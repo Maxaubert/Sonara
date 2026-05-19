@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """
 claude-speak: PTY wrapper for Claude Code with streaming TTS.
 Passes all output through unchanged while feeding text to macOS `say`.

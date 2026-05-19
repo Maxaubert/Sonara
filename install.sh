@@ -3,6 +3,19 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")" && pwd)"
+
+# Find a working Python 3
+PYTHON=""
+for candidate in /opt/homebrew/bin/python3.10 /opt/homebrew/bin/python3.9 /opt/homebrew/bin/python3 /usr/local/bin/python3 python3; do
+  if "$candidate" --version >/dev/null 2>&1; then
+    PYTHON="$candidate"
+    break
+  fi
+done
+if [ -z "$PYTHON" ]; then
+  echo "Error: Python 3 not found. Install via: brew install python3" >&2
+  exit 1
+fi
 BIN="$HOME/.local/bin"
 COMMANDS_DIR="$HOME/.claude/commands"
 HOOKS_DIR="$HOME/.claude/hooks"
@@ -14,11 +27,13 @@ echo "Installing claude-tts..."
 # 1 — Directories
 mkdir -p "$BIN" "$COMMANDS_DIR" "$HOOKS_DIR"
 
-# 2 — Binaries
+# 2 — Binaries (rewrite shebang to use the working Python found above)
 cp "$REPO/bin/claude-speak" "$BIN/claude-speak"
 cp "$REPO/bin/claude-tts"   "$BIN/claude-tts"
+sed -i '' "1s|.*|#!$PYTHON|" "$BIN/claude-speak"
+sed -i '' "s|python3 |$PYTHON |g" "$BIN/claude-tts"
 chmod +x "$BIN/claude-speak" "$BIN/claude-tts"
-echo "  ✓ Binaries → $BIN"
+echo "  ✓ Binaries → $BIN (python: $PYTHON)"
 
 # 3 — Hook scripts
 cp "$REPO/hooks/permission-request.sh" "$HOOKS_DIR/claude-tts-permission.sh"
@@ -31,7 +46,7 @@ cp "$REPO/commands/read.md" "$COMMANDS_DIR/read.md"
 echo "  ✓ Slash command /read → $COMMANDS_DIR"
 
 # 5 — Merge hooks into settings.json
-python3 - "$SETTINGS" "$HOOKS_DIR" << 'PYEOF'
+"$PYTHON" - "$SETTINGS" "$HOOKS_DIR" << 'PYEOF'
 import json, os, sys
 
 settings_path = sys.argv[1]
