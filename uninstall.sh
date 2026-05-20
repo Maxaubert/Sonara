@@ -15,7 +15,9 @@ echo "  ✓ Binaries removed"
 # Hook scripts
 rm -f "$HOME/.claude/hooks/claude-tts-permission.sh"
 rm -f "$HOME/.claude/hooks/claude-tts-pre-tool.sh"
+rm -f "$HOME/.claude/hooks/claude-tts-post-tool.sh"
 rm -f "$HOME/.claude/hooks/claude-tts-stop.sh"
+rm -f "$HOME/.claude-tts-pos"
 echo "  ✓ Hook scripts removed"
 
 # Slash command

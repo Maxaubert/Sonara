@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
-# Fired when Claude finishes a turn. Reads any final text not yet covered by PostToolUse.
+# Fired after each tool completes. Reads any new Claude text since the last read.
 
 [ -f "$HOME/.claude-tts-enabled" ] || exit 0
 
-TRANSCRIPT=$(python3 -c "
-import glob, os
-files = glob.glob(os.path.expanduser('~/.claude/projects/**/*.jsonl'), recursive=True)
-if files:
-    print(max(files, key=os.path.getmtime))
-")
+python3 - << 'PYEOF'
+import sys, json, re, subprocess, os, glob
 
-[ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ] && exit 0
-
-python3 - "$TRANSCRIPT" << 'PYEOF'
-import sys, json, re, subprocess, time, os
-
-transcript = sys.argv[1]
 POS_FILE = os.path.expanduser("~/.claude-tts-pos")
 
 def read_pos():
@@ -66,18 +56,16 @@ def clean(text):
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
+files = glob.glob(os.path.expanduser('~/.claude/projects/**/*.jsonl'), recursive=True)
+if not files:
+    sys.exit(0)
+transcript = max(files, key=os.path.getmtime)
+
 prev_transcript, prev_count = read_pos()
 if prev_transcript != transcript:
     prev_count = 0
 
-# Poll up to 3s for the final message to land in the transcript
 messages = read_messages(transcript)
-for _ in range(6):
-    if len(messages) > prev_count:
-        break
-    time.sleep(0.5)
-    messages = read_messages(transcript)
-
 new_messages = messages[prev_count:]
 if not new_messages:
     sys.exit(0)
@@ -86,6 +74,7 @@ write_pos(transcript, len(messages))
 
 text = clean('\n\n'.join(new_messages))
 if text:
+    subprocess.run(['pkill', '-x', 'say'], capture_output=True)
     subprocess.Popen(['say', text])
 PYEOF
 
