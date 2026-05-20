@@ -1,94 +1,15 @@
 #!/usr/bin/env bash
-# claude-tts: helper for the claude-tts accessibility tool
-# Usage: claude-tts <toggle|status|speak-nth|stop>
-
 set -euo pipefail
 
 TTS_FLAG="$HOME/.claude-tts-enabled"
 CMD="${1:-help}"
 shift || true
 
-# ── Clean text for TTS ───────────────────────────────────────────────────────
-_clean() {
-  python3 - "$@" << 'PYEOF'
-import sys, re
-
-text = sys.stdin.read()
-# Code blocks → marker
-text = re.sub(r'```[\s\S]*?```', ' code block. ', text)
-# Inline code → strip backticks
-text = re.sub(r'`[^`\n]{1,120}`', '', text)
-# Markdown headers
-text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-# Bold / italic
-text = re.sub(r'\*{1,3}([^*\n]+)\*{1,3}', r'\1', text)
-# URLs
-text = re.sub(r'https?://\S+', 'link', text)
-# Table rows
-text = re.sub(r'\|[^\n]+\|', '', text)
-# Collapse extra whitespace
-text = re.sub(r'[ \t]{3,}', ' ', text)
-text = re.sub(r'\n{3,}', '\n\n', text)
-print(text.strip())
-PYEOF
-}
-
-# ── Find most recent Claude transcript ──────────────────────────────────────
-_find_transcript() {
-  python3 -c "
-import glob, os
-files = glob.glob(os.path.expanduser('~/.claude/projects/**/*.jsonl'), recursive=True)
-if files:
-    print(max(files, key=os.path.getmtime))
-"
-}
-
-# ── Extract Nth-last assistant message from transcript ──────────────────────
-_extract_nth() {
-  local transcript="$1"
-  local n="$2"
-  python3 - "$transcript" "$n" << 'PYEOF'
-import sys, json
-
-transcript = sys.argv[1]
-n = int(sys.argv[2])
-messages = []
-
-with open(transcript) as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            role = obj.get('role', '')
-            if role != 'assistant':
-                continue
-            content = obj.get('content', '')
-            if isinstance(content, str) and content.strip():
-                messages.append(content)
-            elif isinstance(content, list):
-                parts = [
-                    c.get('text', '') for c in content
-                    if isinstance(c, dict) and c.get('type') == 'text'
-                ]
-                text = ' '.join(parts).strip()
-                if text:
-                    messages.append(text)
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-if len(messages) >= n:
-    sys.stdout.write(messages[-n])
-PYEOF
-}
-
-# ── Commands ─────────────────────────────────────────────────────────────────
-
 case "$CMD" in
   toggle)
     if [ -f "$TTS_FLAG" ]; then
       rm "$TTS_FLAG"
+      pkill -x say 2>/dev/null || true
       echo "Speaking mode: OFF"
     else
       touch "$TTS_FLAG"
@@ -98,11 +19,7 @@ case "$CMD" in
     ;;
 
   status)
-    if [ -f "$TTS_FLAG" ]; then
-      echo "ON"
-    else
-      echo "OFF"
-    fi
+    [ -f "$TTS_FLAG" ] && echo "ON" || echo "OFF"
     ;;
 
   speak-nth)
@@ -110,24 +27,89 @@ case "$CMD" in
     TRANSCRIPT="${1:-auto}"
     N="${2:-1}"
 
-    if [ "$TRANSCRIPT" = "auto" ]; then
-      TRANSCRIPT="$(_find_transcript)"
-    fi
+    python3 - "$TRANSCRIPT" "$N" << 'PYEOF'
+import sys, json, re, glob, os, subprocess
 
-    if [ -z "$TRANSCRIPT" ] || [ ! -f "$TRANSCRIPT" ]; then
-      echo "claude-tts: no transcript found" >&2
-      exit 1
-    fi
+transcript_arg = sys.argv[1]
+n = int(sys.argv[2])
 
-    TEXT="$(_extract_nth "$TRANSCRIPT" "$N")"
+if transcript_arg == 'auto':
+    files = glob.glob(os.path.expanduser('~/.claude/projects/**/*.jsonl'), recursive=True)
+    if not files:
+        print("claude-tts: no transcript found", file=sys.stderr)
+        sys.exit(1)
+    transcript_arg = max(files, key=os.path.getmtime)
 
-    if [ -z "$TEXT" ]; then
-      echo "claude-tts: no response at position -$N" >&2
-      exit 1
-    fi
+if not os.path.isfile(transcript_arg):
+    print("claude-tts: no transcript found", file=sys.stderr)
+    sys.exit(1)
 
-    CLEANED="$(echo "$TEXT" | _clean)"
-    say "$CLEANED"
+def is_real_user_turn(msg):
+    content = msg.get('content', '')
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(isinstance(c, dict) and c.get('type') == 'text' for c in content)
+    return False
+
+def extract_assistant_text(msg):
+    content = msg.get('content', '')
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = [c.get('text', '') for c in content
+                 if isinstance(c, dict) and c.get('type') == 'text']
+        return ' '.join(parts).strip()
+    return ''
+
+turns = []
+current_blocks = []
+with open(transcript_arg) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            if obj.get('isSidechain', False):
+                continue
+            msg = obj.get('message', {})
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get('role', '')
+            if role == 'user' and is_real_user_turn(msg):
+                if current_blocks:
+                    turns.append('\n\n'.join(current_blocks))
+                current_blocks = []
+            elif role == 'assistant':
+                text = extract_assistant_text(msg)
+                if text:
+                    current_blocks.append(text)
+        except Exception:
+            pass
+
+if current_blocks:
+    turns.append('\n\n'.join(current_blocks))
+
+if len(turns) < n:
+    print(f"claude-tts: no response at position -{n}", file=sys.stderr)
+    sys.exit(1)
+
+text = turns[-n]
+text = re.sub(r'```[\s\S]*?```', ' code block. ', text)
+text = re.sub(r'`[^`\n]{1,120}`', '', text)
+text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+text = re.sub(r'\*{1,3}([^*\n]+)\*{1,3}', r'\1', text)
+text = re.sub(r'https?://\S+', 'link', text)
+text = re.sub(r'\|[^\n]+\|', '', text)
+text = re.sub(r'[ \t]{3,}', ' ', text)
+text = re.sub(r'\n{3,}', '\n\n', text)
+text = text.strip()
+
+if text:
+    subprocess.run(['pkill', '-x', 'say'], capture_output=True)
+    subprocess.run(['say', text])
+PYEOF
     ;;
 
   stop)
@@ -135,7 +117,7 @@ case "$CMD" in
     echo "Stopped"
     ;;
 
-  help|*)
+  *)
     echo "Usage: claude-tts <toggle|status|speak-nth [transcript] N|stop>" >&2
     exit 1
     ;;
