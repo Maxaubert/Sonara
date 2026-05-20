@@ -62,10 +62,13 @@ if not files:
 transcript = max(files, key=os.path.getmtime)
 
 prev_transcript, prev_count = read_pos()
-if prev_transcript != transcript:
-    prev_count = 0
-
 messages = read_messages(transcript)
+
+# On first run or new session, initialize to current count — skip history
+if prev_transcript != transcript:
+    write_pos(transcript, len(messages))
+    sys.exit(0)
+
 new_messages = messages[prev_count:]
 if not new_messages:
     sys.exit(0)

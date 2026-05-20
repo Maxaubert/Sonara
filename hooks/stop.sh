@@ -67,11 +67,14 @@ def clean(text):
     return text.strip()
 
 prev_transcript, prev_count = read_pos()
-if prev_transcript != transcript:
-    prev_count = 0
 
 # Poll up to 3s for the final message to land in the transcript
 messages = read_messages(transcript)
+
+# On first run or new session, initialize to current count — skip history
+if prev_transcript != transcript:
+    write_pos(transcript, len(messages))
+    sys.exit(0)
 for _ in range(6):
     if len(messages) > prev_count:
         break
