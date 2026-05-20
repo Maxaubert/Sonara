@@ -38,12 +38,11 @@ echo "  ✓ Binaries → $BIN (python: $PYTHON)"
 # 3 — Hook scripts
 cp "$REPO/hooks/permission-request.sh" "$HOOKS_DIR/claude-tts-permission.sh"
 cp "$REPO/hooks/pre-tool-use.sh"       "$HOOKS_DIR/claude-tts-pre-tool.sh"
-cp "$REPO/hooks/post-tool-use.sh"      "$HOOKS_DIR/claude-tts-post-tool.sh"
 cp "$REPO/hooks/stop.sh"               "$HOOKS_DIR/claude-tts-stop.sh"
-sed -i '' "s|python3 |$PYTHON |g" "$HOOKS_DIR/claude-tts-post-tool.sh"
+sed -i '' "s|python3 |$PYTHON |g" "$HOOKS_DIR/claude-tts-pre-tool.sh"
 sed -i '' "s|python3 |$PYTHON |g" "$HOOKS_DIR/claude-tts-stop.sh"
 chmod +x "$HOOKS_DIR/claude-tts-permission.sh" "$HOOKS_DIR/claude-tts-pre-tool.sh" \
-         "$HOOKS_DIR/claude-tts-post-tool.sh"  "$HOOKS_DIR/claude-tts-stop.sh"
+         "$HOOKS_DIR/claude-tts-stop.sh"
 echo "  ✓ Hooks → $HOOKS_DIR"
 
 # 4 — Slash command
@@ -80,7 +79,6 @@ def add_hook(event, command):
 
 add_hook("PermissionRequest", f"{hooks_dir}/claude-tts-permission.sh")
 add_hook("PreToolUse",        f"{hooks_dir}/claude-tts-pre-tool.sh")
-add_hook("PostToolUse",       f"{hooks_dir}/claude-tts-post-tool.sh")
 add_hook("Stop",              f"{hooks_dir}/claude-tts-stop.sh")
 
 os.makedirs(os.path.dirname(settings_path), exist_ok=True)
