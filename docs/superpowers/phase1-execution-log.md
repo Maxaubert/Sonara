@@ -41,8 +41,8 @@ to Opus.
 | 2 | protocol.py + config.py | ✅ done | 7 | 31 passed |
 | 3 | cleaner.py + assembler.py | ✅ done | 7 | 50 passed |
 | 4 | queue.py + speaker.py | ✅ done | 9 | 74 passed |
-| 5 | sessions.py + daemon.py + client.py | 🔄 running | ~10 | — |
-| 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | ⏳ pending (has 1 MANUAL task) | ~9 | — |
+| 5 | sessions.py + daemon.py + client.py | ✅ done | 10 | 119 passed (1 warn) |
+| 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | 🔄 running (has 1 MANUAL task) | ~9 | — |
 | 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | ⏳ pending | ~8 | — |
 | 8 | End-to-end integration test + README + final verification | ⏳ pending | ~7 | — |
 
@@ -97,6 +97,18 @@ to Opus.
 - Controller probe confirmed: `jump_to_decision` skips leading prose to the decision item;
   `Speaker.cancel` terminates only its own `say` child (no system-wide `pkill`) — the core fix
   for the legacy interruption bug.
+
+### Section 5 — sessions.py + daemon.py + client.py — ✅
+- 10/10 tasks DONE. Gate: **119 passed (1 warning)**. Workflow run `wf_9a0813ab-97e` (task `wboqwsltz`).
+- Commits `45cf9c7` … `a8f2dc3`. Created: `src/echo/{sessions,daemon,client}.py` + tests.
+- **Controller probe of the integration heart confirms the plan self-review fix:** decision
+  earcons fire exactly once (from the EARCON message; the CHOICE/PLAN/PERMISSION content
+  messages do NOT earcon — no doubling); choice text = `"Which approach? Option 1: Refactor.
+  Option 2: Rewrite."`; permission text = bare `"Run: pytest -q"`; background-session decisions
+  are gated (text not enqueued). This matches §8's e2e expectation exactly.
+- 1 `specPass:false` (speak-loop threading test, non-blocking). 1 pytest warning: an unhandled
+  thread-exception in `tests/test_client_send.py::test_send_no_reply` (test-helper echo-server
+  thread) → logged in follow-ups.
 
 ---
 

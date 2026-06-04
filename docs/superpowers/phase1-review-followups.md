@@ -39,6 +39,14 @@ Each item: what, where, why it matters, and the concrete action + how to verify.
     to legitimate corrections (plan's "1-line" fence count was wrong → "2-line"; a commit msg).
     No action needed for §3.
 
+- [ ] **Unhandled thread-exception warning in the test suite.** `tests/test_client_send.py::
+  test_send_no_reply` triggers `PytestUnhandledThreadExceptionWarning: Exception in thread
+  Thread-1 (_echo_server)` (Section 5). The throwaway echo-server thread raises when the client
+  sends with no reply expected. **Action:** make the test's server thread handle the
+  client-closed / no-reply path cleanly (try/except around recv/send; daemon thread + join) so
+  the suite runs warning-free. Confirm it is a TEST-helper issue, not `client.send` leaving a
+  socket in a bad state.
+
 ## Resolved
 
 (none yet)
