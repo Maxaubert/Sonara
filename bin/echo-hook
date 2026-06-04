@@ -1,58 +1,73 @@
 #!/usr/bin/env python3
-"""Echo hook dispatcher: argv[1]=event, stdin=JSON payload.
+"""Echo hook entrypoint.
 
-Maps the event to protocol messages and forwards them to the speech daemon.
-ALWAYS exits 0 and never raises, so it can never break Claude Code.
+Invoked by Claude Code as: bin/echo-hook <Event>  (payload JSON on stdin).
+Thin shim: parse argv/stdin, optionally capture raw stdin, map the event to
+protocol messages via the PURE echo.hooks_entry.handle_event, ensure the daemon
+is up, and send each message. Wrapped in a total try/except and ALWAYS exits 0
+so a failure here can never break the Claude session. Keep total work tiny.
 """
-import json
 import os
 import sys
 
 
-def _main() -> None:
-    event = sys.argv[1] if len(sys.argv) > 1 else ""
-
-    raw = b""
+def main() -> None:
+    # Read raw stdin first so we can capture it even if everything else fails.
     try:
         raw = sys.stdin.buffer.read()
     except Exception:
         raw = b""
 
-    if os.environ.get("ECHO_CAPTURE"):
+    # Optional golden-payload capture: dump raw stdin BEFORE any other work.
+    capture_dir = os.environ.get("ECHO_CAPTURE")
+    if capture_dir:
         try:
-            cap_dir = os.environ["ECHO_CAPTURE"]
-            os.makedirs(cap_dir, exist_ok=True)
-            cap_path = os.path.join(cap_dir, f"{event}-{os.getpid()}.json")
-            with open(cap_path, "wb") as fh:
-                fh.write(raw)
+            event_for_name = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+            os.makedirs(capture_dir, exist_ok=True)
+            out_path = os.path.join(capture_dir, f"{event_for_name}-{os.getpid()}.json")
+            with open(out_path, "wb") as f:
+                f.write(raw)
         except Exception:
             pass
 
+    # Resolve the package: prefer an installed 'echo'; fall back to ../src.
     try:
-        payload = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+        import echo  # noqa: F401
+    except Exception:
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = os.path.join(os.path.dirname(here), "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+
+    from echo.hooks_entry import handle_event
+    from echo import client
+
+    event = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    # Tolerant stdin parse: empty/invalid -> {}.
+    import json
+
+    try:
+        text = raw.decode("utf-8").strip()
+        payload = json.loads(text) if text else {}
         if not isinstance(payload, dict):
             payload = {}
     except Exception:
         payload = {}
-
-    from echo.hooks_entry import handle_event
-    from echo import client
 
     msgs = handle_event(event, payload)
     if not msgs:
         return
 
     client.ensure_daemon()
-    for msg in msgs:
-        try:
-            client.send(msg)
-        except Exception:
-            pass
+    for m in msgs:
+        client.send(m)
 
 
 if __name__ == "__main__":
     try:
-        _main()
+        main()
     except Exception:
+        # Never let a hook failure surface to Claude.
         pass
     sys.exit(0)
