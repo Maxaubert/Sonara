@@ -1,5 +1,6 @@
 import os
 import socket
+import subprocess
 import threading
 
 from echo.protocol import MsgType, encode, decode
@@ -293,4 +294,59 @@ class SpeechDaemon:
                 os.unlink(SOCKET_PATH)
             except FileNotFoundError:
                 pass
+
+
+def _socket_connectable() -> bool:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(str(SOCKET_PATH))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def _daemon_shim_path() -> str:
+    # repo layout: <repo>/bin/echo-daemon ; this file is <repo>/src/echo/daemon.py
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(os.path.dirname(here))
+    return os.path.join(repo_root, "bin", "echo-daemon")
+
+
+def ensure_running() -> None:
+    if _socket_connectable():
+        return
+    shim = _daemon_shim_path()
+    subprocess.Popen(
+        [shim],
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def main() -> None:
+    from echo.speaker import Speaker
+    from echo.queue import SpeechQueue
+    from echo.sessions import SessionManager
+
+    cfg = load_config()
+    queue = SpeechQueue()
+    speaker = Speaker(
+        voice=cfg.get("voice"),
+        rate=cfg.get("rate", 200),
+        earcons=cfg.get("earcons"),
+    )
+    sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))
+    daemon = SpeechDaemon(queue, speaker, sessions, cfg)
+    daemon.run()
+
+
+if __name__ == "__main__":
+    main()
 
