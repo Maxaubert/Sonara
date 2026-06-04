@@ -341,12 +341,86 @@ def _cmd_install(_args) -> int:
     return install()
 
 
+import shutil as _shutil  # alias so module-level 'shutil' (used by doctor) stays clear
+
+
+def _legacy_migrate(home: Optional[str] = None) -> list:
+    """Clean up a PRIOR legacy claude-tts install. Returns a list of strings
+    describing what was removed. Safe (no-op) on a machine with no legacy install.
+    """
+    base = home or os.path.expanduser("~")
+    removed = []
+
+    zshrc = os.path.join(base, ".zshrc")
+    if _clean_zshrc(zshrc):
+        removed.append(f"cleaned legacy alias/PATH lines from {zshrc}")
+
+    settings = os.path.join(base, ".claude", "settings.json")
+    if _clean_settings_json(settings):
+        removed.append(f"cleaned legacy hooks from {settings}")
+
+    legacy_files = [
+        os.path.join(base, ".local", "bin", "claude-speak"),
+        os.path.join(base, ".local", "bin", "claude-tts"),
+        os.path.join(base, ".claude-tts-enabled"),
+        os.path.join(base, ".claude-tts-pos"),
+    ]
+    for f in legacy_files:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+                removed.append(f"removed {f}")
+            except OSError:
+                pass
+
+    return removed
+
+
+def uninstall() -> int:
+    """Remove the LaunchAgent + ECHO_DIR and migrate away a legacy install."""
+    if os.path.exists(LAUNCH_AGENT_PATH):
+        _launchctl(["unload", LAUNCH_AGENT_PATH])
+        try:
+            os.remove(LAUNCH_AGENT_PATH)
+            print(f"Removed LaunchAgent: {LAUNCH_AGENT_PATH}")
+        except OSError as exc:
+            print(f"warning: could not remove {LAUNCH_AGENT_PATH}: {exc}")
+    else:
+        print("No LaunchAgent installed.")
+
+    echo_dir = str(paths.ECHO_DIR)
+    if os.path.isdir(echo_dir):
+        _shutil.rmtree(echo_dir, ignore_errors=True)
+        print(f"Removed {echo_dir}")
+
+    print("Checking for a prior legacy claude-tts install...")
+    for line in _legacy_migrate():
+        print(f"  - {line}")
+    print("Done. Disable the 'echo' plugin via /plugin in Claude Code if enabled.")
+    return 0
+
+
+def _cmd_uninstall(_args) -> int:
+    return uninstall()
+
+
+def _cmd_daemon(_args) -> int:
+    from . import daemon
+    daemon.main()
+    return 0
+
+
 def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
     sub.add_parser("install", help="install the LaunchAgent + ECHO_DIR").set_defaults(
         func=_cmd_install)
+    sub.add_parser("uninstall",
+                   help="remove Echo and clean a legacy install").set_defaults(
+        func=_cmd_uninstall)
+    sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
+        func=_cmd_daemon)
 
 
 def main(argv: Optional[list] = None) -> int:
