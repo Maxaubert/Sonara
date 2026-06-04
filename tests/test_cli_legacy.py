@@ -1,4 +1,3 @@
-"""Tests for legacy zshrc cleaner and settings.json cleaner in echo.cli."""
 from pathlib import Path
 
 from echo import cli
