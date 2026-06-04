@@ -62,9 +62,22 @@ non-atomic user-file writes, DRY dups, + key test-coverage gaps.
 text and quiet verbosity drops prose while keeping decisions. See `phase1-review-followups.md`
 (all "fixing now" items now Resolved; a short "Deferred" list remains for Phase 1.x).
 
-**NEXT:** `superpowers:finishing-a-development-branch`. THEN (with Nima): real golden-payload
-capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) and the eyes-free verification
-(`docs/phase1-verification-checklist.md`).
+**Branch decision:** KEEP `rebuild-echo` as-is (not merged) — verify by ear first, then merge.
+Tests: 242 passed, 0 warnings. 106 commits.
+
+**NEXT (needs Nima + a real install; modifies the real system, so do deliberately):**
+1. Install Echo: `pip install -e .`, register the plugin, install the LaunchAgent daemon,
+   download an enhanced macOS voice, `echo doctor`.
+2. **Migrate off the legacy tool** (so both don't narrate at once): remove the old
+   `alias claude='claude-speak'` from `~/.zshrc` and the 3 legacy `claude-tts` hooks from
+   `~/.claude/settings.json` (Echo's legacy cleaners do this).
+3. Real golden-payload capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) — validate the
+   representative fixtures against live hook stdin; adjust parsers if the real schema differs.
+4. **Eyes-free verification** (`docs/phase1-verification-checklist.md`) — a full screen-off
+   session. THIS is the real acceptance test. Then merge.
+
+Open design Q for install UX: legacy migration currently lives in `echo uninstall`; for the
+switch-over it should run as part of (or alongside) `echo install`. Sort out with Nima at install.
 
 ### Known MANUAL steps (need Nima / a real Claude session)
 - **Section 6 — golden payload capture:** capturing REAL hook stdin (MessageDisplay,
