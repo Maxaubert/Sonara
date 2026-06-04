@@ -1,0 +1,11 @@
+{
+  "name": "echo",
+  "version": "0.1.0",
+  "description": "Eyes-free text-to-speech layer for Claude Code (macOS)",
+  "author": {
+    "name": "Nima Hakimi",
+    "email": "hakimi.nima1@gmail.com"
+  },
+  "license": "MIT",
+  "keywords": ["accessibility", "tts", "speech"]
+}
