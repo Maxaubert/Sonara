@@ -52,8 +52,12 @@ def _clean_zshrc(path: str) -> bool:
     if kept == lines:
         return False
 
-    with open(p, "w", encoding="utf-8") as f:
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         f.writelines(kept)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
     return True
 
 
@@ -105,9 +109,13 @@ def _clean_settings_json(path: str) -> bool:
     if not changed:
         return False
 
-    with open(p, "w", encoding="utf-8") as f:
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
     return True
 
 

@@ -28,6 +28,10 @@ def test_clean_zshrc_removes_legacy_lines(tmp_path):
     assert "export EDITOR=vim" in text
     assert 'export PATH="$HOME/bin:$PATH"' in text
     assert "alias gs='git status'" in text
+    # Atomic write: the original file path now has the new content (not the old).
+    assert text != LEGACY_ZSHRC
+    # No leftover temp file.
+    assert not (tmp_path / ".zshrc.tmp").exists()
 
 
 def test_clean_zshrc_keeps_user_local_bin_without_marker(tmp_path):
@@ -78,10 +82,12 @@ def _legacy_settings():
 
 def test_clean_settings_removes_legacy_hooks(tmp_path):
     sp = tmp_path / "settings.json"
-    sp.write_text(json.dumps(_legacy_settings()))
+    original_text = json.dumps(_legacy_settings())
+    sp.write_text(original_text)
     changed = cli._clean_settings_json(str(sp))
     assert changed is True
-    data = json.loads(sp.read_text())
+    new_text = sp.read_text()
+    data = json.loads(new_text)
     blob = json.dumps(data)
     assert "claude-tts" not in blob
     # Unrelated hook preserved; empty events dropped.
@@ -90,6 +96,10 @@ def test_clean_settings_removes_legacy_hooks(tmp_path):
     assert "Stop" not in data["hooks"]
     assert "PermissionRequest" not in data["hooks"]
     assert data["model"] == "opus"
+    # Atomic write: the original file path now has the new content (not the old).
+    assert new_text != original_text
+    # No leftover temp file.
+    assert not (tmp_path / "settings.json.tmp").exists()
 
 
 def test_clean_settings_missing_file_is_noop(tmp_path):
