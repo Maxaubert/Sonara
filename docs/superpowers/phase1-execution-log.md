@@ -43,8 +43,8 @@ to Opus.
 | 4 | queue.py + speaker.py | ✅ done | 9 | 74 passed |
 | 5 | sessions.py + daemon.py + client.py | ✅ done | 10 | 119 passed (1 warn) |
 | 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | ✅ done (live capture deferred) | 9 | 150 passed (1 warn) |
-| 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | 🔄 running | 8 | — |
-| 8 | End-to-end integration test + README + final verification | ⏳ pending | ~7 | — |
+| 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | ✅ done (real system untouched) | 8 | 193 passed (1 warn) |
+| 8 | End-to-end integration test + README + final verification | 🔄 running | ~7 | — |
 
 **After Section 8:** run the final whole-implementation review (must consume
 `phase1-review-followups.md`), then `superpowers:finishing-a-development-branch`.
@@ -126,6 +126,24 @@ to Opus.
   hardening. Recovered from the dangling commit; runner further hardened to allow ONLY
   `git add`/`git commit`. Functional tree unaffected (150 green; both probes pass).
 
+### Section 7 — cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration — ✅
+- 8/8 tasks DONE. Gate: **193 passed (1 warning)**. Final run `wf_f09a5c38-60d` (task `w1f6rtjy4`).
+  First run `wf_1a2c075d-cbb` CRASHED mid-`doctor()` on a flaky "subagent emitted no structured
+  output" infra error.
+- Created in `src/echo/cli.py`: control subcmds (status/stop/repeat/skip/rate/verbosity/voice/
+  daemon), `doctor`, `install`/`uninstall` (+ `_launchagent_plist`, `_launchctl`,
+  `LAUNCH_AGENT_PATH = ~/Library/LaunchAgents/com.echo.speechd.plist`), legacy `_clean_zshrc` +
+  `_clean_settings_json` + `_legacy_migrate`, `_register_local`, `main`. Slash commands in
+  `commands/`: echo:status, echo:stop, echo:repeat, echo:verbosity, echo:doctor.
+- **SAFETY VERIFIED (controller probe): the REAL system was NOT touched** — `~/.zshrc` still has
+  `alias claude='claude-speak'`; `~/.claude/settings.json` still has the 3 legacy hooks;
+  `~/.local/bin/claude-speak`+`claude-tts` still present; NO LaunchAgent installed. Cleaners/
+  install were implemented + unit-tested on temp paths only.
+- Recovery: discarded the crash's un-reviewed partial `doctor` work, hardened the runner
+  (safeAgent retry + idempotency), re-ran. The idempotent re-run made some trivial churn commits
+  re-reviewing tasks 1–3 (harmless; fix loops are capped) before doing doctor/install/uninstall/
+  slash. The 4 `specPass:false` are those churn tasks; doctor/install/uninstall/slash specPass:true.
+
 ---
 
 ## 🐞 Gotchas / debugging notes (controller-level)
@@ -156,6 +174,12 @@ to Opus.
   destructive git commands (only `git add`/`git commit`). Lesson: trust the TEST SUITE + targeted
   controller probes as the source of truth for per-section integrity — multi-agent git churn can
   be messy even when the functional tree ends up correct.
+- **A subagent can finish WITHOUT emitting structured output → crashes the whole section.**
+  §7's first run died this way mid-`doctor()`. Fix: a `safeAgent` wrapper now catches the throw
+  and retries once on opus, returning null (recorded BLOCKED) instead of aborting the section.
+  Also added IDEMPOTENCY so a re-run skips already-done tasks — but the re-run still re-REVIEWS
+  done tasks (the skip returns current HEAD, which the reviewer compares to the OLD task spec →
+  minor churn commits). Future improvement: skip reviews entirely when a task reports already-done.
 - **Path casing was a red herring.** Repo's real name is `Projects` (capital); FS is
   case-insensitive, so lowercase paths resolve fine for Bash AND the file tools. The earlier
   "File does not exist" on the execution log was because the file had been DELETED (above), not
