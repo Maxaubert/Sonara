@@ -173,6 +173,81 @@ def test_play_earcon_invokes_afplay_with_path(monkeypatch):
     assert recorded["args"] == ["afplay", "/System/Library/Sounds/Tink.aiff"]
 
 
+class FakeEarconPopen:
+    """Fake Popen returned by an earcon player; controllable finish state."""
+
+    def __init__(self, finished: bool = False):
+        self._finished = finished
+        self.poll_calls = 0
+
+    def finish(self):
+        self._finished = True
+
+    def poll(self):
+        self.poll_calls += 1
+        return 0 if self._finished else None
+
+
+class RecordingEarconPlayer:
+    """earcon_player that returns FakeEarconPopen instances for tracking."""
+
+    def __init__(self):
+        self.paths = []
+        self.procs: list[FakeEarconPopen] = []
+
+    def __call__(self, path: str) -> FakeEarconPopen:
+        self.paths.append(path)
+        proc = FakeEarconPopen()
+        self.procs.append(proc)
+        return proc
+
+
+def test_finished_earcon_processes_are_reaped_on_next_earcon():
+    """Finished earcon procs must be removed from _earcon_procs on the next call."""
+    player = RecordingEarconPlayer()
+    earcons = {
+        "ping": "/sounds/ping.aiff",
+        "pong": "/sounds/pong.aiff",
+        "done": "/sounds/done.aiff",
+    }
+    sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons=earcons)
+
+    # Fire three earcons; all three procs are still running.
+    sp.earcon("ping")
+    sp.earcon("pong")
+    sp.earcon("done")
+    assert len(sp._earcon_procs) == 3
+
+    # Mark the first two as finished.
+    player.procs[0].finish()
+    player.procs[1].finish()
+
+    # The next earcon call must reap the two finished procs before adding the new one.
+    sp.earcon("ping")
+    # Only the still-running third proc plus the newly spawned proc should remain.
+    assert len(sp._earcon_procs) == 2
+    # The remaining procs are the previously-running third and the brand-new fourth.
+    assert sp._earcon_procs[0] is player.procs[2]
+    assert sp._earcon_procs[1] is player.procs[3]
+
+
+def test_earcon_procs_do_not_accumulate_unbounded():
+    """Finished procs must be removed so the list stays bounded (no zombie buildup)."""
+    player = RecordingEarconPlayer()
+    earcons = {"tick": "/sounds/tick.aiff"}
+    sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons=earcons)
+
+    N = 20
+    for i in range(N):
+        # Immediately mark the previous proc as done before firing the next one.
+        if player.procs:
+            player.procs[-1].finish()
+        sp.earcon("tick")
+
+    # Every finished proc must have been reaped; at most 1 (the last) can remain.
+    assert len(sp._earcon_procs) <= 1
+
+
 from echo.speaker import best_enhanced_voice
 
 SAY_SAMPLE = (

@@ -10,13 +10,14 @@ def run_say(text: str, voice, rate: int):
     return subprocess.Popen(cmd)
 
 
-def play_earcon(path: str) -> None:
+def play_earcon(path: str):
+    """Spawn afplay for *path* and return the Popen (or None on error)."""
     if not os.path.exists(path):
-        return
+        return None
     try:
-        subprocess.Popen(["afplay", path])
+        return subprocess.Popen(["afplay", path])
     except (FileNotFoundError, OSError):
-        pass
+        return None
 
 
 def best_enhanced_voice() -> str:
@@ -75,6 +76,7 @@ class Speaker:
         self._earcon_player = earcon_player
         self._earcons = dict(earcons) if earcons else {}
         self._current = None
+        self._earcon_procs: list = []
 
     def speak(self, text: str) -> None:
         proc = self._say_runner(text, self._voice, self._rate)
@@ -87,11 +89,19 @@ class Speaker:
         if proc is not None:
             proc.terminate()
 
+    def _reap_earcon_procs(self) -> None:
+        """Non-blocking poll: discard entries whose process has finished."""
+        self._earcon_procs = [p for p in self._earcon_procs if p.poll() is None]
+
     def earcon(self, kind: str) -> None:
+        # Reap any finished earcon processes before launching a new one.
+        self._reap_earcon_procs()
         path = self._earcons.get(kind)
         if path is None:
             return
-        self._earcon_player(path)
+        proc = self._earcon_player(path)
+        if proc is not None and hasattr(proc, "poll"):
+            self._earcon_procs.append(proc)
 
     def set_voice(self, v) -> None:
         self._voice = v
