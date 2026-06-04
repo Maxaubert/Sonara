@@ -40,8 +40,8 @@ to Opus.
 | 1 | Project scaffolding, plugin manifest & legacy removal | ✅ done | 11 | 5 passed |
 | 2 | protocol.py + config.py | ✅ done | 7 | 31 passed |
 | 3 | cleaner.py + assembler.py | ✅ done | 7 | 50 passed |
-| 4 | queue.py + speaker.py | 🔄 running | ~9 | — |
-| 5 | sessions.py + daemon.py + client.py | ⏳ pending | ~10 | — |
+| 4 | queue.py + speaker.py | ✅ done | 9 | 74 passed |
+| 5 | sessions.py + daemon.py + client.py | 🔄 running | ~10 | — |
 | 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | ⏳ pending (has 1 MANUAL task) | ~9 | — |
 | 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | ⏳ pending | ~8 | — |
 | 8 | End-to-end integration test + README + final verification | ⏳ pending | ~7 | — |
@@ -89,6 +89,14 @@ to Opus.
   The flags were the reviewer being pedantic about LEGITIMATE corrections: the plan's expected
   fence count "1-line" was wrong for the test input (real = 2 content lines → "2-line"), plus a
   commit-message deviation. **No real bug; cleared — the final review need not re-litigate §3.**
+
+### Section 4 — queue.py + speaker.py — ✅
+- 9/9 tasks DONE. Gate: **74 passed**. Workflow run `wf_571420f1-dcb` (task `wcnfhp5ee`).
+- Commits `030786a` … `52b032d`. Created: `src/echo/{queue,speaker}.py` + tests.
+- Hardened runner worked: only 1 `specPass:false` (the no-code "full suite + commit" task).
+- Controller probe confirmed: `jump_to_decision` skips leading prose to the decision item;
+  `Speaker.cancel` terminates only its own `say` child (no system-wide `pkill`) — the core fix
+  for the legacy interruption bug.
 
 ---
 
