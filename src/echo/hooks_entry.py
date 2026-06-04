@@ -27,4 +27,18 @@ def handle_event(event: str, payload: dict) -> list[dict]:
             )
         ]
 
+    if event == "PreToolUse":
+        tool = payload.get("tool_name")
+        ti = payload.get("tool_input", {})
+        if tool == "AskUserQuestion":
+            return [
+                _msg(type=MsgType.EARCON, kind="choice"),
+                _msg(
+                    type=MsgType.CHOICE,
+                    session=session,
+                    questions=ti.get("questions", []),
+                ),
+            ]
+        return []
+
     return []

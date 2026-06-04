@@ -41,3 +41,36 @@ def test_message_display_from_fixture():
     assert m["index"] == payload["index"]
     assert m["final"] == payload["final"]
     assert m["v"] == PROTOCOL_VERSION
+
+
+def test_ask_user_question_earcon_then_choice():
+    payload = {
+        "session_id": "sess-1",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {
+            "questions": [
+                {"question": "Pick one", "options": [{"label": "A"}, {"label": "B"}]}
+            ]
+        },
+    }
+    assert handle_event("PreToolUse", payload) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "choice"},
+        {
+            "v": PROTOCOL_VERSION,
+            "type": MsgType.CHOICE,
+            "session": "sess-1",
+            "questions": [
+                {"question": "Pick one", "options": [{"label": "A"}, {"label": "B"}]}
+            ],
+        },
+    ]
+
+
+def test_ask_user_question_from_fixture():
+    payload = _load("PreToolUse-AskUserQuestion.json")
+    msgs = handle_event("PreToolUse", payload)
+    assert [m["type"] for m in msgs] == [MsgType.EARCON, MsgType.CHOICE]
+    assert msgs[0]["kind"] == "choice"
+    assert msgs[1]["session"] == payload["session_id"]
+    assert msgs[1]["questions"] == payload["tool_input"]["questions"]
+    assert all(m["v"] == PROTOCOL_VERSION for m in msgs)
