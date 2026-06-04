@@ -101,3 +101,69 @@ def test_rate_rejects_non_integer_wpm():
         with pytest.raises(SystemExit):
             cli.main(["rate", "fast"])
     send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Daemon-down: friendly message, non-zero exit, no traceback
+# ---------------------------------------------------------------------------
+
+CONTROL_SUBCOMMANDS = [
+    ["status"],
+    ["verbosity", "quiet"],
+    ["rate", "200"],
+    ["voice", "Samantha"],
+    ["repeat"],
+    ["stop"],
+    ["skip"],
+]
+
+
+@pytest.mark.parametrize("argv", CONTROL_SUBCOMMANDS)
+def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, capsys):
+    """When the daemon is down all control subcommands must print a friendly
+    message to stderr and return non-zero — no raw traceback."""
+    from echo.client import DaemonNotRunning
+
+    with mock.patch("echo.client.send", side_effect=DaemonNotRunning(
+        "Echo daemon is not running. Run: echo install"
+    )):
+        rc = cli.main(argv)
+
+    assert rc != 0, f"Expected non-zero exit for {argv}"
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    # Must contain a human-readable hint
+    assert "echo install" in combined.lower() or "not running" in combined.lower(), (
+        f"No friendly message found in output: {combined!r}"
+    )
+    # Must NOT contain a raw traceback
+    assert "Traceback" not in combined, (
+        f"Raw traceback leaked into output for {argv}: {combined!r}"
+    )
+
+
+def test_daemon_down_message_goes_to_stderr(capsys):
+    """The friendly daemon-down message must go to stderr, not stdout."""
+    from echo.client import DaemonNotRunning
+
+    with mock.patch("echo.client.send", side_effect=DaemonNotRunning(
+        "Echo daemon is not running. Run: echo install"
+    )):
+        rc = cli.main(["stop"])
+
+    assert rc != 0
+    captured = capsys.readouterr()
+    assert "not running" in captured.err.lower() or "echo install" in captured.err.lower()
+
+
+def test_client_send_raises_daemon_not_running_on_connection_refused(tmp_path, monkeypatch):
+    """send() must raise DaemonNotRunning (not a raw OSError) when the
+    socket is absent, making the error cleanly catchable."""
+    import echo.client as client_mod
+    from echo.client import DaemonNotRunning
+
+    missing_sock = str(tmp_path / "no_such.sock")
+    monkeypatch.setattr(client_mod, "SOCKET_PATH", missing_sock, raising=False)
+
+    with pytest.raises(DaemonNotRunning):
+        client_mod.send({"type": "ping"})

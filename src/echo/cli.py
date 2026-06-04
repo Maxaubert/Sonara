@@ -116,6 +116,10 @@ def _send(msg: dict, expect_reply: bool = False):
     return client.send(msg, expect_reply=expect_reply)
 
 
+def _daemon_not_running_message() -> str:
+    return "Echo daemon is not running. Run: echo install"
+
+
 def _cmd_status(_args) -> int:
     reply = _send({"v": PROTOCOL_VERSION, "type": MsgType.STATUS},
                   expect_reply=True)
@@ -431,7 +435,14 @@ def main(argv: Optional[list] = None) -> int:
     if not getattr(args, "func", None):
         parser.print_help()
         return 2
-    return args.func(args)
+    try:
+        return args.func(args)
+    except OSError as exc:
+        from .client import DaemonNotRunning  # local import; client may not be loaded
+        if isinstance(exc, DaemonNotRunning):
+            print(_daemon_not_running_message(), file=sys.stderr)
+            return 1
+        raise
 
 
 if __name__ == "__main__":

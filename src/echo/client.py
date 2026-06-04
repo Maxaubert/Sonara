@@ -6,11 +6,20 @@ from echo.paths import SOCKET_PATH
 from echo.daemon import ensure_running
 
 
+class DaemonNotRunning(OSError):
+    """Raised when the Echo daemon socket cannot be reached."""
+
+
 def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
-        s.connect(str(SOCKET_PATH))
+        try:
+            s.connect(str(SOCKET_PATH))
+        except (ConnectionRefusedError, FileNotFoundError, OSError) as exc:
+            raise DaemonNotRunning(
+                "Echo daemon is not running. Run: echo install"
+            ) from exc
         s.sendall(encode(msg))
         if not expect_reply:
             return None
