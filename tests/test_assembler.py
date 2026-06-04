@@ -60,3 +60,30 @@ def test_fence_suppresses_code_and_keeps_surrounding_prose():
     delta = "Here it is. ```python\nx = 1\ny = 2\n``` Done now."
     out = a.feed(delta, 0, True)
     assert out == ["Here it is.", "2-line python code block", "Done now."]
+
+
+def test_fence_spanning_multiple_feed_calls_emits_n_line_summary():
+    """A code fence whose open/body/close arrive in separate feed() calls must
+    produce the correct N-line summary (not prematurely closed or dropped)."""
+    a = ProseAssembler()
+
+    # Delta 0: opening fence marker + language tag
+    out0 = a.feed("```python\n", 0, False)
+    # The fence is open; no summary yet.
+    assert out0 == []
+
+    # Delta 1: first body line
+    out1 = a.feed("x = 1\n", 1, False)
+    assert out1 == []
+
+    # Delta 2: second body line
+    out2 = a.feed("y = 2\n", 2, False)
+    assert out2 == []
+
+    # Delta 3: third body line
+    out3 = a.feed("z = 3\n", 3, False)
+    assert out3 == []
+
+    # Delta 4: closing fence — summary must fire here
+    out4 = a.feed("```", 4, True)
+    assert out4 == ["3-line python code block"]
