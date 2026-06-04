@@ -1,7 +1,12 @@
-from echo.protocol import MsgType
+import os
+import socket
+import threading
+
+from echo.protocol import MsgType, encode, decode
 from echo.queue import SpeechItem
 from echo.assembler import ProseAssembler
-from echo.config import save_config
+from echo.config import save_config, load_config
+from echo.paths import SOCKET_PATH, ensure_echo_dir
 
 
 class SpeechDaemon:
@@ -12,6 +17,12 @@ class SpeechDaemon:
         self.config = config
         self._assemblers = {}
         self._next_id = 0
+        self._running = threading.Event()
+        self._wake = threading.Event()
+        self._lock = threading.Lock()
+        self._server = None
+        self._threads = []
+        self._poll_interval = 0.1
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -33,6 +44,7 @@ class SpeechDaemon:
             is_decision=is_decision,
         )
         self.queue.enqueue(item)
+        self._wake.set()
 
     @staticmethod
     def _choice_text(msg) -> str:
@@ -182,3 +194,103 @@ class SpeechDaemon:
             return {"ok": True}
 
         return None
+
+    def stop(self) -> None:
+        self._running.clear()
+        self._wake.set()
+        srv = self._server
+        if srv is not None:
+            try:
+                srv.close()
+            except OSError:
+                pass
+
+    def _speak_loop(self) -> None:
+        self._running.set()
+        while self._running.is_set():
+            item = self.queue.pop_next()
+            if item is not None:
+                self.speaker.speak(item.text)
+                continue
+            # nothing to say: wait until woken by an enqueue or until stop()
+            self._wake.wait(self._poll_interval)
+            self._wake.clear()
+
+    def _handle_conn(self, conn) -> None:
+        try:
+            buf = b""
+            with conn:
+                conn.settimeout(5.0)
+                while self._running.is_set():
+                    try:
+                        data = conn.recv(4096)
+                    except (OSError, socket.timeout):
+                        return
+                    if not data:
+                        return
+                    buf += data
+                    while b"\n" in buf:
+                        line, buf = buf.split(b"\n", 1)
+                        if not line.strip():
+                            continue
+                        try:
+                            msg = decode(line)
+                        except (ValueError, UnicodeDecodeError):
+                            continue
+                        with self._lock:
+                            reply = self.handle_message(msg)
+                        if reply is not None:
+                            try:
+                                conn.sendall(encode(reply))
+                            except OSError:
+                                return
+        except OSError:
+            return
+
+    def _accept_loop(self) -> None:
+        srv = self._server
+        while self._running.is_set():
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            th = threading.Thread(target=self._handle_conn, args=(conn,), daemon=True)
+            th.start()
+
+    def run(self) -> None:
+        ensure_echo_dir()
+        # unlink a stale socket file before binding
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(SOCKET_PATH))
+        srv.listen(16)
+        self._server = srv
+        self._running.set()
+
+        speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
+        accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
+        self._threads = [speak_thread, accept_thread]
+        speak_thread.start()
+        accept_thread.start()
+
+        try:
+            while self._running.is_set():
+                accept_thread.join(timeout=0.25)
+                if not accept_thread.is_alive():
+                    break
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop()
+            try:
+                srv.close()
+            except OSError:
+                pass
+            try:
+                os.unlink(SOCKET_PATH)
+            except FileNotFoundError:
+                pass
+
