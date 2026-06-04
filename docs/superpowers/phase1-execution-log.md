@@ -223,3 +223,34 @@ switch-over it should run as part of (or alongside) `echo install`. Sort out wit
   case-insensitive, so lowercase paths resolve fine for Bash AND the file tools. The earlier
   "File does not exist" on the execution log was because the file had been DELETED (above), not
   a casing problem.
+
+---
+
+## 🚀 Post-build: rebrand, live test, permanent install (Sonari)
+
+- **Rebranded Echo → Sonari** (`081c120`): "echo" collided with the shell builtin AND a $6B AI
+  company; verified `sonari` is ownable (PyPI/npm/GitHub/Homebrew all free). Package, CLI, plugin,
+  state dir (`~/.sonari`), LaunchAgent label all renamed; 242 tests still green; added
+  `[project.scripts] sonari` console entry + `.claude-plugin/marketplace.json`.
+- **Live eyes-free test PASSED** on this Mac (real `claude --plugin-dir` session): prose, per-type
+  earcons, numbered options, and permissions all narrated; the ORDERING CONTRACT confirmed by ear
+  (decision chime fires instantly mid-speech; spoken content stays FIFO, never jumps ahead).
+- **Golden payloads validated**: real captured hook stdin (`/tmp/sonari-capture/`) matches our
+  parser exactly — MessageDisplay (session_id/index/final/delta), Notification (notification_type),
+  PreToolUse (tool_name/tool_input). No parser changes needed.
+- **PERMANENTLY INSTALLED on this device:**
+  - Package: `pip install --break-system-packages -e .` into Homebrew python3 (hooks `import sonari`;
+    `sonari` on PATH at `/opt/homebrew/bin/sonari`).
+  - Daemon: LaunchAgent `com.sonari.speechd` (autostart + KeepAlive) running `python3.13 -m sonari.daemon`.
+  - Plugin: local marketplace added + `sonari@sonari` installed **user scope, enabled** → loads in
+    every `claude` session (cached at `~/.claude/plugins/cache/sonari/sonari/0.1.0`).
+  - Legacy tool switched OFF (alias + 3 hooks + old bins removed; backups at `~/.zshrc.sonari-bak-*`
+    and `~/.claude/settings.json.sonari-bak-*`; old code at tag `v0-legacy-pty`).
+- **Use:** just run `claude` — Sonari narrates automatically. Control via `sonari status|verbosity
+  <lvl>|rate <n>|stop|repeat|doctor` or `/sonari:*` slash commands. (`~/.local/bin/sonari-session`
+  is an optional capture launcher; NOT needed normally, and must NOT pass --plugin-dir.)
+- **Revert:** `sonari uninstall`; `claude plugin uninstall sonari@sonari`; `pip uninstall --break-system-packages sonari`;
+  restore the `~/.zshrc` / `~/.claude/settings.json` backups; or `git checkout v0-legacy-pty` for the old tool.
+- **NEXT — Phase 2:** `hotkeyd` (global hotkeys + 100%-eyes-free option SELECTION via key injection),
+  starting with the key-injection feasibility spike. Plus the deferred Phase-1.x items in
+  `phase1-review-followups.md`. Branch `rebuild-echo` still un-merged — merge after living with it.
