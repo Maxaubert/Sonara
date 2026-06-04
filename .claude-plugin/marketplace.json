@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sonari",
+  "description": "Sonari — eyes-free text-to-speech for Claude Code (blind/low-vision developers)",
+  "owner": {
+    "name": "Nima Hakimi",
+    "email": "hakimi.nima1@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "sonari",
+      "description": "Eyes-free text-to-speech layer for Claude Code (macOS): narrates prose, options, plans, and permissions with a single ordered speech queue and per-type earcons.",
+      "author": {
+        "name": "Nima Hakimi"
+      },
+      "category": "accessibility",
+      "source": "./"
+    }
+  ]
+}
