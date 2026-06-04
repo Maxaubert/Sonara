@@ -282,8 +282,21 @@ def _daemon_shim_path() -> str:
     return os.path.join(_repo_root(), "bin", "echo-daemon")
 
 
-def _launchagent_plist(daemon_path: str, log_path: str) -> str:
-    """Return the full LaunchAgent plist XML for the speech daemon."""
+def _launchagent_plist(daemon_path: str, log_path: str,
+                       python_executable: Optional[str] = None) -> str:
+    """Return the full LaunchAgent plist XML for the speech daemon.
+
+    *python_executable* must be an absolute path to the Python interpreter.
+    It defaults to ``sys.executable`` so that launchd (which runs with a
+    minimal PATH that may not include the venv) always uses the same
+    interpreter that the user installed the ``echo`` package into.
+
+    *daemon_path* is kept as a parameter for API compatibility but is no
+    longer embedded in ProgramArguments; the plist now runs the module
+    directly via ``<python> -m echo.daemon`` to avoid any reliance on PATH.
+    """
+    if python_executable is None:
+        python_executable = sys.executable
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -294,7 +307,9 @@ def _launchagent_plist(daemon_path: str, log_path: str) -> str:
         f'    <string>{LAUNCH_AGENT_LABEL}</string>\n'
         '    <key>ProgramArguments</key>\n'
         '    <array>\n'
-        f'        <string>{daemon_path}</string>\n'
+        f'        <string>{python_executable}</string>\n'
+        '        <string>-m</string>\n'
+        '        <string>echo.daemon</string>\n'
         '    </array>\n'
         '    <key>RunAtLoad</key>\n'
         '    <true/>\n'
@@ -324,7 +339,7 @@ def install() -> int:
     paths.ensure_echo_dir()
     daemon = _daemon_shim_path()
     log = str(paths.LOG_PATH)
-    xml = _launchagent_plist(daemon, log)
+    xml = _launchagent_plist(daemon, log, python_executable=sys.executable)
 
     os.makedirs(os.path.dirname(LAUNCH_AGENT_PATH), exist_ok=True)
     with open(LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:

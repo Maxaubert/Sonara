@@ -1,5 +1,6 @@
 import os
 import plistlib
+import sys
 from unittest import mock
 
 from echo import cli
@@ -8,16 +9,51 @@ from echo import cli
 def test_launchagent_plist_is_valid_and_complete(tmp_path):
     daemon = "/repo/bin/echo-daemon"
     log = "/home/u/.echo/speechd.log"
-    xml = cli._launchagent_plist(daemon, log)
+    fake_python = "/usr/local/venv/bin/python3"
+    xml = cli._launchagent_plist(daemon, log, python_executable=fake_python)
     assert isinstance(xml, str)
     assert xml.startswith("<?xml")
     data = plistlib.loads(xml.encode("utf-8"))
     assert data["Label"] == cli.LAUNCH_AGENT_LABEL
-    assert data["ProgramArguments"] == [daemon]
+    assert data["ProgramArguments"] == [fake_python, "-m", "echo.daemon"]
     assert data["RunAtLoad"] is True
     assert data["KeepAlive"] is True
     assert data["StandardErrorPath"] == log
     assert data["StandardOutPath"] == log
+
+
+def test_launchagent_plist_uses_absolute_python_not_bare_python3(tmp_path):
+    """ProgramArguments must start with an absolute interpreter path.
+
+    launchd runs agents with a minimal PATH that may not include the venv.
+    Using bare 'python3' would silently invoke the wrong interpreter (or
+    fail), so the first element of ProgramArguments must be an absolute path.
+    """
+    daemon = "/repo/bin/echo-daemon"
+    log = "/home/u/.echo/speechd.log"
+
+    # Default: no python_executable supplied — must fall back to sys.executable.
+    xml = cli._launchagent_plist(daemon, log)
+    data = plistlib.loads(xml.encode("utf-8"))
+    prog_args = data["ProgramArguments"]
+    interpreter = prog_args[0]
+
+    # Must be absolute (starts with '/').
+    assert os.path.isabs(interpreter), (
+        f"ProgramArguments[0] is not an absolute path: {interpreter!r}"
+    )
+    # Must NOT be a bare name like 'python3'.
+    assert interpreter not in ("python3", "python", "python3.x"), (
+        f"ProgramArguments[0] must not be a bare interpreter name: {interpreter!r}"
+    )
+    # Must match the current sys.executable so the installed package is found.
+    assert interpreter == sys.executable, (
+        f"Expected sys.executable {sys.executable!r}, got {interpreter!r}"
+    )
+    # Module invocation must follow.
+    assert prog_args[1:] == ["-m", "echo.daemon"], (
+        f"Expected ['-m', 'echo.daemon'] after interpreter, got {prog_args[1:]!r}"
+    )
 
 
 def test_install_writes_plist_and_loads(tmp_path, capsys):
