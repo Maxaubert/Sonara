@@ -235,6 +235,8 @@ switch-over it should run as part of (or alongside) `echo install`. Sort out wit
 - **Live eyes-free test PASSED** on this Mac (real `claude --plugin-dir` session): prose, per-type
   earcons, numbered options, and permissions all narrated; the ORDERING CONTRACT confirmed by ear
   (decision chime fires instantly mid-speech; spoken content stays FIFO, never jumps ahead).
+- **✅ PHASE 1 COMPLETE (2026-06-05):** plain `claude` (no flags, persistent install) ear-confirmed
+  narrating perfectly. The eyes-free goal is met end-to-end on real hardware.
 - **Golden payloads validated**: real captured hook stdin (`/tmp/sonari-capture/`) matches our
   parser exactly — MessageDisplay (session_id/index/final/delta), Notification (notification_type),
   PreToolUse (tool_name/tool_input). No parser changes needed.
