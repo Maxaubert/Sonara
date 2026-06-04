@@ -1,45 +1,14 @@
 # Echo Phase 1 — Review Follow-ups
 
 Durable backlog from subagent-driven execution + the final whole-implementation review
-(run `wf_dc5c640f-7c3`). The **fix pass** (run after the review) resolves the "Open — fixing
-now" items below. Items under "Deferred" are real-but-lower-priority and are intentionally
-left for a follow-up pass (logged so nothing is lost).
+(`wf_dc5c640f-7c3`) and the fix pass (`wf_c6dc752d-76d`). Everything the review flagged as
+fix-now is **Resolved**. "Deferred" items are real-but-lower-priority, logged for a later pass.
+
+Suite after the fix pass: **242 passed, 0 warnings.**
 
 ---
 
-## Open — fixing now (the final-review fix pass)
-
-- [ ] **CRITICAL: `/echo repeat` is a no-op.** `MsgType.REPEAT` is sent by the CLI but the daemon
-  has no handler and nothing tracks the last-spoken text. A key eyes-free control silently does
-  nothing. **Fix:** track last-spoken text in the daemon/speaker; add a REPEAT handler that
-  re-speaks it; test it. (`daemon.py`, `speaker.py`)
-- [ ] **HIGH: ProseAssembler not reset on FLUSH** → stale/garbled prose leaks into the next turn.
-  **Fix:** drop/reset the session's assembler in the FLUSH handler; test cross-turn. (`daemon.py`)
-- [ ] **HIGH: `afplay` earcon processes never reaped** (zombie leak). **Fix:** reap earcon
-  subprocesses; test no accumulation. (`speaker.py`)
-- [ ] **HIGH: verbosity `medium` behaves identically to `quiet`** (README mismatch). **Fix:** make
-  the three levels distinct — everything = prose+tools+decisions; medium = prose+decisions (no
-  routine tool announcements); quiet = decisions only (no prose). Update daemon + README + tests.
-- [ ] **HIGH: control commands raw-traceback when the daemon is down.** **Fix:** catch the
-  connection error in `client.send`/`cli` and print a short friendly message (non-zero exit).
-  test. (`client.py`, `cli.py`)
-- [ ] **HIGH: `Speaker._current` data race + `say` `proc.wait()` has no timeout** (a hung `say`
-  can stall the speak loop forever). **Fix:** lock around `_current` set/read in speak/cancel;
-  add a wait timeout / robust cancel. test. (`speaker.py`)
-- [ ] **HIGH: install interpreter** — `bin/echo` / `bin/echo-daemon` use bare `python3` via env,
-  which won't resolve the `echo` package under launchd's minimal env, so the daemon won't start
-  on install. **Fix:** make the shims / install use a correct absolute interpreter (the venv
-  python). Verify via `doctor`. (`bin/*`, `cli.install`)
-- [ ] **MEDIUM: `_clean_zshrc` / `_clean_settings_json` write your REAL files non-atomically**
-  (corruption risk if killed mid-write). **Fix:** tmp-file + `os.replace`, like `config.save_config`.
-  test. (`cli.py`)
-- [ ] **HIGH (design): DRY** — `_connectable`/`_socket_connectable` duplicated across client+daemon;
-  repo-root computation duplicated in 3 places. **Fix:** consolidate into one helper each.
-- [ ] **Test coverage gaps** (add the high-value ones): multi-item speak-loop FIFO + wake path;
-  real `_handle_conn` socket round-trip; REPEAT contract; client error paths; assembler fence
-  spanning multiple `feed()` calls.
-
-## Deferred — real but lower priority (next pass)
+## Deferred — real but lower priority (next pass / Phase 1.x)
 
 - [ ] Stop-hook transcript reconciliation (spec §5.2 safety net for a dropped final delta).
 - [ ] `background_policy` is dead config (should_speak ignores it) — wire it or remove it.
@@ -53,10 +22,20 @@ left for a follow-up pass (logged so nothing is lost).
 
 ## Resolved
 
-- [x] **`load_config` deep-copy** — VERIFIED already correct: `load_config` deep-copies via
-  `_deep_merge(DEFAULTS, {})`, and `tests/test_config.py` already has the exact regression test
-  (mutate `cfg["earcons"]` → `DEFAULTS` unchanged). No change needed.
-- [x] **Test-suite thread-exception warning** — FIXED (`d5c5d2d`): the `_echo_server` test helper
-  now wraps recv/send in `try/except OSError`; suite is **0 warnings**.
+**Final-review fix pass (`wf_c6dc752d-76d`) — all verified with tests + a re-gate:**
+- [x] **REPEAT control** implemented (`a2f51fb`) — daemon tracks `_last_spoken`; REPEAT re-enqueues it. (probe + 4 tests)
+- [x] **Assembler reset on FLUSH** (`a81b84e`) — no stale prose leaks across turns. (cross-turn test)
+- [x] **`afplay` earcons reaped** (`e2b9a8a`) — no zombie accumulation. (2 tests)
+- [x] **Distinct verbosity levels** (`d2b6425`) — quiet drops prose; medium drops tools; README aligned. (7 tests; probe confirms quiet keeps only decisions)
+- [x] **Friendly daemon-down error** (`5a2993f`) — `DaemonNotRunning`; CLI prints a message, exit 1, no traceback. (9 tests)
+- [x] **Speaker thread-safety + wait timeout** (`192c12e`) — `_current` lock; 120s `wait` bound; robust cancel. (2 tests)
+- [x] **Atomic user-file writes** (`0f46f10`) — `_clean_zshrc`/`_clean_settings_json` use tmp+`os.replace`. (tests)
+- [x] **Absolute launchd interpreter** (`8651cc3`) — plist uses `sys.executable -m echo.daemon`. (2 tests)
+- [x] **DRY** (`69067ae`) — `socket_connectable()` + `repo_root()` consolidated into `paths.py`. (6 tests)
+- [x] **Test-coverage gaps** (`8217372`) — multi-item FIFO loop + wake path; real `_handle_conn` socket round-trip; assembler multi-feed fence.
+
+**From the original backlog:**
+- [x] **`load_config` deep-copy** — VERIFIED already correct (deep-copies via `_deep_merge`; regression test exists).
+- [x] **Test-suite thread-exception warning** — FIXED (`d5c5d2d`); suite is 0 warnings.
 - [x] **§3 `specPass:false` (5 tasks)** — audited & cleared (assembler verified correct by probe).
-- [x] **§1 egg-info / clean tree** — verified: tree stays clean after editable install; egg-info ignored.
+- [x] **§1 egg-info / clean tree** — verified clean after editable install.

@@ -57,8 +57,13 @@ per-section tests missed — **a FIX PASS is now running** (see `phase1-review-f
 medium==quiet, daemon-down traceback, install interpreter under launchd, Speaker race/wait-timeout,
 non-atomic user-file writes, DRY dups, + key test-coverage gaps.
 
-**AFTER the fix pass:** `superpowers:finishing-a-development-branch`. THEN (with Nima): real
-golden-payload capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) and the eyes-free verification
+**Fix pass DONE** (run `wf_c6dc752d-76d`): all 10 review findings resolved with tests + review;
+**suite 242 passed, 0 warnings, tree clean.** Controller probes confirm REPEAT re-speaks the last
+text and quiet verbosity drops prose while keeping decisions. See `phase1-review-followups.md`
+(all "fixing now" items now Resolved; a short "Deferred" list remains for Phase 1.x).
+
+**NEXT:** `superpowers:finishing-a-development-branch`. THEN (with Nima): real golden-payload
+capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) and the eyes-free verification
 (`docs/phase1-verification-checklist.md`).
 
 ### Known MANUAL steps (need Nima / a real Claude session)
