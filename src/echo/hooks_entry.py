@@ -1,4 +1,6 @@
 """Pure mapping from Claude Code hook events to protocol message dicts."""
+import os
+
 from echo.protocol import PROTOCOL_VERSION, MsgType
 
 
@@ -7,6 +9,18 @@ def _msg(**fields):
     out = {"v": PROTOCOL_VERSION}
     out.update(fields)
     return out
+
+
+def _tool_summary(tool: str, ti: dict) -> str:
+    """Short, speakable, tool-specific description of a pending tool call."""
+    if tool == "Bash":
+        cmd = (ti.get("command") or "").strip()
+        return cmd[:120] if cmd else "Bash"
+    if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        path = ti.get("file_path") or ti.get("notebook_path") or ""
+        base = os.path.basename(path.rstrip("/")) if path else ""
+        return base if base else (tool or "")
+    return tool or ""
 
 
 def handle_event(event: str, payload: dict) -> list[dict]:
@@ -44,6 +58,13 @@ def handle_event(event: str, payload: dict) -> list[dict]:
                 _msg(type=MsgType.EARCON, kind="plan"),
                 _msg(type=MsgType.PLAN, session=session, text=ti.get("plan", "")),
             ]
-        return []
+        return [
+            _msg(
+                type=MsgType.TOOL,
+                session=session,
+                tool=tool,
+                summary=_tool_summary(tool, ti),
+            )
+        ]
 
     return []

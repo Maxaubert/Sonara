@@ -101,3 +101,72 @@ def test_exit_plan_mode_from_fixture():
     assert msgs[1]["session"] == payload["session_id"]
     assert msgs[1]["text"] == payload["tool_input"]["plan"]
     assert all(m["v"] == PROTOCOL_VERSION for m in msgs)
+
+
+def test_pre_tool_use_bash_tool_announce():
+    payload = {
+        "session_id": "sess-1",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git status", "description": "Show status"},
+    }
+    assert handle_event("PreToolUse", payload) == [
+        {
+            "v": PROTOCOL_VERSION,
+            "type": MsgType.TOOL,
+            "session": "sess-1",
+            "tool": "Bash",
+            "summary": "git status",
+        }
+    ]
+
+
+def test_pre_tool_use_write_summary_is_basename():
+    payload = {
+        "session_id": "sess-1",
+        "tool_name": "Write",
+        "tool_input": {"file_path": "/Users/me/proj/src/echo/cli.py"},
+    }
+    msgs = handle_event("PreToolUse", payload)
+    assert msgs == [
+        {
+            "v": PROTOCOL_VERSION,
+            "type": MsgType.TOOL,
+            "session": "sess-1",
+            "tool": "Write",
+            "summary": "cli.py",
+        }
+    ]
+
+
+def test_pre_tool_use_edit_summary_is_basename():
+    payload = {
+        "session_id": "sess-1",
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "/Users/me/proj/README.md"},
+    }
+    msgs = handle_event("PreToolUse", payload)
+    assert msgs[0]["summary"] == "README.md"
+    assert msgs[0]["tool"] == "Edit"
+
+
+def test_pre_tool_use_unknown_tool_summary_is_tool_name():
+    payload = {"session_id": "sess-1", "tool_name": "WebFetch", "tool_input": {}}
+    msgs = handle_event("PreToolUse", payload)
+    assert msgs == [
+        {
+            "v": PROTOCOL_VERSION,
+            "type": MsgType.TOOL,
+            "session": "sess-1",
+            "tool": "WebFetch",
+            "summary": "WebFetch",
+        }
+    ]
+
+
+def test_pre_tool_use_bash_from_fixture():
+    payload = _load("PreToolUse-Bash.json")
+    msgs = handle_event("PreToolUse", payload)
+    assert msgs[0]["type"] == MsgType.TOOL
+    assert msgs[0]["tool"] == "Bash"
+    assert msgs[0]["summary"] == "git status"
+    assert msgs[0]["session"] == payload["session_id"]
