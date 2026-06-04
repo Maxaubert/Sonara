@@ -23,7 +23,10 @@ DEFAULTS = {
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """Return a new dict: override applied onto base, recursing into nested dicts."""
-    result = dict(base)
+    result = {
+        k: _deep_merge(v, {}) if isinstance(v, dict) else v
+        for k, v in base.items()
+    }
     for key, value in override.items():
         if (
             key in result
