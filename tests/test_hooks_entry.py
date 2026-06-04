@@ -226,3 +226,39 @@ def test_notification_idle_prompt_from_fixture():
 def test_unknown_notification_type_is_empty():
     payload = {"session_id": "sess-1", "notification_type": "something_else"}
     assert handle_event("Notification", payload) == []
+
+
+def test_stop_emits_turn_done_earcon():
+    assert handle_event("Stop", {"session_id": "sess-1"}) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "turn_done"}
+    ]
+
+
+def test_user_prompt_submit_sets_foreground_then_flush():
+    assert handle_event("UserPromptSubmit", {"session_id": "sess-9"}) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9"},
+        {"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "sess-9"},
+    ]
+
+
+def test_session_start_sets_foreground_then_session_start():
+    assert handle_event("SessionStart", {"session_id": "sess-9"}) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9"},
+        {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START, "session": "sess-9"},
+    ]
+
+
+def test_session_end_emits_session_end():
+    assert handle_event("SessionEnd", {"session_id": "sess-9"}) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END, "session": "sess-9"}
+    ]
+
+
+def test_unknown_event_is_empty():
+    assert handle_event("TotallyMadeUp", {"session_id": "sess-1"}) == []
+
+
+def test_missing_session_id_defaults_to_empty_string():
+    msgs = handle_event("SessionStart", {})
+    assert msgs[0]["session"] == ""
+    assert msgs[1]["session"] == ""

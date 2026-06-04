@@ -82,4 +82,22 @@ def handle_event(event: str, payload: dict) -> list[dict]:
             return [_msg(type=MsgType.EARCON, kind="ready")]
         return []
 
+    if event == "Stop":
+        return [_msg(type=MsgType.EARCON, kind="turn_done")]
+
+    if event == "UserPromptSubmit":
+        return [
+            _msg(type=MsgType.SET_FOREGROUND, session=session),
+            _msg(type=MsgType.FLUSH, session=session),
+        ]
+
+    if event == "SessionStart":
+        return [
+            _msg(type=MsgType.SET_FOREGROUND, session=session),
+            _msg(type=MsgType.SESSION_START, session=session),
+        ]
+
+    if event == "SessionEnd":
+        return [_msg(type=MsgType.SESSION_END, session=session)]
+
     return []
