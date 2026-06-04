@@ -93,7 +93,7 @@ class SpeechDaemon:
         if t == MsgType.PROSE:
             a = self._assembler(session)
             chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), msg.get("final", False))
-            if self.sessions.should_speak(session):
+            if verbosity != "quiet" and self.sessions.should_speak(session):
                 for chunk in chunks:
                     self._enqueue(session, "prose", chunk, False)
             return None

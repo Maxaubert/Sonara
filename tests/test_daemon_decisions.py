@@ -71,10 +71,52 @@ def test_tool_announce_dropped_when_verbosity_medium():
     assert len(queue) == 0
 
 
+def test_tool_announce_dropped_when_verbosity_quiet():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="quiet", foreground="fg")
+    daemon.handle_message(_msg(MsgType.TOOL, "fg", tool="Bash", summary="run tests"))
+    assert len(queue) == 0
+
+
 def test_tool_announce_dropped_when_not_foreground():
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
     daemon.handle_message(_msg(MsgType.TOOL, "other", tool="Bash", summary="run tests"))
     assert len(queue) == 0
+
+
+def test_decision_enqueued_at_everything():
+    for mtype, kwargs, kind in [
+        (MsgType.CHOICE, {"questions": [{"question": "Q?"}]}, "choice"),
+        (MsgType.PLAN, {"text": "Do X."}, "plan"),
+        (MsgType.PERMISSION, {"action": "rm -rf"}, "permission"),
+    ]:
+        daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+        daemon.handle_message(_msg(mtype, "fg", **kwargs))
+        assert len(queue) == 1, f"{kind} not enqueued at everything"
+        assert queue.pop_next().kind == kind
+
+
+def test_decision_enqueued_at_medium():
+    for mtype, kwargs, kind in [
+        (MsgType.CHOICE, {"questions": [{"question": "Q?"}]}, "choice"),
+        (MsgType.PLAN, {"text": "Do X."}, "plan"),
+        (MsgType.PERMISSION, {"action": "rm -rf"}, "permission"),
+    ]:
+        daemon, queue, speaker, sessions, config = make_daemon(verbosity="medium", foreground="fg")
+        daemon.handle_message(_msg(mtype, "fg", **kwargs))
+        assert len(queue) == 1, f"{kind} not enqueued at medium"
+        assert queue.pop_next().kind == kind
+
+
+def test_decision_enqueued_at_quiet():
+    for mtype, kwargs, kind in [
+        (MsgType.CHOICE, {"questions": [{"question": "Q?"}]}, "choice"),
+        (MsgType.PLAN, {"text": "Do X."}, "plan"),
+        (MsgType.PERMISSION, {"action": "rm -rf"}, "permission"),
+    ]:
+        daemon, queue, speaker, sessions, config = make_daemon(verbosity="quiet", foreground="fg")
+        daemon.handle_message(_msg(mtype, "fg", **kwargs))
+        assert len(queue) == 1, f"{kind} not enqueued at quiet"
+        assert queue.pop_next().kind == kind
 
 
 def test_bare_earcon_message_plays_kind():

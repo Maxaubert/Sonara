@@ -64,6 +64,24 @@ def test_prose_uses_per_session_assembler():
     assert queue.pop_next().text == "Foreground sentence here."
 
 
+def test_prose_enqueued_at_verbosity_everything():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg", verbosity="everything")
+    daemon.handle_message(_prose("fg", "Hello world. ", 0, False))
+    assert len(queue) == 1
+
+
+def test_prose_enqueued_at_verbosity_medium():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg", verbosity="medium")
+    daemon.handle_message(_prose("fg", "Hello world. ", 0, False))
+    assert len(queue) == 1
+
+
+def test_prose_dropped_at_verbosity_quiet():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg", verbosity="quiet")
+    daemon.handle_message(_prose("fg", "Hello world. ", 0, False))
+    assert len(queue) == 0
+
+
 def test_flush_resets_assembler_so_next_turn_is_clean():
     """After FLUSH, stale assembler state (_seen/_buf/_pending) must not leak.
 

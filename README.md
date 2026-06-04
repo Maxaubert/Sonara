@@ -86,10 +86,12 @@ In Phase 1, control is via the `echo` CLI and namespaced slash commands inside a
 
 Three live-switchable levels (earcons fire in **all** of them):
 
-- **everything** (default) — prose, questions, plans, permissions, *and* brief tool
-  announcements ("Running git status").
-- **medium** — same as everything but **drops** routine tool announcements.
-- **quiet** — prose plus decisions (questions / plans / permissions) only; no tool chatter.
+- **everything** (default) — prose narration, questions, plans, permissions, *and* brief
+  tool announcements ("Running git status").
+- **medium** — prose narration plus decisions (questions / plans / permissions); **drops**
+  routine tool announcements.
+- **quiet** — decisions only (questions / plans / permissions); drops both tool
+  announcements **and** prose narration. Earcons still fire at every level.
 
 ## How ordering works
 
