@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Echo hook dispatcher: argv[1]=event, stdin=JSON payload.
+
+Maps the event to protocol messages and forwards them to the speech daemon.
+ALWAYS exits 0 and never raises, so it can never break Claude Code.
+"""
+import json
+import os
+import sys
+
+
+def _main() -> None:
+    event = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    raw = b""
+    try:
+        raw = sys.stdin.buffer.read()
+    except Exception:
+        raw = b""
+
+    if os.environ.get("ECHO_CAPTURE"):
+        try:
+            cap_dir = os.environ["ECHO_CAPTURE"]
+            os.makedirs(cap_dir, exist_ok=True)
+            cap_path = os.path.join(cap_dir, f"{event}-{os.getpid()}.json")
+            with open(cap_path, "wb") as fh:
+                fh.write(raw)
+        except Exception:
+            pass
+
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw.strip() else {}
+        if not isinstance(payload, dict):
+            payload = {}
+    except Exception:
+        payload = {}
+
+    from echo.hooks_entry import handle_event
+    from echo import client
+
+    msgs = handle_event(event, payload)
+    if not msgs:
+        return
+
+    client.ensure_daemon()
+    for msg in msgs:
+        try:
+            client.send(msg)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    try:
+        _main()
+    except Exception:
+        pass
+    sys.exit(0)
