@@ -156,3 +156,74 @@ def test_load_config_corrupt_returns_independent_copy(monkeypatch, tmp_path):
     loaded = config.load_config()
     loaded["earcons"]["plan"] = "/tmp/x.aiff"
     assert DEFAULTS["earcons"]["plan"] == "/System/Library/Sounds/Submarine.aiff"
+
+
+def _patch_config_paths_nested(monkeypatch, tmp_path):
+    echo_dir = tmp_path / ".echo"
+    cfg_path = echo_dir / "config.json"
+    monkeypatch.setattr(config, "ECHO_DIR", echo_dir)
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_path)
+    monkeypatch.setattr(
+        config,
+        "ensure_echo_dir",
+        lambda: echo_dir.mkdir(parents=True, exist_ok=True),
+    )
+    return echo_dir, cfg_path
+
+
+def test_save_config_creates_dir_and_round_trips(monkeypatch, tmp_path):
+    echo_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
+    assert not echo_dir.exists()
+
+    cfg = config.load_config()
+    cfg["rate"] = 175
+    cfg["voice"] = "Zoe (Premium)"
+    cfg["verbosity"] = "medium"
+    cfg["earcons"]["choice"] = "/custom/choice.aiff"
+    config.save_config(cfg)
+
+    assert echo_dir.exists()
+    assert cfg_path.exists()
+    # no temp artifact left behind after os.replace
+    leftovers = list(echo_dir.glob("*.tmp"))
+    assert leftovers == []
+
+    reloaded = config.load_config()
+    assert reloaded["rate"] == 175
+    assert reloaded["voice"] == "Zoe (Premium)"
+    assert reloaded["verbosity"] == "medium"
+    assert reloaded["earcons"]["choice"] == "/custom/choice.aiff"
+    # untouched defaults survive the round-trip
+    assert reloaded["earcons"]["permission"] == "/System/Library/Sounds/Funk.aiff"
+    assert reloaded["background_policy"] == "earcon_only"
+
+
+def test_save_config_writes_valid_json_on_disk(monkeypatch, tmp_path):
+    echo_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
+    cfg = config.load_config()
+    cfg["rate"] = 123
+    config.save_config(cfg)
+    on_disk = _json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert on_disk == cfg
+
+
+def test_save_config_is_atomic_on_replace_failure(monkeypatch, tmp_path):
+    echo_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
+    echo_dir.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(_json.dumps({"rate": 200}), encoding="utf-8")
+
+    def _boom(src, dst):
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(config.os, "replace", _boom)
+    new_cfg = config.load_config()
+    new_cfg["rate"] = 999
+
+    try:
+        config.save_config(new_cfg)
+    except OSError:
+        pass
+
+    # original file content is untouched: os.replace never overwrote it
+    on_disk = _json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert on_disk == {"rate": 200}
