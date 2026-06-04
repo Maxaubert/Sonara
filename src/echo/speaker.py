@@ -20,7 +20,44 @@ def play_earcon(path: str) -> None:
 
 
 def best_enhanced_voice() -> str:
-    return "Samantha"
+    fallback = "Samantha"
+    try:
+        listing = subprocess.check_output(
+            ["say", "-v", "?"], text=True
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return fallback
+
+    premium_en = []
+    plain_en = []
+    for line in listing.splitlines():
+        line = line.rstrip()
+        if not line:
+            continue
+        # Format: "Name [maybe (Quality)] <pad> locale # sample"
+        before_hash = line.split("#", 1)[0].rstrip()
+        parts = before_hash.split()
+        if len(parts) < 2:
+            continue
+        locale = parts[-1]
+        name_tokens = parts[:-1]
+        name = " ".join(name_tokens)
+        is_premium = "(Premium)" in name or "(Enhanced)" in name
+        # Bare display name without the quality suffix.
+        bare = name.replace("(Premium)", "").replace("(Enhanced)", "").strip()
+        if not locale.startswith("en"):
+            continue
+        if is_premium:
+            premium_en.append(bare)
+        else:
+            plain_en.append(bare)
+
+    if premium_en:
+        return premium_en[0]
+    for preferred in ("Allison", "Samantha"):
+        if preferred in plain_en:
+            return preferred
+    return fallback
 
 
 class Speaker:
