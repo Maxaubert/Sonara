@@ -115,4 +115,38 @@ class SpeechDaemon:
             self.speaker.earcon(msg.get("kind", ""))
             return None
 
+        if t == MsgType.FLUSH:
+            self.queue.flush_session(session)
+            self.speaker.cancel()
+            return None
+
+        if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
+            self.sessions.set_foreground(session)
+            if t == MsgType.SESSION_START:
+                self.sessions.register(session)
+            return None
+
+        if t == MsgType.SESSION_END:
+            self.sessions.unregister(session)
+            return None
+
+        if t == MsgType.STOP:
+            self.queue.clear()
+            self.speaker.cancel()
+            return None
+
+        if t == MsgType.SKIP:
+            self.speaker.cancel()
+            return None
+
+        if t == MsgType.JUMP_DECISION:
+            self.queue.jump_to_decision()
+            self.speaker.cancel()
+            return None
+
+        if t == MsgType.CATCH_UP:
+            self.queue.clear()
+            self.speaker.cancel()
+            return None
+
         return None
