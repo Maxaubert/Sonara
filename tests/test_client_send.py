@@ -13,17 +13,27 @@ def _echo_server(sock_path, ready, captured):
     srv.listen(1)
     ready.set()
     conn, _ = srv.accept()
-    with conn:
-        buf = b""
-        while b"\n" not in buf:
-            data = conn.recv(4096)
-            if not data:
-                break
-            buf += data
-        line = buf.split(b"\n", 1)[0]
-        captured["recv"] = json.loads(line)
-        conn.sendall(encode({"ok": True, "pong": "yes"}))
-    srv.close()
+    try:
+        with conn:
+            buf = b""
+            while b"\n" not in buf:
+                try:
+                    data = conn.recv(4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                buf += data
+            if buf:
+                line = buf.split(b"\n", 1)[0]
+                captured["recv"] = json.loads(line)
+            try:
+                conn.sendall(encode({"ok": True, "pong": "yes"}))
+            except OSError:
+                # Client closed without reading (e.g. expect_reply=False); ignore.
+                pass
+    finally:
+        srv.close()
 
 
 def test_send_no_reply(tmp_path, monkeypatch):
