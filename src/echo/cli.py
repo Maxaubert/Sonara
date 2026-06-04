@@ -11,12 +11,48 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
+
+
+def _clean_zshrc(path: str) -> bool:
+    """Remove legacy claude-tts lines from a zshrc. Returns True if it changed.
+
+    Drops the '# claude-tts' marker comment, the 'alias claude=...claude-speak'
+    line, and the '.local/bin' PATH export that carries the '# claude-tts'
+    marker. A user's own .local/bin PATH line WITHOUT the marker is preserved.
+    """
+    p = os.path.expanduser(path)
+    if not os.path.exists(p):
+        return False
+    with open(p, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    kept = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "# claude-tts":
+            continue
+        if "claude-speak" in line and "alias" in line and "claude" in line:
+            continue
+        if ".local/bin" in line and "claude-tts" in line:
+            continue
+        kept.append(line)
+
+    # Collapse a blank line that the marker block left orphaned at the top of a
+    # run only if we actually removed something; otherwise leave file untouched.
+    if kept == lines:
+        return False
+
+    with open(p, "w", encoding="utf-8") as f:
+        f.writelines(kept)
+    return True
 
 
 def _send(msg: dict, expect_reply: bool = False):
