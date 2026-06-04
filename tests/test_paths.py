@@ -1,5 +1,8 @@
 import importlib
+import os
+import socket
 from pathlib import Path
+from unittest import mock
 
 
 def _fresh_paths(monkeypatch, home):
@@ -41,3 +44,60 @@ def test_ensure_echo_dir_is_idempotent(monkeypatch, tmp_path):
     paths.ensure_echo_dir()
     paths.ensure_echo_dir()  # must not raise on an existing dir
     assert paths.ECHO_DIR.is_dir()
+
+
+# ---------------------------------------------------------------------------
+# socket_connectable
+# ---------------------------------------------------------------------------
+
+def test_socket_connectable_returns_true_when_connect_succeeds():
+    import echo.paths as paths
+    with mock.patch("echo.paths.socket.socket") as mock_socket_cls:
+        mock_sock = mock.MagicMock()
+        mock_socket_cls.return_value = mock_sock
+        mock_sock.connect.return_value = None
+        assert paths.socket_connectable() is True
+        mock_sock.close.assert_called_once()
+
+
+def test_socket_connectable_returns_false_on_oserror():
+    import echo.paths as paths
+    with mock.patch("echo.paths.socket.socket") as mock_socket_cls:
+        mock_sock = mock.MagicMock()
+        mock_socket_cls.return_value = mock_sock
+        mock_sock.connect.side_effect = OSError("refused")
+        assert paths.socket_connectable() is False
+        mock_sock.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# repo_root
+# ---------------------------------------------------------------------------
+
+def test_repo_root_returns_string():
+    import echo.paths as paths
+    root = paths.repo_root()
+    assert isinstance(root, str)
+
+
+def test_repo_root_is_absolute():
+    import echo.paths as paths
+    root = paths.repo_root()
+    assert os.path.isabs(root)
+
+
+def test_repo_root_contains_src_subdir():
+    """The canonical repo root must have a src/ subdirectory."""
+    import echo.paths as paths
+    root = paths.repo_root()
+    assert os.path.isdir(os.path.join(root, "src")), (
+        f"Expected a src/ directory under repo_root {root!r}"
+    )
+
+
+def test_repo_root_derivation_matches_file_location():
+    """repo_root() must be two directory levels above paths.py."""
+    import echo.paths as paths
+    paths_file = os.path.abspath(paths.__file__)
+    expected = os.path.dirname(os.path.dirname(os.path.dirname(paths_file)))
+    assert paths.repo_root() == expected

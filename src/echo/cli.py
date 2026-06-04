@@ -203,9 +203,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _repo_hooks_json_path() -> str:
     """Path to the plugin hooks/hooks.json inside this repo checkout."""
-    here = os.path.dirname(os.path.abspath(__file__))      # src/echo
-    repo = os.path.dirname(os.path.dirname(here))          # repo root
-    return os.path.join(repo, "hooks", "hooks.json")
+    return os.path.join(paths.repo_root(), "hooks", "hooks.json")
 
 
 def doctor() -> list:
@@ -274,12 +272,11 @@ LAUNCH_AGENT_PATH = os.path.expanduser(
 
 
 def _repo_root() -> str:
-    here = os.path.dirname(os.path.abspath(__file__))   # src/echo
-    return os.path.dirname(os.path.dirname(here))       # repo root
+    return paths.repo_root()
 
 
 def _daemon_shim_path() -> str:
-    return os.path.join(_repo_root(), "bin", "echo-daemon")
+    return os.path.join(paths.repo_root(), "bin", "echo-daemon")
 
 
 def _launchagent_plist(daemon_path: str, log_path: str,

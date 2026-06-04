@@ -7,7 +7,7 @@ from echo.protocol import MsgType, encode, decode
 from echo.queue import SpeechItem
 from echo.assembler import ProseAssembler
 from echo.config import save_config, load_config
-from echo.paths import SOCKET_PATH, ensure_echo_dir
+from echo.paths import SOCKET_PATH, ensure_echo_dir, socket_connectable, repo_root
 
 
 class SpeechDaemon:
@@ -308,29 +308,12 @@ class SpeechDaemon:
                 pass
 
 
-def _socket_connectable() -> bool:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        s.connect(str(SOCKET_PATH))
-        return True
-    except OSError:
-        return False
-    finally:
-        try:
-            s.close()
-        except OSError:
-            pass
-
-
 def _daemon_shim_path() -> str:
-    # repo layout: <repo>/bin/echo-daemon ; this file is <repo>/src/echo/daemon.py
-    here = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.dirname(os.path.dirname(here))
-    return os.path.join(repo_root, "bin", "echo-daemon")
+    return os.path.join(repo_root(), "bin", "echo-daemon")
 
 
 def ensure_running() -> None:
-    if _socket_connectable():
+    if socket_connectable():
         return
     shim = _daemon_shim_path()
     subprocess.Popen(

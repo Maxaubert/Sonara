@@ -2,7 +2,7 @@ import socket
 import time
 
 from echo.protocol import encode, decode
-from echo.paths import SOCKET_PATH
+from echo.paths import SOCKET_PATH, socket_connectable
 from echo.daemon import ensure_running
 
 
@@ -52,14 +52,4 @@ def ensure_daemon(timeout: float = 3.0) -> None:
 
 
 def _connectable() -> bool:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        s.connect(str(SOCKET_PATH))
-        return True
-    except OSError:
-        return False
-    finally:
-        try:
-            s.close()
-        except OSError:
-            pass
+    return socket_connectable()

@@ -4,7 +4,7 @@ import echo.daemon as daemon_mod
 
 
 def test_ensure_running_noop_when_socket_connectable():
-    with mock.patch("echo.daemon._socket_connectable", return_value=True) as conn, \
+    with mock.patch("echo.daemon.socket_connectable", return_value=True) as conn, \
          mock.patch("echo.daemon.subprocess.Popen") as popen:
         daemon_mod.ensure_running()
     conn.assert_called_once()
@@ -12,7 +12,7 @@ def test_ensure_running_noop_when_socket_connectable():
 
 
 def test_ensure_running_spawns_detached_when_socket_absent():
-    with mock.patch("echo.daemon._socket_connectable", return_value=False), \
+    with mock.patch("echo.daemon.socket_connectable", return_value=False), \
          mock.patch("echo.daemon.subprocess.Popen") as popen:
         daemon_mod.ensure_running()
     assert popen.call_count == 1
