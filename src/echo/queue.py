@@ -30,5 +30,10 @@ class SpeechQueue:
     def clear(self) -> None:
         self._items.clear()
 
+    def flush_session(self, session: str) -> None:
+        self._items = deque(
+            item for item in self._items if item.session != session
+        )
+
     def __len__(self) -> int:
         return len(self._items)
