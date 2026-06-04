@@ -1,5 +1,6 @@
 import os
 import subprocess
+import threading
 
 
 def run_say(text: str, voice, rate: int):
@@ -61,6 +62,9 @@ def best_enhanced_voice() -> str:
     return fallback
 
 
+_DEFAULT_WAIT_TIMEOUT = 120  # seconds; generous upper bound for even long TTS
+
+
 class Speaker:
     def __init__(
         self,
@@ -69,6 +73,7 @@ class Speaker:
         say_runner=run_say,
         earcon_player=play_earcon,
         earcons=None,
+        _wait_timeout: float = _DEFAULT_WAIT_TIMEOUT,
     ) -> None:
         self._voice = voice
         self._rate = rate
@@ -76,16 +81,28 @@ class Speaker:
         self._earcon_player = earcon_player
         self._earcons = dict(earcons) if earcons else {}
         self._current = None
+        self._current_lock = threading.Lock()
         self._earcon_procs: list = []
+        self._wait_timeout = _wait_timeout
 
     def speak(self, text: str) -> None:
         proc = self._say_runner(text, self._voice, self._rate)
-        self._current = proc
-        proc.wait()
-        self._current = None
+        with self._current_lock:
+            self._current = proc
+        try:
+            try:
+                proc.wait(timeout=self._wait_timeout)
+            except subprocess.TimeoutExpired:
+                # 'say' hung past the generous deadline; kill it and move on.
+                proc.terminate()
+        finally:
+            with self._current_lock:
+                if self._current is proc:
+                    self._current = None
 
     def cancel(self) -> None:
-        proc = self._current
+        with self._current_lock:
+            proc = self._current
         if proc is not None:
             proc.terminate()
 

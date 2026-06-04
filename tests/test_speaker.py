@@ -1,3 +1,6 @@
+import subprocess
+import threading
+
 from echo.speaker import Speaker
 
 
@@ -8,7 +11,7 @@ class FakePopen:
         self.wait_calls = 0
         self.terminate_calls = 0
 
-    def wait(self):
+    def wait(self, timeout=None):
         self.wait_calls += 1
         return 0
 
@@ -72,10 +75,10 @@ def test_cancel_terminates_active_proc_mid_speak():
             super().__init__()
             self._speaker = speaker
 
-        def wait(self):
+        def wait(self, timeout=None):
             # While we are "blocking", the speaker treats us as current.
             self._speaker.cancel()
-            return super().wait()
+            return super().wait(timeout=timeout)
 
     class HookRunner:
         def __init__(self):
@@ -308,3 +311,73 @@ def test_best_enhanced_voice_falls_back_when_say_errors(monkeypatch):
 
     monkeypatch.setattr(speaker_mod.subprocess, "check_output", boom)
     assert best_enhanced_voice() == "Samantha"
+
+
+# ---------------------------------------------------------------------------
+# Lock / race-condition / timeout tests
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_terminates_proc_tracked_as_current():
+    """cancel() must call terminate() on the proc held in _current."""
+    terminated = []
+    captured_speaker = {}
+
+    class TrackedPopen(FakePopen):
+        def wait(self, timeout=None):
+            # The proc is current at this point; cancel the speaker.
+            captured_speaker["sp"].cancel()
+            return super().wait(timeout=timeout)
+
+        def terminate(self):
+            terminated.append(True)
+            super().terminate()
+
+    class TrackedRunner:
+        def __call__(self, text, voice, rate):
+            return TrackedPopen()
+
+    sp = Speaker(say_runner=TrackedRunner())
+    captured_speaker["sp"] = sp
+    sp.speak("test")
+    # terminate() must have been called once from cancel().
+    assert len(terminated) == 1
+
+
+def test_speak_wait_timeout_terminates_hung_proc():
+    """A proc whose wait() always raises TimeoutExpired must be terminated."""
+
+    class HungPopen(FakePopen):
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(cmd=["say"], timeout=timeout)
+            # No-timeout call should never happen in normal flow.
+            return 0
+
+    class HungRunner:
+        def __call__(self, text, voice, rate):
+            return HungPopen()
+
+    # Inject a very small timeout (0.01 s) so the test is instantaneous.
+    sp = Speaker(say_runner=HungRunner(), _wait_timeout=0.01)
+    sp.speak("will hang")
+    # The fake proc's terminate must have been called.
+    # We verify by checking terminate_calls via a shared reference.
+    procs = []
+
+    class TrackingHungPopen(FakePopen):
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(cmd=["say"], timeout=timeout)
+            return 0
+
+    class TrackingHungRunner:
+        def __call__(self, text, voice, rate):
+            p = TrackingHungPopen()
+            procs.append(p)
+            return p
+
+    sp2 = Speaker(say_runner=TrackingHungRunner(), _wait_timeout=0.01)
+    sp2.speak("will hang tracked")
+    assert len(procs) == 1
+    assert procs[0].terminate_calls == 1
