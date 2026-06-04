@@ -47,6 +47,12 @@ class Speaker:
         if proc is not None:
             proc.terminate()
 
+    def earcon(self, kind: str) -> None:
+        path = self._earcons.get(kind)
+        if path is None:
+            return
+        self._earcon_player(path)
+
     def set_voice(self, v) -> None:
         self._voice = v
 

@@ -97,3 +97,37 @@ def test_cancel_with_no_current_proc_is_noop():
     sp = Speaker(say_runner=RecordingRunner())
     # Never called speak; cancel must not raise.
     sp.cancel()
+
+
+class RecordingEarcon:
+    def __init__(self):
+        self.paths = []
+
+    def __call__(self, path):
+        self.paths.append(path)
+
+
+def test_earcon_plays_mapped_path():
+    player = RecordingEarcon()
+    earcons = {
+        "permission": "/System/Library/Sounds/Funk.aiff",
+        "choice": "/System/Library/Sounds/Ping.aiff",
+    }
+    sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons=earcons)
+    sp.earcon("choice")
+    assert player.paths == ["/System/Library/Sounds/Ping.aiff"]
+
+
+def test_earcon_unknown_kind_is_noop():
+    player = RecordingEarcon()
+    earcons = {"choice": "/System/Library/Sounds/Ping.aiff"}
+    sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons=earcons)
+    sp.earcon("does-not-exist")
+    assert player.paths == []
+
+
+def test_earcon_kind_with_no_mapping_is_noop():
+    player = RecordingEarcon()
+    sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons={})
+    sp.earcon("choice")
+    assert player.paths == []
