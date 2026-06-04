@@ -48,7 +48,7 @@ def test_speak_tracks_current_proc():
     assert runner.procs[1].wait_calls == 1
 
 
-def test_cancel_terminates_the_current_proc():
+def test_cancel_after_speak_completes_is_noop():
     runner = RecordingRunner()
 
     # A runner whose returned proc does NOT auto-finish on wait(): we drive
