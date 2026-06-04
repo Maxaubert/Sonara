@@ -94,3 +94,10 @@ def test_no_args_prints_help_and_returns_2(capsys):
     assert rc == 2
     err = capsys.readouterr()
     assert "usage" in (err.out + err.err).lower()
+
+
+def test_rate_rejects_non_integer_wpm():
+    with mock.patch("echo.client.send") as send:
+        with pytest.raises(SystemExit):
+            cli.main(["rate", "fast"])
+    send.assert_not_called()
