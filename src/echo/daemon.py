@@ -1,6 +1,7 @@
 from echo.protocol import MsgType
 from echo.queue import SpeechItem
 from echo.assembler import ProseAssembler
+from echo.config import save_config
 
 
 class SpeechDaemon:
@@ -148,5 +149,36 @@ class SpeechDaemon:
             self.queue.clear()
             self.speaker.cancel()
             return None
+
+        if t == MsgType.SET_RATE:
+            rate = msg.get("rate")
+            self.config["rate"] = rate
+            self.speaker.set_rate(rate)
+            save_config(self.config)
+            return None
+
+        if t == MsgType.SET_VOICE:
+            voice = msg.get("voice")
+            self.config["voice"] = voice
+            self.speaker.set_voice(voice)
+            save_config(self.config)
+            return None
+
+        if t == MsgType.SET_VERBOSITY:
+            self.config["verbosity"] = msg.get("verbosity")
+            save_config(self.config)
+            return None
+
+        if t == MsgType.STATUS:
+            return {
+                "verbosity": self.config.get("verbosity"),
+                "rate": self.config.get("rate"),
+                "voice": self.config.get("voice"),
+                "foreground": self.sessions.foreground(),
+                "queue_len": len(self.queue),
+            }
+
+        if t == MsgType.PING:
+            return {"ok": True}
 
         return None
