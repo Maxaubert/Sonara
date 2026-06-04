@@ -50,3 +50,63 @@ def test_clean_zshrc_idempotent(tmp_path):
     rc.write_text(LEGACY_ZSHRC)
     assert cli._clean_zshrc(str(rc)) is True
     assert cli._clean_zshrc(str(rc)) is False
+
+
+import json
+
+
+def _legacy_settings():
+    return {
+        "model": "opus",
+        "hooks": {
+            "PreToolUse": [
+                {"hooks": [{"type": "command",
+                            "command": "/Users/x/.claude/hooks/claude-tts-pre-tool.sh"}]},
+                {"hooks": [{"type": "command", "command": "/Users/x/keep-me.sh"}]},
+            ],
+            "Stop": [
+                {"hooks": [{"type": "command",
+                            "command": "/Users/x/.claude/hooks/claude-tts-stop.sh"}]},
+            ],
+            "PermissionRequest": [
+                {"hooks": [{"type": "command",
+                            "command": "/Users/x/.claude/hooks/claude-tts-permission.sh"}]},
+            ],
+        },
+    }
+
+
+def test_clean_settings_removes_legacy_hooks(tmp_path):
+    sp = tmp_path / "settings.json"
+    sp.write_text(json.dumps(_legacy_settings()))
+    changed = cli._clean_settings_json(str(sp))
+    assert changed is True
+    data = json.loads(sp.read_text())
+    blob = json.dumps(data)
+    assert "claude-tts" not in blob
+    # Unrelated hook preserved; empty events dropped.
+    assert data["hooks"]["PreToolUse"] == [
+        {"hooks": [{"type": "command", "command": "/Users/x/keep-me.sh"}]}]
+    assert "Stop" not in data["hooks"]
+    assert "PermissionRequest" not in data["hooks"]
+    assert data["model"] == "opus"
+
+
+def test_clean_settings_missing_file_is_noop(tmp_path):
+    sp = tmp_path / "settings.json"
+    assert cli._clean_settings_json(str(sp)) is False
+
+
+def test_clean_settings_corrupt_file_is_noop(tmp_path):
+    sp = tmp_path / "settings.json"
+    sp.write_text("{not json")
+    assert cli._clean_settings_json(str(sp)) is False
+    # File left as-is when it cannot be parsed.
+    assert sp.read_text() == "{not json"
+
+
+def test_clean_settings_no_legacy_no_change(tmp_path):
+    sp = tmp_path / "settings.json"
+    sp.write_text(json.dumps({"hooks": {"Stop": [
+        {"hooks": [{"type": "command", "command": "/Users/x/other.sh"}]}]}}))
+    assert cli._clean_settings_json(str(sp)) is False

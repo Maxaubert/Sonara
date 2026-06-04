@@ -55,6 +55,60 @@ def _clean_zshrc(path: str) -> bool:
     return True
 
 
+def _clean_settings_json(path: str) -> bool:
+    """Remove legacy claude-tts hooks from a settings.json. Returns True if changed.
+
+    Drops any hook entry whose command contains 'claude-tts', removes hook
+    groups left without hooks, and removes events left without groups. Tolerates
+    a missing or corrupt file (returns False, leaves the file untouched).
+    """
+    p = os.path.expanduser(path)
+    if not os.path.exists(p):
+        return False
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (ValueError, OSError):
+        return False
+    if not isinstance(data, dict):
+        return False
+
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+
+    changed = False
+    for event in list(hooks.keys()):
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            continue
+        new_groups = []
+        for group in groups:
+            inner = group.get("hooks", []) if isinstance(group, dict) else []
+            kept = [h for h in inner
+                    if "claude-tts" not in str(h.get("command", ""))]
+            if len(kept) != len(inner):
+                changed = True
+            if not kept:
+                # whole group was legacy -> drop it
+                continue
+            group = dict(group)
+            group["hooks"] = kept
+            new_groups.append(group)
+        if new_groups:
+            hooks[event] = new_groups
+        else:
+            del hooks[event]
+
+    if not changed:
+        return False
+
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+    return True
+
+
 def _send(msg: dict, expect_reply: bool = False):
     from . import client  # local import so tests can patch echo.client.send
     return client.send(msg, expect_reply=expect_reply)
