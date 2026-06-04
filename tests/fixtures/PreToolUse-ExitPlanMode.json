@@ -1,0 +1,9 @@
+{
+  "session_id": "11111111-2222-3333-4444-555555555555",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-proj/11111111-2222-3333-4444-555555555555.jsonl",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "ExitPlanMode",
+  "tool_input": {
+    "plan": "1. Add the parser.\n2. Wire the daemon.\n3. Ship it."
+  }
+}

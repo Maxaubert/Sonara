@@ -1,0 +1,19 @@
+{
+  "session_id": "11111111-2222-3333-4444-555555555555",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-proj/11111111-2222-3333-4444-555555555555.jsonl",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "Which color do you prefer?",
+        "header": "Color",
+        "multiSelect": false,
+        "options": [
+          {"label": "Red", "description": "warm"},
+          {"label": "Blue", "description": "cool"}
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "11111111-2222-3333-4444-555555555555",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-proj/11111111-2222-3333-4444-555555555555.jsonl",
+  "hook_event_name": "MessageDisplay",
+  "delta": "Here is the first sentence. And a second.",
+  "index": 0,
+  "final": false
+}

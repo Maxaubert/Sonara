@@ -1,0 +1,10 @@
+{
+  "session_id": "11111111-2222-3333-4444-555555555555",
+  "transcript_path": "/Users/me/.claude/projects/-Users-me-proj/11111111-2222-3333-4444-555555555555.jsonl",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "git status",
+    "description": "Show working tree status"
+  }
+}
