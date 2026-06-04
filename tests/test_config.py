@@ -127,3 +127,32 @@ def test_load_config_merge_does_not_mutate_defaults(monkeypatch, tmp_path):
     )
     config.load_config()
     assert DEFAULTS["earcons"]["choice"] == "/System/Library/Sounds/Ping.aiff"
+
+
+def test_load_config_tolerates_non_json(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text("this is { not json ::: ", encoding="utf-8")
+    loaded = config.load_config()
+    assert loaded == DEFAULTS
+
+
+def test_load_config_tolerates_empty_file(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text("", encoding="utf-8")
+    loaded = config.load_config()
+    assert loaded == DEFAULTS
+
+
+def test_load_config_tolerates_json_non_object(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text("[1, 2, 3]", encoding="utf-8")
+    loaded = config.load_config()
+    assert loaded == DEFAULTS
+
+
+def test_load_config_corrupt_returns_independent_copy(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text("garbage", encoding="utf-8")
+    loaded = config.load_config()
+    loaded["earcons"]["plan"] = "/tmp/x.aiff"
+    assert DEFAULTS["earcons"]["plan"] == "/System/Library/Sounds/Submarine.aiff"
