@@ -2,13 +2,6 @@
 
 PURE: no I/O. Splits prose into sentences and replaces triple-backtick
 fenced code blocks with a spoken one-line summary.
-
-Public API
-----------
-ProseAssembler.feed(delta, index, final) -> list[str]
-    Feed one streamed delta; returns zero or more ready-to-speak strings.
-    Duplicate *index* values are silently dropped (idempotent).
-    Pass ``final=True`` on the last delta to flush any buffered remainder.
 """
 import re
 

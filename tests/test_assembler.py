@@ -1,4 +1,3 @@
-"""Tests for ProseAssembler — streamed sentence and code-fence assembly."""
 from echo.assembler import ProseAssembler
 
 
