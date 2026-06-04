@@ -41,3 +41,22 @@ def test_final_resets_state_for_reuse():
     assert a.feed("Leftover text", 0, True) == ["Leftover text"]
     # after reset, index 0 is fresh again and buffer is empty
     assert a.feed("Brand new. ", 0, False) == ["Brand new."]
+
+
+def test_fence_with_info_string_emits_lang_code_block_summary():
+    a = ProseAssembler()
+    delta = "```python\nline one\nline two\nline three\n```"
+    assert a.feed(delta, 0, True) == ["3-line python code block"]
+
+
+def test_fence_without_info_string_emits_plain_code_block_summary():
+    a = ProseAssembler()
+    delta = "```\nalpha\nbeta\n```"
+    assert a.feed(delta, 0, True) == ["2-line code block"]
+
+
+def test_fence_suppresses_code_and_keeps_surrounding_prose():
+    a = ProseAssembler()
+    delta = "Here it is. ```python\nx = 1\ny = 2\n``` Done now."
+    out = a.feed(delta, 0, True)
+    assert out == ["Here it is.", "1-line python code block", "Done now."]
