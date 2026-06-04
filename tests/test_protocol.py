@@ -47,3 +47,70 @@ def test_decode_accepts_line_without_trailing_newline():
 def test_encode_is_pure_module_function():
     assert callable(protocol.encode)
     assert callable(protocol.decode)
+
+
+def test_msgtype_has_every_constant_with_exact_values():
+    expected = {
+        "PROSE": "prose",
+        "CHOICE": "choice",
+        "PLAN": "plan",
+        "TOOL": "tool_announce",
+        "PERMISSION": "permission",
+        "EARCON": "earcon",
+        "FLUSH": "flush",
+        "SESSION_START": "session_start",
+        "SESSION_END": "session_end",
+        "SET_FOREGROUND": "set_foreground",
+        "STOP": "stop",
+        "SKIP": "skip",
+        "REPEAT": "repeat",
+        "JUMP_DECISION": "jump_decision",
+        "CATCH_UP": "catch_up",
+        "SET_RATE": "set_rate",
+        "SET_VERBOSITY": "set_verbosity",
+        "SET_VOICE": "set_voice",
+        "STATUS": "status",
+        "PING": "ping",
+    }
+    for name, value in expected.items():
+        assert hasattr(MsgType, name), f"MsgType missing {name}"
+        assert getattr(MsgType, name) == value, f"MsgType.{name} != {value!r}"
+
+
+def test_msgtype_defines_no_extra_string_constants():
+    actual = {
+        k: v
+        for k, v in vars(MsgType).items()
+        if not k.startswith("_") and isinstance(v, str)
+    }
+    expected = {
+        "PROSE": "prose",
+        "CHOICE": "choice",
+        "PLAN": "plan",
+        "TOOL": "tool_announce",
+        "PERMISSION": "permission",
+        "EARCON": "earcon",
+        "FLUSH": "flush",
+        "SESSION_START": "session_start",
+        "SESSION_END": "session_end",
+        "SET_FOREGROUND": "set_foreground",
+        "STOP": "stop",
+        "SKIP": "skip",
+        "REPEAT": "repeat",
+        "JUMP_DECISION": "jump_decision",
+        "CATCH_UP": "catch_up",
+        "SET_RATE": "set_rate",
+        "SET_VERBOSITY": "set_verbosity",
+        "SET_VOICE": "set_voice",
+        "STATUS": "status",
+        "PING": "ping",
+    }
+    assert actual == expected
+
+
+def test_msgtype_values_are_unique():
+    values = [
+        v for k, v in vars(MsgType).items()
+        if not k.startswith("_") and isinstance(v, str)
+    ]
+    assert len(values) == len(set(values))
