@@ -72,3 +72,58 @@ def test_load_config_missing_returns_independent_copy(monkeypatch, tmp_path):
     assert DEFAULTS == pristine
     assert DEFAULTS["rate"] == 200
     assert DEFAULTS["earcons"]["choice"] == "/System/Library/Sounds/Ping.aiff"
+
+
+import json as _json
+
+
+def test_load_config_deep_merges_partial_file(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text(
+        _json.dumps(
+            {
+                "rate": 240,
+                "voice": "Ava (Premium)",
+                "earcons": {"choice": "/custom/choice.aiff"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = config.load_config()
+
+    # overridden scalars
+    assert loaded["rate"] == 240
+    assert loaded["voice"] == "Ava (Premium)"
+    # untouched scalars keep their defaults
+    assert loaded["verbosity"] == "everything"
+    assert loaded["background_policy"] == "earcon_only"
+    # nested earcons: overridden key replaced, all others preserved
+    assert loaded["earcons"]["choice"] == "/custom/choice.aiff"
+    assert loaded["earcons"]["permission"] == "/System/Library/Sounds/Funk.aiff"
+    assert loaded["earcons"]["plan"] == "/System/Library/Sounds/Submarine.aiff"
+    assert loaded["earcons"]["error"] == "/System/Library/Sounds/Sosumi.aiff"
+    assert loaded["earcons"]["turn_done"] == "/System/Library/Sounds/Tink.aiff"
+    assert loaded["earcons"]["ready"] == "/System/Library/Sounds/Glass.aiff"
+
+
+def test_load_config_merges_extra_nested_key(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text(
+        _json.dumps({"earcons": {"custom_kind": "/custom/extra.aiff"}}),
+        encoding="utf-8",
+    )
+    loaded = config.load_config()
+    assert loaded["earcons"]["custom_kind"] == "/custom/extra.aiff"
+    # all six defaults still present
+    assert loaded["earcons"]["permission"] == "/System/Library/Sounds/Funk.aiff"
+    assert len(loaded["earcons"]) == 7
+
+
+def test_load_config_merge_does_not_mutate_defaults(monkeypatch, tmp_path):
+    cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    cfg_path.write_text(
+        _json.dumps({"earcons": {"choice": "/custom/choice.aiff"}}),
+        encoding="utf-8",
+    )
+    config.load_config()
+    assert DEFAULTS["earcons"]["choice"] == "/System/Library/Sounds/Ping.aiff"
