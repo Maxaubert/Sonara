@@ -44,10 +44,16 @@ to Opus.
 | 5 | sessions.py + daemon.py + client.py | ✅ done | 10 | 119 passed (1 warn) |
 | 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | ✅ done (live capture deferred) | 9 | 150 passed (1 warn) |
 | 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | ✅ done (real system untouched) | 8 | 193 passed (1 warn) |
-| 8 | End-to-end integration test + README + final verification | 🔄 running | ~7 | — |
+| 8 | End-to-end integration test + README + final verification | ✅ done | 7 | 206 passed (1 warn) |
 
-**After Section 8:** run the final whole-implementation review (must consume
-`phase1-review-followups.md`), then `superpowers:finishing-a-development-branch`.
+**🏁 ALL 8 SECTIONS DONE — Phase 1 implementation complete: 206 tests pass, tree clean,
+92 commits on `rebuild-echo`. The e2e ordering proof (`tests/test_e2e_pipeline.py`) passes.**
+
+**NOW (in progress):** the final whole-implementation review — consumes
+`phase1-review-followups.md` (resolve `load_config` deep-copy + the test-thread warning),
+then `superpowers:finishing-a-development-branch`. THEN (with Nima): real golden-payload
+capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) and the eyes-free verification
+(`docs/phase1-verification-checklist.md`).
 
 ### Known MANUAL steps (need Nima / a real Claude session)
 - **Section 6 — golden payload capture:** capturing REAL hook stdin (MessageDisplay,
@@ -144,7 +150,16 @@ to Opus.
   re-reviewing tasks 1–3 (harmless; fix loops are capped) before doing doctor/install/uninstall/
   slash. The 4 `specPass:false` are those churn tasks; doctor/install/uninstall/slash specPass:true.
 
----
+### Section 8 — End-to-end integration test + README + final verification — ✅
+- 7/7 tasks DONE. Gate: **206 passed (1 warning)**. Workflow run `wf_27ed3dac-999` (task `wzms6lydf`).
+- `tests/test_e2e_pipeline.py` (the producer→consumer ordering PROOF) passes both cases:
+  `test_scripted_session_full_ordering` and `test_background_session_is_earcon_only`.
+  Also: golden-fixture parse test, plugin/hooks manifest-validity test, full `README.md` (153 lines).
+- Incident #3 (recovered): the "Manual VERIFICATION CHECKLIST" task created
+  `docs/phase1-verification-checklist.md`, then a fix-agent DELETED it (`cce9113` "remove
+  unauthorized checklist file") — the file-deletion misfire recurred on a task's OWN legit
+  artifact (rules can't fully stop a reviewer mis-judging intended output). Recovered from
+  `cce9113~1` and re-committed. Functional code never affected (tests protect it).
 
 ## 🐞 Gotchas / debugging notes (controller-level)
 - **Workflow `args` is unreliable** for inline/scriptPath runs — it reached the script as a
