@@ -82,3 +82,33 @@ def test_hook_send_failure_is_swallowed(tmp_path):
     # When the fake client is told to raise, the shim must still exit 0.
     res = _run("Stop", b"{}", {"ECHO_FAKE_RAISE": "1"})
     assert res.returncode == 0, res.stderr.decode()
+
+
+def test_hook_partial_batch_send_failure_does_not_drop_subsequent_messages(tmp_path):
+    """A transient error on the first send of a two-message event must not
+    prevent the second message from being attempted.
+
+    PreToolUse + AskUserQuestion emits [EARCON(choice), CHOICE(...)].
+    ECHO_FAKE_RAISE_ON=0 makes the fakeclient raise only on the first send
+    (index 0) while the second send (index 1) succeeds and is logged.
+    Without a per-send try/except, the exception from send[0] propagates out
+    of main() and the second message is never attempted.
+    The hook must still exit 0, and the second message must appear in the log.
+    """
+    sent_log = tmp_path / "sent.jsonl"
+    payload = json.dumps({
+        "session_id": "s1",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{"q": "Yes or no?", "options": ["Yes", "No"]}]},
+    }).encode()
+    res = _run(
+        "PreToolUse",
+        payload,
+        {"ECHO_FAKE_SENT_LOG": str(sent_log), "ECHO_FAKE_RAISE_ON": "0"},
+    )
+    assert res.returncode == 0, res.stderr.decode()
+    # The second message (CHOICE) must have been sent despite the error on the first.
+    assert sent_log.exists(), "no messages logged — second send was not attempted"
+    lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
+    assert len(lines) >= 1, "expected at least the second message to be logged"
+    assert lines[0]["type"] == "choice"

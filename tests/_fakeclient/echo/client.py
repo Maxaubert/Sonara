@@ -3,9 +3,20 @@
 Shadowed onto PYTHONPATH ahead of src/ so bin/echo-hook imports THIS client.
 The pure echo.hooks_entry and echo.protocol still resolve from src/ because this
 package only provides a `client` submodule.
+
+Environment variables:
+  ECHO_FAKE_RAISE         -- raise on every call to ensure_daemon and send.
+  ECHO_FAKE_RAISE_AFTER   -- integer N; raise on send calls with index >= N
+                             (0-indexed), but let earlier calls succeed.
+  ECHO_FAKE_RAISE_ON      -- integer N; raise only on send call with exact
+                             index N (0-indexed); all other calls succeed.
+  ECHO_FAKE_SENT_LOG      -- path to append sent messages as newline-delimited JSON.
 """
 import json
 import os
+
+# Module-level call counter so the subprocess-level state resets for each run.
+_send_call_count = 0
 
 
 def ensure_daemon(timeout: float = 3.0) -> None:
@@ -14,8 +25,31 @@ def ensure_daemon(timeout: float = 3.0) -> None:
 
 
 def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
+    global _send_call_count
+    call_index = _send_call_count
+    _send_call_count += 1
+
     if os.environ.get("ECHO_FAKE_RAISE"):
         raise RuntimeError("forced send failure")
+
+    raise_after_env = os.environ.get("ECHO_FAKE_RAISE_AFTER")
+    if raise_after_env is not None:
+        try:
+            threshold = int(raise_after_env)
+        except ValueError:
+            threshold = 0
+        if call_index >= threshold:
+            raise RuntimeError(f"forced send failure at call index {call_index}")
+
+    raise_on_env = os.environ.get("ECHO_FAKE_RAISE_ON")
+    if raise_on_env is not None:
+        try:
+            target = int(raise_on_env)
+        except ValueError:
+            target = 0
+        if call_index == target:
+            raise RuntimeError(f"forced send failure at call index {call_index}")
+
     log = os.environ.get("ECHO_FAKE_SENT_LOG")
     if log:
         with open(log, "a") as f:

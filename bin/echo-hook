@@ -59,9 +59,15 @@ def main() -> None:
     if not msgs:
         return
 
-    client.ensure_daemon()
+    try:
+        client.ensure_daemon()
+    except Exception:
+        pass
     for m in msgs:
-        client.send(m)
+        try:
+            client.send(m)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
