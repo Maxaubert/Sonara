@@ -254,10 +254,99 @@ def _cmd_doctor(_args) -> int:
     return 0 if all_ok else 1
 
 
+import subprocess
+
+LAUNCH_AGENT_LABEL = "com.echo.speechd"
+LAUNCH_AGENT_PATH = os.path.expanduser(
+    "~/Library/LaunchAgents/com.echo.speechd.plist")
+
+
+def _repo_root() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))   # src/echo
+    return os.path.dirname(os.path.dirname(here))       # repo root
+
+
+def _daemon_shim_path() -> str:
+    return os.path.join(_repo_root(), "bin", "echo-daemon")
+
+
+def _launchagent_plist(daemon_path: str, log_path: str) -> str:
+    """Return the full LaunchAgent plist XML for the speech daemon."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '    <key>Label</key>\n'
+        f'    <string>{LAUNCH_AGENT_LABEL}</string>\n'
+        '    <key>ProgramArguments</key>\n'
+        '    <array>\n'
+        f'        <string>{daemon_path}</string>\n'
+        '    </array>\n'
+        '    <key>RunAtLoad</key>\n'
+        '    <true/>\n'
+        '    <key>KeepAlive</key>\n'
+        '    <true/>\n'
+        '    <key>StandardErrorPath</key>\n'
+        f'    <string>{log_path}</string>\n'
+        '    <key>StandardOutPath</key>\n'
+        f'    <string>{log_path}</string>\n'
+        '    <key>ProcessType</key>\n'
+        '    <string>Interactive</string>\n'
+        '</dict>\n'
+        '</plist>\n'
+    )
+
+
+def _launchctl(args: list) -> int:
+    """Run 'launchctl <args...>'. Patched in tests. Returns the exit code."""
+    try:
+        return subprocess.call(["launchctl", *args])
+    except FileNotFoundError:
+        return 1
+
+
+def install() -> int:
+    """Install the speech daemon as a LaunchAgent and ensure ECHO_DIR."""
+    paths.ensure_echo_dir()
+    daemon = _daemon_shim_path()
+    log = str(paths.LOG_PATH)
+    xml = _launchagent_plist(daemon, log)
+
+    os.makedirs(os.path.dirname(LAUNCH_AGENT_PATH), exist_ok=True)
+    with open(LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:
+        f.write(xml)
+    print(f"Wrote LaunchAgent: {LAUNCH_AGENT_PATH}")
+
+    # Reload: unload any prior copy (ignore failure), then load.
+    _launchctl(["unload", LAUNCH_AGENT_PATH])
+    rc = _launchctl(["load", LAUNCH_AGENT_PATH])
+    if rc == 0:
+        print(f"Loaded LaunchAgent {LAUNCH_AGENT_LABEL}.")
+    else:
+        print(f"warning: 'launchctl load' returned {rc}; "
+              f"the daemon will still autostart on next login.")
+
+    print("")
+    print("Enable the Echo plugin in Claude Code:")
+    print(f"  1. Add this repo as a plugin marketplace/source: {_repo_root()}")
+    print("  2. In Claude Code run: /plugin")
+    print("  3. Enable 'echo' so its hooks load.")
+    print("Then run 'echo doctor' to verify everything is wired up.")
+    return 0
+
+
+def _cmd_install(_args) -> int:
+    return install()
+
+
 def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
+    sub.add_parser("install", help="install the LaunchAgent + ECHO_DIR").set_defaults(
+        func=_cmd_install)
 
 
 def main(argv: Optional[list] = None) -> int:
