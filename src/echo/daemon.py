@@ -33,14 +33,86 @@ class SpeechDaemon:
         )
         self.queue.enqueue(item)
 
+    @staticmethod
+    def _choice_text(msg) -> str:
+        parts = []
+        for q in msg.get("questions", []) or []:
+            qtext = q.get("question", "") if isinstance(q, dict) else str(q)
+            opts = q.get("options", []) if isinstance(q, dict) else []
+            labels = []
+            for o in opts:
+                if isinstance(o, dict):
+                    labels.append(o.get("label", ""))
+                else:
+                    labels.append(str(o))
+            labels = [l for l in labels if l]
+            # Number the options so the user can pick by number (eyes-free).
+            segs = ["Option {0}: {1}.".format(i, label) for i, label in enumerate(labels, 1)]
+            if qtext and segs:
+                parts.append("{0} {1}".format(qtext, " ".join(segs)))
+            elif segs:
+                parts.append(" ".join(segs))
+            elif qtext:
+                parts.append(qtext)
+        return " ".join(parts) if parts else "A question needs your answer."
+
+    @staticmethod
+    def _plan_text(msg) -> str:
+        text = (msg.get("text") or "").strip()
+        if text:
+            return "Plan ready. {0}".format(text)
+        return "A plan is ready for your review."
+
+    @staticmethod
+    def _permission_text(msg) -> str:
+        # The 'permission' earcon already signals that approval is needed, so the
+        # spoken text is just the pending action (e.g. "Run: pytest -q").
+        action = (msg.get("action") or "").strip()
+        return action if action else "Permission needed."
+
     def handle_message(self, msg):
         t = msg.get("type")
+        session = msg.get("session", "")
+        verbosity = self.config.get("verbosity", "everything")
+
         if t == MsgType.PROSE:
-            session = msg.get("session", "")
             a = self._assembler(session)
             chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), msg.get("final", False))
             if self.sessions.should_speak(session):
                 for chunk in chunks:
                     self._enqueue(session, "prose", chunk, False)
             return None
+
+        # Decision CONTENT is enqueued (and gated by foreground). The ALERT
+        # earcon for a decision travels as a SEPARATE EARCON message that
+        # hooks_entry emits BEFORE the content message; it is handled by the
+        # MsgType.EARCON branch below, so the earcon fires instantly and
+        # cross-session WITHOUT being doubled here.
+        if t == MsgType.CHOICE:
+            if self.sessions.should_speak(session):
+                self._enqueue(session, "choice", self._choice_text(msg), True)
+            return None
+
+        if t == MsgType.PLAN:
+            if self.sessions.should_speak(session):
+                self._enqueue(session, "plan", self._plan_text(msg), True)
+            return None
+
+        if t == MsgType.PERMISSION:
+            if self.sessions.should_speak(session):
+                self._enqueue(session, "permission", self._permission_text(msg), True)
+            return None
+
+        if t == MsgType.TOOL:
+            if verbosity == "everything" and self.sessions.should_speak(session):
+                tool = msg.get("tool", "")
+                summary = (msg.get("summary") or "").strip()
+                text = summary if summary else "Running {0}.".format(tool)
+                self._enqueue(session, "tool_announce", text, False)
+            return None
+
+        if t == MsgType.EARCON:
+            self.speaker.earcon(msg.get("kind", ""))
+            return None
+
         return None
