@@ -42,8 +42,8 @@ to Opus.
 | 3 | cleaner.py + assembler.py | ✅ done | 7 | 50 passed |
 | 4 | queue.py + speaker.py | ✅ done | 9 | 74 passed |
 | 5 | sessions.py + daemon.py + client.py | ✅ done | 10 | 119 passed (1 warn) |
-| 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | 🔄 running (has 1 MANUAL task) | ~9 | — |
-| 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | ⏳ pending | ~8 | — |
+| 6 | Golden payload capture + hooks_entry.py + bin/echo-hook | ✅ done (live capture deferred) | 9 | 150 passed (1 warn) |
+| 7 | cli.py + bin/echo + slash commands + install/uninstall/doctor + legacy migration | 🔄 running | 8 | — |
 | 8 | End-to-end integration test + README + final verification | ⏳ pending | ~7 | — |
 
 **After Section 8:** run the final whole-implementation review (must consume
@@ -110,6 +110,22 @@ to Opus.
   thread-exception in `tests/test_client_send.py::test_send_no_reply` (test-helper echo-server
   thread) → logged in follow-ups.
 
+### Section 6 — Golden payload capture + hooks_entry.py + bin/echo-hook — ✅
+- 9/9 tasks DONE. Gate: **150 passed (1 warning)**. Workflow run `wf_7fbcd8ea-161` (task `waqhow0od`).
+- Created: `src/echo/hooks_entry.py`, full `bin/echo-hook` (ECHO_CAPTURE + dispatch + always
+  exit 0), representative `tests/fixtures/*.json` (MessageDisplay, AskUserQuestion, ExitPlanMode,
+  Bash, permission_prompt, idle_prompt), and `tests/fixtures/CAPTURE_INSTRUCTIONS.md`.
+- Controller probe confirms the PRODUCER side: AskUserQuestion→[earcon,choice],
+  ExitPlanMode→[earcon,plan], permission_prompt→[earcon,permission], idle→[earcon], Stop→[earcon],
+  UserPromptSubmit→[set_foreground,flush], SessionStart→[set_foreground,session_start], unknown→[].
+  With §5's daemon probe, BOTH pipeline sides are now verified end-to-end.
+- MANUAL (deferred): real golden-payload capture from a live Claude session — see
+  `tests/fixtures/CAPTURE_INSTRUCTIONS.md`; to be done with Nima as post-build validation.
+- **Incident + fix:** a fix-agent dropped `CAPTURE_INSTRUCTIONS.md` via a DESTRUCTIVE GIT OP (its
+  add-commit `3fb7f7b` was orphaned from HEAD by a reset/checkout), despite the file-deletion
+  hardening. Recovered from the dangling commit; runner further hardened to allow ONLY
+  `git add`/`git commit`. Functional tree unaffected (150 green; both probes pass).
+
 ---
 
 ## 🐞 Gotchas / debugging notes (controller-level)
@@ -134,6 +150,12 @@ to Opus.
   never while a section workflow is running; (b) runner HARDENED — a SCOPE-DISCIPLINE rule
   forbids agents touching files outside their task, and the spec reviewer now evaluates ONLY
   the implementer's own commit diff (`git show <sha>`), never the wider tree.
+- **Fix-agents can drop work via DESTRUCTIVE GIT OPS, not just file deletion.** In §6,
+  `CAPTURE_INSTRUCTIONS.md` (committed in orphaned `3fb7f7b`) vanished from HEAD because a later
+  fix-agent ran a reset/checkout. Recovered from the dangling commit. Runner now FORBIDS all
+  destructive git commands (only `git add`/`git commit`). Lesson: trust the TEST SUITE + targeted
+  controller probes as the source of truth for per-section integrity — multi-agent git churn can
+  be messy even when the functional tree ends up correct.
 - **Path casing was a red herring.** Repo's real name is `Projects` (capital); FS is
   case-insensitive, so lowercase paths resolve fine for Bash AND the file tools. The earlier
   "File does not exist" on the execution log was because the file had been DELETED (above), not
