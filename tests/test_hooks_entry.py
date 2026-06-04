@@ -74,3 +74,30 @@ def test_ask_user_question_from_fixture():
     assert msgs[1]["session"] == payload["session_id"]
     assert msgs[1]["questions"] == payload["tool_input"]["questions"]
     assert all(m["v"] == PROTOCOL_VERSION for m in msgs)
+
+
+def test_exit_plan_mode_earcon_then_plan():
+    payload = {
+        "session_id": "sess-1",
+        "tool_name": "ExitPlanMode",
+        "tool_input": {"plan": "Step one. Step two."},
+    }
+    assert handle_event("PreToolUse", payload) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "plan"},
+        {
+            "v": PROTOCOL_VERSION,
+            "type": MsgType.PLAN,
+            "session": "sess-1",
+            "text": "Step one. Step two.",
+        },
+    ]
+
+
+def test_exit_plan_mode_from_fixture():
+    payload = _load("PreToolUse-ExitPlanMode.json")
+    msgs = handle_event("PreToolUse", payload)
+    assert [m["type"] for m in msgs] == [MsgType.EARCON, MsgType.PLAN]
+    assert msgs[0]["kind"] == "plan"
+    assert msgs[1]["session"] == payload["session_id"]
+    assert msgs[1]["text"] == payload["tool_input"]["plan"]
+    assert all(m["v"] == PROTOCOL_VERSION for m in msgs)

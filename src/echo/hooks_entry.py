@@ -39,6 +39,11 @@ def handle_event(event: str, payload: dict) -> list[dict]:
                     questions=ti.get("questions", []),
                 ),
             ]
+        if tool == "ExitPlanMode":
+            return [
+                _msg(type=MsgType.EARCON, kind="plan"),
+                _msg(type=MsgType.PLAN, session=session, text=ti.get("plan", "")),
+            ]
         return []
 
     return []
