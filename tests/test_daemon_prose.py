@@ -3,6 +3,10 @@ from echo.queue import SpeechItem
 from tests.daemon_helpers import make_daemon
 
 
+def _flush(session):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": session}
+
+
 def _prose(session, delta, index, final):
     return {
         "v": PROTOCOL_VERSION,
@@ -58,3 +62,31 @@ def test_prose_uses_per_session_assembler():
     daemon.handle_message(_prose("bg", "Background sentence here. ", 0, False))
     assert len(queue) == 1
     assert queue.pop_next().text == "Foreground sentence here."
+
+
+def test_flush_resets_assembler_so_next_turn_is_clean():
+    """After FLUSH, stale assembler state (_seen/_buf/_pending) must not leak.
+
+    Scenario:
+      1. Feed a partial (no terminator) at index 0  -> nothing enqueued yet.
+      2. FLUSH the session              -> queue cleared, assembler dropped.
+      3. Feed a *new* final message at index 0 (same index, fresh turn).
+         The assembler must NOT treat it as a duplicate (old _seen), and
+         the new content (not the old partial) must be enqueued.
+    """
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+
+    # Step 1: partial delta – no sentence terminator, nothing enqueued.
+    daemon.handle_message(_prose("fg", "old partial content", 0, False))
+    assert len(queue) == 0
+
+    # Step 2: FLUSH – clears queue items and drops the assembler.
+    daemon.handle_message(_flush("fg"))
+    assert len(queue) == 0
+    assert "fg" not in daemon._assemblers
+
+    # Step 3: fresh final message re-using index 0 (new turn, new assembler).
+    daemon.handle_message(_prose("fg", "New sentence here.", 0, True))
+    assert len(queue) == 1
+    item = queue.pop_next()
+    assert item.text == "New sentence here."

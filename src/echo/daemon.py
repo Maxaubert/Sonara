@@ -133,6 +133,7 @@ class SpeechDaemon:
         if t == MsgType.FLUSH:
             self.queue.flush_session(session)
             self.speaker.cancel()
+            self._assemblers.pop(session, None)
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
