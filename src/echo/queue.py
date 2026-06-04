@@ -23,5 +23,12 @@ class SpeechQueue:
             return None
         return self._items.popleft()
 
+    def jump_to_decision(self) -> None:
+        while self._items and not self._items[0].is_decision:
+            self._items.popleft()
+
+    def clear(self) -> None:
+        self._items.clear()
+
     def __len__(self) -> int:
         return len(self._items)
