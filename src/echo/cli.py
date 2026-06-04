@@ -432,7 +432,3 @@ def main(argv: Optional[list] = None) -> int:
         parser.print_help()
         return 2
     return args.func(args)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
