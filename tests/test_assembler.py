@@ -59,4 +59,4 @@ def test_fence_suppresses_code_and_keeps_surrounding_prose():
     a = ProseAssembler()
     delta = "Here it is. ```python\nx = 1\ny = 2\n``` Done now."
     out = a.feed(delta, 0, True)
-    assert out == ["Here it is.", "1-line python code block", "Done now."]
+    assert out == ["Here it is.", "2-line python code block", "Done now."]
