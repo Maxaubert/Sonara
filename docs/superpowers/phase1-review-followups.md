@@ -1,52 +1,62 @@
-# Echo Phase 1 — Review Follow-ups (MUST be resolved before Phase 1 is "done")
+# Echo Phase 1 — Review Follow-ups
 
-This file is the durable backlog of concerns spotted during subagent-driven
-execution. **The final whole-implementation review MUST read this file and
-verify or fix every open item**, then check it off. Do not consider Phase 1
-complete while any item is unchecked.
-
-Each item: what, where, why it matters, and the concrete action + how to verify.
+Durable backlog from subagent-driven execution + the final whole-implementation review
+(run `wf_dc5c640f-7c3`). The **fix pass** (run after the review) resolves the "Open — fixing
+now" items below. Items under "Deferred" are real-but-lower-priority and are intentionally
+left for a follow-up pass (logged so nothing is lost).
 
 ---
 
-## Open
+## Open — fixing now (the final-review fix pass)
 
-- [ ] **`load_config` may return a shallow copy of `DEFAULTS` (shared nested dicts).**
-  - **Where:** `src/echo/config.py` (`load_config` / `_deep_merge`). Section 2,
-    task "load_config returns DEFAULTS copy when CONFIG_PATH missing". During
-    execution a deep-copy fix (`d720499`) was added then **reverted** (`08d2ee6`)
-    to satisfy a literal spec reading; that task ended `specPass:false`.
-  - **Why it matters:** if `load_config()` returns a config whose nested `earcons`
-    dict is the *same object* as the module-level `DEFAULTS["earcons"]`, then any
-    code that mutates `cfg["earcons"][k]` (or the daemon updating config in place)
-    silently corrupts `DEFAULTS` for the rest of the process — a classic
-    shared-mutable-default bug.
-  - **Action:** confirm `load_config()` returns a fully independent copy (deep-copy
-    nested dict values). Add a regression test: load a config, mutate a nested
-    value (e.g. `cfg["earcons"]["choice"] = "X"`), reload/inspect `DEFAULTS` and
-    assert it is unchanged. Reconcile with `save_config`/daemon mutation paths.
+- [ ] **CRITICAL: `/echo repeat` is a no-op.** `MsgType.REPEAT` is sent by the CLI but the daemon
+  has no handler and nothing tracks the last-spoken text. A key eyes-free control silently does
+  nothing. **Fix:** track last-spoken text in the daemon/speaker; add a REPEAT handler that
+  re-speaks it; test it. (`daemon.py`, `speaker.py`)
+- [ ] **HIGH: ProseAssembler not reset on FLUSH** → stale/garbled prose leaks into the next turn.
+  **Fix:** drop/reset the session's assembler in the FLUSH handler; test cross-turn. (`daemon.py`)
+- [ ] **HIGH: `afplay` earcon processes never reaped** (zombie leak). **Fix:** reap earcon
+  subprocesses; test no accumulation. (`speaker.py`)
+- [ ] **HIGH: verbosity `medium` behaves identically to `quiet`** (README mismatch). **Fix:** make
+  the three levels distinct — everything = prose+tools+decisions; medium = prose+decisions (no
+  routine tool announcements); quiet = decisions only (no prose). Update daemon + README + tests.
+- [ ] **HIGH: control commands raw-traceback when the daemon is down.** **Fix:** catch the
+  connection error in `client.send`/`cli` and print a short friendly message (non-zero exit).
+  test. (`client.py`, `cli.py`)
+- [ ] **HIGH: `Speaker._current` data race + `say` `proc.wait()` has no timeout** (a hung `say`
+  can stall the speak loop forever). **Fix:** lock around `_current` set/read in speak/cancel;
+  add a wait timeout / robust cancel. test. (`speaker.py`)
+- [ ] **HIGH: install interpreter** — `bin/echo` / `bin/echo-daemon` use bare `python3` via env,
+  which won't resolve the `echo` package under launchd's minimal env, so the daemon won't start
+  on install. **Fix:** make the shims / install use a correct absolute interpreter (the venv
+  python). Verify via `doctor`. (`bin/*`, `cli.install`)
+- [ ] **MEDIUM: `_clean_zshrc` / `_clean_settings_json` write your REAL files non-atomically**
+  (corruption risk if killed mid-write). **Fix:** tmp-file + `os.replace`, like `config.save_config`.
+  test. (`cli.py`)
+- [ ] **HIGH (design): DRY** — `_connectable`/`_socket_connectable` duplicated across client+daemon;
+  repo-root computation duplicated in 3 places. **Fix:** consolidate into one helper each.
+- [ ] **Test coverage gaps** (add the high-value ones): multi-item speak-loop FIFO + wake path;
+  real `_handle_conn` socket round-trip; REPEAT contract; client error paths; assembler fence
+  spanning multiple `feed()` calls.
 
-- [ ] **Re-audit every task that ended `specPass:false`.** The spec-review loop
-  did not converge on these; confirm each is actually correct (not a real gap):
-  - Section 1: "Create venv, editable install, and verify pytest" (added then the
-    follow-up reverted an `*.egg-info/` .gitignore entry — verify the working tree
-    stays clean after `pip install -e .` and that egg-info never gets committed).
-  - Section 2: "load_config returns DEFAULTS copy when CONFIG_PATH missing" (see
-    the deep-copy item above).
-  - Section 3: 5 of 7 tasks ended `specPass:false` — **already audited & cleared** by the
-    controller (direct probe of `ProseAssembler`: sentence assembly, dedup, final-flush, and
-    code-fence summary all correct; the e2e prose case matches). Flags were pedantic reactions
-    to legitimate corrections (plan's "1-line" fence count was wrong → "2-line"; a commit msg).
-    No action needed for §3.
+## Deferred — real but lower priority (next pass)
 
-- [ ] **Unhandled thread-exception warning in the test suite.** `tests/test_client_send.py::
-  test_send_no_reply` triggers `PytestUnhandledThreadExceptionWarning: Exception in thread
-  Thread-1 (_echo_server)` (Section 5). The throwaway echo-server thread raises when the client
-  sends with no reply expected. **Action:** make the test's server thread handle the
-  client-closed / no-reply path cleanly (try/except around recv/send; daemon thread + join) so
-  the suite runs warning-free. Confirm it is a TEST-helper issue, not `client.send` leaving a
-  socket in a bad state.
+- [ ] Stop-hook transcript reconciliation (spec §5.2 safety net for a dropped final delta).
+- [ ] `background_policy` is dead config (should_speak ignores it) — wire it or remove it.
+- [ ] STOP vs CATCH_UP are currently identical — differentiate (catch-up = jump to newest) or document.
+- [ ] SET_RATE range validation; Unix socket mode 0600; LaunchAgent plist XML-escaping + ThrottleInterval;
+  install verifies the daemon shim is executable; unbounded per-connection recv buffer.
+- [ ] Add missing slash commands (`/echo:voice`, `/echo:rate`, `/echo:skip`) or trim the README table.
+- [ ] Minor clarity nits: `clean_markdown` double-call in assembler; mid-file imports in cli;
+  `chr(10)`→`"\n"`; `_deep_merge(DEFAULTS, {})`→`copy.deepcopy`; unused `SpeechItem.id`; split the
+  SET_FOREGROUND/SESSION_START branch; strengthen `test_commands.py` assertions.
 
 ## Resolved
 
-(none yet)
+- [x] **`load_config` deep-copy** — VERIFIED already correct: `load_config` deep-copies via
+  `_deep_merge(DEFAULTS, {})`, and `tests/test_config.py` already has the exact regression test
+  (mutate `cfg["earcons"]` → `DEFAULTS` unchanged). No change needed.
+- [x] **Test-suite thread-exception warning** — FIXED (`d5c5d2d`): the `_echo_server` test helper
+  now wraps recv/send in `try/except OSError`; suite is **0 warnings**.
+- [x] **§3 `specPass:false` (5 tasks)** — audited & cleared (assembler verified correct by probe).
+- [x] **§1 egg-info / clean tree** — verified: tree stays clean after editable install; egg-info ignored.

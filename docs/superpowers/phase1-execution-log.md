@@ -49,10 +49,16 @@ to Opus.
 **🏁 ALL 8 SECTIONS DONE — Phase 1 implementation complete: 206 tests pass, tree clean,
 92 commits on `rebuild-echo`. The e2e ordering proof (`tests/test_e2e_pipeline.py`) passes.**
 
-**NOW (in progress):** the final whole-implementation review — consumes
-`phase1-review-followups.md` (resolve `load_config` deep-copy + the test-thread warning),
-then `superpowers:finishing-a-development-branch`. THEN (with Nima): real golden-payload
-capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) and the eyes-free verification
+**Final review DONE** (run `wf_dc5c640f-7c3`): gate **206 passed, 0 warnings**; both original
+follow-ups resolved (`load_config` already deep-copies + has a regression test; the test-thread
+warning is FIXED). The multi-dimension review found real cross-turn / integration bugs the
+per-section tests missed — **a FIX PASS is now running** (see `phase1-review-followups.md` →
+"Open — fixing now"): REPEAT no-op, assembler-not-reset-on-FLUSH, afplay zombie leak, verbosity
+medium==quiet, daemon-down traceback, install interpreter under launchd, Speaker race/wait-timeout,
+non-atomic user-file writes, DRY dups, + key test-coverage gaps.
+
+**AFTER the fix pass:** `superpowers:finishing-a-development-branch`. THEN (with Nima): real
+golden-payload capture (`tests/fixtures/CAPTURE_INSTRUCTIONS.md`) and the eyes-free verification
 (`docs/phase1-verification-checklist.md`).
 
 ### Known MANUAL steps (need Nima / a real Claude session)
