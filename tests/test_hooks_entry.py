@@ -170,3 +170,59 @@ def test_pre_tool_use_bash_from_fixture():
     assert msgs[0]["tool"] == "Bash"
     assert msgs[0]["summary"] == "git status"
     assert msgs[0]["session"] == payload["session_id"]
+
+
+def test_notification_permission_prompt():
+    payload = {
+        "session_id": "sess-1",
+        "notification_type": "permission_prompt",
+        "action": "Run git status",
+    }
+    assert handle_event("Notification", payload) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "permission"},
+        {
+            "v": PROTOCOL_VERSION,
+            "type": MsgType.PERMISSION,
+            "session": "sess-1",
+            "action": "Run git status",
+        },
+    ]
+
+
+def test_notification_permission_prompt_via_matcher_fallback():
+    payload = {
+        "session_id": "sess-1",
+        "matcher": "permission_prompt",
+        "action": "Edit file cli.py",
+    }
+    msgs = handle_event("Notification", payload)
+    assert [m["type"] for m in msgs] == [MsgType.EARCON, MsgType.PERMISSION]
+    assert msgs[0]["kind"] == "permission"
+    assert msgs[1]["action"] == "Edit file cli.py"
+
+
+def test_notification_idle_prompt():
+    payload = {"session_id": "sess-1", "notification_type": "idle_prompt"}
+    assert handle_event("Notification", payload) == [
+        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "ready"}
+    ]
+
+
+def test_notification_permission_prompt_from_fixture():
+    payload = _load("Notification-permission_prompt.json")
+    msgs = handle_event("Notification", payload)
+    assert [m["type"] for m in msgs] == [MsgType.EARCON, MsgType.PERMISSION]
+    assert msgs[0]["kind"] == "permission"
+    assert msgs[1]["session"] == payload["session_id"]
+    assert msgs[1]["action"] == payload["action"]
+
+
+def test_notification_idle_prompt_from_fixture():
+    payload = _load("Notification-idle_prompt.json")
+    msgs = handle_event("Notification", payload)
+    assert msgs == [{"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "ready"}]
+
+
+def test_unknown_notification_type_is_empty():
+    payload = {"session_id": "sess-1", "notification_type": "something_else"}
+    assert handle_event("Notification", payload) == []

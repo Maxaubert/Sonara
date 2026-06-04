@@ -67,4 +67,19 @@ def handle_event(event: str, payload: dict) -> list[dict]:
             )
         ]
 
+    if event == "Notification":
+        nt = payload.get("notification_type") or payload.get("matcher")
+        if nt == "permission_prompt":
+            return [
+                _msg(type=MsgType.EARCON, kind="permission"),
+                _msg(
+                    type=MsgType.PERMISSION,
+                    session=session,
+                    action=payload.get("action", ""),
+                ),
+            ]
+        if nt == "idle_prompt":
+            return [_msg(type=MsgType.EARCON, kind="ready")]
+        return []
+
     return []
