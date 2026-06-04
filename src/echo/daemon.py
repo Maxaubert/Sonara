@@ -24,6 +24,7 @@ class SpeechDaemon:
         self._server = None
         self._threads = []
         self._poll_interval = 0.1
+        self._last_spoken: str | None = None
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -153,6 +154,14 @@ class SpeechDaemon:
             self.speaker.cancel()
             return None
 
+        if t == MsgType.REPEAT:
+            last = self._last_spoken
+            if last is not None:
+                fg = self.sessions.foreground()
+                if fg is not None:
+                    self._enqueue(fg, "prose", last, False)
+            return None
+
         if t == MsgType.JUMP_DECISION:
             self.queue.jump_to_decision()
             self.speaker.cancel()
@@ -212,6 +221,8 @@ class SpeechDaemon:
             item = self.queue.pop_next()
             if item is not None:
                 self.speaker.speak(item.text)
+                with self._lock:
+                    self._last_spoken = item.text
                 continue
             # nothing to say: wait until woken by an enqueue or until stop()
             self._wake.wait(self._poll_interval)

@@ -87,3 +87,67 @@ def test_session_end_unregisters():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="s9")
     daemon.handle_message(_msg(MsgType.SESSION_END, "s9"))
     assert sessions.foreground() is None
+
+
+# ---------------------------------------------------------------------------
+# REPEAT tests
+# ---------------------------------------------------------------------------
+
+def test_repeat_noop_when_nothing_spoken_yet():
+    """REPEAT before any speech must not enqueue anything and must not crash."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    assert daemon._last_spoken is None
+    daemon.handle_message(_msg(MsgType.REPEAT, "fg"))
+    assert len(queue) == 0
+
+
+def test_repeat_reenqueues_last_spoken_text():
+    """After _last_spoken is set, REPEAT re-enqueues that text as a prose item
+    for the foreground session."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    # Simulate the speak loop having spoken an item.
+    daemon._last_spoken = "Hello world."
+    daemon.handle_message(_msg(MsgType.REPEAT, "fg"))
+    assert len(queue) == 1
+    item = queue.pop_next()
+    assert item.text == "Hello world."
+    assert item.kind == "prose"
+    assert item.session == "fg"
+    assert item.is_decision is False
+
+
+def test_repeat_noop_when_no_foreground_session():
+    """REPEAT with no foreground session must not enqueue anything."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    daemon._last_spoken = "Something said earlier."
+    daemon.handle_message(_msg(MsgType.REPEAT))
+    assert len(queue) == 0
+
+
+def test_repeat_drives_speak_path():
+    """Integration: set _last_spoken then REPEAT, then drain queue through
+    the speak path and assert the text is spoken again."""
+    import threading, time
+
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._last_spoken = "Repeat me please."
+
+    # Kick the speak loop.
+    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t.start()
+    try:
+        # Issue REPEAT while the loop is running.
+        daemon.handle_message(_msg(MsgType.REPEAT, "fg"))
+
+        deadline = time.time() + 2.0
+        while time.time() < deadline and not speaker.spoken:
+            time.sleep(0.01)
+
+        assert "Repeat me please." in speaker.spoken
+        # After speaking, _last_spoken should be updated to that text.
+        # Give the loop a moment to persist _last_spoken.
+        time.sleep(0.05)
+        assert daemon._last_spoken == "Repeat me please."
+    finally:
+        daemon.stop()
+        t.join(timeout=2.0)
