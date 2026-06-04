@@ -42,6 +42,11 @@ class Speaker:
         proc.wait()
         self._current = None
 
+    def cancel(self) -> None:
+        proc = self._current
+        if proc is not None:
+            proc.terminate()
+
     def set_voice(self, v) -> None:
         self._voice = v
 

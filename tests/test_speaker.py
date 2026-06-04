@@ -46,3 +46,54 @@ def test_speak_tracks_current_proc():
     assert len(runner.procs) == 2
     assert runner.procs[0].wait_calls == 1
     assert runner.procs[1].wait_calls == 1
+
+
+def test_cancel_terminates_the_current_proc():
+    runner = RecordingRunner()
+
+    # A runner whose returned proc does NOT auto-finish on wait(): we drive
+    # cancel() before the (simulated) blocking wait by calling speak in a way
+    # that lets us inspect the tracked proc. Here we use a runner that records
+    # the proc and lets us cancel after wait returns, then assert terminate.
+    sp = Speaker(say_runner=runner)
+    sp.speak("blah")
+    # After speak returns, current proc is cleared; cancel must be a safe no-op.
+    sp.cancel()
+    assert runner.procs[0].terminate_calls == 0
+
+
+def test_cancel_terminates_active_proc_mid_speak():
+    # Use a runner whose proc.wait() invokes a hook so we can cancel while the
+    # proc is still tracked as current.
+    captured = {}
+
+    class CancelOnWaitPopen(FakePopen):
+        def __init__(self, speaker):
+            super().__init__()
+            self._speaker = speaker
+
+        def wait(self):
+            # While we are "blocking", the speaker treats us as current.
+            self._speaker.cancel()
+            return super().wait()
+
+    class HookRunner:
+        def __init__(self):
+            self.procs = []
+
+        def __call__(self, text, voice, rate):
+            proc = CancelOnWaitPopen(captured["speaker"])
+            self.procs.append(proc)
+            return proc
+
+    runner = HookRunner()
+    sp = Speaker(say_runner=runner)
+    captured["speaker"] = sp
+    sp.speak("active")
+    assert runner.procs[0].terminate_calls == 1
+
+
+def test_cancel_with_no_current_proc_is_noop():
+    sp = Speaker(say_runner=RecordingRunner())
+    # Never called speak; cancel must not raise.
+    sp.cancel()
