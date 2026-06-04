@@ -1,0 +1,56 @@
+import socket
+import time
+
+from echo.protocol import encode, decode
+from echo.paths import SOCKET_PATH
+from echo.daemon import ensure_running
+
+
+def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(str(SOCKET_PATH))
+        s.sendall(encode(msg))
+        if not expect_reply:
+            return None
+        buf = b""
+        while b"\n" not in buf:
+            data = s.recv(4096)
+            if not data:
+                break
+            buf += data
+        if not buf:
+            return None
+        line = buf.split(b"\n", 1)[0]
+        return decode(line)
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def ensure_daemon(timeout: float = 3.0) -> None:
+    if _connectable():
+        return
+    ensure_running()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _connectable():
+            return
+        time.sleep(0.05)
+
+
+def _connectable() -> bool:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(str(SOCKET_PATH))
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
