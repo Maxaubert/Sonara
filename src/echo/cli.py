@@ -13,10 +13,12 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
+from . import paths
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
@@ -187,9 +189,75 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _repo_hooks_json_path() -> str:
+    """Path to the plugin hooks/hooks.json inside this repo checkout."""
+    here = os.path.dirname(os.path.abspath(__file__))      # src/echo
+    repo = os.path.dirname(os.path.dirname(here))          # repo root
+    return os.path.join(repo, "hooks", "hooks.json")
+
+
+def doctor() -> list:
+    """Return a list of (check, ok, detail) health-check tuples."""
+    results = []
+
+    say = shutil.which("say")
+    results.append(("say", say is not None,
+                    say or "not found (macOS 'say' required)"))
+
+    afplay = shutil.which("afplay")
+    results.append(("afplay", afplay is not None,
+                    afplay or "not found (macOS 'afplay' required)"))
+
+    try:
+        from . import speaker
+        voice = speaker.best_enhanced_voice()
+        results.append(("enhanced voice", bool(voice),
+                        voice or "none detected; will fall back to Samantha"))
+    except Exception as exc:  # noqa: BLE001 - doctor must never raise
+        results.append(("enhanced voice", False, f"error: {exc}"))
+
+    try:
+        paths.ensure_echo_dir()
+        writable = os.access(str(paths.ECHO_DIR), os.W_OK)
+        results.append(("ECHO_DIR writable", writable,
+                        str(paths.ECHO_DIR) if writable
+                        else f"{paths.ECHO_DIR} is not writable"))
+    except Exception as exc:  # noqa: BLE001
+        results.append(("ECHO_DIR writable", False, f"error: {exc}"))
+
+    try:
+        from . import client
+        reply = client.send({"v": PROTOCOL_VERSION, "type": MsgType.PING},
+                            expect_reply=True)
+        ok = bool(reply) and reply.get("ok") is True
+        results.append(("daemon socket", ok,
+                        "reachable" if ok else "no ok reply from daemon"))
+    except Exception as exc:  # noqa: BLE001
+        results.append(("daemon socket", False,
+                        f"not reachable: {exc} (run 'echo install')"))
+
+    hooks_json = _repo_hooks_json_path()
+    present = os.path.exists(hooks_json)
+    results.append(("plugin hooks.json", present,
+                    hooks_json if present else f"missing: {hooks_json}"))
+
+    return results
+
+
+def _cmd_doctor(_args) -> int:
+    rows = doctor()
+    all_ok = True
+    for check, ok, detail in rows:
+        mark = "ok " if ok else "FAIL"
+        print(f"[{mark}] {check}: {detail}")
+        all_ok = all_ok and ok
+    return 0 if all_ok else 1
+
+
 def _register_local(sub) -> None:
-    """Register local (non-control) subcommands. Filled in later tasks."""
-    return None
+    """Register local (non-control) subcommands."""
+    sub.add_parser("doctor", help="run health checks").set_defaults(
+        func=_cmd_doctor)
 
 
 def main(argv: Optional[list] = None) -> int:
