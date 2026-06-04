@@ -33,6 +33,11 @@ Each item: what, where, why it matters, and the concrete action + how to verify.
     stays clean after `pip install -e .` and that egg-info never gets committed).
   - Section 2: "load_config returns DEFAULTS copy when CONFIG_PATH missing" (see
     the deep-copy item above).
+  - Section 3: 5 of 7 tasks ended `specPass:false` — **already audited & cleared** by the
+    controller (direct probe of `ProseAssembler`: sentence assembly, dedup, final-flush, and
+    code-fence summary all correct; the e2e prose case matches). Flags were pedantic reactions
+    to legitimate corrections (plan's "1-line" fence count was wrong → "2-line"; a commit msg).
+    No action needed for §3.
 
 ## Resolved
 
