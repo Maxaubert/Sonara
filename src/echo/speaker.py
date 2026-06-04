@@ -1,3 +1,4 @@
+import os
 import subprocess
 
 
@@ -10,9 +11,11 @@ def run_say(text: str, voice, rate: int):
 
 
 def play_earcon(path: str) -> None:
+    if not os.path.exists(path):
+        return
     try:
         subprocess.Popen(["afplay", path])
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         pass
 
 

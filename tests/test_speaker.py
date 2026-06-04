@@ -131,3 +131,43 @@ def test_earcon_kind_with_no_mapping_is_noop():
     sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons={})
     sp.earcon("choice")
     assert player.paths == []
+
+
+import echo.speaker as speaker_mod
+
+
+def test_play_earcon_missing_file_is_tolerated(monkeypatch):
+    called = {"popen": False}
+
+    def fake_popen(args):
+        called["popen"] = True
+        return object()
+
+    monkeypatch.setattr(speaker_mod.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(speaker_mod.subprocess, "Popen", fake_popen)
+    # Missing file: must return without spawning afplay and without raising.
+    speaker_mod.play_earcon("/no/such/sound.aiff")
+    assert called["popen"] is False
+
+
+def test_play_earcon_spawn_error_is_tolerated(monkeypatch):
+    def fake_popen(args):
+        raise FileNotFoundError("afplay missing")
+
+    monkeypatch.setattr(speaker_mod.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(speaker_mod.subprocess, "Popen", fake_popen)
+    # Binary missing: must not raise.
+    speaker_mod.play_earcon("/System/Library/Sounds/Tink.aiff")
+
+
+def test_play_earcon_invokes_afplay_with_path(monkeypatch):
+    recorded = {}
+
+    def fake_popen(args):
+        recorded["args"] = args
+        return object()
+
+    monkeypatch.setattr(speaker_mod.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(speaker_mod.subprocess, "Popen", fake_popen)
+    speaker_mod.play_earcon("/System/Library/Sounds/Tink.aiff")
+    assert recorded["args"] == ["afplay", "/System/Library/Sounds/Tink.aiff"]
