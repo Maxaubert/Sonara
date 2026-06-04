@@ -1,7 +1,7 @@
 import subprocess
 import threading
 
-from echo.speaker import Speaker
+from sonari.speaker import Speaker
 
 
 class FakePopen:
@@ -136,7 +136,7 @@ def test_earcon_kind_with_no_mapping_is_noop():
     assert player.paths == []
 
 
-import echo.speaker as speaker_mod
+import sonari.speaker as speaker_mod
 
 
 def test_play_earcon_missing_file_is_tolerated(monkeypatch):
@@ -251,7 +251,7 @@ def test_earcon_procs_do_not_accumulate_unbounded():
     assert len(sp._earcon_procs) <= 1
 
 
-from echo.speaker import best_enhanced_voice
+from sonari.speaker import best_enhanced_voice
 
 SAY_SAMPLE = (
     "Albert              en_US    # Hello! My name is Albert.\n"

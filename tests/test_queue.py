@@ -1,4 +1,4 @@
-from echo.queue import SpeechItem, SpeechQueue
+from sonari.queue import SpeechItem, SpeechQueue
 
 
 def _item(id, session="s1", kind="prose", text="t", is_decision=False):

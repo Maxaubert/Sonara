@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from echo import cli
+from sonari import cli
 
 
 LEGACY_ZSHRC = """\

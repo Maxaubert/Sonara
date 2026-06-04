@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Echo hook entrypoint.
+"""Sonari hook entrypoint.
 
-Invoked by Claude Code as: bin/echo-hook <Event>  (payload JSON on stdin).
+Invoked by Claude Code as: bin/sonari-hook <Event>  (payload JSON on stdin).
 Thin shim: parse argv/stdin, optionally capture raw stdin, map the event to
-protocol messages via the PURE echo.hooks_entry.handle_event, ensure the daemon
+protocol messages via the PURE sonari.hooks_entry.handle_event, ensure the daemon
 is up, and send each message. Wrapped in a total try/except and ALWAYS exits 0
 so a failure here can never break the Claude session. Keep total work tiny.
 """
@@ -19,7 +19,7 @@ def main() -> None:
         raw = b""
 
     # Optional golden-payload capture: dump raw stdin BEFORE any other work.
-    capture_dir = os.environ.get("ECHO_CAPTURE")
+    capture_dir = os.environ.get("SONARI_CAPTURE")
     if capture_dir:
         try:
             event_for_name = sys.argv[1] if len(sys.argv) > 1 else "unknown"
@@ -30,17 +30,17 @@ def main() -> None:
         except Exception:
             pass
 
-    # Resolve the package: prefer an installed 'echo'; fall back to ../src.
+    # Resolve the package: prefer an installed 'sonari'; fall back to ../src.
     try:
-        import echo  # noqa: F401
+        import sonari  # noqa: F401
     except Exception:
         here = os.path.dirname(os.path.abspath(__file__))
         src = os.path.join(os.path.dirname(here), "src")
         if src not in sys.path:
             sys.path.insert(0, src)
 
-    from echo.hooks_entry import handle_event
-    from echo import client
+    from sonari.hooks_entry import handle_event
+    from sonari import client
 
     event = sys.argv[1] if len(sys.argv) > 1 else ""
 

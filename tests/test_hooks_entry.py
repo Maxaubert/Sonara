@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from echo.hooks_entry import handle_event
-from echo.protocol import PROTOCOL_VERSION, MsgType
+from sonari.hooks_entry import handle_event
+from sonari.protocol import PROTOCOL_VERSION, MsgType
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -124,7 +124,7 @@ def test_pre_tool_use_write_summary_is_basename():
     payload = {
         "session_id": "sess-1",
         "tool_name": "Write",
-        "tool_input": {"file_path": "/Users/me/proj/src/echo/cli.py"},
+        "tool_input": {"file_path": "/Users/me/proj/src/sonari/cli.py"},
     }
     msgs = handle_event("PreToolUse", payload)
     assert msgs == [

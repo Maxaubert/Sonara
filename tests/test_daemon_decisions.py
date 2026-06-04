@@ -1,4 +1,4 @@
-from echo.protocol import MsgType, PROTOCOL_VERSION
+from sonari.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
 
 

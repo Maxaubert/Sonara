@@ -1,6 +1,6 @@
 from unittest import mock
 
-from echo.protocol import MsgType, PROTOCOL_VERSION
+from sonari.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
 
 
@@ -14,7 +14,7 @@ def _msg(mtype, session=None, **extra):
 
 def test_set_rate_updates_config_and_speaker_and_saves():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("echo.daemon.save_config") as save:
+    with mock.patch("sonari.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_RATE, rate=150))
     assert config["rate"] == 150
     assert speaker.rates == [150]
@@ -23,7 +23,7 @@ def test_set_rate_updates_config_and_speaker_and_saves():
 
 def test_set_voice_updates_config_and_speaker_and_saves():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("echo.daemon.save_config") as save:
+    with mock.patch("sonari.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_VOICE, voice="Ava (Premium)"))
     assert config["voice"] == "Ava (Premium)"
     assert speaker.voices == ["Ava (Premium)"]
@@ -32,7 +32,7 @@ def test_set_voice_updates_config_and_speaker_and_saves():
 
 def test_set_verbosity_updates_config_and_saves_no_speaker_call():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("echo.daemon.save_config") as save:
+    with mock.patch("sonari.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_VERBOSITY, verbosity="quiet"))
     assert config["verbosity"] == "quiet"
     assert speaker.rates == []
@@ -45,7 +45,7 @@ def test_status_returns_documented_dict():
     config["rate"] = 175
     config["voice"] = "Samantha"
     # enqueue two items so queue_len is reported
-    from echo.queue import SpeechItem
+    from sonari.queue import SpeechItem
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="a", is_decision=False))
     queue.enqueue(SpeechItem(id=2, session="fg", kind="prose", text="b", is_decision=False))
     resp = daemon.handle_message(_msg(MsgType.STATUS))

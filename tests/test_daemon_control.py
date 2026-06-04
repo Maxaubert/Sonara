@@ -1,5 +1,5 @@
-from echo.protocol import MsgType, PROTOCOL_VERSION
-from echo.queue import SpeechItem
+from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonari.queue import SpeechItem
 from tests.daemon_helpers import make_daemon
 
 

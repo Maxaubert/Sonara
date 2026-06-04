@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-HOOK = REPO / "bin" / "echo-hook"
+HOOK = REPO / "bin" / "sonari-hook"
 
 
 def _run(event, stdin_bytes, extra_env=None):
@@ -30,7 +30,7 @@ def test_hook_exists_and_is_executable():
 def test_hook_sends_messages_and_exits_zero(tmp_path):
     sent_log = tmp_path / "sent.jsonl"
     payload = json.dumps({"session_id": "s1", "delta": "Hi.", "index": 0, "final": True}).encode()
-    res = _run("MessageDisplay", payload, {"ECHO_FAKE_SENT_LOG": str(sent_log)})
+    res = _run("MessageDisplay", payload, {"SONARI_FAKE_SENT_LOG": str(sent_log)})
     assert res.returncode == 0, res.stderr.decode()
     lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
     assert len(lines) == 1
@@ -40,7 +40,7 @@ def test_hook_sends_messages_and_exits_zero(tmp_path):
 
 def test_hook_invalid_stdin_still_exits_zero(tmp_path):
     sent_log = tmp_path / "sent.jsonl"
-    res = _run("MessageDisplay", b"not json at all", {"ECHO_FAKE_SENT_LOG": str(sent_log)})
+    res = _run("MessageDisplay", b"not json at all", {"SONARI_FAKE_SENT_LOG": str(sent_log)})
     assert res.returncode == 0, res.stderr.decode()
     # Empty/invalid stdin -> payload {} -> a prose message with empty delta is still produced.
     lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
@@ -51,7 +51,7 @@ def test_hook_invalid_stdin_still_exits_zero(tmp_path):
 
 def test_hook_empty_stdin_exits_zero(tmp_path):
     sent_log = tmp_path / "sent.jsonl"
-    res = _run("Stop", b"", {"ECHO_FAKE_SENT_LOG": str(sent_log)})
+    res = _run("Stop", b"", {"SONARI_FAKE_SENT_LOG": str(sent_log)})
     assert res.returncode == 0, res.stderr.decode()
     lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
     assert len(lines) == 1
@@ -61,7 +61,7 @@ def test_hook_empty_stdin_exits_zero(tmp_path):
 
 def test_hook_unknown_event_sends_nothing(tmp_path):
     sent_log = tmp_path / "sent.jsonl"
-    res = _run("MadeUp", b"{}", {"ECHO_FAKE_SENT_LOG": str(sent_log)})
+    res = _run("MadeUp", b"{}", {"SONARI_FAKE_SENT_LOG": str(sent_log)})
     assert res.returncode == 0, res.stderr.decode()
     assert not sent_log.exists() or sent_log.read_text().strip() == ""
 
@@ -71,7 +71,7 @@ def test_hook_capture_dumps_raw_stdin(tmp_path):
     cap.mkdir()
     sent_log = tmp_path / "sent.jsonl"
     raw = b'{"session_id": "s1", "delta": "Cap.", "index": 0, "final": true}'
-    res = _run("MessageDisplay", raw, {"ECHO_CAPTURE": str(cap), "ECHO_FAKE_SENT_LOG": str(sent_log)})
+    res = _run("MessageDisplay", raw, {"SONARI_CAPTURE": str(cap), "SONARI_FAKE_SENT_LOG": str(sent_log)})
     assert res.returncode == 0, res.stderr.decode()
     files = list(cap.glob("MessageDisplay-*.json"))
     assert len(files) == 1
@@ -80,7 +80,7 @@ def test_hook_capture_dumps_raw_stdin(tmp_path):
 
 def test_hook_send_failure_is_swallowed(tmp_path):
     # When the fake client is told to raise, the shim must still exit 0.
-    res = _run("Stop", b"{}", {"ECHO_FAKE_RAISE": "1"})
+    res = _run("Stop", b"{}", {"SONARI_FAKE_RAISE": "1"})
     assert res.returncode == 0, res.stderr.decode()
 
 
@@ -89,7 +89,7 @@ def test_hook_partial_batch_send_failure_does_not_drop_subsequent_messages(tmp_p
     prevent the second message from being attempted.
 
     PreToolUse + AskUserQuestion emits [EARCON(choice), CHOICE(...)].
-    ECHO_FAKE_RAISE_ON=0 makes the fakeclient raise only on the first send
+    SONARI_FAKE_RAISE_ON=0 makes the fakeclient raise only on the first send
     (index 0) while the second send (index 1) succeeds and is logged.
     Without a per-send try/except, the exception from send[0] propagates out
     of main() and the second message is never attempted.
@@ -104,7 +104,7 @@ def test_hook_partial_batch_send_failure_does_not_drop_subsequent_messages(tmp_p
     res = _run(
         "PreToolUse",
         payload,
-        {"ECHO_FAKE_SENT_LOG": str(sent_log), "ECHO_FAKE_RAISE_ON": "0"},
+        {"SONARI_FAKE_SENT_LOG": str(sent_log), "SONARI_FAKE_RAISE_ON": "0"},
     )
     assert res.returncode == 0, res.stderr.decode()
     # The second message (CHOICE) must have been sent despite the error on the first.

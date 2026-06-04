@@ -1,4 +1,4 @@
-"""Echo wire protocol: newline-delimited JSON over a Unix stream socket."""
+"""Sonari wire protocol: newline-delimited JSON over a Unix stream socket."""
 
 import json
 

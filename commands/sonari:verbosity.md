@@ -1,13 +1,13 @@
 ---
-description: Set Echo verbosity (everything | medium | quiet)
+description: Set Sonari verbosity (everything | medium | quiet)
 argument-hint: everything | medium | quiet
 ---
 
-Run the Echo verbosity command using the Bash tool, forwarding the requested
+Run the Sonari verbosity command using the Bash tool, forwarding the requested
 level:
 
 ```
-echo verbosity $ARGUMENTS
+sonari verbosity $ARGUMENTS
 ```
 
 This is a silent control action. Print nothing to the user on success — just run

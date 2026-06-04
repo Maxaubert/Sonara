@@ -1,7 +1,7 @@
-from echo.queue import SpeechQueue
-from echo.sessions import SessionManager
-from echo.daemon import SpeechDaemon
-from echo.config import DEFAULTS
+from sonari.queue import SpeechQueue
+from sonari.sessions import SessionManager
+from sonari.daemon import SpeechDaemon
+from sonari.config import DEFAULTS
 
 
 class FakeSpeaker:

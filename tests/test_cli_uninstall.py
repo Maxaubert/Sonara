@@ -2,26 +2,26 @@ import json
 import os
 from unittest import mock
 
-from echo import cli
+from sonari import cli
 
 
-def test_uninstall_removes_launchagent_and_echo_dir(tmp_path):
-    plist = tmp_path / "com.echo.speechd.plist"
+def test_uninstall_removes_launchagent_and_sonari_dir(tmp_path):
+    plist = tmp_path / "com.sonari.speechd.plist"
     plist.write_text("<plist/>")
-    echo_dir = tmp_path / ".echo"
-    echo_dir.mkdir()
-    (echo_dir / "config.json").write_text("{}")
+    sonari_dir = tmp_path / ".sonari"
+    sonari_dir.mkdir()
+    (sonari_dir / "config.json").write_text("{}")
 
     run = mock.Mock(return_value=0)
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
-         mock.patch.object(cli.paths, "ECHO_DIR", echo_dir), \
+         mock.patch.object(cli.paths, "SONARI_DIR", sonari_dir), \
          mock.patch.object(cli, "_legacy_migrate", return_value=[]) as mig:
         rc = cli.uninstall()
 
     assert rc == 0
     assert not plist.exists()
-    assert not echo_dir.exists()
+    assert not sonari_dir.exists()
     assert any(c.args[0][0] == "unload" for c in run.call_args_list)
     mig.assert_called_once()
 
@@ -64,7 +64,7 @@ def test_legacy_migrate_on_clean_machine_is_safe(tmp_path):
 
 
 def test_uninstall_subcommand_invokes_uninstall():
-    with mock.patch("echo.cli.uninstall", return_value=0) as un:
+    with mock.patch("sonari.cli.uninstall", return_value=0) as un:
         rc = cli.main(["uninstall"])
     un.assert_called_once()
     assert rc == 0

@@ -1,7 +1,7 @@
 import json
 
-from echo import protocol
-from echo.protocol import MsgType, PROTOCOL_VERSION, encode, decode
+from sonari import protocol
+from sonari.protocol import MsgType, PROTOCOL_VERSION, encode, decode
 
 
 def test_protocol_version_is_one():

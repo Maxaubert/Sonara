@@ -1,11 +1,11 @@
 ---
-description: Run Echo health checks (say, afplay, voice, daemon, hooks)
+description: Run Sonari health checks (say, afplay, voice, daemon, hooks)
 ---
 
-Run the Echo doctor command using the Bash tool:
+Run the Sonari doctor command using the Bash tool:
 
 ```
-echo doctor
+sonari doctor
 ```
 
 Print the command's output to the user verbatim so they can see which health

@@ -1,11 +1,11 @@
 ---
-description: Show Echo speech daemon status (verbosity, rate, voice, queue)
+description: Show Sonari speech daemon status (verbosity, rate, voice, queue)
 ---
 
-Run the Echo status command using the Bash tool:
+Run the Sonari status command using the Bash tool:
 
 ```
-echo status
+sonari status
 ```
 
 Print the command's output to the user verbatim so they can see the current

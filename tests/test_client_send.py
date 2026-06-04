@@ -2,12 +2,12 @@ import json
 import socket
 import threading
 
-from echo import paths
-from echo.client import send
-from echo.protocol import PROTOCOL_VERSION, encode
+from sonari import paths
+from sonari.client import send
+from sonari.protocol import PROTOCOL_VERSION, encode
 
 
-def _echo_server(sock_path, ready, captured):
+def _reply_server(sock_path, ready, captured):
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(sock_path)
     srv.listen(1)
@@ -39,12 +39,12 @@ def _echo_server(sock_path, ready, captured):
 def test_send_no_reply(tmp_path, monkeypatch):
     sock_path = str(tmp_path / "speechd.sock")
     monkeypatch.setattr(paths, "SOCKET_PATH", sock_path, raising=False)
-    import echo.client as client_mod
+    import sonari.client as client_mod
     monkeypatch.setattr(client_mod, "SOCKET_PATH", sock_path, raising=False)
 
     ready = threading.Event()
     captured = {}
-    t = threading.Thread(target=_echo_server, args=(sock_path, ready, captured), daemon=True)
+    t = threading.Thread(target=_reply_server, args=(sock_path, ready, captured), daemon=True)
     t.start()
     assert ready.wait(2.0)
 
@@ -57,12 +57,12 @@ def test_send_no_reply(tmp_path, monkeypatch):
 
 def test_send_round_trip_reply(tmp_path, monkeypatch):
     sock_path = str(tmp_path / "speechd.sock")
-    import echo.client as client_mod
+    import sonari.client as client_mod
     monkeypatch.setattr(client_mod, "SOCKET_PATH", sock_path, raising=False)
 
     ready = threading.Event()
     captured = {}
-    t = threading.Thread(target=_echo_server, args=(sock_path, ready, captured), daemon=True)
+    t = threading.Thread(target=_reply_server, args=(sock_path, ready, captured), daemon=True)
     t.start()
     assert ready.wait(2.0)
 

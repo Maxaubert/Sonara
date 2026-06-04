@@ -1,12 +1,12 @@
 """Validate the shipped plugin manifests as real JSON and assert every
-hooks.json command points at an existing bin/echo-hook under the repo root."""
+hooks.json command points at an existing bin/sonari-hook under the repo root."""
 import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
 HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
-ECHO_HOOK = REPO_ROOT / "bin" / "echo-hook"
+SONARI_HOOK = REPO_ROOT / "bin" / "sonari-hook"
 
 
 def _load(path: Path) -> dict:
@@ -20,8 +20,8 @@ def test_plugin_json_is_valid_and_named():
     assert data.get("name"), "plugin.json must declare a non-empty name"
 
 
-def test_echo_hook_shim_exists():
-    assert ECHO_HOOK.is_file(), f"missing hook shim: {ECHO_HOOK}"
+def test_sonari_hook_shim_exists():
+    assert SONARI_HOOK.is_file(), f"missing hook shim: {SONARI_HOOK}"
 
 
 def _iter_hook_commands(data: dict):
@@ -45,23 +45,23 @@ def _iter_hook_commands(data: dict):
     yield from walk(data)
 
 
-def test_hooks_json_commands_point_at_existing_echo_hook():
+def test_hooks_json_commands_point_at_existing_sonari_hook():
     data = _load(HOOKS_JSON)
     commands = list(_iter_hook_commands(data))
     assert commands, "hooks.json declares no commands"
 
     for cmd in commands:
-        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/echo-hook <Event>.
+        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonari-hook <Event>.
         assert "${CLAUDE_PLUGIN_ROOT}" in cmd, (
             f"command must use ${{CLAUDE_PLUGIN_ROOT}}: {cmd!r}"
         )
         # Resolve the plugin-root-relative path to this repo and assert it
-        # points at the existing bin/echo-hook shim.
+        # points at the existing bin/sonari-hook shim.
         rel = cmd.split("${CLAUDE_PLUGIN_ROOT}", 1)[1].lstrip("/")
-        # rel looks like 'bin/echo-hook MessageDisplay' -> take the path token.
+        # rel looks like 'bin/sonari-hook MessageDisplay' -> take the path token.
         path_token = rel.split()[0]
         resolved = REPO_ROOT / path_token
-        assert resolved == ECHO_HOOK, f"command path {path_token!r} != bin/echo-hook"
+        assert resolved == SONARI_HOOK, f"command path {path_token!r} != bin/sonari-hook"
         assert resolved.is_file(), f"hook command target does not exist: {resolved}"
 
 

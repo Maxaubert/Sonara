@@ -10,40 +10,40 @@ def _read(name):
 
 
 def test_all_command_files_exist():
-    for name in ("echo:status.md", "echo:verbosity.md", "echo:stop.md",
-                 "echo:repeat.md", "echo:doctor.md"):
+    for name in ("sonari:status.md", "sonari:verbosity.md", "sonari:stop.md",
+                 "sonari:repeat.md", "sonari:doctor.md"):
         assert os.path.exists(os.path.join(CMD, name)), name
 
 
 def test_status_runs_status_and_shows_output():
-    txt = _read("echo:status.md")
-    assert "echo status" in txt
+    txt = _read("sonari:status.md")
+    assert "sonari status" in txt
     assert "Bash" in txt
     # status surfaces output to the user.
     assert "print" in txt.lower()
 
 
 def test_verbosity_passes_argument_and_is_silent():
-    txt = _read("echo:verbosity.md")
-    assert "echo verbosity" in txt
+    txt = _read("sonari:verbosity.md")
+    assert "sonari verbosity" in txt
     assert "$ARGUMENTS" in txt or "ARGUMENTS" in txt
     assert "nothing" in txt.lower()
 
 
 def test_stop_is_silent():
-    txt = _read("echo:stop.md")
-    assert "echo stop" in txt
+    txt = _read("sonari:stop.md")
+    assert "sonari stop" in txt
     assert "nothing" in txt.lower()
 
 
 def test_repeat_is_silent():
-    txt = _read("echo:repeat.md")
-    assert "echo repeat" in txt
+    txt = _read("sonari:repeat.md")
+    assert "sonari repeat" in txt
     assert "nothing" in txt.lower()
 
 
 def test_doctor_shows_output():
-    txt = _read("echo:doctor.md")
-    assert "echo doctor" in txt
+    txt = _read("sonari:doctor.md")
+    assert "sonari doctor" in txt
     assert "Bash" in txt
     assert "print" in txt.lower()

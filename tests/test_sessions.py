@@ -1,4 +1,4 @@
-from echo.sessions import SessionManager
+from sonari.sessions import SessionManager
 
 
 def test_foreground_starts_none():

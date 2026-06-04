@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from echo.hooks_entry import handle_event
-from echo.protocol import PROTOCOL_VERSION, MsgType
+from sonari.hooks_entry import handle_event
+from sonari.protocol import PROTOCOL_VERSION, MsgType
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -56,6 +56,6 @@ def test_at_least_one_fixture_exists():
     zero fixtures would be a silent false positive."""
     files = _fixture_files()
     assert files, (
-        "no tests/fixtures/*.json captured; run the ECHO_CAPTURE capture task "
+        "no tests/fixtures/*.json captured; run the SONARI_CAPTURE capture task "
         "against a real session first"
     )

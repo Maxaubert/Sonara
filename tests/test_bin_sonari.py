@@ -3,12 +3,12 @@ import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHIM = os.path.join(REPO, "bin", "echo")
+SHIM = os.path.join(REPO, "bin", "sonari")
 
 
 def _env():
     env = dict(os.environ)
-    # Make 'echo' importable without an install.
+    # Make 'sonari' importable without an install.
     src = os.path.join(REPO, "src")
     env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
     return env

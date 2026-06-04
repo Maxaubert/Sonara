@@ -5,7 +5,7 @@ fenced code blocks with a spoken one-line summary.
 """
 import re
 
-from echo.cleaner import clean_markdown
+from sonari.cleaner import clean_markdown
 
 _FENCE = "```"
 # a complete sentence ends at . ! or ? followed by whitespace or end-of-string

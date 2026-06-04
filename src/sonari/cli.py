@@ -1,7 +1,7 @@
-"""Echo command-line interface.
+"""Sonari command-line interface.
 
 Subcommands fall into two groups:
-  * control  -> build a protocol message and hand it to echo.client.send
+  * control  -> build a protocol message and hand it to sonari.client.send
   * local    -> doctor / install / uninstall / daemon (run in-process)
 
 main(argv) returns an int exit code. Heavy imports (client, daemon) are done
@@ -120,19 +120,19 @@ def _clean_settings_json(path: str) -> bool:
 
 
 def _send(msg: dict, expect_reply: bool = False):
-    from . import client  # local import so tests can patch echo.client.send
+    from . import client  # local import so tests can patch sonari.client.send
     return client.send(msg, expect_reply=expect_reply)
 
 
 def _daemon_not_running_message() -> str:
-    return "Echo daemon is not running. Run: echo install"
+    return "Sonari daemon is not running. Run: sonari install"
 
 
 def _cmd_status(_args) -> int:
     reply = _send({"v": PROTOCOL_VERSION, "type": MsgType.STATUS},
                   expect_reply=True)
     if reply is None:
-        print("echo: no response from daemon (is it running?)")
+        print("sonari: no response from daemon (is it running?)")
         return 1
     print(json.dumps(reply, indent=2))
     return 0
@@ -170,8 +170,8 @@ def _cmd_skip(_args) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="echo",
-                                description="Echo eyes-free TTS for Claude Code")
+    p = argparse.ArgumentParser(prog="sonari",
+                                description="Sonari eyes-free TTS for Claude Code")
     sub = p.add_subparsers(dest="command")
 
     sub.add_parser("status", help="print daemon status").set_defaults(
@@ -227,13 +227,13 @@ def doctor() -> list:
         results.append(("enhanced voice", False, f"error: {exc}"))
 
     try:
-        paths.ensure_echo_dir()
-        writable = os.access(str(paths.ECHO_DIR), os.W_OK)
-        results.append(("ECHO_DIR writable", writable,
-                        str(paths.ECHO_DIR) if writable
-                        else f"{paths.ECHO_DIR} is not writable"))
+        paths.ensure_sonari_dir()
+        writable = os.access(str(paths.SONARI_DIR), os.W_OK)
+        results.append(("SONARI_DIR writable", writable,
+                        str(paths.SONARI_DIR) if writable
+                        else f"{paths.SONARI_DIR} is not writable"))
     except Exception as exc:  # noqa: BLE001
-        results.append(("ECHO_DIR writable", False, f"error: {exc}"))
+        results.append(("SONARI_DIR writable", False, f"error: {exc}"))
 
     try:
         from . import client
@@ -244,7 +244,7 @@ def doctor() -> list:
                         "reachable" if ok else "no ok reply from daemon"))
     except Exception as exc:  # noqa: BLE001
         results.append(("daemon socket", False,
-                        f"not reachable: {exc} (run 'echo install')"))
+                        f"not reachable: {exc} (run 'sonari install')"))
 
     hooks_json = _repo_hooks_json_path()
     present = os.path.exists(hooks_json)
@@ -266,9 +266,9 @@ def _cmd_doctor(_args) -> int:
 
 import subprocess
 
-LAUNCH_AGENT_LABEL = "com.echo.speechd"
+LAUNCH_AGENT_LABEL = "com.sonari.speechd"
 LAUNCH_AGENT_PATH = os.path.expanduser(
-    "~/Library/LaunchAgents/com.echo.speechd.plist")
+    "~/Library/LaunchAgents/com.sonari.speechd.plist")
 
 
 def _repo_root() -> str:
@@ -276,7 +276,7 @@ def _repo_root() -> str:
 
 
 def _daemon_shim_path() -> str:
-    return os.path.join(paths.repo_root(), "bin", "echo-daemon")
+    return os.path.join(paths.repo_root(), "bin", "sonari-daemon")
 
 
 def _launchagent_plist(daemon_path: str, log_path: str,
@@ -286,11 +286,11 @@ def _launchagent_plist(daemon_path: str, log_path: str,
     *python_executable* must be an absolute path to the Python interpreter.
     It defaults to ``sys.executable`` so that launchd (which runs with a
     minimal PATH that may not include the venv) always uses the same
-    interpreter that the user installed the ``echo`` package into.
+    interpreter that the user installed the ``sonari`` package into.
 
     *daemon_path* is kept as a parameter for API compatibility but is no
     longer embedded in ProgramArguments; the plist now runs the module
-    directly via ``<python> -m echo.daemon`` to avoid any reliance on PATH.
+    directly via ``<python> -m sonari.daemon`` to avoid any reliance on PATH.
     """
     if python_executable is None:
         python_executable = sys.executable
@@ -306,7 +306,7 @@ def _launchagent_plist(daemon_path: str, log_path: str,
         '    <array>\n'
         f'        <string>{python_executable}</string>\n'
         '        <string>-m</string>\n'
-        '        <string>echo.daemon</string>\n'
+        '        <string>sonari.daemon</string>\n'
         '    </array>\n'
         '    <key>RunAtLoad</key>\n'
         '    <true/>\n'
@@ -332,8 +332,8 @@ def _launchctl(args: list) -> int:
 
 
 def install() -> int:
-    """Install the speech daemon as a LaunchAgent and ensure ECHO_DIR."""
-    paths.ensure_echo_dir()
+    """Install the speech daemon as a LaunchAgent and ensure SONARI_DIR."""
+    paths.ensure_sonari_dir()
     daemon = _daemon_shim_path()
     log = str(paths.LOG_PATH)
     xml = _launchagent_plist(daemon, log, python_executable=sys.executable)
@@ -353,11 +353,10 @@ def install() -> int:
               f"the daemon will still autostart on next login.")
 
     print("")
-    print("Enable the Echo plugin in Claude Code:")
-    print(f"  1. Add this repo as a plugin marketplace/source: {_repo_root()}")
-    print("  2. In Claude Code run: /plugin")
-    print("  3. Enable 'echo' so its hooks load.")
-    print("Then run 'echo doctor' to verify everything is wired up.")
+    print("Enable the Sonari plugin in Claude Code:")
+    print(f"  - Per session: claude --plugin-dir {_repo_root()}")
+    print("  - Or add this repo as a local plugin marketplace and enable it via /plugin.")
+    print("Then run 'sonari doctor' to verify everything is wired up.")
     return 0
 
 
@@ -401,7 +400,7 @@ def _legacy_migrate(home: Optional[str] = None) -> list:
 
 
 def uninstall() -> int:
-    """Remove the LaunchAgent + ECHO_DIR and migrate away a legacy install."""
+    """Remove the LaunchAgent + SONARI_DIR and migrate away a legacy install."""
     if os.path.exists(LAUNCH_AGENT_PATH):
         _launchctl(["unload", LAUNCH_AGENT_PATH])
         try:
@@ -412,15 +411,15 @@ def uninstall() -> int:
     else:
         print("No LaunchAgent installed.")
 
-    echo_dir = str(paths.ECHO_DIR)
-    if os.path.isdir(echo_dir):
-        _shutil.rmtree(echo_dir, ignore_errors=True)
-        print(f"Removed {echo_dir}")
+    sonari_dir = str(paths.SONARI_DIR)
+    if os.path.isdir(sonari_dir):
+        _shutil.rmtree(sonari_dir, ignore_errors=True)
+        print(f"Removed {sonari_dir}")
 
     print("Checking for a prior legacy claude-tts install...")
     for line in _legacy_migrate():
         print(f"  - {line}")
-    print("Done. Disable the 'echo' plugin via /plugin in Claude Code if enabled.")
+    print("Done. Disable the 'sonari' plugin via /plugin in Claude Code if enabled.")
     return 0
 
 
@@ -438,10 +437,10 @@ def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
-    sub.add_parser("install", help="install the LaunchAgent + ECHO_DIR").set_defaults(
+    sub.add_parser("install", help="install the LaunchAgent + SONARI_DIR").set_defaults(
         func=_cmd_install)
     sub.add_parser("uninstall",
-                   help="remove Echo and clean a legacy install").set_defaults(
+                   help="remove Sonari and clean a legacy install").set_defaults(
         func=_cmd_uninstall)
     sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
         func=_cmd_daemon)

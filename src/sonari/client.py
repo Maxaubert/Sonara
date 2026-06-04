@@ -1,13 +1,13 @@
 import socket
 import time
 
-from echo.protocol import encode, decode
-from echo.paths import SOCKET_PATH, socket_connectable
-from echo.daemon import ensure_running
+from sonari.protocol import encode, decode
+from sonari.paths import SOCKET_PATH, socket_connectable
+from sonari.daemon import ensure_running
 
 
 class DaemonNotRunning(OSError):
-    """Raised when the Echo daemon socket cannot be reached."""
+    """Raised when the Sonari daemon socket cannot be reached."""
 
 
 def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
@@ -18,7 +18,7 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
             s.connect(str(SOCKET_PATH))
         except (ConnectionRefusedError, FileNotFoundError, OSError) as exc:
             raise DaemonNotRunning(
-                "Echo daemon is not running. Run: echo install"
+                "Sonari daemon is not running. Run: sonari install"
             ) from exc
         s.sendall(encode(msg))
         if not expect_reply:

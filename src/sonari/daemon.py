@@ -3,11 +3,11 @@ import socket
 import subprocess
 import threading
 
-from echo.protocol import MsgType, encode, decode
-from echo.queue import SpeechItem
-from echo.assembler import ProseAssembler
-from echo.config import save_config, load_config
-from echo.paths import SOCKET_PATH, ensure_echo_dir, socket_connectable, repo_root
+from sonari.protocol import MsgType, encode, decode
+from sonari.queue import SpeechItem
+from sonari.assembler import ProseAssembler
+from sonari.config import save_config, load_config
+from sonari.paths import SOCKET_PATH, ensure_sonari_dir, socket_connectable, repo_root
 
 
 class SpeechDaemon:
@@ -271,7 +271,7 @@ class SpeechDaemon:
             th.start()
 
     def run(self) -> None:
-        ensure_echo_dir()
+        ensure_sonari_dir()
         # unlink a stale socket file before binding
         try:
             os.unlink(SOCKET_PATH)
@@ -309,7 +309,7 @@ class SpeechDaemon:
 
 
 def _daemon_shim_path() -> str:
-    return os.path.join(repo_root(), "bin", "echo-daemon")
+    return os.path.join(repo_root(), "bin", "sonari-daemon")
 
 
 def ensure_running() -> None:
@@ -326,9 +326,9 @@ def ensure_running() -> None:
 
 
 def main() -> None:
-    from echo.speaker import Speaker
-    from echo.queue import SpeechQueue
-    from echo.sessions import SessionManager
+    from sonari.speaker import Speaker
+    from sonari.queue import SpeechQueue
+    from sonari.sessions import SessionManager
 
     cfg = load_config()
     queue = SpeechQueue()

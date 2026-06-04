@@ -4,8 +4,8 @@ import tempfile
 import threading
 import time
 
-from echo.queue import SpeechItem
-from echo.protocol import MsgType, encode, decode
+from sonari.queue import SpeechItem
+from sonari.protocol import MsgType, encode, decode
 from tests.daemon_helpers import make_daemon
 
 

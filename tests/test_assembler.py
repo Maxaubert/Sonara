@@ -1,4 +1,4 @@
-from echo.assembler import ProseAssembler
+from sonari.assembler import ProseAssembler
 
 
 def test_two_sentences_across_two_feeds_emit_both_and_hold_nothing():

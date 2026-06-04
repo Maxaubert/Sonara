@@ -1,16 +1,16 @@
 from unittest import mock
 
-from echo import cli
+from sonari import cli
 
 
 def _ok_patches():
     """Context managers that make every doctor check pass."""
     return [
         mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
-        mock.patch("echo.speaker.best_enhanced_voice", return_value="Ava (Premium)"),
+        mock.patch("sonari.speaker.best_enhanced_voice", return_value="Ava (Premium)"),
         mock.patch("os.access", return_value=True),
-        mock.patch("echo.paths.ensure_echo_dir"),
-        mock.patch("echo.client.send", return_value={"ok": True}),
+        mock.patch("sonari.paths.ensure_sonari_dir"),
+        mock.patch("sonari.client.send", return_value={"ok": True}),
         mock.patch("os.path.exists", return_value=True),
     ]
 
@@ -42,7 +42,7 @@ def test_doctor_returns_tuples():
 
 def test_doctor_all_ok():
     d = _as_dict(_run(_ok_patches()))
-    for key in ("say", "afplay", "enhanced voice", "ECHO_DIR writable",
+    for key in ("say", "afplay", "enhanced voice", "SONARI_DIR writable",
                 "daemon socket", "plugin hooks.json"):
         assert key in d, key
         assert d[key][0] is True, (key, d[key])
@@ -60,7 +60,7 @@ def test_doctor_say_missing():
 
 def test_doctor_socket_unreachable():
     patches = _ok_patches()
-    patches[4] = mock.patch("echo.client.send",
+    patches[4] = mock.patch("sonari.client.send",
                             side_effect=ConnectionRefusedError())
     d = _as_dict(_run(patches))
     assert d["daemon socket"][0] is False
@@ -74,7 +74,7 @@ def test_doctor_hooks_json_missing():
 
 
 def test_doctor_subcommand_prints_and_returns(capsys):
-    with mock.patch("echo.cli.doctor",
+    with mock.patch("sonari.cli.doctor",
                     return_value=[("say", True, "/usr/bin/say"),
                                   ("afplay", False, "not found")]):
         rc = cli.main(["doctor"])
@@ -85,7 +85,7 @@ def test_doctor_subcommand_prints_and_returns(capsys):
 
 
 def test_doctor_subcommand_all_ok_returns_zero(capsys):
-    with mock.patch("echo.cli.doctor",
+    with mock.patch("sonari.cli.doctor",
                     return_value=[("say", True, "ok")]):
         rc = cli.main(["doctor"])
     assert rc == 0

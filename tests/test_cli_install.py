@@ -3,19 +3,19 @@ import plistlib
 import sys
 from unittest import mock
 
-from echo import cli
+from sonari import cli
 
 
 def test_launchagent_plist_is_valid_and_complete(tmp_path):
-    daemon = "/repo/bin/echo-daemon"
-    log = "/home/u/.echo/speechd.log"
+    daemon = "/repo/bin/sonari-daemon"
+    log = "/home/u/.sonari/speechd.log"
     fake_python = "/usr/local/venv/bin/python3"
     xml = cli._launchagent_plist(daemon, log, python_executable=fake_python)
     assert isinstance(xml, str)
     assert xml.startswith("<?xml")
     data = plistlib.loads(xml.encode("utf-8"))
     assert data["Label"] == cli.LAUNCH_AGENT_LABEL
-    assert data["ProgramArguments"] == [fake_python, "-m", "echo.daemon"]
+    assert data["ProgramArguments"] == [fake_python, "-m", "sonari.daemon"]
     assert data["RunAtLoad"] is True
     assert data["KeepAlive"] is True
     assert data["StandardErrorPath"] == log
@@ -29,8 +29,8 @@ def test_launchagent_plist_uses_absolute_python_not_bare_python3(tmp_path):
     Using bare 'python3' would silently invoke the wrong interpreter (or
     fail), so the first element of ProgramArguments must be an absolute path.
     """
-    daemon = "/repo/bin/echo-daemon"
-    log = "/home/u/.echo/speechd.log"
+    daemon = "/repo/bin/sonari-daemon"
+    log = "/home/u/.sonari/speechd.log"
 
     # Default: no python_executable supplied — must fall back to sys.executable.
     xml = cli._launchagent_plist(daemon, log)
@@ -51,8 +51,8 @@ def test_launchagent_plist_uses_absolute_python_not_bare_python3(tmp_path):
         f"Expected sys.executable {sys.executable!r}, got {interpreter!r}"
     )
     # Module invocation must follow.
-    assert prog_args[1:] == ["-m", "echo.daemon"], (
-        f"Expected ['-m', 'echo.daemon'] after interpreter, got {prog_args[1:]!r}"
+    assert prog_args[1:] == ["-m", "sonari.daemon"], (
+        f"Expected ['-m', 'sonari.daemon'] after interpreter, got {prog_args[1:]!r}"
     )
 
 
@@ -62,7 +62,7 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
     run = mock.Mock(return_value=0)
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
-         mock.patch("echo.paths.ensure_echo_dir") as ensure:
+         mock.patch("sonari.paths.ensure_sonari_dir") as ensure:
         rc = cli.install()
     assert rc == 0
     ensure.assert_called_once()
@@ -74,7 +74,7 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
 
 
 def test_install_subcommand_invokes_install():
-    with mock.patch("echo.cli.install", return_value=0) as inst:
+    with mock.patch("sonari.cli.install", return_value=0) as inst:
         rc = cli.main(["install"])
     inst.assert_called_once()
     assert rc == 0

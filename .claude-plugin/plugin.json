@@ -1,5 +1,5 @@
 {
-  "name": "echo",
+  "name": "sonari",
   "version": "0.1.0",
   "description": "Eyes-free text-to-speech layer for Claude Code (macOS)",
   "author": {

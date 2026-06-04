@@ -1,9 +1,9 @@
-"""Echo persisted configuration: DEFAULTS plus load/save against CONFIG_PATH."""
+"""Sonari persisted configuration: DEFAULTS plus load/save against CONFIG_PATH."""
 
 import json
 import os
 
-from echo.paths import CONFIG_PATH, ECHO_DIR, ensure_echo_dir
+from sonari.paths import CONFIG_PATH, SONARI_DIR, ensure_sonari_dir
 
 DEFAULTS = {
     "voice": None,
@@ -56,9 +56,9 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    """Atomically persist cfg to CONFIG_PATH (temp file in ECHO_DIR + os.replace)."""
-    ensure_echo_dir()
-    tmp_path = ECHO_DIR / (CONFIG_PATH.name + ".tmp")
+    """Atomically persist cfg to CONFIG_PATH (temp file in SONARI_DIR + os.replace)."""
+    ensure_sonari_dir()
+    tmp_path = SONARI_DIR / (CONFIG_PATH.name + ".tmp")
     with open(tmp_path, "w", encoding="utf-8") as fh:
         json.dump(cfg, fh, indent=2)
         fh.flush()

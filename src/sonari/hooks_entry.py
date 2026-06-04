@@ -1,7 +1,7 @@
 """Pure mapping from Claude Code hook events to protocol message dicts."""
 import os
 
-from echo.protocol import PROTOCOL_VERSION, MsgType
+from sonari.protocol import PROTOCOL_VERSION, MsgType
 
 
 def _msg(**fields):
