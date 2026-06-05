@@ -1,8 +1,10 @@
 """Test double for sonari.client: records sent messages instead of using a socket.
 
-Shadowed onto PYTHONPATH ahead of src/ so bin/sonari-hook imports THIS client.
-The pure sonari.hooks_entry and sonari.protocol still resolve from src/ because this
-package only provides a `client` submodule.
+Loaded by tests/_fakeclient/sitecustomize.py at interpreter startup and registered
+as sys.modules["sonari.client"] so bin/sonari-hook's `from sonari import client`
+returns THIS client. The shim puts src/ at sys.path[0] unconditionally, so sonari
+itself plus sonari.hooks_entry and sonari.protocol still resolve from src/; only
+the pre-injected `client` submodule is overridden.
 
 Environment variables:
   SONARI_FAKE_RAISE         -- raise on every call to ensure_daemon and send.

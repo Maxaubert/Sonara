@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHIM = os.path.join(REPO, "bin", "sonari")
 
@@ -38,9 +40,6 @@ def test_shim_forwards_subcommand_exit_code():
                           env=_env())
     assert proc.returncode in (0, 1)
     assert "say" in proc.stdout
-
-
-import pytest
 
 
 def test_cli_runs_under_usr_bin_python3_with_scrubbed_env():

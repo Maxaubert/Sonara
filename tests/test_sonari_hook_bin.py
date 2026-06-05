@@ -8,10 +8,18 @@ REPO = Path(__file__).resolve().parent.parent
 HOOK = REPO / "bin" / "sonari-hook"
 
 
-def _run(event, stdin_bytes, extra_env=None):
+def _run(event, stdin_bytes, extra_env=None, pythonpath_prefix=None):
     env = dict(os.environ)
     # Force the daemon/send path into a no-op fake so the shim never touches a socket.
-    env["PYTHONPATH"] = str(REPO / "tests" / "_fakeclient") + os.pathsep + str(REPO / "src") + os.pathsep + env.get("PYTHONPATH", "")
+    parts = []
+    if pythonpath_prefix:
+        parts.extend(pythonpath_prefix)
+    parts.extend([
+        str(REPO / "tests" / "_fakeclient"),
+        str(REPO / "src"),
+        env.get("PYTHONPATH", ""),
+    ])
+    env["PYTHONPATH"] = os.pathsep.join(parts)
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
@@ -114,37 +122,65 @@ def test_hook_partial_batch_send_failure_does_not_drop_subsequent_messages(tmp_p
     assert lines[0]["type"] == "choice"
 
 
-def test_hook_src_is_first_on_syspath_and_shadows_stale_global(tmp_path):
-    """A stale globally-installed 'sonari' must NOT shadow the plugin's own src.
-
-    We plant a fake 'sonari' package EARLIER on PYTHONPATH than the plugin src
-    and assert the hook still resolves the real plugin package (its handle_event
-    produces a real prose message). The rewritten shim inserts ../src at
-    sys.path[0] before importing, so the real package wins.
-    """
-    stale = tmp_path / "stale"
-    pkg = stale / "sonari"
+def _plant_stale_sonari(stale_dir, init_body):
+    """Create a stale 'sonari' package whose hooks_entry crashes if imported."""
+    pkg = stale_dir / "sonari"
     pkg.mkdir(parents=True)
-    (pkg / "__init__.py").write_text("RAISE = True\n")
+    (pkg / "__init__.py").write_text(init_body)
     # A stale hooks_entry that would crash if it were the one imported.
     (pkg / "hooks_entry.py").write_text("raise RuntimeError('stale wins')\n")
 
-    sent_log = tmp_path / "sent.jsonl"
-    env = dict(os.environ)
-    # Put the STALE dir before the plugin src AND the fakeclient on PYTHONPATH.
-    env["PYTHONPATH"] = os.pathsep.join([
-        str(stale),
-        str(REPO / "tests" / "_fakeclient"),
-        str(REPO / "src"),
-        env.get("PYTHONPATH", ""),
-    ])
-    env["SONARI_FAKE_SENT_LOG"] = str(sent_log)
-    payload = json.dumps({"session_id": "s1", "delta": "Hi.",
-                          "index": 0, "final": True}).encode()
-    res = subprocess.run([sys.executable, str(HOOK), "MessageDisplay"],
-                         input=payload, capture_output=True, env=env)
+
+def _assert_real_package_won(res, sent_log):
     assert res.returncode == 0, res.stderr.decode()
     lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
     assert len(lines) == 1
     assert lines[0]["type"] == "prose"
     assert lines[0]["delta"] == "Hi."
+
+
+def test_hook_src_is_first_on_syspath_and_shadows_stale_global(tmp_path):
+    """A stale globally-installed 'sonari' must NOT shadow the plugin's own src.
+
+    We plant a fake 'sonari' package (a plain shadowing dir, no extend_path)
+    EARLIER on PYTHONPATH than the plugin src and assert the hook still resolves
+    the real plugin package (its handle_event produces a real prose message).
+    The shim removes any existing src entry and inserts ../src at sys.path[0]
+    before importing, so the real package always wins.
+    """
+    stale = tmp_path / "stale"
+    _plant_stale_sonari(stale, "RAISE = True\n")
+    sent_log = tmp_path / "sent.jsonl"
+    payload = json.dumps({"session_id": "s1", "delta": "Hi.",
+                          "index": 0, "final": True}).encode()
+    res = _run(
+        "MessageDisplay",
+        payload,
+        extra_env={"SONARI_FAKE_SENT_LOG": str(sent_log)},
+        pythonpath_prefix=[str(stale)],
+    )
+    _assert_real_package_won(res, sent_log)
+
+
+def test_hook_src_wins_over_stale_extend_path_namespace(tmp_path):
+    """A stale 'sonari' using pkgutil.extend_path (the structure of legacy
+    editable/develop installs and namespace packages) must ALSO lose to the
+    plugin's own src. Its hooks_entry would raise if imported, so if the stale
+    copy won the hook would silently send nothing. The shim's unconditional
+    insert-at-0 guarantees src wins regardless of the stale package's shape.
+    """
+    stale = tmp_path / "stale"
+    _plant_stale_sonari(
+        stale,
+        "import pkgutil\n__path__ = pkgutil.extend_path(__path__, __name__)\n",
+    )
+    sent_log = tmp_path / "sent.jsonl"
+    payload = json.dumps({"session_id": "s1", "delta": "Hi.",
+                          "index": 0, "final": True}).encode()
+    res = _run(
+        "MessageDisplay",
+        payload,
+        extra_env={"SONARI_FAKE_SENT_LOG": str(sent_log)},
+        pythonpath_prefix=[str(stale)],
+    )
+    _assert_real_package_won(res, sent_log)
