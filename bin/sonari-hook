@@ -30,14 +30,38 @@ def main() -> None:
         except Exception:
             pass
 
-    # Resolve the package: prefer an installed 'sonari'; fall back to ../src.
-    try:
-        import sonari  # noqa: F401
-    except Exception:
-        here = os.path.dirname(os.path.abspath(__file__))
-        src = os.path.join(os.path.dirname(here), "src")
-        if src not in sys.path:
-            sys.path.insert(0, src)
+    # Resolve the package from the plugin's own src/ (self-contained; never rely
+    # on an installed 'sonari'). The plugin src must win over any stale global
+    # 'sonari' copy on sys.path. We keep cooperative pkgutil.extend_path namespace
+    # packages (e.g. test doubles) ahead of src so they can still override a
+    # single submodule, and demote any plain shadowing 'sonari' dirs to the end.
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(os.path.dirname(here), "src")
+
+    def _shadows_src(entry):
+        if entry == src:
+            return None
+        init = os.path.join(entry, "sonari", "__init__.py")
+        if not os.path.isfile(init):
+            return None
+        try:
+            with open(init, encoding="utf-8") as f:
+                return "extend_path" in f.read()  # True => cooperative namespace
+        except Exception:
+            return False  # unreadable => treat as a plain shadowing copy
+
+    coop, shadowing, rest = [], [], []
+    for entry in sys.path:
+        if entry == src:
+            continue
+        kind = _shadows_src(entry)
+        if kind is True:
+            coop.append(entry)
+        elif kind is False:
+            shadowing.append(entry)
+        else:
+            rest.append(entry)
+    sys.path[:] = coop + [src] + rest + shadowing
 
     from sonari.hooks_entry import handle_event
     from sonari import client

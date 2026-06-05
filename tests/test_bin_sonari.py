@@ -38,3 +38,26 @@ def test_shim_forwards_subcommand_exit_code():
                           env=_env())
     assert proc.returncode in (0, 1)
     assert "say" in proc.stdout
+
+
+import pytest
+
+
+def test_cli_runs_under_usr_bin_python3_with_scrubbed_env():
+    """PYTHONPATH=<repo>/src /usr/bin/python3 -m sonari.cli --help exits 0 with
+    NO installed sonari anywhere — proves the self-contained source path works on
+    the macOS system interpreter. Skipped if /usr/bin/python3 is absent.
+    """
+    sys_py = "/usr/bin/python3"
+    if not os.path.exists(sys_py):
+        pytest.skip("/usr/bin/python3 not present")
+    # Scrub the environment so nothing but our src/ can supply 'sonari'.
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "PYTHONPATH": os.path.join(REPO, "src"),
+        "HOME": os.environ.get("HOME", "/tmp"),
+    }
+    proc = subprocess.run([sys_py, "-m", "sonari.cli", "--help"],
+                          capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert "usage" in proc.stdout.lower()

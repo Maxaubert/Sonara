@@ -1,2 +1,8 @@
 #!/usr/bin/env bash
-exec python3 -m sonari.daemon "$@"
+# Self-contained: run the plugin's own src with no installed 'sonari'.
+here="$(cd "$(dirname "$0")" && pwd)"
+root="$(cd "$here/.." && pwd)"
+export PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}"
+py="$(command -v python3 || true)"
+[ -x "$py" ] || py="/usr/bin/python3"
+exec "$py" -m sonari.daemon "$@"
