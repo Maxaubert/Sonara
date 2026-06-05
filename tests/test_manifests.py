@@ -82,3 +82,13 @@ def test_every_phase1_event_is_hooked():
     }
     missing = required - keys
     assert not missing, f"hooks.json is missing event hooks: {sorted(missing)}"
+
+
+def test_plugin_json_version_is_0_3_0():
+    data = _load(PLUGIN_JSON)
+    assert data.get("version") == "0.3.0"
+
+
+def test_pyproject_version_is_0_3_0():
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'version = "0.3.0"' in text

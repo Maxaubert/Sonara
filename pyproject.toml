@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sonari"
-version = "0.1.0"
+version = "0.3.0"
 description = "Eyes-free text-to-speech layer for Claude Code (macOS)"
 requires-python = ">=3.9"
 authors = [{ name = "Nima Hakimi", email = "hakimi.nima1@gmail.com" }]

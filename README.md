@@ -21,31 +21,33 @@ a short sound alerts you the moment a question, plan, or permission is waiting.
 ## Requirements
 
 - macOS (Sonari uses the built-in `say` and `afplay` commands).
-- Python 3.10 or newer (`python3 --version`).
+- Python 3.9 or newer — macOS ships `/usr/bin/python3`, which is enough. Sonari
+  picks the best `python3 >= 3.9` it can find automatically.
+- Xcode Command Line Tools for global hotkeys — `xcode-select --install`. (Speech
+  works without them; only the hotkeys need `swiftc`.)
 - Claude Code 2.1.162 or newer.
-- No third-party Python packages at runtime. `pytest` is only needed to run the tests.
+- No third-party Python packages at runtime, and no `pip` install. `pytest` is
+  only needed to run the tests.
 
 ## Install
 
-```bash
-git clone https://github.com/nimkimi/claude-tts ~/projects/claude-tts
-cd ~/projects/claude-tts
-pip install -e .
-```
+Sonari is a self-contained Claude Code plugin: it ships its own source and runs
+on the macOS system Python with no `pip` install.
 
-`pip install -e .` installs the `sonari` package and creates the `sonari` command on your
-PATH.
-
-There is no `claude plugin add` command. To load Sonari as a Claude Code plugin (it
-registers its hooks declaratively — no hand-editing of `settings.json`), use one of:
+1. Enable the `sonari` plugin in Claude Code — either per session with
+   `claude --plugin-dir /path/to/sonari`, or register this repo as a local
+   plugin marketplace and enable `sonari` from the `/plugin` menu.
+2. Run the one-time installer:
 
 ```bash
-# Per session: point Claude Code at this repo's plugin directory.
-claude --plugin-dir ~/projects/claude-tts
+sonari install
 ```
 
-Or register this repo as a **local plugin marketplace** and enable `sonari` from the
-`/plugin` menu so it loads automatically in every session.
+`sonari install` resolves the best `python3 >= 3.9`, builds the hotkey daemon
+locally with `swiftc` (no notarization needed), writes both LaunchAgents with
+absolute paths, and places a `~/.local/bin/sonari` launcher so the `sonari`
+command works in every shell. If `~/.local/bin` is not on your PATH, the
+installer prints the exact line to add.
 
 Verify everything is wired up:
 
@@ -53,10 +55,21 @@ Verify everything is wired up:
 sonari doctor
 ```
 
-`doctor` checks: an enhanced voice is installed, the `say`/`afplay` binaries exist, the
-speech daemon can start and its socket is reachable, the plugin manifests are valid, and the
-seven Phase 1 hooks are registered. Start a Claude Code session and you should hear a
-**ready** earcon.
+`doctor` reports each check pass/fail: an enhanced voice, `say`/`afplay`,
+`python3 >= 3.9`, the resolved plugin path, the speech and hotkey LaunchAgents,
+the daemon socket, the `~/.local/bin/sonari` launcher, and the plugin hooks.
+Start a Claude Code session and you should hear a **ready** earcon.
+
+### Development
+
+Contributors can run the test suite from a venv:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e .[dev]
+.venv/bin/python -m pytest -q
+```
+
+The public install path above does **not** use `pip` — the venv is for tests only.
 
 ## Enhanced-voice setup (recommended)
 
