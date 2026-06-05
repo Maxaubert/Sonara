@@ -167,3 +167,29 @@ def test_client_send_raises_daemon_not_running_on_connection_refused(tmp_path, m
 
     with pytest.raises(DaemonNotRunning):
         client_mod.send({"type": "ping"})
+
+
+def test_rate_subcommand_sends_absolute_set_rate():
+    with mock.patch("sonari.client.send", return_value=None) as send:
+        rc = cli.main(["rate", "300"])
+    msg, _, _ = _sent(send)
+    assert rc == 0
+    assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SET_RATE, "rate": 300}
+    assert "delta" not in msg  # absolute, not a delta
+
+
+def test_voice_subcommand_sends_set_voice():
+    with mock.patch("sonari.client.send", return_value=None) as send:
+        rc = cli.main(["voice", "Zoe (Premium)"])
+    msg, _, _ = _sent(send)
+    assert rc == 0
+    assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SET_VOICE,
+                   "voice": "Zoe (Premium)"}
+
+
+def test_skip_subcommand_sends_skip():
+    with mock.patch("sonari.client.send", return_value=None) as send:
+        rc = cli.main(["skip"])
+    msg, _, _ = _sent(send)
+    assert rc == 0
+    assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SKIP}
