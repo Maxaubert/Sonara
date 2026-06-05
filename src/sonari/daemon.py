@@ -30,6 +30,7 @@ class SpeechDaemon:
         self._poll_interval = 0.1
         self._last_spoken: str | None = None
         self._last_options: str | None = None
+        self._warned_immediate: set[str] = set()
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -90,6 +91,31 @@ class SpeechDaemon:
         action = (msg.get("action") or "").strip()
         return action if action else "Permission needed."
 
+    def _selection_cue(self, session: str, verbosity: str) -> str:
+        if verbosity != "everything":
+            return ""
+        cue = "Press the option's number to choose, or Escape to cancel."
+        if session not in self._warned_immediate:
+            self._warned_immediate.add(session)
+            cue += " Selecting is immediate."
+        return cue
+
+    @staticmethod
+    def _choice_notes(msg) -> str:
+        notes = []
+        questions = msg.get("questions", []) or []
+        if any(isinstance(q, dict) and q.get("multiSelect") for q in questions):
+            notes.append(
+                "Select multiple: press each number, or Space on the "
+                "highlighted item, then Enter to confirm."
+            )
+        if any(
+            isinstance(q, dict) and len(q.get("options", []) or []) > 9
+            for q in questions
+        ):
+            notes.append("More than nine options; use arrow keys for ten and up.")
+        return " ".join(notes)
+
     def handle_message(self, msg):
         t = msg.get("type")
         session = msg.get("session", "")
@@ -111,6 +137,12 @@ class SpeechDaemon:
         if t == MsgType.CHOICE:
             if self.sessions.should_speak(session):
                 text = self._choice_text(msg)
+                extras = [e for e in (
+                    self._choice_notes(msg),
+                    self._selection_cue(session, verbosity),
+                ) if e]
+                if extras:
+                    text = "{0} {1}".format(text, " ".join(extras))
                 self._last_options = text
                 self._enqueue(session, "choice", text, True)
             return None
@@ -118,6 +150,9 @@ class SpeechDaemon:
         if t == MsgType.PLAN:
             if self.sessions.should_speak(session):
                 text = self._plan_text(msg)
+                cue = self._selection_cue(session, verbosity)
+                if cue:
+                    text = "{0} {1}".format(text, cue)
                 self._last_options = text
                 self._enqueue(session, "plan", text, True)
             return None
@@ -125,6 +160,9 @@ class SpeechDaemon:
         if t == MsgType.PERMISSION:
             if self.sessions.should_speak(session):
                 text = self._permission_text(msg)
+                cue = self._selection_cue(session, verbosity)
+                if cue:
+                    text = "{0} {1}".format(text, cue)
                 self._last_options = text
                 self._enqueue(session, "permission", text, True)
             return None

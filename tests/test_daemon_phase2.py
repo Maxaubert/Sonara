@@ -184,3 +184,116 @@ def test_session_end_clears_option_cache():
     queue.pop_next()
     daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
     assert daemon._last_options is None
+
+
+# ---------------------------------------------------------------------------
+# Task 5: selection cue + immediate warning + multiSelect/>9 notes
+# ---------------------------------------------------------------------------
+
+CUE = "Press the option's number to choose, or Escape to cancel."
+WARN = "Selecting is immediate."
+MULTI = "Select multiple: press each number, or Space on the highlighted item, then Enter to confirm."
+OVER9 = "More than nine options; use arrow keys for ten and up."
+
+
+def _two_option_choice(session="fg"):
+    return _msg(MsgType.CHOICE, session, questions=[
+        {"question": "Pick a color", "options": [{"label": "Red"}, {"label": "Blue"}]},
+    ])
+
+
+def test_choice_cue_present_at_everything():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_two_option_choice())
+    text = queue.pop_next().text
+    assert CUE in text
+
+
+def test_choice_cue_absent_at_medium():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="medium", foreground="fg")
+    daemon.handle_message(_two_option_choice())
+    text = queue.pop_next().text
+    assert CUE not in text
+    assert WARN not in text
+
+
+def test_choice_cue_absent_at_quiet():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="quiet", foreground="fg")
+    daemon.handle_message(_two_option_choice())
+    text = queue.pop_next().text
+    assert CUE not in text
+    assert WARN not in text
+
+
+def test_immediate_warning_fires_once_per_session():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_two_option_choice())
+    first = queue.pop_next().text
+    assert WARN in first
+    daemon.handle_message(_two_option_choice())
+    second = queue.pop_next().text
+    assert CUE in second          # cue still present every time
+    assert WARN not in second     # warning only the first time
+
+
+def test_immediate_warning_independent_per_session():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_two_option_choice("fg"))
+    assert WARN in queue.pop_next().text
+    # a different foreground session gets its own first-time warning
+    sessions.set_foreground("fg2")
+    daemon.handle_message(_two_option_choice("fg2"))
+    assert WARN in queue.pop_next().text
+
+
+def test_multiselect_note_present_in_any_mode():
+    for verb in ("everything", "medium", "quiet"):
+        daemon, queue, speaker, sessions, config = make_daemon(verbosity=verb, foreground="fg")
+        daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
+            {"question": "Pick some", "multiSelect": True,
+             "options": [{"label": "A"}, {"label": "B"}]},
+        ]))
+        text = queue.pop_next().text
+        assert MULTI in text, verb
+
+
+def test_over_nine_note_present_in_any_mode():
+    opts = [{"label": "Opt {0}".format(i)} for i in range(1, 11)]  # 10 options
+    for verb in ("everything", "medium", "quiet"):
+        daemon, queue, speaker, sessions, config = make_daemon(verbosity=verb, foreground="fg")
+        daemon.handle_message(_msg(MsgType.CHOICE, "fg",
+                                   questions=[{"question": "Many", "options": opts}]))
+        text = queue.pop_next().text
+        assert OVER9 in text, verb
+
+
+def test_permission_gets_cue_but_not_choice_notes_at_everything():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_msg(MsgType.PERMISSION, "fg", action="run rm -rf"))
+    text = queue.pop_next().text
+    assert "run rm -rf" in text
+    assert CUE in text
+    assert MULTI not in text
+    assert OVER9 not in text
+
+
+def test_plan_gets_cue_at_everything_but_not_at_quiet():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Do it."))
+    assert CUE in queue.pop_next().text
+
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="quiet", foreground="fg")
+    daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Do it."))
+    assert CUE not in queue.pop_next().text
+
+
+def test_reread_includes_cue_and_notes():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
+        {"question": "Pick some", "multiSelect": True,
+         "options": [{"label": "A"}, {"label": "B"}]},
+    ]))
+    spoken = queue.pop_next().text
+    assert MULTI in spoken and CUE in spoken
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
+    assert queue.pop_next().text == spoken

@@ -43,7 +43,7 @@ def test_permission_enqueues_when_foreground():
     item = queue.pop_next()
     assert item.kind == "permission"
     assert item.is_decision is True
-    assert item.text == "run rm -rf"
+    assert "run rm -rf" in item.text
 
 
 def test_decision_content_not_enqueued_when_not_foreground():
