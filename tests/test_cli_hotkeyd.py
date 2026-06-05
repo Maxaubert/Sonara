@@ -136,6 +136,10 @@ def _doctor_ok_patches(tmp_path):
     binp.write_text("x")
     resolved = tmp_path / "hotkeyd.resolved.json"
     resolved.write_text("[]")
+    # Keep the 'keymap resolves' check hermetic: point load_keymap() at a temp
+    # path instead of the real ~/.sonari/keymap.json so the row is not
+    # machine-state-dependent (e.g. a malformed user keymap on the test box).
+    keymap = tmp_path / "keymap.json"
     return [
         mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
         mock.patch("sonari.speaker.best_enhanced_voice", return_value="Ava (Premium)"),
@@ -144,6 +148,7 @@ def _doctor_ok_patches(tmp_path):
         mock.patch("sonari.client.send", return_value={"ok": True}),
         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp),
         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved),
+        mock.patch.object(cli.keymap, "KEYMAP_PATH", keymap),
     ]
 
 

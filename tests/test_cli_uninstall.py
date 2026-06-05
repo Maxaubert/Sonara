@@ -5,25 +5,52 @@ from unittest import mock
 from sonari import cli
 
 
-def test_uninstall_removes_launchagent_and_sonari_dir(tmp_path):
+def test_uninstall_removes_launchagent_but_preserves_keymap(tmp_path):
     plist = tmp_path / "com.sonari.speechd.plist"
     plist.write_text("<plist/>")
+    hotkeyd_plist = tmp_path / "com.sonari.hotkeyd.plist"
+    hotkeyd_plist.write_text("<plist/>")
     sonari_dir = tmp_path / ".sonari"
     sonari_dir.mkdir()
-    (sonari_dir / "config.json").write_text("{}")
+    # Sonari-owned runtime artifacts that uninstall should remove.
+    config = sonari_dir / "config.json"
+    config.write_text("{}")
+    log = sonari_dir / "speechd.log"
+    log.write_text("log")
+    resolved = sonari_dir / "hotkeyd.resolved.json"
+    resolved.write_text("[]")
+    binp = sonari_dir / "sonari-hotkeyd"
+    binp.write_text("binary")
+    # The user's customized hotkey rebindings: must survive uninstall (spec §5).
+    keymap = sonari_dir / "keymap.json"
+    keymap.write_text('{"custom": true}')
 
     run = mock.Mock(return_value=0)
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
          mock.patch.object(cli.paths, "SONARI_DIR", sonari_dir), \
-         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
-         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"), \
+         mock.patch.object(cli.paths, "CONFIG_PATH", config), \
+         mock.patch.object(cli.paths, "LOG_PATH", log), \
+         mock.patch.object(cli.paths, "SOCKET_PATH", sonari_dir / "speechd.sock"), \
+         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
+         mock.patch.object(cli.paths, "KEYMAP_PATH", keymap), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp), \
          mock.patch.object(cli, "_legacy_migrate", return_value=[]) as mig:
         rc = cli.uninstall()
 
     assert rc == 0
+    # LaunchAgents and binary are gone.
     assert not plist.exists()
-    assert not sonari_dir.exists()
+    assert not hotkeyd_plist.exists()
+    assert not binp.exists()
+    # Runtime artifacts are gone.
+    assert not config.exists()
+    assert not log.exists()
+    assert not resolved.exists()
+    # keymap.json is preserved across uninstall.
+    assert keymap.exists()
+    assert keymap.read_text() == '{"custom": true}'
     assert any(c.args[0][0] == "unload" for c in run.call_args_list)
     mig.assert_called_once()
 

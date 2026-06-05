@@ -309,6 +309,42 @@ def _daemon_shim_path() -> str:
     return os.path.join(paths.repo_root(), "bin", "sonari-daemon")
 
 
+def _plist(label: str, program_args: list, log_path: str) -> str:
+    """Return a full LaunchAgent plist XML for *label*.
+
+    *program_args* is the ProgramArguments array (already absolute paths).
+    RunAtLoad + KeepAlive keep the agent alive in the Aqua (GUI) session;
+    ProcessType Interactive so it participates in the foreground session that
+    Carbon hotkeys require.
+    """
+    args_xml = "".join(f"        <string>{a}</string>\n" for a in program_args)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '    <key>Label</key>\n'
+        f'    <string>{label}</string>\n'
+        '    <key>ProgramArguments</key>\n'
+        '    <array>\n'
+        f'{args_xml}'
+        '    </array>\n'
+        '    <key>RunAtLoad</key>\n'
+        '    <true/>\n'
+        '    <key>KeepAlive</key>\n'
+        '    <true/>\n'
+        '    <key>StandardErrorPath</key>\n'
+        f'    <string>{log_path}</string>\n'
+        '    <key>StandardOutPath</key>\n'
+        f'    <string>{log_path}</string>\n'
+        '    <key>ProcessType</key>\n'
+        '    <string>Interactive</string>\n'
+        '</dict>\n'
+        '</plist>\n'
+    )
+
+
 def _launchagent_plist(daemon_path: str, log_path: str,
                        python_executable: Optional[str] = None) -> str:
     """Return the full LaunchAgent plist XML for the speech daemon.
@@ -324,67 +360,19 @@ def _launchagent_plist(daemon_path: str, log_path: str,
     """
     if python_executable is None:
         python_executable = sys.executable
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        '<plist version="1.0">\n'
-        '<dict>\n'
-        '    <key>Label</key>\n'
-        f'    <string>{LAUNCH_AGENT_LABEL}</string>\n'
-        '    <key>ProgramArguments</key>\n'
-        '    <array>\n'
-        f'        <string>{python_executable}</string>\n'
-        '        <string>-m</string>\n'
-        '        <string>sonari.daemon</string>\n'
-        '    </array>\n'
-        '    <key>RunAtLoad</key>\n'
-        '    <true/>\n'
-        '    <key>KeepAlive</key>\n'
-        '    <true/>\n'
-        '    <key>StandardErrorPath</key>\n'
-        f'    <string>{log_path}</string>\n'
-        '    <key>StandardOutPath</key>\n'
-        f'    <string>{log_path}</string>\n'
-        '    <key>ProcessType</key>\n'
-        '    <string>Interactive</string>\n'
-        '</dict>\n'
-        '</plist>\n'
+    return _plist(
+        LAUNCH_AGENT_LABEL,
+        [python_executable, "-m", "sonari.daemon"],
+        log_path,
     )
 
 
 def _hotkeyd_plist(binary_path: str, log_path: str) -> str:
     """Return the full LaunchAgent plist XML for the hotkey daemon.
 
-    Runs the compiled Swift binary directly. RunAtLoad + KeepAlive keep it alive
-    in the Aqua (GUI) session; ProcessType Interactive so it participates in the
-    foreground session that Carbon hotkeys require.
+    Runs the compiled Swift binary directly.
     """
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        '<plist version="1.0">\n'
-        '<dict>\n'
-        '    <key>Label</key>\n'
-        f'    <string>{HOTKEYD_LAUNCH_AGENT_LABEL}</string>\n'
-        '    <key>ProgramArguments</key>\n'
-        '    <array>\n'
-        f'        <string>{binary_path}</string>\n'
-        '    </array>\n'
-        '    <key>RunAtLoad</key>\n'
-        '    <true/>\n'
-        '    <key>KeepAlive</key>\n'
-        '    <true/>\n'
-        '    <key>StandardErrorPath</key>\n'
-        f'    <string>{log_path}</string>\n'
-        '    <key>StandardOutPath</key>\n'
-        f'    <string>{log_path}</string>\n'
-        '    <key>ProcessType</key>\n'
-        '    <string>Interactive</string>\n'
-        '</dict>\n'
-        '</plist>\n'
-    )
+    return _plist(HOTKEYD_LAUNCH_AGENT_LABEL, [binary_path], log_path)
 
 
 def _build_hotkeyd():
@@ -464,9 +452,6 @@ def _cmd_install(_args) -> int:
     return install()
 
 
-import shutil as _shutil  # alias so module-level 'shutil' (used by doctor) stays clear
-
-
 def _legacy_migrate(home: Optional[str] = None) -> list:
     """Clean up a PRIOR legacy claude-tts install. Returns a list of strings
     describing what was removed. Safe (no-op) on a machine with no legacy install.
@@ -525,12 +510,27 @@ def uninstall() -> int:
         except OSError:
             pass
 
-    # Note: SONARI_DIR is removed below, which also removes keymap.json. Spec §5
-    # prefers preserving keymap.json; left for the code-quality reviewer to decide.
-    sonari_dir = str(paths.SONARI_DIR)
-    if os.path.isdir(sonari_dir):
-        _shutil.rmtree(sonari_dir, ignore_errors=True)
-        print(f"Removed {sonari_dir}")
+    # Spec §5: remove Sonari-owned artifacts but LEAVE keymap.json so a user's
+    # customized hotkey rebindings survive an uninstall/reinstall (upgrade) cycle.
+    sonari_dir = paths.SONARI_DIR
+    hk_log = sonari_dir / "hotkeyd.log"
+    artifacts = [
+        paths.SOCKET_PATH,
+        paths.LOG_PATH,
+        paths.CONFIG_PATH,
+        paths.HOTKEYD_RESOLVED_PATH,
+        hk_log,
+    ]
+    for artifact in artifacts:
+        if os.path.exists(str(artifact)):
+            try:
+                os.remove(str(artifact))
+            except OSError:
+                pass
+    if os.path.exists(str(paths.KEYMAP_PATH)):
+        print(f"Preserved your keymap: {paths.KEYMAP_PATH}")
+    print(f"Removed Sonari runtime files from {sonari_dir} "
+          f"(keymap.json left in place).")
 
     print("Checking for a prior legacy claude-tts install...")
     for line in _legacy_migrate():
