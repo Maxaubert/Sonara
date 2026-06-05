@@ -737,15 +737,15 @@ def uninstall() -> int:
         except OSError:
             pass
 
-    # Spec §5: remove Sonari-owned artifacts but LEAVE keymap.json so a user's
-    # customized hotkey rebindings survive an uninstall/reinstall (upgrade) cycle.
+    # Spec §5.4: remove Sonari-owned runtime artifacts but PRESERVE the user's
+    # keymap.json AND config.json so customizations survive uninstall/reinstall.
     sonari_dir = paths.SONARI_DIR
     hk_log = sonari_dir / "hotkeyd.log"
     artifacts = [
         paths.SOCKET_PATH,
         paths.LOG_PATH,
-        paths.CONFIG_PATH,
         paths.HOTKEYD_RESOLVED_PATH,
+        paths.INSTALL_RECORD_PATH,
         hk_log,
     ]
     for artifact in artifacts:
@@ -754,10 +754,19 @@ def uninstall() -> int:
                 os.remove(str(artifact))
             except OSError:
                 pass
+
+    if _remove_launcher():
+        print(f"Removed launcher: {_launcher_path()}")
+
+    preserved = []
     if os.path.exists(str(paths.KEYMAP_PATH)):
-        print(f"Preserved your keymap: {paths.KEYMAP_PATH}")
+        preserved.append("keymap.json")
+    if os.path.exists(str(paths.CONFIG_PATH)):
+        preserved.append("config.json")
+    if preserved:
+        print(f"Preserved your settings: {', '.join(preserved)}")
     print(f"Removed Sonari runtime files from {sonari_dir} "
-          f"(keymap.json left in place).")
+          f"(keymap.json and config.json left in place).")
 
     print("Checking for a prior legacy claude-tts install...")
     for line in _legacy_migrate():
