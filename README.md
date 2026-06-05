@@ -7,16 +7,19 @@ permission prompts — so you can run a full session **with the screen off**. It
 ground-up rebuild of the old `claude-tts` tool: one speech daemon, one ordered queue, one
 `say` voice at a time, and a distinct sound (an *earcon*) the instant any decision appears.
 
-> **Phase 1 (this release) is the output pipeline:** you *hear* everything, in order,
-> reliably. Answering questions and approving actions still uses Claude Code's own keyboard
-> picker. Fully eyes-free *selection* via global hotkeys is Phase 2.
+> **Fully eyes-free today:** you *hear* everything in order — prose, plans, multiple-choice
+> questions, and permission prompts, with a distinct earcon the instant any decision appears
+> — and you *answer* without looking by pressing the option's number (1-9), `Esc` to cancel.
+> Global speech-control hotkeys (stop, repeat, skip, jump-to-decision, catch-up, rate,
+> verbosity, re-read options) work even mid-speech.
 
 ## The goal
 
 A blind or low-vision developer should be able to use Claude Code without looking at the
-screen. Sonari's job in Phase 1 is to make sure nothing important is ever silent or
-out-of-order: you always hear the prose that explains a decision *before* the decision, and
-a short sound alerts you the moment a question, plan, or permission is waiting.
+screen. Sonari makes sure nothing important is ever silent or out-of-order: you always hear
+the prose that explains a decision *before* the decision, a short sound alerts you the moment
+a question, plan, or permission is waiting, and you choose any option by typing its number —
+no screen needed.
 
 ## Requirements
 
@@ -34,10 +37,17 @@ a short sound alerts you the moment a question, plan, or permission is waiting.
 Sonari is a self-contained Claude Code plugin: it ships its own source and runs
 on the macOS system Python with no `pip` install.
 
-1. Enable the `sonari` plugin in Claude Code — either per session with
-   `claude --plugin-dir /path/to/sonari`, or register this repo as a local
-   plugin marketplace and enable `sonari` from the `/plugin` menu.
-2. Run the one-time installer:
+1. Add the marketplace and install the plugin:
+
+```bash
+claude plugin marketplace add nimkimi/sonari
+claude plugin install sonari@sonari
+```
+
+   (For local development, you can instead run a session with
+   `claude --plugin-dir /path/to/sonari`.)
+2. Run the one-time installer (this needs Xcode Command Line Tools for the
+   hotkeys — `xcode-select --install`):
 
 ```bash
 sonari install
@@ -89,8 +99,34 @@ sonari voice "Ava (Premium)"
 
 ## Controls and slash commands
 
-In Phase 1, control is via the `sonari` CLI and namespaced slash commands inside a session.
-(Global hotkeys that work even mid-speech arrive in Phase 2.)
+Control is via global hotkeys (work even mid-speech), the `sonari` CLI, and namespaced slash
+commands inside a session.
+
+### Global hotkeys
+
+Default modifier is **Ctrl+Cmd** (rebindable via `~/.sonari/keymap.json`). A tiny Swift
+helper registers these with Carbon `RegisterEventHotKey`, so no macOS accessibility
+permission is needed.
+
+| Hotkey | Effect |
+|---|---|
+| Ctrl+Cmd+S | Stop now and clear the queue |
+| Ctrl+Cmd+R | Repeat the last item |
+| Ctrl+Cmd+. | Skip the current item |
+| Ctrl+Cmd+D | Jump to the pending decision |
+| Ctrl+Cmd+L | Catch up (speak what you missed) |
+| Ctrl+Cmd+] | Speak faster |
+| Ctrl+Cmd+[ | Speak slower |
+| Ctrl+Cmd+V | Cycle verbosity (everything / medium / quiet) |
+| Ctrl+Cmd+O | Re-read the current options |
+
+### Eyes-free selection
+
+When a question, permission prompt, or plan (`AskUserQuestion` / permission /
+`ExitPlanMode`) appears, choose an option by pressing its **number (1-9)**, or `Esc` to
+cancel — using Claude Code's native numeric selection, no key injection.
+
+### Slash commands and CLI
 
 | Slash command | CLI | Effect |
 |---|---|---|
@@ -141,7 +177,7 @@ Run `sonari doctor` first — it reports each check as pass/fail. Common issues:
   daemon starts lazily on the first hook; if the socket is unreachable, run `sonari doctor` to
   restart it, or check `~/.sonari/speechd.log`.
 - **Robotic voice.** No enhanced voice is installed; see *Enhanced-voice setup* above.
-- **Hooks not firing.** Re-launch with `claude --plugin-dir ~/projects/claude-tts` (or
+- **Hooks not firing.** Re-launch with `claude --plugin-dir /path/to/sonari` (or
   re-enable `sonari` via `/plugin`) and verify with `sonari doctor` that all seven hooks are
   registered.
 - **Speech too fast/slow.** `sonari rate 180` (default is 200 wpm).
@@ -151,7 +187,7 @@ Run `sonari doctor` first — it reports each check as pass/fail. Common issues:
 State, config, the socket, and logs all live under `~/.sonari/`
 (`config.json`, `speechd.sock`, `speechd.log`).
 
-## Uninstall and migration from legacy
+## Uninstall
 
 To remove Sonari, disable the `sonari` plugin via `/plugin` (or stop passing
 `--plugin-dir`), then run:
@@ -160,17 +196,6 @@ To remove Sonari, disable the `sonari` plugin via `/plugin` (or stop passing
 sonari uninstall
 ```
 
-`sonari uninstall` also cleans up a **prior legacy `claude-tts` install** if one is present on
-your machine: it removes the `alias claude=claude-speak` line and the `~/.local/bin` PATH
-export from your `~/.zshrc`, removes the three legacy hooks
-(`claude-tts-permission.sh`, `claude-tts-pre-tool.sh`, `claude-tts-stop.sh`) from
-`~/.claude/settings.json`, and deletes `~/.local/bin/claude-speak`,
-`~/.local/bin/claude-tts`, `~/.claude-tts-enabled`, and `~/.claude-tts-pos`. The new Sonari
-design uses **no shell alias and no `~/.zshrc` edits at all**. (The legacy code is preserved
-at git tag `v0-legacy-pty` if you ever need it.)
-
-## What's next (Phase 2)
-
-Global keyboard hotkeys for live speech control (skip, jump-to-decision, catch-up) and 100%
-eyes-free **selection** — pick any question option and approve plans and permissions without
-ever looking at the screen.
+`sonari uninstall` removes the LaunchAgents, the hotkey helper, and the
+`~/.local/bin/sonari` launcher. It preserves your `~/.sonari/config.json` and
+`~/.sonari/keymap.json` so your settings survive a reinstall.

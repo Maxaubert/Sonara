@@ -1,5 +1,6 @@
 {
   "name": "sonari",
+  "displayName": "Sonari",
   "version": "0.3.0",
   "description": "Eyes-free text-to-speech layer for Claude Code (macOS)",
   "author": {
@@ -7,5 +8,7 @@
     "email": "hakimi.nima1@gmail.com"
   },
   "license": "MIT",
+  "homepage": "https://github.com/nimkimi/sonari",
+  "repository": "https://github.com/nimkimi/sonari",
   "keywords": ["accessibility", "tts", "speech"]
 }
