@@ -12,6 +12,11 @@ def _ok_patches():
         mock.patch("sonari.paths.ensure_sonari_dir"),
         mock.patch("sonari.client.send", return_value={"ok": True}),
         mock.patch("os.path.exists", return_value=True),
+        mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"),
+        mock.patch.object(cli, "_launchctl", return_value=0),
+        mock.patch.object(cli, "_local_bin_on_path", return_value=True),
+        mock.patch.object(cli, "_read_install_record",
+                          return_value={"src": "/plug/src"}),
     ]
 
 
@@ -43,7 +48,9 @@ def test_doctor_returns_tuples():
 def test_doctor_all_ok():
     d = _as_dict(_run(_ok_patches()))
     for key in ("say", "afplay", "enhanced voice", "SONARI_DIR writable",
-                "daemon socket", "plugin hooks.json"):
+                "daemon socket", "plugin hooks.json", "python3",
+                "plugin path resolved", "speechd LaunchAgent loaded",
+                "hotkeyd LaunchAgent loaded", "sonari launcher"):
         assert key in d, key
         assert d[key][0] is True, (key, d[key])
 

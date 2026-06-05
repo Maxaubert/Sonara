@@ -284,7 +284,8 @@ def doctor() -> list:
 
     swiftc = shutil.which("swiftc")
     results.append(("swiftc", swiftc is not None,
-                    swiftc or "not found (needed to build the hotkey daemon)"))
+                    swiftc or "not found; install Command Line Tools: "
+                              "xcode-select --install"))
 
     hk_bin = str(paths.HOTKEYD_BIN_PATH)
     hk_exists = os.path.exists(hk_bin)
@@ -306,6 +307,50 @@ def doctor() -> list:
         results.append(("keymap resolves", True, "ok"))
     except Exception as exc:  # noqa: BLE001
         results.append(("keymap resolves", False, f"error: {exc}"))
+
+    # python3 >= 3.9 resolved.
+    try:
+        py = _resolve_python()
+        results.append(("python3", py is not None,
+                        py or "no python3 >= 3.9 found; install the Command "
+                              "Line Tools (xcode-select --install)"))
+    except Exception as exc:  # noqa: BLE001
+        results.append(("python3", False, f"error: {exc}"))
+
+    # plugin path resolved (install.json -> src contains sonari/__init__.py).
+    try:
+        rec = _read_install_record()
+        src = rec.get("src") if rec else None
+        init = os.path.join(src, "sonari", "__init__.py") if src else None
+        ok = bool(init) and os.path.exists(init)
+        results.append(("plugin path resolved", ok,
+                        src if ok else "install.json missing or src has no "
+                                       "sonari package (run 'sonari install')"))
+    except Exception as exc:  # noqa: BLE001
+        results.append(("plugin path resolved", False, f"error: {exc}"))
+
+    # LaunchAgents loaded.
+    speechd_loaded = _launchctl(["list", LAUNCH_AGENT_LABEL]) == 0
+    results.append(("speechd LaunchAgent loaded", speechd_loaded,
+                    LAUNCH_AGENT_LABEL if speechd_loaded
+                    else "not loaded (run 'sonari install')"))
+    hotkeyd_loaded = _launchctl(["list", HOTKEYD_LAUNCH_AGENT_LABEL]) == 0
+    results.append(("hotkeyd LaunchAgent loaded", hotkeyd_loaded,
+                    HOTKEYD_LAUNCH_AGENT_LABEL if hotkeyd_loaded
+                    else "not loaded (build CLT then 'sonari install')"))
+
+    # ~/.local/bin/sonari launcher + PATH.
+    launcher = _launcher_path()
+    launcher_ok = os.path.exists(launcher)
+    on_path = _local_bin_on_path()
+    if launcher_ok and on_path:
+        detail = launcher
+    elif launcher_ok:
+        detail = (f"{launcher} present, but ~/.local/bin is NOT on PATH; add: "
+                  'export PATH="$HOME/.local/bin:$PATH"')
+    else:
+        detail = "missing (run 'sonari install')"
+    results.append(("sonari launcher", launcher_ok and on_path, detail))
 
     return results
 
@@ -408,6 +453,16 @@ def _write_install_record(python: str, python_version: str,
     with open(str(paths.INSTALL_RECORD_PATH), "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2)
         f.write("\n")
+
+
+def _read_install_record():
+    """Return the install.json record dict, or None if unreadable/absent."""
+    try:
+        with open(str(paths.INSTALL_RECORD_PATH), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 - doctor must never raise
+        return None
 
 
 def _local_bin_dir() -> str:
