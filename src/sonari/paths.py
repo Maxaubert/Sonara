@@ -6,6 +6,9 @@ SONARI_DIR = Path.home() / ".sonari"
 CONFIG_PATH = SONARI_DIR / "config.json"
 SOCKET_PATH = SONARI_DIR / "speechd.sock"
 LOG_PATH = SONARI_DIR / "speechd.log"
+KEYMAP_PATH = SONARI_DIR / "keymap.json"
+HOTKEYD_RESOLVED_PATH = SONARI_DIR / "hotkeyd.resolved.json"
+HOTKEYD_BIN_PATH = SONARI_DIR / "sonari-hotkeyd"
 
 
 def ensure_sonari_dir() -> None:

@@ -27,6 +27,20 @@ def test_paths_are_nested_under_sonari_dir(monkeypatch, tmp_path):
     assert paths.LOG_PATH.parent == paths.SONARI_DIR
 
 
+def test_phase2_path_constants_names(monkeypatch, tmp_path):
+    paths = _fresh_paths(monkeypatch, tmp_path)
+    assert paths.KEYMAP_PATH.name == "keymap.json"
+    assert paths.HOTKEYD_RESOLVED_PATH.name == "hotkeyd.resolved.json"
+    assert paths.HOTKEYD_BIN_PATH.name == "sonari-hotkeyd"
+
+
+def test_phase2_paths_nested_under_sonari_dir(monkeypatch, tmp_path):
+    paths = _fresh_paths(monkeypatch, tmp_path)
+    assert paths.KEYMAP_PATH.parent == paths.SONARI_DIR
+    assert paths.HOTKEYD_RESOLVED_PATH.parent == paths.SONARI_DIR
+    assert paths.HOTKEYD_BIN_PATH.parent == paths.SONARI_DIR
+
+
 def test_sonari_dir_is_under_home(monkeypatch, tmp_path):
     paths = _fresh_paths(monkeypatch, tmp_path)
     assert paths.SONARI_DIR == Path(tmp_path) / ".sonari"
