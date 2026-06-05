@@ -393,15 +393,37 @@ def _resolve_python():
     return qualifying[0][0]
 
 
-def _plist(label: str, program_args: list, log_path: str) -> str:
+def _xml_escape(s: str) -> str:
+    """Escape the three XML-significant characters for safe plist interpolation."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _plist(label: str, program_args: list, log_path: str,
+           env: Optional[dict] = None) -> str:
     """Return a full LaunchAgent plist XML for *label*.
 
     *program_args* is the ProgramArguments array (already absolute paths).
-    RunAtLoad + KeepAlive keep the agent alive in the Aqua (GUI) session;
+    *env*, when given, is emitted as an EnvironmentVariables <dict> (used to
+    inject PYTHONPATH for the self-contained speech daemon). Every interpolated
+    string is XML-escaped so a path containing &, <, or > cannot corrupt the
+    plist. RunAtLoad + KeepAlive keep the agent alive in the Aqua (GUI) session;
     ProcessType Interactive so it participates in the foreground session that
     Carbon hotkeys require.
     """
-    args_xml = "".join(f"        <string>{a}</string>\n" for a in program_args)
+    args_xml = "".join(
+        f"        <string>{_xml_escape(a)}</string>\n" for a in program_args)
+    env_xml = ""
+    if env:
+        pairs = "".join(
+            f"        <key>{_xml_escape(k)}</key>\n"
+            f"        <string>{_xml_escape(v)}</string>\n"
+            for k, v in env.items())
+        env_xml = (
+            '    <key>EnvironmentVariables</key>\n'
+            '    <dict>\n'
+            f'{pairs}'
+            '    </dict>\n'
+        )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
@@ -409,19 +431,20 @@ def _plist(label: str, program_args: list, log_path: str) -> str:
         '<plist version="1.0">\n'
         '<dict>\n'
         '    <key>Label</key>\n'
-        f'    <string>{label}</string>\n'
+        f'    <string>{_xml_escape(label)}</string>\n'
         '    <key>ProgramArguments</key>\n'
         '    <array>\n'
         f'{args_xml}'
         '    </array>\n'
+        f'{env_xml}'
         '    <key>RunAtLoad</key>\n'
         '    <true/>\n'
         '    <key>KeepAlive</key>\n'
         '    <true/>\n'
         '    <key>StandardErrorPath</key>\n'
-        f'    <string>{log_path}</string>\n'
+        f'    <string>{_xml_escape(log_path)}</string>\n'
         '    <key>StandardOutPath</key>\n'
-        f'    <string>{log_path}</string>\n'
+        f'    <string>{_xml_escape(log_path)}</string>\n'
         '    <key>ProcessType</key>\n'
         '    <string>Interactive</string>\n'
         '</dict>\n'
@@ -429,25 +452,20 @@ def _plist(label: str, program_args: list, log_path: str) -> str:
     )
 
 
-def _launchagent_plist(daemon_path: str, log_path: str,
-                       python_executable: Optional[str] = None) -> str:
-    """Return the full LaunchAgent plist XML for the speech daemon.
+def _launchagent_plist(python_executable: str, src_path: str,
+                       log_path: str) -> str:
+    """Return the LaunchAgent plist XML for the speech daemon.
 
-    *python_executable* must be an absolute path to the Python interpreter.
-    It defaults to ``sys.executable`` so that launchd (which runs with a
-    minimal PATH that may not include the venv) always uses the same
-    interpreter that the user installed the ``sonari`` package into.
-
-    *daemon_path* is kept as a parameter for API compatibility but is no
-    longer embedded in ProgramArguments; the plist now runs the module
-    directly via ``<python> -m sonari.daemon`` to avoid any reliance on PATH.
+    *python_executable* is the resolved absolute interpreter (>= 3.9).
+    *src_path* is the plugin's <root>/src directory; it is injected as
+    PYTHONPATH so the daemon imports the plugin's own source with no installed
+    'sonari'. ProgramArguments runs the module directly: [<py>, -m, sonari.daemon].
     """
-    if python_executable is None:
-        python_executable = sys.executable
     return _plist(
         LAUNCH_AGENT_LABEL,
         [python_executable, "-m", "sonari.daemon"],
         log_path,
+        env={"PYTHONPATH": src_path},
     )
 
 

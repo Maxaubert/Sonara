@@ -6,54 +6,41 @@ from unittest import mock
 from sonari import cli
 
 
-def test_launchagent_plist_is_valid_and_complete(tmp_path):
-    daemon = "/repo/bin/sonari-daemon"
+def test_launchagent_plist_embeds_resolved_python_and_pythonpath(tmp_path):
     log = "/home/u/.sonari/speechd.log"
-    fake_python = "/usr/local/venv/bin/python3"
-    xml = cli._launchagent_plist(daemon, log, python_executable=fake_python)
+    fake_python = "/usr/bin/python3"
+    src = "/Users/u/.claude/plugins/sonari/src"
+    xml = cli._launchagent_plist(python_executable=fake_python,
+                                 src_path=src, log_path=log)
     assert isinstance(xml, str)
     assert xml.startswith("<?xml")
     data = plistlib.loads(xml.encode("utf-8"))
     assert data["Label"] == cli.LAUNCH_AGENT_LABEL
     assert data["ProgramArguments"] == [fake_python, "-m", "sonari.daemon"]
+    assert data["EnvironmentVariables"]["PYTHONPATH"] == src
     assert data["RunAtLoad"] is True
     assert data["KeepAlive"] is True
     assert data["StandardErrorPath"] == log
     assert data["StandardOutPath"] == log
+    # First arg must be an absolute interpreter path, never a bare name.
+    interpreter = data["ProgramArguments"][0]
+    assert os.path.isabs(interpreter)
+    assert interpreter not in ("python3", "python")
 
 
-def test_launchagent_plist_uses_absolute_python_not_bare_python3(tmp_path):
-    """ProgramArguments must start with an absolute interpreter path.
-
-    launchd runs agents with a minimal PATH that may not include the venv.
-    Using bare 'python3' would silently invoke the wrong interpreter (or
-    fail), so the first element of ProgramArguments must be an absolute path.
-    """
-    daemon = "/repo/bin/sonari-daemon"
+def test_plist_xml_escapes_special_chars_in_paths():
+    """A plugin path containing & / space / < must not corrupt the plist; the
+    parsed PYTHONPATH must equal the original string intact."""
     log = "/home/u/.sonari/speechd.log"
-
-    # Default: no python_executable supplied — must fall back to sys.executable.
-    xml = cli._launchagent_plist(daemon, log)
+    fake_python = "/usr/bin/python3"
+    src = "/Users/u/My Plugins/A & B/<sonari>/src"
+    xml = cli._launchagent_plist(python_executable=fake_python,
+                                 src_path=src, log_path=log)
+    # Raw XML must not contain a bare unescaped '&' or '<' inside the src value.
+    assert "A & B" not in xml  # the bare ampersand was escaped
+    assert "&amp;" in xml
     data = plistlib.loads(xml.encode("utf-8"))
-    prog_args = data["ProgramArguments"]
-    interpreter = prog_args[0]
-
-    # Must be absolute (starts with '/').
-    assert os.path.isabs(interpreter), (
-        f"ProgramArguments[0] is not an absolute path: {interpreter!r}"
-    )
-    # Must NOT be a bare name like 'python3'.
-    assert interpreter not in ("python3", "python", "python3.x"), (
-        f"ProgramArguments[0] must not be a bare interpreter name: {interpreter!r}"
-    )
-    # Must match the current sys.executable so the installed package is found.
-    assert interpreter == sys.executable, (
-        f"Expected sys.executable {sys.executable!r}, got {interpreter!r}"
-    )
-    # Module invocation must follow.
-    assert prog_args[1:] == ["-m", "sonari.daemon"], (
-        f"Expected ['-m', 'sonari.daemon'] after interpreter, got {prog_args[1:]!r}"
-    )
+    assert data["EnvironmentVariables"]["PYTHONPATH"] == src
 
 
 def test_install_writes_plist_and_loads(tmp_path, capsys):
