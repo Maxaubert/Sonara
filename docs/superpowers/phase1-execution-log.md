@@ -256,3 +256,109 @@ switch-over it should run as part of (or alongside) `echo install`. Sort out wit
 - **NEXT — Phase 2:** `hotkeyd` (global hotkeys + 100%-eyes-free option SELECTION via key injection),
   starting with the key-injection feasibility spike. Plus the deferred Phase-1.x items in
   `phase1-review-followups.md`. Branch `rebuild-echo` still un-merged — merge after living with it.
+
+---
+
+## Phase 2 — Control & Selection (DONE)
+
+**Spec:** `docs/superpowers/specs/2026-06-05-sonari-phase2-control-selection-design.md`
+**Plan:** `docs/superpowers/plans/2026-06-05-sonari-phase2-control-selection.md`
+**Manual checklist:** `docs/superpowers/phase2-manual-smoke-checklist.md`
+
+> Note: the original "NEXT" line above guessed key *injection* for selection. That
+> approach was dropped during the spike — Claude Code's pickers are operable by typing
+> the option's number, so Sonari selects **natively** (no synthetic key injection, no
+> Accessibility permission). The injection PoC is parked at `spikes/sonari_inject_poc.swift`.
+
+### What was built
+- **hotkeyd (`hotkeyd/sonari-hotkeyd.swift`):** a tiny Swift daemon using Carbon
+  `RegisterEventHotKey` — registers system-wide combos that fire from any app, consume
+  only the registered combo, and need **NO macOS permission** (no Accessibility, no Input
+  Monitoring). It reads `~/.sonari/hotkeyd.resolved.json` (an array of
+  `{action, keyCode, modifiers, message}`), registers each entry, and on fire writes the
+  entry's `message` + newline to the speechd Unix socket `~/.sonari/speechd.sock`
+  (best-effort). The binary is *dumb*: all name→code/mask and action→message reasoning
+  lives in Python (`src/sonari/keymap.py`) and is unit-tested.
+- **Native numeric selection (NO key injection):** to choose a picker option the user
+  presses the option's own number (1–9) and the terminal/Claude Code handles it; Esc
+  cancels/denies. Sonari only *narrates* — it never injects keystrokes — so no special
+  permission is required and selection is 100% eyes-free.
+- **speechd new ops (`src/sonari/daemon.py`):**
+  - relative rate: `set_rate` with a `delta` clamps to 100–400 wpm, persists, and speaks
+    "Rate N." (absolute `set_rate` with `rate` unchanged);
+  - `cycle_verbosity`: everything → medium → quiet → everything, persisted, announces the
+    new level (even when switching *to* quiet);
+  - option cache + `reread_options`: every CHOICE/PLAN/PERMISSION caches its exact spoken
+    text; `reread_options` re-speaks it (or "No options to repeat."); the cache clears on
+    flush and session_end;
+  - selection cue: "Press the option's number to choose, or Escape to cancel." is appended
+    at `everything` verbosity only, plus a once-per-session "Selecting is immediate."
+    warning; multiSelect and >9-option notes are appended in *any* verbosity.
+- **Protocol (`src/sonari/protocol.py`):** added `reread_options` and `cycle_verbosity`
+  message types; `set_rate` gained the optional `delta`. All additive — `PROTOCOL_VERSION`
+  stays `1`.
+- **keymap (`src/sonari/keymap.py`):** key/mod/action resolution, default keymap,
+  load+merge of the user override, and atomic writers for `~/.sonari/keymap.json` and
+  `~/.sonari/hotkeyd.resolved.json`.
+- **paths (`src/sonari/paths.py`):** `KEYMAP_PATH`, `HOTKEYD_RESOLVED_PATH`,
+  `HOTKEYD_BIN_PATH` (all under `~/.sonari`).
+- **cli (`src/sonari/cli.py`):** `install` builds hotkeyd via `swiftc`, writes the default
+  keymap + resolved JSON, writes & (re)loads the `com.sonari.hotkeyd` LaunchAgent (a build
+  failure is non-fatal — speech still works, only global hotkeys are disabled); `uninstall`
+  unloads/removes the agent + binary but **keeps `keymap.json`**; `doctor` adds swiftc /
+  hotkeyd-binary / resolved-keymap / keymap-resolves checks. A `sonari keymap` subcommand
+  and a `/sonari:keymap` slash command (`commands/sonari:keymap.md`) print the active
+  bindings.
+
+### Default keymap (Ctrl+Cmd; rebindable in `~/.sonari/keymap.json`)
+Verbatim from `sonari keymap`:
+
+| Combo | Action |
+|---|---|
+| Ctrl+Cmd+S | stop |
+| Ctrl+Cmd+R | repeat |
+| Ctrl+Cmd+. | skip |
+| Ctrl+Cmd+D | jump_decision |
+| Ctrl+Cmd+L | catch_up |
+| Ctrl+Cmd+] | faster (+25 wpm) |
+| Ctrl+Cmd+[ | slower (-25 wpm) |
+| Ctrl+Cmd+V | cycle_verbosity |
+| Ctrl+Cmd+O | reread_options |
+
+(Ctrl+Cmd was chosen to avoid colliding with VoiceOver's Ctrl+Opt.)
+
+### How to use it
+- Run `claude` as usual. When a picker (AskUserQuestion / permission prompt /
+  ExitPlanMode) appears, Sonari reads the numbered options and (at `everything`) the cue.
+- **Select:** press the option's **number** (1–9). **Deny/cancel:** press **Esc**.
+- **Re-read** the current options any time: Ctrl+Cmd+O.
+- **Speech control while it talks:** stop (Ctrl+Cmd+S), repeat (R), skip current
+  utterance (.), jump to the pending decision (D), catch up / drain (L), faster (]),
+  slower ([), cycle verbosity (V). These work from any focused app.
+
+### Rebind
+1. Create/edit `~/.sonari/keymap.json` — an `action → {"key": "...", "mods": [...]}` map
+   (only the actions you want to change; the rest keep their defaults).
+2. Re-run `sonari install` to rewrite `hotkeyd.resolved.json` and rebuild + reload the
+   LaunchAgent. Run `sonari keymap` to confirm the active bindings.
+
+### Install / uninstall / doctor
+- `sonari install` — builds hotkeyd, writes keymap + resolved JSON, loads both
+  LaunchAgents. If `swiftc` is absent the hotkeyd build is skipped (non-fatal): speech
+  still works; global hotkeys are simply unavailable until swiftc is present.
+- `sonari uninstall` — unloads/removes the agents and the hotkeyd binary; **leaves
+  `keymap.json`** so a reinstall keeps your bindings.
+- `sonari doctor` — reports swiftc, the hotkeyd binary, the resolved keymap file, and
+  whether the keymap resolves cleanly (alongside the Phase 1 checks).
+
+### Test coverage
+- The **daemon side** (relative rate + clamp + "Rate N."; cycle_verbosity; option
+  cache/reread/clear; cue/warning gating + once-per-session; multiSelect/>9 notes), the
+  **keymap brain** (name→code/mask, action→message golden strings, load/merge, writers),
+  the **paths**, the **CLI** (plist/build/doctor, protocol contract), and **Swift
+  compilation + resolved-JSON shape** are all covered by the deterministic pytest suite.
+- The **Carbon global-hotkey runtime** (combos actually firing, no character leak / no
+  beep, LaunchAgent-vs-shell parity) and **live numeric selection** in real Claude Code
+  pickers cannot be unit-tested — they are covered by the manual smoke checklist
+  (`docs/superpowers/phase2-manual-smoke-checklist.md`), which also resolves spec open
+  questions O-1..O-4.
