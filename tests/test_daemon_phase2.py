@@ -69,3 +69,46 @@ def test_set_rate_delta_no_foreground_still_updates_rate():
     assert speaker.rates[-1] == 225
     # no foreground => nothing enqueued
     assert len(queue) == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 3: cycle_verbosity
+# ---------------------------------------------------------------------------
+
+def test_cycle_verbosity_everything_to_medium():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
+    assert config["verbosity"] == "medium"
+    item = queue.pop_next()
+    assert item is not None
+    assert item.text == "Verbosity medium."
+    assert item.session == "fg"
+
+
+def test_cycle_verbosity_medium_to_quiet():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="medium", foreground="fg")
+    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
+    assert config["verbosity"] == "quiet"
+    assert queue.pop_next().text == "Verbosity quiet."
+
+
+def test_cycle_verbosity_quiet_wraps_to_everything():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="quiet", foreground="fg")
+    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
+    assert config["verbosity"] == "everything"
+    assert queue.pop_next().text == "Verbosity everything."
+
+
+def test_cycle_verbosity_unknown_current_defaults_to_everything_step():
+    # an out-of-range stored value is treated as the start of the cycle
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    config["verbosity"] = "bogus"
+    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
+    assert config["verbosity"] == "everything"
+
+
+def test_cycle_verbosity_no_foreground_still_persists():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground=None)
+    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY))
+    assert config["verbosity"] == "medium"
+    assert len(queue) == 0

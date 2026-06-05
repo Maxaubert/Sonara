@@ -208,6 +208,20 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
+        if t == MsgType.CYCLE_VERBOSITY:
+            order = ["everything", "medium", "quiet"]
+            cur = self.config.get("verbosity", "everything")
+            if cur in order:
+                nxt = order[(order.index(cur) + 1) % len(order)]
+            else:
+                nxt = order[0]
+            self.config["verbosity"] = nxt
+            save_config(self.config)
+            fg = self.sessions.foreground()
+            if fg is not None:
+                self._enqueue(fg, "prose", "Verbosity {0}.".format(nxt), False)
+            return None
+
         if t == MsgType.STATUS:
             return {
                 "verbosity": self.config.get("verbosity"),
