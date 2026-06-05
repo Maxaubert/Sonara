@@ -757,13 +757,50 @@ def _legacy_migrate(home: Optional[str] = None) -> list:
     return removed
 
 
-def _dev_install_migrate(home: Optional[str] = None) -> list:
-    """Detect a dev editable 'sonari' footprint and PRINT cleanup guidance.
+def _detect_editable_sonari() -> Optional[str]:
+    """Return a foreign interpreter path if an editable 'sonari' resolves from
+    OUTSIDE this plugin's src, else None.
 
-    Safe no-op when there is no dev footprint. Body is implemented in a later
-    task; for now it returns no lines so install() can call it unconditionally.
+    We import sonari (which, via PYTHONPATH/conftest, is THIS plugin's source)
+    and compare its location to the plugin root. If a DIFFERENT interpreter on
+    PATH imports a sonari that lives in its own site-packages (the dev editable
+    install), report that interpreter. Best-effort; any failure -> None.
     """
-    return []
+    plugin_src = os.path.realpath(os.path.join(paths.repo_root(), "src"))
+    other = shutil.which("python3")
+    if not other:
+        return None
+    try:
+        loc = subprocess.check_output(
+            [other, "-c",
+             "import sonari, os; print(os.path.realpath(sonari.__file__))"],
+            stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
+    except Exception:  # noqa: BLE001
+        return None
+    if not loc:
+        return None
+    # If that interpreter's sonari is NOT inside this plugin's src, it is a
+    # foreign (editable/site-packages) install worth cleaning up.
+    if os.path.realpath(loc).startswith(plugin_src + os.sep):
+        return None
+    return other
+
+
+def _dev_install_migrate(home: Optional[str] = None) -> list:
+    """Detect a dev editable 'sonari' footprint and return cleanup GUIDANCE.
+
+    Never auto-uninstalls (uninstalling another interpreter's package is risky).
+    Safe no-op when there is no foreign footprint.
+    """
+    interp = _detect_editable_sonari()
+    if not interp:
+        return []
+    return [
+        f"Detected an old editable 'sonari' install in {interp}. "
+        f"The plugin's own source now shadows it, so this is cleanup, not a "
+        f"blocker. Remove it with: {interp} -m pip uninstall sonari "
+        f"(optionally also: --break-system-packages).",
+    ]
 
 
 def uninstall() -> int:
