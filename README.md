@@ -213,3 +213,9 @@ sonari uninstall
 `sonari uninstall` removes the LaunchAgents, the hotkey helper, and the
 `~/.local/bin/sonari` launcher. It preserves your `~/.sonari/config.json` and
 `~/.sonari/keymap.json` so your settings survive a reinstall.
+
+## Privacy
+
+Sonari runs entirely on your own Mac. It collects nothing, sends nothing over the network,
+and has no servers, telemetry, or analytics — the text it speaks is processed locally and is
+never stored or transmitted. See [PRIVACY.md](PRIVACY.md) for the full details.
