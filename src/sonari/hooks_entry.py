@@ -1,4 +1,6 @@
 """Pure mapping from Claude Code hook events to protocol message dicts."""
+from __future__ import annotations
+
 import os
 
 from sonari.protocol import PROTOCOL_VERSION, MsgType

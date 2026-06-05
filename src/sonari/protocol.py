@@ -1,4 +1,5 @@
 """Sonari wire protocol: newline-delimited JSON over a Unix stream socket."""
+from __future__ import annotations
 
 import json
 

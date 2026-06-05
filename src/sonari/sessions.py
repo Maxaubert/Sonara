@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+
 class SessionManager:
     def __init__(self, background_policy: str = "earcon_only") -> None:
         self.background_policy = background_policy

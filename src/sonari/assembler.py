@@ -3,6 +3,8 @@
 PURE: no I/O. Splits prose into sentences and replaces triple-backtick
 fenced code blocks with a spoken one-line summary.
 """
+from __future__ import annotations
+
 import re
 
 from sonari.cleaner import clean_markdown

@@ -4,6 +4,7 @@ Maps key names -> macOS virtual key codes, modifier names -> Carbon masks, and
 actions -> speechd protocol messages. Produces the resolved JSON array that the
 Swift hotkeyd reads, registers, and sends on fire.
 """
+from __future__ import annotations
 
 import json
 import os

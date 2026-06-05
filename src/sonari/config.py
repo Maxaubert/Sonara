@@ -1,4 +1,5 @@
 """Sonari persisted configuration: DEFAULTS plus load/save against CONFIG_PATH."""
+from __future__ import annotations
 
 import json
 import os

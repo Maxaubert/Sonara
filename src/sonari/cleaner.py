@@ -3,6 +3,8 @@
 PURE: no I/O. Does NOT handle triple-backtick fenced code blocks; the
 ProseAssembler handles those before text reaches here.
 """
+from __future__ import annotations
+
 import re
 
 # [label](url) -> label   (run BEFORE the bare-url rule)
