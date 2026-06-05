@@ -56,8 +56,6 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
          mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
          mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
          mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")) as place_launcher, \
-         mock.patch.object(cli, "_dev_install_migrate", return_value=[]), \
-         mock.patch.object(cli, "_legacy_migrate", return_value=[]), \
          mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", tmp_path / "keymap.json"), \

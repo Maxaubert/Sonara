@@ -24,102 +24,6 @@ from . import keymap
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
 
-def _clean_zshrc(path: str) -> bool:
-    """Remove legacy claude-tts lines from a zshrc. Returns True if it changed.
-
-    Drops the '# claude-tts' marker comment, the 'alias claude=...claude-speak'
-    line, and the '.local/bin' PATH export that carries the '# claude-tts'
-    marker. A user's own .local/bin PATH line WITHOUT the marker is preserved.
-    """
-    p = os.path.expanduser(path)
-    if not os.path.exists(p):
-        return False
-    with open(p, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    kept = []
-    for line in lines:
-        stripped = line.strip()
-        if stripped == "# claude-tts":
-            continue
-        if "claude-speak" in line and "alias" in line and "claude" in line:
-            continue
-        if ".local/bin" in line and "claude-tts" in line:
-            continue
-        kept.append(line)
-
-    # Collapse a blank line that the marker block left orphaned at the top of a
-    # run only if we actually removed something; otherwise leave file untouched.
-    if kept == lines:
-        return False
-
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.writelines(kept)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, p)
-    return True
-
-
-def _clean_settings_json(path: str) -> bool:
-    """Remove legacy claude-tts hooks from a settings.json. Returns True if changed.
-
-    Drops any hook entry whose command contains 'claude-tts', removes hook
-    groups left without hooks, and removes events left without groups. Tolerates
-    a missing or corrupt file (returns False, leaves the file untouched).
-    """
-    p = os.path.expanduser(path)
-    if not os.path.exists(p):
-        return False
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (ValueError, OSError):
-        return False
-    if not isinstance(data, dict):
-        return False
-
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
-        return False
-
-    changed = False
-    for event in list(hooks.keys()):
-        groups = hooks.get(event)
-        if not isinstance(groups, list):
-            continue
-        new_groups = []
-        for group in groups:
-            inner = group.get("hooks", []) if isinstance(group, dict) else []
-            kept = [h for h in inner
-                    if "claude-tts" not in str(h.get("command", ""))]
-            if len(kept) != len(inner):
-                changed = True
-            if not kept:
-                # whole group was legacy -> drop it
-                continue
-            group = dict(group)
-            group["hooks"] = kept
-            new_groups.append(group)
-        if new_groups:
-            hooks[event] = new_groups
-        else:
-            del hooks[event]
-
-    if not changed:
-        return False
-
-    tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, p)
-    return True
-
-
 def _send(msg: dict, expect_reply: bool = False):
     from . import client  # local import so tests can patch sonari.client.send
     return client.send(msg, expect_reply=expect_reply)
@@ -691,13 +595,7 @@ def install() -> int:
     launcher = _place_launcher(plugin_root)
     print(f"Placed launcher: {launcher}")
 
-    # 9. Migrations.
-    for line in _legacy_migrate():
-        print(f"  - {line}")
-    for line in _dev_install_migrate():
-        print(f"  - {line}")
-
-    # 10. Voice check.
+    # 9. Voice check.
     try:
         from . import speaker
         voice = speaker.best_enhanced_voice()
@@ -710,7 +608,7 @@ def install() -> int:
     except Exception:  # noqa: BLE001 - voice check must never break install
         pass
 
-    # 11. Eyes-free next steps.
+    # 10. Eyes-free next steps.
     print("")
     print("Enable the Sonari plugin in Claude Code, then run 'sonari doctor'.")
     print(f"  - Per session: claude --plugin-dir {plugin_root}")
@@ -725,86 +623,8 @@ def _cmd_install(_args) -> int:
     return install()
 
 
-def _legacy_migrate(home: Optional[str] = None) -> list:
-    """Clean up a PRIOR legacy claude-tts install. Returns a list of strings
-    describing what was removed. Safe (no-op) on a machine with no legacy install.
-    """
-    base = home or os.path.expanduser("~")
-    removed = []
-
-    zshrc = os.path.join(base, ".zshrc")
-    if _clean_zshrc(zshrc):
-        removed.append(f"cleaned legacy alias/PATH lines from {zshrc}")
-
-    settings = os.path.join(base, ".claude", "settings.json")
-    if _clean_settings_json(settings):
-        removed.append(f"cleaned legacy hooks from {settings}")
-
-    legacy_files = [
-        os.path.join(base, ".local", "bin", "claude-speak"),
-        os.path.join(base, ".local", "bin", "claude-tts"),
-        os.path.join(base, ".claude-tts-enabled"),
-        os.path.join(base, ".claude-tts-pos"),
-    ]
-    for f in legacy_files:
-        if os.path.exists(f):
-            try:
-                os.remove(f)
-                removed.append(f"removed {f}")
-            except OSError:
-                pass
-
-    return removed
-
-
-def _detect_editable_sonari() -> Optional[str]:
-    """Return a foreign interpreter path if an editable 'sonari' resolves from
-    OUTSIDE this plugin's src, else None.
-
-    We import sonari (which, via PYTHONPATH/conftest, is THIS plugin's source)
-    and compare its location to the plugin root. If a DIFFERENT interpreter on
-    PATH imports a sonari that lives in its own site-packages (the dev editable
-    install), report that interpreter. Best-effort; any failure -> None.
-    """
-    plugin_src = os.path.realpath(os.path.join(paths.repo_root(), "src"))
-    other = shutil.which("python3")
-    if not other:
-        return None
-    try:
-        loc = subprocess.check_output(
-            [other, "-c",
-             "import sonari, os; print(os.path.realpath(sonari.__file__))"],
-            stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
-    except Exception:  # noqa: BLE001
-        return None
-    if not loc:
-        return None
-    # If that interpreter's sonari is NOT inside this plugin's src, it is a
-    # foreign (editable/site-packages) install worth cleaning up.
-    if os.path.realpath(loc).startswith(plugin_src + os.sep):
-        return None
-    return other
-
-
-def _dev_install_migrate(home: Optional[str] = None) -> list:
-    """Detect a dev editable 'sonari' footprint and return cleanup GUIDANCE.
-
-    Never auto-uninstalls (uninstalling another interpreter's package is risky).
-    Safe no-op when there is no foreign footprint.
-    """
-    interp = _detect_editable_sonari()
-    if not interp:
-        return []
-    return [
-        f"Detected an old editable 'sonari' install in {interp}. "
-        f"The plugin's own source now shadows it, so this is cleanup, not a "
-        f"blocker. Remove it with: {interp} -m pip uninstall sonari "
-        f"(optionally also: --break-system-packages).",
-    ]
-
-
 def uninstall() -> int:
-    """Remove the LaunchAgent + SONARI_DIR and migrate away a legacy install."""
+    """Remove the LaunchAgent + SONARI_DIR (Sonari-owned runtime artifacts)."""
     if os.path.exists(LAUNCH_AGENT_PATH):
         _launchctl(["unload", LAUNCH_AGENT_PATH])
         try:
@@ -860,9 +680,6 @@ def uninstall() -> int:
     print(f"Removed Sonari runtime files from {sonari_dir} "
           f"(keymap.json and config.json left in place).")
 
-    print("Checking for a prior legacy claude-tts install...")
-    for line in _legacy_migrate():
-        print(f"  - {line}")
     print("Done. Disable the 'sonari' plugin via /plugin in Claude Code if enabled.")
     return 0
 
@@ -884,7 +701,7 @@ def _register_local(sub) -> None:
     sub.add_parser("install", help="install the LaunchAgent + SONARI_DIR").set_defaults(
         func=_cmd_install)
     sub.add_parser("uninstall",
-                   help="remove Sonari and clean a legacy install").set_defaults(
+                   help="remove Sonari (LaunchAgents, launcher, runtime files)").set_defaults(
         func=_cmd_uninstall)
     sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
         func=_cmd_daemon)
