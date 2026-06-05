@@ -170,6 +170,36 @@ def _cmd_skip(_args) -> int:
     return 0
 
 
+_MOD_DISPLAY = [
+    (4096, "Ctrl"),
+    (256, "Cmd"),
+    (2048, "Opt"),
+    (512, "Shift"),
+]
+_KEYCODE_DISPLAY = {
+    1: "S", 15: "R", 2: "D", 37: "L", 9: "V", 31: "O",
+    47: ".", 30: "]", 33: "[",
+}
+
+
+def _combo_label(modifiers: int, key_code: int) -> str:
+    parts = [name for mask, name in _MOD_DISPLAY if modifiers & mask]
+    parts.append(_KEYCODE_DISPLAY.get(key_code, "key{0}".format(key_code)))
+    return "+".join(parts)
+
+
+def _cmd_keymap(_args) -> int:
+    try:
+        resolved = keymap.resolve_keymap(keymap.load_keymap())
+    except ValueError as exc:
+        print(f"sonari: invalid keymap: {exc}", file=sys.stderr)
+        return 1
+    for entry in resolved:
+        combo = _combo_label(entry["modifiers"], entry["keyCode"])
+        print("{0:<16} {1}".format(entry["action"], combo))
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sonari",
                                 description="Sonari eyes-free TTS for Claude Code")
@@ -560,6 +590,9 @@ def _register_local(sub) -> None:
         func=_cmd_uninstall)
     sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
         func=_cmd_daemon)
+    sub.add_parser("keymap",
+                   help="print the active global hotkey bindings").set_defaults(
+        func=_cmd_keymap)
 
 
 def main(argv: Optional[list] = None) -> int:

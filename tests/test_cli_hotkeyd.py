@@ -189,3 +189,14 @@ def test_doctor_hotkeyd_binary_missing_fails(tmp_path):
         for p in reversed(patches):
             p.stop()
     assert d["hotkeyd binary"] is False
+
+
+def test_keymap_subcommand_prints_all_nine_actions(capsys):
+    rc = cli.main(["keymap"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    for action in ("stop", "repeat", "skip", "jump_decision", "catch_up",
+                   "faster", "slower", "cycle_verbosity", "reread_options"):
+        assert action in out
+    # human-readable combos appear (Ctrl+Cmd default)
+    assert "Ctrl" in out and "Cmd" in out

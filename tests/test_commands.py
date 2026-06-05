@@ -11,7 +11,7 @@ def _read(name):
 
 def test_all_command_files_exist():
     for name in ("sonari:status.md", "sonari:verbosity.md", "sonari:stop.md",
-                 "sonari:repeat.md", "sonari:doctor.md"):
+                 "sonari:repeat.md", "sonari:doctor.md", "sonari:keymap.md"):
         assert os.path.exists(os.path.join(CMD, name)), name
 
 
@@ -45,5 +45,13 @@ def test_repeat_is_silent():
 def test_doctor_shows_output():
     txt = _read("sonari:doctor.md")
     assert "sonari doctor" in txt
+    assert "Bash" in txt
+    assert "print" in txt.lower()
+
+
+def test_keymap_command_file_exists_and_runs_sonari_keymap():
+    assert os.path.exists(os.path.join(CMD, "sonari:keymap.md"))
+    txt = _read("sonari:keymap.md")
+    assert "sonari keymap" in txt
     assert "Bash" in txt
     assert "print" in txt.lower()
