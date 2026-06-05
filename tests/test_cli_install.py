@@ -62,6 +62,15 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
     run = mock.Mock(return_value=0)
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
+         mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
+         mock.patch.object(cli.paths, "KEYMAP_PATH", tmp_path / "keymap.json"), \
+         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"), \
+         mock.patch.object(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json"), \
+         mock.patch.object(cli.keymap, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
+         mock.patch.object(cli.keymap, "SONARI_DIR", tmp_path), \
+         mock.patch.object(cli.keymap, "ensure_sonari_dir", lambda: tmp_path.mkdir(parents=True, exist_ok=True)), \
          mock.patch("sonari.paths.ensure_sonari_dir") as ensure:
         rc = cli.install()
     assert rc == 0

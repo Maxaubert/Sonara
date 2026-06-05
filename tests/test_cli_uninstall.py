@@ -16,6 +16,8 @@ def test_uninstall_removes_launchagent_and_sonari_dir(tmp_path):
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
          mock.patch.object(cli.paths, "SONARI_DIR", sonari_dir), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"), \
          mock.patch.object(cli, "_legacy_migrate", return_value=[]) as mig:
         rc = cli.uninstall()
 

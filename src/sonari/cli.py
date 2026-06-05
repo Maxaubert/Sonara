@@ -19,6 +19,7 @@ from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import paths
+from . import keymap
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
@@ -251,6 +252,31 @@ def doctor() -> list:
     results.append(("plugin hooks.json", present,
                     hooks_json if present else f"missing: {hooks_json}"))
 
+    swiftc = shutil.which("swiftc")
+    results.append(("swiftc", swiftc is not None,
+                    swiftc or "not found (needed to build the hotkey daemon)"))
+
+    hk_bin = str(paths.HOTKEYD_BIN_PATH)
+    hk_exists = os.path.exists(hk_bin)
+    results.append(("hotkeyd binary", hk_exists,
+                    hk_bin if hk_exists else f"missing: {hk_bin} (run 'sonari install')"))
+
+    try:
+        with open(paths.HOTKEYD_RESOLVED_PATH, "r", encoding="utf-8") as fh:
+            parsed = json.load(fh)
+        ok = isinstance(parsed, list)
+        results.append(("hotkeyd resolved keymap", ok,
+                        str(paths.HOTKEYD_RESOLVED_PATH) if ok
+                        else "not a JSON list"))
+    except Exception as exc:  # noqa: BLE001 - doctor must never raise
+        results.append(("hotkeyd resolved keymap", False, f"unreadable: {exc}"))
+
+    try:
+        keymap.resolve_keymap(keymap.load_keymap())
+        results.append(("keymap resolves", True, "ok"))
+    except Exception as exc:  # noqa: BLE001
+        results.append(("keymap resolves", False, f"error: {exc}"))
+
     return results
 
 
@@ -269,6 +295,10 @@ import subprocess
 LAUNCH_AGENT_LABEL = "com.sonari.speechd"
 LAUNCH_AGENT_PATH = os.path.expanduser(
     "~/Library/LaunchAgents/com.sonari.speechd.plist")
+
+HOTKEYD_LAUNCH_AGENT_LABEL = "com.sonari.hotkeyd"
+HOTKEYD_LAUNCH_AGENT_PATH = os.path.expanduser(
+    "~/Library/LaunchAgents/com.sonari.hotkeyd.plist")
 
 
 def _repo_root() -> str:
@@ -323,6 +353,55 @@ def _launchagent_plist(daemon_path: str, log_path: str,
     )
 
 
+def _hotkeyd_plist(binary_path: str, log_path: str) -> str:
+    """Return the full LaunchAgent plist XML for the hotkey daemon.
+
+    Runs the compiled Swift binary directly. RunAtLoad + KeepAlive keep it alive
+    in the Aqua (GUI) session; ProcessType Interactive so it participates in the
+    foreground session that Carbon hotkeys require.
+    """
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n'
+        '<dict>\n'
+        '    <key>Label</key>\n'
+        f'    <string>{HOTKEYD_LAUNCH_AGENT_LABEL}</string>\n'
+        '    <key>ProgramArguments</key>\n'
+        '    <array>\n'
+        f'        <string>{binary_path}</string>\n'
+        '    </array>\n'
+        '    <key>RunAtLoad</key>\n'
+        '    <true/>\n'
+        '    <key>KeepAlive</key>\n'
+        '    <true/>\n'
+        '    <key>StandardErrorPath</key>\n'
+        f'    <string>{log_path}</string>\n'
+        '    <key>StandardOutPath</key>\n'
+        f'    <string>{log_path}</string>\n'
+        '    <key>ProcessType</key>\n'
+        '    <string>Interactive</string>\n'
+        '</dict>\n'
+        '</plist>\n'
+    )
+
+
+def _build_hotkeyd():
+    """Compile hotkeyd/sonari-hotkeyd.swift to paths.HOTKEYD_BIN_PATH.
+
+    Returns (ok, detail). Non-fatal: if swiftc is absent we return
+    (False, "swiftc not found") and the caller warns but still installs speechd.
+    """
+    if shutil.which("swiftc") is None:
+        return (False, "swiftc not found")
+    src = os.path.join(paths.repo_root(), "hotkeyd", "sonari-hotkeyd.swift")
+    rc = subprocess.call(["swiftc", src, "-o", str(paths.HOTKEYD_BIN_PATH)])
+    if rc == 0:
+        return (True, str(paths.HOTKEYD_BIN_PATH))
+    return (False, f"swiftc exited {rc}")
+
+
 def _launchctl(args: list) -> int:
     """Run 'launchctl <args...>'. Patched in tests. Returns the exit code."""
     try:
@@ -351,6 +430,27 @@ def install() -> int:
     else:
         print(f"warning: 'launchctl load' returned {rc}; "
               f"the daemon will still autostart on next login.")
+
+    # --- Phase 2: hotkeyd ---------------------------------------------------
+    keymap.write_default_keymap_if_absent()
+    keymap.write_resolved()
+    ok, detail = _build_hotkeyd()
+    if ok:
+        hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
+        hk_xml = _hotkeyd_plist(str(paths.HOTKEYD_BIN_PATH), hk_log)
+        os.makedirs(os.path.dirname(HOTKEYD_LAUNCH_AGENT_PATH), exist_ok=True)
+        with open(HOTKEYD_LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:
+            f.write(hk_xml)
+        print(f"Wrote LaunchAgent: {HOTKEYD_LAUNCH_AGENT_PATH}")
+        _launchctl(["unload", HOTKEYD_LAUNCH_AGENT_PATH])
+        hrc = _launchctl(["load", HOTKEYD_LAUNCH_AGENT_PATH])
+        if hrc == 0:
+            print(f"Loaded LaunchAgent {HOTKEYD_LAUNCH_AGENT_LABEL}.")
+        else:
+            print(f"warning: 'launchctl load' returned {hrc} for the hotkey daemon.")
+    else:
+        print(f"warning: hotkey daemon not built ({detail}); "
+              f"global hotkeys disabled, but speech still works.")
 
     print("")
     print("Enable the Sonari plugin in Claude Code:")
@@ -411,6 +511,22 @@ def uninstall() -> int:
     else:
         print("No LaunchAgent installed.")
 
+    if os.path.exists(HOTKEYD_LAUNCH_AGENT_PATH):
+        _launchctl(["unload", HOTKEYD_LAUNCH_AGENT_PATH])
+        try:
+            os.remove(HOTKEYD_LAUNCH_AGENT_PATH)
+            print(f"Removed LaunchAgent: {HOTKEYD_LAUNCH_AGENT_PATH}")
+        except OSError as exc:
+            print(f"warning: could not remove {HOTKEYD_LAUNCH_AGENT_PATH}: {exc}")
+    if os.path.exists(str(paths.HOTKEYD_BIN_PATH)):
+        try:
+            os.remove(str(paths.HOTKEYD_BIN_PATH))
+            print(f"Removed hotkey daemon binary: {paths.HOTKEYD_BIN_PATH}")
+        except OSError:
+            pass
+
+    # Note: SONARI_DIR is removed below, which also removes keymap.json. Spec §5
+    # prefers preserving keymap.json; left for the code-quality reviewer to decide.
     sonari_dir = str(paths.SONARI_DIR)
     if os.path.isdir(sonari_dir):
         _shutil.rmtree(sonari_dir, ignore_errors=True)

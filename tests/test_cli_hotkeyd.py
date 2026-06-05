@@ -1,0 +1,186 @@
+import os
+import plistlib
+from unittest import mock
+
+from sonari import cli
+
+
+def test_hotkeyd_plist_is_valid_and_complete(tmp_path):
+    binary = "/Users/u/.sonari/sonari-hotkeyd"
+    log = "/Users/u/.sonari/hotkeyd.log"
+    xml = cli._hotkeyd_plist(binary, log)
+    assert isinstance(xml, str)
+    assert xml.startswith("<?xml")
+    data = plistlib.loads(xml.encode("utf-8"))
+    assert data["Label"] == cli.HOTKEYD_LAUNCH_AGENT_LABEL
+    assert data["ProgramArguments"] == [binary]
+    assert data["RunAtLoad"] is True
+    assert data["KeepAlive"] is True
+    assert data["StandardErrorPath"] == log
+    assert data["StandardOutPath"] == log
+    assert data["ProcessType"] == "Interactive"
+
+
+def test_build_hotkeyd_missing_swiftc_returns_false():
+    with mock.patch("shutil.which", return_value=None):
+        ok, detail = cli._build_hotkeyd()
+    assert ok is False
+    assert "swiftc" in detail.lower()
+
+
+def test_build_hotkeyd_compiles_when_swiftc_present(tmp_path):
+    with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
+         mock.patch("subprocess.call", return_value=0) as call, \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"):
+        ok, detail = cli._build_hotkeyd()
+    assert ok is True
+    # swiftc was invoked with the repo's swift source and the bin output path
+    args = call.call_args.args[0]
+    assert args[0] == "swiftc"
+    assert args[1].endswith(os.path.join("hotkeyd", "sonari-hotkeyd.swift"))
+    assert args[-1] == str(tmp_path / "sonari-hotkeyd")
+
+
+def test_build_hotkeyd_nonzero_returncode_is_failure(tmp_path):
+    with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
+         mock.patch("subprocess.call", return_value=1), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"):
+        ok, _ = cli._build_hotkeyd()
+    assert ok is False
+
+
+def test_install_writes_hotkeyd_plist_and_keymap(tmp_path, capsys):
+    speechd_plist = tmp_path / "com.sonari.speechd.plist"
+    hotkeyd_plist = tmp_path / "com.sonari.hotkeyd.plist"
+    km = tmp_path / "keymap.json"
+    resolved = tmp_path / "hotkeyd.resolved.json"
+    binp = tmp_path / "sonari-hotkeyd"
+    run = mock.Mock(return_value=0)
+    with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(speechd_plist)), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
+         mock.patch.object(cli, "_launchctl", run), \
+         mock.patch.object(cli.paths, "KEYMAP_PATH", km), \
+         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp), \
+         mock.patch.object(cli.keymap, "KEYMAP_PATH", km), \
+         mock.patch.object(cli.keymap, "HOTKEYD_RESOLVED_PATH", resolved), \
+         mock.patch.object(cli.keymap, "SONARI_DIR", tmp_path), \
+         mock.patch.object(cli.keymap, "ensure_sonari_dir",
+                           lambda: tmp_path.mkdir(parents=True, exist_ok=True)), \
+         mock.patch("sonari.paths.ensure_sonari_dir"), \
+         mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")):
+        rc = cli.install()
+    assert rc == 0
+    assert hotkeyd_plist.exists()
+    assert km.exists()
+    assert resolved.exists()
+    data = plistlib.loads(hotkeyd_plist.read_text().encode("utf-8"))
+    assert data["ProgramArguments"] == [str(binp)]
+    # hotkeyd agent reloaded
+    loads = [c.args[0] for c in run.call_args_list]
+    assert any(a[0] == "load" and a[1] == str(hotkeyd_plist) for a in loads)
+
+
+def test_install_build_failure_is_nonfatal(tmp_path, capsys):
+    speechd_plist = tmp_path / "com.sonari.speechd.plist"
+    hotkeyd_plist = tmp_path / "com.sonari.hotkeyd.plist"
+    km = tmp_path / "keymap.json"
+    resolved = tmp_path / "hotkeyd.resolved.json"
+    binp = tmp_path / "sonari-hotkeyd"
+    run = mock.Mock(return_value=0)
+    with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(speechd_plist)), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
+         mock.patch.object(cli, "_launchctl", run), \
+         mock.patch.object(cli.paths, "KEYMAP_PATH", km), \
+         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp), \
+         mock.patch.object(cli.keymap, "KEYMAP_PATH", km), \
+         mock.patch.object(cli.keymap, "HOTKEYD_RESOLVED_PATH", resolved), \
+         mock.patch.object(cli.keymap, "SONARI_DIR", tmp_path), \
+         mock.patch.object(cli.keymap, "ensure_sonari_dir",
+                           lambda: tmp_path.mkdir(parents=True, exist_ok=True)), \
+         mock.patch("sonari.paths.ensure_sonari_dir"), \
+         mock.patch.object(cli, "_build_hotkeyd",
+                           return_value=(False, "swiftc not found")):
+        rc = cli.install()
+    assert rc == 0  # speechd still installed; build failure only warns
+    out = capsys.readouterr().out
+    assert "warning" in out.lower() or "swiftc" in out.lower()
+
+
+def test_uninstall_removes_hotkeyd_agent_and_binary(tmp_path):
+    speechd_plist = tmp_path / "com.sonari.speechd.plist"
+    speechd_plist.write_text("<plist/>")
+    hotkeyd_plist = tmp_path / "com.sonari.hotkeyd.plist"
+    hotkeyd_plist.write_text("<plist/>")
+    sonari_dir = tmp_path / ".sonari"
+    sonari_dir.mkdir()
+    binp = sonari_dir / "sonari-hotkeyd"
+    binp.write_text("binary")
+    run = mock.Mock(return_value=0)
+    with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(speechd_plist)), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
+         mock.patch.object(cli, "_launchctl", run), \
+         mock.patch.object(cli.paths, "SONARI_DIR", sonari_dir), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp), \
+         mock.patch.object(cli, "_legacy_migrate", return_value=[]):
+        rc = cli.uninstall()
+    assert rc == 0
+    assert not hotkeyd_plist.exists()
+    unloads = [c.args[0] for c in run.call_args_list]
+    assert any(a[0] == "unload" and a[1] == str(hotkeyd_plist) for a in unloads)
+
+
+def _doctor_ok_patches(tmp_path):
+    binp = tmp_path / "sonari-hotkeyd"
+    binp.write_text("x")
+    resolved = tmp_path / "hotkeyd.resolved.json"
+    resolved.write_text("[]")
+    return [
+        mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
+        mock.patch("sonari.speaker.best_enhanced_voice", return_value="Ava (Premium)"),
+        mock.patch("os.access", return_value=True),
+        mock.patch("sonari.paths.ensure_sonari_dir"),
+        mock.patch("sonari.client.send", return_value={"ok": True}),
+        mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp),
+        mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved),
+    ]
+
+
+def test_doctor_includes_hotkeyd_checks(tmp_path):
+    patches = _doctor_ok_patches(tmp_path)
+    for p in patches:
+        p.start()
+    try:
+        rows = cli.doctor()
+    finally:
+        for p in reversed(patches):
+            p.stop()
+    checks = {check for check, _, _ in rows}
+    assert "swiftc" in checks
+    assert "hotkeyd binary" in checks
+    assert "hotkeyd resolved keymap" in checks
+    assert "keymap resolves" in checks
+
+
+def test_doctor_hotkeyd_binary_missing_fails(tmp_path):
+    missing = tmp_path / "nope" / "sonari-hotkeyd"
+    resolved = tmp_path / "hotkeyd.resolved.json"
+    resolved.write_text("[]")
+    patches = [
+        mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
+        mock.patch("sonari.speaker.best_enhanced_voice", return_value="V"),
+        mock.patch("os.access", return_value=True),
+        mock.patch("sonari.paths.ensure_sonari_dir"),
+        mock.patch("sonari.client.send", return_value={"ok": True}),
+        mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", missing),
+        mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        d = {check: ok for check, ok, _ in cli.doctor()}
+    finally:
+        for p in reversed(patches):
+            p.stop()
+    assert d["hotkeyd binary"] is False
