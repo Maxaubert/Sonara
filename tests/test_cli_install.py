@@ -74,3 +74,21 @@ def test_install_subcommand_invokes_install():
         rc = cli.main(["install"])
     inst.assert_called_once()
     assert rc == 0
+
+
+def test_write_install_record_writes_expected_keys(tmp_path):
+    rec = tmp_path / "install.json"
+    with mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", rec):
+        cli._write_install_record(
+            python="/usr/bin/python3",
+            python_version="3.9",
+            plugin_root="/plug",
+            src="/plug/src",
+        )
+    import json as _json
+    data = _json.loads(rec.read_text())
+    assert data["python"] == "/usr/bin/python3"
+    assert data["python_version"] == "3.9"
+    assert data["plugin_root"] == "/plug"
+    assert data["src"] == "/plug/src"
+    assert "installed_at" in data and isinstance(data["installed_at"], str)

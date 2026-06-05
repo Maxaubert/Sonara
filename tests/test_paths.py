@@ -115,3 +115,8 @@ def test_repo_root_derivation_matches_file_location():
     paths_file = os.path.abspath(paths.__file__)
     expected = os.path.dirname(os.path.dirname(os.path.dirname(paths_file)))
     assert paths.repo_root() == expected
+
+
+def test_install_record_path_lives_under_sonari_dir():
+    from sonari import paths
+    assert paths.INSTALL_RECORD_PATH == paths.SONARI_DIR / "install.json"

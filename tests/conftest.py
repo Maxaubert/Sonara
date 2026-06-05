@@ -38,6 +38,8 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
         raising=False)
     monkeypatch.setattr(
         paths, "HOTKEYD_BIN_PATH", sonari_dir / "sonari-hotkeyd", raising=False)
+    monkeypatch.setattr(
+        paths, "INSTALL_RECORD_PATH", sonari_dir / "install.json", raising=False)
 
     # Modules that bound these names at import time need their copies repointed too.
     import sonari.config as config

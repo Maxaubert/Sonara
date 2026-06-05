@@ -393,6 +393,23 @@ def _resolve_python():
     return qualifying[0][0]
 
 
+def _write_install_record(python: str, python_version: str,
+                          plugin_root: str, src: str) -> None:
+    """Persist the durable install record used by doctor + migration."""
+    from datetime import datetime, timezone
+    record = {
+        "python": python,
+        "python_version": python_version,
+        "plugin_root": plugin_root,
+        "src": src,
+        "installed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    os.makedirs(os.path.dirname(str(paths.INSTALL_RECORD_PATH)), exist_ok=True)
+    with open(str(paths.INSTALL_RECORD_PATH), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2)
+        f.write("\n")
+
+
 def _xml_escape(s: str) -> str:
     """Escape the three XML-significant characters for safe plist interpolation."""
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
