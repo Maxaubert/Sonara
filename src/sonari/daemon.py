@@ -178,20 +178,22 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.SET_RATE:
-            if "delta" in msg:
-                cur = self.config.get("rate", 200)
-                new = max(RATE_MIN, min(RATE_MAX, int(cur) + int(msg.get("delta", 0))))
-                self.config["rate"] = new
-                self.speaker.set_rate(new)
-                save_config(self.config)
-                fg = self.sessions.foreground()
-                if fg is not None:
-                    self._enqueue(fg, "prose", "Rate {0}.".format(new), False)
-                return None
-            rate = msg.get("rate")
+            is_delta = "delta" in msg
+            if is_delta:
+                try:
+                    cur = int(self.config.get("rate", 200))
+                    rate = max(RATE_MIN, min(RATE_MAX, cur + int(msg.get("delta", 0))))
+                except (ValueError, TypeError):
+                    return None
+            else:
+                rate = msg.get("rate")
             self.config["rate"] = rate
             self.speaker.set_rate(rate)
             save_config(self.config)
+            if is_delta:
+                fg = self.sessions.foreground()
+                if fg is not None:
+                    self._enqueue(fg, "prose", "Rate {0}.".format(rate), False)
             return None
 
         if t == MsgType.SET_VOICE:
