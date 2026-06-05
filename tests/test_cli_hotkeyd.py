@@ -56,10 +56,16 @@ def test_install_writes_hotkeyd_plist_and_keymap(tmp_path, capsys):
     km = tmp_path / "keymap.json"
     resolved = tmp_path / "hotkeyd.resolved.json"
     binp = tmp_path / "sonari-hotkeyd"
+    record = tmp_path / "install.json"
     run = mock.Mock(return_value=0)
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(speechd_plist)), \
          mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
          mock.patch.object(cli, "_launchctl", run), \
+         mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
+         mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")), \
+         mock.patch.object(cli, "_dev_install_migrate", return_value=[]), \
+         mock.patch.object(cli, "_legacy_migrate", return_value=[]), \
+         mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", km), \
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
          mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp), \
@@ -77,7 +83,6 @@ def test_install_writes_hotkeyd_plist_and_keymap(tmp_path, capsys):
     assert resolved.exists()
     data = plistlib.loads(hotkeyd_plist.read_text().encode("utf-8"))
     assert data["ProgramArguments"] == [str(binp)]
-    # hotkeyd agent reloaded
     loads = [c.args[0] for c in run.call_args_list]
     assert any(a[0] == "load" and a[1] == str(hotkeyd_plist) for a in loads)
 
@@ -88,10 +93,16 @@ def test_install_build_failure_is_nonfatal(tmp_path, capsys):
     km = tmp_path / "keymap.json"
     resolved = tmp_path / "hotkeyd.resolved.json"
     binp = tmp_path / "sonari-hotkeyd"
+    record = tmp_path / "install.json"
     run = mock.Mock(return_value=0)
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(speechd_plist)), \
          mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
          mock.patch.object(cli, "_launchctl", run), \
+         mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
+         mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")), \
+         mock.patch.object(cli, "_dev_install_migrate", return_value=[]), \
+         mock.patch.object(cli, "_legacy_migrate", return_value=[]), \
+         mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", km), \
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
          mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp), \
@@ -105,6 +116,8 @@ def test_install_build_failure_is_nonfatal(tmp_path, capsys):
                            return_value=(False, "swiftc not found")):
         rc = cli.install()
     assert rc == 0  # speechd still installed; build failure only warns
+    # The hotkeyd LaunchAgent is NOT written when there is no binary.
+    assert not hotkeyd_plist.exists()
     out = capsys.readouterr().out
     assert "warning" in out.lower() or "swiftc" in out.lower()
 

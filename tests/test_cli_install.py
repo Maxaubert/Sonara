@@ -46,11 +46,20 @@ def test_plist_xml_escapes_special_chars_in_paths():
 def test_install_writes_plist_and_loads(tmp_path, capsys):
     la_dir = tmp_path / "LaunchAgents"
     plist = la_dir / (cli.LAUNCH_AGENT_LABEL + ".plist")
+    record = tmp_path / "install.json"
     run = mock.Mock(return_value=0)
+    monkeypatch_home = tmp_path / "home"
+    monkeypatch_home.mkdir()
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
-         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
+         mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
+         mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
          mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
+         mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")) as place_launcher, \
+         mock.patch.object(cli, "_dev_install_migrate", return_value=[]), \
+         mock.patch.object(cli, "_legacy_migrate", return_value=[]), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
+         mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", tmp_path / "keymap.json"), \
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
          mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"), \
@@ -63,10 +72,32 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
     assert rc == 0
     ensure.assert_called_once()
     assert plist.exists()
-    # launchctl unload (ignored) then load was attempted.
+    # The speechd plist now embeds the resolved interpreter + PYTHONPATH=<src>.
+    data = plistlib.loads(plist.read_text().encode("utf-8"))
+    assert data["ProgramArguments"][0] == "/usr/bin/python3"
+    assert data["ProgramArguments"][1:] == ["-m", "sonari.daemon"]
+    assert data["EnvironmentVariables"]["PYTHONPATH"].endswith(os.path.join("", "src")) \
+        or data["EnvironmentVariables"]["PYTHONPATH"].endswith("/src")
+    # install.json was written with the resolved interpreter.
+    import json as _json
+    rec = _json.loads(record.read_text())
+    assert rec["python"] == "/usr/bin/python3"
+    assert rec["src"].endswith("src")
+    # The launcher was placed.
+    place_launcher.assert_called_once()
     assert any(c.args[0][0] == "load" for c in run.call_args_list)
     out = capsys.readouterr().out
-    assert "/plugin" in out or "plugin" in out.lower()
+    assert "doctor" in out.lower()
+
+
+def test_install_fatal_when_no_python_found(capsys):
+    with mock.patch.object(cli, "_resolve_python", return_value=None), \
+         mock.patch("sonari.paths.ensure_sonari_dir"):
+        rc = cli.install()
+    assert rc != 0
+    out = capsys.readouterr().out
+    assert "python3" in out.lower()
+    assert "xcode-select --install" in out.lower()
 
 
 def test_install_subcommand_invokes_install():

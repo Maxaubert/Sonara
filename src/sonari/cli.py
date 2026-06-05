@@ -564,18 +564,48 @@ def _launchctl(args: list) -> int:
 
 
 def install() -> int:
-    """Install the speech daemon as a LaunchAgent and ensure SONARI_DIR."""
+    """Install Sonari as a self-contained plugin: resolve python, build hotkeyd,
+    write both LaunchAgents (resolved interp + PYTHONPATH), place the launcher.
+    """
     paths.ensure_sonari_dir()
-    daemon = _daemon_shim_path()
-    log = str(paths.LOG_PATH)
-    xml = _launchagent_plist(daemon, log, python_executable=sys.executable)
 
+    # 1. Resolve the best python3 >= 3.9 (FATAL if none).
+    python = _resolve_python()
+    if python is None:
+        print("No suitable python3 found (need 3.9+). macOS normally ships "
+              "/usr/bin/python3; if missing, install the Command Line Tools "
+              "(xcode-select --install).")
+        return 1
+    ver = _probe_python_version(python)
+    py_ver = "{0}.{1}".format(*ver) if ver else "3.9"
+    print(f"Using interpreter: {python} (Python {py_ver})")
+
+    plugin_root = os.path.realpath(paths.repo_root())
+    src = os.path.join(plugin_root, "src")
+
+    # 2. Pre-check swiftc / Command Line Tools (non-fatal).
+    if shutil.which("swiftc") is None:
+        print("Xcode Command Line Tools not found; global hotkeys disabled. "
+              "Install them with:  xcode-select --install   then re-run: "
+              "sonari install")
+
+    # 3-4. Keymap + build hotkeyd.
+    keymap.write_default_keymap_if_absent()
+    keymap.write_resolved()
+    ok, detail = _build_hotkeyd()
+
+    # 5. Durable install record.
+    _write_install_record(python=python, python_version=py_ver,
+                          plugin_root=plugin_root, src=src)
+
+    # 6. speechd LaunchAgent (resolved interpreter + PYTHONPATH=<src>).
+    log = str(paths.LOG_PATH)
+    xml = _launchagent_plist(python_executable=python, src_path=src,
+                             log_path=log)
     os.makedirs(os.path.dirname(LAUNCH_AGENT_PATH), exist_ok=True)
     with open(LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:
         f.write(xml)
     print(f"Wrote LaunchAgent: {LAUNCH_AGENT_PATH}")
-
-    # Reload: unload any prior copy (ignore failure), then load.
     _launchctl(["unload", LAUNCH_AGENT_PATH])
     rc = _launchctl(["load", LAUNCH_AGENT_PATH])
     if rc == 0:
@@ -584,10 +614,7 @@ def install() -> int:
         print(f"warning: 'launchctl load' returned {rc}; "
               f"the daemon will still autostart on next login.")
 
-    # --- Phase 2: hotkeyd ---------------------------------------------------
-    keymap.write_default_keymap_if_absent()
-    keymap.write_resolved()
-    ok, detail = _build_hotkeyd()
+    # 7. hotkeyd LaunchAgent (skip entirely if no binary).
     if ok:
         hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
         hk_xml = _hotkeyd_plist(str(paths.HOTKEYD_BIN_PATH), hk_log)
@@ -605,11 +632,37 @@ def install() -> int:
         print(f"warning: hotkey daemon not built ({detail}); "
               f"global hotkeys disabled, but speech still works.")
 
+    # 8. ~/.local/bin/sonari launcher.
+    launcher = _place_launcher(plugin_root)
+    print(f"Placed launcher: {launcher}")
+
+    # 9. Migrations.
+    for line in _legacy_migrate():
+        print(f"  - {line}")
+    for line in _dev_install_migrate():
+        print(f"  - {line}")
+
+    # 10. Voice check.
+    try:
+        from . import speaker
+        voice = speaker.best_enhanced_voice()
+        if voice:
+            print(f"Voice: {voice}.")
+        else:
+            print("Voice: no enhanced voice found; will fall back to Samantha. "
+                  "Install one via System Settings -> Accessibility -> "
+                  "Spoken Content.")
+    except Exception:  # noqa: BLE001 - voice check must never break install
+        pass
+
+    # 11. Eyes-free next steps.
     print("")
-    print("Enable the Sonari plugin in Claude Code:")
-    print(f"  - Per session: claude --plugin-dir {_repo_root()}")
-    print("  - Or add this repo as a local plugin marketplace and enable it via /plugin.")
-    print("Then run 'sonari doctor' to verify everything is wired up.")
+    print("Enable the Sonari plugin in Claude Code, then run 'sonari doctor'.")
+    print(f"  - Per session: claude --plugin-dir {plugin_root}")
+    print("  - Or enable 'sonari' from the /plugin menu (local marketplace).")
+    if not _local_bin_on_path():
+        print('Add ~/.local/bin to your PATH so `sonari` works in every shell:')
+        print('  export PATH="$HOME/.local/bin:$PATH"')
     return 0
 
 
@@ -647,6 +700,15 @@ def _legacy_migrate(home: Optional[str] = None) -> list:
                 pass
 
     return removed
+
+
+def _dev_install_migrate(home: Optional[str] = None) -> list:
+    """Detect a dev editable 'sonari' footprint and PRINT cleanup guidance.
+
+    Safe no-op when there is no dev footprint. Body is implemented in a later
+    task; for now it returns no lines so install() can call it unconditionally.
+    """
+    return []
 
 
 def uninstall() -> int:
