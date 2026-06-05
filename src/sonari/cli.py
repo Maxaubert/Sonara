@@ -410,6 +410,52 @@ def _write_install_record(python: str, python_version: str,
         f.write("\n")
 
 
+def _local_bin_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".local", "bin")
+
+
+def _launcher_path() -> str:
+    return os.path.join(_local_bin_dir(), "sonari")
+
+
+def _place_launcher(plugin_root: str) -> str:
+    """Write an executable ~/.local/bin/sonari that execs the plugin bin/sonari.
+
+    The plugin path is baked in and shell-quoted so a path with spaces is safe.
+    Overwrites any prior Sonari-owned launcher. Returns the launcher path.
+    """
+    target = os.path.join(plugin_root, "bin", "sonari")
+    wrapper = (
+        "#!/usr/bin/env bash\n"
+        f'exec "{target}" "$@"\n'
+    )
+    path = _launcher_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(wrapper)
+    os.chmod(path, 0o755)
+    return path
+
+
+def _remove_launcher() -> bool:
+    """Remove ~/.local/bin/sonari if present. Returns True if it was removed."""
+    path = _launcher_path()
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def _local_bin_on_path() -> bool:
+    """Return True if ~/.local/bin is on the current PATH."""
+    lb = _local_bin_dir()
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    return lb in entries
+
+
 def _xml_escape(s: str) -> str:
     """Escape the three XML-significant characters for safe plist interpolation."""
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
