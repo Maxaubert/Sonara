@@ -112,3 +112,75 @@ def test_cycle_verbosity_no_foreground_still_persists():
     daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY))
     assert config["verbosity"] == "medium"
     assert len(queue) == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 4: option caching + reread_options + clearing
+# ---------------------------------------------------------------------------
+
+def test_reread_after_choice_reenqueues_same_text():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
+        {"question": "Pick a color", "options": [{"label": "Red"}, {"label": "Blue"}]},
+    ]))
+    spoken = queue.pop_next().text  # drain the original CHOICE item
+    assert "Option 1: Red." in spoken
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
+    item = queue.pop_next()
+    assert item is not None
+    assert item.text == spoken
+    assert item.kind == "choice"
+    assert item.session == "fg"
+    assert item.is_decision is False
+
+
+def test_reread_with_no_prior_says_nothing_to_repeat():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    assert daemon._last_options is None
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
+    item = queue.pop_next()
+    assert item is not None
+    assert item.text == "No options to repeat."
+    assert item.kind == "prose"
+
+
+def test_reread_no_foreground_is_noop():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    daemon._last_options = "Option 1: Red."
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
+    assert len(queue) == 0
+
+
+def test_plan_and_permission_also_cache_for_reread():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Do the thing."))
+    plan_spoken = queue.pop_next().text
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
+    assert queue.pop_next().text == plan_spoken
+
+    daemon.handle_message(_msg(MsgType.PERMISSION, "fg", action="run rm -rf"))
+    perm_spoken = queue.pop_next().text
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
+    assert queue.pop_next().text == perm_spoken
+
+
+def test_flush_clears_option_cache():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
+        {"question": "Q", "options": [{"label": "A"}]},
+    ]))
+    queue.pop_next()  # drain
+    daemon.handle_message(_msg(MsgType.FLUSH, "fg"))
+    assert daemon._last_options is None
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
+    assert queue.pop_next().text == "No options to repeat."
+
+
+def test_session_end_clears_option_cache():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
+        {"question": "Q", "options": [{"label": "A"}]},
+    ]))
+    queue.pop_next()
+    daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
+    assert daemon._last_options is None

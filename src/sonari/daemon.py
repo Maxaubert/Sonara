@@ -29,6 +29,7 @@ class SpeechDaemon:
         self._threads = []
         self._poll_interval = 0.1
         self._last_spoken: str | None = None
+        self._last_options: str | None = None
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -109,17 +110,23 @@ class SpeechDaemon:
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
             if self.sessions.should_speak(session):
-                self._enqueue(session, "choice", self._choice_text(msg), True)
+                text = self._choice_text(msg)
+                self._last_options = text
+                self._enqueue(session, "choice", text, True)
             return None
 
         if t == MsgType.PLAN:
             if self.sessions.should_speak(session):
-                self._enqueue(session, "plan", self._plan_text(msg), True)
+                text = self._plan_text(msg)
+                self._last_options = text
+                self._enqueue(session, "plan", text, True)
             return None
 
         if t == MsgType.PERMISSION:
             if self.sessions.should_speak(session):
-                self._enqueue(session, "permission", self._permission_text(msg), True)
+                text = self._permission_text(msg)
+                self._last_options = text
+                self._enqueue(session, "permission", text, True)
             return None
 
         if t == MsgType.TOOL:
@@ -138,6 +145,7 @@ class SpeechDaemon:
             self.queue.flush_session(session)
             self.speaker.cancel()
             self._assemblers.pop(session, None)
+            self._last_options = None
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
@@ -148,6 +156,7 @@ class SpeechDaemon:
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
+            self._last_options = None
             return None
 
         if t == MsgType.STOP:
@@ -165,6 +174,14 @@ class SpeechDaemon:
                 fg = self.sessions.foreground()
                 if fg is not None:
                     self._enqueue(fg, "prose", last, False)
+            return None
+
+        if t == MsgType.REREAD_OPTIONS:
+            fg = self.sessions.foreground()
+            if self._last_options and fg is not None:
+                self._enqueue(fg, "choice", self._last_options, False)
+            elif fg is not None:
+                self._enqueue(fg, "prose", "No options to repeat.", False)
             return None
 
         if t == MsgType.JUMP_DECISION:
