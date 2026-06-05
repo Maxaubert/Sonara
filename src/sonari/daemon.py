@@ -195,6 +195,7 @@ class SpeechDaemon:
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
             self._last_options = None
+            self._warned_immediate.discard(session)
             return None
 
         if t == MsgType.STOP:

@@ -297,3 +297,18 @@ def test_reread_includes_cue_and_notes():
     assert MULTI in spoken and CUE in spoken
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
     assert queue.pop_next().text == spoken
+
+
+def test_session_end_resets_immediate_warning():
+    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    daemon.handle_message(_two_option_choice("fg"))
+    assert WARN in queue.pop_next().text        # first decision warns
+    daemon.handle_message(_two_option_choice("fg"))
+    assert WARN not in queue.pop_next().text     # already warned this session
+    # session ends -> the per-session warned flag is cleared (bounds the set,
+    # and a reconnect under the same id re-hears the warning)
+    daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
+    assert "fg" not in daemon._warned_immediate
+    sessions.set_foreground("fg")
+    daemon.handle_message(_two_option_choice("fg"))
+    assert WARN in queue.pop_next().text

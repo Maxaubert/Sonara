@@ -129,6 +129,19 @@ Trigger each picker from a real `claude` session, screen off.
 
 ---
 
+## "Other" / free-text option
+
+- [ ] Trigger an AskUserQuestion whose options include an **"Other"/free-text** entry.
+  Confirm Sonari reads it among the numbered options (e.g. its number + "Other").
+- [ ] Select the "Other" option by its number; confirm focus drops into the text field so
+  you can type a custom answer, then Enter submits. (screen off)
+- [ ] **Known Claude Code quirk:** a digit typed *while in* the free-text field still acts
+  as option-select (so a custom answer that *starts with a digit* isn't possible via the
+  picker). Note whether this still reproduces on this version — if so, decide whether Sonari
+  should warn; if Anthropic has fixed it, drop the caveat from the docs.
+
+---
+
 ## Re-read (Ctrl+Cmd+O)
 
 - [ ] **Re-read replays exactly.** With a picker on screen, press **Ctrl+Cmd+O** → the
