@@ -452,6 +452,14 @@ Rewrite the **Requirements** and **Install** sections for the public, pip-free p
 
 ## 8. Migration (dev-Mac + general)
 
+> **⚠️ DROPPED (2026-06-05, owner decision):** Both `_dev_install_migrate` and the
+> pre-existing `_legacy_migrate` (+ `_clean_zshrc`/`_clean_settings_json`) were **removed**
+> (YAGNI — the old `claude-tts` PTY tool and the editable-pip build were never published, so
+> migration only ever helped one machine; that machine was migrated to the self-contained
+> path by hand: `pip uninstall sonari` + `bin/sonari install`). `install()`'s automatic
+> LaunchAgent rewrite — which is *not* migration — stays. The text below is retained for
+> history only.
+
 A new `_dev_install_migrate(home=None) -> list` (alongside the existing `_legacy_migrate`),
 called from `install()`, returns human-readable lines and is a safe no-op when there is no
 dev footprint:
