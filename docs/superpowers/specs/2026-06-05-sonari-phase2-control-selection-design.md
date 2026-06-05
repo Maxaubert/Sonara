@@ -94,11 +94,15 @@ All existing control ops (`stop`, `skip`, `repeat`, `jump_decision`, `catch_up`,
    absolute `rate` still supported. speechd speaks a terse confirmation ("rate 225").
 3. **`cycle_verbosity`** (new `MsgType.CYCLE_VERBOSITY`): advance
    `everything → medium → quiet → everything`, persist, and speak the new level name.
-4. **Selection cue + warning** in the `CHOICE` / `PERMISSION` / `PLAN` narration: after the
-   numbered options, append a **terse, verbosity-gated** cue — at `everything`: *"Press the
-   option's number to choose, or Escape to cancel."*; at `medium`/`quiet`: omit (the user
-   already knows). The first picker per session also appends *"Selecting is immediate."* once.
-   Implemented in the narration builder, not the hooks.
+4. **Selection cue + warning — `everything` mode ONLY** in the `CHOICE` / `PERMISSION` /
+   `PLAN` narration. At verbosity `everything` only: after the numbered options, append the
+   terse cue *"Press the option's number to choose, or Escape to cancel."*, and **once per
+   session** also append *"Selecting is immediate."*. At `medium` **and** `quiet`: append
+   **nothing** — the options themselves are still read, but no cue and no warning (the user
+   knows the drill). Implemented in the narration builder, not the hooks.
+   *(Note: the situation-specific notes in §6 — multiSelect keys and the `>9`-options
+   arrow note — are NOT gated; they appear whenever that case occurs in any mode, because
+   the user cannot operate those cases from the learned single-select behavior.)*
 
 ### 3.3 Data flow (selection, end to end — no new code on the hot path)
 
@@ -148,8 +152,10 @@ Add to `MsgType`: `REREAD_OPTIONS = "reread_options"`, `CYCLE_VERBOSITY =
 - **Deterministic (Python, existing mock-`say`/`afplay` harness):** `reread_options` caches
   then re-speaks the right text and "nothing to repeat" when empty; cache cleared on
   flush/session_end; `set_rate` delta clamps at bounds and speaks confirmation;
-  `cycle_verbosity` cycles + persists + announces; selection cue appears only at the right
-  verbosity and the once-per-session immediate-select warning fires once; `>9` note appears.
+  `cycle_verbosity` cycles + persists + announces; the selection cue **and** the
+  immediate-select warning appear **only in `everything`** (absent in `medium`/`quiet`) and
+  the warning fires **once per session**; the `>9` and multiSelect notes appear in any mode
+  when those cases occur.
 - **`hotkeyd` logic (no GUI):** test keymap parsing (key/mod name → code/mask), the
   action→JSON mapping (via `--print <action>` golden strings), and that `--once <action>`
   writes the exact bytes to a stub socket. The Carbon registration itself is covered by the
