@@ -24,6 +24,8 @@ def test_swift_source_compiles(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert out.exists()
+    # Zero-warning bar (Phase 1 standard, public-release artifact).
+    assert "warning:" not in proc.stderr, proc.stderr
 
 
 def test_resolved_json_shape_matches_swift_contract(monkeypatch, tmp_path):

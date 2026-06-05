@@ -72,7 +72,7 @@ func sendMessage(_ message: String) {
     addr.sun_family = sa_family_t(AF_UNIX)
     let path = socketPath()
     let maxLen = MemoryLayout.size(ofValue: addr.sun_path)
-    path.withCString { cstr in
+    _ = path.withCString { cstr in
         withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
             ptr.withMemoryRebound(to: CChar.self, capacity: maxLen) { dst in
                 strncpy(dst, cstr, maxLen - 1)
