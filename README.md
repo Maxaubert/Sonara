@@ -3,15 +3,29 @@
 **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS.**
 
 Sonari speaks everything Claude Code does — prose, plans, multiple-choice questions, and
-permission prompts — so you can run a full session **with the screen off**. It is a
-ground-up rebuild of the old `claude-tts` tool: one speech daemon, one ordered queue, one
-`say` voice at a time, and a distinct sound (an *earcon*) the instant any decision appears.
+permission prompts — so you can run a full session **with the screen off**. Under the hood
+it's deliberately simple: one speech daemon, one ordered queue, one `say` voice at a time,
+and a distinct sound (an *earcon*) the instant any decision appears.
 
 > **Fully eyes-free today:** you *hear* everything in order — prose, plans, multiple-choice
 > questions, and permission prompts, with a distinct earcon the instant any decision appears
 > — and you *answer* without looking by pressing the option's number (1-9), `Esc` to cancel.
 > Global speech-control hotkeys (stop, repeat, skip, jump-to-decision, catch-up, rate,
 > verbosity, re-read options) work even mid-speech.
+
+## Why Sonari
+
+Claude Code lives in a fast-changing terminal interface — exactly the kind of thing that's
+awkward to follow by ear. Screen readers *can* do it, but they're demanding to learn and
+configure, and they tend to fight a live, redrawing TUI: too chatty, often out of order, and
+easy to lose your place in.
+
+Plenty of **low-vision** developers don't use a screen reader at all — they get by with a
+magnifier and a lot of squinting — which makes a busy terminal *extra* tiring. Sonari is for
+them, and for anyone who'd simply rather not stare at the screen. Instead of narrating the
+whole interface, it speaks just what matters, in the right order, and plays a quick sound the
+moment a decision needs you. The point is to work with Claude Code **relaxed, by ear** — no
+steep screen-reader setup, no eye strain.
 
 ## The goal
 
