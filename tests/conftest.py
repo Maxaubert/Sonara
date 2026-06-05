@@ -32,11 +32,29 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "CONFIG_PATH", sonari_dir / "config.json", raising=False)
     monkeypatch.setattr(paths, "SOCKET_PATH", sonari_dir / "speechd.sock", raising=False)
     monkeypatch.setattr(paths, "LOG_PATH", sonari_dir / "speechd.log", raising=False)
+    monkeypatch.setattr(paths, "KEYMAP_PATH", sonari_dir / "keymap.json", raising=False)
+    monkeypatch.setattr(
+        paths, "HOTKEYD_RESOLVED_PATH", sonari_dir / "hotkeyd.resolved.json",
+        raising=False)
+    monkeypatch.setattr(
+        paths, "HOTKEYD_BIN_PATH", sonari_dir / "sonari-hotkeyd", raising=False)
 
     # Modules that bound these names at import time need their copies repointed too.
     import sonari.config as config
 
     monkeypatch.setattr(config, "SONARI_DIR", sonari_dir, raising=False)
     monkeypatch.setattr(config, "CONFIG_PATH", sonari_dir / "config.json", raising=False)
+
+    # keymap.py binds KEYMAP_PATH/HOTKEYD_RESOLVED_PATH/SONARI_DIR by value at
+    # import time, so patching paths.* alone does not redirect it. Repoint the
+    # keymap module's copies too so no test (e.g. the `keymap` subcommand, which
+    # reads load_keymap()) can ever read or write the real ~/.sonari.
+    import sonari.keymap as keymap
+
+    monkeypatch.setattr(keymap, "SONARI_DIR", sonari_dir, raising=False)
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", sonari_dir / "keymap.json", raising=False)
+    monkeypatch.setattr(
+        keymap, "HOTKEYD_RESOLVED_PATH", sonari_dir / "hotkeyd.resolved.json",
+        raising=False)
 
     yield

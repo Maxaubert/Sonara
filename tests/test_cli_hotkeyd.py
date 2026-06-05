@@ -3,6 +3,7 @@ import plistlib
 from unittest import mock
 
 from sonari import cli
+from sonari import keymap as _keymap
 
 
 def test_hotkeyd_plist_is_valid_and_complete(tmp_path):
@@ -191,7 +192,12 @@ def test_doctor_hotkeyd_binary_missing_fails(tmp_path):
     assert d["hotkeyd binary"] is False
 
 
-def test_keymap_subcommand_prints_all_nine_actions(capsys):
+def test_keymap_subcommand_prints_all_nine_actions(capsys, tmp_path, monkeypatch):
+    # Isolate the keymap so the subcommand reads DEFAULT_KEYMAP, not the
+    # developer's real ~/.sonari/keymap.json (which may be remapped). An absent
+    # file makes load_keymap() fall back to DEFAULT_KEYMAP -> deterministic
+    # Ctrl/Cmd assertions.
+    monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
     rc = cli.main(["keymap"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -200,3 +206,19 @@ def test_keymap_subcommand_prints_all_nine_actions(capsys):
         assert action in out
     # human-readable combos appear (Ctrl+Cmd default)
     assert "Ctrl" in out and "Cmd" in out
+
+
+def test_display_tables_cover_every_keycode_and_modifier():
+    # cli._KEYCODE_DISPLAY / _MOD_DISPLAY are a hand-maintained presentation copy
+    # of the authoritative keymap.KEY_CODES / MOD_MASKS values. If a key or
+    # modifier is added to keymap.py without a friendly label here, _combo_label
+    # silently degrades to 'keyN'. Fail loudly instead.
+    for key_code in set(_keymap.KEY_CODES.values()):
+        assert key_code in cli._KEYCODE_DISPLAY, (
+            "keyCode {0} has no friendly label in cli._KEYCODE_DISPLAY".format(
+                key_code))
+    display_masks = {mask for mask, _ in cli._MOD_DISPLAY}
+    for mask in set(_keymap.MOD_MASKS.values()):
+        assert mask in display_masks, (
+            "modifier mask {0} has no friendly label in cli._MOD_DISPLAY".format(
+                mask))
