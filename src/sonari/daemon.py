@@ -10,6 +10,10 @@ from sonari.config import save_config, load_config
 from sonari.paths import SOCKET_PATH, ensure_sonari_dir, socket_connectable, repo_root
 
 
+RATE_MIN = 100
+RATE_MAX = 400
+
+
 class SpeechDaemon:
     def __init__(self, queue, speaker, sessions, config) -> None:
         self.queue = queue
@@ -174,6 +178,16 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.SET_RATE:
+            if "delta" in msg:
+                cur = self.config.get("rate", 200)
+                new = max(RATE_MIN, min(RATE_MAX, int(cur) + int(msg.get("delta", 0))))
+                self.config["rate"] = new
+                self.speaker.set_rate(new)
+                save_config(self.config)
+                fg = self.sessions.foreground()
+                if fg is not None:
+                    self._enqueue(fg, "prose", "Rate {0}.".format(new), False)
+                return None
             rate = msg.get("rate")
             self.config["rate"] = rate
             self.speaker.set_rate(rate)
