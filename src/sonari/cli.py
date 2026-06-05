@@ -339,6 +339,60 @@ def _daemon_shim_path() -> str:
     return os.path.join(paths.repo_root(), "bin", "sonari-daemon")
 
 
+_PYTHON_CANDIDATE_NAMES = (
+    "python3", "python3.13", "python3.12", "python3.11", "python3.10",
+    "python3.9",
+)
+
+
+def _probe_python_version(path: str):
+    """Return (major, minor) reported by *path*, or None if it cannot be run.
+
+    Patched in tests. Runs the interpreter so we read its REAL version, not the
+    one running cli.py.
+    """
+    try:
+        out = subprocess.check_output(
+            [path, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
+        major, minor = out.split(".")
+        return (int(major), int(minor))
+    except Exception:  # noqa: BLE001 - any failure means "not a usable python"
+        return None
+
+
+def _resolve_python():
+    """Return the absolute realpath of the best python3 >= 3.9, or None.
+
+    Preference: /usr/bin/python3 when it qualifies (guaranteed present and stable
+    across logins); otherwise the first qualifying candidate in PATH order.
+    Candidates are deduped by realpath so a symlink farm is probed once.
+    """
+    candidates = ["/usr/bin/python3"]
+    for name in _PYTHON_CANDIDATE_NAMES:
+        found = shutil.which(name)
+        if found:
+            candidates.append(found)
+
+    seen = set()
+    qualifying = []  # list of (realpath, was_usr_bin)
+    for cand in candidates:
+        real = os.path.realpath(cand)
+        if real in seen:
+            continue
+        seen.add(real)
+        ver = _probe_python_version(cand)
+        if ver is not None and ver >= (3, 9):
+            qualifying.append((real, cand == "/usr/bin/python3"))
+
+    if not qualifying:
+        return None
+    for real, was_usr_bin in qualifying:
+        if was_usr_bin:
+            return real
+    return qualifying[0][0]
+
+
 def _plist(label: str, program_args: list, log_path: str) -> str:
     """Return a full LaunchAgent plist XML for *label*.
 
