@@ -198,6 +198,12 @@ All decision events (`choice`/`plan`/`permission`/`error`) trigger their **disti
 immediately**, while the spoken detail enters the queue in order (§4).
 
 ### 5.3 `hotkeyd` — the global-hotkey helper (singleton)
+> **⚠️ SUPERSEDED (2026-06-05):** The Phase 2 spike found native numeric selection works,
+> so the injection/intercept design below is obsolete. See the approved Phase 2 spec:
+> `2026-06-05-sonari-phase2-control-selection-design.md` (and the spike report at
+> `../spikes/2026-06-05-phase2-keyinjection-spike.md`). hotkeyd now uses Carbon
+> `RegisterEventHotKey` (no permission) and selection is native-numeric (no injection).
+
 Long-lived; connects to `speechd`; runs via LaunchAgent; requires macOS Accessibility /
 Input-Monitoring permission. Two jobs:
 
