@@ -26,6 +26,8 @@ class MsgType:
     SET_VOICE = "set_voice"
     STATUS = "status"
     PING = "ping"
+    REREAD_OPTIONS = "reread_options"
+    CYCLE_VERBOSITY = "cycle_verbosity"
 
 
 def encode(msg: dict) -> bytes:

@@ -71,6 +71,8 @@ def test_msgtype_has_every_constant_with_exact_values():
         "SET_VOICE": "set_voice",
         "STATUS": "status",
         "PING": "ping",
+        "REREAD_OPTIONS": "reread_options",
+        "CYCLE_VERBOSITY": "cycle_verbosity",
     }
     for name, value in expected.items():
         assert hasattr(MsgType, name), f"MsgType missing {name}"
@@ -104,6 +106,8 @@ def test_msgtype_defines_no_extra_string_constants():
         "SET_VOICE": "set_voice",
         "STATUS": "status",
         "PING": "ping",
+        "REREAD_OPTIONS": "reread_options",
+        "CYCLE_VERBOSITY": "cycle_verbosity",
     }
     assert actual == expected
 
@@ -114,3 +118,8 @@ def test_msgtype_values_are_unique():
         if not k.startswith("_") and isinstance(v, str)
     ]
     assert len(values) == len(set(values))
+
+
+def test_reread_options_and_cycle_verbosity_constants():
+    assert MsgType.REREAD_OPTIONS == "reread_options"
+    assert MsgType.CYCLE_VERBOSITY == "cycle_verbosity"
