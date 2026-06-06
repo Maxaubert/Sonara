@@ -3,15 +3,11 @@
 **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS.**
 
 Sonari speaks everything Claude Code does — prose, plans, multiple-choice questions, and
-permission prompts — so you can run a full session **with the screen off**. Under the hood
-it's deliberately simple: one speech daemon, one ordered queue, one `say` voice at a time,
-and a distinct sound (an *earcon*) the instant any decision appears.
-
-> **Fully eyes-free today:** you *hear* everything in order — prose, plans, multiple-choice
-> questions, and permission prompts, with a distinct earcon the instant any decision appears
-> — and you *answer* without looking by pressing the option's number (1-9), `Esc` to cancel.
-> Global speech-control hotkeys (stop, repeat, skip, jump-to-decision, catch-up, rate,
-> verbosity, re-read options) work even mid-speech.
+permission prompts — **in order**, and plays a distinct sound (an *earcon*) the instant any
+decision needs you, so you can run a full session **with the screen off**. You *answer*
+without looking by pressing the option's number (1-9), or `Esc` to cancel; and global
+speech-control hotkeys (stop, repeat, skip, jump-to-decision, catch-up, rate, verbosity,
+re-read) work even mid-speech.
 
 ## Why Sonari
 
@@ -21,19 +17,15 @@ configure, and they tend to fight a live, redrawing TUI: too chatty, often out o
 easy to lose your place in.
 
 Plenty of **low-vision** developers don't use a screen reader at all — they get by with a
-magnifier and a lot of squinting — which makes a busy terminal *extra* tiring. Sonari is for
-them, and for anyone who'd simply rather not stare at the screen. Instead of narrating the
-whole interface, it speaks just what matters, in the right order, and plays a quick sound the
-moment a decision needs you. The point is to work with Claude Code **relaxed, by ear** — no
-steep screen-reader setup, no eye strain.
+magnifier and a lot of squinting — which makes a busy terminal *extra* tiring.
 
-## The goal
-
-A blind or low-vision developer should be able to use Claude Code without looking at the
-screen. Sonari makes sure nothing important is ever silent or out-of-order: you always hear
-the prose that explains a decision *before* the decision, a short sound alerts you the moment
-a question, plan, or permission is waiting, and you choose any option by typing its number —
-no screen needed.
+Sonari is for them, and for anyone who'd rather not stare at the screen. A blind or low-vision
+developer should be able to use Claude Code without looking. Instead of narrating the whole
+interface, Sonari speaks just what matters, in the right order — you always hear the prose
+that explains a decision *before* the decision — alerts you with a quick sound the moment a
+question, plan, or permission is waiting, and lets you choose any option by typing its number.
+The point is to work with Claude Code **relaxed, by ear** — no steep screen-reader setup, no
+eye strain.
 
 ## Requirements
 
@@ -43,8 +35,6 @@ no screen needed.
 - Xcode Command Line Tools for global hotkeys — `xcode-select --install`. (Speech
   works without them; only the hotkeys need `swiftc`.)
 - Claude Code 2.1.162 or newer.
-- No third-party Python packages at runtime, and no `pip` install. `pytest` is
-  only needed to run the tests.
 
 ## Install
 
@@ -71,7 +61,7 @@ For local development you can skip the marketplace and load the repo per session
 
 If you already have `sonari` on your PATH, the CLI equivalent of step 3 is:
 
-```
+```bash
 sonari install
 ```
 
