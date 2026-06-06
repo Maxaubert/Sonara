@@ -5,6 +5,7 @@ import socket
 from pathlib import Path
 
 SONARI_DIR = Path.home() / ".sonari"
+APP_DIR = SONARI_DIR / "app"          # stable copy of the sonari package (PYTHONPATH target)
 CONFIG_PATH = SONARI_DIR / "config.json"
 SOCKET_PATH = SONARI_DIR / "speechd.sock"
 LOG_PATH = SONARI_DIR / "speechd.log"

@@ -120,3 +120,10 @@ def test_repo_root_derivation_matches_file_location():
 def test_install_record_path_lives_under_sonari_dir():
     from sonari import paths
     assert paths.INSTALL_RECORD_PATH == paths.SONARI_DIR / "install.json"
+
+
+def test_app_dir_lives_under_sonari_dir(monkeypatch, tmp_path):
+    paths = _fresh_paths(monkeypatch, tmp_path)
+    assert paths.APP_DIR == paths.SONARI_DIR / "app"
+    assert paths.APP_DIR.name == "app"
+    assert paths.APP_DIR.parent == paths.SONARI_DIR
