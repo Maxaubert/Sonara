@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "sonari",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "description": "Eyes-free text-to-speech layer for Claude Code (macOS): narrates prose, options, plans, and permissions with a single ordered speech queue and per-type earcons.",
       "author": {
         "name": "Nima Hakimi"
