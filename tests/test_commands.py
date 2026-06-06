@@ -12,7 +12,8 @@ def _read(name):
 def test_all_command_files_exist():
     for name in ("sonari:status.md", "sonari:verbosity.md", "sonari:stop.md",
                  "sonari:repeat.md", "sonari:doctor.md", "sonari:keymap.md",
-                 "sonari:voice.md", "sonari:rate.md", "sonari:skip.md"):
+                 "sonari:voice.md", "sonari:rate.md", "sonari:skip.md",
+                 "sonari:install.md", "sonari:uninstall.md"):
         assert os.path.exists(os.path.join(CMD, name)), name
 
 
@@ -76,3 +77,21 @@ def test_skip_is_silent():
     txt = _read("sonari:skip.md")
     assert "sonari skip" in txt
     assert "nothing" in txt.lower()
+
+
+def test_install_command_runs_sonari_install():
+    txt = _read("sonari:install.md")
+    assert "sonari install" in txt
+    assert "Bash" in txt
+    assert "print" in txt.lower()
+    assert txt.lstrip().startswith("---")  # has front-matter
+    assert "description:" in txt
+
+
+def test_uninstall_command_runs_sonari_uninstall():
+    txt = _read("sonari:uninstall.md")
+    assert "sonari uninstall" in txt
+    assert "Bash" in txt
+    assert "print" in txt.lower()
+    assert txt.lstrip().startswith("---")
+    assert "description:" in txt
