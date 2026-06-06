@@ -45,6 +45,19 @@ def main() -> None:
     from sonari.hooks_entry import handle_event
     from sonari import client
 
+    # Resolve plugin version (advisory) so the SessionStart message can carry it.
+    if not os.environ.get("CLAUDE_PLUGIN_VERSION"):
+        try:
+            import json as _json
+            root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(here)
+            with open(os.path.join(root, ".claude-plugin", "plugin.json"),
+                      "r", encoding="utf-8") as _f:
+                _v = _json.load(_f).get("version")
+            if isinstance(_v, str) and _v:
+                os.environ["CLAUDE_PLUGIN_VERSION"] = _v
+        except Exception:
+            pass
+
     event = sys.argv[1] if len(sys.argv) > 1 else ""
 
     # Tolerant stdin parse: empty/invalid -> {}.

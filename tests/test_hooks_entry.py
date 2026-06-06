@@ -241,11 +241,22 @@ def test_user_prompt_submit_sets_foreground_then_flush():
     ]
 
 
-def test_session_start_sets_foreground_then_session_start():
+def test_session_start_carries_plugin_version_and_root_from_env(monkeypatch):
+    monkeypatch.setenv("CLAUDE_PLUGIN_VERSION", "0.4.0")
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plug/root")
     assert handle_event("SessionStart", {"session_id": "sess-9"}) == [
         {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9"},
-        {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START, "session": "sess-9"},
+        {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START, "session": "sess-9",
+         "plugin_version": "0.4.0", "plugin_root": "/plug/root"},
     ]
+
+
+def test_session_start_empty_strings_when_env_unset(monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_VERSION", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+    msgs = handle_event("SessionStart", {"session_id": "sess-9"})
+    assert msgs[1]["plugin_version"] == ""
+    assert msgs[1]["plugin_root"] == ""
 
 
 def test_session_end_emits_session_end():
@@ -258,7 +269,9 @@ def test_unknown_event_is_empty():
     assert handle_event("TotallyMadeUp", {"session_id": "sess-1"}) == []
 
 
-def test_missing_session_id_defaults_to_empty_string():
+def test_missing_session_id_defaults_to_empty_string(monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_VERSION", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
     msgs = handle_event("SessionStart", {})
     assert msgs[0]["session"] == ""
     assert msgs[1]["session"] == ""
