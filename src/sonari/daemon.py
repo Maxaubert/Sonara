@@ -9,7 +9,10 @@ from sonari.protocol import MsgType, encode, decode
 from sonari.queue import SpeechItem
 from sonari.assembler import ProseAssembler
 from sonari.config import save_config, load_config
-from sonari.paths import SOCKET_PATH, ensure_sonari_dir, socket_connectable, repo_root
+from sonari.paths import (
+    SOCKET_PATH, ensure_sonari_dir, socket_connectable, repo_root,
+    INSTALL_RECORD_PATH,
+)
 
 
 RATE_MIN = 100
@@ -33,6 +36,7 @@ class SpeechDaemon:
         self._last_spoken: str | None = None
         self._last_options: str | None = None
         self._warned_immediate: set[str] = set()
+        self._guided_sessions: set[str] = set()
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -117,6 +121,47 @@ class SpeechDaemon:
         ):
             notes.append("More than nine options; use arrow keys for ten and up.")
         return " ".join(notes)
+
+    @staticmethod
+    def _read_install_record():
+        """Return the install.json dict, or None if unreadable/absent. Never raises."""
+        import json
+        try:
+            with open(str(INSTALL_RECORD_PATH), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except Exception:  # noqa: BLE001 - health check must never raise
+            return None
+
+    @staticmethod
+    def _launcher_present() -> bool:
+        """True if ~/.local/bin/sonari exists (cheap stat)."""
+        import os as _os
+        return _os.path.exists(
+            _os.path.join(_os.path.expanduser("~"), ".local", "bin", "sonari"))
+
+    def _setup_health(self, plugin_version: str):
+        """Return (state, cue) where state is one of:
+        "ok"            -> fully installed, no version drift   -> cue None
+        "not_installed" -> no install.json or launcher (never ran `sonari install`)
+        "version_drift" -> installed but plugin_version differs from this session's
+
+        Cheap: a few file stats + a string compare. No launchctl. Never raises.
+        The hotkeyd binary is deliberately NOT part of this check so a deliberate
+        speech-only user (no swiftc) is never nagged.
+        """
+        rec = self._read_install_record()
+        installed = (rec is not None and self._launcher_present())
+        if not installed:
+            return ("not_installed",
+                    "Sonari is reading aloud. To enable hotkeys and autostart, "
+                    "run, slash sonari install.")
+        recorded = (rec.get("plugin_version") or "")
+        # Only flag drift when BOTH sides are known and differ.
+        if plugin_version and recorded and plugin_version != recorded:
+            return ("version_drift",
+                    "Sonari was updated. Run, slash sonari install, to apply.")
+        return ("ok", None)
 
     def handle_message(self, msg):
         t = msg.get("type")
