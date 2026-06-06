@@ -48,41 +48,29 @@ no screen needed.
 
 ## Install
 
-Sonari is a self-contained Claude Code plugin: it ships its own source and runs
-on the macOS system Python with no `pip` install.
+Enable the plugin, then finish setup entirely from inside Claude Code — no
+`sonari` on your PATH required:
 
-1. Add the marketplace and install the plugin:
+1. Enable the **Sonari** plugin (via `/plugin`, or per session
+   `claude --plugin-dir <plugin-root>`). You will start hearing Claude
+   immediately; the daemon lazy-starts on the first hook.
+2. Run `/sonari:install` from inside Claude Code. It runs `sonari install` via
+   the plugin's `bin/`, so it works before the `~/.local/bin/sonari` launcher
+   exists. Each step is printed (and spoken) so you can follow along eyes-free.
+3. Run `/sonari:doctor` to confirm everything is green (or to hear the only
+   expected failure — `swiftc`/Command Line Tools — on a machine without them).
 
-```bash
-claude plugin marketplace add nimkimi/sonari
-claude plugin install sonari@sonari
+If you already have `sonari` on your PATH, the CLI equivalent is:
+
 ```
-
-   (For local development, you can instead run a session with
-   `claude --plugin-dir /path/to/sonari`.)
-2. Run the one-time installer (this needs Xcode Command Line Tools for the
-   hotkeys — `xcode-select --install`):
-
-```bash
 sonari install
 ```
 
-`sonari install` resolves the best `python3 >= 3.9`, builds the hotkey daemon
-locally with `swiftc` (no notarization needed), writes both LaunchAgents with
-absolute paths, and places a `~/.local/bin/sonari` launcher so the `sonari`
-command works in every shell. If `~/.local/bin` is not on your PATH, the
-installer prints the exact line to add.
-
-Verify everything is wired up:
-
-```bash
-sonari doctor
-```
-
-`doctor` reports each check pass/fail: an enhanced voice, `say`/`afplay`,
-`python3 >= 3.9`, the resolved plugin path, the speech and hotkey LaunchAgents,
-the daemon socket, the `~/.local/bin/sonari` launcher, and the plugin hooks.
-Start a Claude Code session and you should hear a **ready** earcon.
+`sonari install` resolves the best `python3 >= 3.9`, **copies the runtime to
+`~/.sonari/app`** (so it survives plugin auto-updates), builds the hotkey
+daemon, writes both LaunchAgents, and places the `~/.local/bin/sonari` launcher.
+After a plugin update, Sonari will say **"run /sonari:install"** once so you can
+re-point the daemon at the refreshed copy.
 
 ### Development
 
@@ -144,6 +132,8 @@ cancel — using Claude Code's native numeric selection, no key injection.
 
 | Slash command | CLI | Effect |
 |---|---|---|
+| `/sonari:install` | `sonari install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonari/app`) |
+| `/sonari:uninstall` | `sonari uninstall` | Remove LaunchAgents, hotkey helper, launcher, and `~/.sonari/app` (keeps your settings) |
 | `/sonari:status` | `sonari status` | Show voice, rate, verbosity, foreground session, queue length |
 | `/sonari:verbosity <level>` | `sonari verbosity <level>` | Set `everything` / `medium` / `quiet` |
 | `/sonari:voice <name>` | `sonari voice <name>` | Set the `say` voice |
@@ -213,6 +203,10 @@ sonari uninstall
 `sonari uninstall` removes the LaunchAgents, the hotkey helper, and the
 `~/.local/bin/sonari` launcher. It preserves your `~/.sonari/config.json` and
 `~/.sonari/keymap.json` so your settings survive a reinstall.
+
+The in-session equivalent is `/sonari:uninstall`. Uninstall also removes the
+stable app copy at `~/.sonari/app`, and **preserves** your `config.json` and
+`keymap.json`.
 
 ## Privacy
 
