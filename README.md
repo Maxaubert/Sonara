@@ -48,19 +48,28 @@ no screen needed.
 
 ## Install
 
-Enable the plugin, then finish setup entirely from inside Claude Code — no
-`sonari` on your PATH required:
+Sonari installs from a Claude Code marketplace. You start *hearing* Claude as soon
+as the plugin is enabled; one more command turns on global hotkeys and autostart —
+and you can do all of it eyes-free from inside Claude Code.
 
-1. Enable the **Sonari** plugin (via `/plugin`, or per session
-   `claude --plugin-dir <plugin-root>`). You will start hearing Claude
-   immediately; the daemon lazy-starts on the first hook.
-2. Run `/sonari:install` from inside Claude Code. It runs `sonari install` via
-   the plugin's `bin/`, so it works before the `~/.local/bin/sonari` launcher
-   exists. Each step is printed (and spoken) so you can follow along eyes-free.
-3. Run `/sonari:doctor` to confirm everything is green (or to hear the only
-   expected failure — `swiftc`/Command Line Tools — on a machine without them).
+1. Add the marketplace: `/plugin marketplace add nimkimi/sonari` (or, in a shell,
+   `claude plugin marketplace add nimkimi/sonari`).
+2. Install the plugin: `/plugin install sonari@sonari` (or
+   `claude plugin install sonari@sonari`). The marketplace is named `sonari`, so the
+   install target is `sonari@sonari`. You will start hearing Claude immediately — the
+   daemon lazy-starts on the first hook.
+3. Run `/sonari:install` from inside Claude Code to finish setup. Each step is printed
+   (and spoken) so you can follow along eyes-free. Until you run it, every new session
+   Sonari speaks a one-time reminder: *"Sonari is reading aloud. To enable hotkeys and
+   autostart, run /sonari:install."*
+4. Run `/sonari:doctor` to confirm everything is green (the only expected failure is
+   `swiftc` / Xcode Command Line Tools on a machine without them — speech still works;
+   only the hotkeys need them).
 
-If you already have `sonari` on your PATH, the CLI equivalent is:
+For local development you can skip the marketplace and load the repo per session with
+`claude --plugin-dir <path-to-sonari>`.
+
+If you already have `sonari` on your PATH, the CLI equivalent of step 3 is:
 
 ```
 sonari install
@@ -69,15 +78,15 @@ sonari install
 `sonari install` resolves the best `python3 >= 3.9`, **copies the runtime to
 `~/.sonari/app`** (so it survives plugin auto-updates), builds the hotkey
 daemon, writes both LaunchAgents, and places the `~/.local/bin/sonari` launcher.
-After a plugin update, Sonari will say **"run /sonari:install"** once so you can
-re-point the daemon at the refreshed copy.
+After a plugin update, Sonari says once — *"Sonari was updated. Run /sonari:install
+to apply."* — so you can refresh the copy.
 
 ### Development
 
 Contributors can run the test suite from a venv:
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e .[dev]
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m pytest -q
 ```
 
@@ -116,7 +125,7 @@ permission is needed.
 | Ctrl+Cmd+R | Repeat the last item |
 | Ctrl+Cmd+. | Skip the current item |
 | Ctrl+Cmd+D | Jump to the pending decision |
-| Ctrl+Cmd+L | Catch up (speak what you missed) |
+| Ctrl+Cmd+L | Catch up to live (drop the backlog, jump to now) |
 | Ctrl+Cmd+] | Speak faster |
 | Ctrl+Cmd+[ | Speak slower |
 | Ctrl+Cmd+V | Cycle verbosity (everything / medium / quiet) |
@@ -126,7 +135,11 @@ permission is needed.
 
 When a question, permission prompt, or plan (`AskUserQuestion` / permission /
 `ExitPlanMode`) appears, choose an option by pressing its **number (1-9)**, or `Esc` to
-cancel — using Claude Code's native numeric selection, no key injection.
+cancel — using Claude Code's native numeric selection, no key injection. For a
+**multi-select** question, press each option's number (or `Space` on the highlighted item),
+then `Enter` to confirm. If a question has **more than nine options**, numbers cover 1-9;
+use the **arrow keys** plus `Enter` for the tenth and beyond. Sonari speaks these cues when
+they apply.
 
 ### Slash commands and CLI
 
@@ -139,15 +152,17 @@ cancel — using Claude Code's native numeric selection, no key injection.
 | `/sonari:voice <name>` | `sonari voice <name>` | Set the `say` voice |
 | `/sonari:rate <wpm>` | `sonari rate <wpm>` | Set words-per-minute |
 | `/sonari:repeat` | `sonari repeat` | Re-speak the last item |
+| `/sonari:skip` | `sonari skip` | Skip the current item |
 | `/sonari:stop` | `sonari stop` | Stop now and clear the queue |
 | `/sonari:doctor` | `sonari doctor` | Run all health checks |
+| `/sonari:keymap` | `sonari keymap` | Show the active global hotkey bindings |
 
 ## Verbosity
 
 Three live-switchable levels (earcons fire in **all** of them):
 
 - **everything** (default) — prose narration, questions, plans, permissions, *and* brief
-  tool announcements ("Running git status").
+  tool announcements (a short summary of what's running, e.g. "Running git status").
 - **medium** — prose narration plus decisions (questions / plans / permissions); **drops**
   routine tool announcements.
 - **quiet** — decisions only (questions / plans / permissions); drops both tool
@@ -178,12 +193,13 @@ prompt or stopping flushes the queue, so the voice always resumes at what is cur
 Run `sonari doctor` first — it reports each check as pass/fail. Common issues:
 
 - **No speech at all.** Confirm `sonari status` shows your session as the foreground. The
-  daemon starts lazily on the first hook; if the socket is unreachable, run `sonari doctor` to
-  restart it, or check `~/.sonari/speechd.log`.
+  daemon starts lazily on the first hook; if the socket is unreachable, run `sonari install`
+  to (re)load the daemon (`sonari doctor` tells you whether the socket is reachable), or
+  check `~/.sonari/speechd.log`.
 - **Robotic voice.** No enhanced voice is installed; see *Enhanced-voice setup* above.
-- **Hooks not firing.** Re-launch with `claude --plugin-dir /path/to/sonari` (or
-  re-enable `sonari` via `/plugin`) and verify with `sonari doctor` that all seven hooks are
-  registered.
+- **Hooks not firing.** Re-enable `sonari` via `/plugin` (or re-launch with
+  `claude --plugin-dir /path/to/sonari`), then run `sonari doctor` and confirm the
+  `plugin hooks.json` check passes.
 - **Speech too fast/slow.** `sonari rate 180` (default is 200 wpm).
 - **Too chatty.** `sonari verbosity medium` or `sonari verbosity quiet`.
 - **Everything is stuck.** `sonari stop` clears the queue and cancels the current utterance.
