@@ -16,7 +16,7 @@ def _ok_patches():
         mock.patch.object(cli, "_launchctl", return_value=0),
         mock.patch.object(cli, "_local_bin_on_path", return_value=True),
         mock.patch.object(cli, "_read_install_record",
-                          return_value={"src": "/plug/src"}),
+                          return_value={"app_path": "/home/u/.sonari/app"}),
     ]
 
 

@@ -47,16 +47,18 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
     la_dir = tmp_path / "LaunchAgents"
     plist = la_dir / (cli.LAUNCH_AGENT_LABEL + ".plist")
     record = tmp_path / "install.json"
+    app_dir = tmp_path / ".sonari" / "app"
     run = mock.Mock(return_value=0)
-    monkeypatch_home = tmp_path / "home"
-    monkeypatch_home.mkdir()
     with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
          mock.patch.object(cli, "_launchctl", run), \
          mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
          mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
          mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
+         mock.patch.object(cli, "_copy_app", return_value=str(app_dir)) as copy_app, \
+         mock.patch.object(cli, "_read_plugin_version", return_value="0.4.0"), \
          mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")) as place_launcher, \
          mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "com.sonari.hotkeyd.plist")), \
+         mock.patch.object(cli.paths, "APP_DIR", app_dir), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", tmp_path / "keymap.json"), \
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
@@ -69,19 +71,20 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
         rc = cli.install()
     assert rc == 0
     ensure.assert_called_once()
+    copy_app.assert_called_once()
     assert plist.exists()
-    # The speechd plist now embeds the resolved interpreter + PYTHONPATH=<src>.
+    # The speechd plist embeds the resolved interpreter + PYTHONPATH=<APP_DIR>.
     data = plistlib.loads(plist.read_text().encode("utf-8"))
     assert data["ProgramArguments"][0] == "/usr/bin/python3"
     assert data["ProgramArguments"][1:] == ["-m", "sonari.daemon"]
-    assert data["EnvironmentVariables"]["PYTHONPATH"].endswith(os.path.join("", "src")) \
-        or data["EnvironmentVariables"]["PYTHONPATH"].endswith("/src")
-    # install.json was written with the resolved interpreter.
+    assert data["EnvironmentVariables"]["PYTHONPATH"] == str(app_dir)
+    # install.json was written with the resolved interpreter + new fields.
     import json as _json
     rec = _json.loads(record.read_text())
     assert rec["python"] == "/usr/bin/python3"
-    assert rec["src"].endswith("src")
-    # The launcher was placed.
+    assert rec["app_path"] == str(app_dir)
+    assert rec["plugin_version"] == "0.4.0"
+    assert "src" not in rec
     place_launcher.assert_called_once()
     assert any(c.args[0][0] == "load" for c in run.call_args_list)
     out = capsys.readouterr().out
@@ -112,14 +115,17 @@ def test_write_install_record_writes_expected_keys(tmp_path):
             python="/usr/bin/python3",
             python_version="3.9",
             plugin_root="/plug",
-            src="/plug/src",
+            app_path="/home/u/.sonari/app",
+            plugin_version="0.4.0",
         )
     import json as _json
     data = _json.loads(rec.read_text())
     assert data["python"] == "/usr/bin/python3"
     assert data["python_version"] == "3.9"
     assert data["plugin_root"] == "/plug"
-    assert data["src"] == "/plug/src"
+    assert data["app_path"] == "/home/u/.sonari/app"
+    assert data["plugin_version"] == "0.4.0"
+    assert "src" not in data  # src key was replaced by app_path
     assert "installed_at" in data and isinstance(data["installed_at"], str)
 
 
@@ -197,3 +203,63 @@ def test_copy_app_raises_oserror_when_source_missing(tmp_path):
         except OSError:
             raised = True
     assert raised is True
+
+
+def test_install_copy_failure_is_fatal_and_writes_no_plist(tmp_path, capsys):
+    plist = tmp_path / "com.sonari.speechd.plist"
+    record = tmp_path / "install.json"
+    app_dir = tmp_path / ".sonari" / "app"
+    with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
+         mock.patch.object(cli, "_launchctl", mock.Mock(return_value=0)), \
+         mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
+         mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
+         mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
+         mock.patch.object(cli, "_copy_app", side_effect=OSError("read-only")), \
+         mock.patch.object(cli.paths, "APP_DIR", app_dir), \
+         mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
+         mock.patch.object(cli.paths, "KEYMAP_PATH", tmp_path / "keymap.json"), \
+         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"), \
+         mock.patch.object(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json"), \
+         mock.patch.object(cli.keymap, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
+         mock.patch.object(cli.keymap, "SONARI_DIR", tmp_path), \
+         mock.patch.object(cli.keymap, "ensure_sonari_dir", lambda: None), \
+         mock.patch("sonari.paths.ensure_sonari_dir"):
+        rc = cli.install()
+    assert rc == 1
+    # No speechd plist was written when the copy failed.
+    assert not plist.exists()
+    out = capsys.readouterr().out.lower()
+    assert "~/.sonari" in out or ".sonari is writable" in out
+
+
+def test_install_plist_pythonpath_handles_spaces_in_app_dir(tmp_path, capsys):
+    plist = tmp_path / "com.sonari.speechd.plist"
+    record = tmp_path / "install.json"
+    # APP_DIR with a space in the path (e.g. a username with a space).
+    app_dir = tmp_path / "Spaced Home" / ".sonari" / "app"
+    with mock.patch.object(cli, "LAUNCH_AGENT_PATH", str(plist)), \
+         mock.patch.object(cli, "_launchctl", mock.Mock(return_value=0)), \
+         mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
+         mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
+         mock.patch.object(cli, "_build_hotkeyd", return_value=(False, "swiftc not found")), \
+         mock.patch.object(cli, "_copy_app", return_value=str(app_dir)), \
+         mock.patch.object(cli, "_read_plugin_version", return_value="0.4.0"), \
+         mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")), \
+         mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(tmp_path / "hk.plist")), \
+         mock.patch.object(cli.paths, "APP_DIR", app_dir), \
+         mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
+         mock.patch.object(cli.paths, "KEYMAP_PATH", tmp_path / "keymap.json"), \
+         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"), \
+         mock.patch.object(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json"), \
+         mock.patch.object(cli.keymap, "HOTKEYD_RESOLVED_PATH", tmp_path / "hotkeyd.resolved.json"), \
+         mock.patch.object(cli.keymap, "SONARI_DIR", tmp_path), \
+         mock.patch.object(cli.keymap, "ensure_sonari_dir", lambda: None), \
+         mock.patch("sonari.paths.ensure_sonari_dir"):
+        rc = cli.install()
+    assert rc == 0
+    data = plistlib.loads(plist.read_text().encode("utf-8"))
+    # The spaced path round-trips through the plist XML intact.
+    assert data["EnvironmentVariables"]["PYTHONPATH"] == str(app_dir)
+    assert " " in data["EnvironmentVariables"]["PYTHONPATH"]

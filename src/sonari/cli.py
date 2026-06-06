@@ -224,11 +224,11 @@ def doctor() -> list:
     # plugin path resolved (install.json -> src contains sonari/__init__.py).
     try:
         rec = _read_install_record()
-        src = rec.get("src") if rec else None
-        init = os.path.join(src, "sonari", "__init__.py") if src else None
+        app = rec.get("app_path") if rec else None
+        init = os.path.join(app, "sonari", "__init__.py") if app else None
         ok = bool(init) and os.path.exists(init)
         results.append(("plugin path resolved", ok,
-                        src if ok else "install.json missing or src has no "
+                        app if ok else "install.json missing or app copy has no "
                                        "sonari package (run 'sonari install')"))
     except Exception as exc:  # noqa: BLE001
         results.append(("plugin path resolved", False, f"error: {exc}"))
@@ -343,14 +343,16 @@ def _resolve_python():
 
 
 def _write_install_record(python: str, python_version: str,
-                          plugin_root: str, src: str) -> None:
-    """Persist the durable install record used by doctor + migration."""
+                          plugin_root: str, app_path: str,
+                          plugin_version: str) -> None:
+    """Persist the durable install record used by doctor + session-start health."""
     from datetime import datetime, timezone
     record = {
         "python": python,
         "python_version": python_version,
+        "app_path": app_path,
         "plugin_root": plugin_root,
-        "src": src,
+        "plugin_version": plugin_version,
         "installed_at": datetime.now(timezone.utc).isoformat(),
     }
     os.makedirs(os.path.dirname(str(paths.INSTALL_RECORD_PATH)), exist_ok=True)
@@ -515,9 +517,9 @@ def _launchagent_plist(python_executable: str, src_path: str,
     """Return the LaunchAgent plist XML for the speech daemon.
 
     *python_executable* is the resolved absolute interpreter (>= 3.9).
-    *src_path* is the plugin's <root>/src directory; it is injected as
-    PYTHONPATH so the daemon imports the plugin's own source with no installed
-    'sonari'. ProgramArguments runs the module directly: [<py>, -m, sonari.daemon].
+    *src_path* is the stable APP_DIR copy (~/.sonari/app); it is injected as
+    PYTHONPATH so the daemon imports the stable package copy, surviving plugin
+    cache churn. ProgramArguments runs the module directly: [<py>, -m, sonari.daemon].
     """
     return _plist(
         LAUNCH_AGENT_LABEL,
@@ -576,7 +578,6 @@ def install() -> int:
     print(f"Using interpreter: {python} (Python {py_ver})")
 
     plugin_root = os.path.realpath(paths.repo_root())
-    src = os.path.join(plugin_root, "src")
 
     # 2. Pre-check swiftc / Command Line Tools (non-fatal).
     if shutil.which("swiftc") is None:
@@ -584,18 +585,31 @@ def install() -> int:
               "Install them with:  xcode-select --install   then re-run: "
               "sonari install")
 
-    # 3-4. Keymap + build hotkeyd.
+    # 3. Copy the package into the stable APP_DIR (decouples the long-lived
+    #    daemon from the version-pinned marketplace cache; see spec §3.B).
+    #    Fatal-with-guidance: a half-copy must not produce a dangling plist.
+    try:
+        app_dir = _copy_app(plugin_root)
+    except OSError as exc:
+        print(f"Could not copy the runtime to ~/.sonari/app: {exc}. "
+              f"Check that ~/.sonari is writable.")
+        return 1
+    print(f"Copied runtime to: {app_dir}")
+
+    # 4. Keymap + build hotkeyd.
     keymap.write_default_keymap_if_absent()
     keymap.write_resolved()
     ok, detail = _build_hotkeyd()
 
     # 5. Durable install record.
+    plugin_version = _read_plugin_version(plugin_root)
     _write_install_record(python=python, python_version=py_ver,
-                          plugin_root=plugin_root, src=src)
+                          plugin_root=plugin_root, app_path=app_dir,
+                          plugin_version=plugin_version)
 
-    # 6. speechd LaunchAgent (resolved interpreter + PYTHONPATH=<src>).
+    # 6. speechd LaunchAgent (resolved interpreter + PYTHONPATH=<APP_DIR>).
     log = str(paths.LOG_PATH)
-    xml = _launchagent_plist(python_executable=python, src_path=src,
+    xml = _launchagent_plist(python_executable=python, src_path=app_dir,
                              log_path=log)
     os.makedirs(os.path.dirname(LAUNCH_AGENT_PATH), exist_ok=True)
     with open(LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:

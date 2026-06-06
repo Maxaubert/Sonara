@@ -63,6 +63,9 @@ def test_install_writes_hotkeyd_plist_and_keymap(tmp_path, capsys):
          mock.patch.object(cli, "_launchctl", run), \
          mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
          mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")), \
+         mock.patch.object(cli, "_copy_app", return_value=str(tmp_path / "app")), \
+         mock.patch.object(cli, "_read_plugin_version", return_value="0.4.0"), \
+         mock.patch.object(cli.paths, "APP_DIR", tmp_path / "app"), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", km), \
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
@@ -98,6 +101,9 @@ def test_install_build_failure_is_nonfatal(tmp_path, capsys):
          mock.patch.object(cli, "_launchctl", run), \
          mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
          mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")), \
+         mock.patch.object(cli, "_copy_app", return_value=str(tmp_path / "app")), \
+         mock.patch.object(cli, "_read_plugin_version", return_value="0.4.0"), \
+         mock.patch.object(cli.paths, "APP_DIR", tmp_path / "app"), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", km), \
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
