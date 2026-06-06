@@ -1,31 +1,18 @@
 # Sonari
 
-**Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS.**
+**Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS — an
+accessibility tool for blind and low-vision developers.**
 
-Sonari speaks everything Claude Code does — prose, plans, multiple-choice questions, and
-permission prompts — **in order**, and plays a distinct sound (an *earcon*) the instant any
-decision needs you, so you can run a full session **with the screen off**. You *answer*
-without looking by pressing the option's number (1-9), or `Esc` to cancel; and global
-speech-control hotkeys (stop, repeat, skip, jump-to-decision, catch-up, rate, verbosity,
-re-read) work even mid-speech.
+Sonari reads Claude Code's output aloud — prose, plans, multiple-choice questions, and
+permission prompts — in order, plays a distinct sound the instant a decision needs you, and
+lets you answer and control the speech without looking. Run a full session with the screen
+off.
 
-## Why Sonari
-
-Claude Code lives in a fast-changing terminal interface — exactly the kind of thing that's
-awkward to follow by ear. Screen readers *can* do it, but they're demanding to learn and
-configure, and they tend to fight a live, redrawing TUI: too chatty, often out of order, and
-easy to lose your place in.
-
-Plenty of **low-vision** developers don't use a screen reader at all — they get by with a
-magnifier and a lot of squinting — which makes a busy terminal *extra* tiring.
-
-Sonari is for them, and for anyone who'd rather not stare at the screen. A blind or low-vision
-developer should be able to use Claude Code without looking. Instead of narrating the whole
-interface, Sonari speaks just what matters, in the right order — you always hear the prose
-that explains a decision *before* the decision — alerts you with a quick sound the moment a
-question, plan, or permission is waiting, and lets you choose any option by typing its number.
-The point is to work with Claude Code **relaxed, by ear** — no steep screen-reader setup, no
-eye strain.
+- **Ordered narration** — prose, plans, questions, and permissions are spoken in order, never out of sequence.
+- **Per-decision earcons** — a distinct sound the moment a question, plan, permission, or error appears.
+- **Selection by number** — answer prompts with the option's number; no key injection.
+- **Global hotkeys** — stop, repeat, skip, jump-to-decision, catch-up, rate, verbosity, re-read (work mid-speech).
+- **Self-contained** — runs on the macOS system Python; no `pip`, no third-party packages.
 
 ## Requirements
 
@@ -38,9 +25,8 @@ eye strain.
 
 ## Install
 
-Sonari installs from a Claude Code marketplace. You start *hearing* Claude as soon
-as the plugin is enabled; one more command turns on global hotkeys and autostart —
-and you can do all of it eyes-free from inside Claude Code.
+Sonari installs from a Claude Code marketplace. You start hearing Claude as soon as the
+plugin is enabled; one more command turns on global hotkeys and autostart.
 
 1. Add the marketplace: `/plugin marketplace add nimkimi/sonari` (or, in a shell,
    `claude plugin marketplace add nimkimi/sonari`).
@@ -48,10 +34,9 @@ and you can do all of it eyes-free from inside Claude Code.
    `claude plugin install sonari@sonari`). The marketplace is named `sonari`, so the
    install target is `sonari@sonari`. You will start hearing Claude immediately — the
    daemon lazy-starts on the first hook.
-3. Run `/sonari:install` from inside Claude Code to finish setup. Each step is printed
-   (and spoken) so you can follow along eyes-free. Until you run it, every new session
-   Sonari speaks a one-time reminder: *"Sonari is reading aloud. To enable hotkeys and
-   autostart, run /sonari:install."*
+3. Run `/sonari:install` from inside Claude Code to finish setup (each step is printed and
+   spoken). Until you run it, every new session Sonari reminds you once: *"Sonari is reading
+   aloud. To enable hotkeys and autostart, run /sonari:install."*
 4. Run `/sonari:doctor` to confirm everything is green (the only expected failure is
    `swiftc` / Xcode Command Line Tools on a machine without them — speech still works;
    only the hotkeys need them).
@@ -121,7 +106,7 @@ permission is needed.
 | Ctrl+Cmd+V | Cycle verbosity (everything / medium / quiet) |
 | Ctrl+Cmd+O | Re-read the current options |
 
-### Eyes-free selection
+### Selecting options
 
 When a question, permission prompt, or plan (`AskUserQuestion` / permission /
 `ExitPlanMode`) appears, choose an option by pressing its **number (1-9)**, or `Esc` to
@@ -219,3 +204,7 @@ stable app copy at `~/.sonari/app`, and **preserves** your `config.json` and
 Sonari runs entirely on your own Mac. It collects nothing, sends nothing over the network,
 and has no servers, telemetry, or analytics — the text it speaks is processed locally and is
 never stored or transmitted. See [PRIVACY.md](PRIVACY.md) for the full details.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
