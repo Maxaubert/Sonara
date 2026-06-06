@@ -478,6 +478,12 @@ def ensure_running() -> None:
 
 
 def main() -> None:
+    # Single-instance guard: if a daemon is already accepting connections, exit
+    # cleanly instead of unlinking + rebinding the live socket (prevents the
+    # duplicate-daemon race between a lazy start and the LaunchAgent at login).
+    if socket_connectable():
+        return
+
     from sonari.speaker import Speaker
     from sonari.queue import SpeechQueue
     from sonari.sessions import SessionManager
