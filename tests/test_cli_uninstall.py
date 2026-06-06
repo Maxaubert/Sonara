@@ -20,6 +20,10 @@ def test_uninstall_removes_launchagent_but_preserves_keymap_and_config(tmp_path,
     binp.write_text("binary")
     record = sonari_dir / "install.json"
     record.write_text("{}")
+    # The stable app copy uninstall should remove.
+    app_dir = sonari_dir / "app"
+    (app_dir / "sonari").mkdir(parents=True)
+    (app_dir / "sonari" / "__init__.py").write_text("# pkg\n")
     # PRESERVED across uninstall: user keymap AND config.
     keymap = sonari_dir / "keymap.json"
     keymap.write_text('{"custom": true}')
@@ -41,6 +45,7 @@ def test_uninstall_removes_launchagent_but_preserves_keymap_and_config(tmp_path,
          mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", keymap), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
+         mock.patch.object(cli.paths, "APP_DIR", app_dir), \
          mock.patch.object(cli, "HOTKEYD_LAUNCH_AGENT_PATH", str(hotkeyd_plist)), \
          mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", binp):
         rc = cli.uninstall()
@@ -52,6 +57,7 @@ def test_uninstall_removes_launchagent_but_preserves_keymap_and_config(tmp_path,
     assert not log.exists()
     assert not resolved.exists()
     assert not record.exists()
+    assert not app_dir.exists()
     assert not launcher.exists()
     # Preserved.
     assert keymap.exists()

@@ -717,6 +717,15 @@ def uninstall() -> int:
             except OSError:
                 pass
 
+    # Remove the stable app copy (spec §3.B). config.json + keymap.json live in
+    # SONARI_DIR (not APP_DIR) and are preserved below.
+    if os.path.isdir(str(paths.APP_DIR)):
+        try:
+            shutil.rmtree(str(paths.APP_DIR))
+            print(f"Removed app copy: {paths.APP_DIR}")
+        except OSError:
+            pass
+
     if _remove_launcher():
         print(f"Removed launcher: {_launcher_path()}")
 
