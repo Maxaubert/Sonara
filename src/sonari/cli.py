@@ -369,6 +369,24 @@ def _read_install_record():
         return None
 
 
+def _read_plugin_version(plugin_root: str) -> str:
+    """Return the plugin's declared version, or "" if unreadable.
+
+    Reads <plugin_root>/.claude-plugin/plugin.json 'version'; falls back to the
+    CLAUDE_PLUGIN_VERSION env var. Never raises (version is advisory).
+    """
+    path = os.path.join(plugin_root, ".claude-plugin", "plugin.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        v = data.get("version") if isinstance(data, dict) else None
+        if isinstance(v, str) and v:
+            return v
+    except Exception:  # noqa: BLE001 - version is advisory, never fatal
+        pass
+    return os.environ.get("CLAUDE_PLUGIN_VERSION", "") or ""
+
+
 def _local_bin_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".local", "bin")
 

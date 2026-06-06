@@ -121,3 +121,30 @@ def test_write_install_record_writes_expected_keys(tmp_path):
     assert data["plugin_root"] == "/plug"
     assert data["src"] == "/plug/src"
     assert "installed_at" in data and isinstance(data["installed_at"], str)
+
+
+def test_read_plugin_version_reads_version_from_plugin_json(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_VERSION", raising=False)
+    pdir = tmp_path / ".claude-plugin"
+    pdir.mkdir()
+    (pdir / "plugin.json").write_text('{"name": "sonari", "version": "0.4.0"}')
+    assert cli._read_plugin_version(str(tmp_path)) == "0.4.0"
+
+
+def test_read_plugin_version_missing_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_VERSION", raising=False)
+    assert cli._read_plugin_version(str(tmp_path)) == ""
+
+
+def test_read_plugin_version_corrupt_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_PLUGIN_VERSION", raising=False)
+    pdir = tmp_path / ".claude-plugin"
+    pdir.mkdir()
+    (pdir / "plugin.json").write_text("{ not json")
+    assert cli._read_plugin_version(str(tmp_path)) == ""
+
+
+def test_read_plugin_version_falls_back_to_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLAUDE_PLUGIN_VERSION", "9.9.9")
+    # No plugin.json on disk -> env fallback wins.
+    assert cli._read_plugin_version(str(tmp_path)) == "9.9.9"
