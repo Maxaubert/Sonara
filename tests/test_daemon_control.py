@@ -78,6 +78,7 @@ def test_set_foreground_sets_foreground():
 
 def test_session_start_sets_foreground_and_registers():
     daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    daemon._setup_health = lambda v: ("ok", None)  # keep focus on fg/register
     daemon.handle_message(_msg(MsgType.SESSION_START, "s9"))
     assert sessions.foreground() == "s9"
     assert sessions.is_foreground("s9") is True

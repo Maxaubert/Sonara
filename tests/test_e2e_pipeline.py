@@ -71,6 +71,7 @@ def make_daemon():
     cfg = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
     cfg["verbosity"] = "everything"
     daemon = SpeechDaemon(queue, speaker, sessions, cfg)
+    daemon._setup_health = lambda v: ("ok", None)  # no setup cue in ordering tests
     return daemon, speaker, log
 
 

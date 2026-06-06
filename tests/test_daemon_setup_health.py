@@ -82,3 +82,64 @@ def test_read_install_record_returns_none_on_corrupt(tmp_path, monkeypatch):
     rec.write_text("{ not json")
     monkeypatch.setattr("sonari.daemon.INSTALL_RECORD_PATH", str(rec))
     assert daemon._read_install_record() is None
+
+
+from sonari.protocol import MsgType, PROTOCOL_VERSION
+
+
+def _ss(session, plugin_version=""):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
+            "session": session, "plugin_version": plugin_version}
+
+
+def _se(session):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END, "session": session}
+
+
+def test_session_start_enqueues_one_cue_when_not_installed(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    monkeypatch.setattr(daemon, "_setup_health",
+                        lambda v: ("not_installed", "RUN slash sonari install"))
+    daemon.handle_message(_ss("s1"))
+    assert len(queue) == 1
+    item = queue.pop_next()
+    assert item.kind == "prose"
+    assert "slash sonari install" in item.text.lower()
+
+
+def test_session_start_silent_when_ok(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    monkeypatch.setattr(daemon, "_setup_health", lambda v: ("ok", None))
+    daemon.handle_message(_ss("s1"))
+    assert len(queue) == 0
+
+
+def test_session_start_cue_throttled_per_session(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    monkeypatch.setattr(daemon, "_setup_health",
+                        lambda v: ("not_installed", "RUN slash sonari install"))
+    daemon.handle_message(_ss("s1"))
+    daemon.handle_message(_ss("s1"))  # same session again
+    assert len(queue) == 1  # only ONE cue
+
+
+def test_session_end_clears_throttle_so_cue_can_fire_again(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    monkeypatch.setattr(daemon, "_setup_health",
+                        lambda v: ("not_installed", "RUN slash sonari install"))
+    daemon.handle_message(_ss("s1"))
+    assert len(queue) == 1
+    queue.pop_next()
+    daemon.handle_message(_se("s1"))
+    daemon.handle_message(_ss("s1"))  # new session lifecycle, same id
+    assert len(queue) == 1
+
+
+def test_setup_health_exception_never_breaks_session(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    def _boom(v):
+        raise RuntimeError("health blew up")
+    monkeypatch.setattr(daemon, "_setup_health", _boom)
+    # Must not raise; just no cue.
+    daemon.handle_message(_ss("s1"))
+    assert len(queue) == 0

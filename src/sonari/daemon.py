@@ -60,6 +60,23 @@ class SpeechDaemon:
         self.queue.enqueue(item)
         self._wake.set()
 
+    def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
+        """Speak ONE setup-guidance cue for this session, only when degraded.
+
+        Throttle: at most once per session (recorded whether or not a cue fires).
+        Silent when healthy. The check is a few file stats + a version compare
+        (no launchctl) and never raises.
+        """
+        if session in self._guided_sessions:
+            return
+        try:
+            state, cue = self._setup_health(plugin_version or "")
+        except Exception:  # noqa: BLE001 - guidance must never break a session
+            return
+        self._guided_sessions.add(session)
+        if state != "ok" and cue:
+            self._enqueue(session, "prose", cue, False)
+
     @staticmethod
     def _choice_text(msg) -> str:
         parts = []
@@ -237,12 +254,14 @@ class SpeechDaemon:
             self.sessions.set_foreground(session)
             if t == MsgType.SESSION_START:
                 self.sessions.register(session)
+                self._maybe_guide_setup(session, msg.get("plugin_version", ""))
             return None
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
             self._last_options = None
             self._warned_immediate.discard(session)
+            self._guided_sessions.discard(session)
             return None
 
         if t == MsgType.STOP:
