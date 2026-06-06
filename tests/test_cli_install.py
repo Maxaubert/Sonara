@@ -148,3 +148,52 @@ def test_read_plugin_version_falls_back_to_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_PLUGIN_VERSION", "9.9.9")
     # No plugin.json on disk -> env fallback wins.
     assert cli._read_plugin_version(str(tmp_path)) == "9.9.9"
+
+
+def test_copy_app_copies_package_into_app_dir(tmp_path):
+    plugin_root = tmp_path / "plugin"
+    src_pkg = plugin_root / "src" / "sonari"
+    src_pkg.mkdir(parents=True)
+    (src_pkg / "__init__.py").write_text("# sonari\n")
+    (src_pkg / "daemon.py").write_text("# daemon\n")
+    app_dir = tmp_path / "home" / ".sonari" / "app"
+    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
+        returned = cli._copy_app(str(plugin_root))
+    assert returned == str(app_dir)
+    assert (app_dir / "sonari" / "__init__.py").exists()
+    assert (app_dir / "sonari" / "daemon.py").exists()
+
+
+def test_copy_app_is_remove_then_copy_so_stale_modules_vanish(tmp_path):
+    app_dir = tmp_path / "home" / ".sonari" / "app"
+
+    def _root_with(modules):
+        root = tmp_path / ("plug-" + "-".join(modules))
+        pkg = root / "src" / "sonari"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text("# pkg\n")
+        for m in modules:
+            (pkg / m).write_text("# " + m + "\n")
+        return root
+
+    first = _root_with(["old_only.py", "daemon.py"])
+    second = _root_with(["daemon.py"])
+    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
+        cli._copy_app(str(first))
+        assert (app_dir / "sonari" / "old_only.py").exists()
+        cli._copy_app(str(second))
+    # The module present only in the FIRST root must be gone after re-copy.
+    assert not (app_dir / "sonari" / "old_only.py").exists()
+    assert (app_dir / "sonari" / "daemon.py").exists()
+
+
+def test_copy_app_raises_oserror_when_source_missing(tmp_path):
+    plugin_root = tmp_path / "plugin"  # no src/sonari beneath it
+    app_dir = tmp_path / "home" / ".sonari" / "app"
+    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
+        try:
+            cli._copy_app(str(plugin_root))
+            raised = False
+        except OSError:
+            raised = True
+    assert raised is True

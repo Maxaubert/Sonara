@@ -414,6 +414,24 @@ def _place_launcher(plugin_root: str) -> str:
     return path
 
 
+def _copy_app(plugin_root: str) -> str:
+    """Copy the plugin's sonari package into the stable APP_DIR. Returns APP_DIR.
+
+    Overwrites on every install so a plugin update fully refreshes the copy
+    (stale modules from a prior version do not linger). The daemon LaunchAgent
+    points PYTHONPATH at APP_DIR, decoupling the long-lived daemon from the
+    version-pinned marketplace cache.
+    """
+    app_dir = str(paths.APP_DIR)
+    src_pkg = os.path.join(plugin_root, "src", "sonari")
+    dst_pkg = os.path.join(app_dir, "sonari")
+    os.makedirs(app_dir, exist_ok=True)
+    if os.path.isdir(dst_pkg):
+        shutil.rmtree(dst_pkg)
+    shutil.copytree(src_pkg, dst_pkg)
+    return app_dir
+
+
 def _remove_launcher() -> bool:
     """Remove ~/.local/bin/sonari if present. Returns True if it was removed."""
     path = _launcher_path()
