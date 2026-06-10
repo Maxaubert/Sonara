@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import socket
 import time
 
 from sonari.protocol import encode, decode
-from sonari.paths import SOCKET_PATH, socket_connectable
+from sonari.paths import LOCK_PATH, socket_connectable
+from sonari.platform import transport
 from sonari.daemon import ensure_running
 
 
@@ -13,15 +13,13 @@ class DaemonNotRunning(OSError):
 
 
 def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout)
     try:
-        try:
-            s.connect(str(SOCKET_PATH))
-        except (ConnectionRefusedError, FileNotFoundError, OSError) as exc:
-            raise DaemonNotRunning(
-                "Sonari daemon is not running. Run: sonari install"
-            ) from exc
+        s = transport.connect(LOCK_PATH, timeout=timeout)
+    except OSError as exc:
+        raise DaemonNotRunning(
+            "Sonari daemon is not running. Run: sonari install"
+        ) from exc
+    try:
         s.sendall(encode(msg))
         if not expect_reply:
             return None

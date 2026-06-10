@@ -36,6 +36,12 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "APP_DIR", sonari_dir / "app", raising=False)
     monkeypatch.setattr(paths, "CONFIG_PATH", sonari_dir / "config.json", raising=False)
     monkeypatch.setattr(paths, "SOCKET_PATH", sonari_dir / "speechd.sock", raising=False)
+    monkeypatch.setattr(paths, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)
+    # client.send does `from sonari.paths import LOCK_PATH` (a by-value bind), so
+    # patching paths.LOCK_PATH alone leaves the client reading the developer's
+    # real ~/.sonari/daemon.lock. Repoint the client module's copy too.
+    import sonari.client as client_mod
+    monkeypatch.setattr(client_mod, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)
     monkeypatch.setattr(paths, "LOG_PATH", sonari_dir / "speechd.log", raising=False)
     monkeypatch.setattr(paths, "KEYMAP_PATH", sonari_dir / "keymap.json", raising=False)
     monkeypatch.setattr(

@@ -158,12 +158,12 @@ def test_daemon_down_message_goes_to_stderr(capsys):
 
 def test_client_send_raises_daemon_not_running_on_connection_refused(tmp_path, monkeypatch):
     """send() must raise DaemonNotRunning (not a raw OSError) when the
-    socket is absent, making the error cleanly catchable."""
+    lockfile is absent, making the error cleanly catchable."""
     import sonari.client as client_mod
     from sonari.client import DaemonNotRunning
 
-    missing_sock = str(tmp_path / "no_such.sock")
-    monkeypatch.setattr(client_mod, "SOCKET_PATH", missing_sock, raising=False)
+    missing_lock = tmp_path / "daemon.lock"  # nonexistent -> transport.connect raises
+    monkeypatch.setattr(client_mod, "LOCK_PATH", missing_lock, raising=False)
 
     with pytest.raises(DaemonNotRunning):
         client_mod.send({"type": "ping"})

@@ -72,19 +72,21 @@ def test_speak_loop_fifo_order_including_items_added_after_start():
     assert speaker.spoken == ["first", "second", "third (wake)"]
 
 
-def _make_unix_socket_daemon(tmp_path):
-    """Start a daemon with its accept + speak loops on a temp socket.
+def _make_inet_daemon(tmp_path):
+    """Start a daemon with its accept + speak loops on a localhost TCP port.
 
-    Returns (daemon, socket_path, [threads]).  Caller must call daemon.stop()
-    and join threads when done.
+    Returns (daemon, (host, port), [threads], speaker).  The daemon gates every
+    connection on a token sent as the first newline-terminated line.  Caller must
+    call daemon.stop() and join threads when done.
     """
-    sock_path = os.path.join(tmp_path, "test.sock")
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
 
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(sock_path)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
     srv.listen(4)
+    host, port = srv.getsockname()
     daemon._server = srv
+    daemon._token = "testtoken"          # daemon checks this as the first line
     daemon._running.set()
 
     speak_t = threading.Thread(target=daemon._speak_loop, daemon=True)
@@ -92,21 +94,23 @@ def _make_unix_socket_daemon(tmp_path):
     speak_t.start()
     accept_t.start()
 
-    return daemon, sock_path, [speak_t, accept_t], speaker
+    return daemon, (host, port), [speak_t, accept_t], speaker
 
 
 def test_handle_conn_ping_round_trip():
-    """Connect to a live daemon over a Unix socket, send PING, receive {ok: True}."""
+    """Connect to a live daemon over TCP, authenticate with the token, send PING,
+    receive {ok: True}."""
     with tempfile.TemporaryDirectory() as tmp:
-        daemon, sock_path, threads, speaker = _make_unix_socket_daemon(tmp)
+        daemon, (host, port), threads, speaker = _make_inet_daemon(tmp)
         try:
             # Give the accept loop a moment to start listening.
             time.sleep(0.05)
 
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.connect(sock_path)
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.connect((host, port))
             client.settimeout(2.0)
 
+            client.sendall(b"testtoken\n")           # token handshake first
             client.sendall(encode({"type": MsgType.PING}))
 
             buf = b""
@@ -124,17 +128,18 @@ def test_handle_conn_ping_round_trip():
 
 
 def test_handle_conn_status_round_trip():
-    """Connect to a live daemon over a Unix socket, send STATUS, receive a dict
-    with the expected keys."""
+    """Connect to a live daemon over TCP, authenticate, send STATUS, receive a
+    dict with the expected keys."""
     with tempfile.TemporaryDirectory() as tmp:
-        daemon, sock_path, threads, speaker = _make_unix_socket_daemon(tmp)
+        daemon, (host, port), threads, speaker = _make_inet_daemon(tmp)
         try:
             time.sleep(0.05)
 
-            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            client.connect(sock_path)
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.connect((host, port))
             client.settimeout(2.0)
 
+            client.sendall(b"testtoken\n")           # token handshake first
             client.sendall(encode({"type": MsgType.STATUS}))
 
             buf = b""
@@ -146,6 +151,37 @@ def test_handle_conn_status_round_trip():
             reply = decode(line)
             assert set(reply.keys()) >= {"verbosity", "rate", "voice", "foreground", "queue_len"}
             assert reply["queue_len"] == 0
+        finally:
+            daemon.stop()
+            for t in threads:
+                t.join(timeout=2.0)
+
+
+def test_handle_conn_rejects_wrong_token():
+    """A connection that sends the wrong token is dropped without a reply."""
+    with tempfile.TemporaryDirectory() as tmp:
+        daemon, (host, port), threads, speaker = _make_inet_daemon(tmp)
+        try:
+            time.sleep(0.05)
+
+            client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client.connect((host, port))
+            client.settimeout(2.0)
+
+            client.sendall(b"wrongtoken\n")          # bad token -> rejected
+            try:
+                client.sendall(encode({"type": MsgType.PING}))
+            except OSError:
+                pass  # peer already closed; the connection was rejected
+
+            # The daemon drops the peer without replying: recv returns EOF, or the
+            # socket has already been reset (no PING reply is ever delivered).
+            try:
+                data = client.recv(4096)
+            except ConnectionResetError:
+                data = b""
+            client.close()
+            assert data == b""
         finally:
             daemon.stop()
             for t in threads:

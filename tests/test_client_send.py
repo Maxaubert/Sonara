@@ -4,18 +4,31 @@ import threading
 
 from sonari import paths
 from sonari.client import send
+from sonari.platform import transport
 from sonari.protocol import PROTOCOL_VERSION, encode
 
 
-def _reply_server(sock_path, ready, captured):
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(sock_path)
+def _reply_server(lock_path, ready, captured, token="tok"):
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
     srv.listen(1)
+    transport.write_lockfile(lock_path, "127.0.0.1", srv.getsockname()[1], token, 1)
     ready.set()
     conn, _ = srv.accept()
     try:
         with conn:
             buf = b""
+            while b"\n" not in buf:
+                try:
+                    data = conn.recv(4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                buf += data
+            # strip the token handshake line; the payload is the second line
+            token_line, _, buf = buf.partition(b"\n")
+            captured["token"] = token_line.decode("utf-8")
             while b"\n" not in buf:
                 try:
                     data = conn.recv(4096)
@@ -37,14 +50,14 @@ def _reply_server(sock_path, ready, captured):
 
 
 def test_send_no_reply(tmp_path, monkeypatch):
-    sock_path = str(tmp_path / "speechd.sock")
-    monkeypatch.setattr(paths, "SOCKET_PATH", sock_path, raising=False)
+    lock_path = tmp_path / "daemon.lock"
+    monkeypatch.setattr(paths, "LOCK_PATH", lock_path, raising=False)
     import sonari.client as client_mod
-    monkeypatch.setattr(client_mod, "SOCKET_PATH", sock_path, raising=False)
+    monkeypatch.setattr(client_mod, "LOCK_PATH", lock_path, raising=False)
 
     ready = threading.Event()
     captured = {}
-    t = threading.Thread(target=_reply_server, args=(sock_path, ready, captured), daemon=True)
+    t = threading.Thread(target=_reply_server, args=(lock_path, ready, captured), daemon=True)
     t.start()
     assert ready.wait(2.0)
 
@@ -52,17 +65,18 @@ def test_send_no_reply(tmp_path, monkeypatch):
     result = send(msg, expect_reply=False)
     assert result is None
     t.join(timeout=2.0)
+    assert captured["token"] == "tok"
     assert captured["recv"] == msg
 
 
 def test_send_round_trip_reply(tmp_path, monkeypatch):
-    sock_path = str(tmp_path / "speechd.sock")
+    lock_path = tmp_path / "daemon.lock"
     import sonari.client as client_mod
-    monkeypatch.setattr(client_mod, "SOCKET_PATH", sock_path, raising=False)
+    monkeypatch.setattr(client_mod, "LOCK_PATH", lock_path, raising=False)
 
     ready = threading.Event()
     captured = {}
-    t = threading.Thread(target=_reply_server, args=(sock_path, ready, captured), daemon=True)
+    t = threading.Thread(target=_reply_server, args=(lock_path, ready, captured), daemon=True)
     t.start()
     assert ready.wait(2.0)
 

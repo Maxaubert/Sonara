@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import socket
 import subprocess
 import threading
@@ -10,9 +11,10 @@ from sonari.queue import SpeechItem
 from sonari.assembler import ProseAssembler
 from sonari.config import save_config, load_config
 from sonari.paths import (
-    SOCKET_PATH, ensure_sonari_dir, socket_connectable, repo_root,
+    LOCK_PATH, ensure_sonari_dir, socket_connectable, repo_root,
     INSTALL_RECORD_PATH,
 )
+from sonari.platform import transport
 
 
 RATE_MIN = 100
@@ -31,6 +33,7 @@ class SpeechDaemon:
         self._wake = threading.Event()
         self._lock = threading.Lock()
         self._server = None
+        self._token = None
         self._threads = []
         self._poll_interval = 0.1
         from sonari.history import SessionHistory
@@ -504,7 +507,9 @@ class SpeechDaemon:
             buf = b""
             with conn:
                 conn.settimeout(5.0)
-                while self._running.is_set():
+                # --- token handshake: the first newline-terminated line must
+                # equal the daemon's session token, or the peer is dropped. ---
+                while b"\n" not in buf:
                     try:
                         data = conn.recv(4096)
                     except (OSError, socket.timeout):
@@ -512,6 +517,12 @@ class SpeechDaemon:
                     if not data:
                         return
                     buf += data
+                token_line, buf = buf.split(b"\n", 1)
+                if token_line.decode("utf-8", "replace") != self._token:
+                    return  # reject unauthenticated peer
+                while self._running.is_set():
+                    # Process any complete messages already buffered (e.g. a
+                    # message that arrived in the same packet as the token).
                     while b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
                         if not line.strip():
@@ -527,6 +538,13 @@ class SpeechDaemon:
                                 conn.sendall(encode(reply))
                             except OSError:
                                 return
+                    try:
+                        data = conn.recv(4096)
+                    except (OSError, socket.timeout):
+                        return
+                    if not data:
+                        return
+                    buf += data
         except OSError:
             return
 
@@ -542,14 +560,14 @@ class SpeechDaemon:
 
     def run(self) -> None:
         ensure_sonari_dir()
-        # unlink a stale socket file before binding
-        try:
-            os.unlink(SOCKET_PATH)
-        except FileNotFoundError:
-            pass
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(SOCKET_PATH))
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind((transport.HOST, 0))
         srv.listen(16)
+        port = srv.getsockname()[1]
+        self._token = secrets.token_hex(32)
+        transport.write_lockfile(
+            LOCK_PATH, transport.HOST, port, self._token, os.getpid())
         self._server = srv
         self._running.set()
 
@@ -573,7 +591,7 @@ class SpeechDaemon:
             except OSError:
                 pass
             try:
-                os.unlink(SOCKET_PATH)
+                os.unlink(LOCK_PATH)
             except FileNotFoundError:
                 pass
 
@@ -585,14 +603,9 @@ def _daemon_shim_path() -> str:
 def ensure_running() -> None:
     if socket_connectable():
         return
-    shim = _daemon_shim_path()
-    subprocess.Popen(
-        [shim],
-        start_new_session=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    from sonari.platform import get_platform
+    argv, kwargs = get_platform().supervisor.launch_spec()
+    subprocess.Popen(argv, **kwargs)
 
 
 def main() -> None:
