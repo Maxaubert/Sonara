@@ -7,14 +7,17 @@ def _ok_patches():
     """Context managers that make every doctor check pass."""
     return [
         mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
-        mock.patch("sonari.speaker.best_enhanced_voice", return_value="Ava (Premium)"),
+        mock.patch("sonari.platform.macos.tts.MacTtsBackend.best_voice",
+                   return_value="Ava (Premium)"),
         mock.patch("os.access", return_value=True),
         mock.patch("sonari.paths.ensure_sonari_dir"),
         mock.patch("sonari.client.send", return_value={"ok": True}),
         mock.patch("os.path.exists", return_value=True),
         mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"),
-        mock.patch.object(cli, "_launchctl", return_value=0),
-        mock.patch.object(cli, "_local_bin_on_path", return_value=True),
+        mock.patch("sonari.platform.macos.supervisor.MacSupervisorBackend.launchctl",
+                   return_value=0),
+        mock.patch("sonari.platform.macos.supervisor._local_bin_on_path",
+                   return_value=True),
         mock.patch.object(cli, "_read_install_record",
                           return_value={"app_path": "/home/u/.sonari/app"}),
     ]

@@ -27,6 +27,11 @@ from sonari.platform.macos.hotkeys import (
     LAUNCH_AGENT_LABEL as HOTKEYD_LAUNCH_AGENT_LABEL,
     LAUNCH_AGENT_PATH as HOTKEYD_LAUNCH_AGENT_PATH,
 )
+from sonari.platform.macos.supervisor import (
+    MacSupervisorBackend,
+    _PYTHON_CANDIDATE_NAMES,
+)
+_mac_sup = MacSupervisorBackend()
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
@@ -140,22 +145,12 @@ def doctor() -> list:
     """Return a list of (check, ok, detail) health-check tuples."""
     results = []
 
-    say = shutil.which("say")
-    results.append(("say", say is not None,
-                    say or "not found (macOS 'say' required)"))
+    # macOS-specific rows: say, afplay, enhanced voice, swiftc, hotkeyd binary,
+    # hotkeyd resolved keymap, speechd LaunchAgent loaded, hotkeyd LaunchAgent
+    # loaded, sonari launcher.
+    results.extend(_mac_sup.doctor_rows())
 
-    afplay = shutil.which("afplay")
-    results.append(("afplay", afplay is not None,
-                    afplay or "not found (macOS 'afplay' required)"))
-
-    try:
-        from . import speaker
-        voice = speaker.best_enhanced_voice()
-        results.append(("enhanced voice", bool(voice),
-                        voice or "none detected; will fall back to Samantha"))
-    except Exception as exc:  # noqa: BLE001 - doctor must never raise
-        results.append(("enhanced voice", False, f"error: {exc}"))
-
+    # Neutral rows (portable, keep inline).
     try:
         paths.ensure_sonari_dir()
         writable = os.access(str(paths.SONARI_DIR), os.W_OK)
@@ -180,26 +175,6 @@ def doctor() -> list:
     present = os.path.exists(hooks_json)
     results.append(("plugin hooks.json", present,
                     hooks_json if present else f"missing: {hooks_json}"))
-
-    swiftc = shutil.which("swiftc")
-    results.append(("swiftc", swiftc is not None,
-                    swiftc or "not found; install Command Line Tools: "
-                              "xcode-select --install"))
-
-    hk_bin = str(paths.HOTKEYD_BIN_PATH)
-    hk_exists = os.path.exists(hk_bin)
-    results.append(("hotkeyd binary", hk_exists,
-                    hk_bin if hk_exists else f"missing: {hk_bin} (run 'sonari install')"))
-
-    try:
-        with open(paths.HOTKEYD_RESOLVED_PATH, "r", encoding="utf-8") as fh:
-            parsed = json.load(fh)
-        ok = isinstance(parsed, list)
-        results.append(("hotkeyd resolved keymap", ok,
-                        str(paths.HOTKEYD_RESOLVED_PATH) if ok
-                        else "not a JSON list"))
-    except Exception as exc:  # noqa: BLE001 - doctor must never raise
-        results.append(("hotkeyd resolved keymap", False, f"unreadable: {exc}"))
 
     try:
         keymap.resolve_keymap(keymap.load_keymap())
@@ -228,29 +203,6 @@ def doctor() -> list:
     except Exception as exc:  # noqa: BLE001
         results.append(("plugin path resolved", False, f"error: {exc}"))
 
-    # LaunchAgents loaded.
-    speechd_loaded = _launchctl(["list", LAUNCH_AGENT_LABEL]) == 0
-    results.append(("speechd LaunchAgent loaded", speechd_loaded,
-                    LAUNCH_AGENT_LABEL if speechd_loaded
-                    else "not loaded (run 'sonari install')"))
-    hotkeyd_loaded = _launchctl(["list", HOTKEYD_LAUNCH_AGENT_LABEL]) == 0
-    results.append(("hotkeyd LaunchAgent loaded", hotkeyd_loaded,
-                    HOTKEYD_LAUNCH_AGENT_LABEL if hotkeyd_loaded
-                    else "not loaded (build CLT then 'sonari install')"))
-
-    # ~/.local/bin/sonari launcher + PATH.
-    launcher = _launcher_path()
-    launcher_ok = os.path.exists(launcher)
-    on_path = _local_bin_on_path()
-    if launcher_ok and on_path:
-        detail = launcher
-    elif launcher_ok:
-        detail = (f"{launcher} present, but ~/.local/bin is NOT on PATH; add: "
-                  'export PATH="$HOME/.local/bin:$PATH"')
-    else:
-        detail = "missing (run 'sonari install')"
-    results.append(("sonari launcher", launcher_ok and on_path, detail))
-
     return results
 
 
@@ -278,58 +230,17 @@ def _daemon_shim_path() -> str:
     return os.path.join(paths.repo_root(), "bin", "sonari-daemon")
 
 
-_PYTHON_CANDIDATE_NAMES = (
-    "python3", "python3.13", "python3.12", "python3.11", "python3.10",
-    "python3.9",
-)
+# _PYTHON_CANDIDATE_NAMES is imported from sonari.platform.macos.supervisor
 
 
 def _probe_python_version(path: str):
-    """Return (major, minor) reported by *path*, or None if it cannot be run.
-
-    Patched in tests. Runs the interpreter so we read its REAL version, not the
-    one running cli.py.
-    """
-    try:
-        out = subprocess.check_output(
-            [path, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
-            stderr=subprocess.DEVNULL, text=True, timeout=5).strip()
-        major, minor = out.split(".")
-        return (int(major), int(minor))
-    except Exception:  # noqa: BLE001 - any failure means "not a usable python"
-        return None
+    """Delegating shim — logic lives in MacSupervisorBackend._probe_python_version."""
+    return _mac_sup._probe_python_version(path)
 
 
 def _resolve_python():
-    """Return the absolute realpath of the best python3 >= 3.9, or None.
-
-    Preference: /usr/bin/python3 when it qualifies (guaranteed present and stable
-    across logins); otherwise the first qualifying candidate in PATH order.
-    Candidates are deduped by realpath so a symlink farm is probed once.
-    """
-    candidates = ["/usr/bin/python3"]
-    for name in _PYTHON_CANDIDATE_NAMES:
-        found = shutil.which(name)
-        if found:
-            candidates.append(found)
-
-    seen = set()
-    qualifying = []  # list of (realpath, was_usr_bin)
-    for cand in candidates:
-        real = os.path.realpath(cand)
-        if real in seen:
-            continue
-        seen.add(real)
-        ver = _probe_python_version(cand)
-        if ver is not None and ver >= (3, 9):
-            qualifying.append((real, cand == "/usr/bin/python3"))
-
-    if not qualifying:
-        return None
-    for real, was_usr_bin in qualifying:
-        if was_usr_bin:
-            return real
-    return qualifying[0][0]
+    """Delegating shim — logic lives in MacSupervisorBackend.resolve_python."""
+    return _mac_sup.resolve_python()
 
 
 def _write_install_record(python: str, python_version: str,
@@ -535,11 +446,8 @@ def _build_hotkeyd():
 
 
 def _launchctl(args: list) -> int:
-    """Run 'launchctl <args...>'. Patched in tests. Returns the exit code."""
-    try:
-        return subprocess.call(["launchctl", *args])
-    except FileNotFoundError:
-        return 1
+    """Delegating shim — logic lives in MacSupervisorBackend.launchctl."""
+    return _mac_sup.launchctl(args)
 
 
 def install() -> int:

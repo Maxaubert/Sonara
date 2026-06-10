@@ -202,10 +202,9 @@ class SpeechDaemon:
 
     @staticmethod
     def _launcher_present() -> bool:
-        """True if ~/.local/bin/sonari exists (cheap stat)."""
-        import os as _os
-        return _os.path.exists(
-            _os.path.join(_os.path.expanduser("~"), ".local", "bin", "sonari"))
+        """Delegating shim — logic lives in MacSupervisorBackend.is_installed."""
+        from sonari.platform.macos.supervisor import MacSupervisorBackend
+        return MacSupervisorBackend().is_installed()
 
     def _setup_health(self, plugin_version: str):
         """Return (state, cue) where state is one of:
