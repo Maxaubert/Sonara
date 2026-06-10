@@ -508,7 +508,7 @@ def uninstall() -> int:
     sonari_dir = paths.SONARI_DIR
     hk_log = sonari_dir / "hotkeyd.log"
     artifacts = [
-        paths.SOCKET_PATH,
+        paths.LOCK_PATH,
         paths.LOG_PATH,
         paths.HOTKEYD_RESOLVED_PATH,
         paths.INSTALL_RECORD_PATH,

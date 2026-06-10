@@ -5,9 +5,10 @@
 //   { "action": String, "keyCode": Int, "modifiers": Int, "message": String }
 // produced by sonari.keymap.write_resolved(). For each entry it registers a
 // Carbon global hotkey (RegisterEventHotKey: fires system-wide, consumes only
-// the registered combo, needs NO macOS permission). On fire it writes the
-// entry's `message` plus a newline to the speechd Unix socket at
-// ~/.sonari/speechd.sock (best-effort; errors ignored).
+// the registered combo, needs NO macOS permission). On fire it reads the
+// daemon's port + token from ~/.sonari/daemon.lock and writes the session
+// token plus the entry's `message` (each newline-terminated) to the speechd
+// localhost-TCP listener at 127.0.0.1 (best-effort; errors ignored).
 //
 // Build: swiftc hotkeyd/sonari-hotkeyd.swift -o ~/.sonari/sonari-hotkeyd
 // Run:   the com.sonari.hotkeyd LaunchAgent (Aqua session, .accessory policy).
@@ -29,10 +30,6 @@ func sonariDir() -> String {
 
 func resolvedPath() -> String {
     return (sonariDir() as NSString).appendingPathComponent("hotkeyd.resolved.json")
-}
-
-func socketPath() -> String {
-    return (sonariDir() as NSString).appendingPathComponent("speechd.sock")
 }
 
 // Parse the resolved JSON array into HotkeyEntry values.
@@ -62,35 +59,35 @@ func loadEntries() -> [HotkeyEntry] {
     return entries
 }
 
-// Best-effort: connect to the speechd Unix socket and write one newline-JSON line.
+// Read ~/.sonari/daemon.lock for the daemon's ephemeral port + session token.
+func lockInfo() -> (port: UInt16, token: String)? {
+    let path = (sonariDir() as NSString).appendingPathComponent("daemon.lock")
+    guard let data = FileManager.default.contents(atPath: path),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let port = obj["port"] as? Int,
+          let token = obj["token"] as? String else { return nil }
+    return (UInt16(port), token)
+}
+
+// Best-effort: connect to the speechd localhost-TCP listener and write
+// the session token followed by one newline-JSON message line.
 func sendMessage(_ message: String) {
-    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard let info = lockInfo() else { return }
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
     if fd < 0 { return }
     defer { close(fd) }
-
-    var addr = sockaddr_un()
-    addr.sun_family = sa_family_t(AF_UNIX)
-    let path = socketPath()
-    let maxLen = MemoryLayout.size(ofValue: addr.sun_path)
-    _ = path.withCString { cstr in
-        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-            ptr.withMemoryRebound(to: CChar.self, capacity: maxLen) { dst in
-                strncpy(dst, cstr, maxLen - 1)
-            }
-        }
-    }
-    let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = info.port.bigEndian
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr)
     let connected = withUnsafePointer(to: &addr) { aptr -> Int32 in
         aptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sptr in
-            connect(fd, sptr, size)
+            connect(fd, sptr, socklen_t(MemoryLayout<sockaddr_in>.size))
         }
     }
     if connected != 0 { return }
-
-    let line = message + "\n"
-    _ = line.withCString { cstr in
-        write(fd, cstr, strlen(cstr))
-    }
+    let line = info.token + "\n" + message + "\n"
+    _ = line.withCString { write(fd, $0, strlen($0)) }
 }
 
 // Index entries by their hotkey id so the handler can look up the message.
