@@ -13,9 +13,11 @@ class FakeSpeaker:
         self.cancels: int = 0
         self.rates: list[int] = []
         self.voices: list = []
+        self.complete = True          # next speak() reports completed?
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str) -> bool:
         self.spoken.append(text)
+        return self.complete
 
     def earcon(self, kind: str) -> None:
         self.earcons.append(kind)
