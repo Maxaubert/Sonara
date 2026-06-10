@@ -82,7 +82,9 @@ def _cmd_skip(_args) -> int:
 
 
 def _combo_label(modifiers: int, key_code: int) -> str:
-    return MacHotkeyBackend().display_combo(modifiers, key_code)
+    parts = [name for mask, name in _MOD_DISPLAY if modifiers & mask]
+    parts.append(_KEYCODE_DISPLAY.get(key_code, "key{0}".format(key_code)))
+    return "+".join(parts)
 
 
 def _cmd_keymap(_args) -> int:
@@ -516,15 +518,6 @@ def _launchagent_plist(python_executable: str, src_path: str,
         env={"PYTHONPATH": src_path},
     )
 
-
-def _hotkeyd_plist(binary_path: str, log_path: str) -> str:
-    """Return the full LaunchAgent plist XML for the hotkey daemon.
-
-    Runs the compiled Swift binary directly.  Delegates to MacHotkeyBackend's
-    module-level helper so the plist logic lives in exactly one place.
-    """
-    from sonari.platform.macos.hotkeys import _hotkeyd_plist as _hk_plist
-    return _hk_plist(binary_path, log_path)
 
 
 def _build_hotkeyd():

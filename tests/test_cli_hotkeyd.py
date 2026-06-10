@@ -4,17 +4,17 @@ from unittest import mock
 
 from sonari import cli
 from sonari import keymap as _keymap
-from sonari.platform.macos.hotkeys import MacHotkeyBackend
+from sonari.platform.macos.hotkeys import MacHotkeyBackend, _hotkeyd_plist, LAUNCH_AGENT_LABEL as HOTKEYD_LAUNCH_AGENT_LABEL
 
 
 def test_hotkeyd_plist_is_valid_and_complete(tmp_path):
     binary = "/Users/u/.sonari/sonari-hotkeyd"
     log = "/Users/u/.sonari/hotkeyd.log"
-    xml = cli._hotkeyd_plist(binary, log)
+    xml = _hotkeyd_plist(binary, log)
     assert isinstance(xml, str)
     assert xml.startswith("<?xml")
     data = plistlib.loads(xml.encode("utf-8"))
-    assert data["Label"] == cli.HOTKEYD_LAUNCH_AGENT_LABEL
+    assert data["Label"] == HOTKEYD_LAUNCH_AGENT_LABEL
     assert data["ProgramArguments"] == [binary]
     assert data["RunAtLoad"] is True
     assert data["KeepAlive"] is True

@@ -36,8 +36,13 @@ class EarconBackend(abc.ABC):
 
 class HotkeyBackend(abc.ABC):
     @abc.abstractmethod
-    def install(self) -> "tuple":
-        """Set up the global-hotkey mechanism. Return (ok: bool, detail: str)."""
+    def install(self, log_path: str, agent_path: str, launchctl_fn) -> "tuple":
+        """Set up the global-hotkey mechanism. Return (ok: bool, detail: str).
+
+        *log_path*     – path to the hotkey daemon log file.
+        *agent_path*   – path where the LaunchAgent plist is written.
+        *launchctl_fn* – callable(args) → int; abstracted so tests can patch it.
+        """
 
     @abc.abstractmethod
     def uninstall(self) -> None:
