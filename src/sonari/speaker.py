@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import threading
 
 from sonari.platform.macos.tts import MacTtsBackend  # Task 8 will replace with get_platform()
+from sonari.platform.macos.earcon import MacEarconBackend  # removed in Task 8's flip
 _MAC_TTS = MacTtsBackend()
+_MAC_EARCON = MacEarconBackend()
 
 
 def run_say(text: str, voice, rate: int):
@@ -17,13 +18,7 @@ def best_enhanced_voice() -> str:
 
 
 def play_earcon(path: str):
-    """Spawn afplay for *path* and return the Popen (or None on error)."""
-    if not os.path.exists(path):
-        return None
-    try:
-        return subprocess.Popen(["afplay", path])
-    except (FileNotFoundError, OSError):
-        return None
+    return _MAC_EARCON.play(path)
 
 
 _DEFAULT_WAIT_TIMEOUT = 120  # seconds; generous upper bound for even long TTS
