@@ -6,7 +6,6 @@ from pathlib import Path
 SONARI_DIR = Path.home() / ".sonari"
 APP_DIR = SONARI_DIR / "app"          # stable copy of the sonari package (PYTHONPATH target)
 CONFIG_PATH = SONARI_DIR / "config.json"
-SOCKET_PATH = SONARI_DIR / "speechd.sock"   # legacy AF_UNIX path; consumers migrate in Tasks 10/11
 LOCK_PATH = SONARI_DIR / "daemon.lock"
 LOG_PATH = SONARI_DIR / "speechd.log"
 KEYMAP_PATH = SONARI_DIR / "keymap.json"
