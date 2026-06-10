@@ -7,6 +7,7 @@ SONARI_DIR = Path.home() / ".sonari"
 APP_DIR = SONARI_DIR / "app"          # stable copy of the sonari package (PYTHONPATH target)
 CONFIG_PATH = SONARI_DIR / "config.json"
 LOCK_PATH = SONARI_DIR / "daemon.lock"
+SINGLETON_PATH = SONARI_DIR / "daemon.singleton"   # held-open flock: single-instance
 LOG_PATH = SONARI_DIR / "speechd.log"
 KEYMAP_PATH = SONARI_DIR / "keymap.json"
 HOTKEYD_RESOLVED_PATH = SONARI_DIR / "hotkeyd.resolved.json"

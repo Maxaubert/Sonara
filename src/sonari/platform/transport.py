@@ -57,3 +57,31 @@ def connectable(path) -> bool:
     except OSError:
         pass
     return True
+
+
+def acquire_singleton(path):
+    """Acquire an exclusive, OS-level single-instance lock at *path*.
+
+    Returns the held file object on success — the CALLER MUST keep a reference
+    for the whole process lifetime, since the flock is released when the file
+    object is garbage-collected/closed (or, automatically, when the process
+    dies — so a crashed daemon never leaves a stuck lock). Returns None if
+    another live process already holds it.
+
+    This restores the single-instance guarantee that the fixed-path AF_UNIX
+    bind() gave us for free; with an ephemeral TCP port, bind() never collides,
+    so this flock is the authoritative guard against duplicate daemons.
+    (POSIX/fcntl for now; the Windows backend supplies its own in M2.)"""
+    import fcntl
+    fh = open(str(path), "w")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    try:
+        fh.write(str(os.getpid()))
+        fh.flush()
+    except OSError:
+        pass
+    return fh

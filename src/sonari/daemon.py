@@ -11,10 +11,13 @@ from sonari.queue import SpeechItem
 from sonari.assembler import ProseAssembler
 from sonari.config import save_config, load_config
 from sonari.paths import (
-    LOCK_PATH, ensure_sonari_dir, socket_connectable, repo_root,
+    LOCK_PATH, SINGLETON_PATH, ensure_sonari_dir, socket_connectable, repo_root,
     INSTALL_RECORD_PATH,
 )
 from sonari.platform import transport
+
+# Holds the single-instance flock for this process's lifetime (see main()).
+_SINGLETON = None
 
 
 RATE_MIN = 100
@@ -609,11 +612,19 @@ def ensure_running() -> None:
 
 
 def main() -> None:
-    # Single-instance guard: if a daemon is already accepting connections, exit
-    # cleanly instead of unlinking + rebinding the live socket (prevents the
-    # duplicate-daemon race between a lazy start and the LaunchAgent at login).
+    # Single-instance guard. The fast path avoids work when a daemon is clearly
+    # already serving. The AUTHORITATIVE guard is the exclusive flock below:
+    # with an ephemeral TCP port, bind() never collides (unlike the old fixed
+    # AF_UNIX path), so socket_connectable() alone is racy and lets concurrent
+    # lazy-starts each bind their own port -> a daemon explosion. The flock lets
+    # exactly one process win; the rest exit. The lock auto-releases on death.
+    global _SINGLETON
     if socket_connectable():
         return
+    ensure_sonari_dir()
+    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)
+    if _SINGLETON is None:
+        return  # another daemon already owns the single-instance lock
 
     from sonari.speaker import Speaker
     from sonari.queue import SpeechQueue

@@ -32,3 +32,16 @@ def test_connectable_true_against_a_live_listener(tmp_path):
 
 def test_connectable_false_when_lockfile_absent(tmp_path):
     assert transport.connectable(tmp_path / "absent.lock") is False
+
+
+def test_acquire_singleton_is_exclusive(tmp_path):
+    # Restores the single-instance guarantee AF_UNIX's fixed-path bind gave us:
+    # only one holder at a time; releasing lets the next acquire succeed.
+    lock = tmp_path / "daemon.singleton"
+    f1 = transport.acquire_singleton(lock)
+    assert f1 is not None, "first acquire should win"
+    assert transport.acquire_singleton(lock) is None, "second acquire must fail while held"
+    f1.close()  # releases the flock
+    f2 = transport.acquire_singleton(lock)
+    assert f2 is not None, "after release, acquire should win again"
+    f2.close()

@@ -69,4 +69,14 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
         keymap, "HOTKEYD_RESOLVED_PATH", sonari_dir / "hotkeyd.resolved.json",
         raising=False)
 
+    # daemon.py binds LOCK_PATH + SINGLETON_PATH by value at import; main() takes
+    # an exclusive flock on SINGLETON_PATH for single-instance. Repoint per-test
+    # (each test has a unique sonari_dir) and reset the process-wide held-flock
+    # global so a main()-calling test never blocks a later one.
+    monkeypatch.setattr(paths, "SINGLETON_PATH", sonari_dir / "daemon.singleton", raising=False)
+    import sonari.daemon as daemon
+    monkeypatch.setattr(daemon, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)
+    monkeypatch.setattr(daemon, "SINGLETON_PATH", sonari_dir / "daemon.singleton", raising=False)
+    monkeypatch.setattr(daemon, "_SINGLETON", None, raising=False)
+
     yield
