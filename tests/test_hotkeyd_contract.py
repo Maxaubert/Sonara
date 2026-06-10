@@ -39,8 +39,14 @@ def test_skip_message_cancels():
 
 
 def test_repeat_message_reenqueues_last_spoken():
+    from sonari.protocol import MsgType, PROTOCOL_VERSION
+    # Repeat is now history-based: enqueue prose first, drain it, then repeat.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._last_spoken = "Hello."
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
+                           "session": "fg", "delta": "Hello. ", "index": 0,
+                           "final": True})
+    item = queue.pop_next()
+    daemon.note_spoken(item, True)
     daemon.handle_message(_msg(keymap.ACTION_MESSAGES["repeat"]))
     assert queue.pop_next().text == "Hello."
 
@@ -67,7 +73,7 @@ def test_cycle_verbosity_message_advances():
 
 def test_reread_options_message_works():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._last_options = "Option 1: A."
+    daemon._options["fg"] = "Option 1: A."
     daemon.handle_message(_msg(keymap.ACTION_MESSAGES["reread_options"]))
     assert queue.pop_next().text == "Option 1: A."
 

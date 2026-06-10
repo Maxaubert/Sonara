@@ -136,7 +136,7 @@ def test_reread_after_choice_reenqueues_same_text():
 
 def test_reread_with_no_prior_says_nothing_to_repeat():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    assert daemon._last_options is None
+    assert daemon._options.get("fg") is None
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
     item = queue.pop_next()
     assert item is not None
@@ -171,7 +171,7 @@ def test_flush_clears_option_cache():
     ]))
     queue.pop_next()  # drain
     daemon.handle_message(_msg(MsgType.FLUSH, "fg"))
-    assert daemon._last_options is None
+    assert daemon._options.get("fg") is None
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
     assert queue.pop_next().text == "No options to repeat."
 
@@ -183,7 +183,7 @@ def test_session_end_clears_option_cache():
     ]))
     queue.pop_next()
     daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
-    assert daemon._last_options is None
+    assert daemon._options.get("fg") is None
 
 
 # ---------------------------------------------------------------------------

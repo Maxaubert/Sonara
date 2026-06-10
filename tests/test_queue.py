@@ -85,3 +85,23 @@ def test_flush_session_unknown_session_is_noop():
     q.enqueue(_item(1, session="A"))
     q.flush_session("does-not-exist")
     assert len(q) == 1
+
+
+def test_clear_returns_dropped_items():
+    from sonari.queue import SpeechQueue, SpeechItem
+    q = SpeechQueue()
+    q.enqueue(SpeechItem(1, "s", "prose", "A.", False))
+    q.enqueue(SpeechItem(2, "s", "prose", "B.", False))
+    dropped = q.clear()
+    assert [i.id for i in dropped] == [1, 2]
+    assert len(q) == 0
+
+
+def test_flush_session_returns_dropped_items():
+    from sonari.queue import SpeechQueue, SpeechItem
+    q = SpeechQueue()
+    q.enqueue(SpeechItem(1, "a", "prose", "A.", False))
+    q.enqueue(SpeechItem(2, "b", "prose", "B.", False))
+    dropped = q.flush_session("a")
+    assert [i.id for i in dropped] == [1]
+    assert len(q) == 1

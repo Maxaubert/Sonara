@@ -29,13 +29,17 @@ class SpeechQueue:
         while self._items and not self._items[0].is_decision:
             self._items.popleft()
 
-    def clear(self) -> None:
+    def clear(self) -> "list[SpeechItem]":
+        dropped = list(self._items)
         self._items.clear()
+        return dropped
 
-    def flush_session(self, session: str) -> None:
+    def flush_session(self, session: str) -> "list[SpeechItem]":
+        dropped = [i for i in self._items if i.session == session]
         self._items = deque(
             item for item in self._items if item.session != session
         )
+        return dropped
 
     def __len__(self) -> int:
         return len(self._items)
