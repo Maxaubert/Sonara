@@ -299,22 +299,8 @@ def _launcher_path() -> str:
 
 
 def _place_launcher(plugin_root: str) -> str:
-    """Write an executable ~/.local/bin/sonari that execs the plugin bin/sonari.
-
-    The plugin path is baked in and shell-quoted so a path with spaces is safe.
-    Overwrites any prior Sonari-owned launcher. Returns the launcher path.
-    """
-    target = os.path.join(plugin_root, "bin", "sonari")
-    wrapper = (
-        "#!/usr/bin/env bash\n"
-        f'exec "{target}" "$@"\n'
-    )
-    path = _launcher_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(wrapper)
-    os.chmod(path, 0o755)
-    return path
+    """Delegating shim — logic lives in MacSupervisorBackend.place_launcher."""
+    return _mac_sup.place_launcher(plugin_root)
 
 
 def _copy_app(plugin_root: str) -> str:
@@ -348,86 +334,19 @@ def _remove_launcher() -> bool:
 
 
 def _local_bin_on_path() -> bool:
-    """Return True if ~/.local/bin is on the current PATH."""
-    lb = _local_bin_dir()
-    entries = os.environ.get("PATH", "").split(os.pathsep)
-    return lb in entries
+    """Delegating shim — logic lives in MacSupervisorBackend.local_bin_on_path."""
+    return _mac_sup.local_bin_on_path()
 
 
-def _xml_escape(s: str) -> str:
-    """Escape the three XML-significant characters for safe plist interpolation."""
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _plist(label: str, program_args: list, log_path: str,
-           env: Optional[dict] = None) -> str:
-    """Return a full LaunchAgent plist XML for *label*.
-
-    *program_args* is the ProgramArguments array (already absolute paths).
-    *env*, when given, is emitted as an EnvironmentVariables <dict> (used to
-    inject PYTHONPATH for the self-contained speech daemon). Every interpolated
-    string is XML-escaped so a path containing &, <, or > cannot corrupt the
-    plist. RunAtLoad + KeepAlive keep the agent alive in the Aqua (GUI) session;
-    ProcessType Interactive so it participates in the foreground session that
-    Carbon hotkeys require.
-    """
-    args_xml = "".join(
-        f"        <string>{_xml_escape(a)}</string>\n" for a in program_args)
-    env_xml = ""
-    if env:
-        pairs = "".join(
-            f"        <key>{_xml_escape(k)}</key>\n"
-            f"        <string>{_xml_escape(v)}</string>\n"
-            for k, v in env.items())
-        env_xml = (
-            '    <key>EnvironmentVariables</key>\n'
-            '    <dict>\n'
-            f'{pairs}'
-            '    </dict>\n'
-        )
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        '<plist version="1.0">\n'
-        '<dict>\n'
-        '    <key>Label</key>\n'
-        f'    <string>{_xml_escape(label)}</string>\n'
-        '    <key>ProgramArguments</key>\n'
-        '    <array>\n'
-        f'{args_xml}'
-        '    </array>\n'
-        f'{env_xml}'
-        '    <key>RunAtLoad</key>\n'
-        '    <true/>\n'
-        '    <key>KeepAlive</key>\n'
-        '    <true/>\n'
-        '    <key>StandardErrorPath</key>\n'
-        f'    <string>{_xml_escape(log_path)}</string>\n'
-        '    <key>StandardOutPath</key>\n'
-        f'    <string>{_xml_escape(log_path)}</string>\n'
-        '    <key>ProcessType</key>\n'
-        '    <string>Interactive</string>\n'
-        '</dict>\n'
-        '</plist>\n'
-    )
+def _plist(*a, **k) -> str:
+    """Delegating shim — logic lives in MacSupervisorBackend.plist."""
+    return _mac_sup.plist(*a, **k)
 
 
 def _launchagent_plist(python_executable: str, src_path: str,
                        log_path: str) -> str:
-    """Return the LaunchAgent plist XML for the speech daemon.
-
-    *python_executable* is the resolved absolute interpreter (>= 3.9).
-    *src_path* is the stable APP_DIR copy (~/.sonari/app); it is injected as
-    PYTHONPATH so the daemon imports the stable package copy, surviving plugin
-    cache churn. ProgramArguments runs the module directly: [<py>, -m, sonari.daemon].
-    """
-    return _plist(
-        LAUNCH_AGENT_LABEL,
-        [python_executable, "-m", "sonari.daemon"],
-        log_path,
-        env={"PYTHONPATH": src_path},
-    )
+    """Delegating shim — logic lives in MacSupervisorBackend.launchagent_plist."""
+    return _mac_sup.launchagent_plist(python_executable, src_path, log_path)
 
 
 
