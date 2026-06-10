@@ -4,13 +4,16 @@ import os
 import subprocess
 import threading
 
+from sonari.platform.macos.tts import MacTtsBackend  # removed in Task 8's flip
+_MAC_TTS = MacTtsBackend()
 
-def run_say(text: str, voice, rate: int):
-    cmd = ["say"]
-    if voice:
-        cmd += ["-v", voice]
-    cmd += ["-r", str(rate), text]
-    return subprocess.Popen(cmd)
+
+def run_say(text, voice, rate):
+    return _MAC_TTS.run(text, voice, rate)
+
+
+def best_enhanced_voice() -> str:
+    return _MAC_TTS.best_voice()
 
 
 def play_earcon(path: str):
@@ -21,47 +24,6 @@ def play_earcon(path: str):
         return subprocess.Popen(["afplay", path])
     except (FileNotFoundError, OSError):
         return None
-
-
-def best_enhanced_voice() -> str:
-    fallback = "Samantha"
-    try:
-        listing = subprocess.check_output(
-            ["say", "-v", "?"], text=True
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError):
-        return fallback
-
-    premium_en = []
-    plain_en = []
-    for line in listing.splitlines():
-        line = line.rstrip()
-        if not line:
-            continue
-        # Format: "Name [maybe (Quality)] <pad> locale # sample"
-        before_hash = line.split("#", 1)[0].rstrip()
-        parts = before_hash.split()
-        if len(parts) < 2:
-            continue
-        locale = parts[-1]
-        name_tokens = parts[:-1]
-        name = " ".join(name_tokens)
-        is_premium = "(Premium)" in name or "(Enhanced)" in name
-        # Bare display name without the quality suffix.
-        bare = name.replace("(Premium)", "").replace("(Enhanced)", "").strip()
-        if not locale.startswith("en"):
-            continue
-        if is_premium:
-            premium_en.append(bare)
-        else:
-            plain_en.append(bare)
-
-    if premium_en:
-        return premium_en[0]
-    for preferred in ("Allison", "Samantha"):
-        if preferred in plain_en:
-            return preferred
-    return fallback
 
 
 _DEFAULT_WAIT_TIMEOUT = 120  # seconds; generous upper bound for even long TTS

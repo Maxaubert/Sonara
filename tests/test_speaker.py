@@ -251,68 +251,6 @@ def test_earcon_procs_do_not_accumulate_unbounded():
     assert len(sp._earcon_procs) <= 1
 
 
-from sonari.speaker import best_enhanced_voice
-
-SAY_SAMPLE = (
-    "Albert              en_US    # Hello! My name is Albert.\n"
-    "Alice               it_IT    # Ciao! Mi chiamo Alice.\n"
-    "Allison             en_US    # Hi, my name is Allison.\n"
-    "Ava (Premium)       en_US    # Hi, my name is Ava.\n"
-    "Daniel              en_GB    # Hello, my name is Daniel.\n"
-    "Samantha            en_US    # Hi, my name is Samantha.\n"
-    "Zoe (Premium)       en_US    # Hi, my name is Zoe.\n"
-    "Zuzana              cs_CZ    # Dobrý den, jmenuji se Zuzana.\n"
-)
-
-SAY_SAMPLE_NO_PREMIUM = (
-    "Albert              en_US    # Hello! My name is Albert.\n"
-    "Daniel              en_GB    # Hello, my name is Daniel.\n"
-    "Zuzana              cs_CZ    # Dobrý den, jmenuji se Zuzana.\n"
-)
-
-SAY_SAMPLE_PREMIUM_NON_EN = (
-    "Alice (Premium)     it_IT    # Ciao! Mi chiamo Alice.\n"
-    "Daniel              en_GB    # Hello, my name is Daniel.\n"
-)
-
-
-def test_best_enhanced_voice_prefers_premium_en(monkeypatch):
-    monkeypatch.setattr(
-        speaker_mod.subprocess, "check_output", lambda *a, **k: SAY_SAMPLE
-    )
-    voice = best_enhanced_voice()
-    assert voice in ("Ava", "Zoe")
-    # The first Premium en voice in the listing wins.
-    assert voice == "Ava"
-
-
-def test_best_enhanced_voice_falls_back_to_samantha_when_no_premium(monkeypatch):
-    monkeypatch.setattr(
-        speaker_mod.subprocess,
-        "check_output",
-        lambda *a, **k: SAY_SAMPLE_NO_PREMIUM,
-    )
-    assert best_enhanced_voice() == "Samantha"
-
-
-def test_best_enhanced_voice_ignores_premium_non_en(monkeypatch):
-    monkeypatch.setattr(
-        speaker_mod.subprocess,
-        "check_output",
-        lambda *a, **k: SAY_SAMPLE_PREMIUM_NON_EN,
-    )
-    # Premium voice is Italian; must fall back to Samantha.
-    assert best_enhanced_voice() == "Samantha"
-
-
-def test_best_enhanced_voice_falls_back_when_say_errors(monkeypatch):
-    def boom(*a, **k):
-        raise FileNotFoundError("say missing")
-
-    monkeypatch.setattr(speaker_mod.subprocess, "check_output", boom)
-    assert best_enhanced_voice() == "Samantha"
-
-
 # ---------------------------------------------------------------------------
 # Lock / race-condition / timeout tests
 # ---------------------------------------------------------------------------
