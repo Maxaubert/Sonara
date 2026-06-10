@@ -239,7 +239,10 @@ def test_immediate_warning_fires_once_per_session():
 def test_immediate_warning_independent_per_session():
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
     daemon.handle_message(_two_option_choice("fg"))
-    assert WARN in queue.pop_next().text
+    item = queue.pop_next()
+    assert WARN in item.text
+    # Drain the item so voice_owner is released before fg2 speaks.
+    daemon.note_spoken(item, True)
     # a different foreground session gets its own first-time warning
     sessions.set_foreground("fg2")
     daemon.handle_message(_two_option_choice("fg2"))

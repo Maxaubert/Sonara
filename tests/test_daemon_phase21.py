@@ -75,3 +75,66 @@ def test_user_prompt_flush_resets_history():
 def test_history_cap_comes_from_config():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     assert daemon.history._cap == config["history_cap"] == 200
+
+
+# --- voice continuity / capture ---------------------------------------------
+
+def test_foreground_session_acquires_free_voice():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "a", "Hi. ", final=False)
+    assert daemon._voice_owner == "a"
+    assert len(queue) == 1
+
+
+def test_nonforeground_response_is_captured_not_spoken():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "b", "Background. ")
+    assert len(queue) == 0                                  # not spoken live
+    assert [e.text for e in daemon.history.unheard("b")] == ["Background."]
+
+
+def test_owner_keeps_voice_after_foreground_moves():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "a", "A speaking. ", final=False)        # a owns the voice
+    sessions.set_foreground("b")                            # user prompts in b
+    _prose(daemon, "a", "Still a. ", index=1, final=False)  # a keeps talking
+    assert daemon._voice_owner == "a"
+    assert len(queue) == 2
+
+
+def test_response_landing_on_busy_voice_stays_captured_to_its_end():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "a", "A holds the voice. ", final=False)
+    sessions.set_foreground("b")
+    _prose(daemon, "b", "B part one. ", final=False)        # voice busy -> captured
+    # a drains; voice frees
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    # b's SAME message continues -> still captured (no mid-thought join)
+    _prose(daemon, "b", "B part two. ", index=1, final=True)
+    assert len(queue) == 0
+    texts = [e.text for e in daemon.history.unheard("b")]
+    assert texts == ["B part one.", "B part two."]
+    # b's NEXT message may acquire the free voice (b is foreground)
+    _prose(daemon, "b", "B fresh message. ")
+    assert daemon._voice_owner == "b"
+    assert len(queue) == 1
+
+
+def test_voice_frees_but_never_autostarts_nonforeground_backlog():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "b", "B backlog. ")                      # captured
+    assert daemon._voice_owner is None
+    assert len(queue) == 0                                  # stays silent
+
+
+def test_choice_for_nonowner_is_captured_and_options_stored():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "a", "A talking. ", final=False)
+    sessions.set_foreground("b")
+    daemon.handle_message(_msg(MsgType.CHOICE, "b", questions=[
+        {"question": "Pick one?", "options": [{"label": "X"}, {"label": "Y"}]}
+    ]))
+    assert len(queue) == 1                                  # only a's prose queued
+    assert "Pick one?" in daemon._options["b"]              # reread works on return
+    assert daemon.history.unheard("b")                      # captured for catch_up

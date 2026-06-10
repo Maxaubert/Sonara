@@ -244,40 +244,46 @@ class SpeechDaemon:
         # MsgType.EARCON branch below, so the earcon fires instantly and
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
-            if self.sessions.should_speak(session):
-                text = self._choice_text(msg)
-                extras = [e for e in (
-                    self._choice_notes(msg),
-                    self._selection_cue(session, verbosity),
-                ) if e]
-                if extras:
-                    text = "{0} {1}".format(text, " ".join(extras))
-                self._options[session] = text
-                self._enqueue(session, "choice", text, True)
+            text = self._choice_text(msg)
+            extras = [e for e in (
+                self._choice_notes(msg),
+                self._selection_cue(session, verbosity),
+            ) if e]
+            if extras:
+                text = "{0} {1}".format(text, " ".join(extras))
+            self._options[session] = text
+            entry = self.history.record(session, "choice", text)
+            self.history.end_message(session)
+            if self._may_speak(session):
+                self._enqueue(session, "choice", text, True, entry=entry)
             return None
 
         if t == MsgType.PLAN:
-            if self.sessions.should_speak(session):
-                text = self._plan_text(msg)
-                cue = self._selection_cue(session, verbosity)
-                if cue:
-                    text = "{0} {1}".format(text, cue)
-                self._options[session] = text
-                self._enqueue(session, "plan", text, True)
+            text = self._plan_text(msg)
+            cue = self._selection_cue(session, verbosity)
+            if cue:
+                text = "{0} {1}".format(text, cue)
+            self._options[session] = text
+            entry = self.history.record(session, "plan", text)
+            self.history.end_message(session)
+            if self._may_speak(session):
+                self._enqueue(session, "plan", text, True, entry=entry)
             return None
 
         if t == MsgType.PERMISSION:
-            if self.sessions.should_speak(session):
-                text = self._permission_text(msg)
-                cue = self._selection_cue(session, verbosity)
-                if cue:
-                    text = "{0} {1}".format(text, cue)
-                self._options[session] = text
-                self._enqueue(session, "permission", text, True)
+            text = self._permission_text(msg)
+            cue = self._selection_cue(session, verbosity)
+            if cue:
+                text = "{0} {1}".format(text, cue)
+            self._options[session] = text
+            entry = self.history.record(session, "permission", text)
+            self.history.end_message(session)
+            if self._may_speak(session):
+                self._enqueue(session, "permission", text, True, entry=entry)
             return None
 
         if t == MsgType.TOOL:
-            if verbosity == "everything" and self.sessions.should_speak(session):
+            if verbosity == "everything" and self._may_speak(session):
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
@@ -327,6 +333,11 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.SKIP:
+            cur = self._current_item
+            if cur is not None:
+                entry = self._pending_heard.get(cur.id)
+                if entry is not None:
+                    entry.heard = True
             self.speaker.cancel()
             return None
 
