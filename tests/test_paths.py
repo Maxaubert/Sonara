@@ -16,14 +16,14 @@ def test_constants_end_with_expected_names(monkeypatch, tmp_path):
     paths = _fresh_paths(monkeypatch, tmp_path)
     assert paths.SONARI_DIR.name == ".sonari"
     assert paths.CONFIG_PATH.name == "config.json"
-    assert paths.SOCKET_PATH.name == "speechd.sock"
+    assert paths.LOCK_PATH.name == "daemon.lock"
     assert paths.LOG_PATH.name == "speechd.log"
 
 
 def test_paths_are_nested_under_sonari_dir(monkeypatch, tmp_path):
     paths = _fresh_paths(monkeypatch, tmp_path)
     assert paths.CONFIG_PATH.parent == paths.SONARI_DIR
-    assert paths.SOCKET_PATH.parent == paths.SONARI_DIR
+    assert paths.LOCK_PATH.parent == paths.SONARI_DIR
     assert paths.LOG_PATH.parent == paths.SONARI_DIR
 
 
@@ -66,22 +66,16 @@ def test_ensure_sonari_dir_is_idempotent(monkeypatch, tmp_path):
 
 def test_socket_connectable_returns_true_when_connect_succeeds():
     import sonari.paths as paths
-    with mock.patch("sonari.paths.socket.socket") as mock_socket_cls:
-        mock_sock = mock.MagicMock()
-        mock_socket_cls.return_value = mock_sock
-        mock_sock.connect.return_value = None
+    with mock.patch("sonari.platform.transport.connectable", return_value=True) as mocked:
         assert paths.socket_connectable() is True
-        mock_sock.close.assert_called_once()
+        mocked.assert_called_once_with(paths.LOCK_PATH)
 
 
 def test_socket_connectable_returns_false_on_oserror():
     import sonari.paths as paths
-    with mock.patch("sonari.paths.socket.socket") as mock_socket_cls:
-        mock_sock = mock.MagicMock()
-        mock_socket_cls.return_value = mock_sock
-        mock_sock.connect.side_effect = OSError("refused")
+    with mock.patch("sonari.platform.transport.connectable", return_value=False) as mocked:
         assert paths.socket_connectable() is False
-        mock_sock.close.assert_called_once()
+        mocked.assert_called_once_with(paths.LOCK_PATH)
 
 
 # ---------------------------------------------------------------------------

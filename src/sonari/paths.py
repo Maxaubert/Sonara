@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import os
-import socket
 from pathlib import Path
 
 SONARI_DIR = Path.home() / ".sonari"
 APP_DIR = SONARI_DIR / "app"          # stable copy of the sonari package (PYTHONPATH target)
 CONFIG_PATH = SONARI_DIR / "config.json"
-SOCKET_PATH = SONARI_DIR / "speechd.sock"
+SOCKET_PATH = SONARI_DIR / "speechd.sock"   # legacy AF_UNIX path; consumers migrate in Tasks 10/11
+LOCK_PATH = SONARI_DIR / "daemon.lock"
 LOG_PATH = SONARI_DIR / "speechd.log"
 KEYMAP_PATH = SONARI_DIR / "keymap.json"
 HOTKEYD_RESOLVED_PATH = SONARI_DIR / "hotkeyd.resolved.json"
@@ -20,18 +20,9 @@ def ensure_sonari_dir() -> None:
 
 
 def socket_connectable() -> bool:
-    """Return True if the daemon socket is accepting connections."""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        s.connect(str(SOCKET_PATH))
-        return True
-    except OSError:
-        return False
-    finally:
-        try:
-            s.close()
-        except OSError:
-            pass
+    """Return True if the daemon is accepting connections (TCP lockfile)."""
+    from sonari.platform import transport
+    return transport.connectable(LOCK_PATH)
 
 
 def repo_root() -> str:
