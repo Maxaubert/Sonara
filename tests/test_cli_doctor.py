@@ -99,26 +99,52 @@ def test_doctor_subcommand_all_ok_returns_zero(capsys):
     assert "say" in capsys.readouterr().out
 
 
-def test_doctor_reports_input_monitoring_state(monkeypatch, tmp_path):
+def _write_hotkeyd_log(text):
+    # paths.* are repointed to a tmp .sonari by the conftest autouse fixture.
+    from sonari import paths
+    paths.HOTKEYD_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    paths.HOTKEYD_LOG_PATH.write_text(text)
+
+
+def test_doctor_reports_input_monitoring_granted():
     from sonari import cli
 
-    hk = tmp_path / "sonari-hotkeyd"
-    hk.write_text("#!/bin/sh\nexit 0\n")
-    hk.chmod(0o755)
-    monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", hk)
+    _write_hotkeyd_log(
+        "hotkeyd: registered 9/9 hotkeys\n"
+        "hotkeyd: caret tap installed (listen-only)\n")
     rows = {name: (ok, detail) for name, ok, detail in cli.doctor()}
     ok, detail = rows["input monitoring (caret tracking)"]
     assert ok is True
 
 
-def test_doctor_input_monitoring_not_granted(monkeypatch, tmp_path):
+def test_doctor_input_monitoring_not_granted():
     from sonari import cli
 
-    hk = tmp_path / "sonari-hotkeyd"
-    hk.write_text("#!/bin/sh\nexit 1\n")
-    hk.chmod(0o755)
-    monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", hk)
+    _write_hotkeyd_log(
+        "hotkeyd: registered 9/9 hotkeys\n"
+        "hotkeyd: caret tracking disabled (Input Monitoring not granted)\n")
     rows = {name: (ok, detail) for name, ok, detail in cli.doctor()}
     ok, detail = rows["input monitoring (caret tracking)"]
     assert ok is False
     assert "Input Monitoring" in detail
+
+
+def test_doctor_input_monitoring_uses_most_recent_marker():
+    # A grant after an earlier 'disabled' launch must win (chronological).
+    from sonari import cli
+
+    _write_hotkeyd_log(
+        "hotkeyd: caret tracking disabled (Input Monitoring not granted)\n"
+        "hotkeyd: registered 9/9 hotkeys\n"
+        "hotkeyd: caret tap installed (listen-only)\n")
+    rows = {name: (ok, detail) for name, ok, detail in cli.doctor()}
+    assert rows["input monitoring (caret tracking)"][0] is True
+
+
+def test_doctor_input_monitoring_unknown_without_log():
+    from sonari import cli
+
+    rows = {name: (ok, detail) for name, ok, detail in cli.doctor()}
+    ok, detail = rows["input monitoring (caret tracking)"]
+    assert ok is False
+    assert "sonari install" in detail

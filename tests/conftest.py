@@ -32,6 +32,8 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "CONFIG_PATH", sonari_dir / "config.json", raising=False)
     monkeypatch.setattr(paths, "SOCKET_PATH", sonari_dir / "speechd.sock", raising=False)
     monkeypatch.setattr(paths, "LOG_PATH", sonari_dir / "speechd.log", raising=False)
+    monkeypatch.setattr(
+        paths, "HOTKEYD_LOG_PATH", sonari_dir / "hotkeyd.log", raising=False)
     monkeypatch.setattr(paths, "KEYMAP_PATH", sonari_dir / "keymap.json", raising=False)
     monkeypatch.setattr(
         paths, "HOTKEYD_RESOLVED_PATH", sonari_dir / "hotkeyd.resolved.json",

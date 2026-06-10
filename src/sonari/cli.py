@@ -141,6 +141,33 @@ def _repo_hooks_json_path() -> str:
     return os.path.join(paths.repo_root(), "hooks", "hooks.json")
 
 
+def _caret_permission_granted():
+    """Return True/False from the hotkeyd log's most recent caret marker, or
+    None if the log is absent or has no marker yet.
+
+    hotkeyd logs 'caret tap installed' (granted) or 'caret tracking disabled'
+    (not granted) at each launch. Reading the log reflects the launchd-run
+    daemon's ACTUAL permission — unlike spawning a probe, which macOS would
+    attribute to whatever launched `sonari doctor`. Reads only the tail so a
+    long log stays cheap. Never raises for a missing log.
+    """
+    try:
+        with open(str(paths.HOTKEYD_LOG_PATH), "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 65536))
+            text = fh.read().decode("utf-8", "replace")
+    except (FileNotFoundError, OSError):
+        return None
+    granted = None
+    for line in text.splitlines():
+        if "caret tap installed" in line:
+            granted = True
+        elif "caret tracking disabled" in line:
+            granted = False
+    return granted
+
+
 def doctor() -> list:
     """Return a list of (check, ok, detail) health-check tuples."""
     results = []
@@ -196,22 +223,31 @@ def doctor() -> list:
     results.append(("hotkeyd binary", hk_exists,
                     hk_bin if hk_exists else f"missing: {hk_bin} (run 'sonari install')"))
 
-    # Input Monitoring (Phase 2.1 caret tracking) — probe via the binary.
-    if hk_exists:
-        try:
-            granted = subprocess.run(
-                [hk_bin, "--check-input-monitoring"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=5,
-            ).returncode == 0
-            results.append((
-                "input monitoring (caret tracking)", granted,
-                "granted" if granted else
-                "not granted — arrow-key narration off; grant in System "
-                "Settings > Privacy & Security > Input Monitoring"))
-        except Exception as exc:  # noqa: BLE001 - doctor must never raise
-            results.append(("input monitoring (caret tracking)", False,
-                            f"probe failed: {exc}"))
+    # Input Monitoring (Phase 2.1 caret tracking) — read the DAEMON's own
+    # verdict from its log. We deliberately do NOT spawn a probe: macOS
+    # attributes Input Monitoring to the RESPONSIBLE (parent) process, so a
+    # probe spawned by `sonari doctor` reports the TERMINAL's permission, not
+    # the launchd-run hotkeyd's — a false negative. hotkeyd logs which path it
+    # took at each launch; the most recent marker is the ground truth.
+    try:
+        granted = _caret_permission_granted()
+    except Exception as exc:  # noqa: BLE001 - doctor must never raise
+        granted, exc_detail = None, str(exc)
+    else:
+        exc_detail = None
+    if granted is True:
+        results.append(("input monitoring (caret tracking)", True,
+                        "granted (caret tap active)"))
+    elif granted is False:
+        results.append((
+            "input monitoring (caret tracking)", False,
+            "not granted — enable 'sonari-hotkeyd' in System Settings > "
+            "Privacy & Security > Input Monitoring, then run 'sonari install'"))
+    else:
+        results.append((
+            "input monitoring (caret tracking)", False,
+            exc_detail or "unknown — hotkeyd has not reported caret state yet "
+            "(run 'sonari install')"))
 
     try:
         with open(paths.HOTKEYD_RESOLVED_PATH, "r", encoding="utf-8") as fh:
