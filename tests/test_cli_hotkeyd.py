@@ -51,8 +51,8 @@ def test_build_hotkeyd_nonzero_returncode_is_failure(tmp_path):
 
 
 def test_build_hotkeyd_skips_recompile_when_source_unchanged(tmp_path, monkeypatch):
-    # Recompiling drops the macOS Input Monitoring grant (new code identity), so
-    # an unchanged reinstall must NOT touch the binary.
+    # Recompiling re-prompts for any macOS permission grants (new code
+    # identity), so an unchanged reinstall must NOT touch the binary.
     binp = tmp_path / "sonari-hotkeyd"
     binp.write_text("pretend-built binary")
     monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", binp)

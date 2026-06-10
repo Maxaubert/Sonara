@@ -1,14 +1,5 @@
-import pytest
-
 from sonari.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
-
-
-@pytest.fixture(autouse=True)
-def _tmp_prompt_flag(tmp_path, monkeypatch):
-    import sonari.daemon as daemon_mod
-    monkeypatch.setattr(daemon_mod, "PROMPT_OPEN_PATH",
-                        tmp_path / "prompt-open")
 
 
 def _msg(mtype, session=None, **extra):
@@ -324,141 +315,20 @@ def test_reread_is_per_session():
     assert item.text == "No options right now."
 
 
-# --- caret tracking ----------------------------------------------------------
+# --- permission text fallback ----------------------------------------------
 
-def _open_multiselect(daemon):
-    _choice(daemon, "fg", [{
-        "question": "Pick.",
-        "multiSelect": True,
-        "options": [{"label": "Alpha"}, {"label": "Beta"}],
-    }])
-
-
-def test_caret_speaks_focused_option_on_move():
+def test_permission_uses_message_when_action_empty():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))
+    daemon.handle_message(_msg(MsgType.PERMISSION, "fg", action="",
+                               message="Claude needs your permission."))
     item = queue.pop_next()
-    assert item.text == "Option 2: Beta."
+    assert "Claude needs your permission." in item.text
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
+    assert "Claude needs your permission." in queue.pop_next().text
 
 
-def test_caret_past_last_option_is_submit_on_multiselect():
+def test_permission_falls_back_to_generic_cue_without_action_or_message():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))     # -> Beta
-    daemon.handle_message(_msg("caret_move", dir="down"))     # -> Submit
-    texts = [queue.pop_next().text for _ in range(len(queue))]
-    assert texts[-1] == "Submit."
-
-
-def test_caret_clamps_at_edges():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="up"))        # clamp at top
+    daemon.handle_message(_msg(MsgType.PERMISSION, "fg", action="", message=""))
     item = queue.pop_next()
-    assert item.text == "Option 1: Alpha."
-
-
-def test_caret_single_select_has_no_submit_row():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _choice(daemon, "fg", [{
-        "question": "One?",
-        "options": [{"label": "Only"}],
-    }])
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))      # clamp: no Submit
-    item = queue.pop_next()
-    assert item.text == "Option 1: Only."
-
-
-def test_caret_inert_without_open_prompt():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg("caret_move", dir="down"))
-    assert len(queue) == 0
-
-
-def test_caret_resets_on_each_new_prompt():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    daemon.handle_message(_msg("caret_move", dir="down"))      # pos -> 1
-    _open_multiselect(daemon)                                  # fresh prompt
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))
-    item = queue.pop_next()
-    assert item.text == "Option 2: Beta."                      # snapped back to top first
-
-
-def test_caret_closes_when_prompt_answered():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    _prose(daemon, "fg", "Answered; moving on. ")
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))
-    assert len(queue) == 0
-
-
-def test_caret_inert_for_multi_question_prompts():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _choice(daemon, "fg", [
-        {"question": "Q1?", "options": [{"label": "A"}]},
-        {"question": "Q2?", "options": [{"label": "B"}]},
-    ])
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))
-    assert len(queue) == 0
-
-
-# --- final branch-review fixes -------------------------------------------------
-
-def test_caret_closes_as_soon_as_answer_prose_arrives():
-    # Not only on final: the FIRST chunks from the prompt's session mean the
-    # prompt was answered — arrows must go inert immediately, not at the end
-    # of Claude's (possibly tool-heavy) next message.
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    _prose(daemon, "fg", "Answer chosen; thinking. ", final=False)
-    while len(queue):
-        queue.pop_next()
-    daemon.handle_message(_msg("caret_move", dir="down"))
-    assert len(queue) == 0
-
-
-def test_caret_move_does_not_cancel_another_sessions_utterance():
-    from sonari.queue import SpeechItem
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    while len(queue):
-        queue.pop_next()
-    # another session currently holds the voice
-    daemon._current_item = SpeechItem(99, "other", "prose", "Other talking.", False)
-    daemon.handle_message(_msg("caret_move", dir="down"))
-    assert speaker.cancels == 0          # voice continuity: only stop/skip cut others
-    item = queue.pop_next()
-    assert item.text == "Option 2: Beta."
-
-
-def test_background_choice_does_not_arm_or_steal_the_caret():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)                       # fg caret armed
-    _choice(daemon, "bg", [{"question": "Bg?", "multiSelect": True,
-                            "options": [{"label": "X"}]}])
-    assert daemon._caret is not None
-    assert daemon._caret["session"] == "fg"          # untouched by the bg prompt
-
-
-def test_background_permission_does_not_close_foreground_caret():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _open_multiselect(daemon)
-    daemon.handle_message(_msg(MsgType.PERMISSION, "bg", action="Run: ls"))
-    assert daemon._caret is not None
-    assert daemon._caret["session"] == "fg"
+    assert "Permission needed." in item.text

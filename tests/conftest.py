@@ -37,8 +37,6 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "CONFIG_PATH", sonari_dir / "config.json", raising=False)
     monkeypatch.setattr(paths, "SOCKET_PATH", sonari_dir / "speechd.sock", raising=False)
     monkeypatch.setattr(paths, "LOG_PATH", sonari_dir / "speechd.log", raising=False)
-    monkeypatch.setattr(
-        paths, "HOTKEYD_LOG_PATH", sonari_dir / "hotkeyd.log", raising=False)
     monkeypatch.setattr(paths, "KEYMAP_PATH", sonari_dir / "keymap.json", raising=False)
     monkeypatch.setattr(
         paths, "HOTKEYD_RESOLVED_PATH", sonari_dir / "hotkeyd.resolved.json",
@@ -47,8 +45,6 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
         paths, "HOTKEYD_BIN_PATH", sonari_dir / "sonari-hotkeyd", raising=False)
     monkeypatch.setattr(
         paths, "INSTALL_RECORD_PATH", sonari_dir / "install.json", raising=False)
-    monkeypatch.setattr(
-        paths, "PROMPT_OPEN_PATH", sonari_dir / "prompt-open", raising=False)
 
     # Modules that bound these names at import time need their copies repointed too.
     import sonari.config as config
@@ -67,15 +63,5 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
         keymap, "HOTKEYD_RESOLVED_PATH", sonari_dir / "hotkeyd.resolved.json",
         raising=False)
-
-    # daemon.py binds PROMPT_OPEN_PATH by value at import time (the caret flag
-    # hotkeyd watches). Without this repoint, any test that drives a CHOICE
-    # message touches the REAL ~/.sonari/prompt-open — and once the Phase 2.1
-    # hotkeyd is deployed, a stray flag makes it forward every arrow keypress
-    # system-wide. (Empirically confirmed leak before this fix.)
-    import sonari.daemon as daemon_mod
-
-    monkeypatch.setattr(
-        daemon_mod, "PROMPT_OPEN_PATH", sonari_dir / "prompt-open", raising=False)
 
     yield

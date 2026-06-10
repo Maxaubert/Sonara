@@ -9,12 +9,10 @@ APP_DIR = SONARI_DIR / "app"          # stable copy of the sonari package (PYTHO
 CONFIG_PATH = SONARI_DIR / "config.json"
 SOCKET_PATH = SONARI_DIR / "speechd.sock"
 LOG_PATH = SONARI_DIR / "speechd.log"
-HOTKEYD_LOG_PATH = SONARI_DIR / "hotkeyd.log"
 KEYMAP_PATH = SONARI_DIR / "keymap.json"
 HOTKEYD_RESOLVED_PATH = SONARI_DIR / "hotkeyd.resolved.json"
 HOTKEYD_BIN_PATH = SONARI_DIR / "sonari-hotkeyd"
 INSTALL_RECORD_PATH = SONARI_DIR / "install.json"
-PROMPT_OPEN_PATH = SONARI_DIR / "prompt-open"   # exists IFF a caret-trackable prompt is open
 
 
 def ensure_sonari_dir() -> None:

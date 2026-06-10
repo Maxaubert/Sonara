@@ -142,33 +142,6 @@ def _repo_hooks_json_path() -> str:
     return os.path.join(paths.repo_root(), "hooks", "hooks.json")
 
 
-def _caret_permission_granted():
-    """Return True/False from the hotkeyd log's most recent caret marker, or
-    None if the log is absent or has no marker yet.
-
-    hotkeyd logs 'caret tap installed' (granted) or 'caret tracking disabled'
-    (not granted) at each launch. Reading the log reflects the launchd-run
-    daemon's ACTUAL permission — unlike spawning a probe, which macOS would
-    attribute to whatever launched `sonari doctor`. Reads only the tail so a
-    long log stays cheap. Never raises for a missing log.
-    """
-    try:
-        with open(str(paths.HOTKEYD_LOG_PATH), "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            fh.seek(max(0, size - 65536))
-            text = fh.read().decode("utf-8", "replace")
-    except (FileNotFoundError, OSError):
-        return None
-    granted = None
-    for line in text.splitlines():
-        if "caret tap installed" in line:
-            granted = True
-        elif "caret tracking disabled" in line:
-            granted = False
-    return granted
-
-
 def doctor() -> list:
     """Return a list of (check, ok, detail) health-check tuples."""
     results = []
@@ -223,32 +196,6 @@ def doctor() -> list:
     hk_exists = os.path.exists(hk_bin)
     results.append(("hotkeyd binary", hk_exists,
                     hk_bin if hk_exists else f"missing: {hk_bin} (run 'sonari install')"))
-
-    # Input Monitoring (Phase 2.1 caret tracking) — read the DAEMON's own
-    # verdict from its log. We deliberately do NOT spawn a probe: macOS
-    # attributes Input Monitoring to the RESPONSIBLE (parent) process, so a
-    # probe spawned by `sonari doctor` reports the TERMINAL's permission, not
-    # the launchd-run hotkeyd's — a false negative. hotkeyd logs which path it
-    # took at each launch; the most recent marker is the ground truth.
-    try:
-        granted = _caret_permission_granted()
-    except Exception as exc:  # noqa: BLE001 - doctor must never raise
-        granted, exc_detail = None, str(exc)
-    else:
-        exc_detail = None
-    if granted is True:
-        results.append(("input monitoring (caret tracking)", True,
-                        "granted (caret tap active)"))
-    elif granted is False:
-        results.append((
-            "input monitoring (caret tracking)", False,
-            "not granted — enable 'sonari-hotkeyd' in System Settings > "
-            "Privacy & Security > Input Monitoring, then run 'sonari install'"))
-    else:
-        results.append((
-            "input monitoring (caret tracking)", False,
-            exc_detail or "unknown — hotkeyd has not reported caret state yet "
-            "(run 'sonari install')"))
 
     try:
         with open(paths.HOTKEYD_RESOLVED_PATH, "r", encoding="utf-8") as fh:
@@ -595,12 +542,11 @@ def _build_hotkeyd():
     """Compile hotkeyd/sonari-hotkeyd.swift to paths.HOTKEYD_BIN_PATH.
 
     SKIPS the recompile when the existing binary was already built from the
-    current source (same content hash). This is load-bearing for accessibility:
-    recompiling produces a NEW code identity, which macOS treats as a different
-    app and so DROPS the user's Input Monitoring grant (caret tracking dies).
-    A routine reinstall (e.g. after a Python-only change) must not touch the
-    binary. A real source change re-hashes and rebuilds (and the user re-grants
-    once). Returns (ok, detail). Non-fatal: absent swiftc returns
+    current source (same content hash). Recompiling produces a NEW code
+    identity, which macOS treats as a different app and re-prompts for any
+    permission grants; a routine reinstall (e.g. after a Python-only change)
+    must not touch the binary. A real source change re-hashes and rebuilds.
+    Returns (ok, detail). Non-fatal: absent swiftc returns
     (False, "swiftc not found").
     """
     if shutil.which("swiftc") is None:
@@ -616,8 +562,8 @@ def _build_hotkeyd():
         try:
             with open(hash_path, "r", encoding="utf-8") as fh:
                 if fh.read().strip() == src_hash:
-                    return (True, "{0} (unchanged; kept to preserve the Input "
-                            "Monitoring grant)".format(paths.HOTKEYD_BIN_PATH))
+                    return (True, "{0} (unchanged; kept to preserve any "
+                            "permission grants)".format(paths.HOTKEYD_BIN_PATH))
         except OSError:
             pass
     rc = subprocess.call(["swiftc", src, "-o", str(paths.HOTKEYD_BIN_PATH)])

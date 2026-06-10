@@ -116,8 +116,6 @@ then `Enter` to confirm. If a question has **more than nine options**, numbers c
 use the **arrow keys** plus `Enter` for the tenth and beyond. Sonari speaks these cues when
 they apply.
 
-- **Arrow keys in multi-select** — navigate the options with ↑/↓; each focused option is spoken; past the last option appears "Submit"; press `Enter` to submit — fully eyes-free. (Requires the one-time Input Monitoring permission; `sonari doctor` shows its state.)
-
 ### Slash commands and CLI
 
 | Slash command | CLI | Effect |

@@ -115,12 +115,6 @@ let hotKeyHandler: EventHandlerUPP = { (_ nextHandler, _ theEvent, _ userData) -
     return noErr
 }
 
-// Phase 2.1: doctor probe. Exit 0 iff Input Monitoring is granted (the
-// listen-only arrow tap needs it; everything else works without it).
-if CommandLine.arguments.contains("--check-input-monitoring") {
-    exit(CGPreflightListenEventAccess() ? 0 : 1)
-}
-
 // 1. Install the keyboard event handler for hotkey-pressed events.
 var eventType = EventTypeSpec(
     eventClass: OSType(kEventClassKeyboard),
@@ -168,61 +162,6 @@ for (index, entry) in entries.enumerated() {
 
 FileHandle.standardError.write(
     "hotkeyd: registered \(hotKeyRefs.count)/\(entries.count) hotkeys\n".data(using: .utf8)!)
-
-// Phase 2.1: caret tracking. A LISTEN-ONLY CGEventTap observes arrow-key
-// keyDown events (codes 125 down / 126 up) and forwards a caret_move message
-// to speechd — but ONLY while ~/.sonari/prompt-open exists (the daemon
-// creates/removes that flag around caret-trackable prompts). Listen-only
-// means the event is NEVER consumed: the Claude Code TUI still receives
-// every arrow press, so the mirror and the real highlight move together.
-// Requires the Input Monitoring permission; without it the tap is skipped
-// and Sonari runs exactly as before (hotkeys are Carbon, unaffected).
-func promptOpenPath() -> String {
-    return (sonariDir() as NSString).appendingPathComponent("prompt-open")
-}
-
-let arrowTapCallback: CGEventTapCallBack = { _, type, event, _ in
-    if type == .keyDown {
-        let code = event.getIntegerValueField(.keyboardEventKeycode)
-        if (code == 125 || code == 126)
-            && FileManager.default.fileExists(atPath: promptOpenPath()) {
-            let dir = (code == 125) ? "down" : "up"
-            sendMessage("{\"type\": \"caret_move\", \"dir\": \"\(dir)\"}")
-        }
-    }
-    return Unmanaged.passUnretained(event)
-}
-
-if CGPreflightListenEventAccess() {
-    let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-    if let tap = CGEvent.tapCreate(
-        tap: .cgSessionEventTap,
-        place: .headInsertEventTap,
-        options: .listenOnly,
-        eventsOfInterest: mask,
-        callback: arrowTapCallback,
-        userInfo: nil
-    ) {
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
-        FileHandle.standardError.write(
-            "hotkeyd: caret tap installed (listen-only)\n".data(using: .utf8)!)
-    }
-} else {
-    // Ask for the permission ONCE per machine (the system shows its own
-    // dialog and lists "sonari-hotkeyd" under Input Monitoring). A marker
-    // file prevents re-prompting on every login.
-    let marker = (sonariDir() as NSString)
-        .appendingPathComponent(".input-monitoring-requested")
-    if !FileManager.default.fileExists(atPath: marker) {
-        FileManager.default.createFile(atPath: marker, contents: nil)
-        _ = CGRequestListenEventAccess()
-    }
-    FileHandle.standardError.write(
-        "hotkeyd: caret tracking disabled (Input Monitoring not granted)\n"
-            .data(using: .utf8)!)
-}
 
 // 3. Run the Carbon event loop headlessly (no Dock icon).
 let app = NSApplication.shared

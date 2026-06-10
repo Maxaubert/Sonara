@@ -108,7 +108,6 @@ def test_msgtype_defines_no_extra_string_constants():
         "PING": "ping",
         "REREAD_OPTIONS": "reread_options",
         "CYCLE_VERBOSITY": "cycle_verbosity",
-        "CARET_MOVE": "caret_move",
     }
     assert actual == expected
 

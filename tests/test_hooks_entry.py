@@ -177,6 +177,7 @@ def test_notification_permission_prompt():
         "session_id": "sess-1",
         "notification_type": "permission_prompt",
         "action": "Run git status",
+        "message": "Claude needs your permission to run a command",
     }
     assert handle_event("Notification", payload) == [
         {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "permission"},
@@ -185,6 +186,7 @@ def test_notification_permission_prompt():
             "type": MsgType.PERMISSION,
             "session": "sess-1",
             "action": "Run git status",
+            "message": "Claude needs your permission to run a command",
         },
     ]
 

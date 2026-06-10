@@ -29,7 +29,6 @@ class MsgType:
     PING = "ping"
     REREAD_OPTIONS = "reread_options"
     CYCLE_VERBOSITY = "cycle_verbosity"
-    CARET_MOVE = "caret_move"
 
 
 def encode(msg: dict) -> bytes:
