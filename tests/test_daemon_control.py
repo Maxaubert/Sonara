@@ -64,12 +64,13 @@ def test_jump_decision_drops_to_first_decision_and_cancels():
     assert nxt.text == "item 2"
 
 
-def test_catch_up_clears_and_cancels():
+def test_catch_up_no_longer_discards_the_backlog():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _seed(queue, daemon, "fg", 3)
-    daemon.handle_message(_msg(MsgType.CATCH_UP, "fg"))
-    assert len(queue) == 0
-    assert speaker.cancels == 1
+    daemon.handle_message(_msg(MsgType.PROSE, "fg", delta="Keep me. ",
+                               index=0, final=True))
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    texts = [queue.pop_next().text for _ in range(len(queue))]
+    assert "Keep me." in texts
 
 
 def test_set_foreground_sets_foreground():

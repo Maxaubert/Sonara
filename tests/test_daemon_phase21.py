@@ -182,3 +182,61 @@ def test_repeat_acts_on_foreground_session_history():
     daemon.handle_message(_msg(MsgType.REPEAT))
     item = queue.pop_next()
     assert item.text == "A message."
+
+
+# --- catch_up ----------------------------------------------------------------
+
+def test_catch_up_replays_unheard_oldest_first_then_marks_heard():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "One. Two. ")
+    daemon.handle_message(_msg(MsgType.STOP))               # heard nothing
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    texts = []
+    while len(queue):
+        texts.append(_drain_one(daemon, queue, speaker).text)
+    assert texts == ["One.", "Two."]
+    assert daemon.history.unheard("fg") == []               # marker advanced
+
+
+def test_catch_up_interrupted_sentence_replays_from_its_start():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "Long sentence here. ")
+    speaker.complete = False                                # cut mid-sentence
+    _drain_one(daemon, queue, speaker)
+    speaker.complete = True
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    item = queue.pop_next()
+    assert item.text == "Long sentence here."               # from the start
+
+
+def test_catch_up_all_heard_says_caught_up():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "Hi. ")
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    item = queue.pop_next()
+    assert item.text == "You're all caught up."
+
+
+def test_catch_up_falls_back_to_other_session_backlog():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "a", "A heard. ")
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    _prose(daemon, "b", "B unheard. ")                      # captured silently
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    texts = []
+    while len(queue):
+        texts.append(queue.pop_next().text)
+    assert texts == ["Catching up on another session.", "B unheard."]
+
+
+def test_catch_up_does_not_double_speak_queued_items():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "Queued one. Queued two. ")        # in queue, unheard
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    texts = []
+    while len(queue):
+        texts.append(queue.pop_next().text)
+    assert texts == ["Queued one.", "Queued two."]          # once, not twice

@@ -84,11 +84,13 @@ def test_jump_decision_message_cancels():
     assert speaker.cancels == 1
 
 
-def test_catch_up_message_clears_and_cancels():
-    from sonari.queue import SpeechItem
+def test_catch_up_message_replays_unheard_backlog():
+    # catch_up now replays unheard history rather than discarding the queue.
+    from sonari.protocol import MsgType, PROTOCOL_VERSION
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    queue.enqueue(SpeechItem(id=1, session="fg", kind="prose",
-                             text="x", is_decision=False))
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
+                           "session": "fg", "delta": "Unheard item. ",
+                           "index": 0, "final": True})
     daemon.handle_message(_msg(keymap.ACTION_MESSAGES["catch_up"]))
-    assert len(queue) == 0
-    assert speaker.cancels == 1
+    texts = [queue.pop_next().text for _ in range(len(queue))]
+    assert "Unheard item." in texts

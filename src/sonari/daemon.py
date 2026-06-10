@@ -370,8 +370,34 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.CATCH_UP:
-            self.queue.clear()
-            self.speaker.cancel()
+            fg = self.sessions.foreground()
+            if fg is None:
+                return None
+            target = fg
+            entries = self.history.unheard(fg)
+            preamble = None
+            if not entries:
+                other = self.history.other_session_with_unheard(fg)
+                if other is not None:
+                    target = other
+                    entries = self.history.unheard(other)
+                    preamble = "Catching up on another session."
+            if not entries:
+                self._enqueue(fg, "prose", "You're all caught up.", False)
+                return None
+            # Replay cleanly: cut the target's current utterance (it stays
+            # unheard, so it replays FROM ITS START) and drop its queued
+            # duplicates — every unheard entry is re-enqueued in order below.
+            cur = self._current_item
+            if cur is not None and cur.session == target:
+                self.speaker.cancel()
+            self._drop_pending(self.queue.flush_session(target))
+            if preamble:
+                self._enqueue(fg, "prose", preamble, False)
+            for e in entries:
+                self._enqueue(target, e.kind, e.text,
+                              e.kind in ("choice", "plan", "permission"),
+                              entry=e)
             return None
 
         if t == MsgType.SET_RATE:
