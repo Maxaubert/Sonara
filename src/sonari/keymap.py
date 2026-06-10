@@ -16,31 +16,7 @@ from sonari.paths import (
     ensure_sonari_dir,
 )
 
-# macOS ANSI virtual key codes (Carbon kVK_ANSI_*).
-KEY_CODES = {
-    "s": 1,
-    "r": 15,
-    "d": 2,
-    "l": 37,
-    "v": 9,
-    "o": 31,
-    "period": 47,
-    ".": 47,
-    "rightbracket": 30,
-    "]": 30,
-    "leftbracket": 33,
-    "[": 33,
-}
-
-# Carbon modifier masks.
-MOD_MASKS = {
-    "cmd": 256,
-    "shift": 512,
-    "opt": 2048,
-    "option": 2048,
-    "ctrl": 4096,
-    "control": 4096,
-}
+from sonari.platform.macos.keytables import KEY_CODES, MOD_MASKS
 
 # action -> the speechd protocol message it sends.
 ACTION_MESSAGES = {

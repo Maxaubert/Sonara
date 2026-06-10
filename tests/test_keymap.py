@@ -151,3 +151,13 @@ def test_write_resolved_no_tmp_leftover(monkeypatch, tmp_path):
     km, resolved = _patch_keymap_paths(monkeypatch, tmp_path)
     keymap.write_resolved()
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_keytables_live_in_macos_backend():
+    from sonari.platform.macos import keytables
+    assert keytables.KEY_CODES["o"] == 31
+    assert keytables.MOD_MASKS["cmd"] == 256
+    # keymap re-exports them for backward compatibility
+    import sonari.keymap as keymap
+    assert keymap.KEY_CODES is keytables.KEY_CODES
+    assert keymap.MOD_MASKS is keytables.MOD_MASKS
