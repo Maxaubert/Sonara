@@ -136,17 +136,17 @@ def test_reread_after_choice_reenqueues_same_text():
 
 def test_reread_with_no_prior_says_nothing_to_repeat():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    assert daemon._last_options is None
+    assert daemon._options.get("fg") is None
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
     item = queue.pop_next()
     assert item is not None
-    assert item.text == "No options to repeat."
+    assert item.text == "No options right now."
     assert item.kind == "prose"
 
 
 def test_reread_no_foreground_is_noop():
     daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
-    daemon._last_options = "Option 1: Red."
+    daemon._options["some_session"] = "Option 1: Red."
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
     assert len(queue) == 0
 
@@ -171,9 +171,9 @@ def test_flush_clears_option_cache():
     ]))
     queue.pop_next()  # drain
     daemon.handle_message(_msg(MsgType.FLUSH, "fg"))
-    assert daemon._last_options is None
+    assert daemon._options.get("fg") is None
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    assert queue.pop_next().text == "No options to repeat."
+    assert queue.pop_next().text == "No options right now."
 
 
 def test_session_end_clears_option_cache():
@@ -183,7 +183,7 @@ def test_session_end_clears_option_cache():
     ]))
     queue.pop_next()
     daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
-    assert daemon._last_options is None
+    assert daemon._options.get("fg") is None
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +239,10 @@ def test_immediate_warning_fires_once_per_session():
 def test_immediate_warning_independent_per_session():
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
     daemon.handle_message(_two_option_choice("fg"))
-    assert WARN in queue.pop_next().text
+    item = queue.pop_next()
+    assert WARN in item.text
+    # Drain the item so voice_owner is released before fg2 speaks.
+    daemon.note_spoken(item, True)
     # a different foreground session gets its own first-time warning
     sessions.set_foreground("fg2")
     daemon.handle_message(_two_option_choice("fg2"))

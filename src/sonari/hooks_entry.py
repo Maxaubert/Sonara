@@ -78,6 +78,7 @@ def handle_event(event: str, payload: dict) -> list[dict]:
                     type=MsgType.PERMISSION,
                     session=session,
                     action=payload.get("action", ""),
+                    message=payload.get("message", ""),
                 ),
             ]
         if nt == "idle_prompt":

@@ -10,6 +10,7 @@ inside the handlers so the module imports cheaply and is easy to patch in tests.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -540,14 +541,38 @@ def _hotkeyd_plist(binary_path: str, log_path: str) -> str:
 def _build_hotkeyd():
     """Compile hotkeyd/sonari-hotkeyd.swift to paths.HOTKEYD_BIN_PATH.
 
-    Returns (ok, detail). Non-fatal: if swiftc is absent we return
-    (False, "swiftc not found") and the caller warns but still installs speechd.
+    SKIPS the recompile when the existing binary was already built from the
+    current source (same content hash). Recompiling produces a NEW code
+    identity, which macOS treats as a different app and re-prompts for any
+    permission grants; a routine reinstall (e.g. after a Python-only change)
+    must not touch the binary. A real source change re-hashes and rebuilds.
+    Returns (ok, detail). Non-fatal: absent swiftc returns
+    (False, "swiftc not found").
     """
     if shutil.which("swiftc") is None:
         return (False, "swiftc not found")
     src = os.path.join(paths.repo_root(), "hotkeyd", "sonari-hotkeyd.swift")
+    try:
+        with open(src, "rb") as fh:
+            src_hash = hashlib.sha256(fh.read()).hexdigest()
+    except OSError as exc:
+        return (False, f"cannot read hotkeyd source: {exc}")
+    hash_path = str(paths.SONARI_DIR / ".hotkeyd.srchash")
+    if os.path.exists(str(paths.HOTKEYD_BIN_PATH)):
+        try:
+            with open(hash_path, "r", encoding="utf-8") as fh:
+                if fh.read().strip() == src_hash:
+                    return (True, "{0} (unchanged; kept to preserve any "
+                            "permission grants)".format(paths.HOTKEYD_BIN_PATH))
+        except OSError:
+            pass
     rc = subprocess.call(["swiftc", src, "-o", str(paths.HOTKEYD_BIN_PATH)])
     if rc == 0:
+        try:
+            with open(hash_path, "w", encoding="utf-8") as fh:
+                fh.write(src_hash)
+        except OSError:
+            pass
         return (True, str(paths.HOTKEYD_BIN_PATH))
     return (False, f"swiftc exited {rc}")
 

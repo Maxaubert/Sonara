@@ -381,3 +381,32 @@ def test_speak_wait_timeout_terminates_hung_proc():
     sp2.speak("will hang tracked")
     assert len(procs) == 1
     assert procs[0].terminate_calls == 1
+
+
+class _DoneProc:
+    returncode = 0
+    def wait(self, timeout=None):
+        return 0
+    def terminate(self):
+        self.returncode = -15
+
+
+class _KilledProc:
+    returncode = None
+    def wait(self, timeout=None):
+        self.returncode = -15
+        return -15
+    def terminate(self):
+        self.returncode = -15
+
+
+def test_speak_returns_true_when_say_completes():
+    from sonari.speaker import Speaker
+    s = Speaker(say_runner=lambda text, voice, rate: _DoneProc())
+    assert s.speak("Hello there.") is True
+
+
+def test_speak_returns_false_when_say_terminated():
+    from sonari.speaker import Speaker
+    s = Speaker(say_runner=lambda text, voice, rate: _KilledProc())
+    assert s.speak("Hello there.") is False

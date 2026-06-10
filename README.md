@@ -97,14 +97,14 @@ permission is needed.
 | Hotkey | Effect |
 |---|---|
 | Ctrl+Cmd+S | Stop now and clear the queue |
-| Ctrl+Cmd+R | Repeat the last item |
+| Ctrl+Cmd+R | Re-speak the entire last message |
 | Ctrl+Cmd+. | Skip the current item |
 | Ctrl+Cmd+D | Jump to the pending decision |
-| Ctrl+Cmd+L | Catch up to live (drop the backlog, jump to now) |
+| Ctrl+Cmd+L | Replay everything you haven't heard (after stop, or from a session you left), then mark it heard |
 | Ctrl+Cmd+] | Speak faster |
 | Ctrl+Cmd+[ | Speak slower |
 | Ctrl+Cmd+V | Cycle verbosity (everything / medium / quiet) |
-| Ctrl+Cmd+O | Re-read the current options |
+| Ctrl+Cmd+O | Re-read the current prompt's options (numbers, descriptions, multi-select announce) |
 
 ### Selecting options
 

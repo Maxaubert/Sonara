@@ -29,6 +29,11 @@ def _isolate_sonari_dir(tmp_path, monkeypatch):
     import sonari.paths as paths
 
     monkeypatch.setattr(paths, "SONARI_DIR", sonari_dir, raising=False)
+    # APP_DIR is SONARI_DIR/"app" bound at import; it is NOT derived live, so
+    # patching SONARI_DIR alone leaves it pointing at the real ~/.sonari/app.
+    # The uninstall path shutil.rmtree(APP_DIR)s it — without this repoint, a
+    # plain `pytest` run DELETES the developer's live daemon copy (it did).
+    monkeypatch.setattr(paths, "APP_DIR", sonari_dir / "app", raising=False)
     monkeypatch.setattr(paths, "CONFIG_PATH", sonari_dir / "config.json", raising=False)
     monkeypatch.setattr(paths, "SOCKET_PATH", sonari_dir / "speechd.sock", raising=False)
     monkeypatch.setattr(paths, "LOG_PATH", sonari_dir / "speechd.log", raising=False)

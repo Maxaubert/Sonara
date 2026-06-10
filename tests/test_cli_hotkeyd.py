@@ -50,6 +50,37 @@ def test_build_hotkeyd_nonzero_returncode_is_failure(tmp_path):
     assert ok is False
 
 
+def test_build_hotkeyd_skips_recompile_when_source_unchanged(tmp_path, monkeypatch):
+    # Recompiling re-prompts for any macOS permission grants (new code
+    # identity), so an unchanged reinstall must NOT touch the binary.
+    binp = tmp_path / "sonari-hotkeyd"
+    binp.write_text("pretend-built binary")
+    monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", binp)
+    monkeypatch.setattr(cli.paths, "SONARI_DIR", tmp_path)
+    with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
+         mock.patch("subprocess.call", return_value=0) as call1:
+        ok1, _ = cli._build_hotkeyd()
+    assert ok1 is True and call1.call_count == 1          # first build compiles
+    with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
+         mock.patch("subprocess.call", return_value=0) as call2:
+        ok2, detail2 = cli._build_hotkeyd()
+    assert ok2 is True
+    assert call2.call_count == 0                          # unchanged -> no recompile
+    assert "unchanged" in detail2.lower()
+
+
+def test_build_hotkeyd_recompiles_when_source_changes(tmp_path, monkeypatch):
+    binp = tmp_path / "sonari-hotkeyd"
+    binp.write_text("pretend-built binary")
+    (tmp_path / ".hotkeyd.srchash").write_text("a-stale-hash-from-old-source")
+    monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", binp)
+    monkeypatch.setattr(cli.paths, "SONARI_DIR", tmp_path)
+    with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
+         mock.patch("subprocess.call", return_value=0) as call:
+        ok, _ = cli._build_hotkeyd()
+    assert ok is True and call.call_count == 1            # hash differs -> rebuild
+
+
 def test_install_writes_hotkeyd_plist_and_keymap(tmp_path, capsys):
     speechd_plist = tmp_path / "com.sonari.speechd.plist"
     hotkeyd_plist = tmp_path / "com.sonari.hotkeyd.plist"

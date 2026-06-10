@@ -87,7 +87,10 @@ class Speaker:
         self._earcon_procs: list = []
         self._wait_timeout = _wait_timeout
 
-    def speak(self, text: str) -> None:
+    def speak(self, text: str) -> bool:
+        """Speak text, blocking. Return True iff the utterance COMPLETED
+        (say exited 0). A cancelled/terminated utterance returns False so the
+        caller can leave it marked unheard (sentence-granular replay)."""
         proc = self._say_runner(text, self._voice, self._rate)
         with self._current_lock:
             self._current = proc
@@ -101,6 +104,7 @@ class Speaker:
             with self._current_lock:
                 if self._current is proc:
                     self._current = None
+        return getattr(proc, "returncode", None) == 0
 
     def cancel(self) -> None:
         with self._current_lock:

@@ -11,6 +11,7 @@ DEFAULTS = {
     "rate": 200,
     "verbosity": "everything",
     "background_policy": "earcon_only",
+    "history_cap": 200,
     "earcons": {
         "permission": "/System/Library/Sounds/Funk.aiff",
         "choice": "/System/Library/Sounds/Ping.aiff",

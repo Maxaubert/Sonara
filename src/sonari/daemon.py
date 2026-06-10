@@ -33,10 +33,15 @@ class SpeechDaemon:
         self._server = None
         self._threads = []
         self._poll_interval = 0.1
-        self._last_spoken: str | None = None
-        self._last_options: str | None = None
-        self._warned_immediate: set[str] = set()
-        self._guided_sessions: set[str] = set()
+        from sonari.history import SessionHistory
+        self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
+        self._options: "dict[str, str]" = {}
+        self._voice_owner: "str | None" = None
+        self._captured_msg: "set[str]" = set()
+        self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
+        self._current_item = None                 # item being spoken right now
+        self._warned_immediate: set = set()
+        self._guided_sessions: set = set()
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -49,7 +54,8 @@ class SpeechDaemon:
             self._assemblers[session] = a
         return a
 
-    def _enqueue(self, session: str, kind: str, text: str, is_decision: bool) -> None:
+    def _enqueue(self, session: str, kind: str, text: str, is_decision: bool,
+                 entry=None) -> None:
         item = SpeechItem(
             id=self._alloc_id(),
             session=session,
@@ -57,6 +63,8 @@ class SpeechDaemon:
             text=text,
             is_decision=is_decision,
         )
+        if entry is not None:
+            self._pending_heard[item.id] = entry
         self.queue.enqueue(item)
         self._wake.set()
 
@@ -77,27 +85,66 @@ class SpeechDaemon:
         if state != "ok" and cue:
             self._enqueue(session, "prose", cue, False)
 
+    def _drop_pending(self, items) -> None:
+        for it in items:
+            self._pending_heard.pop(it.id, None)
+
+    def note_spoken(self, item, completed: bool) -> None:
+        """Speak-loop bookkeeping: confirm (or decline) the heard-marker for a
+        finished utterance, and release the voice when the queue drains."""
+        with self._lock:
+            self._current_item = None
+            entry = self._pending_heard.pop(item.id, None)
+            if entry is not None and completed:
+                entry.heard = True
+            if len(self.queue) == 0:
+                self._voice_owner = None
+
+    def _may_speak(self, session: str) -> bool:
+        """Voice continuity: a busy voice stays with its owner to the end; a
+        free voice is acquired only by the FOREGROUND session, and only at a
+        message boundary (a message that started captured stays captured)."""
+        if self._voice_owner == session:
+            return True
+        if (self._voice_owner is None
+                and self.sessions.is_foreground(session)
+                and session not in self._captured_msg):
+            self._voice_owner = session
+            return True
+        return False
+
     @staticmethod
     def _choice_text(msg) -> str:
         parts = []
         for q in msg.get("questions", []) or []:
             qtext = q.get("question", "") if isinstance(q, dict) else str(q)
+            multi = bool(isinstance(q, dict) and q.get("multiSelect"))
             opts = q.get("options", []) if isinstance(q, dict) else []
-            labels = []
-            for o in opts:
+            segs = []
+            for i, o in enumerate(opts, 1):
                 if isinstance(o, dict):
-                    labels.append(o.get("label", ""))
+                    label = o.get("label", "")
+                    desc = (o.get("description") or "").strip()
                 else:
-                    labels.append(str(o))
-            labels = [l for l in labels if l]
-            # Number the options so the user can pick by number (eyes-free).
-            segs = ["Option {0}: {1}.".format(i, label) for i, label in enumerate(labels, 1)]
-            if qtext and segs:
-                parts.append("{0} {1}".format(qtext, " ".join(segs)))
+                    label, desc = str(o), ""
+                if not label:
+                    continue   # keep numbering aligned with the TUI's digits
+                seg = "Option {0}: {1}.".format(i, label)
+                if desc:
+                    seg += " {0}{1}".format(
+                        desc, "" if desc.endswith((".", "!", "?")) else ".")
+                segs.append(seg)
+            head = qtext
+            if multi:
+                head = "{0}{1}".format(
+                    (qtext + " ") if qtext else "",
+                    "This is a multi-select; you can pick more than one.")
+            if head and segs:
+                parts.append("{0} {1}".format(head, " ".join(segs)))
             elif segs:
                 parts.append(" ".join(segs))
-            elif qtext:
-                parts.append(qtext)
+            elif head:
+                parts.append(head)
         return " ".join(parts) if parts else "A question needs your answer."
 
     @staticmethod
@@ -109,10 +156,13 @@ class SpeechDaemon:
 
     @staticmethod
     def _permission_text(msg) -> str:
-        # The 'permission' earcon already signals that approval is needed, so the
-        # spoken text is just the pending action (e.g. "Run: pytest -q").
+        # The 'permission' earcon already signals approval is needed; speak the
+        # pending action, else the human-readable message, else a generic cue.
         action = (msg.get("action") or "").strip()
-        return action if action else "Permission needed."
+        if action:
+            return action
+        message = (msg.get("message") or "").strip()
+        return message if message else "Permission needed."
 
     def _selection_cue(self, session: str, verbosity: str) -> str:
         if verbosity != "everything":
@@ -188,9 +238,18 @@ class SpeechDaemon:
         if t == MsgType.PROSE:
             a = self._assembler(session)
             chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), msg.get("final", False))
-            if verbosity != "quiet" and self.sessions.should_speak(session):
+            if chunks:
+                speak = verbosity != "quiet" and self._may_speak(session)
                 for chunk in chunks:
-                    self._enqueue(session, "prose", chunk, False)
+                    entry = self.history.record(session, "prose", chunk)
+                    if speak:
+                        self._enqueue(session, "prose", chunk, False, entry=entry)
+                    else:
+                        self._captured_msg.add(session)
+            if msg.get("final", False):
+                self.history.end_message(session)
+                self._captured_msg.discard(session)
+                self._options.pop(session, None)
             return None
 
         # Decision CONTENT is enqueued (and gated by foreground). The ALERT
@@ -199,40 +258,46 @@ class SpeechDaemon:
         # MsgType.EARCON branch below, so the earcon fires instantly and
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
-            if self.sessions.should_speak(session):
-                text = self._choice_text(msg)
-                extras = [e for e in (
-                    self._choice_notes(msg),
-                    self._selection_cue(session, verbosity),
-                ) if e]
-                if extras:
-                    text = "{0} {1}".format(text, " ".join(extras))
-                self._last_options = text
-                self._enqueue(session, "choice", text, True)
+            text = self._choice_text(msg)
+            extras = [e for e in (
+                self._choice_notes(msg),
+                self._selection_cue(session, verbosity),
+            ) if e]
+            if extras:
+                text = "{0} {1}".format(text, " ".join(extras))
+            self._options[session] = text
+            entry = self.history.record(session, "choice", text)
+            self.history.end_message(session)
+            if self._may_speak(session):
+                self._enqueue(session, "choice", text, True, entry=entry)
             return None
 
         if t == MsgType.PLAN:
-            if self.sessions.should_speak(session):
-                text = self._plan_text(msg)
-                cue = self._selection_cue(session, verbosity)
-                if cue:
-                    text = "{0} {1}".format(text, cue)
-                self._last_options = text
-                self._enqueue(session, "plan", text, True)
+            text = self._plan_text(msg)
+            cue = self._selection_cue(session, verbosity)
+            if cue:
+                text = "{0} {1}".format(text, cue)
+            self._options[session] = text
+            entry = self.history.record(session, "plan", text)
+            self.history.end_message(session)
+            if self._may_speak(session):
+                self._enqueue(session, "plan", text, True, entry=entry)
             return None
 
         if t == MsgType.PERMISSION:
-            if self.sessions.should_speak(session):
-                text = self._permission_text(msg)
-                cue = self._selection_cue(session, verbosity)
-                if cue:
-                    text = "{0} {1}".format(text, cue)
-                self._last_options = text
-                self._enqueue(session, "permission", text, True)
+            text = self._permission_text(msg)
+            cue = self._selection_cue(session, verbosity)
+            if cue:
+                text = "{0} {1}".format(text, cue)
+            self._options[session] = text
+            entry = self.history.record(session, "permission", text)
+            self.history.end_message(session)
+            if self._may_speak(session):
+                self._enqueue(session, "permission", text, True, entry=entry)
             return None
 
         if t == MsgType.TOOL:
-            if verbosity == "everything" and self.sessions.should_speak(session):
+            if verbosity == "everything" and self._may_speak(session):
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
@@ -244,10 +309,16 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.FLUSH:
-            self.queue.flush_session(session)
-            self.speaker.cancel()
+            self._drop_pending(self.queue.flush_session(session))
+            cur = self._current_item
+            if cur is not None and cur.session == session:
+                self.speaker.cancel()
+            if self._voice_owner == session:
+                self._voice_owner = None
             self._assemblers.pop(session, None)
-            self._last_options = None
+            self.history.reset(session)
+            self._captured_msg.discard(session)
+            self._options.pop(session, None)
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
@@ -259,34 +330,52 @@ class SpeechDaemon:
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
-            self._last_options = None
+            self._drop_pending(self.queue.flush_session(session))
+            if self._voice_owner == session:
+                self._voice_owner = None
+            self.history.reset(session)
+            self._captured_msg.discard(session)
+            self._options.pop(session, None)
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
             return None
 
         if t == MsgType.STOP:
-            self.queue.clear()
+            self._drop_pending(self.queue.clear())
             self.speaker.cancel()
+            self._voice_owner = None
             return None
 
         if t == MsgType.SKIP:
+            cur = self._current_item
+            if cur is not None:
+                entry = self._pending_heard.get(cur.id)
+                if entry is not None:
+                    entry.heard = True
             self.speaker.cancel()
             return None
 
         if t == MsgType.REPEAT:
-            last = self._last_spoken
-            if last is not None:
-                fg = self.sessions.foreground()
-                if fg is not None:
-                    self._enqueue(fg, "prose", last, False)
+            fg = self.sessions.foreground()
+            if fg is None:
+                return None
+            entries = self.history.last_message(fg)
+            if not entries:
+                self._enqueue(fg, "prose", "Nothing to repeat.", False)
+                return None
+            for e in entries:
+                self._enqueue(fg, e.kind, e.text, False, entry=e)
             return None
 
         if t == MsgType.REREAD_OPTIONS:
             fg = self.sessions.foreground()
-            if self._last_options and fg is not None:
-                self._enqueue(fg, "choice", self._last_options, False)
-            elif fg is not None:
-                self._enqueue(fg, "prose", "No options to repeat.", False)
+            if fg is None:
+                return None
+            text = self._options.get(fg)
+            if text:
+                self._enqueue(fg, "choice", text, False)
+            else:
+                self._enqueue(fg, "prose", "No options right now.", False)
             return None
 
         if t == MsgType.JUMP_DECISION:
@@ -295,8 +384,34 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.CATCH_UP:
-            self.queue.clear()
-            self.speaker.cancel()
+            fg = self.sessions.foreground()
+            if fg is None:
+                return None
+            target = fg
+            entries = self.history.unheard(fg)
+            preamble = None
+            if not entries:
+                other = self.history.other_session_with_unheard(fg)
+                if other is not None:
+                    target = other
+                    entries = self.history.unheard(other)
+                    preamble = "Catching up on another session."
+            if not entries:
+                self._enqueue(fg, "prose", "You're all caught up.", False)
+                return None
+            # Replay cleanly: cut the target's current utterance (it stays
+            # unheard, so it replays FROM ITS START) and drop its queued
+            # duplicates — every unheard entry is re-enqueued in order below.
+            cur = self._current_item
+            if cur is not None and cur.session == target:
+                self.speaker.cancel()
+            self._drop_pending(self.queue.flush_session(target))
+            if preamble:
+                self._enqueue(fg, "prose", preamble, False)
+            for e in entries:
+                self._enqueue(target, e.kind, e.text,
+                              e.kind in ("choice", "plan", "permission"),
+                              entry=e)
             return None
 
         if t == MsgType.SET_RATE:
@@ -373,10 +488,14 @@ class SpeechDaemon:
         while self._running.is_set():
             item = self.queue.pop_next()
             if item is not None:
-                self.speaker.speak(item.text)
                 with self._lock:
-                    self._last_spoken = item.text
+                    self._current_item = item
+                completed = self.speaker.speak(item.text)
+                self.note_spoken(item, completed)
                 continue
+            with self._lock:
+                if self._voice_owner is not None and len(self.queue) == 0:
+                    self._voice_owner = None
             # nothing to say: wait until woken by an enqueue or until stop()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
