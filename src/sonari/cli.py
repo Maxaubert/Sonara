@@ -21,6 +21,8 @@ from typing import Optional
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import paths
 from . import keymap
+from sonari.platform.macos.hotkeys import MacHotkeyBackend
+_mac_hotkeys = MacHotkeyBackend()
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
@@ -75,22 +77,12 @@ def _cmd_skip(_args) -> int:
     return 0
 
 
-_MOD_DISPLAY = [
-    (4096, "Ctrl"),
-    (256, "Cmd"),
-    (2048, "Opt"),
-    (512, "Shift"),
-]
-_KEYCODE_DISPLAY = {
-    1: "S", 15: "R", 2: "D", 37: "L", 9: "V", 31: "O",
-    47: ".", 30: "]", 33: "[",
-}
+_KEYCODE_DISPLAY = _mac_hotkeys._keycode_display
+_MOD_DISPLAY = _mac_hotkeys._mod_display
 
 
 def _combo_label(modifiers: int, key_code: int) -> str:
-    parts = [name for mask, name in _MOD_DISPLAY if modifiers & mask]
-    parts.append(_KEYCODE_DISPLAY.get(key_code, "key{0}".format(key_code)))
-    return "+".join(parts)
+    return _mac_hotkeys.display_combo(modifiers, key_code)
 
 
 def _cmd_keymap(_args) -> int:
@@ -549,32 +541,7 @@ def _build_hotkeyd():
     Returns (ok, detail). Non-fatal: absent swiftc returns
     (False, "swiftc not found").
     """
-    if shutil.which("swiftc") is None:
-        return (False, "swiftc not found")
-    src = os.path.join(paths.repo_root(), "hotkeyd", "sonari-hotkeyd.swift")
-    try:
-        with open(src, "rb") as fh:
-            src_hash = hashlib.sha256(fh.read()).hexdigest()
-    except OSError as exc:
-        return (False, f"cannot read hotkeyd source: {exc}")
-    hash_path = str(paths.SONARI_DIR / ".hotkeyd.srchash")
-    if os.path.exists(str(paths.HOTKEYD_BIN_PATH)):
-        try:
-            with open(hash_path, "r", encoding="utf-8") as fh:
-                if fh.read().strip() == src_hash:
-                    return (True, "{0} (unchanged; kept to preserve any "
-                            "permission grants)".format(paths.HOTKEYD_BIN_PATH))
-        except OSError:
-            pass
-    rc = subprocess.call(["swiftc", src, "-o", str(paths.HOTKEYD_BIN_PATH)])
-    if rc == 0:
-        try:
-            with open(hash_path, "w", encoding="utf-8") as fh:
-                fh.write(src_hash)
-        except OSError:
-            pass
-        return (True, str(paths.HOTKEYD_BIN_PATH))
-    return (False, f"swiftc exited {rc}")
+    return _mac_hotkeys.build()
 
 
 def _launchctl(args: list) -> int:
