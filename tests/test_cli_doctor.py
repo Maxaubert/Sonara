@@ -97,3 +97,28 @@ def test_doctor_subcommand_all_ok_returns_zero(capsys):
         rc = cli.main(["doctor"])
     assert rc == 0
     assert "say" in capsys.readouterr().out
+
+
+def test_doctor_reports_input_monitoring_state(monkeypatch, tmp_path):
+    from sonari import cli
+
+    hk = tmp_path / "sonari-hotkeyd"
+    hk.write_text("#!/bin/sh\nexit 0\n")
+    hk.chmod(0o755)
+    monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", hk)
+    rows = {name: (ok, detail) for name, ok, detail in cli.doctor()}
+    ok, detail = rows["input monitoring (caret tracking)"]
+    assert ok is True
+
+
+def test_doctor_input_monitoring_not_granted(monkeypatch, tmp_path):
+    from sonari import cli
+
+    hk = tmp_path / "sonari-hotkeyd"
+    hk.write_text("#!/bin/sh\nexit 1\n")
+    hk.chmod(0o755)
+    monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", hk)
+    rows = {name: (ok, detail) for name, ok, detail in cli.doctor()}
+    ok, detail = rows["input monitoring (caret tracking)"]
+    assert ok is False
+    assert "Input Monitoring" in detail

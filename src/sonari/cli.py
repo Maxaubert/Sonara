@@ -196,6 +196,23 @@ def doctor() -> list:
     results.append(("hotkeyd binary", hk_exists,
                     hk_bin if hk_exists else f"missing: {hk_bin} (run 'sonari install')"))
 
+    # Input Monitoring (Phase 2.1 caret tracking) — probe via the binary.
+    if hk_exists:
+        try:
+            granted = subprocess.run(
+                [hk_bin, "--check-input-monitoring"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5,
+            ).returncode == 0
+            results.append((
+                "input monitoring (caret tracking)", granted,
+                "granted" if granted else
+                "not granted — arrow-key narration off; grant in System "
+                "Settings > Privacy & Security > Input Monitoring"))
+        except Exception as exc:  # noqa: BLE001 - doctor must never raise
+            results.append(("input monitoring (caret tracking)", False,
+                            f"probe failed: {exc}"))
+
     try:
         with open(paths.HOTKEYD_RESOLVED_PATH, "r", encoding="utf-8") as fh:
             parsed = json.load(fh)
