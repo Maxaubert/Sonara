@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.9 stdlib only (`src/sonari/`), pytest (tests must pass on system `/usr/bin/python3` 3.9), Swift/Carbon/CoreGraphics for hotkeyd. Daemon runs from `~/.sonari/app` — code changes reach the live daemon only after `sonari install`.
 
+**STATUS (2026-06-10):** Built + deployed, EXCEPT **Tasks 8–10 (caret tracking), which were built then REMOVED/de-scoped.** A macOS event tap needs Secure Keyboard Entry OFF *and* an Input-Monitoring grant that resets on every unsigned rebuild (the grant is cdhash-bound; only code-signing makes it persist) — not shippable. The tap also must run on its own `CFRunLoopRun()` thread, not the main loop under `NSApplication.run()`, or it installs but delivers no events. Kept: the history substrate, `repeat`, `catch_up`, `reread_options` (+ a fix to read the permission `message`), and voice continuity. The eyes-free multi-select **Submit** gap remains open.
+
 **Resolved spec assumptions (verified against the code — do not re-investigate):**
 - Session identity: every hook payload carries `session_id`; the daemon already keys assemblers and foreground on it (`hooks_entry.py:33`).
 - "Focused session" = `sessions.foreground()`, set by `SessionStart` + `UserPromptSubmit` (there is no OS-window-focus hook). The "come back to A and hear what I missed" scenario is covered by catch_up's cross-session fallback (Task 7), not window tracking.

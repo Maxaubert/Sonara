@@ -3,6 +3,14 @@
 > **projectType:** claude-plugin
 > Status: draft from the brainstorm (live interview with Nima, 2026-06-09); consumed by /stack → /issues.
 > Scope: a **minor update** to the existing Sonari plugin (`~/projects/private/claude-tts`).
+>
+> **Update (2026-06-10) — shipped EXCEPT caret tracking.** Built + deployed: the history substrate, `repeat`,
+> `catch_up`, `reread_options` (incl. reading the permission `message` field), and voice continuity. The
+> **caret tracking** capability in §2 (arrow-key option navigation + the virtual **Submit**) was built and
+> verified working, then **DE-SCOPED**: a macOS `CGEventTap` needs Secure Keyboard Entry OFF *and* an
+> Input-Monitoring grant that resets on every (unsigned) rebuild — not shippable to other blind/low-vision
+> users. The eyes-free **multi-select Submit** gap it targeted therefore remains OPEN (realistically needs
+> host support from Claude Code to expose the selection).
 
 ## 1. Core
 - **Problem:** Sonari's Phase 2 eyes-free controls fail exactly when an eyes-free / low-vision user needs them most — during Claude's prompts and after interruptions. Three "re-speak" hotkeys (`reread_options`, `repeat`, `catch_up`) read only the live TTS **queue tail** — usually a one-sentence fragment — instead of the meaningful content; `catch_up` doesn't work at all; multi-select **Submit** can't be reached without sighted arrow-navigation; and a focus-bound voice loses everything a non-focused session says.
