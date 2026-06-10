@@ -118,22 +118,33 @@ class SpeechDaemon:
         parts = []
         for q in msg.get("questions", []) or []:
             qtext = q.get("question", "") if isinstance(q, dict) else str(q)
+            multi = bool(isinstance(q, dict) and q.get("multiSelect"))
             opts = q.get("options", []) if isinstance(q, dict) else []
-            labels = []
-            for o in opts:
+            segs = []
+            for i, o in enumerate(opts, 1):
                 if isinstance(o, dict):
-                    labels.append(o.get("label", ""))
+                    label = o.get("label", "")
+                    desc = (o.get("description") or "").strip()
                 else:
-                    labels.append(str(o))
-            labels = [l for l in labels if l]
-            # Number the options so the user can pick by number (eyes-free).
-            segs = ["Option {0}: {1}.".format(i, label) for i, label in enumerate(labels, 1)]
-            if qtext and segs:
-                parts.append("{0} {1}".format(qtext, " ".join(segs)))
+                    label, desc = str(o), ""
+                if not label:
+                    continue   # keep numbering aligned with the TUI's digits
+                seg = "Option {0}: {1}.".format(i, label)
+                if desc:
+                    seg += " {0}{1}".format(
+                        desc, "" if desc.endswith((".", "!", "?")) else ".")
+                segs.append(seg)
+            head = qtext
+            if multi:
+                head = "{0}{1}".format(
+                    (qtext + " ") if qtext else "",
+                    "This is a multi-select; you can pick more than one.")
+            if head and segs:
+                parts.append("{0} {1}".format(head, " ".join(segs)))
             elif segs:
                 parts.append(" ".join(segs))
-            elif qtext:
-                parts.append(qtext)
+            elif head:
+                parts.append(head)
         return " ".join(parts) if parts else "A question needs your answer."
 
     @staticmethod
@@ -361,7 +372,7 @@ class SpeechDaemon:
             if text:
                 self._enqueue(fg, "choice", text, False)
             else:
-                self._enqueue(fg, "prose", "No options to repeat.", False)
+                self._enqueue(fg, "prose", "No options right now.", False)
             return None
 
         if t == MsgType.JUMP_DECISION:

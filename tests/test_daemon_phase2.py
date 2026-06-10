@@ -140,13 +140,13 @@ def test_reread_with_no_prior_says_nothing_to_repeat():
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
     item = queue.pop_next()
     assert item is not None
-    assert item.text == "No options to repeat."
+    assert item.text == "No options right now."
     assert item.kind == "prose"
 
 
 def test_reread_no_foreground_is_noop():
     daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
-    daemon._last_options = "Option 1: Red."
+    daemon._options["some_session"] = "Option 1: Red."
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
     assert len(queue) == 0
 
@@ -173,7 +173,7 @@ def test_flush_clears_option_cache():
     daemon.handle_message(_msg(MsgType.FLUSH, "fg"))
     assert daemon._options.get("fg") is None
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    assert queue.pop_next().text == "No options to repeat."
+    assert queue.pop_next().text == "No options right now."
 
 
 def test_session_end_clears_option_cache():

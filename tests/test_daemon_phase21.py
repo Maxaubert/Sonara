@@ -240,3 +240,76 @@ def test_catch_up_does_not_double_speak_queued_items():
     while len(queue):
         texts.append(queue.pop_next().text)
     assert texts == ["Queued one.", "Queued two."]          # once, not twice
+
+
+# --- reread_options ----------------------------------------------------------
+
+def _choice(daemon, session, questions):
+    daemon.handle_message(_msg(MsgType.CHOICE, session, questions=questions))
+
+
+def test_choice_speaks_descriptions_and_numbers():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon, "fg", [{
+        "question": "Auth method?",
+        "options": [
+            {"label": "OAuth", "description": "Use Google sign-in"},
+            {"label": "Magic link"},
+        ],
+    }])
+    item = queue.pop_next()
+    assert "Option 1: OAuth. Use Google sign-in." in item.text
+    assert "Option 2: Magic link." in item.text
+
+
+def test_multiselect_announced_up_front():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon, "fg", [{
+        "question": "Pick features.",
+        "multiSelect": True,
+        "options": [{"label": "A"}, {"label": "B"}],
+    }])
+    item = queue.pop_next()
+    assert "This is a multi-select; you can pick more than one." in item.text
+
+
+def test_reread_speaks_current_options_not_queue_tail():
+    # REREAD reads from the dedicated _options slot, not from whatever text is
+    # currently at the queue tail. Drain the original choice item (queue tail
+    # moves on), then reread — the slot still holds the choice text.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon, "fg", [{"question": "Q?", "options": [{"label": "X"}]}])
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    # Enqueue unrelated prose WITHOUT final=True so the options slot stays open.
+    daemon.handle_message(_msg(MsgType.PROSE, "fg", delta="Other speech. ",
+                               index=0, final=False))
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
+    item = queue.pop_next()
+    assert "Option 1: X." in item.text                       # the options, not the tail
+
+
+def test_reread_with_no_active_options_says_so():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
+    item = queue.pop_next()
+    assert item.text == "No options right now."
+
+
+def test_reread_after_flush_says_no_options():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon, "fg", [{"question": "Q?", "options": [{"label": "X"}]}])
+    daemon.handle_message(_msg(MsgType.FLUSH, "fg"))
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
+    item = queue.pop_next()
+    assert item.text == "No options right now."
+
+
+def test_reread_is_per_session():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _choice(daemon, "b", [{"question": "B q?", "options": [{"label": "BB"}]}])
+    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))      # fg=a has none
+    item = queue.pop_next()
+    assert item.text == "No options right now."
