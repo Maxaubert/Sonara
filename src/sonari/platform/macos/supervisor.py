@@ -32,23 +32,6 @@ def _local_bin_on_path() -> bool:
     return lb in entries
 
 
-def _place_launcher(plugin_root: str) -> str:
-    """Write an executable ~/.local/bin/sonari that execs the plugin bin/sonari.
-
-    The plugin path is baked in and shell-quoted so a path with spaces is safe.
-    Overwrites any prior Sonari-owned launcher. Returns the launcher path.
-    """
-    target = os.path.join(plugin_root, "bin", "sonari")
-    wrapper = (
-        "#!/usr/bin/env bash\n"
-        'exec "{target}" "$@"\n'.format(target=target)
-    )
-    path = _launcher_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(wrapper)
-    os.chmod(path, 0o755)
-    return path
 
 
 def _xml_escape(s: str) -> str:
@@ -192,8 +175,22 @@ class MacSupervisorBackend(SupervisorBackend):
                          "stderr": subprocess.DEVNULL})
 
     def place_launcher(self, plugin_root: str) -> str:
-        """Delegating method — calls module-level _place_launcher."""
-        return _place_launcher(plugin_root)
+        """Write an executable ~/.local/bin/sonari that execs the plugin bin/sonari.
+
+        The plugin path is baked in and shell-quoted so a path with spaces is safe.
+        Overwrites any prior Sonari-owned launcher. Returns the launcher path.
+        """
+        target = os.path.join(plugin_root, "bin", "sonari")
+        wrapper = (
+            "#!/usr/bin/env bash\n"
+            'exec "{target}" "$@"\n'.format(target=target)
+        )
+        path = _launcher_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(wrapper)
+        os.chmod(path, 0o755)
+        return path
 
     def local_bin_on_path(self) -> bool:
         """Return True if ~/.local/bin is on the current PATH."""

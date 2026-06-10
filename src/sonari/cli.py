@@ -30,6 +30,7 @@ from sonari.platform.macos.hotkeys import (
 from sonari.platform.macos.supervisor import (
     MacSupervisorBackend,
     _PYTHON_CANDIDATE_NAMES,
+    _launcher_path as _sup_launcher_path,
 )
 _mac_sup = MacSupervisorBackend()
 
@@ -216,8 +217,6 @@ def _cmd_doctor(_args) -> int:
     return 0 if all_ok else 1
 
 
-import subprocess
-
 LAUNCH_AGENT_LABEL = "com.sonari.speechd"
 LAUNCH_AGENT_PATH = os.path.expanduser(
     "~/Library/LaunchAgents/com.sonari.speechd.plist")
@@ -290,12 +289,9 @@ def _read_plugin_version(plugin_root: str) -> str:
     return os.environ.get("CLAUDE_PLUGIN_VERSION", "") or ""
 
 
-def _local_bin_dir() -> str:
-    return os.path.join(os.path.expanduser("~"), ".local", "bin")
-
-
 def _launcher_path() -> str:
-    return os.path.join(_local_bin_dir(), "sonari")
+    """Delegating shim — logic lives in MacSupervisorBackend (_launcher_path)."""
+    return _sup_launcher_path()
 
 
 def _place_launcher(plugin_root: str) -> str:
@@ -338,9 +334,10 @@ def _local_bin_on_path() -> bool:
     return _mac_sup.local_bin_on_path()
 
 
-def _plist(*a, **k) -> str:
+def _plist(label: str, program_args: list, log_path: str,
+           env=None) -> str:
     """Delegating shim — logic lives in MacSupervisorBackend.plist."""
-    return _mac_sup.plist(*a, **k)
+    return _mac_sup.plist(label, program_args, log_path, env=env)
 
 
 def _launchagent_plist(python_executable: str, src_path: str,
