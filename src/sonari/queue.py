@@ -21,9 +21,13 @@ class SpeechQueue:
         self._items.append(item)
 
     def pop_next(self) -> "SpeechItem | None":
-        if not self._items:
+        # The speak loop pops outside the daemon lock while flush_session can
+        # swap the deque underneath it; treat a lost race as "nothing to say"
+        # rather than letting an IndexError kill the speak loop (a mute daemon).
+        try:
+            return self._items.popleft()
+        except IndexError:
             return None
-        return self._items.popleft()
 
     def jump_to_decision(self) -> None:
         while self._items and not self._items[0].is_decision:

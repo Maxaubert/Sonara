@@ -87,8 +87,12 @@ class SpeechDaemon:
             self._enqueue(session, "prose", cue, False)
 
     def _open_caret(self, session: str, questions) -> None:
-        """Arm caret tracking for a single-question prompt; otherwise disarm.
-        The flag file tells hotkeyd to forward arrow keys (listen-only)."""
+        """Arm caret tracking for a single-question FOREGROUND prompt; otherwise
+        disarm. A background session's prompt must never steal (or close) the
+        foreground user's live arrow navigation. The flag file tells hotkeyd
+        to forward arrow keys (listen-only)."""
+        if not self.sessions.is_foreground(session):
+            return
         self._close_caret()
         if len(questions) != 1 or not isinstance(questions[0], dict):
             return
@@ -278,6 +282,10 @@ class SpeechDaemon:
                         self._enqueue(session, "prose", chunk, False, entry=entry)
                     else:
                         self._captured_msg.add(session)
+                # the prompt was answered the moment its session resumes prose
+                # — arrows go inert NOW, not at the end of the next message
+                if self._caret is not None and self._caret["session"] == session:
+                    self._close_caret()
             if msg.get("final", False):
                 self.history.end_message(session)
                 self._captured_msg.discard(session)
@@ -313,7 +321,8 @@ class SpeechDaemon:
             if cue:
                 text = "{0} {1}".format(text, cue)
             self._options[session] = text
-            self._close_caret()
+            if self._caret is not None and self._caret["session"] == session:
+                self._close_caret()
             entry = self.history.record(session, "plan", text)
             self.history.end_message(session)
             if self._may_speak(session):
@@ -326,7 +335,8 @@ class SpeechDaemon:
             if cue:
                 text = "{0} {1}".format(text, cue)
             self._options[session] = text
-            self._close_caret()
+            if self._caret is not None and self._caret["session"] == session:
+                self._close_caret()
             entry = self.history.record(session, "permission", text)
             self.history.end_message(session)
             if self._may_speak(session):
@@ -432,7 +442,11 @@ class SpeechDaemon:
             else:
                 spoken = "Option {0}: {1}.".format(c["pos"] + 1,
                                                    c["labels"][c["pos"]])
-            self.speaker.cancel()   # snappy: cut the previous announcement
+            # snappy: cut OUR OWN previous announcement — never another
+            # session's live utterance (voice continuity: only stop/skip cut)
+            cur = self._current_item
+            if cur is not None and cur.session == fg:
+                self.speaker.cancel()
             self._enqueue(fg, "prose", spoken, False)
             return None
 
@@ -606,6 +620,9 @@ class SpeechDaemon:
             os.unlink(SOCKET_PATH)
         except FileNotFoundError:
             pass
+        # a stale prompt-open flag from a crash would keep hotkeyd forwarding
+        # every arrow keypress system-wide; clear it before serving
+        self._close_caret()
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         srv.bind(str(SOCKET_PATH))
         srv.listen(16)
@@ -627,6 +644,7 @@ class SpeechDaemon:
             pass
         finally:
             self.stop()
+            self._close_caret()
             try:
                 srv.close()
             except OSError:

@@ -416,3 +416,49 @@ def test_caret_inert_for_multi_question_prompts():
         queue.pop_next()
     daemon.handle_message(_msg("caret_move", dir="down"))
     assert len(queue) == 0
+
+
+# --- final branch-review fixes -------------------------------------------------
+
+def test_caret_closes_as_soon_as_answer_prose_arrives():
+    # Not only on final: the FIRST chunks from the prompt's session mean the
+    # prompt was answered — arrows must go inert immediately, not at the end
+    # of Claude's (possibly tool-heavy) next message.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    _prose(daemon, "fg", "Answer chosen; thinking. ", final=False)
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    assert len(queue) == 0
+
+
+def test_caret_move_does_not_cancel_another_sessions_utterance():
+    from sonari.queue import SpeechItem
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    while len(queue):
+        queue.pop_next()
+    # another session currently holds the voice
+    daemon._current_item = SpeechItem(99, "other", "prose", "Other talking.", False)
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    assert speaker.cancels == 0          # voice continuity: only stop/skip cut others
+    item = queue.pop_next()
+    assert item.text == "Option 2: Beta."
+
+
+def test_background_choice_does_not_arm_or_steal_the_caret():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)                       # fg caret armed
+    _choice(daemon, "bg", [{"question": "Bg?", "multiSelect": True,
+                            "options": [{"label": "X"}]}])
+    assert daemon._caret is not None
+    assert daemon._caret["session"] == "fg"          # untouched by the bg prompt
+
+
+def test_background_permission_does_not_close_foreground_caret():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    daemon.handle_message(_msg(MsgType.PERMISSION, "bg", action="Run: ls"))
+    assert daemon._caret is not None
+    assert daemon._caret["session"] == "fg"
