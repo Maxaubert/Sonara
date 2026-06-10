@@ -346,8 +346,11 @@ class SpeechDaemon:
             if fg is None:
                 return None
             entries = self.history.last_message(fg)
+            if not entries:
+                self._enqueue(fg, "prose", "Nothing to repeat.", False)
+                return None
             for e in entries:
-                self._enqueue(fg, "prose", e.text, False, entry=e)
+                self._enqueue(fg, e.kind, e.text, False, entry=e)
             return None
 
         if t == MsgType.REREAD_OPTIONS:

@@ -138,3 +138,47 @@ def test_choice_for_nonowner_is_captured_and_options_stored():
     assert len(queue) == 1                                  # only a's prose queued
     assert "Pick one?" in daemon._options["b"]              # reread works on return
     assert daemon.history.unheard("b")                      # captured for catch_up
+
+
+# --- repeat ------------------------------------------------------------------
+
+def test_repeat_respeaks_whole_last_message_not_last_fragment():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "First sentence. Second sentence. Third. ")
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    daemon.handle_message(_msg(MsgType.REPEAT))
+    texts = []
+    while len(queue):
+        texts.append(queue.pop_next().text)
+    assert texts == ["First sentence.", "Second sentence.", "Third."]
+
+
+def test_repeat_targets_last_message_only():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "Old message. ")
+    _prose(daemon, "fg", "New message. ")
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    daemon.handle_message(_msg(MsgType.REPEAT))
+    item = queue.pop_next()
+    assert item.text == "New message."
+    assert len(queue) == 0
+
+
+def test_repeat_with_no_history_says_nothing_to_repeat():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg(MsgType.REPEAT))
+    item = queue.pop_next()
+    assert item.text == "Nothing to repeat."
+
+
+def test_repeat_acts_on_foreground_session_history():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "a", "A message. ")
+    _prose(daemon, "b", "B captured. ")
+    while len(queue):
+        _drain_one(daemon, queue, speaker)
+    daemon.handle_message(_msg(MsgType.REPEAT))
+    item = queue.pop_next()
+    assert item.text == "A message."

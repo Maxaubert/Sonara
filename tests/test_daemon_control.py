@@ -110,10 +110,11 @@ def _drain_one(daemon, queue, speaker):
 
 
 def test_repeat_noop_when_nothing_spoken_yet():
-    """REPEAT before any speech must not enqueue anything and must not crash."""
+    """REPEAT before any speech says "Nothing to repeat." when foreground exists."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.handle_message(_msg(MsgType.REPEAT, "fg"))
-    assert len(queue) == 0
+    item = queue.pop_next()
+    assert item.text == "Nothing to repeat."
 
 
 def test_repeat_reenqueues_last_spoken_text():
