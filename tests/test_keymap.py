@@ -153,11 +153,15 @@ def test_write_resolved_no_tmp_leftover(monkeypatch, tmp_path):
     assert list(tmp_path.glob("*.tmp")) == []
 
 
-def test_keytables_live_in_macos_backend():
-    from sonari.platform.macos import keytables
-    assert keytables.KEY_CODES["o"] == 31
-    assert keytables.MOD_MASKS["cmd"] == 256
-    # keymap re-exports them for backward compatibility
-    import sonari.keymap as keymap
-    assert keymap.KEY_CODES is keytables.KEY_CODES
-    assert keymap.MOD_MASKS is keytables.MOD_MASKS
+def test_keytables_wired_into_resolution_path():
+    """Verify that KEY_CODES/MOD_MASKS from the macos backend are actually used
+    by resolve_keymap() — i.e. the tables are live in the resolution path after
+    the move to platform/macos/keytables."""
+    # "o" (reread_options default key) maps to Carbon code 31;
+    # ctrl+cmd = 4096 | 256 = 4352.
+    resolved = keymap.resolve_keymap({"reread_options": {"key": "o", "mods": ["ctrl", "cmd"]}})
+    assert len(resolved) == 1
+    entry = resolved[0]
+    assert entry["action"] == "reread_options"
+    assert entry["keyCode"] == 31   # Carbon code for "o"
+    assert entry["modifiers"] == 4352  # ctrl (4096) | cmd (256)

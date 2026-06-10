@@ -16,6 +16,13 @@ from sonari.paths import (
     ensure_sonari_dir,
 )
 
+# NOTE: This is an unconditional macOS-specific import.  keytables.py itself has
+# no platform dependencies (it's pure data), so this works today even when the
+# broader platform/macos package is partially assembled.  However, once
+# platform/macos/__init__.py adds a platform guard (see "Assembled in Task 9"),
+# this bare import will fail on non-macOS hosts.  When that guard lands, this
+# line must be made conditional (e.g. wrapped in a sys.platform check or moved
+# behind the platform-dispatch layer).
 from sonari.platform.macos.keytables import KEY_CODES, MOD_MASKS
 
 # action -> the speechd protocol message it sends.
