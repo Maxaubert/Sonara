@@ -4,6 +4,7 @@ import sys
 from unittest import mock
 
 from sonari import cli
+from sonari.platform.macos.hotkeys import MacHotkeyBackend
 
 
 def test_launchagent_plist_embeds_resolved_python_and_pythonpath(tmp_path):
@@ -53,7 +54,7 @@ def test_install_writes_plist_and_loads(tmp_path, capsys):
          mock.patch.object(cli, "_launchctl", run), \
          mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
          mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
-         mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
+         mock.patch.object(MacHotkeyBackend, "build", return_value=(True, "built")), \
          mock.patch.object(cli, "_copy_app", return_value=str(app_dir)) as copy_app, \
          mock.patch.object(cli, "_read_plugin_version", return_value="0.4.0"), \
          mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")) as place_launcher, \
@@ -213,7 +214,6 @@ def test_install_copy_failure_is_fatal_and_writes_no_plist(tmp_path, capsys):
          mock.patch.object(cli, "_launchctl", mock.Mock(return_value=0)), \
          mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
          mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
-         mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")), \
          mock.patch.object(cli, "_copy_app", side_effect=OSError("read-only")), \
          mock.patch.object(cli.paths, "APP_DIR", app_dir), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
@@ -242,7 +242,7 @@ def test_install_plist_pythonpath_handles_spaces_in_app_dir(tmp_path, capsys):
          mock.patch.object(cli, "_launchctl", mock.Mock(return_value=0)), \
          mock.patch.object(cli, "_resolve_python", return_value="/usr/bin/python3"), \
          mock.patch.object(cli, "_probe_python_version", return_value=(3, 9)), \
-         mock.patch.object(cli, "_build_hotkeyd", return_value=(False, "swiftc not found")), \
+         mock.patch.object(MacHotkeyBackend, "build", return_value=(False, "swiftc not found")), \
          mock.patch.object(cli, "_copy_app", return_value=str(app_dir)), \
          mock.patch.object(cli, "_read_plugin_version", return_value="0.4.0"), \
          mock.patch.object(cli, "_place_launcher", return_value=str(tmp_path / "launcher")), \

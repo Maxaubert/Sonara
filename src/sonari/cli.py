@@ -10,7 +10,6 @@ inside the handlers so the module imports cheaply and is easy to patch in tests.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -21,8 +20,13 @@ from typing import Optional
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import paths
 from . import keymap
-from sonari.platform.macos.hotkeys import MacHotkeyBackend
-_mac_hotkeys = MacHotkeyBackend()
+from sonari.platform.macos.hotkeys import (
+    MacHotkeyBackend,
+    _KEYCODE_DISPLAY,
+    _MOD_DISPLAY,
+    LAUNCH_AGENT_LABEL as HOTKEYD_LAUNCH_AGENT_LABEL,
+    LAUNCH_AGENT_PATH as HOTKEYD_LAUNCH_AGENT_PATH,
+)
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
@@ -77,12 +81,8 @@ def _cmd_skip(_args) -> int:
     return 0
 
 
-_KEYCODE_DISPLAY = _mac_hotkeys._keycode_display
-_MOD_DISPLAY = _mac_hotkeys._mod_display
-
-
 def _combo_label(modifiers: int, key_code: int) -> str:
-    return _mac_hotkeys.display_combo(modifiers, key_code)
+    return MacHotkeyBackend().display_combo(modifiers, key_code)
 
 
 def _cmd_keymap(_args) -> int:
@@ -267,11 +267,6 @@ import subprocess
 LAUNCH_AGENT_LABEL = "com.sonari.speechd"
 LAUNCH_AGENT_PATH = os.path.expanduser(
     "~/Library/LaunchAgents/com.sonari.speechd.plist")
-
-HOTKEYD_LAUNCH_AGENT_LABEL = "com.sonari.hotkeyd"
-HOTKEYD_LAUNCH_AGENT_PATH = os.path.expanduser(
-    "~/Library/LaunchAgents/com.sonari.hotkeyd.plist")
-
 
 def _repo_root() -> str:
     return paths.repo_root()
@@ -525,9 +520,11 @@ def _launchagent_plist(python_executable: str, src_path: str,
 def _hotkeyd_plist(binary_path: str, log_path: str) -> str:
     """Return the full LaunchAgent plist XML for the hotkey daemon.
 
-    Runs the compiled Swift binary directly.
+    Runs the compiled Swift binary directly.  Delegates to MacHotkeyBackend's
+    module-level helper so the plist logic lives in exactly one place.
     """
-    return _plist(HOTKEYD_LAUNCH_AGENT_LABEL, [binary_path], log_path)
+    from sonari.platform.macos.hotkeys import _hotkeyd_plist as _hk_plist
+    return _hk_plist(binary_path, log_path)
 
 
 def _build_hotkeyd():
@@ -541,7 +538,7 @@ def _build_hotkeyd():
     Returns (ok, detail). Non-fatal: absent swiftc returns
     (False, "swiftc not found").
     """
-    return _mac_hotkeys.build()
+    return MacHotkeyBackend().build()
 
 
 def _launchctl(args: list) -> int:
@@ -588,10 +585,9 @@ def install() -> int:
         return 1
     print(f"Copied runtime to: {app_dir}")
 
-    # 4. Keymap + build hotkeyd.
+    # 4. Keymap setup.
     keymap.write_default_keymap_if_absent()
     keymap.write_resolved()
-    ok, detail = _build_hotkeyd()
 
     # 5. Durable install record.
     plugin_version = _read_plugin_version(plugin_root)
@@ -615,20 +611,19 @@ def install() -> int:
         print(f"warning: 'launchctl load' returned {rc}; "
               f"the daemon will still autostart on next login.")
 
-    # 7. hotkeyd LaunchAgent (skip entirely if no binary).
+    # 7. hotkeyd: compile binary + write + load LaunchAgent (skip if no swiftc).
+    hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
+    ok, detail = MacHotkeyBackend().install(
+        log_path=hk_log,
+        agent_path=HOTKEYD_LAUNCH_AGENT_PATH,
+        launchctl_fn=_launchctl,
+    )
     if ok:
-        hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
-        hk_xml = _hotkeyd_plist(str(paths.HOTKEYD_BIN_PATH), hk_log)
-        os.makedirs(os.path.dirname(HOTKEYD_LAUNCH_AGENT_PATH), exist_ok=True)
-        with open(HOTKEYD_LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:
-            f.write(hk_xml)
         print(f"Wrote LaunchAgent: {HOTKEYD_LAUNCH_AGENT_PATH}")
-        _launchctl(["unload", HOTKEYD_LAUNCH_AGENT_PATH])
-        hrc = _launchctl(["load", HOTKEYD_LAUNCH_AGENT_PATH])
-        if hrc == 0:
-            print(f"Loaded LaunchAgent {HOTKEYD_LAUNCH_AGENT_LABEL}.")
+        if detail.startswith("launchctl load returned"):
+            print(f"warning: {detail} for the hotkey daemon.")
         else:
-            print(f"warning: 'launchctl load' returned {hrc} for the hotkey daemon.")
+            print(f"Loaded LaunchAgent {HOTKEYD_LAUNCH_AGENT_LABEL}.")
     else:
         print(f"warning: hotkey daemon not built ({detail}); "
               f"global hotkeys disabled, but speech still works.")

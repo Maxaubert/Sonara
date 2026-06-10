@@ -4,6 +4,7 @@ from unittest import mock
 
 from sonari import cli
 from sonari import keymap as _keymap
+from sonari.platform.macos.hotkeys import MacHotkeyBackend
 
 
 def test_hotkeyd_plist_is_valid_and_complete(tmp_path):
@@ -107,7 +108,7 @@ def test_install_writes_hotkeyd_plist_and_keymap(tmp_path, capsys):
          mock.patch.object(cli.keymap, "ensure_sonari_dir",
                            lambda: tmp_path.mkdir(parents=True, exist_ok=True)), \
          mock.patch("sonari.paths.ensure_sonari_dir"), \
-         mock.patch.object(cli, "_build_hotkeyd", return_value=(True, "built")):
+         mock.patch.object(MacHotkeyBackend, "build", return_value=(True, "built")):
         rc = cli.install()
     assert rc == 0
     assert hotkeyd_plist.exists()
@@ -145,7 +146,7 @@ def test_install_build_failure_is_nonfatal(tmp_path, capsys):
          mock.patch.object(cli.keymap, "ensure_sonari_dir",
                            lambda: tmp_path.mkdir(parents=True, exist_ok=True)), \
          mock.patch("sonari.paths.ensure_sonari_dir"), \
-         mock.patch.object(cli, "_build_hotkeyd",
+         mock.patch.object(MacHotkeyBackend, "build",
                            return_value=(False, "swiftc not found")):
         rc = cli.install()
     assert rc == 0  # speechd still installed; build failure only warns
