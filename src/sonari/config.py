@@ -12,14 +12,6 @@ DEFAULTS = {
     "verbosity": "everything",
     "background_policy": "earcon_only",
     "history_cap": 200,
-    "earcons": {
-        "permission": "/System/Library/Sounds/Funk.aiff",
-        "choice": "/System/Library/Sounds/Ping.aiff",
-        "plan": "/System/Library/Sounds/Submarine.aiff",
-        "error": "/System/Library/Sounds/Sosumi.aiff",
-        "turn_done": "/System/Library/Sounds/Tink.aiff",
-        "ready": "/System/Library/Sounds/Glass.aiff",
-    },
 }
 
 

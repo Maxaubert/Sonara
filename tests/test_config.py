@@ -8,7 +8,6 @@ def test_defaults_has_documented_top_level_keys():
         "rate",
         "verbosity",
         "background_policy",
-        "earcons",
         "history_cap",
     }
 
@@ -20,26 +19,10 @@ def test_defaults_scalar_values():
     assert DEFAULTS["background_policy"] == "earcon_only"
 
 
-def test_defaults_earcon_map_exact():
-    assert DEFAULTS["earcons"] == {
-        "permission": "/System/Library/Sounds/Funk.aiff",
-        "choice": "/System/Library/Sounds/Ping.aiff",
-        "plan": "/System/Library/Sounds/Submarine.aiff",
-        "error": "/System/Library/Sounds/Sosumi.aiff",
-        "turn_done": "/System/Library/Sounds/Tink.aiff",
-        "ready": "/System/Library/Sounds/Glass.aiff",
-    }
-
-
-def test_defaults_earcon_kinds_match_contract():
-    assert set(DEFAULTS["earcons"].keys()) == {
-        "permission",
-        "choice",
-        "plan",
-        "error",
-        "turn_done",
-        "ready",
-    }
+def test_defaults_no_longer_carries_earcons():
+    # Earcon defaults now live in the platform backend (MacEarconBackend);
+    # the daemon backfills them at startup, so config DEFAULTS must not own them.
+    assert "earcons" not in DEFAULTS
 
 
 def test_module_exposes_load_and_save():
@@ -69,10 +52,8 @@ def test_load_config_missing_returns_independent_copy(monkeypatch, tmp_path):
     pristine = copy.deepcopy(DEFAULTS)
     loaded = config.load_config()
     loaded["rate"] = 999
-    loaded["earcons"]["choice"] = "/tmp/hacked.aiff"
     assert DEFAULTS == pristine
     assert DEFAULTS["rate"] == 200
-    assert DEFAULTS["earcons"]["choice"] == "/System/Library/Sounds/Ping.aiff"
 
 
 import json as _json
@@ -98,36 +79,39 @@ def test_load_config_deep_merges_partial_file(monkeypatch, tmp_path):
     # untouched scalars keep their defaults
     assert loaded["verbosity"] == "everything"
     assert loaded["background_policy"] == "earcon_only"
-    # nested earcons: overridden key replaced, all others preserved
-    assert loaded["earcons"]["choice"] == "/custom/choice.aiff"
-    assert loaded["earcons"]["permission"] == "/System/Library/Sounds/Funk.aiff"
-    assert loaded["earcons"]["plan"] == "/System/Library/Sounds/Submarine.aiff"
-    assert loaded["earcons"]["error"] == "/System/Library/Sounds/Sosumi.aiff"
-    assert loaded["earcons"]["turn_done"] == "/System/Library/Sounds/Tink.aiff"
-    assert loaded["earcons"]["ready"] == "/System/Library/Sounds/Glass.aiff"
+    # earcons are no longer a DEFAULTS key; a persisted block passes through verbatim
+    assert loaded["earcons"] == {"choice": "/custom/choice.aiff"}
 
 
-def test_load_config_merges_extra_nested_key(monkeypatch, tmp_path):
+def test_load_config_deep_merges_nested_dict_key(monkeypatch, tmp_path):
+    # _deep_merge recurses into nested dicts: persisted keys override, base keys survive.
     cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        config,
+        "DEFAULTS",
+        {"voice": None, "rate": 200, "nested": {"a": 1, "b": 2}},
+    )
     cfg_path.write_text(
-        _json.dumps({"earcons": {"custom_kind": "/custom/extra.aiff"}}),
+        _json.dumps({"nested": {"b": 99, "c": 3}}),
         encoding="utf-8",
     )
     loaded = config.load_config()
-    assert loaded["earcons"]["custom_kind"] == "/custom/extra.aiff"
-    # all six defaults still present
-    assert loaded["earcons"]["permission"] == "/System/Library/Sounds/Funk.aiff"
-    assert len(loaded["earcons"]) == 7
+    assert loaded["nested"] == {"a": 1, "b": 99, "c": 3}
 
 
 def test_load_config_merge_does_not_mutate_defaults(monkeypatch, tmp_path):
     cfg_path = _patch_config_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        config,
+        "DEFAULTS",
+        {"voice": None, "rate": 200, "nested": {"choice": "/default.aiff"}},
+    )
     cfg_path.write_text(
-        _json.dumps({"earcons": {"choice": "/custom/choice.aiff"}}),
+        _json.dumps({"nested": {"choice": "/custom/choice.aiff"}}),
         encoding="utf-8",
     )
     config.load_config()
-    assert DEFAULTS["earcons"]["choice"] == "/System/Library/Sounds/Ping.aiff"
+    assert config.DEFAULTS["nested"]["choice"] == "/default.aiff"
 
 
 def test_load_config_tolerates_non_json(monkeypatch, tmp_path):
@@ -155,8 +139,8 @@ def test_load_config_corrupt_returns_independent_copy(monkeypatch, tmp_path):
     cfg_path = _patch_config_paths(monkeypatch, tmp_path)
     cfg_path.write_text("garbage", encoding="utf-8")
     loaded = config.load_config()
-    loaded["earcons"]["plan"] = "/tmp/x.aiff"
-    assert DEFAULTS["earcons"]["plan"] == "/System/Library/Sounds/Submarine.aiff"
+    loaded["rate"] = 999
+    assert DEFAULTS["rate"] == 200
 
 
 def _patch_config_paths_nested(monkeypatch, tmp_path):
@@ -180,7 +164,7 @@ def test_save_config_creates_dir_and_round_trips(monkeypatch, tmp_path):
     cfg["rate"] = 175
     cfg["voice"] = "Zoe (Premium)"
     cfg["verbosity"] = "medium"
-    cfg["earcons"]["choice"] = "/custom/choice.aiff"
+    cfg["earcons"] = {"choice": "/custom/choice.aiff"}
     config.save_config(cfg)
 
     assert sonari_dir.exists()
@@ -193,9 +177,9 @@ def test_save_config_creates_dir_and_round_trips(monkeypatch, tmp_path):
     assert reloaded["rate"] == 175
     assert reloaded["voice"] == "Zoe (Premium)"
     assert reloaded["verbosity"] == "medium"
+    # a persisted (non-default) earcons block round-trips verbatim
     assert reloaded["earcons"]["choice"] == "/custom/choice.aiff"
     # untouched defaults survive the round-trip
-    assert reloaded["earcons"]["permission"] == "/System/Library/Sounds/Funk.aiff"
     assert reloaded["background_policy"] == "earcon_only"
 
 

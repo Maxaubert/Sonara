@@ -451,8 +451,8 @@ def install() -> int:
 
     # 9. Voice check.
     try:
-        from . import speaker
-        voice = speaker.best_enhanced_voice()
+        from sonari.platform import get_platform
+        voice = get_platform().tts.best_voice()
         if voice:
             print(f"Voice: {voice}.")
         else:

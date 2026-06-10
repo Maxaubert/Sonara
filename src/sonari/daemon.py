@@ -202,9 +202,9 @@ class SpeechDaemon:
 
     @staticmethod
     def _launcher_present() -> bool:
-        """Delegating shim — logic lives in MacSupervisorBackend.is_installed."""
-        from sonari.platform.macos.supervisor import MacSupervisorBackend
-        return MacSupervisorBackend().is_installed()
+        """Delegating shim — logic lives in the platform supervisor backend."""
+        from sonari.platform import get_platform
+        return get_platform().supervisor.is_installed()
 
     def _setup_health(self, plugin_version: str):
         """Return (state, cue) where state is one of:
@@ -605,12 +605,18 @@ def main() -> None:
     from sonari.speaker import Speaker
     from sonari.queue import SpeechQueue
     from sonari.sessions import SessionManager
+    from sonari.platform import get_platform
 
+    _backend = get_platform()
     cfg = load_config()
+    if "earcons" not in cfg:
+        cfg["earcons"] = _backend.earcon.default_earcons()
     queue = SpeechQueue()
     speaker = Speaker(
         voice=cfg.get("voice"),
         rate=cfg.get("rate", 200),
+        say_runner=_backend.tts.run,
+        earcon_player=_backend.earcon.play,
         earcons=cfg.get("earcons"),
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))

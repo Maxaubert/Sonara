@@ -189,7 +189,7 @@ def _doctor_ok_patches(tmp_path):
     keymap = tmp_path / "keymap.json"
     return [
         mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
-        mock.patch("sonari.speaker.best_enhanced_voice", return_value="Ava (Premium)"),
+        mock.patch("sonari.platform.macos.tts.MacTtsBackend.best_voice", return_value="Ava (Premium)"),
         mock.patch("os.access", return_value=True),
         mock.patch("sonari.paths.ensure_sonari_dir"),
         mock.patch("sonari.client.send", return_value={"ok": True}),
@@ -221,7 +221,7 @@ def test_doctor_hotkeyd_binary_missing_fails(tmp_path):
     resolved.write_text("[]")
     patches = [
         mock.patch("shutil.which", side_effect=lambda n: "/usr/bin/" + n),
-        mock.patch("sonari.speaker.best_enhanced_voice", return_value="V"),
+        mock.patch("sonari.platform.macos.tts.MacTtsBackend.best_voice", return_value="V"),
         mock.patch("os.access", return_value=True),
         mock.patch("sonari.paths.ensure_sonari_dir"),
         mock.patch("sonari.client.send", return_value={"ok": True}),
