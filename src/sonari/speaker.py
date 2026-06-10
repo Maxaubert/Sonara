@@ -4,11 +4,11 @@ import os
 import subprocess
 import threading
 
-from sonari.platform.macos.tts import MacTtsBackend  # removed in Task 8's flip
+from sonari.platform.macos.tts import MacTtsBackend  # Task 8 will replace with get_platform()
 _MAC_TTS = MacTtsBackend()
 
 
-def run_say(text, voice, rate):
+def run_say(text: str, voice, rate: int):
     return _MAC_TTS.run(text, voice, rate)
 
 
