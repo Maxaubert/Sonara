@@ -11,7 +11,7 @@ from sonari.assembler import ProseAssembler
 from sonari.config import save_config, load_config
 from sonari.paths import (
     SOCKET_PATH, ensure_sonari_dir, socket_connectable, repo_root,
-    INSTALL_RECORD_PATH,
+    INSTALL_RECORD_PATH, PROMPT_OPEN_PATH,
 )
 
 
@@ -42,6 +42,7 @@ class SpeechDaemon:
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
         self._guided_sessions: set = set()
+        self._caret = None   # {"session","labels","submit","pos"} while a prompt is open
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -84,6 +85,40 @@ class SpeechDaemon:
         self._guided_sessions.add(session)
         if state != "ok" and cue:
             self._enqueue(session, "prose", cue, False)
+
+    def _open_caret(self, session: str, questions) -> None:
+        """Arm caret tracking for a single-question prompt; otherwise disarm.
+        The flag file tells hotkeyd to forward arrow keys (listen-only)."""
+        self._close_caret()
+        if len(questions) != 1 or not isinstance(questions[0], dict):
+            return
+        q = questions[0]
+        labels = []
+        for o in q.get("options", []) or []:
+            label = o.get("label", "") if isinstance(o, dict) else str(o)
+            if label:
+                labels.append(label)
+        if not labels:
+            return
+        self._caret = {
+            "session": session,
+            "labels": labels,
+            "submit": bool(q.get("multiSelect")),
+            "pos": 0,   # the TUI opens with the first option highlighted
+        }
+        try:
+            PROMPT_OPEN_PATH.touch()
+        except OSError:
+            pass   # caret narration degrades; never break the daemon
+
+    def _close_caret(self) -> None:
+        self._caret = None
+        try:
+            os.unlink(str(PROMPT_OPEN_PATH))
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
 
     def _drop_pending(self, items) -> None:
         for it in items:
@@ -247,6 +282,8 @@ class SpeechDaemon:
                 self.history.end_message(session)
                 self._captured_msg.discard(session)
                 self._options.pop(session, None)
+                if self._caret is not None and self._caret["session"] == session:
+                    self._close_caret()
             return None
 
         # Decision CONTENT is enqueued (and gated by foreground). The ALERT
@@ -263,6 +300,7 @@ class SpeechDaemon:
             if extras:
                 text = "{0} {1}".format(text, " ".join(extras))
             self._options[session] = text
+            self._open_caret(session, msg.get("questions", []) or [])
             entry = self.history.record(session, "choice", text)
             self.history.end_message(session)
             if self._may_speak(session):
@@ -275,6 +313,7 @@ class SpeechDaemon:
             if cue:
                 text = "{0} {1}".format(text, cue)
             self._options[session] = text
+            self._close_caret()
             entry = self.history.record(session, "plan", text)
             self.history.end_message(session)
             if self._may_speak(session):
@@ -287,6 +326,7 @@ class SpeechDaemon:
             if cue:
                 text = "{0} {1}".format(text, cue)
             self._options[session] = text
+            self._close_caret()
             entry = self.history.record(session, "permission", text)
             self.history.end_message(session)
             if self._may_speak(session):
@@ -316,6 +356,8 @@ class SpeechDaemon:
             self.history.reset(session)
             self._captured_msg.discard(session)
             self._options.pop(session, None)
+            if self._caret is not None and self._caret["session"] == session:
+                self._close_caret()
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
@@ -333,6 +375,8 @@ class SpeechDaemon:
             self.history.reset(session)
             self._captured_msg.discard(session)
             self._options.pop(session, None)
+            if self._caret is not None and self._caret["session"] == session:
+                self._close_caret()
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
             return None
@@ -373,6 +417,23 @@ class SpeechDaemon:
                 self._enqueue(fg, "choice", text, False)
             else:
                 self._enqueue(fg, "prose", "No options right now.", False)
+            return None
+
+        if t == MsgType.CARET_MOVE:
+            c = self._caret
+            fg = self.sessions.foreground()
+            if c is None or fg is None or c["session"] != fg:
+                return None
+            last = len(c["labels"]) - 1 + (1 if c["submit"] else 0)
+            step = 1 if msg.get("dir") == "down" else -1
+            c["pos"] = max(0, min(last, c["pos"] + step))
+            if c["submit"] and c["pos"] == len(c["labels"]):
+                spoken = "Submit."
+            else:
+                spoken = "Option {0}: {1}.".format(c["pos"] + 1,
+                                                   c["labels"][c["pos"]])
+            self.speaker.cancel()   # snappy: cut the previous announcement
+            self._enqueue(fg, "prose", spoken, False)
             return None
 
         if t == MsgType.JUMP_DECISION:

@@ -1,5 +1,14 @@
+import pytest
+
 from sonari.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
+
+
+@pytest.fixture(autouse=True)
+def _tmp_prompt_flag(tmp_path, monkeypatch):
+    import sonari.daemon as daemon_mod
+    monkeypatch.setattr(daemon_mod, "PROMPT_OPEN_PATH",
+                        tmp_path / "prompt-open")
 
 
 def _msg(mtype, session=None, **extra):
@@ -313,3 +322,97 @@ def test_reread_is_per_session():
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))      # fg=a has none
     item = queue.pop_next()
     assert item.text == "No options right now."
+
+
+# --- caret tracking ----------------------------------------------------------
+
+def _open_multiselect(daemon):
+    _choice(daemon, "fg", [{
+        "question": "Pick.",
+        "multiSelect": True,
+        "options": [{"label": "Alpha"}, {"label": "Beta"}],
+    }])
+
+
+def test_caret_speaks_focused_option_on_move():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    item = queue.pop_next()
+    assert item.text == "Option 2: Beta."
+
+
+def test_caret_past_last_option_is_submit_on_multiselect():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))     # -> Beta
+    daemon.handle_message(_msg("caret_move", dir="down"))     # -> Submit
+    texts = [queue.pop_next().text for _ in range(len(queue))]
+    assert texts[-1] == "Submit."
+
+
+def test_caret_clamps_at_edges():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="up"))        # clamp at top
+    item = queue.pop_next()
+    assert item.text == "Option 1: Alpha."
+
+
+def test_caret_single_select_has_no_submit_row():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon, "fg", [{
+        "question": "One?",
+        "options": [{"label": "Only"}],
+    }])
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))      # clamp: no Submit
+    item = queue.pop_next()
+    assert item.text == "Option 1: Only."
+
+
+def test_caret_inert_without_open_prompt():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    assert len(queue) == 0
+
+
+def test_caret_resets_on_each_new_prompt():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    daemon.handle_message(_msg("caret_move", dir="down"))      # pos -> 1
+    _open_multiselect(daemon)                                  # fresh prompt
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    item = queue.pop_next()
+    assert item.text == "Option 2: Beta."                      # snapped back to top first
+
+
+def test_caret_closes_when_prompt_answered():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _open_multiselect(daemon)
+    _prose(daemon, "fg", "Answered; moving on. ")
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    assert len(queue) == 0
+
+
+def test_caret_inert_for_multi_question_prompts():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon, "fg", [
+        {"question": "Q1?", "options": [{"label": "A"}]},
+        {"question": "Q2?", "options": [{"label": "B"}]},
+    ])
+    while len(queue):
+        queue.pop_next()
+    daemon.handle_message(_msg("caret_move", dir="down"))
+    assert len(queue) == 0
