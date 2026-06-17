@@ -44,6 +44,12 @@ class SpeechDaemon:
         self._options: "dict[str, str]" = {}
         self._voice_owner: "str | None" = None
         self._captured_msg: "set[str]" = set()
+        # Sessions with an assistant PROSE message currently streaming (between the
+        # first non-final delta and the turn boundary). We hold the voice across
+        # transient queue drains while the owner has an open message — between chunks
+        # of one reply the deque routinely hits 0, and releasing there let a second
+        # session steal the voice and silence the rest of the reply (H1).
+        self._open_msg: "set[str]" = set()
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
@@ -103,7 +109,10 @@ class SpeechDaemon:
             entry = self._pending_heard.pop(item.id, None)
             if entry is not None and completed:
                 entry.heard = True
-            if len(self.queue) == 0:
+            if len(self.queue) == 0 and self._voice_owner not in self._open_msg:
+                # Hold the voice while the owner still has an open message (the queue
+                # drains to 0 between chunks of one reply); release only at the turn
+                # boundary (H1).
                 self._voice_owner = None
 
     def _may_speak(self, session: str) -> bool:
@@ -241,8 +250,13 @@ class SpeechDaemon:
         verbosity = self.config.get("verbosity", "everything")
 
         if t == MsgType.PROSE:
+            final = msg.get("final", False)
+            if not final:
+                # A message is now streaming for this session: hold its voice across
+                # inter-chunk drains until the turn boundary (see _open_msg).
+                self._open_msg.add(session)
             a = self._assembler(session)
-            chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), msg.get("final", False))
+            chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), final)
             if chunks:
                 speak = verbosity != "quiet" and self._may_speak(session)
                 for chunk in chunks:
@@ -251,9 +265,10 @@ class SpeechDaemon:
                         self._enqueue(session, "prose", chunk, False, entry=entry)
                     else:
                         self._captured_msg.add(session)
-            if msg.get("final", False):
+            if final:
                 self.history.end_message(session)
                 self._captured_msg.discard(session)
+                self._open_msg.discard(session)   # turn boundary: voice may release
                 self._options.pop(session, None)
             return None
 
@@ -310,7 +325,13 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.EARCON:
-            self.speaker.earcon(msg.get("kind", ""))
+            kind = msg.get("kind", "")
+            self.speaker.earcon(kind)
+            if kind == "turn_done":
+                # End-of-turn boundary: the assistant produced its last delta, so the
+                # prose message is no longer open and the voice may release even if a
+                # final PROSE flag never arrived (H1 safety net).
+                self._open_msg.discard(session)
             return None
 
         if t == MsgType.FLUSH:
@@ -323,6 +344,7 @@ class SpeechDaemon:
             self._assemblers.pop(session, None)
             self.history.reset(session)
             self._captured_msg.discard(session)
+            self._open_msg.discard(session)
             self._options.pop(session, None)
             return None
 
@@ -340,6 +362,7 @@ class SpeechDaemon:
                 self._voice_owner = None
             self.history.reset(session)
             self._captured_msg.discard(session)
+            self._open_msg.discard(session)
             self._options.pop(session, None)
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
@@ -499,7 +522,8 @@ class SpeechDaemon:
                 self.note_spoken(item, completed)
                 continue
             with self._lock:
-                if self._voice_owner is not None and len(self.queue) == 0:
+                if (self._voice_owner is not None and len(self.queue) == 0
+                        and self._voice_owner not in self._open_msg):
                     self._voice_owner = None
             # nothing to say: wait until woken by an enqueue or until stop()
             self._wake.wait(self._poll_interval)

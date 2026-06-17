@@ -86,7 +86,9 @@ def handle_event(event: str, payload: dict) -> list[dict]:
         return []
 
     if event == "Stop":
-        return [_msg(type=MsgType.EARCON, kind="turn_done")]
+        # session is carried so the daemon can close this session's open prose
+        # message at the turn boundary (releases the held voice — H1).
+        return [_msg(type=MsgType.EARCON, kind="turn_done", session=session)]
 
     if event == "UserPromptSubmit":
         return [

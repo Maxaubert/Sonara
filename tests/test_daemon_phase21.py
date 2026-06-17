@@ -107,9 +107,12 @@ def test_response_landing_on_busy_voice_stays_captured_to_its_end():
     _prose(daemon, "a", "A holds the voice. ", final=False)
     sessions.set_foreground("b")
     _prose(daemon, "b", "B part one. ", final=False)        # voice busy -> captured
-    # a drains; voice frees
+    # a's turn ENDS (the Stop hook's turn_done earcon), then a drains: the voice is
+    # held across inter-chunk drains and released only at the turn boundary (H1).
+    daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
     while len(queue):
         _drain_one(daemon, queue, speaker)
+    assert daemon._voice_owner is None                      # freed at a's turn boundary
     # b's SAME message continues -> still captured (no mid-thought join)
     _prose(daemon, "b", "B part two. ", index=1, final=True)
     assert len(queue) == 0

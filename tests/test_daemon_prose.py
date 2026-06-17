@@ -108,3 +108,47 @@ def test_flush_resets_assembler_so_next_turn_is_clean():
     assert len(queue) == 1
     item = queue.pop_next()
     assert item.text == "New sentence here."
+
+
+def _earcon(session, kind):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "session": session, "kind": kind}
+
+
+def _set_fg(session):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": session}
+
+
+def test_owner_keeps_voice_across_interchunk_drain_when_other_session_flips_foreground():
+    """H1: between streamed chunks of ONE reply the queue drains to 0. If another
+    session flips foreground in that gap, the original owner must KEEP the voice and
+    its remaining deltas must still be enqueued (not captured to history and lost)."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "First sentence here. ", 0, False))
+    assert len(queue) == 1 and daemon._voice_owner == "A"
+    # Drain A's only queued item via the speak-loop bookkeeping: the queue hits 0
+    # mid-message.
+    daemon.note_spoken(queue.pop_next(), True)
+    assert len(queue) == 0
+    assert daemon._voice_owner == "A"          # held — A's message is still open
+    # A SECOND session flips foreground in that gap.
+    daemon.handle_message(_set_fg("B"))
+    # A's next delta must STILL be enqueued — the reply does not go silent.
+    daemon.handle_message(_prose("A", "Second sentence here. ", 1, False))
+    assert len(queue) == 1
+    assert queue.pop_next().text == "Second sentence here."
+
+
+def test_open_message_released_at_turn_boundary():
+    """Ownership is held during an open message but released once the turn ends
+    (the Stop turn_done earcon, which carries the session), so a new foreground
+    session can then acquire the freed voice."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "Hello there. ", 0, False))
+    daemon.note_spoken(queue.pop_next(), True)
+    assert daemon._voice_owner == "A"          # held (open message)
+    daemon.handle_message(_earcon("A", "turn_done"))
+    assert "A" not in daemon._open_msg          # turn boundary cleared the hold
+    # The next drain now releases the voice (owner no longer has an open message).
+    daemon._enqueue("A", "prose", "x", False)
+    daemon.note_spoken(queue.pop_next(), True)
+    assert daemon._voice_owner is None
