@@ -92,16 +92,19 @@ def handle_event(event: str, payload: dict) -> list[dict]:
 
     if event == "UserPromptSubmit":
         return [
-            _msg(type=MsgType.SET_FOREGROUND, session=session),
+            _msg(type=MsgType.SET_FOREGROUND, session=session,
+                 cwd=payload.get("cwd", "")),
             _msg(type=MsgType.FLUSH, session=session),
         ]
 
     if event == "SessionStart":
         return [
-            _msg(type=MsgType.SET_FOREGROUND, session=session),
+            _msg(type=MsgType.SET_FOREGROUND, session=session,
+                 cwd=payload.get("cwd", "")),
             _msg(
                 type=MsgType.SESSION_START,
                 session=session,
+                cwd=payload.get("cwd", ""),
                 plugin_version=os.environ.get("CLAUDE_PLUGIN_VERSION", ""),
                 plugin_root=os.environ.get("CLAUDE_PLUGIN_ROOT", ""),
             ),
