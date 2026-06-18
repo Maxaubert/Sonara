@@ -1,5 +1,6 @@
 import os
 import sys
+import pytest
 from sonari import paths, kokoro_provision as kp
 
 
@@ -21,3 +22,41 @@ def test_neural_enabled_reflects_venv_python_existence(monkeypatch, tmp_path):
     pybin.mkdir(parents=True)
     (pybin / ("python.exe" if sys.platform == "win32" else "python")).write_text("")
     assert kp.neural_enabled() is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3: ensure_uv
+# ---------------------------------------------------------------------------
+
+def test_ensure_uv_returns_path_when_already_present():
+    got = kp.ensure_uv(which=lambda name: "/usr/local/bin/uv",
+                       run=lambda *a, **k: pytest.fail("must not bootstrap"))
+    assert got == "/usr/local/bin/uv"
+
+
+def test_ensure_uv_bootstraps_via_pip_when_absent(tmp_path):
+    calls = []
+    userbase = tmp_path
+    bindir = userbase / "bin"
+    bindir.mkdir(parents=True)
+    (bindir / "uv").write_text("")  # pip install lands uv here
+
+    def fake_run(cmd, **k):
+        calls.append(cmd)
+
+    got = kp.ensure_uv(
+        which=lambda name: None,                     # not on PATH
+        run=fake_run,
+        base_python="/usr/bin/python3",
+        user_base=lambda py: str(userbase),
+    )
+    assert got == str(bindir / "uv")
+    assert any("pip" in c and "uv" in c for c in calls)  # bootstrap ran
+
+
+def test_ensure_uv_raises_actionable_when_unfindable(tmp_path):
+    with pytest.raises(RuntimeError) as ei:
+        kp.ensure_uv(which=lambda name: None, run=lambda *a, **k: None,
+                     base_python="/usr/bin/python3",
+                     user_base=lambda py: str(tmp_path))  # no uv ever appears
+    assert "uv" in str(ei.value).lower()
