@@ -1,8 +1,19 @@
 from unittest import mock
 
+import pytest
+
 from sonari import cli, paths
 from sonari import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey, FakeTts
+
+
+@pytest.fixture(autouse=True)
+def _no_neural_venv(monkeypatch):
+    """Isolate install() tests from any real ~/.sonari/venv on the dev machine.
+    `_daemon_python` consults `neural_enabled()` (a filesystem check), so without
+    this a machine that has run `sonari voices install` would flip these tests onto
+    the venv-interpreter path. Default neural OFF; the venv-path test overrides it."""
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
 
 
 # --- install() dispatch contract (OS mechanics live in the backend tests) ---
