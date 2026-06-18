@@ -157,11 +157,19 @@ class SpeechDaemon:
             entry = self._pending_heard.pop(item.id, None)
             if entry is not None and completed:
                 entry.heard = True
-            if len(self.queue) == 0 and self._voice_owner not in self._open_msg:
-                # Hold the voice while the owner still has an open message (the
-                # queue drains to 0 between chunks of one reply); release only at
-                # the turn boundary (H1).
+            if len(self.queue) == 0 and not self._owner_mid_reply(self._voice_owner):
+                # Hold the voice while the owner is still mid-reply (the queue drains
+                # to 0 between chunks of one reply, and between batched blocks while
+                # prose sits in the minqueue buffer); release only at the turn
+                # boundary (H1).
                 self._voice_owner = None
+
+    def _owner_mid_reply(self, session) -> bool:
+        """True while *session* is still producing a reply: it has an open (still
+        streaming) message OR prose held in the minqueue buffer. Keeps the voice
+        with its owner across the whole reply, including the gaps between batched
+        blocks (without this, batching would let the voice drop mid-reply)."""
+        return session in self._open_msg or bool(self._prose_buffer.get(session))
 
     def _may_speak(self, session: str) -> bool:
         """Voice continuity: a busy voice stays with its owner to the end; a
@@ -339,9 +347,12 @@ class SpeechDaemon:
                     else:
                         self._captured_msg.add(session)
             if final:
-                # Turn boundary: read whatever is still buffered (even below the
-                # minqueue threshold) BEFORE releasing the voice hold.
-                self._flush_prose_buffer(session)
+                # NOTE: `final` marks the end of ONE assistant text block, not the
+                # whole turn — Claude Code emits many per reply (the prose between
+                # tool calls). Flushing the minqueue buffer here would read every
+                # block separately and defeat batching. The buffer is flushed at the
+                # real turn boundary (the turn_done earcon) and when the threshold
+                # is hit; so it is deliberately NOT flushed on `final`.
                 self.history.end_message(session)
                 self._captured_msg.discard(session)
                 self._open_msg.discard(session)   # turn boundary: voice may release
@@ -875,7 +886,7 @@ class SpeechDaemon:
         if item is None:
             with self._lock:
                 if (self._voice_owner is not None and len(self.queue) == 0
-                        and self._voice_owner not in self._open_msg):
+                        and not self._owner_mid_reply(self._voice_owner)):
                     self._voice_owner = None
             # nothing to say: wait until woken by an enqueue or until stop()
             self._wake.wait(self._poll_interval)

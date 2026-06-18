@@ -29,12 +29,35 @@ def test_prose_held_below_threshold_then_flushes_all_at_once():
     assert _drain(queue) == ["One.", "Two.", "Three."]
 
 
-def test_turn_end_flushes_sub_threshold_remainder():
+def _turn_done(session):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+            "kind": "turn_done", "session": session}
+
+
+def test_turn_boundary_flushes_sub_threshold_remainder():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     daemon.config["minqueue"] = 3
-    # one sentence, but the turn finishes (final) -> read it anyway
+    # A message ending (final) is NOT the turn boundary — Claude Code marks each
+    # text block final, and there are many per reply. The remainder is read when
+    # the TURN ends (turn_done), not at every block.
     daemon.handle_message(_prose("fg", "Only one. ", 0, True))
+    assert len(queue) == 0                       # held: final alone doesn't flush
+    daemon.handle_message(_turn_done("fg"))
     assert _drain(queue) == ["Only one."]
+
+
+def test_multiple_final_messages_batch_across_the_whole_turn():
+    # The bug: a tool-heavy reply streams several text blocks, each marked final.
+    # Below-threshold prose must accumulate ACROSS the blocks and only read once
+    # the turn ends — not once per block.
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    daemon.config["minqueue"] = 5
+    daemon.handle_message(_prose("fg", "Alpha one. Alpha two. ", 0, True))
+    assert len(queue) == 0                       # block 1 done, still held
+    daemon.handle_message(_prose("fg", "Beta one. Beta two. ", 0, True))
+    assert len(queue) == 0                       # block 2 done, still below 5
+    daemon.handle_message(_turn_done("fg"))
+    assert _drain(queue) == ["Alpha one.", "Alpha two.", "Beta one.", "Beta two."]
 
 
 def test_turn_done_earcon_flushes_buffer_when_final_never_arrives():
