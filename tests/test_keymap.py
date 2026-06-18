@@ -61,9 +61,9 @@ def test_action_messages_faster_has_delta_25():
 
 def test_default_keymap_macos_uses_ctrl_cmd(mac):
     d = keymap.default_keymap()
-    # only nav/pause/mute are bound by default; every binding carries the chord
+    # only nav/pause/mute/pin_toggle are bound by default; every binding carries the chord
     assert set(d.keys()) == {"nav_prev", "nav_next", "nav_first", "nav_last",
-                             "pause", "mute"}
+                             "pause", "mute", "pin_toggle"}
     assert d["nav_next"]["key"] == "right" and d["nav_next"]["mods"] == ["ctrl", "cmd"]
     assert d["pause"]["key"] == "p" and d["mute"]["key"] == "m"
 
@@ -100,11 +100,11 @@ def test_resolve_faster_message_is_json_with_delta(mac):
 
 
 def test_default_keymap_binds_only_nav_pause_mute():
-    # The default keymap binds only nav/pause/mute. faster/slower are valid actions
+    # The default keymap binds only nav/pause/mute/pin_toggle. faster/slower are valid actions
     # but ship UNBOUND (blank by default); every default binding is a real action.
     km = keymap.default_keymap()
     assert set(km.keys()) == {"nav_prev", "nav_next", "nav_first", "nav_last",
-                              "pause", "mute"}
+                              "pause", "mute", "pin_toggle"}
     assert set(km.keys()) <= set(keymap.ACTION_MESSAGES.keys())
     assert "faster" in keymap.ACTION_MESSAGES and "faster" not in km
     assert "slower" in keymap.ACTION_MESSAGES and "slower" not in km
@@ -214,7 +214,7 @@ def test_write_default_keymap_if_absent_writes_once(monkeypatch, tmp_path):
 
 # --- write_resolved ---------------------------------------------------------
 
-def test_write_resolved_emits_array_of_nine(monkeypatch, tmp_path):
+def test_write_resolved_emits_array_of_bindings(monkeypatch, tmp_path):
     _patch_keymap_paths(monkeypatch, tmp_path)
     keymap.write_resolved()
     data = json.loads((tmp_path / "hotkeyd.resolved.json").read_text(encoding="utf-8"))
@@ -235,3 +235,30 @@ def test_resolve_nav_action_message(win):
     resolved = keymap.resolve_keymap({"nav_next": {"key": "right", "mods": ["alt"]}})
     assert resolved[0]["action"] == "nav_next"
     assert json.loads(resolved[0]["message"]) == {"type": "nav", "to": "next"}
+
+
+def test_pin_toggle_action_message():
+    from sonari.keymap import ACTION_MESSAGES
+    assert ACTION_MESSAGES["pin_toggle"] == {"type": "pin_toggle"}
+
+
+def test_pin_toggle_default_binding_is_f():
+    from sonari.keymap import default_keymap
+    km = default_keymap()
+    assert km["pin_toggle"]["key"] == "f"     # 'p' is taken by pause
+
+
+def test_pin_toggle_resolves_to_its_message():
+    import json
+    from sonari.keymap import resolve_keymap, default_keymap
+    resolved = resolve_keymap(default_keymap())
+    msgs = [json.loads(e["message"]) for e in resolved]
+    assert {"type": "pin_toggle"} in msgs
+
+
+def test_pin_toggle_is_clearable():
+    # an unknown action raises; a known one does not -> proves it is registered
+    from sonari.keymap import resolve_keymap
+    from sonari.platform import get_platform
+    mods = list(get_platform().hotkey.default_mods())
+    resolve_keymap({"pin_toggle": {"key": "", "mods": mods}})   # cleared -> no raise
