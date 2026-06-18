@@ -128,3 +128,13 @@ def test_doctor_neural_row_fails_when_venv_unhealthy(monkeypatch):
     rows = _doctor_rows(monkeypatch)
     ok, detail = rows["neural voices"]
     assert ok is False and "voices install" in detail
+
+
+def test_doctor_neural_row_ready_when_healthy(monkeypatch):
+    """Healthy venv -> (True, detail containing "ready") with the venv python path."""
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(kp, "neural_healthy", lambda app: True)
+    monkeypatch.setattr("sonari.paths.kokoro_venv_python", lambda: "/venv/bin/python")
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["neural voices"]
+    assert ok is True and "ready" in detail
