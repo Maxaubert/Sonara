@@ -803,9 +803,24 @@ class WinSupervisorBackend(SupervisorBackend):
         #    user settings.json (it raises ValueError); doing it before the Task
         #    Scheduler registration means a failure leaves no orphaned autostart
         #    task behind (partial-install avoidance).
+        #
+        #    But ONLY when the sonari plugin is NOT enabled: an enabled plugin
+        #    already supplies these exact hooks via its hooks/hooks.json, so also
+        #    writing them to settings.json fires every event TWICE — each assistant
+        #    message is then spoken twice (#44). When the plugin is on, heal any
+        #    hooks a prior install left behind and write nothing new.
         settings = claude_settings_path()
-        merge_hooks_into_settings(settings, python, _hook_py())
-        print("Wrote Sonari hooks to: {0}".format(settings))
+        if settings_has_sonari_plugin(settings):
+            if settings_has_sonari_hooks(settings):
+                remove_hooks_from_settings(settings, _hook_py())
+                print("Removed duplicate Sonari hooks from {0}; the enabled sonari "
+                      "plugin already supplies them.".format(settings))
+            else:
+                print("Sonari plugin enabled; hooks come from the plugin "
+                      "(nothing written to {0}).".format(settings))
+        else:
+            merge_hooks_into_settings(settings, python, _hook_py())
+            print("Wrote Sonari hooks to: {0}".format(settings))
         # 2. Task Scheduler autostart (pythonw runs the supervisor loop).
         supervisor_py = os.path.join(app_dir, "sonari", "platform",
                                      "windows", "supervisor_loop.py")
@@ -862,8 +877,15 @@ class WinSupervisorBackend(SupervisorBackend):
         (written by 'sonari install') OR the enabled 'sonari' plugin (its
         hooks/hooks.json). For the settings.json path, go RED if a hook is present
         but its baked script path no longer exists — the stale-after-plugin-update
-        case that otherwise stops speech silently while doctor stayed green (#8)."""
+        case that otherwise stops speech silently while doctor stayed green (#8).
+        Also go RED when BOTH sources are present: each event then fires twice and
+        every message is spoken twice (#44); 're-run sonari install' heals it."""
         path = claude_settings_path()
+        if settings_has_sonari_hooks(path) and settings_has_sonari_plugin(path):
+            return ("hooks installed", False,
+                    "hooks registered TWICE (settings.json + the sonari plugin) — "
+                    "every message is spoken twice; re-run 'sonari install' to heal "
+                    "(it drops the settings.json copy when the plugin is enabled)")
         if settings_has_sonari_hooks(path):
             missing = [p for p in _sonari_hook_paths(path)
                        if p and not os.path.exists(p)]

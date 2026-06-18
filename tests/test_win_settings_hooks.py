@@ -163,6 +163,9 @@ def test_merge_rejects_malformed_hooks_shape(tmp_path):
 
 def test_install_merges_hooks_before_registering_the_task(tmp_path, monkeypatch):
     b = sup.WinSupervisorBackend()
+    sp = tmp_path / "settings.json"   # no plugin enabled -> the merge path runs
+    sp.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
     calls = []
     monkeypatch.setattr(sup, "task_install",
                         lambda *a, **k: (calls.append("task"), 0)[1])
@@ -172,3 +175,63 @@ def test_install_merges_hooks_before_registering_the_task(tmp_path, monkeypatch)
                         lambda *a, **k: (calls.append("launcher"), "x")[1])
     b.install("pythonw.exe", str(tmp_path))
     assert calls.index("hooks") < calls.index("task"), calls
+
+
+# --- #44: with the plugin enabled, the plugin's hooks/hooks.json supplies the
+# hooks; writing them to settings.json too makes every event fire twice (each
+# assistant message is spoken twice). install() must NOT write settings.json
+# hooks when the plugin is enabled, and must HEAL a prior duplicate. ---
+
+def _enable_plugin(sp_path):
+    data = _read(sp_path) if os.path.exists(sp_path) else {}
+    data["enabledPlugins"] = {"sonari@sonari": True}
+    with open(sp_path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+
+def _install_with_settings(monkeypatch, sp_path, app_dir):
+    b = sup.WinSupervisorBackend()
+    monkeypatch.setattr(sup, "claude_settings_path", lambda: sp_path)
+    monkeypatch.setattr(sup, "task_install", lambda *a, **k: 0)
+    monkeypatch.setattr(b, "_place_launcher", lambda *a, **k: "x")
+    b.install("pythonw.exe", app_dir)
+
+
+def test_install_skips_settings_hooks_when_plugin_enabled(tmp_path, monkeypatch):
+    sp = str(tmp_path / "settings.json")
+    with open(sp, "w", encoding="utf-8") as fh:
+        json.dump({"enabledPlugins": {"sonari@sonari": True}, "theme": "dark"}, fh)
+    _install_with_settings(monkeypatch, sp, str(tmp_path))
+    assert settings_has_sonari_hooks(sp) is False        # not double-registered
+    assert settings_has_sonari_plugin(sp) is True        # plugin enablement kept
+    assert _read(sp)["theme"] == "dark"                  # unrelated keys preserved
+
+
+def test_install_heals_existing_duplicate_when_plugin_enabled(tmp_path, monkeypatch):
+    sp = str(tmp_path / "settings.json")
+    merge_hooks_into_settings(sp, PW, HOOK)              # a prior bad install
+    _enable_plugin(sp)
+    assert settings_has_sonari_hooks(sp) is True         # precondition: duplicate
+    _install_with_settings(monkeypatch, sp, str(tmp_path))
+    assert settings_has_sonari_hooks(sp) is False        # healed
+    assert settings_has_sonari_plugin(sp) is True
+
+
+def test_install_writes_settings_hooks_when_plugin_not_enabled(tmp_path, monkeypatch):
+    sp = str(tmp_path / "settings.json")
+    with open(sp, "w", encoding="utf-8") as fh:
+        json.dump({"theme": "dark"}, fh)
+    _install_with_settings(monkeypatch, sp, str(tmp_path))
+    assert settings_has_sonari_hooks(sp) is True         # non-plugin path unchanged
+
+
+def test_hooks_doctor_row_red_when_plugin_and_settings_hooks_both_present(
+        tmp_path, monkeypatch):
+    sp = str(tmp_path / "settings.json")
+    hook = tmp_path / "sonari-hook"
+    hook.write_text("#!/usr/bin/env python\n", encoding="utf-8")  # path must exist
+    merge_hooks_into_settings(sp, PW, str(hook))
+    _enable_plugin(sp)
+    monkeypatch.setattr(sup, "claude_settings_path", lambda: sp)
+    name, ok, detail = sup.WinSupervisorBackend().hooks_doctor_row()
+    assert ok is False, (name, detail)                   # double-fire flagged red
