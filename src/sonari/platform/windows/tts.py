@@ -225,12 +225,17 @@ class WinTtsBackend(TtsBackend):
         [kokoro] extra is installed (else advertising them would let a user pick a
         voice whose first speak silently fails). Internal callers that need the WinRT
         objects use _all_voice_infos()/_best_voice_info() instead. (#16)"""
-        from sonari import kokoro
+        from sonari import kokoro, kokoro_provision
         try:
             native = [v.display_name for v in self._all_voice_infos()]
         except Exception:  # noqa: BLE001 - listing must work even with no winrt
             native = []
-        kokoro_voices = list(kokoro.VOICES) if kokoro.is_installed() else []
+        # Advertise the neural voices when the engine is reachable on this machine:
+        # importable HERE (is_installed) OR provisioned in the venv (neural_enabled).
+        # The CLI runs on system python without the extra while the daemon synthesizes
+        # via the venv, so gating on is_installed alone hid them from `sonari voice`.
+        neural = kokoro.is_installed() or kokoro_provision.neural_enabled()
+        kokoro_voices = list(kokoro.VOICES) if neural else []
         return native + kokoro_voices
 
     def _best_voice_info(self, lang_prefix: str = "en-US"):

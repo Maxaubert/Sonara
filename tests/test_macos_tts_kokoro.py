@@ -15,6 +15,7 @@ import pytest
 from sonari.platform.macos import tts as mod
 from sonari.platform.macos.tts import MacTtsBackend
 from sonari import kokoro
+from sonari import kokoro_provision as kp
 
 
 def _bare_backend():
@@ -294,6 +295,7 @@ def test_poll_observes_exit_runs_cleanup_idempotently(monkeypatch, tmp_path):
 def test_list_voices_appends_kokoro_only_when_installed(monkeypatch):
     listing = "Samantha   en_US  # hi\n"
     monkeypatch.setattr(mod.subprocess, "check_output", lambda *a, **k: listing)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)  # isolate the is_installed gate
 
     monkeypatch.setattr(kokoro, "is_installed", lambda: True)
     voices = MacTtsBackend.__new__(MacTtsBackend).list_voices()
@@ -313,6 +315,20 @@ def test_list_voices_survives_say_failure(monkeypatch):
     monkeypatch.setattr(kokoro, "is_installed", lambda: True)
     voices = MacTtsBackend.__new__(MacTtsBackend).list_voices()  # must not raise
     assert "af_heart" in voices
+
+
+def test_list_voices_lists_kokoro_when_venv_provisioned_without_extra(monkeypatch):
+    # The CLI runs on system python where the [kokoro] extra is NOT importable
+    # (is_installed False), but the daemon synthesizes via the provisioned venv.
+    # list_voices must still advertise the neural voices so they are discoverable
+    # (gate on neural_enabled, not just this interpreter's is_installed).
+    listing = "Samantha   en_US  # hi\n"
+    monkeypatch.setattr(mod.subprocess, "check_output", lambda *a, **k: listing)
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    voices = MacTtsBackend.__new__(MacTtsBackend).list_voices()
+    assert "af_heart" in voices
+    assert set(kokoro.VOICES) <= set(voices)
 
 
 # ---------------------------------------------------------------------------
