@@ -100,3 +100,24 @@ def neural_healthy(app_dir: str, run=subprocess.check_output) -> bool:
     except Exception:  # noqa: BLE001 - any failure means "not healthy"
         return False
     return out.strip() == "True"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: install_kokoro + uninstall_kokoro orchestrators
+# ---------------------------------------------------------------------------
+
+def install_kokoro(app_dir, *, ensure_uv=ensure_uv, provision=provision,
+                   predownload_model=predownload_model) -> None:
+    """Provision the neural venv end-to-end. Any step raising aborts the whole
+    operation (the caller reports it and leaves the daemon on its current
+    interpreter)."""
+    uv = ensure_uv()
+    provision(uv)
+    predownload_model(app_dir)
+
+
+def uninstall_kokoro(rmtree=shutil.rmtree) -> None:
+    """Remove the neural venv (idempotent). The daemon reverts to system Python on
+    the next install/wiring because neural_enabled() then returns False."""
+    if os.path.isdir(str(paths.KOKORO_VENV)):
+        rmtree(str(paths.KOKORO_VENV))

@@ -109,3 +109,37 @@ def test_neural_healthy_false_on_subprocess_error(monkeypatch):
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
     def boom(*a, **k): raise OSError("no python")
     assert kp.neural_healthy("/app", run=boom) is False
+
+
+# ---------------------------------------------------------------------------
+# Task 6: install_kokoro + uninstall_kokoro orchestrators
+# ---------------------------------------------------------------------------
+
+def test_install_kokoro_runs_steps_in_order():
+    order = []
+    kp.install_kokoro(
+        "/app",
+        ensure_uv=lambda **k: order.append("uv") or "/bin/uv",
+        provision=lambda uv, **k: order.append(("provision", uv)),
+        predownload_model=lambda app, **k: order.append(("model", app)),
+    )
+    assert order == ["uv", ("provision", "/bin/uv"), ("model", "/app")]
+
+
+def test_install_kokoro_aborts_if_provision_fails():
+    def boom(uv, **k): raise RuntimeError("uv venv failed")
+    with pytest.raises(RuntimeError):
+        kp.install_kokoro(
+            "/app",
+            ensure_uv=lambda **k: "/bin/uv",
+            provision=boom,
+            predownload_model=lambda app, **k: pytest.fail("must not predownload"),
+        )
+
+
+def test_uninstall_kokoro_removes_venv_idempotently(monkeypatch, tmp_path):
+    venv = tmp_path / "venv"; venv.mkdir()
+    monkeypatch.setattr(paths, "KOKORO_VENV", venv)
+    kp.uninstall_kokoro()
+    assert not venv.exists()
+    kp.uninstall_kokoro()  # second call must not raise
