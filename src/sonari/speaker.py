@@ -23,18 +23,44 @@ class Speaker:
         self._earcons = dict(earcons) if earcons else {}
         self._current = None
         self._current_lock = threading.Lock()
+        self._cancel_epoch = 0          # bumped by cancel(); closes the cancel races
         self._earcon_procs: list = []
         self._wait_timeout = _wait_timeout
 
-    def speak(self, text: str) -> bool:
+    def cancel_epoch(self) -> int:
+        """The current cancel epoch. The daemon captures this at CLAIM time (under
+        its own lock) and passes it to speak(), so a cancel landing in the gap
+        between the claim and speak() is detected, not lost."""
+        with self._current_lock:
+            return self._cancel_epoch
+
+    def speak(self, text: str, cancel_epoch=None) -> bool:
         """Speak text, blocking. Return True iff the utterance COMPLETED
         (say exited 0). A cancelled/terminated utterance returns False so the
-        caller can leave it marked unheard (sentence-granular replay)."""
+        caller can leave it marked unheard (sentence-granular replay).
+
+        *cancel_epoch* is the baseline to compare against. The daemon captures it at
+        the moment it claims the item (under its lock) and passes it here; a cancel()
+        arriving between the claim and this call bumps the live epoch past the
+        captured baseline, so it is still detected. When None, the baseline is the
+        epoch read here (the prior single-call behavior)."""
         if self._say_runner is None:
             return False
+        # Establish the baseline epoch BEFORE synthesis. say_runner (TTS synthesis)
+        # can take tens-hundreds of ms, during which there is no proc to cancel — a
+        # cancel() in that window used to be a silent no-op and the utterance played
+        # anyway. If the epoch advanced past the baseline while we synthesized, a
+        # cancel landed: terminate immediately and report NOT completed (replay).
+        with self._current_lock:
+            epoch = self._cancel_epoch if cancel_epoch is None else cancel_epoch
         proc = self._say_runner(text, self._voice, self._rate)
         with self._current_lock:
-            self._current = proc
+            interrupted = self._cancel_epoch != epoch
+            if not interrupted:
+                self._current = proc
+        if interrupted:
+            proc.terminate()
+            return False
         try:
             try:
                 proc.wait(timeout=self._wait_timeout)
@@ -49,6 +75,7 @@ class Speaker:
 
     def cancel(self) -> None:
         with self._current_lock:
+            self._cancel_epoch += 1     # so a speak() mid-synthesis aborts on return
             proc = self._current
         if proc is not None:
             proc.terminate()

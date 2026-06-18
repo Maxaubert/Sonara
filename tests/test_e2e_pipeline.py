@@ -32,12 +32,17 @@ class FakeSpeaker:
         self.voice = None
         self.rate = DEFAULTS["rate"]
         self.cancelled = 0
+        self._epoch = 0
 
-    def speak(self, text):
+    def speak(self, text, cancel_epoch=None):
         self.log.append(("text", text))
+
+    def cancel_epoch(self):
+        return self._epoch
 
     def cancel(self):
         self.cancelled += 1
+        self._epoch += 1
 
     def earcon(self, kind):
         self.log.append(("earcon", kind))

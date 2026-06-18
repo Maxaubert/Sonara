@@ -495,7 +495,12 @@ class SpeechDaemon:
             if item is not None:
                 with self._lock:
                     self._current_item = item
-                completed = self.speaker.speak(item.text)
+                    # Capture the speaker's cancel baseline atomically with the
+                    # claim. A cancel() after the lock releases (before/while speak()
+                    # runs) bumps the epoch past this baseline, so a cancelled
+                    # utterance is detected instead of playing in full.
+                    cancel_epoch = self.speaker.cancel_epoch()
+                completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
                 self.note_spoken(item, completed)
                 continue
             with self._lock:

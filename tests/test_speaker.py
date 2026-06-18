@@ -308,3 +308,63 @@ def test_speak_returns_false_when_say_terminated():
     from sonari.speaker import Speaker
     s = Speaker(say_runner=lambda text, voice, rate: _KilledProc())
     assert s.speak("Hello there.") is False
+
+
+# --- cancel-epoch: synth-gap + pop->speak-gap (cancel-race) -----------------
+
+def test_cancel_during_synthesis_aborts_before_play():
+    """A cancel() that lands while say_runner is still synthesizing — before a proc
+    exists — must still abort: speak() returns False and the just-created proc is
+    terminated, not waited on / played."""
+    made = []
+    sp = None
+
+    def runner(text, voice, rate):
+        sp.cancel()                      # cancel lands mid-synthesis (no proc yet)
+        proc = FakePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    completed = sp.speak("hello")
+    assert completed is False            # not completed -> caller replays / unheard
+    assert made[0].terminate_calls == 1  # the new proc was terminated
+    assert made[0].wait_calls == 0       # never waited on / played
+
+
+def test_speak_honors_external_cancel_epoch_baseline():
+    """The daemon captures cancel_epoch() at CLAIM time (under its lock) and calls
+    speak() AFTER releasing the lock. A cancel landing in that gap bumps the epoch;
+    speak() must compare against the passed-in baseline and report the utterance as
+    cancelled rather than re-reading the already-bumped value."""
+    made = []
+
+    def runner(text, voice, rate):
+        proc = FakePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    epoch0 = sp.cancel_epoch()
+    sp.cancel()                          # cancel in the pop->speak gap (bumps past epoch0)
+    completed = sp.speak("hello", cancel_epoch=epoch0)
+    assert completed is False
+    assert made[0].terminate_calls == 1
+    assert made[0].wait_calls == 0
+
+
+def test_speak_without_external_epoch_uses_current_baseline():
+    """Backward-compatible: with no cancel_epoch passed, the baseline is the epoch
+    read here, so a prior cancel with no pending speak is not retroactive."""
+    made = []
+
+    def runner(text, voice, rate):
+        proc = FakePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    sp.cancel()                          # bumps epoch, but no speak was in flight
+    sp.speak("hello")                    # next speak starts clean
+    assert made[0].wait_calls == 1       # played, not retroactively cancelled
+    assert made[0].terminate_calls == 0

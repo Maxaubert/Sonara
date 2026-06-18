@@ -14,16 +14,21 @@ class FakeSpeaker:
         self.rates: list[int] = []
         self.voices: list = []
         self.complete = True          # next speak() reports completed?
+        self._epoch = 0
 
-    def speak(self, text: str) -> bool:
+    def speak(self, text: str, cancel_epoch=None) -> bool:
         self.spoken.append(text)
         return self.complete
+
+    def cancel_epoch(self) -> int:
+        return self._epoch
 
     def earcon(self, kind: str) -> None:
         self.earcons.append(kind)
 
     def cancel(self) -> None:
         self.cancels += 1
+        self._epoch += 1
 
     def set_rate(self, r: int) -> None:
         self.rates.append(r)
