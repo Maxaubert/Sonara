@@ -1,6 +1,7 @@
 from unittest import mock
 
-from sonari import cli
+from sonari import cli, paths
+from sonari import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey, FakeTts
 
 
@@ -197,3 +198,50 @@ def test_install_macos_stdout_locks_hotkeyd_and_speechd_lines(tmp_path, monkeypa
     assert "Loaded LaunchAgent com.sonari.hotkeyd." in out       # regression guard
     assert "Placed launcher:" in out
     assert "Voice: Ava (Premium)." in out
+
+
+# --- neural-aware daemon interpreter selection (_daemon_python) ---
+
+def test_daemon_python_prefers_venv_when_neural_enabled(monkeypatch):
+    class _Sup:
+        def resolve_python(self): return "/usr/bin/python3"
+        def _probe_python_version(self, p): return (3, 12)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
+    assert cli._daemon_python(_Sup()) == "/venv/bin/python"
+
+
+def test_daemon_python_falls_back_when_venv_too_old(monkeypatch):
+    # A venv that somehow probes <3.10 must NOT be used (defensive).
+    class _Sup:
+        def resolve_python(self): return "/usr/bin/python3"
+        def _probe_python_version(self, p): return (3, 9)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
+    assert cli._daemon_python(_Sup()) == "/usr/bin/python3"
+
+
+def test_daemon_python_uses_system_when_no_neural(monkeypatch):
+    class _Sup:
+        def resolve_python(self): return "/usr/bin/python3"
+        def _probe_python_version(self, p): return (3, 12)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    assert cli._daemon_python(_Sup()) == "/usr/bin/python3"
+
+
+def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch):
+    # install() must hand the venv python to sup.install() when neural is on.
+    sup = FakeSupervisor(python="/usr/bin/python3")
+    pb = fake_platform(supervisor=sup, hotkey=FakeHotkey(ok=True, detail="ok"),
+                       tts=FakeTts("Samantha"))
+    monkeypatch.setattr(cli, "_platform", lambda: pb)
+    monkeypatch.setattr(cli, "_copy_app", lambda root: str(tmp_path / "app"))
+    monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
+    monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
+    monkeypatch.setattr("sonari.keymap.write_default_keymap_if_absent", lambda: None)
+    monkeypatch.setattr("sonari.keymap.write_resolved", lambda: None)
+    monkeypatch.setattr("sonari.paths.ensure_sonari_dir", lambda: None)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
+    cli.install()
+    assert ("install", "/venv/bin/python", str(tmp_path / "app")) in sup.calls

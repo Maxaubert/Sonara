@@ -259,6 +259,20 @@ def _resolve_python():
     return _platform().supervisor.resolve_python()
 
 
+def _daemon_python(sup):
+    """Interpreter the daemon should run on: the neural venv's Python when it is
+    provisioned AND probes >=3.10, else the system Python from resolve_python().
+    Deriving neural-state from the venv keeps re-runs of `sonari install` on the
+    venv interpreter without a separate flag."""
+    from sonari import kokoro_provision as kp
+    if kp.neural_enabled():
+        venv_py = paths.kokoro_venv_python()
+        ver = sup._probe_python_version(venv_py)
+        if ver is not None and ver >= (3, 10):
+            return venv_py
+    return sup.resolve_python()
+
+
 def _write_install_record(python: str, python_version: str,
                           plugin_root: str, app_path: str,
                           plugin_version: str) -> None:
@@ -333,7 +347,7 @@ def install() -> int:
     sup = _platform().supervisor
 
     # 1. Resolve the best Python >= 3.9 (FATAL if none).
-    python = sup.resolve_python()
+    python = _daemon_python(sup)
     if python is None:
         print("No suitable Python >= 3.9 found. Install Python 3.9+ "
               "(python.org) and re-run: sonari install")
