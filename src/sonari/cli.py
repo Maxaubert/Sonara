@@ -459,6 +459,32 @@ def _cmd_uninstall(_args) -> int:
     return uninstall()
 
 
+def _cmd_voices_install(_args) -> int:
+    """Provision the Kokoro neural-voice venv, then re-wire the daemon onto it."""
+    from sonari import kokoro_provision as kp
+    paths.ensure_sonari_dir()
+    app_dir = str(paths.APP_DIR)
+    print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
+    try:
+        kp.install_kokoro(app_dir)
+    except Exception as exc:  # noqa: BLE001 - report, do not half-wire
+        print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
+        return 1
+    rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
+    if rc == 0 and kp.neural_healthy(app_dir):
+        print("Neural voices ready. Pick one with: sonari voice af_heart")
+    return rc
+
+
+def _cmd_voices_uninstall(_args) -> int:
+    """Remove the neural venv and revert the daemon to system Python."""
+    from sonari import kokoro_provision as kp
+    kp.uninstall_kokoro()
+    rc = install()  # neural_enabled() now False -> reverts to resolve_python()
+    print("Neural voices removed; reverted to the system voice.")
+    return rc
+
+
 def _cmd_daemon(_args) -> int:
     from . import daemon
     daemon.main()
@@ -482,6 +508,13 @@ def _register_local(sub) -> None:
     sp.add_argument("action", nargs="?", help="action to unbind")
     sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
     sp.set_defaults(func=_cmd_keymap)
+    vp = sub.add_parser("voices", help="install/remove neural (Kokoro) voices")
+    vsub = vp.add_subparsers(dest="voices_command")
+    vsub.add_parser("install", help="provision neural voices").set_defaults(
+        func=_cmd_voices_install)
+    vsub.add_parser("uninstall", help="remove neural voices").set_defaults(
+        func=_cmd_voices_uninstall)
+    vp.set_defaults(func=lambda _a: (vp.print_help() or 2))
 
 
 def main(argv: Optional[list] = None) -> int:
