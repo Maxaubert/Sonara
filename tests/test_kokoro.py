@@ -1,0 +1,80 @@
+import io
+import wave
+
+import numpy as np
+import pytest
+
+from sonari import kokoro
+
+
+def test_voices_has_28_including_af_heart_and_asmr():
+    assert "af_heart" in kokoro.VOICES          # default, top-rated
+    assert "af_nicole" in kokoro.VOICES         # the ASMR/whisper voice
+    assert len(kokoro.VOICES) == 28
+    assert len(set(kokoro.VOICES)) == 28        # no dupes
+
+
+def test_is_kokoro_voice():
+    assert kokoro.is_kokoro_voice("af_heart")
+    assert kokoro.is_kokoro_voice("kokoro:af_heart")     # engine-prefixed form
+    assert kokoro.is_kokoro_voice("AF_HEART")            # case-insensitive
+    assert not kokoro.is_kokoro_voice("Microsoft David")
+    assert not kokoro.is_kokoro_voice("")
+    assert not kokoro.is_kokoro_voice(None)
+
+
+def test_normalize_voice_strips_engine_prefix():
+    assert kokoro.normalize_voice("kokoro:af_heart") == "af_heart"
+    assert kokoro.normalize_voice("af_heart") == "af_heart"
+    assert kokoro.normalize_voice("KOKORO:AF_NICOLE") == "af_nicole"
+
+
+def test_rate_to_speed_maps_and_clamps():
+    assert kokoro.rate_to_speed(200) == pytest.approx(1.0)
+    assert kokoro.rate_to_speed(300) == pytest.approx(1.5)
+    assert kokoro.rate_to_speed(100) == pytest.approx(0.5)
+    assert kokoro.rate_to_speed(2000) <= 2.0      # clamped high
+    assert kokoro.rate_to_speed(1) >= 0.5         # clamped low
+
+
+def test_to_wav_bytes_is_valid_16bit_mono_wav():
+    audio = np.array([0.0, 0.5, -0.5, 1.0, -1.0], dtype=np.float32)
+    data = kokoro.to_wav_bytes(audio, 24000)
+    with wave.open(io.BytesIO(data)) as w:
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2          # 16-bit
+        assert w.getframerate() == 24000
+        assert w.getnframes() == 5
+
+
+class _FakeKokoro:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, text, voice, speed, lang):
+        self.calls.append((text, voice, speed, lang))
+        return (np.array([0.1, 0.2, 0.3], dtype=np.float32), 24000)
+
+
+def test_engine_is_lazy_and_synth_calls_create(tmp_path):
+    made = []
+    fake = _FakeKokoro()
+
+    def factory(model_path, voices_path):
+        made.append((model_path, voices_path))
+        return fake
+
+    eng = kokoro.KokoroEngine(tmp_path, factory=factory, ensure=lambda: None)
+    assert made == []                          # nothing loaded until first synth
+    audio, sr = eng.synth("hello", "kokoro:af_heart", 1.0)
+    assert len(made) == 1                       # loaded once
+    assert fake.calls == [("hello", "af_heart", 1.0, "en-us")]  # prefix normalized
+    assert sr == 24000 and list(audio) == pytest.approx([0.1, 0.2, 0.3])
+
+
+def test_engine_wav_bytes_roundtrips(tmp_path):
+    eng = kokoro.KokoroEngine(
+        tmp_path, factory=lambda m, v: _FakeKokoro(), ensure=lambda: None)
+    data = eng.wav_bytes("hi", "af_heart", 1.0)
+    with wave.open(io.BytesIO(data)) as w:
+        assert w.getframerate() == 24000 and w.getnframes() == 3
