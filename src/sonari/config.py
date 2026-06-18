@@ -12,6 +12,7 @@ DEFAULTS = {
     "verbosity": "everything",
     "background_policy": "earcon_only",
     "history_cap": 200,
+    "minqueue": 1,
 }
 
 

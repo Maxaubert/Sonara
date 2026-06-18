@@ -65,6 +65,12 @@ def _cmd_rate(args) -> int:
     return 0
 
 
+def _cmd_minqueue(args) -> int:
+    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_MINQUEUE, "minqueue": args.n})
+    print("Min queue set to {0}.".format(args.n))
+    return 0
+
+
 def _cmd_voice(args) -> int:
     # No name -> list the installed voices so the user can pick one (changes
     # nothing). A name -> set it; the name may be several words ("Microsoft David"),
@@ -158,6 +164,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("voice", help="set the say voice (omit name to list voices)")
     sp.add_argument("name", nargs="*", help="voice name; omit to list installed voices")
     sp.set_defaults(func=_cmd_voice)
+
+    sp = sub.add_parser(
+        "minqueue", help="items to batch before reading (1 = read immediately)")
+    sp.add_argument("n", type=int)
+    sp.set_defaults(func=_cmd_minqueue)
 
     sub.add_parser("repeat", help="repeat the last spoken item").set_defaults(
         func=_cmd_repeat)
