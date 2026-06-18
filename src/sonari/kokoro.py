@@ -13,6 +13,7 @@ first time a Kokoro voice is actually spoken (declared as the `[kokoro]` extra).
 """
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 import urllib.request
@@ -71,6 +72,34 @@ def rate_to_speed(rate) -> float:
     except (TypeError, ValueError):
         return 1.0
     return max(0.5, min(2.0, speed))
+
+
+# The optional [kokoro] extra: kokoro_onnx pulls onnxruntime; numpy is used by
+# to_wav_bytes/synth. find_spec checks importability WITHOUT importing the heavy
+# stack, so this stays cheap enough to call from list_voices().
+_EXTRA_MODULES = ("numpy", "kokoro_onnx")
+
+_INSTALL_HINT = (
+    "The optional Kokoro neural-TTS engine is not installed, so its voices cannot "
+    "synthesize. Install the extra: pip install 'sonari[kokoro]'"
+)
+
+
+def is_installed() -> bool:
+    """True if the optional [kokoro] extra is importable. Gates voice listing and
+    the actionable require_installed() check — kept cheap via find_spec (no import)."""
+    try:
+        return all(importlib.util.find_spec(m) is not None for m in _EXTRA_MODULES)
+    except (ImportError, ValueError):
+        return False
+
+
+def require_installed() -> None:
+    """Raise an actionable RuntimeError if the [kokoro] extra is absent — instead of
+    the raw ModuleNotFoundError that the daemon's speak loop would swallow into
+    silent no-speech. Mirrors the WinRT backend's _require_winrt() (#7)."""
+    if not is_installed():
+        raise RuntimeError(_INSTALL_HINT)
 
 
 def to_wav_bytes(audio, sample_rate: int = _SAMPLE_RATE) -> bytes:

@@ -221,14 +221,17 @@ class WinTtsBackend(TtsBackend):
 
     def list_voices(self) -> list:
         """ABC contract: list of selectable voice NAMES (str) — the installed
-        OneCore voices PLUS the 28 Kokoro neural voices. Internal callers that need
-        the WinRT objects use _all_voice_infos()/_best_voice_info() instead. (#16)"""
+        OneCore voices PLUS the 28 Kokoro neural voices, but only when the optional
+        [kokoro] extra is installed (else advertising them would let a user pick a
+        voice whose first speak silently fails). Internal callers that need the WinRT
+        objects use _all_voice_infos()/_best_voice_info() instead. (#16)"""
         from sonari import kokoro
         try:
             native = [v.display_name for v in self._all_voice_infos()]
         except Exception:  # noqa: BLE001 - listing must work even with no winrt
             native = []
-        return native + list(kokoro.VOICES)
+        kokoro_voices = list(kokoro.VOICES) if kokoro.is_installed() else []
+        return native + kokoro_voices
 
     def _best_voice_info(self, lang_prefix: str = "en-US"):
         """Select a VoiceInformation in priority order:
@@ -320,6 +323,7 @@ class WinTtsBackend(TtsBackend):
         earcon mixing, and cleanup are identical)."""
         from sonari import kokoro
         if kokoro.is_kokoro_voice(voice):
+            kokoro.require_installed()   # actionable error instead of a raw ImportError
             data = self._get_kokoro().wav_bytes(
                 text, voice, kokoro.rate_to_speed(rate))
         else:

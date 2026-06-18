@@ -78,3 +78,26 @@ def test_engine_wav_bytes_roundtrips(tmp_path):
     data = eng.wav_bytes("hi", "af_heart", 1.0)
     with wave.open(io.BytesIO(data)) as w:
         assert w.getframerate() == 24000 and w.getnframes() == 3
+
+
+# --- optional [kokoro] extra: availability gate -----------------------------
+
+def test_is_installed_reflects_find_spec(monkeypatch):
+    monkeypatch.setattr(kokoro.importlib.util, "find_spec", lambda name: object())
+    assert kokoro.is_installed() is True
+    monkeypatch.setattr(kokoro.importlib.util, "find_spec", lambda name: None)
+    assert kokoro.is_installed() is False
+
+
+def test_require_installed_raises_actionable_when_absent(monkeypatch):
+    # When the extra is missing, raise a RuntimeError that names the fix — not the
+    # raw ModuleNotFoundError the daemon would swallow into silent no-speech.
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)
+    with pytest.raises(RuntimeError) as ei:
+        kokoro.require_installed()
+    assert "kokoro" in str(ei.value).lower()      # mentions the extra to install
+
+
+def test_require_installed_noop_when_present(monkeypatch):
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
+    kokoro.require_installed()                     # must not raise
