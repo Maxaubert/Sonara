@@ -308,3 +308,65 @@ def test_speak_returns_false_when_say_terminated():
     from sonari.speaker import Speaker
     s = Speaker(say_runner=lambda text, voice, rate: _KilledProc())
     assert s.speak("Hello there.") is False
+
+
+def test_cancel_during_synthesis_aborts_before_play():
+    """Regression (#2/#9): a cancel() that lands while say_runner is still
+    synthesizing — when there is no proc to terminate yet — must still abort the
+    utterance: speak() returns False and the just-created proc is terminated, not
+    waited on / played."""
+    made = []
+    sp = None
+
+    def runner(text, voice, rate):
+        sp.cancel()                      # cancel lands mid-synthesis, before a proc exists
+        proc = FakePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    completed = sp.speak("hello")
+    assert completed is False              # not completed -> caller replays / leaves unheard
+    assert made[0].terminate_calls == 1    # the new proc was terminated
+    assert made[0].wait_calls == 0         # never waited on / played
+
+
+def test_speak_honors_external_cancel_epoch_baseline():
+    """M2: the daemon captures the cancel epoch at CLAIM time (under its lock),
+    then calls speak() AFTER releasing the lock. A cancel landing in that gap bumps
+    the epoch; speak() must compare against the passed-in baseline (not re-read the
+    already-bumped value) and report the utterance as cancelled."""
+    sp = Speaker(say_runner=lambda t, v, r: FakePopen())
+    epoch0 = sp.cancel_epoch()             # captured at claim
+    sp.cancel()                            # cancel lands in the pop->speak gap
+    proc_made = []
+
+    def runner(text, voice, rate):
+        proc = FakePopen()
+        proc_made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    epoch0 = sp.cancel_epoch()
+    sp.cancel()                            # bump past the captured baseline
+    completed = sp.speak("hello", cancel_epoch=epoch0)
+    assert completed is False              # baseline mismatch -> interrupted
+    assert proc_made[0].terminate_calls == 1
+    assert proc_made[0].wait_calls == 0
+
+
+def test_speak_without_external_epoch_uses_current_baseline():
+    """Backward-compatible: with no cancel_epoch passed, speak() reads the current
+    epoch as its baseline (a prior cancel with no pending speak is not retroactive)."""
+    made = []
+
+    def runner(text, voice, rate):
+        proc = FakePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    sp.cancel()                            # bumps epoch, but no speak was in flight
+    sp.speak("hello")                      # next speak starts clean
+    assert made[0].wait_calls == 1         # played, not retroactively cancelled
+    assert made[0].terminate_calls == 0

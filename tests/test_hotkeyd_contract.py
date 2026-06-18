@@ -1,6 +1,12 @@
-"""Every keymap.ACTION_MESSAGES dict must be a valid speechd command: feeding
-it straight into a daemon's handle_message must produce the intended effect.
-This proves the bytes the Swift hotkeyd sends are real protocol commands."""
+"""The daemon must correctly handle every protocol command the system emits —
+whether from a hotkey (keymap.ACTION_MESSAGES) or the CLI. Feeding each command
+straight into handle_message must produce the intended effect, proving the bytes
+the hotkeyd / CLI send are real protocol commands.
+
+Note: stop/skip/repeat/cycle_verbosity/reread_options/jump_decision/catch_up are no
+longer hotkey actions (removed from ACTION_MESSAGES), but the daemon still handles
+those protocol commands (stop/skip/repeat ship via the CLI), so they are exercised
+here with literal messages."""
 
 from sonari import keymap
 from sonari.protocol import MsgType
@@ -27,14 +33,14 @@ def test_stop_message_clears_and_cancels():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose",
                              text="x", is_decision=False))
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["stop"]))
+    daemon.handle_message(_msg({"type": "stop"}))
     assert len(queue) == 0
     assert speaker.cancels == 1
 
 
 def test_skip_message_cancels():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["skip"]))
+    daemon.handle_message(_msg({"type": "skip"}))
     assert speaker.cancels == 1
 
 
@@ -47,7 +53,7 @@ def test_repeat_message_reenqueues_last_spoken():
                            "final": True})
     item = queue.pop_next()
     daemon.note_spoken(item, True)
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["repeat"]))
+    daemon.handle_message(_msg({"type": "repeat"}))
     assert queue.pop_next().text == "Hello."
 
 
@@ -67,20 +73,20 @@ def test_slower_message_drops_rate_by_25():
 
 def test_cycle_verbosity_message_advances():
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["cycle_verbosity"]))
+    daemon.handle_message(_msg({"type": "cycle_verbosity"}))
     assert config["verbosity"] == "medium"
 
 
 def test_reread_options_message_works():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon._options["fg"] = "Option 1: A."
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["reread_options"]))
+    daemon.handle_message(_msg({"type": "reread_options"}))
     assert queue.pop_next().text == "Option 1: A."
 
 
 def test_jump_decision_message_cancels():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["jump_decision"]))
+    daemon.handle_message(_msg({"type": "jump_decision"}))
     assert speaker.cancels == 1
 
 
@@ -91,6 +97,6 @@ def test_catch_up_message_replays_unheard_backlog():
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
                            "session": "fg", "delta": "Unheard item. ",
                            "index": 0, "final": True})
-    daemon.handle_message(_msg(keymap.ACTION_MESSAGES["catch_up"]))
+    daemon.handle_message(_msg({"type": "catch_up"}))
     texts = [queue.pop_next().text for _ in range(len(queue))]
     assert "Unheard item." in texts

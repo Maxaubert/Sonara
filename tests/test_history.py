@@ -50,6 +50,27 @@ def test_rolling_cap_bounds_memory():
     assert texts == ["S7.", "S8.", "S9."]
 
 
+def test_eviction_excludes_truncated_head_group_from_navigation():
+    # #8: when the rolling cap evicts the HEAD of an older message group, nav must
+    # not replay the surviving fragment — message_ids excludes the truncated group.
+    h = SessionHistory(cap=3)
+    h.record("s", "prose", "a1")
+    h.record("s", "prose", "a2")        # group 0: a1, a2
+    h.end_message("s")
+    h.record("s", "prose", "b1")
+    h.record("s", "prose", "b2")        # group 1: b1, b2 -> evicts a1 (group 0 head)
+    assert h.message_ids("s") == [1]    # truncated group 0 excluded
+    assert [e.text for e in h.entries_for_message("s", 1)] == ["b1", "b2"]
+
+
+def test_complete_groups_remain_navigable():
+    # A group whose head is still present stays navigable (regression guard).
+    h = SessionHistory(cap=10)
+    h.record("s", "prose", "a1"); h.end_message("s")
+    h.record("s", "prose", "b1"); h.end_message("s")
+    assert h.message_ids("s") == [0, 1]
+
+
 def test_other_session_with_unheard_most_recent_first():
     h = SessionHistory()
     h.record("a", "prose", "A1.")
@@ -67,3 +88,33 @@ def test_other_session_excludes_the_given_session():
     h = SessionHistory()
     h.record("fg", "prose", "X.")
     assert h.other_session_with_unheard("fg") is None
+
+
+def test_nth_last_message_walks_back_through_groups():
+    from sonari.history import SessionHistory
+    h = SessionHistory()
+    # group 0: two prose sentences
+    h.record("s", "prose", "a1"); h.record("s", "prose", "a2"); h.end_message("s")
+    # group 1: one choice
+    h.record("s", "choice", "b1"); h.end_message("s")
+    # group 2: current (open) prose
+    h.record("s", "prose", "c1")
+    assert [e.text for e in h.nth_last_message("s", 0)] == ["c1"]       # current
+    assert [e.text for e in h.nth_last_message("s", 1)] == ["b1"]       # previous
+    assert [e.text for e in h.nth_last_message("s", 2)] == ["a1", "a2"] # two back
+    assert h.nth_last_message("s", 3) == []                            # out of range
+    assert h.nth_last_message("s", -1) == []
+    assert h.nth_last_message("missing", 0) == []
+
+
+def test_message_ids_and_entries_for_message():
+    from sonari.history import SessionHistory
+    h = SessionHistory()
+    h.record("s", "prose", "a1"); h.record("s", "prose", "a2"); h.end_message("s")
+    h.record("s", "choice", "b1"); h.end_message("s")
+    h.record("s", "prose", "c1")
+    ids = h.message_ids("s")
+    assert ids == [0, 1, 2]                                   # oldest -> newest
+    assert [e.text for e in h.entries_for_message("s", 0)] == ["a1", "a2"]
+    assert [e.text for e in h.entries_for_message("s", 1)] == ["b1"]
+    assert h.message_ids("missing") == []

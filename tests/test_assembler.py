@@ -87,3 +87,47 @@ def test_fence_spanning_multiple_feed_calls_emits_n_line_summary():
     # Delta 4: closing fence — summary must fire here
     out4 = a.feed("```", 4, True)
     assert out4 == ["3-line python code block"]
+
+
+def test_paragraph_break_emitted_between_paragraphs():
+    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    a = ProseAssembler()
+    out = a.feed("First paragraph here.\n\nSecond paragraph here.", 0, True)
+    assert "First paragraph here." in out and "Second paragraph here." in out
+    assert PARAGRAPH_BREAK in out
+    assert out.index("First paragraph here.") < out.index(PARAGRAPH_BREAK) < out.index("Second paragraph here.")
+
+
+def test_no_paragraph_break_within_one_paragraph():
+    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    a = ProseAssembler()
+    out = a.feed("One sentence. Two sentences. Still one paragraph.", 0, True)
+    assert PARAGRAPH_BREAK not in out
+
+
+def test_three_paragraphs_two_breaks():
+    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    a = ProseAssembler()
+    out = a.feed("Para one.\n\nPara two.\n\nPara three.", 0, True)
+    assert out.count(PARAGRAPH_BREAK) == 2
+
+
+def test_blank_line_split_across_deltas_still_breaks_paragraphs():
+    """A blank line (\\n\\n) straddling two streamed deltas must still produce a
+    PARAGRAPH_BREAK and must not merge the two paragraphs. Regression: the buffer
+    was overwritten with whitespace-collapsed text between deltas, erasing the
+    trailing newline of a straddling blank line, so the heading merged into the
+    next paragraph and reading stalled/garbled at every blank line."""
+    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    a = ProseAssembler()
+    out = []
+    out += a.feed("The headline issue\n", 0, False)        # heading, no period, ends with \n
+    out += a.feed("\nThe next part is here.\n", 1, False)   # starts with \n -> blank line straddles
+    out += a.feed("", 2, True)
+    texts = [c for c in out if c is not PARAGRAPH_BREAK]
+    assert "The headline issue" in texts, f"heading not emitted as its own chunk: {texts}"
+    assert any("next part is here" in t for t in texts), texts
+    assert PARAGRAPH_BREAK in out, "paragraph break lost across deltas"
+    assert out.index("The headline issue") < out.index(PARAGRAPH_BREAK)
+    # no word-joining across the lost newline/space
+    assert not any("issueThe" in t or "issue The next" in t for t in texts), texts

@@ -1,9 +1,18 @@
 import sys
 from pathlib import Path
 
-_SRC = Path(__file__).resolve().parent.parent / "src"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+_SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+
+# Install fake Windows modules (winrt/winsound/winreg/msvcrt) into sys.modules so
+# platform/windows/* imports and unit-tests on macOS/Linux. No-op on real Windows.
+import tests._winfakes as _winfakes
+_winfakes.install()
 
 import pytest
 

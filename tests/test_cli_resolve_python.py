@@ -23,7 +23,7 @@ def test_resolve_prefers_usr_bin_python3_when_it_qualifies():
          mock.patch("os.path.realpath", side_effect=fake_realpath), \
          mock.patch.object(MacSupervisorBackend, "_probe_python_version",
                            side_effect=fake_probe):
-        chosen = cli._resolve_python()
+        chosen = MacSupervisorBackend().resolve_python()
     assert chosen == "/usr/bin/python3"
 
 
@@ -40,7 +40,7 @@ def test_resolve_falls_back_to_first_qualifying_path_candidate():
          mock.patch("os.path.realpath", side_effect=lambda p: p), \
          mock.patch.object(MacSupervisorBackend, "_probe_python_version",
                            side_effect=fake_probe):
-        chosen = cli._resolve_python()
+        chosen = MacSupervisorBackend().resolve_python()
     assert chosen == "/opt/homebrew/bin/python3"
 
 
@@ -55,7 +55,7 @@ def test_resolve_returns_none_when_all_below_39():
          mock.patch("os.path.realpath", side_effect=lambda p: p), \
          mock.patch.object(MacSupervisorBackend, "_probe_python_version",
                            side_effect=fake_probe):
-        assert cli._resolve_python() is None
+        assert MacSupervisorBackend().resolve_python() is None
 
 
 def test_resolve_dedups_candidates_by_realpath():
@@ -72,7 +72,7 @@ def test_resolve_dedups_candidates_by_realpath():
     with mock.patch("shutil.which", side_effect=fake_which), \
          mock.patch("os.path.realpath", side_effect=fake_realpath), \
          mock.patch.object(MacSupervisorBackend, "_probe_python_version", probe):
-        chosen = cli._resolve_python()
+        chosen = MacSupervisorBackend().resolve_python()
     assert chosen == "/usr/bin/python3" or chosen == "/canon/python3"
     # /usr/bin/python3 + the single deduped /canon/python3 => at most 2 probes.
     assert probe.call_count <= 2

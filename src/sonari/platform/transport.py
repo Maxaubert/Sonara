@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 
 HOST = "127.0.0.1"
 
@@ -60,28 +61,36 @@ def connectable(path) -> bool:
 
 
 def acquire_singleton(path):
-    """Acquire an exclusive, OS-level single-instance lock at *path*.
+    """Acquire an exclusive single-instance lock; return the held file object
+    (keep a process-lifetime reference) or None if another process holds it.
+    POSIX: fcntl.flock (content-independent). Windows: msvcrt.locking on a FIXED
+    byte of a NON-truncated file — byte-range locks are system-wide, giving real
+    cross-process exclusion; truncating under another holder's lock is undefined,
+    and a moving file position would lock the wrong byte. The OS releases the
+    lock on process death, so a crash never sticks.
 
-    Returns the held file object on success — the CALLER MUST keep a reference
-    for the whole process lifetime, since the flock is released when the file
-    object is garbage-collected/closed (or, automatically, when the process
-    dies — so a crashed daemon never leaves a stuck lock). Returns None if
-    another live process already holds it.
-
-    This restores the single-instance guarantee that the fixed-path AF_UNIX
-    bind() gave us for free; with an ephemeral TCP port, bind() never collides,
-    so this flock is the authoritative guard against duplicate daemons.
-    (POSIX/fcntl for now; the Windows backend supplies its own in M2.)"""
-    import fcntl
-    fh = open(str(path), "w")
+    NOTE: cross-process exclusion on Windows MUST be confirmed on the box
+    (M2-WINDOWS-ACCEPTANCE.md). If msvcrt.locking proves unreliable, switch to a
+    named mutex (kernel32.CreateMutexW + GetLastError()==ERROR_ALREADY_EXISTS)."""
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+    fh = os.fdopen(fd, "r+")
+    if sys.platform == "win32":
+        import msvcrt
+        fh.seek(0)
+        try:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)   # lock byte [0, 1)
+        except OSError:
+            fh.close()
+            return None
+    else:
+        import fcntl
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            return None
     try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        fh.close()
-        return None
-    try:
-        fh.write(str(os.getpid()))
-        fh.flush()
+        fh.seek(0); fh.write(str(os.getpid())); fh.flush(); fh.truncate()
     except OSError:
         pass
     return fh

@@ -63,6 +63,9 @@ def test_msgtype_has_every_constant_with_exact_values():
         "SET_FOREGROUND": "set_foreground",
         "STOP": "stop",
         "SKIP": "skip",
+        "NAV": "nav",
+        "PAUSE": "pause",
+        "MUTE": "mute",
         "REPEAT": "repeat",
         "JUMP_DECISION": "jump_decision",
         "CATCH_UP": "catch_up",
@@ -98,6 +101,9 @@ def test_msgtype_defines_no_extra_string_constants():
         "SET_FOREGROUND": "set_foreground",
         "STOP": "stop",
         "SKIP": "skip",
+        "NAV": "nav",
+        "PAUSE": "pause",
+        "MUTE": "mute",
         "REPEAT": "repeat",
         "JUMP_DECISION": "jump_decision",
         "CATCH_UP": "catch_up",
@@ -108,6 +114,7 @@ def test_msgtype_defines_no_extra_string_constants():
         "PING": "ping",
         "REREAD_OPTIONS": "reread_options",
         "CYCLE_VERBOSITY": "cycle_verbosity",
+        "RELOAD_KEYMAP": "reload_keymap",
     }
     assert actual == expected
 

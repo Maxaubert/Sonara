@@ -3,6 +3,13 @@ import os
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CMD = os.path.join(REPO, "commands")
 
+# The shipped slash-commands. Files use NTFS-safe names (no colon) so they check
+# out and work on Windows too. stop/skip/repeat are pure hotkey mirrors and
+# install/uninstall are CLI-only, so none of them ship a command file.
+COMMANDS = ("status", "verbosity", "doctor", "keymap", "voice", "rate")
+ARG_COMMANDS = ("verbosity", "voice", "rate", "keymap")  # forward $ARGUMENTS
+DROPPED = ("stop", "skip", "repeat", "install", "uninstall")
+
 
 def _read(name):
     with open(os.path.join(CMD, name), encoding="utf-8") as f:
@@ -10,88 +17,37 @@ def _read(name):
 
 
 def test_all_command_files_exist():
-    for name in ("sonari:status.md", "sonari:verbosity.md", "sonari:stop.md",
-                 "sonari:repeat.md", "sonari:doctor.md", "sonari:keymap.md",
-                 "sonari:voice.md", "sonari:rate.md", "sonari:skip.md",
-                 "sonari:install.md", "sonari:uninstall.md"):
-        assert os.path.exists(os.path.join(CMD, name)), name
+    for verb in COMMANDS:
+        assert os.path.exists(os.path.join(CMD, verb + ".md")), verb
 
 
-def test_status_runs_status_and_shows_output():
-    txt = _read("sonari:status.md")
-    assert "sonari status" in txt
-    assert "Bash" in txt
-    # status surfaces output to the user.
-    assert "print" in txt.lower()
+def test_no_colon_named_or_dropped_command_files():
+    # Colons are illegal on NTFS: every command file was renamed off the colon
+    # form, and the hotkey-mirror / CLI-only verbs ship no file at all. This locks
+    # in the Windows-safe rename so a regression can't reintroduce colon names.
+    for verb in COMMANDS + DROPPED:
+        assert not os.path.exists(os.path.join(CMD, "sonari:" + verb + ".md")), verb
+    for verb in DROPPED:
+        assert not os.path.exists(os.path.join(CMD, verb + ".md")), verb
 
 
-def test_verbosity_passes_argument_and_is_silent():
-    txt = _read("sonari:verbosity.md")
-    assert "sonari verbosity" in txt
-    assert "$ARGUMENTS" in txt or "ARGUMENTS" in txt
-    assert "nothing" in txt.lower()
+def test_every_command_invokes_its_verb_through_the_launcher():
+    for verb in COMMANDS:
+        txt = _read(verb + ".md")
+        assert 'bin/sonari" {0}'.format(verb) in txt, verb
+        assert "Bash tool" in txt, verb
+        assert txt.lstrip().startswith("---"), verb   # YAML front-matter
+        assert "description:" in txt, verb
+        assert "print" in txt.lower(), verb           # surfaces output to the user
 
 
-def test_stop_is_silent():
-    txt = _read("sonari:stop.md")
-    assert "sonari stop" in txt
-    assert "nothing" in txt.lower()
+def test_argument_commands_forward_arguments():
+    for verb in ARG_COMMANDS:
+        txt = _read(verb + ".md")
+        assert "$ARGUMENTS" in txt, verb
 
 
-def test_repeat_is_silent():
-    txt = _read("sonari:repeat.md")
-    assert "sonari repeat" in txt
-    assert "nothing" in txt.lower()
-
-
-def test_doctor_shows_output():
-    txt = _read("sonari:doctor.md")
-    assert "sonari doctor" in txt
-    assert "Bash" in txt
-    assert "print" in txt.lower()
-
-
-def test_keymap_command_file_exists_and_runs_sonari_keymap():
-    assert os.path.exists(os.path.join(CMD, "sonari:keymap.md"))
-    txt = _read("sonari:keymap.md")
-    assert "sonari keymap" in txt
-    assert "Bash" in txt
-    assert "print" in txt.lower()
-
-
-def test_voice_command_runs_voice_and_passes_argument():
-    txt = _read("sonari:voice.md")
-    assert "sonari voice" in txt
-    assert "$ARGUMENTS" in txt or "ARGUMENTS" in txt
-    assert "Bash" in txt
-
-
-def test_rate_command_runs_rate_and_passes_argument():
-    txt = _read("sonari:rate.md")
-    assert "sonari rate" in txt
-    assert "$ARGUMENTS" in txt or "ARGUMENTS" in txt
-    assert "Bash" in txt
-
-
-def test_skip_is_silent():
-    txt = _read("sonari:skip.md")
-    assert "sonari skip" in txt
-    assert "nothing" in txt.lower()
-
-
-def test_install_command_runs_sonari_install():
-    txt = _read("sonari:install.md")
-    assert "sonari install" in txt
-    assert "Bash" in txt
-    assert "print" in txt.lower()
-    assert txt.lstrip().startswith("---")  # has front-matter
-    assert "description:" in txt
-
-
-def test_uninstall_command_runs_sonari_uninstall():
-    txt = _read("sonari:uninstall.md")
-    assert "sonari uninstall" in txt
-    assert "Bash" in txt
-    assert "print" in txt.lower()
-    assert txt.lstrip().startswith("---")
-    assert "description:" in txt
+def test_status_and_doctor_surface_output_verbatim():
+    for verb in ("status", "doctor"):
+        txt = _read(verb + ".md")
+        assert "verbatim" in txt.lower(), verb

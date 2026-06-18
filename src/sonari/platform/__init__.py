@@ -15,7 +15,7 @@ def get_platform() -> PlatformBackend:
     if sys.platform == "darwin":
         from sonari.platform.macos import make_backend
     elif sys.platform == "win32":
-        raise RuntimeError("Windows backend lands in Milestone 2.")
+        from sonari.platform.windows import make_backend
     else:
         raise RuntimeError("Unsupported platform: {0}".format(sys.platform))
     _CACHE = make_backend()

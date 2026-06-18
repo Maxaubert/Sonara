@@ -232,7 +232,8 @@ def test_unknown_notification_type_is_empty():
 
 def test_stop_emits_turn_done_earcon():
     assert handle_event("Stop", {"session_id": "sess-1"}) == [
-        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "turn_done"}
+        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "turn_done",
+         "session": "sess-1"}
     ]
 
 

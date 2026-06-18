@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sonari"
 version = "0.5.0"
-description = "Eyes-free text-to-speech layer for Claude Code (macOS)"
+description = "Eyes-free text-to-speech layer for Claude Code (macOS + Windows)"
 requires-python = ">=3.9"
 authors = [{ name = "Nima Hakimi", email = "hakimi.nima1@gmail.com" }]
 license = { text = "MIT" }
@@ -15,6 +15,16 @@ sonari = "sonari.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+# Windows TTS runtime. OneCore speech is reached via PyWinRT; without these the
+# daemon cannot synthesize and Windows users get silent no-speech (#7).
+windows = [
+    "winrt-runtime; sys_platform == 'win32'",
+    "winrt-Windows.Media.SpeechSynthesis; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams; sys_platform == 'win32'",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sonari = ["platform/windows/earcons/*.wav"]

@@ -21,9 +21,11 @@ LAUNCH_AGENT_PATH = os.path.expanduser(
 # Single-letter keys → uppercase; symbolic names → their symbol.
 _KEY_DISPLAY_BY_NAME = {
     "s": "S", "r": "R", "d": "D", "l": "L", "v": "V", "o": "O",
+    "p": "P", "m": "M",
     "period": ".", ".": ".",
     "rightbracket": "]", "]": "]",
     "leftbracket": "[", "[": "[",
+    "left": "Left", "right": "Right", "up": "Up", "down": "Down",
 }
 
 # Canonical display label + ordering for each canonical modifier name.
@@ -98,6 +100,36 @@ class MacHotkeyBackend(HotkeyBackend):
         parts.append(self._keycode_display.get(key_code, "key{0}".format(key_code)))
         return "+".join(parts)
 
+    # --- keytables for the portable keymap resolver (data lives in keytables.py) ---
+    def key_codes(self) -> dict:
+        from sonari.platform.macos import keytables
+        return dict(keytables.KEY_CODES)
+
+    def mod_masks(self) -> dict:
+        from sonari.platform.macos import keytables
+        return dict(keytables.MOD_MASKS)
+
+    def default_mods(self) -> list:
+        from sonari.platform.macos import keytables
+        return list(keytables.DEFAULT_MODS)
+
+    def reload(self, dispatch=None) -> None:
+        """Apply a keymap change live on macOS. The hotkeyd is a SEPARATE process
+        (start/stop are no-ops here), so 'live' means: rewrite the resolved keymap
+        the Swift hotkeyd reads, then reload its LaunchAgent so it re-reads the file
+        (RunAtLoad relaunches it). No-op when the hotkeyd isn't installed. Never
+        raises — a failed reload must not break the daemon (M7)."""
+        from sonari import keymap
+        from sonari.platform.macos.supervisor import MacSupervisorBackend
+        try:
+            keymap.write_resolved()
+        except Exception:  # noqa: BLE001 - keep going; reload is best-effort
+            pass
+        if os.path.exists(LAUNCH_AGENT_PATH):
+            sup = MacSupervisorBackend()
+            sup.launchctl(["unload", LAUNCH_AGENT_PATH])
+            sup.launchctl(["load", LAUNCH_AGENT_PATH])
+
     def build(self):
         """Compile sonari-hotkeyd if swiftc is present and the source changed.
         Returns (ok: bool, detail: str). (Verbatim move of cli._build_hotkeyd.)"""
@@ -139,19 +171,41 @@ class MacHotkeyBackend(HotkeyBackend):
         """
         ok, detail = self.build()
         if not ok:
+            print("warning: hotkey daemon not built ({0}); "
+                  "global hotkeys disabled, but speech still works.".format(detail))
             return (ok, detail)
+        if agent_path is None:           # cli passes None; backend owns its path
+            agent_path = LAUNCH_AGENT_PATH
         plist_xml = _hotkeyd_plist(str(paths.HOTKEYD_BIN_PATH), log_path)
         os.makedirs(os.path.dirname(agent_path), exist_ok=True)
         with open(agent_path, "w", encoding="utf-8") as fh:
             fh.write(plist_xml)
+        print("Wrote LaunchAgent: {0}".format(agent_path))
         launchctl_fn(["unload", agent_path])
         load_rc = launchctl_fn(["load", agent_path])
         if load_rc != 0:
+            print("warning: launchctl load returned {0} for the hotkey "
+                  "daemon.".format(load_rc))
             return (True, "launchctl load returned {0}".format(load_rc))
+        print("Loaded LaunchAgent {0}.".format(LAUNCH_AGENT_LABEL))
         return (True, str(paths.HOTKEYD_BIN_PATH))
 
     def uninstall(self) -> None:
-        try:
-            os.remove(str(paths.HOTKEYD_BIN_PATH))
-        except OSError:
-            pass
+        """Unload + remove the hotkeyd LaunchAgent and the compiled binary.
+        (LaunchAgent teardown moved here from cli.uninstall.)"""
+        from sonari.platform.macos.supervisor import MacSupervisorBackend
+        if os.path.exists(LAUNCH_AGENT_PATH):
+            MacSupervisorBackend().launchctl(["unload", LAUNCH_AGENT_PATH])
+            try:
+                os.remove(LAUNCH_AGENT_PATH)
+                print("Removed LaunchAgent: {0}".format(LAUNCH_AGENT_PATH))
+            except OSError as exc:
+                print("warning: could not remove {0}: {1}".format(
+                    LAUNCH_AGENT_PATH, exc))
+        if os.path.exists(str(paths.HOTKEYD_BIN_PATH)):
+            try:
+                os.remove(str(paths.HOTKEYD_BIN_PATH))
+                print("Removed hotkey daemon binary: {0}".format(
+                    paths.HOTKEYD_BIN_PATH))
+            except OSError:
+                pass

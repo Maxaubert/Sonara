@@ -26,6 +26,35 @@ def test_speak_loop_speaks_queued_item_then_stops():
     assert not t.is_alive()
 
 
+def test_speak_loop_survives_a_speaker_exception():
+    # A single utterance that throws (e.g. the WinRT synth chokes on a chunk)
+    # must NOT kill the speak thread; later items must still be spoken.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    spoken = []
+
+    def boom(text, cancel_epoch=None):
+        if text == "bad":
+            raise RuntimeError("synth blew up")
+        spoken.append(text)
+        return True
+
+    speaker.speak = boom
+    queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="bad", is_decision=False))
+    queue.enqueue(SpeechItem(id=2, session="fg", kind="prose", text="good", is_decision=False))
+
+    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t.start()
+    try:
+        deadline = time.time() + 2.0
+        while time.time() < deadline and "good" not in spoken:
+            time.sleep(0.01)
+        assert "good" in spoken, "speak loop died on the bad utterance"
+    finally:
+        daemon.stop()
+        t.join(timeout=2.0)
+    assert not t.is_alive()
+
+
 def test_speak_loop_idles_when_queue_empty_then_stops():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     t = threading.Thread(target=daemon._speak_loop, daemon=True)
@@ -178,7 +207,9 @@ def test_handle_conn_rejects_wrong_token():
             # socket has already been reset (no PING reply is ever delivered).
             try:
                 data = client.recv(4096)
-            except ConnectionResetError:
+            except (ConnectionResetError, ConnectionAbortedError):
+                # Windows may abort (WinError 10053) rather than reset when the
+                # daemon drops the unauthenticated peer; both mean "rejected".
                 data = b""
             client.close()
             assert data == b""

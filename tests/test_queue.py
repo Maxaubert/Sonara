@@ -36,7 +36,8 @@ def test_jump_to_decision_drops_leading_non_decision_keeps_decision_at_front():
     q.enqueue(_item(2, kind="prose", text="p2", is_decision=False))
     q.enqueue(_item(3, kind="choice", text="decide", is_decision=True))
     q.enqueue(_item(4, kind="prose", text="after", is_decision=False))
-    q.jump_to_decision()
+    dropped = q.jump_to_decision()
+    assert [i.text for i in dropped] == ["p1", "p2"]   # returns what it discarded
     assert len(q) == 2
     first = q.pop_next()
     assert first.text == "decide"
@@ -48,7 +49,8 @@ def test_jump_to_decision_with_no_decision_empties_queue():
     q = SpeechQueue()
     q.enqueue(_item(1, is_decision=False))
     q.enqueue(_item(2, is_decision=False))
-    q.jump_to_decision()
+    dropped = q.jump_to_decision()
+    assert len(dropped) == 2
     assert len(q) == 0
     assert q.pop_next() is None
 

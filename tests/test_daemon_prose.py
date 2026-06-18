@@ -82,6 +82,46 @@ def test_prose_dropped_at_verbosity_quiet():
     assert len(queue) == 0
 
 
+def _earcon(session, kind):
+    return {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "session": session, "kind": kind}
+
+
+def test_owner_keeps_voice_across_interchunk_drain_when_other_session_flips_foreground():
+    """H1: between streamed chunks of ONE reply the queue drains to 0. If another
+    session flips foreground in that gap, the original owner must KEEP the voice and
+    its remaining deltas must still be enqueued (not captured to history and lost)."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    # A streams its first sentence -> A acquires the voice, message is 'open'.
+    daemon.handle_message(_prose("A", "First sentence here. ", 0, False))
+    assert len(queue) == 1
+    assert daemon._voice_owner == "A"
+    # The speak loop drains A's only queued item: queue hits 0 mid-message.
+    daemon._speak_loop_once()
+    assert len(queue) == 0
+    # A still owns the voice because its message is still open (no final yet).
+    assert daemon._voice_owner == "A"
+    # Now a SECOND session flips foreground (new tab / other window submits).
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "B"})
+    # A's next delta must STILL be enqueued — the reply does not go silent.
+    daemon.handle_message(_prose("A", "Second sentence here. ", 1, False))
+    assert len(queue) == 1
+    assert queue.pop_next().text == "Second sentence here."
+
+
+def test_open_message_released_at_turn_boundary():
+    """Ownership is held during an open message but released once the turn ends
+    (PROSE final or the Stop turn_done earcon), so a new foreground session can
+    then acquire a free voice."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "Hello there. ", 0, False))
+    daemon._speak_loop_once()                      # drain; A keeps voice (open msg)
+    assert daemon._voice_owner == "A"
+    # Turn ends via the Stop turn_done earcon (carries the session).
+    daemon.handle_message(_earcon("A", "turn_done"))
+    daemon._speak_loop_once()                       # empty branch now releases owner
+    assert daemon._voice_owner is None
+
+
 def test_flush_resets_assembler_so_next_turn_is_clean():
     """After FLUSH, stale assembler state (_seen/_buf/_pending) must not leak.
 

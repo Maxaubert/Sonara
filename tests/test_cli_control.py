@@ -68,6 +68,33 @@ def test_voice_sends_set_voice():
                    "voice": "Ava (Premium)"}
 
 
+def test_voice_joins_multiword_name_without_quotes():
+    # "Microsoft David" arrives as two argv tokens; the CLI joins them so the user
+    # doesn't have to quote multi-word voice names.
+    with mock.patch("sonari.client.send", return_value=None) as send:
+        rc = cli.main(["voice", "Microsoft", "David"])
+    msg, _, _ = _sent(send)
+    assert rc == 0
+    assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SET_VOICE,
+                   "voice": "Microsoft David"}
+
+
+def test_voice_no_arg_lists_voices_without_changing_anything(capsys):
+    class _V:
+        def __init__(self, n):
+            self.display_name = n
+
+    fake = mock.Mock()
+    fake.tts.list_voices.return_value = [_V("Microsoft David"), _V("Microsoft Zira")]
+    with mock.patch("sonari.cli._platform", return_value=fake), \
+            mock.patch("sonari.client.send", return_value=None) as send:
+        rc = cli.main(["voice"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Microsoft David" in out and "Microsoft Zira" in out
+    send.assert_not_called()   # listing must not set the voice
+
+
 def test_repeat_sends_repeat():
     with mock.patch("sonari.client.send", return_value=None) as send:
         cli.main(["repeat"])

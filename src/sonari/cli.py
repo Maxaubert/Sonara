@@ -20,19 +20,18 @@ from typing import Optional
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import paths
 from . import keymap
-from sonari.platform.macos.hotkeys import (
-    MacHotkeyBackend,
-    _KEYCODE_DISPLAY,
-    _MOD_DISPLAY,
-    LAUNCH_AGENT_LABEL as HOTKEYD_LAUNCH_AGENT_LABEL,
-    LAUNCH_AGENT_PATH as HOTKEYD_LAUNCH_AGENT_PATH,
-)
-from sonari.platform.macos.supervisor import (
-    MacSupervisorBackend,
-    _PYTHON_CANDIDATE_NAMES,
-    _launcher_path as _sup_launcher_path,
-)
-_mac_sup = MacSupervisorBackend()
+from sonari.platform import get_platform
+
+_PLATFORM = None
+
+
+def _platform():
+    """Return the cached PlatformBackend for this OS (the only OS dispatch point)."""
+    global _PLATFORM
+    if _PLATFORM is None:
+        _PLATFORM = get_platform()
+    return _PLATFORM
+
 
 VERBOSITY_CHOICES = ("everything", "medium", "quiet")
 
@@ -68,7 +67,24 @@ def _cmd_rate(args) -> int:
 
 
 def _cmd_voice(args) -> int:
-    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_VOICE, "voice": args.name})
+    # No name -> list the installed voices so the user can pick one (changes
+    # nothing). A name -> set it; the name may be several words ("Microsoft David"),
+    # so join them rather than requiring the user to quote.
+    name = " ".join(args.name).strip() if args.name else ""
+    if not name:
+        try:
+            voices = _platform().tts.list_voices()
+        except Exception as exc:  # noqa: BLE001 - listing must not crash the CLI
+            print(f"sonari: could not list voices: {exc}", file=sys.stderr)
+            return 1
+        if not voices:
+            print("No voices installed.")
+            return 0
+        print("Installed voices (set with: sonari voice <name>):")
+        for v in voices:
+            print("  " + (getattr(v, "display_name", None) or str(v)))
+        return 0
+    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_VOICE, "voice": name})
     return 0
 
 
@@ -88,20 +104,39 @@ def _cmd_skip(_args) -> int:
 
 
 def _combo_label(modifiers: int, key_code: int) -> str:
-    parts = [name for mask, name in _MOD_DISPLAY if modifiers & mask]
-    parts.append(_KEYCODE_DISPLAY.get(key_code, "key{0}".format(key_code)))
-    return "+".join(parts)
+    return _platform().hotkey.display_combo(modifiers, key_code)
 
 
-def _cmd_keymap(_args) -> int:
+def _cmd_keymap(args) -> int:
+    action = getattr(args, "action", None)
+    value = getattr(args, "value", None)
+    # `keymap <action> clear|none` -> unbind that action.
+    if action:
+        if value not in ("clear", "none"):
+            print("sonari: usage: sonari keymap [<action> clear]", file=sys.stderr)
+            return 2
+        try:
+            keymap.unbind_action(action)
+        except ValueError as exc:
+            print(f"sonari: {exc}", file=sys.stderr)
+            return 1
+        try:                                  # apply live; harmless if daemon is down
+            _send({"v": PROTOCOL_VERSION, "type": MsgType.RELOAD_KEYMAP})
+        except Exception:  # noqa: BLE001 - the keymap.json write is what matters
+            pass
+        print(f"Unbound {action}.")
+        return 0
+    # No args: list EVERY action — bound ones with their combo, the rest "(unbound)".
     try:
         resolved = keymap.resolve_keymap(keymap.load_keymap())
     except ValueError as exc:
         print(f"sonari: invalid keymap: {exc}", file=sys.stderr)
         return 1
-    for entry in resolved:
-        combo = _combo_label(entry["modifiers"], entry["keyCode"])
-        print("{0:<16} {1}".format(entry["action"], combo))
+    combo_by_action = {
+        e["action"]: _combo_label(e["modifiers"], e["keyCode"]) for e in resolved
+    }
+    for name in keymap.ACTION_MESSAGES:
+        print("{0:<16} {1}".format(name, combo_by_action.get(name, "(unbound)")))
     return 0
 
 
@@ -121,8 +156,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("wpm", type=int)
     sp.set_defaults(func=_cmd_rate)
 
-    sp = sub.add_parser("voice", help="set the say voice")
-    sp.add_argument("name")
+    sp = sub.add_parser("voice", help="set the say voice (omit name to list voices)")
+    sp.add_argument("name", nargs="*", help="voice name; omit to list installed voices")
     sp.set_defaults(func=_cmd_voice)
 
     sub.add_parser("repeat", help="repeat the last spoken item").set_defaults(
@@ -137,19 +172,15 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _repo_hooks_json_path() -> str:
-    """Path to the plugin hooks/hooks.json inside this repo checkout."""
-    return os.path.join(paths.repo_root(), "hooks", "hooks.json")
-
-
 def doctor() -> list:
     """Return a list of (check, ok, detail) health-check tuples."""
     results = []
 
-    # macOS-specific rows: say, afplay, enhanced voice, swiftc, hotkeyd binary,
-    # hotkeyd resolved keymap, speechd LaunchAgent loaded, hotkeyd LaunchAgent
-    # loaded, sonari launcher.
-    results.extend(_mac_sup.doctor_rows())
+    # Platform-specific rows supplied by the OS backend (macOS: say/afplay/
+    # swiftc/LaunchAgents/...; Windows: schtasks/Task/pythonw/neural voice/...).
+    results.extend(_platform().supervisor.doctor_rows())
+    # Hotkey diagnostics (Windows: collisions + UIPI/elevation; macOS: none here).
+    results.extend(_platform().hotkey.doctor_rows())
 
     # Neutral rows (portable, keep inline).
     try:
@@ -172,10 +203,7 @@ def doctor() -> list:
         results.append(("daemon socket", False,
                         f"not reachable: {exc} (run 'sonari install')"))
 
-    hooks_json = _repo_hooks_json_path()
-    present = os.path.exists(hooks_json)
-    results.append(("plugin hooks.json", present,
-                    hooks_json if present else f"missing: {hooks_json}"))
+    results.append(_platform().supervisor.hooks_doctor_row())
 
     try:
         keymap.resolve_keymap(keymap.load_keymap())
@@ -187,8 +215,7 @@ def doctor() -> list:
     try:
         py = _resolve_python()
         results.append(("python3", py is not None,
-                        py or "no python3 >= 3.9 found; install the Command "
-                              "Line Tools (xcode-select --install)"))
+                        py or "no python3 >= 3.9 found"))
     except Exception as exc:  # noqa: BLE001
         results.append(("python3", False, f"error: {exc}"))
 
@@ -217,29 +244,14 @@ def _cmd_doctor(_args) -> int:
     return 0 if all_ok else 1
 
 
-LAUNCH_AGENT_LABEL = "com.sonari.speechd"
-LAUNCH_AGENT_PATH = os.path.expanduser(
-    "~/Library/LaunchAgents/com.sonari.speechd.plist")
-
-def _repo_root() -> str:
-    return paths.repo_root()
-
-
-def _daemon_shim_path() -> str:
-    return os.path.join(paths.repo_root(), "bin", "sonari-daemon")
-
-
-# _PYTHON_CANDIDATE_NAMES is imported from sonari.platform.macos.supervisor
-
-
 def _probe_python_version(path: str):
-    """Delegating shim — logic lives in MacSupervisorBackend._probe_python_version."""
-    return _mac_sup._probe_python_version(path)
+    """Probe an interpreter's (major, minor) via the platform supervisor."""
+    return _platform().supervisor._probe_python_version(path)
 
 
 def _resolve_python():
-    """Delegating shim — logic lives in MacSupervisorBackend.resolve_python."""
-    return _mac_sup.resolve_python()
+    """Resolve the best Python >= 3.9 via the platform supervisor."""
+    return _platform().supervisor.resolve_python()
 
 
 def _write_install_record(python: str, python_version: str,
@@ -289,16 +301,6 @@ def _read_plugin_version(plugin_root: str) -> str:
     return os.environ.get("CLAUDE_PLUGIN_VERSION", "") or ""
 
 
-def _launcher_path() -> str:
-    """Delegating shim — logic lives in MacSupervisorBackend (_launcher_path)."""
-    return _sup_launcher_path()
-
-
-def _place_launcher(plugin_root: str) -> str:
-    """Delegating shim — logic lives in MacSupervisorBackend.place_launcher."""
-    return _mac_sup.place_launcher(plugin_root)
-
-
 def _copy_app(plugin_root: str) -> str:
     """Copy the plugin's sonari package into the stable APP_DIR. Returns APP_DIR.
 
@@ -317,83 +319,28 @@ def _copy_app(plugin_root: str) -> str:
     return app_dir
 
 
-def _remove_launcher() -> bool:
-    """Remove ~/.local/bin/sonari if present. Returns True if it was removed."""
-    path = _launcher_path()
-    if os.path.exists(path):
-        try:
-            os.remove(path)
-            return True
-        except OSError:
-            return False
-    return False
-
-
-def _local_bin_on_path() -> bool:
-    """Delegating shim — logic lives in MacSupervisorBackend.local_bin_on_path."""
-    return _mac_sup.local_bin_on_path()
-
-
-def _plist(label: str, program_args: list, log_path: str,
-           env=None) -> str:
-    """Delegating shim — logic lives in MacSupervisorBackend.plist."""
-    return _mac_sup.plist(label, program_args, log_path, env=env)
-
-
-def _launchagent_plist(python_executable: str, src_path: str,
-                       log_path: str) -> str:
-    """Delegating shim — logic lives in MacSupervisorBackend.launchagent_plist."""
-    return _mac_sup.launchagent_plist(python_executable, src_path, log_path)
-
-
-
-def _build_hotkeyd():
-    """Compile hotkeyd/sonari-hotkeyd.swift to paths.HOTKEYD_BIN_PATH.
-
-    SKIPS the recompile when the existing binary was already built from the
-    current source (same content hash). Recompiling produces a NEW code
-    identity, which macOS treats as a different app and re-prompts for any
-    permission grants; a routine reinstall (e.g. after a Python-only change)
-    must not touch the binary. A real source change re-hashes and rebuilds.
-    Returns (ok, detail). Non-fatal: absent swiftc returns
-    (False, "swiftc not found").
-    """
-    return MacHotkeyBackend().build()
-
-
-def _launchctl(args: list) -> int:
-    """Delegating shim — logic lives in MacSupervisorBackend.launchctl."""
-    return _mac_sup.launchctl(args)
-
-
 def install() -> int:
-    """Install Sonari as a self-contained plugin: resolve python, build hotkeyd,
-    write both LaunchAgents (resolved interp + PYTHONPATH), place the launcher.
-    """
+    """Install Sonari: resolve python, copy the runtime, write the install
+    record, then delegate OS-specific autostart + hooks + launcher + hotkeys to
+    the platform backend (macOS: LaunchAgents + hotkeyd; Windows: Task Scheduler
+    + settings.json hooks + sonari.cmd)."""
     paths.ensure_sonari_dir()
+    sup = _platform().supervisor
 
-    # 1. Resolve the best python3 >= 3.9 (FATAL if none).
-    python = _resolve_python()
+    # 1. Resolve the best Python >= 3.9 (FATAL if none).
+    python = sup.resolve_python()
     if python is None:
-        print("No suitable python3 found (need 3.9+). macOS normally ships "
-              "/usr/bin/python3; if missing, install the Command Line Tools "
-              "(xcode-select --install).")
+        print("No suitable Python >= 3.9 found. Install Python 3.9+ "
+              "(python.org) and re-run: sonari install")
         return 1
-    ver = _probe_python_version(python)
+    ver = sup._probe_python_version(python)
     py_ver = "{0}.{1}".format(*ver) if ver else "3.9"
     print(f"Using interpreter: {python} (Python {py_ver})")
 
     plugin_root = os.path.realpath(paths.repo_root())
 
-    # 2. Pre-check swiftc / Command Line Tools (non-fatal).
-    if shutil.which("swiftc") is None:
-        print("Xcode Command Line Tools not found; global hotkeys disabled. "
-              "Install them with:  xcode-select --install   then re-run: "
-              "sonari install")
-
-    # 3. Copy the package into the stable APP_DIR (decouples the long-lived
+    # 2. Copy the package into the stable APP_DIR (decouples the long-lived
     #    daemon from the version-pinned marketplace cache; see spec §3.B).
-    #    Fatal-with-guidance: a half-copy must not produce a dangling plist.
     try:
         app_dir = _copy_app(plugin_root)
     except OSError as exc:
@@ -402,74 +349,35 @@ def install() -> int:
         return 1
     print(f"Copied runtime to: {app_dir}")
 
-    # 4. Keymap setup.
+    # 3. Keymap setup.
     keymap.write_default_keymap_if_absent()
     keymap.write_resolved()
 
-    # 5. Durable install record.
+    # 4. Durable install record.
     plugin_version = _read_plugin_version(plugin_root)
     _write_install_record(python=python, python_version=py_ver,
                           plugin_root=plugin_root, app_path=app_dir,
                           plugin_version=plugin_version)
 
-    # 6. speechd LaunchAgent (resolved interpreter + PYTHONPATH=<APP_DIR>).
-    log = str(paths.LOG_PATH)
-    xml = _launchagent_plist(python_executable=python, src_path=app_dir,
-                             log_path=log)
-    os.makedirs(os.path.dirname(LAUNCH_AGENT_PATH), exist_ok=True)
-    with open(LAUNCH_AGENT_PATH, "w", encoding="utf-8") as f:
-        f.write(xml)
-    print(f"Wrote LaunchAgent: {LAUNCH_AGENT_PATH}")
-    _launchctl(["unload", LAUNCH_AGENT_PATH])
-    rc = _launchctl(["load", LAUNCH_AGENT_PATH])
-    if rc == 0:
-        print(f"Loaded LaunchAgent {LAUNCH_AGENT_LABEL}.")
-    else:
-        print(f"warning: 'launchctl load' returned {rc}; "
-              f"the daemon will still autostart on next login.")
+    # 5. OS-specific autostart + hooks + launcher (the platform backend owns it).
+    sup.install(python, app_dir)
 
-    # 7. hotkeyd: compile binary + write + load LaunchAgent (skip if no swiftc).
+    # 6. Global hotkeys. Each backend prints its own outcome (macOS: build +
+    #    load hotkeyd; Windows: deferred to M3, announced in post_install_notes).
     hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
-    ok, detail = MacHotkeyBackend().install(
-        log_path=hk_log,
-        agent_path=HOTKEYD_LAUNCH_AGENT_PATH,
-        launchctl_fn=_launchctl,
-    )
-    if ok:
-        print(f"Wrote LaunchAgent: {HOTKEYD_LAUNCH_AGENT_PATH}")
-        if detail.startswith("launchctl load returned"):
-            print(f"warning: {detail} for the hotkey daemon.")
-        else:
-            print(f"Loaded LaunchAgent {HOTKEYD_LAUNCH_AGENT_LABEL}.")
-    else:
-        print(f"warning: hotkey daemon not built ({detail}); "
-              f"global hotkeys disabled, but speech still works.")
+    launchctl_fn = getattr(sup, "launchctl", None) or (lambda a: 0)
+    _platform().hotkey.install(
+        log_path=hk_log, agent_path=None, launchctl_fn=launchctl_fn)
 
-    # 8. ~/.local/bin/sonari launcher.
-    launcher = _place_launcher(plugin_root)
-    print(f"Placed launcher: {launcher}")
-
-    # 9. Voice check.
+    # 7. Voice check (best_voice() is a display-name str on every platform).
     try:
-        from sonari.platform import get_platform
-        voice = get_platform().tts.best_voice()
-        if voice:
-            print(f"Voice: {voice}.")
-        else:
-            print("Voice: no enhanced voice found; will fall back to Samantha. "
-                  "Install one via System Settings -> Accessibility -> "
-                  "Spoken Content.")
+        voice = _platform().tts.best_voice()
+        print(f"Voice: {voice}." if voice else "Voice: default.")
     except Exception:  # noqa: BLE001 - voice check must never break install
         pass
 
-    # 10. Eyes-free next steps.
-    print("")
-    print("Enable the Sonari plugin in Claude Code, then run 'sonari doctor'.")
-    print(f"  - Per session: claude --plugin-dir {plugin_root}")
-    print("  - Or enable 'sonari' from the /plugin menu (local marketplace).")
-    if not _local_bin_on_path():
-        print('Add ~/.local/bin to your PATH so `sonari` works in every shell:')
-        print('  export PATH="$HOME/.local/bin:$PATH"')
+    # 8. OS-specific next steps.
+    sup.post_install_notes()
     return 0
 
 
@@ -478,41 +386,25 @@ def _cmd_install(_args) -> int:
 
 
 def uninstall() -> int:
-    """Remove the LaunchAgent + SONARI_DIR (Sonari-owned runtime artifacts)."""
-    if os.path.exists(LAUNCH_AGENT_PATH):
-        _launchctl(["unload", LAUNCH_AGENT_PATH])
-        try:
-            os.remove(LAUNCH_AGENT_PATH)
-            print(f"Removed LaunchAgent: {LAUNCH_AGENT_PATH}")
-        except OSError as exc:
-            print(f"warning: could not remove {LAUNCH_AGENT_PATH}: {exc}")
-    else:
-        print("No LaunchAgent installed.")
-
-    if os.path.exists(HOTKEYD_LAUNCH_AGENT_PATH):
-        _launchctl(["unload", HOTKEYD_LAUNCH_AGENT_PATH])
-        try:
-            os.remove(HOTKEYD_LAUNCH_AGENT_PATH)
-            print(f"Removed LaunchAgent: {HOTKEYD_LAUNCH_AGENT_PATH}")
-        except OSError as exc:
-            print(f"warning: could not remove {HOTKEYD_LAUNCH_AGENT_PATH}: {exc}")
-    if os.path.exists(str(paths.HOTKEYD_BIN_PATH)):
-        try:
-            os.remove(str(paths.HOTKEYD_BIN_PATH))
-            print(f"Removed hotkey daemon binary: {paths.HOTKEYD_BIN_PATH}")
-        except OSError:
-            pass
+    """Remove Sonari's OS autostart/hooks/launcher (via the platform backend)
+    plus the shared runtime artifacts, PRESERVING config.json + keymap.json."""
+    sup = _platform().supervisor
+    sup.uninstall()
+    try:
+        _platform().hotkey.uninstall()
+    except Exception:  # noqa: BLE001 - hotkey teardown must never break uninstall
+        pass
 
     # Spec §5.4: remove Sonari-owned runtime artifacts but PRESERVE the user's
     # keymap.json AND config.json so customizations survive uninstall/reinstall.
     sonari_dir = paths.SONARI_DIR
-    hk_log = sonari_dir / "hotkeyd.log"
     artifacts = [
         paths.LOCK_PATH,
         paths.LOG_PATH,
         paths.HOTKEYD_RESOLVED_PATH,
         paths.INSTALL_RECORD_PATH,
-        hk_log,
+        sonari_dir / "hotkeyd.log",
+        sonari_dir / "faulthandler.log",
     ]
     for artifact in artifacts:
         if os.path.exists(str(artifact)):
@@ -529,9 +421,6 @@ def uninstall() -> int:
             print(f"Removed app copy: {paths.APP_DIR}")
         except OSError:
             pass
-
-    if _remove_launcher():
-        print(f"Removed launcher: {_launcher_path()}")
 
     preserved = []
     if os.path.exists(str(paths.KEYMAP_PATH)):
@@ -568,9 +457,12 @@ def _register_local(sub) -> None:
         func=_cmd_uninstall)
     sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
         func=_cmd_daemon)
-    sub.add_parser("keymap",
-                   help="print the active global hotkey bindings").set_defaults(
-        func=_cmd_keymap)
+    sp = sub.add_parser(
+        "keymap",
+        help="list hotkey bindings (incl. unbound); '<action> clear' to unbind")
+    sp.add_argument("action", nargs="?", help="action to unbind")
+    sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
+    sp.set_defaults(func=_cmd_keymap)
 
 
 def main(argv: Optional[list] = None) -> int:

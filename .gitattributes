@@ -1,0 +1,2 @@
+hooks/*.py text eol=lf
+src/sonari/**/*.py text eol=lf
