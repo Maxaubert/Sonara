@@ -1,7 +1,8 @@
 from unittest import mock
 
 from sonari import cli
-from tests._fakeplatform import fake_platform, FakeSupervisor
+from sonari import kokoro_provision as kp
+from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
 
 def _patches(rows=None, hooks_row=None, send=None, install_record=None):
@@ -105,3 +106,35 @@ def test_doctor_includes_hotkey_rows(monkeypatch):
     monkeypatch.setattr("os.path.exists", lambda p: True)
     names = {r[0] for r in cli.doctor()}
     assert "hotkey chords" in names
+
+
+def _doctor_rows(monkeypatch):
+    pb = fake_platform(supervisor=FakeSupervisor(), hotkey=FakeHotkey(ok=True, detail="ok"))
+    monkeypatch.setattr(cli, "_platform", lambda: pb)
+    return {name: (ok, detail) for name, ok, detail in cli.doctor()}
+
+
+def test_doctor_neural_row_ok_and_green_when_absent(monkeypatch):
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    rows = _doctor_rows(monkeypatch)
+    assert "neural voices" in rows
+    ok, detail = rows["neural voices"]
+    assert ok is True and "not installed" in detail
+
+
+def test_doctor_neural_row_fails_when_venv_unhealthy(monkeypatch):
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(kp, "neural_healthy", lambda app: False)
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["neural voices"]
+    assert ok is False and "voices install" in detail
+
+
+def test_doctor_neural_row_ready_when_healthy(monkeypatch):
+    """Healthy venv -> (True, detail containing "ready") with the venv python path."""
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(kp, "neural_healthy", lambda app: True)
+    monkeypatch.setattr("sonari.paths.kokoro_venv_python", lambda: "/venv/bin/python")
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["neural voices"]
+    assert ok is True and "ready" in detail

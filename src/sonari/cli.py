@@ -221,6 +221,20 @@ def doctor() -> list:
     except Exception as exc:  # noqa: BLE001
         results.append(("keymap resolves", False, f"error: {exc}"))
 
+    try:
+        from sonari import kokoro_provision as kp
+        if not kp.neural_enabled():
+            results.append(("neural voices", True, "not installed (optional)"))
+        elif kp.neural_healthy(str(paths.APP_DIR)):
+            results.append(("neural voices", True,
+                            f"ready ({paths.kokoro_venv_python()})"))
+        else:
+            results.append(("neural voices", False,
+                            "venv present but Kokoro import failed — "
+                            "re-run: sonari voices install"))
+    except Exception as exc:  # noqa: BLE001 - doctor must never raise
+        results.append(("neural voices", False, f"error: {exc}"))
+
     # python3 >= 3.9 resolved.
     try:
         py = _resolve_python()
@@ -257,6 +271,20 @@ def _cmd_doctor(_args) -> int:
 def _resolve_python():
     """Resolve the best Python >= 3.9 via the platform supervisor."""
     return _platform().supervisor.resolve_python()
+
+
+def _daemon_python(sup):
+    """Interpreter the daemon should run on: the neural venv's Python when it is
+    provisioned AND probes >=3.10, else the system Python from resolve_python().
+    Deriving neural-state from the venv keeps re-runs of `sonari install` on the
+    venv interpreter without a separate flag."""
+    from sonari import kokoro_provision as kp
+    if kp.neural_enabled():
+        venv_py = paths.kokoro_venv_python()
+        ver = sup._probe_python_version(venv_py)
+        if ver is not None and ver >= (3, 10):
+            return venv_py
+    return sup.resolve_python()
 
 
 def _write_install_record(python: str, python_version: str,
@@ -333,7 +361,7 @@ def install() -> int:
     sup = _platform().supervisor
 
     # 1. Resolve the best Python >= 3.9 (FATAL if none).
-    python = sup.resolve_python()
+    python = _daemon_python(sup)
     if python is None:
         print("No suitable Python >= 3.9 found. Install Python 3.9+ "
               "(python.org) and re-run: sonari install")
@@ -445,6 +473,34 @@ def _cmd_uninstall(_args) -> int:
     return uninstall()
 
 
+def _cmd_voices_install(_args) -> int:
+    """Provision the Kokoro neural-voice venv, then re-wire the daemon onto it."""
+    from sonari import kokoro_provision as kp
+    paths.ensure_sonari_dir()
+    print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
+    try:
+        # Pass repo src as PYTHONPATH so predownload_model can import sonari even
+        # before install() populates APP_DIR (on a fresh machine APP_DIR is empty).
+        kp.install_kokoro(os.path.join(paths.repo_root(), "src"))
+    except Exception as exc:  # noqa: BLE001 - report, do not half-wire
+        print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
+        kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
+        return 1
+    rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
+    if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
+        print("Neural voices ready. Pick one with: sonari voice af_heart")
+    return rc
+
+
+def _cmd_voices_uninstall(_args) -> int:
+    """Remove the neural venv and revert the daemon to system Python."""
+    from sonari import kokoro_provision as kp
+    kp.uninstall_kokoro()
+    rc = install()  # neural_enabled() now False -> reverts to resolve_python()
+    print("Neural voices removed; reverted to the system voice.")
+    return rc
+
+
 def _cmd_daemon(_args) -> int:
     from . import daemon
     daemon.main()
@@ -468,6 +524,13 @@ def _register_local(sub) -> None:
     sp.add_argument("action", nargs="?", help="action to unbind")
     sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
     sp.set_defaults(func=_cmd_keymap)
+    vp = sub.add_parser("voices", help="install/remove neural (Kokoro) voices")
+    vsub = vp.add_subparsers(dest="voices_command")
+    vsub.add_parser("install", help="provision neural voices").set_defaults(
+        func=_cmd_voices_install)
+    vsub.add_parser("uninstall", help="remove neural voices").set_defaults(
+        func=_cmd_voices_uninstall)
+    vp.set_defaults(func=lambda _a: (vp.print_help() or 2))
 
 
 def main(argv: Optional[list] = None) -> int:
