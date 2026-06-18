@@ -52,3 +52,23 @@ def ensure_uv(which=shutil.which, run=subprocess.check_call,
     raise RuntimeError(
         "Could not install or locate `uv`, needed to provision neural voices. "
         "Install uv (https://docs.astral.sh/uv/) and re-run: sonari voices install")
+
+
+# ---------------------------------------------------------------------------
+# Task 4: requirements_path + provision
+# ---------------------------------------------------------------------------
+
+def requirements_path() -> str:
+    """Absolute path to the bundled pinned Kokoro requirements file."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "requirements-kokoro.txt")
+
+
+def provision(uv: str, run=subprocess.check_call) -> None:
+    """Create the uv-managed venv (downloading CPython 3.12 if absent) and install
+    the pinned Kokoro stack into it. Raises subprocess.CalledProcessError on failure
+    (the caller aborts without rewiring the daemon)."""
+    venv_dir = str(paths.KOKORO_VENV)
+    run([uv, "venv", venv_dir, "--python", "3.12"])
+    run([uv, "pip", "install", "--python", paths.kokoro_venv_python(),
+         "-r", requirements_path()])

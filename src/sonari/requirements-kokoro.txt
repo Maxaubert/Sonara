@@ -1,0 +1,5 @@
+# Pinned, e2e-verified Kokoro neural-voice stack (Python >=3.10). See
+# docs/superpowers/specs/2026-06-18-sonari-kokoro-provisioning-design.md.
+kokoro-onnx==0.5.0
+onnxruntime==1.27.0
+numpy==2.4.6

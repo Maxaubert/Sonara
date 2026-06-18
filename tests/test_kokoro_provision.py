@@ -60,3 +60,25 @@ def test_ensure_uv_raises_actionable_when_unfindable(tmp_path):
                      base_python="/usr/bin/python3",
                      user_base=lambda py: str(tmp_path))  # no uv ever appears
     assert "uv" in str(ei.value).lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: requirements_path + provision
+# ---------------------------------------------------------------------------
+
+def test_requirements_file_pins_verified_versions():
+    text = open(kp.requirements_path()).read()
+    assert "kokoro-onnx==0.5.0" in text
+    assert "onnxruntime==1.27.0" in text
+    assert "numpy==2.4.6" in text
+
+
+def test_provision_runs_uv_venv_then_pip_install(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "KOKORO_VENV", tmp_path / "venv")
+    monkeypatch.setattr(paths, "kokoro_venv_python",
+                        lambda: str(tmp_path / "venv" / "bin" / "python"))
+    cmds = []
+    kp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd))
+    assert cmds[0] == ["/bin/uv", "venv", str(tmp_path / "venv"), "--python", "3.12"]
+    assert cmds[1][:4] == ["/bin/uv", "pip", "install", "--python"]
+    assert "-r" in cmds[1] and kp.requirements_path() in cmds[1]
