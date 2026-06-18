@@ -160,15 +160,47 @@ class _TtsHandle:
         return self.returncode
 
 
+def _play_wav_bytes(data: bytes):
+    """Write WAV *data* to a temp file and start async winsound playback, returning
+    a _TtsHandle. Shared by the WinRT and Kokoro synth paths. If PlaySound raises
+    before the handle owns the file, unlink it so a failed utterance doesn't leak a
+    temp WAV (the #26 init-sweep would otherwise only reclaim it on the next start)."""
+    import winsound
+    fd, path = tempfile.mkstemp(suffix=".wav", prefix=_TMP_PREFIX)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    duration = _wav_duration(data)
+    try:
+        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return _TtsHandle(path, duration)
+
+
 class WinTtsBackend(TtsBackend):
-    """OneCore TTS via PyWinRT synthesis + winsound playback.
+    """OneCore TTS via PyWinRT synthesis + winsound playback, with optional Kokoro
+    neural voices routed through the same winsound path.
 
     The SpeechSynthesizer is created ONCE and reused (synthesis is stable). All
     winrt.*/winsound imports are lazy (inside methods)."""
 
     def __init__(self) -> None:
         self._synth = None         # reused SpeechSynthesizer (lazy)
+        self._kokoro = None        # lazy KokoroEngine (only if a Kokoro voice is used)
         _sweep_stale_wavs()        # clear temp WAVs leaked by a prior crash (#26)
+
+    def _get_kokoro(self):
+        """Lazy KokoroEngine — downloads the ~316 MB model on first Kokoro voice."""
+        if self._kokoro is None:
+            from sonari import kokoro, paths
+            self._kokoro = kokoro.KokoroEngine(paths.SONARI_DIR / "kokoro")
+        return self._kokoro
 
     def _get_synth(self):
         if self._synth is None:
@@ -188,10 +220,18 @@ class WinTtsBackend(TtsBackend):
         return list(SpeechSynthesizer.all_voices)
 
     def list_voices(self) -> list:
-        """ABC contract: list of installed voice display NAMES (str), matching
-        the macOS backend and the base ABC. Internal callers that need the WinRT
+        """ABC contract: list of selectable voice NAMES (str) — the installed
+        OneCore voices PLUS the 28 Kokoro neural voices, but only when the optional
+        [kokoro] extra is installed (else advertising them would let a user pick a
+        voice whose first speak silently fails). Internal callers that need the WinRT
         objects use _all_voice_infos()/_best_voice_info() instead. (#16)"""
-        return [v.display_name for v in self._all_voice_infos()]
+        from sonari import kokoro
+        try:
+            native = [v.display_name for v in self._all_voice_infos()]
+        except Exception:  # noqa: BLE001 - listing must work even with no winrt
+            native = []
+        kokoro_voices = list(kokoro.VOICES) if kokoro.is_installed() else []
+        return native + kokoro_voices
 
     def _best_voice_info(self, lang_prefix: str = "en-US"):
         """Select a VoiceInformation in priority order:
@@ -274,29 +314,19 @@ class WinTtsBackend(TtsBackend):
         return bytes(buf)
 
     def run(self, text: str, voice, rate: int):
-        """Synthesize *text*, write a temp WAV, and start async winsound playback.
-        Returns a _TtsHandle the caller can .wait()/.terminate()/.poll()."""
-        import winsound
+        """Synthesize *text* and start async winsound playback, returning a
+        _TtsHandle the caller can .wait()/.terminate()/.poll().
 
-        _require_winrt()   # actionable error instead of a raw ImportError (#7)
-        data = self._synthesize_wav(text, voice, rate)
-        fd, path = tempfile.mkstemp(suffix=".wav", prefix=_TMP_PREFIX)
-        try:
-            os.write(fd, data)
-        finally:
-            os.close(fd)
-        duration = _wav_duration(data)
-        # SND_ASYNC: returns immediately; a new PlaySound (next utterance or an
-        # earcon) replaces it. SND_FILENAME plays from the temp path. If PlaySound
-        # raises before the _TtsHandle takes ownership of the file, unlink it here
-        # so a failed utterance doesn't leak a temp WAV (the #26 init-sweep would
-        # otherwise only reclaim it on the next start).
-        try:
-            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-        except Exception:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-            raise
-        return _TtsHandle(path, duration)
+        A Kokoro voice (af_heart, af_nicole, ...) is synthesized by the Kokoro
+        engine; anything else by the native WinRT/OneCore engine. Both paths produce
+        WAV bytes played through the same winsound handle (so cancel/interrupt,
+        earcon mixing, and cleanup are identical)."""
+        from sonari import kokoro
+        if kokoro.is_kokoro_voice(voice):
+            kokoro.require_installed()   # actionable error instead of a raw ImportError
+            data = self._get_kokoro().wav_bytes(
+                text, voice, kokoro.rate_to_speed(rate))
+        else:
+            _require_winrt()   # actionable error instead of a raw ImportError (#7)
+            data = self._synthesize_wav(text, voice, rate)
+        return _play_wav_bytes(data)
