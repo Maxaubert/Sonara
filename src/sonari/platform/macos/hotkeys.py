@@ -21,7 +21,7 @@ LAUNCH_AGENT_PATH = os.path.expanduser(
 # Single-letter keys → uppercase; symbolic names → their symbol.
 _KEY_DISPLAY_BY_NAME = {
     "s": "S", "r": "R", "d": "D", "l": "L", "v": "V", "o": "O",
-    "p": "P", "m": "M",
+    "f": "F", "p": "P", "m": "M",
     "period": ".", ".": ".",
     "rightbracket": "]", "]": "]",
     "leftbracket": "[", "[": "[",

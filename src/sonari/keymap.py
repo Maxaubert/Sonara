@@ -31,6 +31,7 @@ ACTION_MESSAGES = {
     "nav_last": {"type": "nav", "to": "last"},
     "pause": {"type": "pause"},     # play/pause toggle
     "mute": {"type": "mute"},       # sticky per-session mute toggle
+    "pin_toggle": {"type": "pin_toggle"},   # pin/unpin the voice to the current session (#31)
     "faster": {"type": "set_rate", "delta": 25},
     "slower": {"type": "set_rate", "delta": -25},
 }
@@ -42,7 +43,7 @@ ACTION_MESSAGES = {
 # minimal — users add a key for them in keymap.json if they want one.
 _DEFAULT_KEYS = {
     "nav_prev": "left", "nav_next": "right", "nav_first": "up", "nav_last": "down",
-    "pause": "p", "mute": "m",
+    "pause": "s", "mute": "m", "pin_toggle": "p",   # pin owns 'p'; pause moved to 's'. 'f' avoided (Ctrl+Cmd+F = macOS Full Screen)
 }
 
 

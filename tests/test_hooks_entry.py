@@ -239,7 +239,7 @@ def test_stop_emits_turn_done_earcon():
 
 def test_user_prompt_submit_sets_foreground_then_flush():
     assert handle_event("UserPromptSubmit", {"session_id": "sess-9"}) == [
-        {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9"},
+        {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9", "cwd": ""},
         {"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "sess-9"},
     ]
 
@@ -248,8 +248,8 @@ def test_session_start_carries_plugin_version_and_root_from_env(monkeypatch):
     monkeypatch.setenv("CLAUDE_PLUGIN_VERSION", "0.4.0")
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", "/plug/root")
     assert handle_event("SessionStart", {"session_id": "sess-9"}) == [
-        {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9"},
-        {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START, "session": "sess-9",
+        {"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "sess-9", "cwd": ""},
+        {"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START, "session": "sess-9", "cwd": "",
          "plugin_version": "0.4.0", "plugin_root": "/plug/root"},
     ]
 
@@ -278,3 +278,21 @@ def test_missing_session_id_defaults_to_empty_string(monkeypatch):
     msgs = handle_event("SessionStart", {})
     assert msgs[0]["session"] == ""
     assert msgs[1]["session"] == ""
+
+
+def test_user_prompt_submit_sets_foreground_with_cwd():
+    msgs = handle_event("UserPromptSubmit", {"session_id": "s1", "cwd": "/x/proj"})
+    fg = [m for m in msgs if m["type"] == "set_foreground"]
+    assert fg and fg[0]["cwd"] == "/x/proj"
+
+
+def test_session_start_carries_cwd():
+    msgs = handle_event("SessionStart", {"session_id": "s1", "cwd": "/x/proj"})
+    ss = [m for m in msgs if m["type"] == "session_start"]
+    assert ss and ss[0]["cwd"] == "/x/proj"
+
+
+def test_missing_cwd_defaults_to_empty_string():
+    msgs = handle_event("UserPromptSubmit", {"session_id": "s1"})
+    fg = [m for m in msgs if m["type"] == "set_foreground"]
+    assert fg and fg[0]["cwd"] == ""

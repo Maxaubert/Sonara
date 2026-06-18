@@ -2,8 +2,8 @@
 into the form the Swift hotkeyd reads)."""
 
 KEY_CODES = {
-    "s": 1, "r": 15, "d": 2, "l": 37, "v": 9, "o": 31,
-    "p": 35, "m": 46,                 # pause / mute defaults (kVK_ANSI_P / _M)
+    "s": 1, "r": 15, "d": 2, "l": 37, "v": 9, "o": 31,   # 's' = pause
+    "f": 3, "p": 35, "m": 46,         # 'p' = pin_toggle, 'm' = mute (kVK_ANSI_P / _M); 'f' kept available
     "period": 47, ".": 47,
     "rightbracket": 30, "]": 30,
     "leftbracket": 33, "[": 33,

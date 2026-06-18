@@ -3,8 +3,8 @@ chord. Pure data — no OS calls — so it imports on any host for the mock suit
 
 # Virtual-Key codes. Letters == ASCII uppercase; OEM keys per WinUser.h.
 KEY_CODES = {
-    "s": 0x53, "r": 0x52, "d": 0x44, "l": 0x4C, "v": 0x56, "o": 0x4F,
-    "p": 0x50, "m": 0x4D,              # pause / mute defaults
+    "s": 0x53, "r": 0x52, "d": 0x44, "l": 0x4C, "v": 0x56, "o": 0x4F,   # 's' = pause
+    "f": 0x46, "p": 0x50, "m": 0x4D,  # 'p' = pin_toggle, 'm' = mute; 'f' kept available
     "period": 0xBE, ".": 0xBE,        # VK_OEM_PERIOD
     "rightbracket": 0xDD, "]": 0xDD,  # VK_OEM_6
     "leftbracket": 0xDB, "[": 0xDB,   # VK_OEM_4
