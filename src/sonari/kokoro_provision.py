@@ -85,10 +85,10 @@ _PREDOWNLOAD = (
 _HEALTH = "from sonari import kokoro; print(kokoro.is_installed())"
 
 
-def predownload_model(app_dir: str, run=subprocess.check_call) -> None:
+def predownload_model(pythonpath: str, run=subprocess.check_call) -> None:
     """Trigger the one-time ~316 MB model download via the venv python, so the
     first real utterance does not stall for minutes."""
-    env = dict(os.environ, PYTHONPATH=app_dir)
+    env = dict(os.environ, PYTHONPATH=pythonpath)
     run([paths.kokoro_venv_python(), "-c", _PREDOWNLOAD], env=env)
 
 
@@ -106,14 +106,14 @@ def neural_healthy(app_dir: str, run=subprocess.check_output) -> bool:
 # Task 6: install_kokoro + uninstall_kokoro orchestrators
 # ---------------------------------------------------------------------------
 
-def install_kokoro(app_dir, *, ensure_uv=ensure_uv, provision=provision,
+def install_kokoro(pythonpath, *, ensure_uv=ensure_uv, provision=provision,
                    predownload_model=predownload_model) -> None:
     """Provision the neural venv end-to-end. Any step raising aborts the whole
     operation (the caller reports it and leaves the daemon on its current
     interpreter)."""
     uv = ensure_uv()
     provision(uv)
-    predownload_model(app_dir)
+    predownload_model(pythonpath)
 
 
 def uninstall_kokoro(rmtree=shutil.rmtree) -> None:

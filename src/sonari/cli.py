@@ -477,15 +477,17 @@ def _cmd_voices_install(_args) -> int:
     """Provision the Kokoro neural-voice venv, then re-wire the daemon onto it."""
     from sonari import kokoro_provision as kp
     paths.ensure_sonari_dir()
-    app_dir = str(paths.APP_DIR)
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
-        kp.install_kokoro(app_dir)
+        # Pass repo src as PYTHONPATH so predownload_model can import sonari even
+        # before install() populates APP_DIR (on a fresh machine APP_DIR is empty).
+        kp.install_kokoro(os.path.join(paths.repo_root(), "src"))
     except Exception as exc:  # noqa: BLE001 - report, do not half-wire
         print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
+        kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
         return 1
     rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
-    if rc == 0 and kp.neural_healthy(app_dir):
+    if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
         print("Neural voices ready. Pick one with: sonari voice af_heart")
     return rc
 
