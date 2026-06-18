@@ -193,16 +193,19 @@ class MacTtsBackend(TtsBackend):
 
     def list_voices(self) -> "List[str]":
         """Return all selectable voice names: the installed `say` voices (bare,
-        without qualifier tags) PLUS the 28 Kokoro neural voices, but only when
-        the optional [kokoro] extra is installed — else we'd advertise voices
-        whose first speak silently fails (parity with the Windows gate, #42)."""
-        from sonari import kokoro
+        without qualifier tags) PLUS the 28 Kokoro neural voices, but only when the
+        neural engine is reachable on this machine — either importable in THIS
+        interpreter (is_installed) OR provisioned in the venv (neural_enabled). The
+        CLI runs on system python without the extra while the daemon synthesizes via
+        the venv, so gating on is_installed alone hid the voices from `sonari voice`."""
+        from sonari import kokoro, kokoro_provision
         try:
             listing = subprocess.check_output(["say", "-v", "?"], text=True)
             native = [bare for bare, _locale, _premium in _parse_listing(listing)]
         except (FileNotFoundError, OSError, subprocess.SubprocessError):
             native = []
-        kokoro_voices = list(kokoro.VOICES) if kokoro.is_installed() else []
+        neural = kokoro.is_installed() or kokoro_provision.neural_enabled()
+        kokoro_voices = list(kokoro.VOICES) if neural else []
         return native + kokoro_voices
 
     def best_voice(self) -> str:

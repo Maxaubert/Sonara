@@ -5,6 +5,7 @@ import pytest
 
 from sonari.platform.windows import tts as wtts
 from sonari import kokoro
+from sonari import kokoro_provision as kp
 
 
 def _bare_backend():
@@ -61,10 +62,11 @@ def test_list_voices_includes_native_and_kokoro(monkeypatch):
 
 
 def test_list_voices_excludes_kokoro_without_extra(monkeypatch):
-    # Base install (no [kokoro] extra): don't advertise voices that can't synthesize
-    # — otherwise the user picks one and first speak silently fails (ImportError).
+    # Base install (no [kokoro] extra, no venv): don't advertise voices that can't
+    # synthesize — otherwise the user picks one and first speak silently fails.
     b = _bare_backend()
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)  # isolate the is_installed gate
 
     class _V:
         display_name = "Microsoft David"
@@ -72,6 +74,18 @@ def test_list_voices_excludes_kokoro_without_extra(monkeypatch):
     voices = b.list_voices()
     assert voices == ["Microsoft David"]
     assert not any(v in voices for v in kokoro.VOICES)
+
+
+def test_list_voices_lists_kokoro_when_venv_provisioned_without_extra(monkeypatch):
+    # CLI on system python (is_installed False) but the daemon's venv is provisioned:
+    # advertise the neural voices so they're discoverable (gate on neural_enabled).
+    b = _bare_backend()
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)
+    monkeypatch.setattr(b, "_all_voice_infos", lambda: [])   # no native voices
+    voices = b.list_voices()
+    assert "af_heart" in voices
+    assert set(kokoro.VOICES) <= set(voices)
 
 
 def test_list_voices_survives_no_winrt(monkeypatch):
