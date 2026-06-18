@@ -390,9 +390,9 @@ class SpeechDaemon:
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
-            self.sessions.set_foreground(session)
+            self.sessions.set_foreground(session, cwd=msg.get("cwd"))
             if t == MsgType.SESSION_START:
-                self.sessions.register(session)
+                self.sessions.register(session, cwd=msg.get("cwd"))
                 self._maybe_guide_setup(session, msg.get("plugin_version", ""))
             return None
 
@@ -462,6 +462,24 @@ class SpeechDaemon:
                 if cur is not None and cur.session == fg:
                     self.speaker.cancel()
                 self._enqueue(fg, "prose", "Session muted.", False, mute_exempt=True)
+            return None
+
+        if t == MsgType.PIN_TOGGLE:
+            # Pin the voice to the current (last-prompt) session, or unpin it.
+            # The pin overrides "foreground", so a later SET_FOREGROUND from another
+            # session can't steal the voice. Confirmation is mute_exempt so the user
+            # always hears it; the no-session case has nothing to speak through, so
+            # it is an error earcon only.
+            action, folder = self.sessions.pin_toggle()
+            if action == "none":
+                self.speaker.earcon("error")
+                return None
+            fg = self.sessions.foreground()
+            if action == "pinned":
+                text = "Pinned {0}.".format(folder) if folder else "Pinned."
+            else:
+                text = "Auto."
+            self._enqueue(fg, "prose", text, False, mute_exempt=True)
             return None
 
         if t == MsgType.RELOAD_KEYMAP:
