@@ -1,5 +1,6 @@
 from sonari.platform.macos import tts as mod
 from sonari.platform.macos.tts import MacTtsBackend, _parse_listing
+from sonari import kokoro
 
 
 def test_run_builds_say_command_with_voice_and_rate(monkeypatch):
@@ -89,6 +90,7 @@ def test_best_voice_excludes_enhanced_non_english(monkeypatch):
 
 def test_list_voices_returns_all_voice_names(monkeypatch):
     """list_voices must return every voice's bare name regardless of locale."""
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)  # isolate native say parsing
     listing = (
         "Ava (Premium)   en_US  # hello\n"
         "Daniel          en_GB  # hello\n"
@@ -101,6 +103,7 @@ def test_list_voices_returns_all_voice_names(monkeypatch):
 
 def test_list_voices_returns_empty_list_when_say_errors(monkeypatch):
     """When `say -v ?` fails, list_voices must return an empty list."""
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)  # isolate native say parsing
     def boom(*a, **k): raise FileNotFoundError()
     monkeypatch.setattr(mod.subprocess, "check_output", boom)
     assert MacTtsBackend().list_voices() == []
@@ -108,6 +111,7 @@ def test_list_voices_returns_empty_list_when_say_errors(monkeypatch):
 
 def test_list_voices_strips_premium_qualifier(monkeypatch):
     """Bare names in list_voices must not contain '(Premium)' or '(Enhanced)'."""
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)  # isolate native say parsing
     listing = (
         "Ava (Premium)      en_US  # hi\n"
         "Siri (Enhanced)    en_AU  # hi\n"
@@ -123,6 +127,7 @@ def test_list_voices_strips_premium_qualifier(monkeypatch):
 
 def test_list_voices_skips_blank_and_malformed_lines(monkeypatch):
     """Blank lines and lines with only one token must be silently skipped."""
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)  # isolate native say parsing
     listing = (
         "\n"
         "BadLine\n"
