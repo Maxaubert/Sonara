@@ -9,6 +9,7 @@ def test_defaults_has_documented_top_level_keys():
         "verbosity",
         "background_policy",
         "history_cap",
+        "minqueue",
     }
 
 

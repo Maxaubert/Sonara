@@ -58,6 +58,23 @@ def test_rate_sends_int_set_rate():
     assert isinstance(msg["rate"], int)
 
 
+def test_minqueue_sends_int_set_minqueue():
+    with mock.patch("sonari.client.send", return_value=None) as send:
+        rc = cli.main(["minqueue", "3"])
+    msg, _, _ = _sent(send)
+    assert rc == 0
+    assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SET_MINQUEUE,
+                   "minqueue": 3}
+    assert isinstance(msg["minqueue"], int)
+
+
+def test_minqueue_rejects_non_integer():
+    with mock.patch("sonari.client.send") as send:
+        with pytest.raises(SystemExit):
+            cli.main(["minqueue", "lots"])
+    send.assert_not_called()
+
+
 def test_voice_sends_set_voice():
     with mock.patch("sonari.client.send", return_value=None) as send:
         rc = cli.main(["voice", "Ava (Premium)"])

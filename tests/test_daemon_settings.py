@@ -63,10 +63,38 @@ def test_set_verbosity_updates_config_and_saves_no_speaker_call():
     save.assert_called_once_with(config)
 
 
+def test_set_minqueue_updates_config_and_saves():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    with mock.patch("sonari.daemon.save_config") as save:
+        daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=3))
+    assert config["minqueue"] == 3
+    save.assert_called_once_with(config)
+
+
+def test_set_minqueue_clamps_out_of_range():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    with mock.patch("sonari.daemon.save_config"):
+        daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=999))
+    assert config["minqueue"] == 10          # clamped to MINQUEUE_MAX
+    with mock.patch("sonari.daemon.save_config"):
+        daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=0))
+    assert config["minqueue"] == 1           # clamped to MINQUEUE_MIN
+
+
+def test_set_minqueue_rejects_non_numeric():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    before = config["minqueue"]
+    with mock.patch("sonari.daemon.save_config") as save:
+        daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue="abc"))
+    assert config["minqueue"] == before
+    save.assert_not_called()
+
+
 def test_status_returns_documented_dict():
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="medium", foreground="fg")
     config["rate"] = 175
     config["voice"] = "Samantha"
+    config["minqueue"] = 4
     # enqueue two items so queue_len is reported
     from sonari.queue import SpeechItem
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="a", is_decision=False))
@@ -78,6 +106,7 @@ def test_status_returns_documented_dict():
         "voice": "Samantha",
         "foreground": "fg",
         "queue_len": 2,
+        "minqueue": 4,
     }
 
 

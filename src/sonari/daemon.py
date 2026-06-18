@@ -23,6 +23,11 @@ _SINGLETON = None
 RATE_MIN = 100
 RATE_MAX = 400
 
+# Min-queue batching: how many prose items must accumulate before they are read.
+# 1 == read each item as it arrives (the default, unchanged behaviour).
+MINQUEUE_MIN = 1
+MINQUEUE_MAX = 10
+
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
 # (one request each), so this bound is generous; it just stops a misbehaving or
 # hostile peer from leaking unbounded threads by opening many connections.
@@ -48,6 +53,10 @@ class SpeechDaemon:
         self._options: "dict[str, str]" = {}
         self._voice_owner: "str | None" = None
         self._captured_msg: "set[str]" = set()
+        # Min-queue batching: per-session prose held back until it reaches the
+        # configured threshold, then flushed to the speech queue all at once
+        # (see _buffer_prose). session -> list of (text, history-entry).
+        self._prose_buffer: "dict[str, list]" = {}
         # Sessions with an assistant PROSE message currently streaming (between the
         # first non-final delta and the turn boundary). While the owner has an open
         # message we DON'T release the voice on a transient queue drain — between
@@ -95,6 +104,30 @@ class SpeechDaemon:
             self.queue.enqueue(item)
         self._wake.set()
 
+    def _minqueue(self) -> int:
+        try:
+            return max(MINQUEUE_MIN, min(MINQUEUE_MAX, int(self.config.get("minqueue", 1))))
+        except (TypeError, ValueError):
+            return 1
+
+    def _buffer_prose(self, session: str, text: str, entry) -> None:
+        """Hold prose until the per-session buffer reaches the minqueue threshold,
+        then flush it all to the speech queue at once (drain-all, then re-gate).
+        With minqueue == 1 this flushes on every item — today's behaviour."""
+        buf = self._prose_buffer.setdefault(session, [])
+        buf.append((text, entry))
+        if len(buf) >= self._minqueue():
+            self._flush_prose_buffer(session)
+
+    def _flush_prose_buffer(self, session: str) -> None:
+        """Enqueue everything buffered for *session* (e.g. at the turn boundary, so
+        a message that ended below the threshold is still read)."""
+        buf = self._prose_buffer.pop(session, None)
+        if not buf:
+            return
+        for text, entry in buf:
+            self._enqueue(session, "prose", text, False, entry=entry)
+
     def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
         """Speak ONE setup-guidance cue for this session, only when degraded.
 
@@ -124,11 +157,19 @@ class SpeechDaemon:
             entry = self._pending_heard.pop(item.id, None)
             if entry is not None and completed:
                 entry.heard = True
-            if len(self.queue) == 0 and self._voice_owner not in self._open_msg:
-                # Hold the voice while the owner still has an open message (the
-                # queue drains to 0 between chunks of one reply); release only at
-                # the turn boundary (H1).
+            if len(self.queue) == 0 and not self._owner_mid_reply(self._voice_owner):
+                # Hold the voice while the owner is still mid-reply (the queue drains
+                # to 0 between chunks of one reply, and between batched blocks while
+                # prose sits in the minqueue buffer); release only at the turn
+                # boundary (H1).
                 self._voice_owner = None
+
+    def _owner_mid_reply(self, session) -> bool:
+        """True while *session* is still producing a reply: it has an open (still
+        streaming) message OR prose held in the minqueue buffer. Keeps the voice
+        with its owner across the whole reply, including the gaps between batched
+        blocks (without this, batching would let the voice drop mid-reply)."""
+        return session in self._open_msg or bool(self._prose_buffer.get(session))
 
     def _may_speak(self, session: str) -> bool:
         """Voice continuity: a busy voice stays with its owner to the end; a
@@ -302,10 +343,16 @@ class SpeechDaemon:
                         continue
                     entry = self.history.record(session, "prose", chunk)
                     if speak:
-                        self._enqueue(session, "prose", chunk, False, entry=entry)
+                        self._buffer_prose(session, chunk, entry)
                     else:
                         self._captured_msg.add(session)
             if final:
+                # NOTE: `final` marks the end of ONE assistant text block, not the
+                # whole turn — Claude Code emits many per reply (the prose between
+                # tool calls). Flushing the minqueue buffer here would read every
+                # block separately and defeat batching. The buffer is flushed at the
+                # real turn boundary (the turn_done earcon) and when the threshold
+                # is hit; so it is deliberately NOT flushed on `final`.
                 self.history.end_message(session)
                 self._captured_msg.discard(session)
                 self._open_msg.discard(session)   # turn boundary: voice may release
@@ -329,6 +376,7 @@ class SpeechDaemon:
             entry = self.history.record(session, "choice", text)
             self.history.end_message(session)
             if self._claim_for_decision(session):
+                self._flush_prose_buffer(session)   # prose before the question
                 self._enqueue(session, "choice", text, True, entry=entry)
             return None
 
@@ -341,6 +389,7 @@ class SpeechDaemon:
             entry = self.history.record(session, "plan", text)
             self.history.end_message(session)
             if self._claim_for_decision(session):
+                self._flush_prose_buffer(session)   # prose before the plan
                 self._enqueue(session, "plan", text, True, entry=entry)
             return None
 
@@ -353,6 +402,7 @@ class SpeechDaemon:
             entry = self.history.record(session, "permission", text)
             self.history.end_message(session)
             if self._claim_for_decision(session):
+                self._flush_prose_buffer(session)   # prose before the permission ask
                 self._enqueue(session, "permission", text, True, entry=entry)
             return None
 
@@ -361,6 +411,9 @@ class SpeechDaemon:
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
+                # Keep textual order: read prose that preceded this tool call before
+                # the tool cue, rather than letting the immediate cue jump ahead.
+                self._flush_prose_buffer(session)
                 self._enqueue(session, "tool_announce", text, False)
             return None
 
@@ -372,7 +425,9 @@ class SpeechDaemon:
             if kind == "turn_done":
                 # End-of-turn boundary: the assistant produced its last delta, so
                 # the prose message is no longer open and the voice may release even
-                # if the final PROSE flag never arrived (H1 safety net).
+                # if the final PROSE flag never arrived (H1 safety net). Flush any
+                # sub-threshold buffered prose here too, for the same reason.
+                self._flush_prose_buffer(session)
                 self._open_msg.discard(session)
             return None
 
@@ -384,6 +439,7 @@ class SpeechDaemon:
             if self._voice_owner == session:
                 self._voice_owner = None
             self._assemblers.pop(session, None)
+            self._prose_buffer.pop(session, None)   # drop unsent buffered prose
             self.history.reset(session)
             self._nav_cursor.pop(session, None)   # new prompt -> fresh navigation
             # A new prompt is a user action -> auto-resume from pause (temp pause).
@@ -404,6 +460,7 @@ class SpeechDaemon:
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
             self._drop_pending(self.queue.flush_session(session))
+            self._prose_buffer.pop(session, None)
             if self._voice_owner == session:
                 self._voice_owner = None
             self.history.reset(session)
@@ -617,6 +674,17 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
+        if t == MsgType.SET_MINQUEUE:
+            # Validate/clamp before persisting — a bad value reaches disk and would
+            # wedge prose buffering on every turn (mirrors the SET_RATE guard).
+            try:
+                n = max(MINQUEUE_MIN, min(MINQUEUE_MAX, int(msg.get("minqueue"))))
+            except (TypeError, ValueError):
+                return None
+            self.config["minqueue"] = n
+            save_config(self.config)
+            return None
+
         if t == MsgType.CYCLE_VERBOSITY:
             order = ["everything", "medium", "quiet"]
             cur = self.config.get("verbosity", "everything")
@@ -638,6 +706,7 @@ class SpeechDaemon:
                 "voice": self.config.get("voice"),
                 "foreground": self.sessions.foreground(),
                 "queue_len": len(self.queue),
+                "minqueue": self.config.get("minqueue"),
             }
 
         if t == MsgType.PING:
@@ -835,7 +904,7 @@ class SpeechDaemon:
         if item is None:
             with self._lock:
                 if (self._voice_owner is not None and len(self.queue) == 0
-                        and self._voice_owner not in self._open_msg):
+                        and not self._owner_mid_reply(self._voice_owner)):
                     self._voice_owner = None
             # nothing to say: wait until woken by an enqueue or until stop()
             self._wake.wait(self._poll_interval)

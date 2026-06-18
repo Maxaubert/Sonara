@@ -122,10 +122,11 @@ they apply.
 |---|---|---|
 | `/sonari:install` | `sonari install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonari/app`) |
 | `/sonari:uninstall` | `sonari uninstall` | Remove LaunchAgents, hotkey helper, launcher, and `~/.sonari/app` (keeps your settings) |
-| `/sonari:status` | `sonari status` | Show voice, rate, verbosity, foreground session, queue length |
+| `/sonari:status` | `sonari status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
 | `/sonari:verbosity <level>` | `sonari verbosity <level>` | Set `everything` / `medium` / `quiet` |
 | `/sonari:voice <name>` | `sonari voice <name>` | Set the `say` voice |
 | `/sonari:rate <wpm>` | `sonari rate <wpm>` | Set words-per-minute |
+| `/sonari:minqueue <n>` | `sonari minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
 | `/sonari:repeat` | `sonari repeat` | Re-speak the last item |
 | `/sonari:skip` | `sonari skip` | Skip the current item |
 | `/sonari:stop` | `sonari stop` | Stop now and clear the queue |
