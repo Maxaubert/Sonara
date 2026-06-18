@@ -82,3 +82,30 @@ def test_provision_runs_uv_venv_then_pip_install(monkeypatch, tmp_path):
     assert cmds[0] == ["/bin/uv", "venv", str(tmp_path / "venv"), "--python", "3.12"]
     assert cmds[1][:4] == ["/bin/uv", "pip", "install", "--python"]
     assert "-r" in cmds[1] and kp.requirements_path() in cmds[1]
+
+
+# ---------------------------------------------------------------------------
+# Task 5: predownload_model + neural_healthy
+# ---------------------------------------------------------------------------
+
+def test_predownload_invokes_venv_python_with_pythonpath(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
+    seen = {}
+    def fake_run(cmd, env=None, **k):
+        seen["cmd"], seen["env"] = cmd, env
+    kp.predownload_model("/app", run=fake_run)
+    assert seen["cmd"][0] == "/venv/bin/python"
+    assert seen["env"]["PYTHONPATH"] == "/app"
+    assert "KokoroEngine" in seen["cmd"][-1]   # the -c body builds the engine
+
+
+def test_neural_healthy_true_when_venv_reports_installed(monkeypatch):
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
+    assert kp.neural_healthy("/app", run=lambda *a, **k: "True\n") is True
+    assert kp.neural_healthy("/app", run=lambda *a, **k: "False\n") is False
+
+
+def test_neural_healthy_false_on_subprocess_error(monkeypatch):
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
+    def boom(*a, **k): raise OSError("no python")
+    assert kp.neural_healthy("/app", run=boom) is False

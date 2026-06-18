@@ -72,3 +72,31 @@ def provision(uv: str, run=subprocess.check_call) -> None:
     run([uv, "venv", venv_dir, "--python", "3.12"])
     run([uv, "pip", "install", "--python", paths.kokoro_venv_python(),
          "-r", requirements_path()])
+
+
+# ---------------------------------------------------------------------------
+# Task 5: predownload_model + neural_healthy
+# ---------------------------------------------------------------------------
+
+_PREDOWNLOAD = (
+    "from sonari import kokoro, paths as p; "
+    "kokoro.KokoroEngine(p.SONARI_DIR / 'kokoro')._ensure_loaded()")
+
+_HEALTH = "from sonari import kokoro; print(kokoro.is_installed())"
+
+
+def predownload_model(app_dir: str, run=subprocess.check_call) -> None:
+    """Trigger the one-time ~316 MB model download via the venv python, so the
+    first real utterance does not stall for minutes."""
+    env = dict(os.environ, PYTHONPATH=app_dir)
+    run([paths.kokoro_venv_python(), "-c", _PREDOWNLOAD], env=env)
+
+
+def neural_healthy(app_dir: str, run=subprocess.check_output) -> bool:
+    """True if the venv python can import the Kokoro extra (kokoro.is_installed())."""
+    env = dict(os.environ, PYTHONPATH=app_dir)
+    try:
+        out = run([paths.kokoro_venv_python(), "-c", _HEALTH], env=env, text=True)
+    except Exception:  # noqa: BLE001 - any failure means "not healthy"
+        return False
+    return out.strip() == "True"
