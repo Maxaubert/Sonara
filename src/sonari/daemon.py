@@ -862,6 +862,23 @@ class SpeechDaemon:
                 traceback.print_exc(file=sys.stderr)
                 self._wake.wait(0.1)
 
+    def _signal_speak_failure(self) -> None:
+        """An utterance raised (missing TTS extra, synth/playback failure, ...).
+        The inner speak-loop handlers swallow it so one bad item can't wedge the
+        loop — but for an eyes-free user a swallowed exception is a SILENT no-op,
+        the worst outcome (#41). Signal it audibly (error earcon) and log the
+        traceback. Never raises — error signaling must not itself re-break the
+        loop. Call only from within an active `except` block (print_exc reads the
+        handled exception)."""
+        try:
+            self.speaker.earcon("error")
+        except Exception:  # noqa: BLE001 - signaling failure must not wedge the loop
+            pass
+        try:
+            traceback.print_exc(file=sys.stderr)
+        except Exception:  # noqa: BLE001 - logging failure must not wedge the loop
+            pass
+
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
@@ -879,6 +896,7 @@ class SpeechDaemon:
             try:
                 completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
             except Exception:  # noqa: BLE001 - one bad cue must not wedge the pause
+                self._signal_speak_failure()
                 completed = False
             self.note_spoken(item, completed)
             return
@@ -915,6 +933,7 @@ class SpeechDaemon:
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
         except Exception:  # noqa: BLE001 - one bad utterance must not abort the item
+            self._signal_speak_failure()
             completed = False
         requeued = False
         with self._lock:
