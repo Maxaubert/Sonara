@@ -12,6 +12,7 @@ class SpeechItem:
     text: str
     is_decision: bool  # True for choice|plan|permission
     mute_exempt: bool = False  # spoken even when the session is muted (e.g. "muted")
+    pause_exempt: bool = False  # spoken even while the loop is paused (e.g. "Paused.")
 
 
 class SpeechQueue:
@@ -33,6 +34,19 @@ class SpeechQueue:
             return self._items.popleft()
         except IndexError:
             return None
+
+    def pop_pause_exempt(self) -> "SpeechItem | None":
+        """Pop the first pause-exempt item from ANYWHERE in the queue, else None.
+
+        While paused the loop holds, but a pause confirmation ("Paused.") must still
+        be voiced. It is found by scanning rather than peeking the head: a pause
+        landing mid-utterance re-queues the interrupted (non-exempt) item at the
+        front, so the exempt cue is not necessarily first."""
+        for i, item in enumerate(self._items):
+            if item.pause_exempt:
+                del self._items[i]
+                return item
+        return None
 
     def jump_to_decision(self) -> "list[SpeechItem]":
         """Discard leading non-decision items so the next decision is at the front.

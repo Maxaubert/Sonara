@@ -20,6 +20,26 @@ def test_pop_next_on_empty_returns_none():
     assert q.pop_next() is None
 
 
+def test_pop_pause_exempt_returns_first_exempt_skipping_non_exempt():
+    # The interrupted utterance (re-queued at the front on pause) is NOT exempt, so
+    # the pause confirmation must be found past it — pop_pause_exempt scans.
+    q = SpeechQueue()
+    q.enqueue(_item(1, text="interrupted"))                      # non-exempt, at front
+    exempt = SpeechItem(id=2, session="s1", kind="prose", text="Paused.",
+                        is_decision=False, pause_exempt=True)
+    q.enqueue(exempt)
+    got = q.pop_pause_exempt()
+    assert got is exempt
+    assert len(q) == 1 and q.pop_next().text == "interrupted"    # other item untouched
+
+
+def test_pop_pause_exempt_returns_none_when_no_exempt_item():
+    q = SpeechQueue()
+    q.enqueue(_item(1, text="a"))
+    assert q.pop_pause_exempt() is None
+    assert len(q) == 1                                           # nothing removed
+
+
 def test_len_tracks_pending_items():
     q = SpeechQueue()
     assert len(q) == 0

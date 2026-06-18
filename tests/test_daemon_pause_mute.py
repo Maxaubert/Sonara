@@ -23,6 +23,43 @@ def test_speak_loop_holds_while_paused_then_resumes():
     assert speaker.spoken == ["hello"]
 
 
+def test_pause_speaks_paused_confirmation():
+    # Pausing holds the loop, but the "Paused." cue is pause-exempt so the paused
+    # branch still voices it.
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    daemon.handle_message({"type": "pause", "session": "fg"})
+    assert daemon._paused.is_set()
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["Paused."]
+    daemon._speak_loop_once()                 # nothing else exempt -> stays held
+    assert speaker.spoken == ["Paused."]
+
+
+def test_resume_speaks_resumed_then_continues_interrupted():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    daemon._paused.set()
+    daemon._enqueue("fg", "prose", "interrupted", False)   # the held/interrupted item
+    daemon.handle_message({"type": "pause", "session": "fg"})   # resume
+    assert not daemon._paused.is_set()
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["Resumed."]                  # confirmation first
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["Resumed.", "interrupted"]   # then the speech continues
+
+
+def test_pause_and_resume_cues_are_audible_even_when_muted():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    daemon.handle_message({"type": "mute", "session": "fg"})
+    daemon._speak_loop_once()                              # "Session muted."
+    speaker.spoken.clear()
+    daemon.handle_message({"type": "pause", "session": "fg"})
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["Paused."]                   # heard despite mute
+    daemon.handle_message({"type": "pause", "session": "fg"})   # resume
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["Paused.", "Resumed."]
+
+
 def test_mute_drops_speech_but_unmute_resumes():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     daemon.handle_message({"type": "mute", "session": "fg"})

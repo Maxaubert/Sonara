@@ -76,7 +76,8 @@ class SpeechDaemon:
         return a
 
     def _enqueue(self, session: str, kind: str, text: str, is_decision: bool,
-                 entry=None, mute_exempt: bool = False) -> None:
+                 entry=None, mute_exempt: bool = False,
+                 pause_exempt: bool = False, at_front: bool = False) -> None:
         item = SpeechItem(
             id=self._alloc_id(),
             session=session,
@@ -84,10 +85,14 @@ class SpeechDaemon:
             text=text,
             is_decision=is_decision,
             mute_exempt=mute_exempt,
+            pause_exempt=pause_exempt,
         )
         if entry is not None:
             self._pending_heard[item.id] = entry
-        self.queue.enqueue(item)
+        if at_front:
+            self.queue.enqueue_front(item)
+        else:
+            self.queue.enqueue(item)
         self._wake.set()
 
     def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
@@ -435,7 +440,14 @@ class SpeechDaemon:
             # Temporary play/pause. Pause stops the current utterance and holds the
             # loop; resume re-speaks the interrupted item so it picks back up. Also
             # auto-cleared by a new prompt (see the FLUSH handler).
+            fg = self.sessions.foreground()
             if self._paused.is_set():
+                # Resuming: voice "Resumed." FIRST (at the front, ahead of the
+                # interrupted utterance that was re-queued there on pause), then
+                # continue. mute_exempt so the control cue is always heard.
+                if fg is not None:
+                    self._enqueue(fg, "prose", "Resumed.", False,
+                                  mute_exempt=True, at_front=True)
                 self._resume()
             else:
                 self._paused.set()
@@ -444,6 +456,12 @@ class SpeechDaemon:
                 # item (it sees completed=False while paused), so we don't capture
                 # it here — which also avoids replaying an already-finished item.
                 self.speaker.cancel()
+                # The hold silences the queue, so "Paused." is pause_exempt (the
+                # paused branch of the speak loop voices it) and mute_exempt (always
+                # heard). pop_pause_exempt finds it past the re-queued interrupted item.
+                if fg is not None:
+                    self._enqueue(fg, "prose", "Paused.", False,
+                                  mute_exempt=True, pause_exempt=True)
             return None
 
         if t == MsgType.MUTE:
@@ -760,9 +778,22 @@ class SpeechDaemon:
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
-            # Play/pause: hold the loop without consuming the queue.
-            self._wake.wait(self._poll_interval)
-            self._wake.clear()
+            # Play/pause: the loop is held, but a pause-exempt cue ("Paused.") must
+            # still be voiced. Speak one if present; otherwise hold without consuming
+            # the queue. Pop+claim under the lock, mirroring the normal branch.
+            with self._lock:
+                item = self.queue.pop_pause_exempt()
+                self._current_item = item
+                cancel_epoch = self.speaker.cancel_epoch()
+            if item is None:
+                self._wake.wait(self._poll_interval)
+                self._wake.clear()
+                return
+            try:
+                completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
+            except Exception:  # noqa: BLE001 - one bad cue must not wedge the pause
+                completed = False
+            self.note_spoken(item, completed)
             return
         # Pop and CLAIM the item atomically under the lock. PAUSE/MUTE/FLUSH run
         # under this same lock, so popping + setting _current_item together means
