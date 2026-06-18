@@ -221,6 +221,20 @@ def doctor() -> list:
     except Exception as exc:  # noqa: BLE001
         results.append(("keymap resolves", False, f"error: {exc}"))
 
+    try:
+        from sonari import kokoro_provision as kp
+        if not kp.neural_enabled():
+            results.append(("neural voices", True, "not installed (optional)"))
+        elif kp.neural_healthy(str(paths.APP_DIR)):
+            results.append(("neural voices", True,
+                            f"ready ({paths.kokoro_venv_python()})"))
+        else:
+            results.append(("neural voices", False,
+                            "venv present but Kokoro import failed — "
+                            "re-run: sonari voices install"))
+    except Exception as exc:  # noqa: BLE001 - doctor must never raise
+        results.append(("neural voices", False, f"error: {exc}"))
+
     # python3 >= 3.9 resolved.
     try:
         py = _resolve_python()
