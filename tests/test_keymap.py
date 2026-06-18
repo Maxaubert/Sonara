@@ -65,7 +65,7 @@ def test_default_keymap_macos_uses_ctrl_cmd(mac):
     assert set(d.keys()) == {"nav_prev", "nav_next", "nav_first", "nav_last",
                              "pause", "mute", "pin_toggle"}
     assert d["nav_next"]["key"] == "right" and d["nav_next"]["mods"] == ["ctrl", "cmd"]
-    assert d["pause"]["key"] == "p" and d["mute"]["key"] == "m"
+    assert d["pause"]["key"] == "s" and d["mute"]["key"] == "m"   # pause moved off 'p' (pin owns it)
 
 
 def test_default_keymap_windows_uses_ctrl_shift_alt(win):
@@ -242,10 +242,22 @@ def test_pin_toggle_action_message():
     assert ACTION_MESSAGES["pin_toggle"] == {"type": "pin_toggle"}
 
 
-def test_pin_toggle_default_binding_is_f():
+def test_pin_toggle_default_binding_is_p():
     from sonari.keymap import default_keymap
     km = default_keymap()
-    assert km["pin_toggle"]["key"] == "f"     # 'p' is taken by pause
+    # 'p' = Pin. pause was moved off 'p' to 's' to free it. NOT 'f': the macOS
+    # default chord is Ctrl+Cmd and Ctrl+Cmd+F is the system "Enter Full Screen"
+    # shortcut, which the Carbon hotkeyd would swallow globally.
+    assert km["pin_toggle"]["key"] == "p"
+    assert km["pause"]["key"] == "s"     # pause no longer collides with pin
+
+
+def test_no_two_default_actions_share_a_key():
+    # Default bindings share one chord, so each must use a distinct key — else
+    # resolve_keymap emits two entries for the same keyCode and one silently loses.
+    from sonari.keymap import default_keymap
+    keys = [b["key"] for b in default_keymap().values()]
+    assert len(keys) == len(set(keys))
 
 
 def test_pin_toggle_resolves_to_its_message():

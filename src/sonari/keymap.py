@@ -43,7 +43,7 @@ ACTION_MESSAGES = {
 # minimal — users add a key for them in keymap.json if they want one.
 _DEFAULT_KEYS = {
     "nav_prev": "left", "nav_next": "right", "nav_first": "up", "nav_last": "down",
-    "pause": "p", "mute": "m", "pin_toggle": "f",
+    "pause": "s", "mute": "m", "pin_toggle": "p",   # pin owns 'p'; pause moved to 's'. 'f' avoided (Ctrl+Cmd+F = macOS Full Screen)
 }
 
 
