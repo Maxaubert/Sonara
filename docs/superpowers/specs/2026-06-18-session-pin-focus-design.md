@@ -33,7 +33,7 @@ not OS-driven.
 
 - **Default state: auto.** Nothing pinned -> foreground = last session to submit a
   prompt / start (today's behavior, unchanged).
-- **Pin toggle** (`pin_toggle` action; default chord+`P`, see Keybind):
+- **Pin toggle** (`pin_toggle` action; default chord+`F` (`P` is taken by `pause`), see Keybind):
   - Let `cur` = the current foreground session at the moment of the press.
   - `cur is None` (no active session) -> announce "No active session"; no state change.
   - A session is already pinned **and** it equals `cur` -> **unpin** (-> auto); announce "Auto".
@@ -97,8 +97,8 @@ ownership logic needs **no changes** — the pin flows through the existing gate
   `is_foreground`, which now honors the pin.
 
 ### `src/sonari/keymap.py` + hotkey backends
-- New action `pin_toggle`. Default binding chord+`P` (macOS Ctrl+Cmd+P / Windows
-  the existing default chord + P). Routed like the other hotkey actions: the
+- New action `pin_toggle`. Default binding chord+`F` (macOS Ctrl+Cmd+F / Windows
+  the existing default chord + F). Routed like the other hotkey actions: the
   backend sends a `PIN_TOGGLE` message to the daemon.
 - Windows in-process hotkey backend + macOS hotkeyd both register it.
 - `keymap <action> clear` unbind already covers the new action generically.
@@ -146,6 +146,6 @@ ownership logic needs **no changes** — the pin flows through the existing gate
 
 - Shared core (`sessions` / `daemon` / `protocol` / `hooks_entry`) + both hotkey
   backends -> **both approve**.
-- New default keybind (chord+`P`) is a **behavior change** -> raise with Nima before
+- New default keybind (chord+`F`) is a **behavior change** -> raise with Nima before
   finalizing the default. The user's personal binding is separate (local keymap).
 - `skipif` cross-OS tests; `opt` not `alt` on macOS; per-platform human acceptance.

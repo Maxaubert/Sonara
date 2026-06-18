@@ -453,6 +453,7 @@ git commit -m "feat(core): hook sends cwd so the daemon can name the pinned fold
 
 **Interfaces:**
 - Consumes: nothing new (the Windows + macOS hotkey backends already forward `resolve_keymap`'s per-action `message` JSON generically — verified in `windows/hotkeys.py::_register_all`).
+- **Correction (found in execution):** the platform key tables are *sparse* (only keys used by defaults: `s r d l v o p m`). A new key letter therefore MUST also be added to both `KEY_CODES` tables (`windows/keytables.py` `f=0x46`, `macos/keytables.py` `f=3`) and the display-label maps (`windows/hotkeys.py` `0x46:"F"`, `macos/hotkeys.py` `f:"F"`), or `resolve_keymap` raises `ValueError: unknown key`. This is required, not optional — and it means the task also touches `macos/**` (Nima's domain). Four one-line additive entries.
 - Produces: `ACTION_MESSAGES["pin_toggle"] == {"type": "pin_toggle"}`; default binding key `"f"`.
 
 - [ ] **Step 1: Write the failing tests**
