@@ -216,7 +216,7 @@ def test_write_default_keymap_if_absent_writes_once(monkeypatch, tmp_path):
 
 def test_write_resolved_emits_array_of_nine(monkeypatch, tmp_path):
     _patch_keymap_paths(monkeypatch, tmp_path)
-    out_path = keymap.write_resolved()
+    keymap.write_resolved()
     data = json.loads((tmp_path / "hotkeyd.resolved.json").read_text(encoding="utf-8"))
     assert isinstance(data, list) and len(data) == len(keymap._DEFAULT_KEYS)
     for entry in data:

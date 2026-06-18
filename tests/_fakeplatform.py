@@ -38,9 +38,6 @@ class FakeSupervisor:
     def hooks_doctor_row(self):
         return self._hooks_row
 
-    def launchctl(self, args):
-        return 0
-
 
 class FakeHotkey:
     def __init__(self, ok=True, detail="ok"):

@@ -6,7 +6,6 @@ uninstall/doctor dispatch is covered in test_cli_install/_uninstall/_doctor.
 """
 import os
 import plistlib
-import types
 from unittest import mock
 
 from sonari import cli

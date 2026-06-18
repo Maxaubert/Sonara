@@ -1,11 +1,8 @@
-import os
-from unittest import mock
 
 from tests.daemon_helpers import make_daemon
 
 
 def _write_install_json(tmp_path, plugin_version="0.4.0"):
-    import sonari.daemon as daemon_mod
     rec = tmp_path / "install.json"
     import json
     rec.write_text(json.dumps({"plugin_version": plugin_version}))
@@ -37,8 +34,6 @@ def test_setup_health_ok_speech_only_no_hotkeyd(tmp_path, monkeypatch):
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path, plugin_version="0.4.0")
     monkeypatch.setattr("sonari.daemon.INSTALL_RECORD_PATH", str(rec))
-    monkeypatch.setattr("sonari.daemon.HOTKEYD_BIN_PATH",
-                        str(tmp_path / "nope" / "sonari-hotkeyd"), raising=False)
     monkeypatch.setattr(daemon, "_launcher_present", lambda: True)
     state, cue = daemon._setup_health("0.4.0")
     assert state == "ok"

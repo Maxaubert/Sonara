@@ -11,7 +11,7 @@ from sonari.queue import SpeechItem
 from sonari.assembler import ProseAssembler
 from sonari.config import save_config, load_config
 from sonari.paths import (
-    LOCK_PATH, SINGLETON_PATH, ensure_sonari_dir, socket_connectable, repo_root,
+    LOCK_PATH, SINGLETON_PATH, ensure_sonari_dir, socket_connectable,
     INSTALL_RECORD_PATH,
 )
 from sonari.platform import transport
@@ -42,7 +42,6 @@ class SpeechDaemon:
         self._lock = threading.Lock()
         self._server = None
         self._token = None
-        self._threads = []
         self._poll_interval = 0.1
         from sonari.history import SessionHistory
         self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
@@ -933,7 +932,6 @@ class SpeechDaemon:
 
         speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
         accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
-        self._threads = [speak_thread, accept_thread]
         speak_thread.start()
         accept_thread.start()
         self._start_hotkeys()
@@ -955,10 +953,6 @@ class SpeechDaemon:
                 os.unlink(LOCK_PATH)
             except FileNotFoundError:
                 pass
-
-
-def _daemon_shim_path() -> str:
-    return os.path.join(repo_root(), "bin", "sonari-daemon")
 
 
 def ensure_running() -> None:

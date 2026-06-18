@@ -1,6 +1,5 @@
 import importlib
 import os
-import socket
 from pathlib import Path
 from unittest import mock
 

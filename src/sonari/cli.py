@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shutil
 import sys
 from typing import Optional
@@ -242,11 +241,6 @@ def _cmd_doctor(_args) -> int:
         print(f"[{mark}] {check}: {detail}")
         all_ok = all_ok and ok
     return 0 if all_ok else 1
-
-
-def _probe_python_version(path: str):
-    """Probe an interpreter's (major, minor) via the platform supervisor."""
-    return _platform().supervisor._probe_python_version(path)
 
 
 def _resolve_python():

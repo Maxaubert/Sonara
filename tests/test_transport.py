@@ -1,4 +1,4 @@
-import json, socket, threading
+import socket, threading
 from sonari.platform import transport
 
 
@@ -48,7 +48,7 @@ def test_acquire_singleton_is_exclusive(tmp_path):
 
 
 def test_acquire_singleton_windows_branch(tmp_path, monkeypatch):
-    import importlib, sonari.platform.transport as tr
+    import sonari.platform.transport as tr
     monkeypatch.setattr(tr.sys, "platform", "win32")
     lock = tmp_path / "daemon.singleton"
     f1 = tr.acquire_singleton(lock)

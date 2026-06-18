@@ -192,10 +192,6 @@ class MacSupervisorBackend(SupervisorBackend):
         os.chmod(path, 0o755)
         return path
 
-    def local_bin_on_path(self) -> bool:
-        """Return True if ~/.local/bin is on the current PATH."""
-        return _local_bin_on_path()
-
     def is_installed(self) -> bool:
         """True if ~/.local/bin/sonari exists (cheap stat)."""
         return os.path.exists(_launcher_path())

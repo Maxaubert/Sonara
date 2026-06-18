@@ -1,5 +1,4 @@
 import subprocess
-import threading
 
 from sonari.speaker import Speaker
 

@@ -14,11 +14,6 @@ import sys
 HOST = "127.0.0.1"
 
 
-def make_token() -> str:
-    import secrets
-    return secrets.token_hex(32)  # 256-bit
-
-
 def write_lockfile(path, host, port, token, pid) -> None:
     data = {"host": host, "port": int(port), "token": token, "pid": int(pid)}
     tmp = str(path) + ".tmp"

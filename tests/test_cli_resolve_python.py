@@ -1,6 +1,5 @@
 from unittest import mock
 
-from sonari import cli
 from sonari.platform.macos.supervisor import MacSupervisorBackend
 
 
