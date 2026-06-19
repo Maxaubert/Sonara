@@ -338,7 +338,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.TOOL:
-            if verbosity == "everything":
+            if verbosity == "everything" and session == self.sessions.foreground():
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
@@ -499,10 +499,9 @@ class SpeechDaemon:
             self._nav_cursor.pop(fg, None)   # repeat returns to the latest message
             entries = self.history.last_message(fg)
             if not entries:
-                self._enqueue(fg, "prose", "Nothing to repeat.", False)
+                self._speak_cue(fg, "Nothing to repeat.")
                 return None
-            for e in entries:
-                self._enqueue(fg, e.kind, e.text, False, entry=e)
+            self._replay(fg, entries)
             return None
 
         if t == MsgType.REREAD_OPTIONS:
@@ -511,20 +510,29 @@ class SpeechDaemon:
                 return None
             text = self._options.get(fg)
             if text:
-                self._enqueue(fg, "choice", text, False)
+                self._speak_cue(fg, text)
             else:
-                self._enqueue(fg, "prose", "No options right now.", False)
+                self._speak_cue(fg, "No options right now.")
             return None
 
         if t == MsgType.JUMP_DECISION:
-            # Mark the cancelled current item heard and drop the heard-markers of
-            # the skipped prose, so a later CATCH_UP doesn't replay them out of
-            # order (mirrors SKIP) (M6).
+            # Mark the cancelled current item heard and advance the active
+            # channel cursor past any leading non-decision items, dropping their
+            # heard-markers so a later CATCH_UP doesn't replay them out of order
+            # (mirrors SKIP, extended to the whole channel) (M6).
             cur = self._current_item
             if cur is not None:
                 entry = self._pending_heard.get(cur.id)
                 if entry is not None:
                     entry.heard = True
+            # Advance the foreground channel cursor to the next decision item.
+            fg = self.sessions.foreground()
+            if fg is not None:
+                ch = self.router.channel(fg)
+                while ch.cursor < len(ch.items) and not ch.items[ch.cursor].is_decision:
+                    skipped = ch.items[ch.cursor]
+                    self._pending_heard.pop(skipped.id, None)
+                    ch.cursor += 1
             self.speaker.cancel()
             return None
 
@@ -542,20 +550,17 @@ class SpeechDaemon:
                     entries = self.history.unheard(other)
                     preamble = "Catching up on another session."
             if not entries:
-                self._enqueue(fg, "prose", "You're all caught up.", False)
+                self._speak_cue(fg, "You're all caught up.")
                 return None
             # Replay cleanly: cut the target's current utterance (it stays
             # unheard, so it replays FROM ITS START) and drop its queued
-            # duplicates — every unheard entry is re-enqueued in order below.
+            # duplicates — every unheard entry is re-replayed in order below.
             cur = self._current_item
             if cur is not None and cur.session == target:
                 self.speaker.cancel()
             if preamble:
-                self._enqueue(fg, "prose", preamble, False)
-            for e in entries:
-                self._enqueue(target, e.kind, e.text,
-                              e.kind in ("choice", "plan", "permission"),
-                              entry=e)
+                self._speak_cue(fg, preamble)
+            self._replay(target, entries)
             return None
 
         if t == MsgType.SET_RATE:
@@ -686,6 +691,28 @@ class SpeechDaemon:
             except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
                 pass
 
+    def _replay(self, session: str, entries) -> None:
+        """Insert history entries as replay items at the active channel cursor.
+
+        Items are inserted in order at the current cursor position so they read
+        next via the router, ahead of any already-queued items. Each entry's
+        heard-marker is registered in _pending_heard so note_spoken can flip it
+        True on completion (same as a normal _enqueue with entry=...)."""
+        ch = self.router.channel(session)
+        at = ch.cursor
+        for e in entries:
+            item = SpeechItem(
+                id=self._alloc_id(),
+                session=session,
+                kind=e.kind,
+                text=e.text,
+                is_decision=e.kind in ("choice", "plan", "permission"),
+            )
+            self._pending_heard[item.id] = e
+            ch.items.insert(at, item)
+            at += 1
+        self._wake.set()
+
     def _nav(self, session: str, to: str) -> None:
         """Move the per-session message cursor and play from there to the end.
 
@@ -693,10 +720,10 @@ class SpeechDaemon:
         prompt), oldest..newest; absent == the latest. 'next'/'prev' step one
         message and CLAMP at the ends (no wrap; at the newest, 'next' just
         re-reads it); 'first'/'last' jump to the start/end of the turn. Every
-        move cuts current speech, clears the queue, and reads the target message
-        AND every later one (seek-and-play) so playback continues instead of
-        stopping after a single item. Newly streamed prose enqueues after these
-        and continues seamlessly."""
+        move cuts current speech, resets the channel cursor to the target message,
+        and reads the target message AND every later one (seek-and-play) so
+        playback continues instead of stopping after a single item. Newly
+        streamed prose enqueues after these and continues seamlessly."""
         ids = self.history.message_ids(session)
         if not ids:
             self._enqueue(session, "prose", "Nothing to navigate yet.", False)
@@ -725,12 +752,19 @@ class SpeechDaemon:
         else:
             self._nav_cursor[session] = ids[new]   # parked on a past message
         self.speaker.cancel()
-        # Seek-and-play: enqueue the target item AND every later item, so nav reads
-        # from here forward (not just one item). Newly streamed prose enqueues after
-        # these and continues seamlessly — no jump from the replay into a live delta.
+        # Clear any not-yet-spoken items from the channel so the replay is the
+        # sole pending work (mirrors the old queue-clear semantics of _nav).
+        ch = self.router.channel(session)
+        for it in ch.items[ch.cursor:]:
+            self._pending_heard.pop(it.id, None)
+        del ch.items[ch.cursor:]
+        # Seek-and-play: insert the target AND every later item at the channel
+        # cursor so they read from here forward. Newly streamed prose appends
+        # after these and continues seamlessly — no jump from replay into live.
+        entries = []
         for mid in ids[new:]:
-            for e in self.history.entries_for_message(session, mid):
-                self._enqueue(session, e.kind, e.text, False, entry=e)
+            entries.extend(self.history.entries_for_message(session, mid))
+        self._replay(session, entries)
 
     def _resume(self) -> None:
         """Clear pause and wake the speak loop. The interrupted utterance was
