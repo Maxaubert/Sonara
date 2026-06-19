@@ -105,10 +105,27 @@ def test_tool_announce_dropped_when_verbosity_quiet():
     assert len(_channel_items(daemon, "fg")) == 0
 
 
-def test_tool_announce_dropped_when_not_foreground():
+def test_tool_announce_lands_in_background_channel_not_spoken_until_active():
+    # A tool announcement for a background session must land in THAT session's own
+    # channel regardless of foreground. The Router decides when it is read: it serves
+    # a session's channel only when that session is the active reader, so the bg tool
+    # text must NOT be spoken while a different session holds the voice.
+    from sonari.protocol import PROTOCOL_VERSION
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
+    # Give "fg" some prose so it stays the active reader.
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
+                           "session": "fg", "delta": "Foreground prose. ", "index": 0, "final": True})
     daemon.handle_message(_msg(MsgType.TOOL, "other", tool="Bash", summary="run tests"))
-    assert len(_channel_items(daemon, "other")) == 0
+    # The item lands in "other"'s own channel.
+    items = _channel_items(daemon, "other")
+    assert len(items) == 1
+    assert items[0].kind == "tool_announce"
+    assert "run tests" in items[0].text
+    # Drive the speak loop: "fg" is the active reader, so only fg's prose is spoken.
+    # The bg tool text must NOT be spoken while fg holds the voice.
+    daemon._speak_loop_once()
+    assert any("Foreground prose" in t for t in speaker.spoken)
+    assert "run tests" not in speaker.spoken
 
 
 def test_decision_enqueued_at_everything():

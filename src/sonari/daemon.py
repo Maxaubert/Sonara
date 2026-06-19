@@ -338,7 +338,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.TOOL:
-            if verbosity == "everything" and session == self.sessions.foreground():
+            if verbosity == "everything":
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
