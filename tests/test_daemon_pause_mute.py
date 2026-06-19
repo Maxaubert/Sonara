@@ -12,60 +12,55 @@ def _prose(s, d, i, f):
 # MUTE tests
 # ---------------------------------------------------------------------------
 
-def test_mute_targets_active_reader_and_skips_it():
+def test_global_mute_silences_all_sessions():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
-    daemon.handle_message(_prose("A", "Secret one. Secret two. ", 0, True))
-    daemon._speak_loop_once()                        # speaks "Secret one." -> A is active
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    assert daemon.router.channel("A").muted is True
+    daemon.handle_message(_prose("A", "A one. ", 0, True))
+    daemon.handle_message(_prose("B", "B one. ", 0, True))
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # global mute
+    assert daemon._muted is True
+    daemon._speak_loop_once()                        # "Muted." cue (mute_exempt) is heard
+    assert speaker.spoken == ["Muted."]
     speaker.spoken.clear()
-    daemon._speak_loop_once()                        # "Session muted." cue (mute_exempt)
-    assert speaker.spoken == ["Session muted."]
-    speaker.spoken.clear()
-    daemon._speak_loop_once()                        # A still muted, "Secret two." skipped
-    assert speaker.spoken == []
+    for _ in range(4):
+        daemon._speak_loop_once()                    # both sessions' prose is dropped
+    assert speaker.spoken == []                       # all silent, not just the active one
 
 
-def test_mute_toggle_unmutes():
+def test_global_mute_toggles():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
-    daemon.handle_message(_prose("A", "Hello. ", 0, True))
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    assert daemon.router.channel("A").muted is True
+    assert daemon._muted is True
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    assert daemon.router.channel("A").muted is False
+    assert daemon._muted is False
 
 
 def test_mute_cancels_currently_speaking_item():
-    """MUTE cancels the speaker when it arrives while that session's item is live."""
+    """MUTE cancels the speaker so the live utterance stops immediately."""
     from sonari.queue import SpeechItem
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
-    # Simulate an in-progress utterance by planting _current_item directly
-    # (mirrors what _speak_loop_once sets before calling speaker.speak)
-    fake_item = SpeechItem(id=1, session="A", kind="prose",
-                           text="mid-utterance", is_decision=False)
-    daemon._current_item = fake_item
+    daemon._current_item = SpeechItem(id=1, session="A", kind="prose",
+                                      text="mid-utterance", is_decision=False)
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    assert daemon.router.channel("A").muted is True
+    assert daemon._muted is True
     assert speaker.cancels >= 1
 
 
 def test_mute_confirmation_is_heard_despite_mute():
-    """'Session muted.' uses mute_exempt so it plays even though channel is muted."""
+    """'Muted.' uses mute_exempt so it plays even though everything else is silenced."""
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    # channel is now muted, but mute-exempt cue should still play
     daemon._speak_loop_once()
-    assert "Session muted." in speaker.spoken
+    assert "Muted." in speaker.spoken
 
 
 def test_unmute_confirmation_is_spoken():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})  # mute
-    daemon._speak_loop_once()                  # "Session muted."
+    daemon._speak_loop_once()                  # "Muted."
     speaker.spoken.clear()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})  # unmute
     daemon._speak_loop_once()
-    assert speaker.spoken == ["Session unmuted."]
+    assert speaker.spoken == ["Unmuted."]
 
 
 # ---------------------------------------------------------------------------

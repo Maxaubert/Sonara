@@ -59,6 +59,7 @@ class SpeechDaemon:
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._paused = threading.Event()          # play/pause: set == speech halted
+        self._muted = False                       # global mute: drop all prose/cues
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
         self._guided_sessions: set = set()
@@ -461,21 +462,17 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.MUTE:
-            # Toggle a per-channel mute on the active reader. Earcons still fire
-            # (alerts), and the "muted"/"unmuted" confirmation is always heard
-            # (the mute-on case uses mute_exempt via _speak_cue).
+            # Global mute toggle: silence ALL sessions at once. Earcons still fire
+            # (alerts), and the "Muted."/"Unmuted." confirmation is always heard
+            # (mute_exempt). The speak loop drops every non-exempt item while muted.
+            self._muted = not self._muted
+            if self._muted:
+                self.speaker.cancel()           # stop the current utterance now
             target = self.router.active or self.sessions.foreground()
-            if target is None:
-                return None
-            ch = self.router.channel(target)
-            ch.muted = not ch.muted
-            if ch.muted:
-                cur = self._current_item
-                if cur is not None and cur.session == target:
-                    self.speaker.cancel()
-                self._speak_cue(target, "Session muted.", exempt_mute=True)
-            else:
-                self._speak_cue(target, "Session unmuted.")
+            if target is not None:
+                self._speak_cue(target, "Muted." if self._muted else "Unmuted.",
+                                exempt_mute=True)
+            self._wake.set()
             return None
 
         if t == MsgType.PIN_TOGGLE:
@@ -911,10 +908,18 @@ class SpeechDaemon:
             item = self.router.next_item()
             self._current_item = item
             cancel_epoch = self.speaker.cancel_epoch()
-            muted = False   # router already skips muted channels
+            # Global mute: drop every non-exempt item (the "Muted."/"Unmuted." cue
+            # is mute_exempt so it is still heard). The router already advanced the
+            # cursor, so a dropped item is consumed, not replayed.
+            muted = (item is not None and self._muted and not item.mute_exempt)
+            if muted:
+                self._current_item = None
+                self._pending_heard.pop(item.id, None)
         if item is None:
             self._wake.wait(self._poll_interval)
             self._wake.clear()
+            return
+        if muted:
             return
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)

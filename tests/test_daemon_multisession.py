@@ -348,35 +348,25 @@ def test_background_decision_preempts_current_reader():
 # Test 6 — Muted foreground: no audio from it; daemon does not get stuck
 # ---------------------------------------------------------------------------
 
-def test_muted_foreground_produces_no_speech():
-    """If the active (foreground) session is muted, none of its prose is spoken.
-
-    The daemon must not get stuck -- it should simply skip muted items and
-    produce no output (other than mute-exempt cues) for that session.
-    """
+def test_global_mute_silences_every_session():
+    """MUTE is global: while muted, NO session's prose is spoken (only the
+    mute-exempt "Muted." cue). The daemon must not get stuck."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
 
-    # Queue some prose for A.
-    daemon.handle_message(_prose("A", "You should not hear this. "))
+    daemon.handle_message(_prose("A", "You should not hear A. "))
     daemon.router.channel("A").turn_done = True
+    daemon.handle_message(_prose("B", "You should not hear B. "))
+    daemon.router.channel("B").turn_done = True
 
-    # Mute session A (the MUTE handler toggles the active channel).
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # global mute
+    assert daemon._muted is True
 
-    # A's channel is now muted.
-    assert daemon.router.channel("A").muted, "Channel A should be muted."
-
-    # Drive the loop.
     _drain(daemon, n=10)
 
-    # The prose must not have been spoken.
-    assert "You should not hear this." not in speaker.spoken, (
-        f"Muted session A spoke prose it shouldn't have. Spoken: {speaker.spoken!r}"
-    )
-
-    # The "Session muted." confirmation cue IS mute_exempt and must be heard.
-    assert "Session muted." in speaker.spoken, (
-        f"'Session muted.' confirmation was not spoken. Spoken: {speaker.spoken!r}"
+    assert "You should not hear A." not in speaker.spoken
+    assert "You should not hear B." not in speaker.spoken          # ALL sessions silenced
+    assert "Muted." in speaker.spoken, (
+        f"'Muted.' confirmation was not spoken. Spoken: {speaker.spoken!r}"
     )
 
 
