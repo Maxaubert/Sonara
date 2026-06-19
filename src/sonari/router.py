@@ -41,7 +41,14 @@ class Router:
 
     def _ready(self, session: str) -> bool:
         ch = self.channels.get(session)
-        return ch is not None and not ch.muted and ch.ready(self._minqueue())
+        if ch is None:
+            return False
+        if ch.muted:
+            # A mute-exempt cue (e.g. "Session muted." / "Session unmuted.") at
+            # the cursor must still be spoken even though the channel is muted.
+            peeked = ch.peek()
+            return peeked is not None and peeked.mute_exempt
+        return ch.ready(self._minqueue())
 
     def _pick(self) -> "str | None":
         pinned = self.sessions.pinned()
