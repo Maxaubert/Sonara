@@ -68,17 +68,28 @@ def test_pin_toggle_with_no_session_beeps_error_only():
     assert speaker.spoken == []
 
 
-def test_pinned_session_keeps_voice_so_background_prose_is_dropped():
-    """End-to-end through the daemon's PROSE handler: while fg is pinned, a
-    background session's prose is dropped (the pin makes is_foreground -> _may_speak
-    suppress it), and the pinned session's prose still enqueues. This proves the pin
-    flows through the real voice-ownership gate, not just SessionManager state."""
+def test_pinned_session_blocks_background_from_being_served():
+    """While fg is pinned, the router refuses to serve bg even when bg has items.
+    Prose still lands in bg's channel (the channel architecture stores everything),
+    but _pick() returns fg only, so _speak_loop_once never speaks bg's text."""
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.handle_message({"type": "pin_toggle", "session": "fg"})     # pin fg
-    daemon._speak_loop_once()                  # drain the "Pinned." announcement
+    daemon._speak_loop_once()                  # drain the "Pinned." cue
+    speaker.spoken.clear()
     daemon.handle_message({"type": "set_foreground", "session": "bg"})  # bg submits a prompt
-    daemon.handle_message(_prose("bg", "Background sentence here. ", 0, False))
-    assert len(queue) == 0                     # bg prose dropped: the pin holds the voice on fg
-    daemon.handle_message(_prose("fg", "Foreground sentence here. ", 0, False))
-    assert len(queue) == 1                     # the pinned session still speaks
-    assert queue.pop_next().session == "fg"
+    daemon.handle_message(_prose("bg", "Background sentence here. ", 0, True))
+    daemon.handle_message(_prose("fg", "Foreground sentence here. ", 0, True))
+    daemon._speak_loop_once()
+    # fg is pinned: the router serves fg, not bg
+    assert speaker.spoken == ["Foreground sentence here."]
+
+
+def test_repin_replays_pinned_channel_from_start():
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "One. Two. ", 0, True))
+    daemon._speak_loop_once(); daemon._speak_loop_once()   # reads One., Two.
+    speaker.spoken.clear()
+    sessions.set_foreground("A")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PIN_TOGGLE})  # pin A
+    daemon._speak_loop_once()
+    assert speaker.spoken[-1] == "One."     # replayed from the start

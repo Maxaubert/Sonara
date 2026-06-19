@@ -472,6 +472,7 @@ class SpeechDaemon:
                 return None
             fg = self.sessions.foreground()
             if action == "pinned":
+                self.router.repin_reset()
                 text = "Pinned {0}.".format(folder) if folder else "Pinned."
             else:
                 text = "Auto."
