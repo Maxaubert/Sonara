@@ -184,11 +184,6 @@ def test_choice_for_nonfg_session_is_captured_and_options_stored():
 def test_repeat_respeaks_whole_last_message_not_last_fragment():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _prose(daemon, "fg", "First sentence. Second sentence. Third. ")
-    while queue.pop_next() is not None:
-        pass  # drain all items (not tracking spoken here)
-    # re-drain via _drain_one to mark heard
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _prose(daemon, "fg", "First sentence. Second sentence. Third. ")
     while daemon.router.channel("fg").pending():
         _drain_one(daemon, queue, speaker)
     daemon.handle_message(_msg(MsgType.REPEAT))
