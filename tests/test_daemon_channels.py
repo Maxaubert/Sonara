@@ -22,3 +22,13 @@ def test_new_prompt_wipes_only_its_own_channel():
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "A"})
     assert daemon.router.channel("A").items == []          # A wiped
     assert [i.text for i in daemon.router.channel("B").items] == ["B first."]  # B intact
+
+
+def test_speak_loop_reads_active_channel_then_idles():
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "One. Two. ", 0, True))
+    daemon._speak_loop_once()
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["One.", "Two."]
+    daemon._speak_loop_once()                 # nothing left -> idle, no error
+    assert speaker.spoken == ["One.", "Two."]

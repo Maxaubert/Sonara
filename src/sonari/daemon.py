@@ -36,7 +36,7 @@ _MAX_CONN_THREADS = 32
 
 class SpeechDaemon:
     def __init__(self, queue, speaker, sessions, config) -> None:
-        self.queue = queue
+        # queue parameter kept for backward compat with make_daemon/main(); unused after Task 4.
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
@@ -57,18 +57,6 @@ class SpeechDaemon:
         from sonari.history import SessionHistory
         self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
         self._options: "dict[str, str]" = {}
-        self._voice_owner: "str | None" = None
-        self._captured_msg: "set[str]" = set()
-        # Min-queue batching: per-session prose held back until it reaches the
-        # configured threshold, then flushed to the speech queue all at once
-        # (see _buffer_prose). session -> list of (text, history-entry).
-        self._prose_buffer: "dict[str, list]" = {}
-        # Sessions with an assistant PROSE message currently streaming (between the
-        # first non-final delta and the turn boundary). While the owner has an open
-        # message we DON'T release the voice on a transient queue drain — between
-        # chunks of one reply the deque routinely hits 0, and releasing there let a
-        # second session steal the voice and silence the rest of the reply (H1).
-        self._open_msg: "set[str]" = set()
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._paused = threading.Event()          # play/pause: set == speech halted
@@ -104,10 +92,11 @@ class SpeechDaemon:
         )
         if entry is not None:
             self._pending_heard[item.id] = entry
+        ch = self.router.channel(session)
         if at_front:
-            self.queue.enqueue_front(item)
+            ch.items.insert(ch.cursor, item)
         else:
-            self.queue.enqueue(item)
+            ch.items.append(item)
         self._wake.set()
 
     def _minqueue(self) -> int:
@@ -115,24 +104,6 @@ class SpeechDaemon:
             return max(MINQUEUE_MIN, min(MINQUEUE_MAX, int(self.config.get("minqueue", 1))))
         except (TypeError, ValueError):
             return 1
-
-    def _buffer_prose(self, session: str, text: str, entry) -> None:
-        """Hold prose until the per-session buffer reaches the minqueue threshold,
-        then flush it all to the speech queue at once (drain-all, then re-gate).
-        With minqueue == 1 this flushes on every item — today's behaviour."""
-        buf = self._prose_buffer.setdefault(session, [])
-        buf.append((text, entry))
-        if len(buf) >= self._minqueue():
-            self._flush_prose_buffer(session)
-
-    def _flush_prose_buffer(self, session: str) -> None:
-        """Enqueue everything buffered for *session* (e.g. at the turn boundary, so
-        a message that ended below the threshold is still read)."""
-        buf = self._prose_buffer.pop(session, None)
-        if not buf:
-            return
-        for text, entry in buf:
-            self._enqueue(session, "prose", text, False, entry=entry)
 
     def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
         """Speak ONE setup-guidance cue for this session, only when degraded.
@@ -157,57 +128,12 @@ class SpeechDaemon:
 
     def note_spoken(self, item, completed: bool) -> None:
         """Speak-loop bookkeeping: confirm (or decline) the heard-marker for a
-        finished utterance, and release the voice when the queue drains."""
+        finished utterance."""
         with self._lock:
             self._current_item = None
             entry = self._pending_heard.pop(item.id, None)
             if entry is not None and completed:
                 entry.heard = True
-            if len(self.queue) == 0 and not self._owner_mid_reply(self._voice_owner):
-                # Hold the voice while the owner is still mid-reply (the queue drains
-                # to 0 between chunks of one reply, and between batched blocks while
-                # prose sits in the minqueue buffer); release only at the turn
-                # boundary (H1).
-                self._voice_owner = None
-
-    def _owner_mid_reply(self, session) -> bool:
-        """True while *session* is still producing a reply: it has an open (still
-        streaming) message OR prose held in the minqueue buffer. Keeps the voice
-        with its owner across the whole reply, including the gaps between batched
-        blocks (without this, batching would let the voice drop mid-reply)."""
-        return session in self._open_msg or bool(self._prose_buffer.get(session))
-
-    def _may_speak(self, session: str) -> bool:
-        """Voice continuity: a busy voice stays with its owner to the end; a
-        free voice is acquired only by the FOREGROUND session, and only at a
-        message boundary (a message that started captured stays captured)."""
-        if self._voice_owner == session:
-            return True
-        if (self._voice_owner is None
-                and self.sessions.is_foreground(session)
-                and session not in self._captured_msg):
-            self._voice_owner = session
-            return True
-        return False
-
-    def _claim_for_decision(self, session: str) -> bool:
-        """Decisions (question/plan/permission) are user-blocking and belong to the
-        window the user is looking at. A decision for the FOREGROUND session claims
-        a voice that is free OR held by a session whose message has already ENDED
-        (a stale lock) — so the options are read even when a background owner still
-        holds a finished-message lock (M4). It deliberately does NOT steal the voice
-        from a session still STREAMING a reply (owner in _open_msg): interrupting an
-        in-progress response is exactly what H1 prevents, so such a decision stays
-        captured (its text is stored for reread / catch_up). A decision for the
-        current owner is always honored. Superset of _may_speak."""
-        if self._voice_owner == session:
-            return True
-        if (self.sessions.is_foreground(session)
-                and self._voice_owner not in self._open_msg):
-            self._voice_owner = session
-            self._captured_msg.discard(session)
-            return True
-        return False
 
     @staticmethod
     def _choice_text(msg) -> str:
@@ -420,12 +346,9 @@ class SpeechDaemon:
             kind = msg.get("kind", "")
             self.speaker.earcon(kind)
             if kind == "turn_done":
-                # End-of-turn boundary: the assistant produced its last delta, so
-                # the prose message is no longer open and the voice may release even
-                # if the final PROSE flag never arrived (H1 safety net). Flush any
-                # sub-threshold buffered prose here too, for the same reason.
-                self._flush_prose_buffer(session)
-                self._open_msg.discard(session)
+                # End-of-turn boundary: safety-net flush in case the final PROSE
+                # flag never arrived.
+                self.router.channel(session).turn_done = True
             return None
 
         if t == MsgType.FLUSH:
@@ -458,9 +381,9 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.STOP:
-            self._drop_pending(self.queue.clear())
+            for ch in self.router.channels.values():
+                ch.wipe()
             self.speaker.cancel()
-            self._voice_owner = None
             return None
 
         if t == MsgType.SKIP:
@@ -518,7 +441,6 @@ class SpeechDaemon:
                 self._enqueue(fg, "prose", "Session unmuted.", False)
             else:
                 self._muted_sessions.add(fg)
-                self._drop_pending(self.queue.flush_session(fg))
                 cur = self._current_item
                 if cur is not None and cur.session == fg:
                     self.speaker.cancel()
@@ -589,7 +511,6 @@ class SpeechDaemon:
                 entry = self._pending_heard.get(cur.id)
                 if entry is not None:
                     entry.heard = True
-            self._drop_pending(self.queue.jump_to_decision())
             self.speaker.cancel()
             return None
 
@@ -615,7 +536,6 @@ class SpeechDaemon:
             cur = self._current_item
             if cur is not None and cur.session == target:
                 self.speaker.cancel()
-            self._drop_pending(self.queue.flush_session(target))
             if preamble:
                 self._enqueue(fg, "prose", preamble, False)
             for e in entries:
@@ -691,7 +611,6 @@ class SpeechDaemon:
                 "rate": self.config.get("rate"),
                 "voice": self.config.get("voice"),
                 "foreground": self.sessions.foreground(),
-                "queue_len": len(self.queue),
                 "minqueue": self.config.get("minqueue"),
             }
 
@@ -768,15 +687,6 @@ class SpeechDaemon:
         if not ids:
             self._enqueue(session, "prose", "Nothing to navigate yet.", False)
             return
-        # Navigating is an active foreground action: claim the voice for this
-        # session so prose streaming in after the replay is spoken (L3). Use the
-        # SAME conservative rule as _claim_for_decision (M4): take only a free or
-        # stale-lock voice, or one we already own — never SEIZE it from a different
-        # session still streaming a reply (owner in _open_msg), which would strand
-        # that in-progress response (the very thing H1 prevents).
-        if self._voice_owner == session or self._voice_owner not in self._open_msg:
-            self._voice_owner = session
-            self._captured_msg.discard(session)
         n = len(ids)
         # Anchor on a STABLE message id, not a position: new paragraphs streaming
         # in append ids without shifting where the cursor points. Unset/stale ->
@@ -801,7 +711,6 @@ class SpeechDaemon:
         else:
             self._nav_cursor[session] = ids[new]   # parked on a past message
         self.speaker.cancel()
-        self._drop_pending(self.queue.flush_session(session))
         # Seek-and-play: enqueue the target item AND every later item, so nav reads
         # from here forward (not just one item). Newly streamed prose enqueues after
         # these and continues seamlessly — no jump from the replay into a live delta.
@@ -868,72 +777,30 @@ class SpeechDaemon:
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
-            # Play/pause: the loop is held, but a pause-exempt cue ("Paused.") must
-            # still be voiced. Speak one if present; otherwise hold without consuming
-            # the queue. Pop+claim under the lock, mirroring the normal branch.
-            with self._lock:
-                item = self.queue.pop_pause_exempt()
-                self._current_item = item
-                cancel_epoch = self.speaker.cancel_epoch()
-            if item is None:
-                self._wake.wait(self._poll_interval)
-                self._wake.clear()
-                return
-            try:
-                completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
-            except Exception:  # noqa: BLE001 - one bad cue must not wedge the pause
-                self._signal_speak_failure()
-                completed = False
-            self.note_spoken(item, completed)
-            return
-        # Pop and CLAIM the item atomically under the lock. PAUSE/MUTE/FLUSH run
-        # under this same lock, so popping + setting _current_item together means
-        # they always observe a consistent current item and can't slip into the
-        # gap between pop and claim (losing the item or failing to cancel it).
-        with self._lock:
-            item = self.queue.pop_next()
-            self._current_item = item
-            # Capture the speaker's cancel baseline HERE, atomically with the claim.
-            # A cancel() arriving after we release the lock (but before/while speak()
-            # runs) bumps the epoch past this baseline, so the cancelled utterance is
-            # detected instead of playing in full (M2 — the pop->speak gap).
-            cancel_epoch = self.speaker.cancel_epoch()
-            muted = (item is not None
-                     and item.session in self._muted_sessions
-                     and not item.mute_exempt)
-            if muted:
-                # Muted session: drop without speaking; release the claim.
-                self._current_item = None
-                self._pending_heard.pop(item.id, None)
-        if item is None:
-            with self._lock:
-                if (self._voice_owner is not None and len(self.queue) == 0
-                        and not self._owner_mid_reply(self._voice_owner)):
-                    self._voice_owner = None
-            # nothing to say: wait until woken by an enqueue or until stop()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
-        if muted:
+        with self._lock:
+            item = self.router.next_item()
+            self._current_item = item
+            cancel_epoch = self.speaker.cancel_epoch()
+            muted = False   # router already skips muted channels
+        if item is None:
+            self._wake.wait(self._poll_interval)
+            self._wake.clear()
             return
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
-        except Exception:  # noqa: BLE001 - one bad utterance must not abort the item
-            self._signal_speak_failure()
+        except Exception:  # noqa: BLE001
             completed = False
         requeued = False
         with self._lock:
-            # Re-check pause INSIDE the lock (L2). A FLUSH (new prompt) also runs
-            # under this lock and clears pause + flushes the queue; checking pause
-            # outside the lock let a FLUSH land between the check and the
-            # enqueue_front, resurrecting a just-flushed item. Atomic check+enqueue
-            # closes that window.
             if not completed and self._paused.is_set():
-                # A pause interrupted this utterance: re-queue it at the front so
-                # resume picks back up here, and KEEP its _pending_heard entry (don't
-                # note_spoken) so the eventual replay can still record it as heard.
+                # paused mid-utterance: rewind the cursor so resume re-speaks it
+                ch = self.router.channels.get(item.session)
+                if ch is not None and ch.cursor > 0:
+                    ch.cursor -= 1
                 self._current_item = None
-                self.queue.enqueue_front(item)
                 requeued = True
         if not requeued:
             self.note_spoken(item, completed)
