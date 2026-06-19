@@ -25,9 +25,11 @@ class Router:
 
     def drop(self, session: str) -> None:
         self.channels.pop(session, None)
+        if self._pending_announce == session:
+            self._pending_announce = None
         if self.active == session:
             self.active = None
-            self._announced = None
+        self._announced = None
 
     def repin_reset(self) -> None:
         """On a change of pinned target, replay the pinned channel from the start."""
