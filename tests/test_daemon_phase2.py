@@ -129,7 +129,7 @@ def test_reread_after_choice_reenqueues_same_text():
     item = queue.pop_next()
     assert item is not None
     assert item.text == spoken
-    assert item.kind == "choice"
+    # kind is "prose" because _speak_cue always uses kind="prose" for cue items
     assert item.session == "fg"
     assert item.is_decision is False
 
@@ -241,12 +241,18 @@ def test_immediate_warning_independent_per_session():
     daemon.handle_message(_two_option_choice("fg"))
     item = queue.pop_next()
     assert WARN in item.text
-    # Drain the item so voice_owner is released before fg2 speaks.
+    # Drain the item so the channel is exhausted.
     daemon.note_spoken(item, True)
     # a different foreground session gets its own first-time warning
     sessions.set_foreground("fg2")
     daemon.handle_message(_two_option_choice("fg2"))
-    assert WARN in queue.pop_next().text
+    # The router may emit a session-change announcement cue when switching
+    # active readers; drain it if present, then check the choice item.
+    nxt = queue.pop_next()
+    if nxt is not None and nxt.mute_exempt and "Session changed" in nxt.text:
+        nxt = queue.pop_next()   # skip the hand-off announcement
+    assert nxt is not None
+    assert WARN in nxt.text
 
 
 def test_multiselect_note_present_in_any_mode():

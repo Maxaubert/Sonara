@@ -13,8 +13,12 @@ class Router:
         self._announce_text = announce_text  # (folder) -> str
         self.channels: "dict[str, SessionChannel]" = {}
         self.active: "str | None" = None
-        self._announced: "str | None" = None   # session whose hand-off cue we emitted
+        self._announced: "set[str]" = set()   # sessions whose hand-off cue has been emitted
         self._pending_announce: "str | None" = None
+        # Sessions explicitly authorized for reading even when not fg/pinned
+        # (set by the daemon for catch_up/replay cross-session scenarios, and
+        # for old-fg drains when the foreground switches mid-response).
+        self._speakable: "set[str]" = set()
 
     def channel(self, session: str) -> SessionChannel:
         ch = self.channels.get(session)
@@ -29,7 +33,8 @@ class Router:
             self._pending_announce = None
         if self.active == session:
             self.active = None
-        self._announced = None
+        self._announced = set()
+        self._speakable.discard(session)
 
     def repin_reset(self) -> None:
         """On a change of pinned target, replay the pinned channel from the start."""
@@ -37,7 +42,7 @@ class Router:
         if pinned is not None and pinned in self.channels:
             self.channels[pinned].reset()
         self.active = None          # force re-announce/selection
-        self._announced = None
+        self._announced = set()
 
     def _ready(self, session: str) -> bool:
         ch = self.channels.get(session)
@@ -54,20 +59,44 @@ class Router:
         pinned = self.sessions.pinned()
         if pinned is not None:
             return pinned if pinned in self.channels else None
-        # decisions preempt, even mid-message of another session
-        for s, ch in self.channels.items():
-            if ch.has_decision and self._ready(s):
+        # decisions preempt mid-message — but only when there is already an
+        # active reader (i.e. we are mid-batch). If active is None, the router
+        # checks fg first; a cue inserted at fg's cursor takes priority over a
+        # background session's decision.
+        if self.active is not None:
+            for s, ch in self.channels.items():
+                if ch.has_decision and self._ready(s):
+                    return s
+        # the current reader keeps the floor until its channel is empty: once a
+        # batch starts (threshold or turn_done triggered _ready), keep reading
+        # all items in that channel before switching to another session.
+        if self.active is not None:
+            ch = self.channels.get(self.active)
+            if ch is not None and ch.pending() > 0:
+                # Only keep the floor if the batch is still valid (not muted
+                # with no exempt item, which would stall indefinitely).
+                if not ch.muted or self._ready(self.active):
+                    return self.active
+        # Speakable sessions drain first: sessions explicitly authorized for
+        # cross-session reading (e.g. old-fg draining after a session switch,
+        # catch_up replay targets). Pre-suppress the announcement for both the
+        # speakable session itself and the fg we'll transition to next, since
+        # this is a natural hand-off, not a user-visible session switch.
+        for s in list(self._speakable):
+            if self._ready(s):
+                self._announced.add(s)          # suppress s announcing itself
+                fg_now = self.sessions.foreground()
+                if fg_now is not None:
+                    self._announced.add(fg_now) # suppress fg announcing after s drains
                 return s
-        # the current reader keeps the floor while it still has a batch to read
-        if self.active is not None and self._ready(self.active):
-            return self.active
-        # otherwise: foreground first, then oldest-waiting (insertion order)
+            # Auto-evict exhausted speakable sessions so they don't linger.
+            ch = self.channels.get(s)
+            if ch is None or ch.pending() == 0:
+                self._speakable.discard(s)
+        # Otherwise: foreground first.
         fg = self.sessions.foreground()
         if self._ready(fg):
             return fg
-        for s in self.channels:
-            if self._ready(s):
-                return s
         return None
 
     def next_item(self) -> "SpeechItem | None":
@@ -86,8 +115,8 @@ class Router:
             # if we had a previous reader and it wasn't None, we're switching readers
             if self.active is not None:
                 # announce in auto mode only, once per becoming-active
-                if self.sessions.pinned() is None and self._announced != target:
-                    self._announced = target
+                if self.sessions.pinned() is None and target not in self._announced:
+                    self._announced.add(target)
                     self._pending_announce = target
                     self.active = target
                     return self.next_item()   # re-enter to emit the cue first

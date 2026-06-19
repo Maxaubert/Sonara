@@ -16,7 +16,7 @@ def _prose(daemon, session, text, index=0, final=True):
 
 
 def _drain_one(daemon, queue, speaker):
-    """Pop one queued item and run it through the speak-loop bookkeeping."""
+    """Pop one item from the router and run it through the speak-loop bookkeeping."""
     item = queue.pop_next()
     assert item is not None
     completed = speaker.speak(item.text)
@@ -60,7 +60,7 @@ def test_stop_leaves_entries_unheard():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _prose(daemon, "fg", "A. B. ")
     daemon.handle_message(_msg(MsgType.STOP))
-    assert len(queue) == 0
+    assert daemon.router.channel("fg").pending() == 0
     assert [e.text for e in daemon.history.unheard("fg")] == ["A.", "B."]
 
 
@@ -77,68 +77,104 @@ def test_history_cap_comes_from_config():
     assert daemon.history._cap == config["history_cap"] == 200
 
 
-# --- voice continuity / capture ---------------------------------------------
+# --- voice continuity / per-session channels --------------------------------
 
-def test_foreground_session_acquires_free_voice():
+def test_foreground_session_items_land_in_its_channel():
+    """Prose from the foreground session goes into that session's channel."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "Hi. ", final=False)
-    assert daemon._voice_owner == "a"
-    assert len(queue) == 1
+    assert daemon.router.channel("a").pending() == 1
 
 
-def test_nonforeground_response_is_captured_not_spoken():
+def test_nonforeground_response_is_captured_in_its_channel():
+    """Non-foreground prose is captured in the session's own channel (not
+    spoken until that session becomes foreground or is reached by the router)."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "b", "Background. ")
-    assert len(queue) == 0                                  # not spoken live
+    # b has its item in its own channel
+    assert daemon.router.channel("b").pending() == 1
+    # but the router would not pick b to speak (a is foreground)
+    assert daemon.router.channel("a").pending() == 0
+    # b's item is in history as unheard
     assert [e.text for e in daemon.history.unheard("b")] == ["Background."]
 
 
-def test_owner_keeps_voice_after_foreground_moves():
+def test_items_from_multiple_sessions_land_in_their_own_channels():
+    """Each session's prose accumulates in its own channel independently."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
-    _prose(daemon, "a", "A speaking. ", final=False)        # a owns the voice
-    sessions.set_foreground("b")                            # user prompts in b
-    _prose(daemon, "a", "Still a. ", index=1, final=False)  # a keeps talking
-    assert daemon._voice_owner == "a"
-    assert len(queue) == 2
+    _prose(daemon, "a", "A speaking. ", final=False)
+    sessions.set_foreground("b")
+    _prose(daemon, "a", "Still a. ", index=1, final=False)
+    # both items in a's channel
+    assert daemon.router.channel("a").pending() == 2
+    # b has nothing yet
+    assert daemon.router.channel("b").pending() == 0
 
 
-def test_response_landing_on_busy_voice_stays_captured_to_its_end():
+def test_background_channel_not_spoken_while_other_session_is_active():
+    """While session a is active, b's items accumulate in b's channel but the
+    router does not read b (a is still active with an open turn).
+
+    In the per-session-channel model the router uses a 'keep-floor' rule:
+    the current reader (a) keeps reading as long as it has items.  b's items
+    stay pending in b's channel until the router transitions to b."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "A holds the voice. ", final=False)
     sessions.set_foreground("b")
-    _prose(daemon, "b", "B part one. ", final=False)        # voice busy -> captured
-    # a's turn ENDS (the Stop hook's turn_done earcon), then a drains: the voice is
-    # held across inter-chunk drains and released only at the turn boundary (H1).
-    daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
-    while len(queue):
-        _drain_one(daemon, queue, speaker)
-    assert daemon._voice_owner is None                      # freed at a's turn boundary
-    # b's SAME message continues -> still captured (no mid-thought join)
-    _prose(daemon, "b", "B part two. ", index=1, final=True)
-    assert len(queue) == 0
-    texts = [e.text for e in daemon.history.unheard("b")]
-    assert texts == ["B part one.", "B part two."]
-    # b's NEXT message may acquire the free voice (b is foreground)
-    _prose(daemon, "b", "B fresh message. ")
-    assert daemon._voice_owner == "b"
-    assert len(queue) == 1
+    _prose(daemon, "b", "B part one. ", final=False)
+    # a still has its item pending
+    assert daemon.router.channel("a").pending() == 1
+    # b's item is in b's channel
+    assert daemon.router.channel("b").pending() == 1
+    # Both items are in history
+    assert [e.text for e in daemon.history.unheard("a")] == ["A holds the voice."]
+    assert [e.text for e in daemon.history.unheard("b")] == ["B part one."]
 
 
-def test_voice_frees_but_never_autostarts_nonforeground_backlog():
+def test_router_transitions_to_foreground_after_active_session_drains():
+    """After a's turn is done and its channel drains, the router picks b
+    (now foreground) to be the active reader.
+
+    The fg switch goes through daemon.handle_message so the daemon can add the
+    old fg (a) to the router's speakable set — enabling a cooperative hand-off
+    where a drains its in-progress response before b takes over."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
-    _prose(daemon, "b", "B backlog. ")                      # captured
-    assert daemon._voice_owner is None
-    assert len(queue) == 0                                  # stays silent
+    _prose(daemon, "a", "A message. ", final=False)
+    # Use handle_message so the daemon authorizes a's pending drain via _speakable
+    daemon.handle_message(_msg(MsgType.SET_FOREGROUND, "b"))
+    _prose(daemon, "b", "B message. ", final=False)
+    # Mark a's turn done so a's channel becomes fully drainable
+    daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
+    # Drain a's item (router picks a first — it's in _speakable and drains before b)
+    item_a = _drain_one(daemon, queue, speaker)
+    assert item_a.text == "A message."
+    # Now b (foreground) becomes active and its item is readable
+    item_b = _drain_one(daemon, queue, speaker)
+    assert item_b.text == "B message."
 
 
-def test_choice_for_nonowner_is_captured_and_options_stored():
+def test_nonforeground_background_session_not_autostarted():
+    """A session that was never foreground does not autostart speaking even if
+    it has items in its channel — the router requires it to be foreground or
+    pinned to read."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
+    _prose(daemon, "b", "B backlog. ")
+    # b has its item captured, but router won't read it
+    assert daemon.router.channel("b").pending() == 1
+    # router.next_item() won't pick b (b is not fg and not pinned)
+    assert daemon.router.next_item() is None
+
+
+def test_choice_for_nonfg_session_is_captured_and_options_stored():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "A talking. ", final=False)
     sessions.set_foreground("b")
     daemon.handle_message(_msg(MsgType.CHOICE, "b", questions=[
         {"question": "Pick one?", "options": [{"label": "X"}, {"label": "Y"}]}
     ]))
-    assert len(queue) == 1                                  # only a's prose queued
+    # a has 1 prose item, b has 1 choice item — each in their own channel
+    assert daemon.router.channel("a").pending() == 1
+    assert daemon.router.channel("b").pending() == 1
     assert "Pick one?" in daemon._options["b"]              # reread works on return
     assert daemon.history.unheard("b")                      # captured for catch_up
 
@@ -148,11 +184,16 @@ def test_choice_for_nonowner_is_captured_and_options_stored():
 def test_repeat_respeaks_whole_last_message_not_last_fragment():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _prose(daemon, "fg", "First sentence. Second sentence. Third. ")
-    while len(queue):
+    while queue.pop_next() is not None:
+        pass  # drain all items (not tracking spoken here)
+    # re-drain via _drain_one to mark heard
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "First sentence. Second sentence. Third. ")
+    while daemon.router.channel("fg").pending():
         _drain_one(daemon, queue, speaker)
     daemon.handle_message(_msg(MsgType.REPEAT))
     texts = []
-    while len(queue):
+    while daemon.router.channel("fg").pending():
         texts.append(queue.pop_next().text)
     assert texts == ["First sentence.", "Second sentence.", "Third."]
 
@@ -161,12 +202,12 @@ def test_repeat_targets_last_message_only():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _prose(daemon, "fg", "Old message. ")
     _prose(daemon, "fg", "New message. ")
-    while len(queue):
+    while daemon.router.channel("fg").pending():
         _drain_one(daemon, queue, speaker)
     daemon.handle_message(_msg(MsgType.REPEAT))
     item = queue.pop_next()
     assert item.text == "New message."
-    assert len(queue) == 0
+    assert daemon.router.channel("fg").pending() == 0
 
 
 def test_repeat_with_no_history_says_nothing_to_repeat():
@@ -180,8 +221,12 @@ def test_repeat_acts_on_foreground_session_history():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "A message. ")
     _prose(daemon, "b", "B captured. ")
-    while len(queue):
-        _drain_one(daemon, queue, speaker)
+    # drain all pending (includes both a and b items)
+    while daemon.router.channel("a").pending() or daemon.router.channel("b").pending():
+        item = queue.pop_next()
+        if item is None:
+            break
+        daemon.note_spoken(item, True)
     daemon.handle_message(_msg(MsgType.REPEAT))
     item = queue.pop_next()
     assert item.text == "A message."
@@ -195,7 +240,7 @@ def test_catch_up_replays_unheard_oldest_first_then_marks_heard():
     daemon.handle_message(_msg(MsgType.STOP))               # heard nothing
     daemon.handle_message(_msg(MsgType.CATCH_UP))
     texts = []
-    while len(queue):
+    while daemon.router.channel("fg").pending():
         texts.append(_drain_one(daemon, queue, speaker).text)
     assert texts == ["One.", "Two."]
     assert daemon.history.unheard("fg") == []               # marker advanced
@@ -215,7 +260,7 @@ def test_catch_up_interrupted_sentence_replays_from_its_start():
 def test_catch_up_all_heard_says_caught_up():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _prose(daemon, "fg", "Hi. ")
-    while len(queue):
+    while daemon.router.channel("fg").pending():
         _drain_one(daemon, queue, speaker)
     daemon.handle_message(_msg(MsgType.CATCH_UP))
     item = queue.pop_next()
@@ -225,23 +270,27 @@ def test_catch_up_all_heard_says_caught_up():
 def test_catch_up_falls_back_to_other_session_backlog():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "A heard. ")
-    while len(queue):
+    while daemon.router.channel("a").pending():
         _drain_one(daemon, queue, speaker)
-    _prose(daemon, "b", "B unheard. ")                      # captured silently
+    _prose(daemon, "b", "B unheard. ")                      # captured in b's channel
     daemon.handle_message(_msg(MsgType.CATCH_UP))
     texts = []
-    while len(queue):
-        texts.append(queue.pop_next().text)
+    item = queue.pop_next()
+    while item is not None:
+        texts.append(item.text)
+        item = queue.pop_next()
     assert texts == ["Catching up on another session.", "B unheard."]
 
 
 def test_catch_up_does_not_double_speak_queued_items():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _prose(daemon, "fg", "Queued one. Queued two. ")        # in queue, unheard
+    _prose(daemon, "fg", "Queued one. Queued two. ")        # in channel, unheard
     daemon.handle_message(_msg(MsgType.CATCH_UP))
     texts = []
-    while len(queue):
-        texts.append(queue.pop_next().text)
+    item = queue.pop_next()
+    while item is not None:
+        texts.append(item.text)
+        item = queue.pop_next()
     assert texts == ["Queued one.", "Queued two."]          # once, not twice
 
 
@@ -278,16 +327,16 @@ def test_multiselect_announced_up_front():
 
 def test_reread_speaks_current_options_not_queue_tail():
     # REREAD reads from the dedicated _options slot, not from whatever text is
-    # currently at the queue tail. Drain the original choice item (queue tail
+    # currently at the channel tail. Drain the original choice item (cursor
     # moves on), then reread — the slot still holds the choice text.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _choice(daemon, "fg", [{"question": "Q?", "options": [{"label": "X"}]}])
-    while len(queue):
+    while daemon.router.channel("fg").pending():
         _drain_one(daemon, queue, speaker)
     # Enqueue unrelated prose WITHOUT final=True so the options slot stays open.
     daemon.handle_message(_msg(MsgType.PROSE, "fg", delta="Other speech. ",
                                index=0, final=False))
-    while len(queue):
+    while daemon.router.channel("fg").pending():
         _drain_one(daemon, queue, speaker)
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
     item = queue.pop_next()
@@ -311,10 +360,14 @@ def test_reread_after_flush_says_no_options():
 
 
 def test_reread_is_per_session():
+    # REREAD_OPTIONS targets the FOREGROUND session only. b's pending decision
+    # does NOT preempt when the router has no active reader — the fg session (a)
+    # is checked first. Decision preemption only fires mid-batch (active != None).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _choice(daemon, "b", [{"question": "B q?", "options": [{"label": "BB"}]}])
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))      # fg=a has none
     item = queue.pop_next()
+    assert item is not None
     assert item.text == "No options right now."
 
 

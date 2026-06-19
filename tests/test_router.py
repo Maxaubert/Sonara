@@ -31,9 +31,9 @@ def test_single_session_reads_in_order_no_announcement():
 
 def test_auto_handoff_announces_then_reads_foreground_first():
     r, s = _router()
-    s._folders = {"A": "alpha", "B": "beta"}
+    s._folders = {"A": "alpha", "B": "beta"}; s._fg = "A"
     a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
-    # A reads its message
+    # A reads its message (A is fg)
     assert r.next_item().text == "a1"
     # B prompts (becomes foreground) with content
     s._fg = "B"
@@ -62,7 +62,10 @@ def test_muted_channel_is_skipped():
     s._folders = {"A": "alpha", "B": "beta"}; s._fg = "A"
     a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True; a.muted = True
     b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
-    # A is muted -> B reads (B is the only candidate; announced since active changes)
+    # A is muted -> router cannot read A (fg is muted, no mute-exempt item)
+    assert r.next_item() is None
+    # User switches to B -> B becomes fg and reads
+    s._fg = "B"
     item = r.next_item()
     assert item.text in ("Session changed: beta.", "b1")
 

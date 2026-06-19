@@ -35,8 +35,7 @@ _MAX_CONN_THREADS = 32
 
 
 class SpeechDaemon:
-    def __init__(self, queue, speaker, sessions, config) -> None:
-        # queue parameter kept for backward compat with make_daemon/main(); unused after Task 4.
+    def __init__(self, speaker, sessions, config) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
@@ -275,12 +274,18 @@ class SpeechDaemon:
                     self.history.end_message(session)
                     continue
                 entry = self.history.record(session, "prose", chunk)
-                item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
-                                  text=chunk, is_decision=False)
-                self._pending_heard[item.id] = entry
-                ch.append(item)
+                # At "quiet" verbosity prose is recorded in history (for catch_up)
+                # but NOT enqueued for speech.
+                if verbosity != "quiet":
+                    item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
+                                      text=chunk, is_decision=False)
+                    self._pending_heard[item.id] = entry
+                    ch.append(item)
             if final:
-                ch.turn_done = True
+                # NOTE: turn_done is NOT set here — a per-block "final" flag means
+                # this text block finished, but the TURN ends only when the
+                # turn_done earcon (or FLUSH) arrives. This keeps minqueue batching
+                # correct: items accumulate until the threshold OR the turn ends.
                 self.history.end_message(session)
                 self._options.pop(session, None)
             self._wake.set()
@@ -342,7 +347,11 @@ class SpeechDaemon:
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
-                self.router.channel(session).append(SpeechItem(
+                ch = self.router.channel(session)
+                # A tool announcement is immediate: flush any held prose
+                # (below the minqueue threshold) so it reads before the cue.
+                ch.turn_done = True
+                ch.append(SpeechItem(
                     id=self._alloc_id(), session=session, kind="tool_announce",
                     text=text, is_decision=False))
                 self._wake.set()
@@ -374,10 +383,18 @@ class SpeechDaemon:
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
+            old_fg = self.sessions.foreground()
             self.sessions.set_foreground(session, cwd=msg.get("cwd"))
             if t == MsgType.SESSION_START:
                 self.sessions.register(session, cwd=msg.get("cwd"))
                 self._maybe_guide_setup(session, msg.get("plugin_version", ""))
+            # Cooperative hand-off: if the old foreground still has pending items,
+            # add it to _speakable so the router drains it before switching to the
+            # new fg. This is the "session B arrives while A is mid-response" case.
+            if old_fg is not None and old_fg != session:
+                old_ch = self.router.channels.get(old_fg)
+                if old_ch is not None and old_ch.pending() > 0:
+                    self.router._speakable.add(old_fg)
             return None
 
         if t == MsgType.SESSION_END:
@@ -558,6 +575,12 @@ class SpeechDaemon:
             cur = self._current_item
             if cur is not None and cur.session == target:
                 self.speaker.cancel()
+            # Drop pending (not-yet-spoken) channel items for the target so we
+            # don't double-speak: _replay re-inserts them fresh at the cursor.
+            ch = self.router.channel(target)
+            for it in ch.items[ch.cursor:]:
+                self._pending_heard.pop(it.id, None)
+            del ch.items[ch.cursor:]
             if preamble:
                 self._speak_cue(fg, preamble)
             self._replay(target, entries)
@@ -697,7 +720,11 @@ class SpeechDaemon:
         Items are inserted in order at the current cursor position so they read
         next via the router, ahead of any already-queued items. Each entry's
         heard-marker is registered in _pending_heard so note_spoken can flip it
-        True on completion (same as a normal _enqueue with entry=...)."""
+        True on completion (same as a normal _enqueue with entry=...).
+
+        If the target session is not the current foreground, it is added to the
+        router's speakable set so the router's fallback can pick it up after the
+        fg channel drains (catch_up cross-session replay)."""
         ch = self.router.channel(session)
         at = ch.cursor
         for e in entries:
@@ -711,6 +738,15 @@ class SpeechDaemon:
             self._pending_heard[item.id] = e
             ch.items.insert(at, item)
             at += 1
+        # Authorize cross-session reading: if this session is not fg, add it to
+        # the router's speakable set so catch_up / replay items are voiced.
+        if at > ch.cursor:  # only if we actually inserted items
+            fg = self.sessions.foreground()
+            if session != fg:
+                self.router._speakable.add(session)
+                # Mark channel ready: replayed items should be spoken without
+                # waiting for minqueue threshold.
+                ch.turn_done = True
         self._wake.set()
 
     def _nav(self, session: str, to: str) -> None:
@@ -818,6 +854,8 @@ class SpeechDaemon:
         except Exception:  # noqa: BLE001 - signaling failure must not wedge the loop
             pass
         try:
+            import sys
+            import traceback
             traceback.print_exc(file=sys.stderr)
         except Exception:  # noqa: BLE001 - logging failure must not wedge the loop
             pass
@@ -853,6 +891,7 @@ class SpeechDaemon:
                 try:
                     completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
                 except Exception:  # noqa: BLE001
+                    self._signal_speak_failure()
                     completed = False
                 self.note_spoken(item, completed)
                 return
@@ -871,6 +910,7 @@ class SpeechDaemon:
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
         except Exception:  # noqa: BLE001
+            self._signal_speak_failure()
             completed = False
         requeued = False
         with self._lock:
@@ -1074,7 +1114,6 @@ def main() -> None:
         return  # another daemon already owns the single-instance lock
 
     from sonari.speaker import Speaker
-    from sonari.queue import SpeechQueue
     from sonari.sessions import SessionManager
     from sonari.platform import get_platform
 
@@ -1082,7 +1121,6 @@ def main() -> None:
     cfg = load_config()
     if "earcons" not in cfg:
         cfg["earcons"] = _backend.earcon.default_earcons()
-    queue = SpeechQueue()
     speaker = Speaker(
         voice=cfg.get("voice"),
         rate=cfg.get("rate", 200),
@@ -1091,7 +1129,7 @@ def main() -> None:
         earcons=cfg.get("earcons"),
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))
-    daemon = SpeechDaemon(queue, speaker, sessions, cfg)
+    daemon = SpeechDaemon(speaker, sessions, cfg)
     daemon.run()
 
 

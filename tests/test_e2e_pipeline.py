@@ -10,7 +10,6 @@ No real audio is ever produced: the Speaker is replaced by a recorder.
 """
 from sonari.hooks_entry import handle_event
 from sonari.protocol import PROTOCOL_VERSION
-from sonari.queue import SpeechQueue
 from sonari.sessions import SessionManager
 from sonari.daemon import SpeechDaemon
 from sonari.config import DEFAULTS
@@ -55,14 +54,14 @@ class FakeSpeaker:
 
 
 def drain_queue(daemon, speaker):
-    """Run the _speak_loop logic to exhaustion: pop FIFO, speak each item.
+    """Run the speak-loop logic to exhaustion via the router.
 
-    This is exactly what SpeechDaemon._speak_loop does per iteration
-    (item = queue.pop_next(); if item: speaker.speak(item.text)), minus the
-    blocking wait, so the test is deterministic and never touches threads.
+    Calls router.next_item() in a loop and speaks each item until the router
+    has no more ready items.  This mirrors what SpeechDaemon._speak_loop does
+    per iteration, minus the blocking wait, so the test is deterministic.
     """
     while True:
-        item = daemon.queue.pop_next()
+        item = daemon.router.next_item()
         if item is None:
             return
         speaker.speak(item.text)
@@ -71,11 +70,10 @@ def drain_queue(daemon, speaker):
 def make_daemon():
     log = []
     speaker = FakeSpeaker(log)
-    queue = SpeechQueue()
     sessions = SessionManager(background_policy="earcon_only")
     cfg = {k: (dict(v) if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
     cfg["verbosity"] = "everything"
-    daemon = SpeechDaemon(queue, speaker, sessions, cfg)
+    daemon = SpeechDaemon(speaker, sessions, cfg)
     daemon._setup_health = lambda v: ("ok", None)  # no setup cue in ordering tests
     return daemon, speaker, log
 
@@ -164,7 +162,7 @@ def test_scripted_session_full_ordering():
 
 def test_background_session_is_earcon_only():
     """A non-foreground session still fires decision earcons but its prose
-    and decision TEXT are NOT spoken (foreground gating)."""
+    and decision TEXT are NOT spoken (foreground gating by the router)."""
     daemon, speaker, log = make_daemon()
 
     feed_event(daemon, "SessionStart", {"session_id": "fg"})
@@ -185,5 +183,6 @@ def test_background_session_is_earcon_only():
     })
     drain_queue(daemon, speaker)
 
-    # Earcon fired (alerts are cross-session), but no text was spoken.
+    # Earcon fired (alerts are cross-session), but no text was spoken
+    # (router only reads the foreground session "fg", which has no items).
     assert log == [("earcon", "choice")]

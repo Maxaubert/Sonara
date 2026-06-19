@@ -177,8 +177,7 @@ def test_handle_conn_status_round_trip():
 
             line = buf.split(b"\n")[0]
             reply = decode(line)
-            assert set(reply.keys()) >= {"verbosity", "rate", "voice", "foreground", "queue_len"}
-            assert reply["queue_len"] == 0
+            assert set(reply.keys()) >= {"verbosity", "rate", "voice", "foreground", "minqueue"}
         finally:
             daemon.stop()
             for t in threads:

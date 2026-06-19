@@ -95,17 +95,12 @@ def test_status_returns_documented_dict():
     config["rate"] = 175
     config["voice"] = "Samantha"
     config["minqueue"] = 4
-    # enqueue two items so queue_len is reported
-    from sonari.queue import SpeechItem
-    queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="a", is_decision=False))
-    queue.enqueue(SpeechItem(id=2, session="fg", kind="prose", text="b", is_decision=False))
     resp = daemon.handle_message(_msg(MsgType.STATUS))
     assert resp == {
         "verbosity": "medium",
         "rate": 175,
         "voice": "Samantha",
         "foreground": "fg",
-        "queue_len": 2,
         "minqueue": 4,
     }
 
