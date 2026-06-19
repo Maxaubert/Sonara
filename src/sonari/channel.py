@@ -38,6 +38,15 @@ class SessionChannel:
     def peek(self) -> "SpeechItem | None":
         return self.items[self.cursor] if self.cursor < len(self.items) else None
 
+    def take_pause_exempt(self) -> "SpeechItem | None":
+        """Remove and return the first pause_exempt item at/after the cursor (the
+        confirmation cue), so it can be spoken while the loop is held even if a
+        cursor-rewind left it just past the cursor. Returns None if there is none."""
+        for i in range(self.cursor, len(self.items)):
+            if self.items[i].pause_exempt:
+                return self.items.pop(i)
+        return None
+
     def next(self) -> "SpeechItem | None":
         if self.cursor >= len(self.items):
             return None

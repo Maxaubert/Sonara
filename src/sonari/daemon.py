@@ -435,8 +435,9 @@ class SpeechDaemon:
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
-                # voices it while holding everything else. mute_exempt ensures it
-                # is always audible.
+                # scans for and voices it while holding everything else (bypassing
+                # the normal mute gate). mute_exempt is NOT needed here for that
+                # reason; we omit it to keep the flag truthful.
                 if target is not None:
                     self._speak_cue(target, "Paused.", pause_exempt=True)
             return None
@@ -802,24 +803,23 @@ class SpeechDaemon:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
-            # from the active session before holding. Normal items remain held.
+            # before holding. Scan ALL channels at/after their cursor: a mid-utterance
+            # pause rewinds the cursor past where _speak_cue inserted the cue, so a
+            # plain peek() at the cursor would miss it.
             with self._lock:
-                active = self.router.active or self.sessions.foreground()
-                pause_cue = None
-                if active is not None:
-                    ch = self.router.channels.get(active)
-                    if ch is not None:
-                        peeked = ch.peek()
-                        if peeked is not None and peeked.pause_exempt:
-                            pause_cue = ch.next()
-                            self._current_item = pause_cue
+                item = None
+                for ch in self.router.channels.values():
+                    item = ch.take_pause_exempt()
+                    if item is not None:
+                        self._current_item = item
+                        break
                 cancel_epoch = self.speaker.cancel_epoch()
-            if pause_cue is not None:
+            if item is not None:
                 try:
-                    completed = self.speaker.speak(pause_cue.text, cancel_epoch=cancel_epoch)
+                    completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
                 except Exception:  # noqa: BLE001
                     completed = False
-                self.note_spoken(pause_cue, completed)
+                self.note_spoken(item, completed)
                 return
             self._wake.wait(self._poll_interval)
             self._wake.clear()

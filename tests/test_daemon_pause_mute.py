@@ -149,3 +149,116 @@ def test_new_prompt_clears_pause():
     daemon._paused.set()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "A"})
     assert not daemon._paused.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Mid-utterance PAUSE concurrency tests (Task 5 pass 2)
+# ---------------------------------------------------------------------------
+
+def test_paused_cue_spoken_after_mid_utterance_pause():
+    """Repro: PAUSE arrives while speak() is running (item already consumed from
+    channel); speak() returns False+paused, cursor rewinds, 'Paused.' is now at
+    cursor+1 — the paused branch must scan beyond the cursor to find and speak it.
+    """
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "Item one. Item two. ", 0, True))
+
+    # Arm the speaker to simulate mid-utterance PAUSE:
+    # While "Item one." is being spoken, PAUSE arrives (sets _paused, cancels
+    # speaker, inserts "Paused." at cursor). speak() then returns False.
+    original_speak = speaker.speak
+
+    def speak_that_pauses(text, cancel_epoch=None):
+        if text == "Item one.":
+            # PAUSE arrives mid-utterance
+            daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+            return False   # cancelled by pause
+        return original_speak(text, cancel_epoch=cancel_epoch)
+
+    speaker.speak = speak_that_pauses
+
+    # This _speak_loop_once consumes "Item one." via ch.next(), calls speak()
+    # which fires PAUSE (inserts "Paused." at cursor, rewinds to cursor-1),
+    # gets False back, sees _paused → rewinds cursor again. Net: cursor points
+    # at "Item one.", "Paused." is at cursor+1.
+    daemon._speak_loop_once()
+
+    assert daemon._paused.is_set()
+    # "Item one." itself was not completed (False) so it's NOT in spoken.
+    # The paused branch must now find and speak "Paused." even though it's
+    # past the cursor.
+    speaker.spoken.clear()
+    daemon._speak_loop_once()
+    assert "Paused." in speaker.spoken, (
+        "Expected 'Paused.' to be spoken while paused, but it was not. "
+        f"Spoken: {speaker.spoken}"
+    )
+
+    # Further iterations while paused should hold (no new items spoken).
+    speaker.spoken.clear()
+    daemon._speak_loop_once()
+    assert speaker.spoken == [], f"Expected silence while paused, got: {speaker.spoken}"
+
+
+def test_mid_utterance_pause_rewinds_and_resumes_interrupted_item():
+    """When PAUSE interrupts an utterance, the cursor must rewind so the
+    interrupted item is not lost; on resume, it replays from the start."""
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "Alpha. Beta. ", 0, True))
+
+    original_speak = speaker.speak
+
+    def speak_that_pauses(text, cancel_epoch=None):
+        if text == "Alpha.":
+            daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+            return False
+        return original_speak(text, cancel_epoch=cancel_epoch)
+
+    speaker.speak = speak_that_pauses
+
+    # Run the loop to trigger the mid-utterance pause on "Alpha."
+    daemon._speak_loop_once()
+
+    assert daemon._paused.is_set()
+
+    # Drain "Paused." cue (may be there or not depending on order; just clear it)
+    speaker.speak = original_speak
+    daemon._speak_loop_once()   # speaks "Paused." or holds
+
+    # Resume
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+    assert not daemon._paused.is_set()
+    daemon._speak_loop_once()   # "Resumed."
+    daemon._speak_loop_once()   # "Alpha." (rewound)
+    assert "Alpha." in speaker.spoken, (
+        f"Expected 'Alpha.' to replay after resume but got: {speaker.spoken}"
+    )
+
+
+def test_pause_replay_preserves_heard_marker():
+    """The interrupted item's _pending_heard entry must survive the cursor rewind
+    so that when it is eventually spoken (completed), its history entry is marked
+    heard."""
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "Marked. ", 0, True))
+
+    ch = daemon.router.channel("A")
+    # Confirm a pending_heard entry exists for the item before it's spoken
+    assert len(daemon._pending_heard) == 1
+    item_id = list(daemon._pending_heard.keys())[0]
+
+    original_speak = speaker.speak
+
+    def speak_that_pauses(text, cancel_epoch=None):
+        if text == "Marked.":
+            daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+            return False
+        return original_speak(text, cancel_epoch=cancel_epoch)
+
+    speaker.speak = speak_that_pauses
+    daemon._speak_loop_once()   # triggers mid-utterance pause on "Marked."
+
+    # The _pending_heard entry must NOT have been removed (item was not completed)
+    assert item_id in daemon._pending_heard, (
+        "Interrupted item's heard-marker was wrongly dropped on cursor rewind."
+    )
