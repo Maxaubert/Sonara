@@ -13,12 +13,12 @@ class Router:
         self._announce_text = announce_text  # (folder) -> str
         self.channels: "dict[str, SessionChannel]" = {}
         self.active: "str | None" = None
-        self._announced: "set[str]" = set()   # sessions whose hand-off cue has been emitted
+        self._last_active: "str | None" = None   # last session that actually read (persists across idle gaps)
         self._pending_announce: "str | None" = None
-        # Sessions explicitly authorized for reading even when not fg/pinned
-        # (set by the daemon for catch_up/replay cross-session scenarios, and
-        # for old-fg drains when the foreground switches mid-response).
-        self._speakable: "set[str]" = set()
+        # Sessions explicitly authorized to bypass the background-policy gate
+        # (set by catch_up / nav cross-session replay so their replayed items
+        # are voiced even when the session is not the current foreground).
+        self._replay_authorized: "set[str]" = set()
 
     def channel(self, session: str) -> SessionChannel:
         ch = self.channels.get(session)
@@ -29,20 +29,21 @@ class Router:
 
     def drop(self, session: str) -> None:
         self.channels.pop(session, None)
-        if self._pending_announce == session:
-            self._pending_announce = None
         if self.active == session:
             self.active = None
-        self._announced = set()
-        self._speakable.discard(session)
+        if self._last_active == session:
+            self._last_active = None
+        if self._pending_announce == session:
+            self._pending_announce = None
+        self._replay_authorized.discard(session)
 
     def repin_reset(self) -> None:
         """On a change of pinned target, replay the pinned channel from the start."""
         pinned = self.sessions.pinned()
         if pinned is not None and pinned in self.channels:
             self.channels[pinned].reset()
-        self.active = None          # force re-announce/selection
-        self._announced = set()
+        self.active = None          # force re-selection
+        # _last_active intentionally NOT reset: pin replay is not an auto handoff.
 
     def _ready(self, session: str) -> bool:
         ch = self.channels.get(session)
@@ -59,44 +60,41 @@ class Router:
         pinned = self.sessions.pinned()
         if pinned is not None:
             return pinned if pinned in self.channels else None
-        # decisions preempt mid-message — but only when there is already an
-        # active reader (i.e. we are mid-batch). If active is None, the router
-        # checks fg first; a cue inserted at fg's cursor takes priority over a
-        # background session's decision.
-        if self.active is not None:
-            for s, ch in self.channels.items():
-                if ch.has_decision and self._ready(s):
+        # decisions preempt -- even when idle (user-blocking; I1 fix).
+        # Still respect the background-policy gate: earcon_only mode suppresses
+        # decision TEXT for non-fg sessions (the earcon itself fires separately
+        # and is always cross-session). _replay_authorized bypasses the gate.
+        should_speak = getattr(self.sessions, "should_speak", None)
+        for s, ch in self.channels.items():
+            if ch.has_decision and self._ready(s):
+                if (should_speak is None or should_speak(s)
+                        or s in self._replay_authorized):
                     return s
-        # the current reader keeps the floor until its channel is empty: once a
-        # batch starts (threshold or turn_done triggered _ready), keep reading
-        # all items in that channel before switching to another session.
+        # the current reader keeps the floor until its batch drains -- minqueue
+        # only gates the START of reading; once started, every pending item is
+        # read (unless the channel is muted with no exempt item).
         if self.active is not None:
             ch = self.channels.get(self.active)
             if ch is not None and ch.pending() > 0:
-                # Only keep the floor if the batch is still valid (not muted
-                # with no exempt item, which would stall indefinitely).
                 if not ch.muted or self._ready(self.active):
                     return self.active
-        # Speakable sessions drain first: sessions explicitly authorized for
-        # cross-session reading (e.g. old-fg draining after a session switch,
-        # catch_up replay targets). Pre-suppress the announcement for both the
-        # speakable session itself and the fg we'll transition to next, since
-        # this is a natural hand-off, not a user-visible session switch.
-        for s in list(self._speakable):
-            if self._ready(s):
-                self._announced.add(s)          # suppress s announcing itself
-                fg_now = self.sessions.foreground()
-                if fg_now is not None:
-                    self._announced.add(fg_now) # suppress fg announcing after s drains
-                return s
-            # Auto-evict exhausted speakable sessions so they don't linger.
-            ch = self.channels.get(s)
-            if ch is None or ch.pending() == 0:
-                self._speakable.discard(s)
-        # Otherwise: foreground first.
+        # foreground first, then oldest-waiting (insertion order).
         fg = self.sessions.foreground()
         if self._ready(fg):
             return fg
+        for s in self.channels:
+            if self._ready(s):
+                # Replay-authorized sessions bypass the policy gate (cross-session
+                # catch_up / nav replay must be voiced even in earcon_only mode).
+                # Auto-evict once drained so authorization doesn't linger.
+                if s in self._replay_authorized:
+                    ch = self.channels.get(s)
+                    if ch is None or ch.pending() == 0:
+                        self._replay_authorized.discard(s)
+                    else:
+                        return s
+                elif should_speak is None or should_speak(s):
+                    return s
         return None
 
     def next_item(self) -> "SpeechItem | None":
@@ -112,13 +110,16 @@ class Router:
             self.active = None
             return None
         if target != self.active:
-            # if we had a previous reader and it wasn't None, we're switching readers
-            if self.active is not None:
-                # announce in auto mode only, once per becoming-active
-                if self.sessions.pinned() is None and target not in self._announced:
-                    self._announced.add(target)
-                    self._pending_announce = target
-                    self.active = target
-                    return self.next_item()   # re-enter to emit the cue first
             self.active = target
+            # Announce a REAL handoff (auto only): switching to a session different
+            # from the LAST one that read. The first-ever reader (no prior
+            # _last_active) does not announce -> single session never announces;
+            # returning to the same session after an idle gap does not announce.
+            if (self.sessions.pinned() is None
+                    and self._last_active is not None
+                    and target != self._last_active):
+                self._pending_announce = target
+                self._last_active = target
+                return self.next_item()
+            self._last_active = target
         return self.channels[target].next()

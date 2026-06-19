@@ -56,12 +56,11 @@ class ChannelQueueProxy:
         ch = self._daemon.router.channel(item.session)
         ch.append(item)
         ch.turn_done = True          # make immediately available at minqueue==1
-        # Authorize non-fg sessions to be readable (test helpers explicitly seed
-        # items into sessions that may not be fg; the router must be able to
-        # return them via pop_next() in those tests).
+        # Authorize non-fg sessions so test helpers can explicitly seed items into
+        # any session and read them back via pop_next() (unit-test infrastructure).
         fg = self._daemon.sessions.foreground()
         if item.session != fg:
-            self._daemon.router._speakable.add(item.session)
+            self._daemon.router._replay_authorized.add(item.session)
         self._daemon._wake.set()
 
     def pop_next(self):

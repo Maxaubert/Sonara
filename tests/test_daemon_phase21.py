@@ -135,33 +135,46 @@ def test_router_transitions_to_foreground_after_active_session_drains():
     """After a's turn is done and its channel drains, the router picks b
     (now foreground) to be the active reader.
 
-    The fg switch goes through daemon.handle_message so the daemon can add the
-    old fg (a) to the router's speakable set — enabling a cooperative hand-off
-    where a drains its in-progress response before b takes over."""
+    The cooperative hand-off uses the router's 'current reader keeps the floor'
+    rule: if reading has ALREADY STARTED on a session (active != None), that
+    session keeps the floor until its batch drains, even if fg switches.
+
+    After a drains completely (establishing _last_active=a), b is a different
+    session so the router emits a 'Session changed' announcement before b's
+    content. Both the announcement and b's message must be heard."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "A message. ", final=False)
-    # Use handle_message so the daemon authorizes a's pending drain via _speakable
-    daemon.handle_message(_msg(MsgType.SET_FOREGROUND, "b"))
-    _prose(daemon, "b", "B message. ", final=False)
-    # Mark a's turn done so a's channel becomes fully drainable
+    # Mark a's turn done so its channel is readable.
     daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
-    # Drain a's item (router picks a first — it's in _speakable and drains before b)
+    # Start reading a (this sets router.active = "a" and _last_active = "a").
     item_a = _drain_one(daemon, queue, speaker)
     assert item_a.text == "A message."
-    # Now b (foreground) becomes active and its item is readable
+    # Now switch fg to b (a has already drained).
+    daemon.handle_message(_msg(MsgType.SET_FOREGROUND, "b"))
+    _prose(daemon, "b", "B message. ", final=False)
+    # b is a different session from _last_active(a): announcement fires first.
+    item_announce = queue.pop_next()
+    assert item_announce is not None
+    assert "Session changed" in item_announce.text, (
+        f"Expected announce before b's item. Got: {item_announce.text!r}"
+    )
+    # b's content follows.
     item_b = _drain_one(daemon, queue, speaker)
     assert item_b.text == "B message."
 
 
 def test_nonforeground_background_session_not_autostarted():
-    """A session that was never foreground does not autostart speaking even if
-    it has items in its channel — the router requires it to be foreground or
-    pinned to read."""
+    """A non-fg session with ready items is NOT served when the default
+    background_policy ('earcon_only') is active.
+
+    The router's oldest-waiting fallthrough is gated by sessions.should_speak():
+    with earcon_only policy, only the foreground session is eligible for voice.
+    The bg session stays pending until it becomes foreground."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "b", "B backlog. ")
-    # b has its item captured, but router won't read it
+    # b has its item captured, but policy blocks it
     assert daemon.router.channel("b").pending() == 1
-    # router.next_item() won't pick b (b is not fg and not pinned)
+    # router.next_item() won't pick b (b is not fg; earcon_only policy blocks it)
     assert daemon.router.next_item() is None
 
 
@@ -355,9 +368,12 @@ def test_reread_after_flush_says_no_options():
 
 
 def test_reread_is_per_session():
-    # REREAD_OPTIONS targets the FOREGROUND session only. b's pending decision
-    # does NOT preempt when the router has no active reader — the fg session (a)
-    # is checked first. Decision preemption only fires mid-batch (active != None).
+    # REREAD_OPTIONS targets the FOREGROUND session only. In earcon_only mode
+    # (the default), b's pending decision does NOT preempt -- non-fg session
+    # text is suppressed by the background policy, so only fg reads.
+    # The earcon fires separately (cross-session) but the text stays silent.
+    # (This behavior is correct; the I1 fix allows preemption in non-earcon_only
+    # configs -- see test_background_decision_while_idle_is_read for that case.)
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _choice(daemon, "b", [{"question": "B q?", "options": [{"label": "BB"}]}])
     daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))      # fg=a has none

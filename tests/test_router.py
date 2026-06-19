@@ -58,16 +58,22 @@ def test_active_reader_finishes_before_handoff():
 
 
 def test_muted_channel_is_skipped():
+    # Spec §3: a muted channel is skipped in auto; hand off past it to
+    # the next oldest-waiting ready session.
     r, s = _router()
     s._folders = {"A": "alpha", "B": "beta"}; s._fg = "A"
     a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True; a.muted = True
     b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
-    # A is muted -> router cannot read A (fg is muted, no mute-exempt item)
-    assert r.next_item() is None
-    # User switches to B -> B becomes fg and reads
-    s._fg = "B"
+    # A is fg but muted (no mute-exempt item) -> router falls through to B
+    # (oldest-waiting). B is served with an announcement since it is a
+    # different session from A.
     item = r.next_item()
-    assert item.text in ("Session changed: beta.", "b1")
+    # Announcement fires first (A is _last_active after this, target=B is new)
+    # BUT _last_active starts as None -> no announce on first real reader.
+    # With _last_active=None at start, B is the FIRST reader -> no announce.
+    assert item is not None
+    assert item.text == "b1"
+    assert r.next_item() is None
 
 
 def test_decision_preempts_current_reader():

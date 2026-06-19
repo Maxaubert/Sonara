@@ -52,7 +52,13 @@ class SessionManager:
             self._pinned = None
 
     def should_speak(self, session: str) -> bool:
-        return self.is_foreground(session)
+        """Whether the router may serve this session in the oldest-waiting slot.
+
+        earcon_only (default): only the foreground session gets voice time.
+        any other policy: all sessions with ready content are eligible."""
+        if self.background_policy == "earcon_only":
+            return self.is_foreground(session)
+        return True
 
     def pinned(self) -> "str | None":
         return self._pinned

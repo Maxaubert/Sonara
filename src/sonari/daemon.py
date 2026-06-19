@@ -59,7 +59,6 @@ class SpeechDaemon:
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._paused = threading.Event()          # play/pause: set == speech halted
-        self._muted_sessions: set = set()         # sessions whose speech is muted
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
         self._guided_sessions: set = set()
@@ -389,12 +388,14 @@ class SpeechDaemon:
                 self.sessions.register(session, cwd=msg.get("cwd"))
                 self._maybe_guide_setup(session, msg.get("plugin_version", ""))
             # Cooperative hand-off: if the old foreground still has pending items,
-            # add it to _speakable so the router drains it before switching to the
-            # new fg. This is the "session B arrives while A is mid-response" case.
+            # authorize it to drain before the new fg takes the floor. This is the
+            # "session B arrives while A is mid-response" case. Uses _replay_authorized
+            # so the policy gate is bypassed for the drain (A finished reading is
+            # a natural completion, not a user-visible session switch).
             if old_fg is not None and old_fg != session:
                 old_ch = self.router.channels.get(old_fg)
                 if old_ch is not None and old_ch.pending() > 0:
-                    self.router._speakable.add(old_fg)
+                    self.router._replay_authorized.add(old_fg)
             return None
 
         if t == MsgType.SESSION_END:
@@ -722,9 +723,13 @@ class SpeechDaemon:
         heard-marker is registered in _pending_heard so note_spoken can flip it
         True on completion (same as a normal _enqueue with entry=...).
 
-        If the target session is not the current foreground, it is added to the
-        router's speakable set so the router's fallback can pick it up after the
-        fg channel drains (catch_up cross-session replay)."""
+        The router's _pick() uses oldest-waiting fallthrough so a non-fg session
+        with replayed items will be reached once the fg channel drains.
+
+        Pre-set _last_active to the replay target so the router does not emit a
+        "Session changed" announcement for programmatic replays (catch_up / nav /
+        repeat). The caller (CATCH_UP) already speaks a "Catching up..." preamble
+        when crossing sessions; the auto-announce would be a spurious duplicate."""
         ch = self.router.channel(session)
         at = ch.cursor
         for e in entries:
@@ -738,15 +743,19 @@ class SpeechDaemon:
             self._pending_heard[item.id] = e
             ch.items.insert(at, item)
             at += 1
-        # Authorize cross-session reading: if this session is not fg, add it to
-        # the router's speakable set so catch_up / replay items are voiced.
         if at > ch.cursor:  # only if we actually inserted items
+            # Mark channel ready: replayed items should be spoken without
+            # waiting for minqueue threshold.
+            ch.turn_done = True
+            # Suppress the "Session changed" auto-announce for programmatic
+            # replay (catch_up/nav/repeat): the handoff is not user-visible.
+            self.router._last_active = session
+            # Authorize cross-session reading: replay targets that are not the
+            # current fg bypass the background-policy gate so their replayed
+            # items are voiced (catch_up / nav cross-session scenarios).
             fg = self.sessions.foreground()
             if session != fg:
-                self.router._speakable.add(session)
-                # Mark channel ready: replayed items should be spoken without
-                # waiting for minqueue threshold.
-                ch.turn_done = True
+                self.router._replay_authorized.add(session)
         self._wake.set()
 
     def _nav(self, session: str, to: str) -> None:
@@ -832,7 +841,7 @@ class SpeechDaemon:
             try:
                 self._speak_loop_once()
             except Exception:  # noqa: BLE001 - NOTHING may permanently kill the
-                # speak thread. A crash in pop_next/note_spoken/etc. used to leave
+                # speak thread. A crash in next_item/note_spoken/etc. used to leave
                 # the daemon alive (earcons kept firing) but mute forever until a
                 # restart. Log the traceback (captured by the daemon log) and keep
                 # going; a short wait avoids a tight error-spin.
