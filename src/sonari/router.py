@@ -103,7 +103,9 @@ class Router:
             folder = self.sessions.folder(self._pending_announce) or "another session"
             text = self._announce_text(folder)
             self._pending_announce = None
-            return SpeechItem(id=0, session=self.active or "", kind="prose",
+            # kind "session_change" lets the speak loop fire the session-switch
+            # earcon (chime) just before voicing the announcement.
+            return SpeechItem(id=0, session=self.active or "", kind="session_change",
                               text=text, is_decision=False, mute_exempt=True)
         target = self._pick()
         if target is None:

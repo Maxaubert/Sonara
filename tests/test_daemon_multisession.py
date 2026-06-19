@@ -139,6 +139,25 @@ def test_two_sessions_take_turns_nothing_lost():
     )
 
 
+def test_session_change_fires_chime_earcon():
+    """On a hand-off, the speak loop fires the 'session_change' earcon (chime)
+    just before voicing the 'Session changed: ...' announcement."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
+                           "session": "A", "cwd": "/home/user/alpha", "plugin_version": ""})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
+                           "session": "B", "cwd": "/home/user/beta", "plugin_version": ""})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "A"})
+    daemon.handle_message(_prose("A", "A one. "))
+    daemon.router.channel("A").turn_done = True
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "B"})
+    daemon.handle_message(_prose("B", "B one. "))
+    daemon.router.channel("B").turn_done = True
+    _drain(daemon, n=10)
+    assert "session_change" in speaker.earcons, (
+        f"session-change chime not fired on hand-off. earcons: {speaker.earcons!r}")
+
+
 # ---------------------------------------------------------------------------
 # Test 3 — Cooperative hand-off: active reader keeps the floor until its
 # batch drains, THEN the new foreground takes over.

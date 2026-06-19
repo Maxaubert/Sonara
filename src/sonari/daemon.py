@@ -921,6 +921,13 @@ class SpeechDaemon:
             return
         if muted:
             return
+        if item.kind == "session_change":
+            # Play the session-switch chime (it mixes with the spoken announcement
+            # on a separate audio path). A missing chime must not wedge the loop.
+            try:
+                self.speaker.earcon("session_change")
+            except Exception:  # noqa: BLE001
+                pass
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
         except Exception:  # noqa: BLE001
