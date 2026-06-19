@@ -42,6 +42,12 @@ class SpeechDaemon:
         self.config = config
         self._assemblers = {}
         self._next_id = 0
+        from sonari.router import Router
+        self.router = Router(
+            self.sessions,
+            minqueue=self._minqueue,
+            announce_text=lambda folder: "Session changed: {0}.".format(folder),
+        )
         self._running = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
@@ -326,37 +332,24 @@ class SpeechDaemon:
 
         if t == MsgType.PROSE:
             final = msg.get("final", False)
-            if not final:
-                # A message is now streaming for this session: hold its voice
-                # across inter-chunk drains until the turn boundary (see _open_msg).
-                self._open_msg.add(session)
             a = self._assembler(session)
             chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), final)
-            if chunks:
-                from sonari.assembler import PARAGRAPH_BREAK
-                speak = verbosity != "quiet" and self._may_speak(session)
-                for chunk in chunks:
-                    if chunk is PARAGRAPH_BREAK:
-                        # A blank-line boundary: start a new message group so the
-                        # nav cursor treats each paragraph as its own 'item'.
-                        self.history.end_message(session)
-                        continue
-                    entry = self.history.record(session, "prose", chunk)
-                    if speak:
-                        self._buffer_prose(session, chunk, entry)
-                    else:
-                        self._captured_msg.add(session)
+            from sonari.assembler import PARAGRAPH_BREAK
+            ch = self.router.channel(session)
+            for chunk in chunks:
+                if chunk is PARAGRAPH_BREAK:
+                    self.history.end_message(session)
+                    continue
+                entry = self.history.record(session, "prose", chunk)
+                item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
+                                  text=chunk, is_decision=False)
+                self._pending_heard[item.id] = entry
+                ch.append(item)
             if final:
-                # NOTE: `final` marks the end of ONE assistant text block, not the
-                # whole turn — Claude Code emits many per reply (the prose between
-                # tool calls). Flushing the minqueue buffer here would read every
-                # block separately and defeat batching. The buffer is flushed at the
-                # real turn boundary (the turn_done earcon) and when the threshold
-                # is hit; so it is deliberately NOT flushed on `final`.
+                ch.turn_done = True
                 self.history.end_message(session)
-                self._captured_msg.discard(session)
-                self._open_msg.discard(session)   # turn boundary: voice may release
                 self._options.pop(session, None)
+            self._wake.set()
             return None
 
         # Decision CONTENT is enqueued (and gated by foreground). The ALERT
@@ -366,18 +359,18 @@ class SpeechDaemon:
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
             text = self._choice_text(msg)
-            extras = [e for e in (
-                self._choice_notes(msg),
-                self._selection_cue(session, verbosity),
-            ) if e]
+            extras = [e for e in (self._choice_notes(msg),
+                                  self._selection_cue(session, verbosity)) if e]
             if extras:
                 text = "{0} {1}".format(text, " ".join(extras))
             self._options[session] = text
             entry = self.history.record(session, "choice", text)
             self.history.end_message(session)
-            if self._claim_for_decision(session):
-                self._flush_prose_buffer(session)   # prose before the question
-                self._enqueue(session, "choice", text, True, entry=entry)
+            item = SpeechItem(id=self._alloc_id(), session=session, kind="choice",
+                              text=text, is_decision=True)
+            self._pending_heard[item.id] = entry
+            self.router.channel(session).append(item)
+            self._wake.set()
             return None
 
         if t == MsgType.PLAN:
@@ -388,9 +381,11 @@ class SpeechDaemon:
             self._options[session] = text
             entry = self.history.record(session, "plan", text)
             self.history.end_message(session)
-            if self._claim_for_decision(session):
-                self._flush_prose_buffer(session)   # prose before the plan
-                self._enqueue(session, "plan", text, True, entry=entry)
+            item = SpeechItem(id=self._alloc_id(), session=session, kind="plan",
+                              text=text, is_decision=True)
+            self._pending_heard[item.id] = entry
+            self.router.channel(session).append(item)
+            self._wake.set()
             return None
 
         if t == MsgType.PERMISSION:
@@ -401,20 +396,22 @@ class SpeechDaemon:
             self._options[session] = text
             entry = self.history.record(session, "permission", text)
             self.history.end_message(session)
-            if self._claim_for_decision(session):
-                self._flush_prose_buffer(session)   # prose before the permission ask
-                self._enqueue(session, "permission", text, True, entry=entry)
+            item = SpeechItem(id=self._alloc_id(), session=session, kind="permission",
+                              text=text, is_decision=True)
+            self._pending_heard[item.id] = entry
+            self.router.channel(session).append(item)
+            self._wake.set()
             return None
 
         if t == MsgType.TOOL:
-            if verbosity == "everything" and self._may_speak(session):
+            if verbosity == "everything":
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
                 text = summary if summary else "Running {0}.".format(tool)
-                # Keep textual order: read prose that preceded this tool call before
-                # the tool cue, rather than letting the immediate cue jump ahead.
-                self._flush_prose_buffer(session)
-                self._enqueue(session, "tool_announce", text, False)
+                self.router.channel(session).append(SpeechItem(
+                    id=self._alloc_id(), session=session, kind="tool_announce",
+                    text=text, is_decision=False))
+                self._wake.set()
             return None
 
         if t == MsgType.EARCON:
@@ -432,21 +429,15 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.FLUSH:
-            self._drop_pending(self.queue.flush_session(session))
             cur = self._current_item
             if cur is not None and cur.session == session:
                 self.speaker.cancel()
-            if self._voice_owner == session:
-                self._voice_owner = None
+            self.router.channel(session).wipe()
             self._assemblers.pop(session, None)
-            self._prose_buffer.pop(session, None)   # drop unsent buffered prose
             self.history.reset(session)
-            self._nav_cursor.pop(session, None)   # new prompt -> fresh navigation
-            # A new prompt is a user action -> auto-resume from pause (temp pause).
+            self._nav_cursor.pop(session, None)
             self._paused.clear()
             self._wake.set()
-            self._captured_msg.discard(session)
-            self._open_msg.discard(session)
             self._options.pop(session, None)
             return None
 
@@ -459,13 +450,8 @@ class SpeechDaemon:
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
-            self._drop_pending(self.queue.flush_session(session))
-            self._prose_buffer.pop(session, None)
-            if self._voice_owner == session:
-                self._voice_owner = None
+            self.router.drop(session)
             self.history.reset(session)
-            self._captured_msg.discard(session)
-            self._open_msg.discard(session)
             self._options.pop(session, None)
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
