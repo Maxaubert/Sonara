@@ -126,6 +126,14 @@ class SpeechDaemon:
         for it in items:
             self._pending_heard.pop(it.id, None)
 
+    def _drop_channel_pending(self, session: str) -> None:
+        """Drop heard-tracking entries for a session's not-yet-spoken channel items
+        (called before wiping/dropping the channel, so _pending_heard can't leak)."""
+        ch = self.router.channels.get(session)
+        if ch is not None:
+            for it in ch.items:
+                self._pending_heard.pop(it.id, None)
+
     def note_spoken(self, item, completed: bool) -> None:
         """Speak-loop bookkeeping: confirm (or decline) the heard-marker for a
         finished utterance."""
@@ -355,6 +363,7 @@ class SpeechDaemon:
             cur = self._current_item
             if cur is not None and cur.session == session:
                 self.speaker.cancel()
+            self._drop_channel_pending(session)
             self.router.channel(session).wipe()
             self._assemblers.pop(session, None)
             self.history.reset(session)
@@ -373,6 +382,7 @@ class SpeechDaemon:
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
+            self._drop_channel_pending(session)
             self.router.drop(session)
             self.history.reset(session)
             self._options.pop(session, None)
@@ -381,6 +391,8 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.STOP:
+            for s in list(self.router.channels):
+                self._drop_channel_pending(s)
             for ch in self.router.channels.values():
                 ch.wipe()
             self.speaker.cancel()
@@ -424,7 +436,7 @@ class SpeechDaemon:
                 self.speaker.cancel()
                 # The hold silences the queue, so "Paused." is pause_exempt (the
                 # paused branch of the speak loop voices it) and mute_exempt (always
-                # heard). pop_pause_exempt finds it past the re-queued interrupted item.
+                # heard). NOTE: the "Paused." cue path while held is restored in the pause/mute task (Task 5).
                 if fg is not None:
                     self._enqueue(fg, "prose", "Paused.", False,
                                   mute_exempt=True, pause_exempt=True)

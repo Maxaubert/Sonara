@@ -32,3 +32,11 @@ def test_speak_loop_reads_active_channel_then_idles():
     assert speaker.spoken == ["One.", "Two."]
     daemon._speak_loop_once()                 # nothing left -> idle, no error
     assert speaker.spoken == ["One.", "Two."]
+
+
+def test_flush_drops_pending_heard_for_wiped_channel():
+    daemon, *_ = make_daemon(foreground="A")
+    daemon.handle_message(_prose("A", "Held. ", 0, False))   # un-spoken item in channel
+    assert len(daemon._pending_heard) >= 1
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "A"})
+    assert daemon._pending_heard == {}                       # no leak
