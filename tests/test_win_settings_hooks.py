@@ -173,6 +173,7 @@ def test_install_merges_hooks_before_registering_the_task(tmp_path, monkeypatch)
                         lambda *a, **k: calls.append("hooks"))
     monkeypatch.setattr(b, "_place_launcher",
                         lambda *a, **k: (calls.append("launcher"), "x")[1])
+    monkeypatch.setattr(b, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks /end call
     b.install("pythonw.exe", str(tmp_path))
     assert calls.index("hooks") < calls.index("task"), calls
 
@@ -194,6 +195,7 @@ def _install_with_settings(monkeypatch, sp_path, app_dir):
     monkeypatch.setattr(sup, "claude_settings_path", lambda: sp_path)
     monkeypatch.setattr(sup, "task_install", lambda *a, **k: 0)
     monkeypatch.setattr(b, "_place_launcher", lambda *a, **k: "x")
+    monkeypatch.setattr(b, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks /end call
     b.install("pythonw.exe", app_dir)
 
 

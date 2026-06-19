@@ -24,8 +24,10 @@ if sys.platform != "win32":
     _fake_winreg.QueryValueEx = lambda *a, **kw: (_ for _ in ()).throw(OSError())
     sys.modules.setdefault("winreg", _fake_winreg)
 
+from sonari.platform.windows import supervisor as sup_mod
 from sonari.platform.windows.supervisor import (
     WinSupervisorBackend, TASK_NAME, TASK_XML_TEMPLATE, _SPAWN_FLAGS,
+    daemon_pythonw,
 )
 
 _NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
@@ -65,15 +67,15 @@ def test_task_xml_run_level_least_privilege():
 
 
 def test_launch_spec_creationflags(monkeypatch):
-    sup = WinSupervisorBackend()
-    monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Python311\pythonw.exe")
-    argv, kwargs = sup.launch_spec()
+    monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
+    argv, kwargs = WinSupervisorBackend().launch_spec()
     assert argv[0].endswith("pythonw.exe")
     assert argv[-1] == "sonari.daemon"
     flags = kwargs["creationflags"]
     assert flags & 0x08000000, "CREATE_NO_WINDOW must be set"
     assert flags & 0x00000008, "DETACHED_PROCESS must be set"
     assert not kwargs.get("start_new_session", False), "must NOT combine with DETACHED_PROCESS"
+    kwargs["stderr"].close()
 
 
 def test_launch_spec_sets_pythonpath_to_src(monkeypatch):
@@ -84,13 +86,13 @@ def test_launch_spec_sets_pythonpath_to_src(monkeypatch):
     import os
     from sonari import paths
 
-    sup = WinSupervisorBackend()
-    monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Python311\pythonw.exe")
-    argv, kwargs = sup.launch_spec()
+    monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
+    argv, kwargs = WinSupervisorBackend().launch_spec()
     env = kwargs.get("env")
     assert env is not None, "launch_spec must pass an env so the daemon can import sonari"
     src = os.path.join(paths.repo_root(), "src")
     assert env.get("PYTHONPATH", "").split(os.pathsep)[0] == src
+    kwargs["stderr"].close()
 
 
 def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch):
@@ -104,14 +106,51 @@ def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch
     log = tmp_path / "speechd.log"
     monkeypatch.setattr(paths, "SONARI_DIR", tmp_path)
     monkeypatch.setattr(paths, "LOG_PATH", log)
+    monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
 
-    sup = WinSupervisorBackend()
-    monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Python311\pythonw.exe")
-    argv, kwargs = sup.launch_spec()
+    argv, kwargs = WinSupervisorBackend().launch_spec()
     assert kwargs["stderr"] is not subprocess.DEVNULL
     assert str(kwargs["stderr"].name) == str(log)
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
+    kwargs["stderr"].close()
+
+
+# ---------------------------------------------------------------------------
+# FIX B: daemon_pythonw() + launch_spec neural-aware resolver
+# ---------------------------------------------------------------------------
+
+def test_daemon_pythonw_prefers_venv_pythonw_when_neural(monkeypatch):
+    from sonari import kokoro_provision, paths
+    monkeypatch.setattr(kokoro_provision, "neural_enabled", lambda: True)
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/v/Scripts/python.exe")
+    monkeypatch.setattr(sup_mod, "_probe_python_version", lambda c: (3, 12))
+    monkeypatch.setattr(sup_mod, "_find_pythonw", lambda p: "/v/Scripts/pythonw.exe")
+    assert daemon_pythonw() == "/v/Scripts/pythonw.exe"
+
+
+def test_daemon_pythonw_falls_back_to_system_when_no_neural(monkeypatch):
+    from sonari import kokoro_provision
+    monkeypatch.setattr(kokoro_provision, "neural_enabled", lambda: False)
+    monkeypatch.setattr(sup_mod, "resolve_python_windows", lambda: r"C:\sys\pythonw.exe")
+    assert daemon_pythonw() == r"C:\sys\pythonw.exe"
+
+
+def test_daemon_pythonw_falls_back_when_venv_too_old(monkeypatch):
+    from sonari import kokoro_provision, paths
+    monkeypatch.setattr(kokoro_provision, "neural_enabled", lambda: True)
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/v/Scripts/python.exe")
+    monkeypatch.setattr(sup_mod, "_probe_python_version", lambda c: (3, 9))
+    monkeypatch.setattr(sup_mod, "resolve_python_windows", lambda: "sys-pw")
+    assert daemon_pythonw() == "sys-pw"
+
+
+def test_launch_spec_uses_daemon_pythonw(tmp_path, monkeypatch):
+    from sonari import paths
+    monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: "/v/Scripts/pythonw.exe")
+    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    argv, kwargs = WinSupervisorBackend().launch_spec()
+    assert argv[0] == "/v/Scripts/pythonw.exe"
     kwargs["stderr"].close()
 
 
@@ -229,10 +268,40 @@ def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monke
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
     s = sup.WinSupervisorBackend()
+    monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
     assert ("task", r"C:\Py\pythonw.exe") in calls
     assert sup.settings_has_sonari_hooks(str(tmp_path / "settings.json"))
     assert (tmp_path / "bin" / "sonari.cmd").exists()
+
+
+# ---------------------------------------------------------------------------
+# FIX D: install() passes pythonw (not the raw python) to task_install + hooks
+# ---------------------------------------------------------------------------
+
+def test_install_wires_task_and_hooks_with_pythonw(tmp_path, monkeypatch):
+    task_calls = []
+    hook_calls = []
+    monkeypatch.setattr(sup_mod, "_find_pythonw", lambda p: "/v/Scripts/pythonw.exe")
+    monkeypatch.setattr(sup_mod, "task_install",
+                        lambda pw, spy: task_calls.append(pw) or 0)
+    monkeypatch.setattr(sup_mod, "merge_hooks_into_settings",
+                        lambda sp, pw, hp: hook_calls.append(pw))
+    monkeypatch.setattr(sup_mod, "claude_settings_path",
+                        lambda: str(tmp_path / "settings.json"))
+    monkeypatch.setattr(sup_mod, "settings_has_sonari_plugin", lambda sp: False)
+    monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
+    monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
+    launcher_calls = []
+    s = sup_mod.WinSupervisorBackend()
+    monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks /end call
+    real_place = s._place_launcher
+    monkeypatch.setattr(s, "_place_launcher",
+                        lambda py, app: launcher_calls.append(py) or real_place(py, app))
+    s.install("/v/Scripts/python.exe", str(tmp_path / "app"))
+    assert task_calls == ["/v/Scripts/pythonw.exe"], "task_install must receive pythonw"
+    assert hook_calls == ["/v/Scripts/pythonw.exe"], "merge_hooks must receive pythonw"
+    assert launcher_calls == ["/v/Scripts/python.exe"], "_place_launcher must keep python.exe"
 
 
 def test_uninstall_removes_task_hooks_and_launcher(tmp_path, monkeypatch):
@@ -244,7 +313,35 @@ def test_uninstall_removes_task_hooks_and_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
     s = sup.WinSupervisorBackend()
+    monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
     s.uninstall()
     assert not sup.settings_has_sonari_hooks(str(tmp_path / "settings.json"))
     assert not (tmp_path / "bin" / "sonari.cmd").exists()
+
+
+# ---------------------------------------------------------------------------
+# FIX E: install() stops the running task before re-registering it
+# ---------------------------------------------------------------------------
+
+def test_install_ends_task_before_reregister(tmp_path, monkeypatch):
+    schtasks_calls = []
+    monkeypatch.setattr(sup_mod, "task_install",
+                        lambda pw, spy: schtasks_calls.append(("/create", pw)) or 0)
+    monkeypatch.setattr(sup_mod, "merge_hooks_into_settings",
+                        lambda sp, pw, hp: None)
+    monkeypatch.setattr(sup_mod, "claude_settings_path",
+                        lambda: str(tmp_path / "settings.json"))
+    monkeypatch.setattr(sup_mod, "settings_has_sonari_plugin", lambda sp: False)
+    monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
+    monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
+    s = sup_mod.WinSupervisorBackend()
+    monkeypatch.setattr(s, "_schtasks", lambda args: schtasks_calls.append(tuple(args)) or 0)
+    s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
+    # The /end call must appear and must precede any /create
+    assert ("/end", "/tn", TASK_NAME) in schtasks_calls
+    end_idx = schtasks_calls.index(("/end", "/tn", TASK_NAME))
+    create_indices = [i for i, c in enumerate(schtasks_calls) if c[0] == "/create"]
+    assert all(end_idx < ci for ci in create_indices), (
+        "/end must come before any /create: {0}".format(schtasks_calls)
+    )

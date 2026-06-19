@@ -27,14 +27,14 @@ def neural_enabled() -> bool:
 # Task 3: ensure_uv
 # ---------------------------------------------------------------------------
 
-def _default_user_base(py: str) -> str:
+def _default_user_scripts(py: str) -> str:
     return subprocess.check_output(
-        [py, "-c", "import site; print(site.getuserbase())"],
+        [py, "-c", "import sysconfig, os; print(sysconfig.get_path('scripts', os.name + '_user'))"],
         text=True).strip()
 
 
 def ensure_uv(which=shutil.which, run=subprocess.check_call,
-              base_python=None, user_base=_default_user_base) -> str:
+              base_python=None, user_scripts=_default_user_scripts) -> str:
     """Return a path to `uv`, bootstrapping it via `pip install --user uv` when
     it is not already on PATH. Raises RuntimeError (actionable) if uv cannot be
     obtained — never returns a non-existent path."""
@@ -43,7 +43,8 @@ def ensure_uv(which=shutil.which, run=subprocess.check_call,
         return found
     py = base_python or sys.executable
     run([py, "-m", "pip", "install", "--user", "--quiet", "uv"])
-    cand = os.path.join(user_base(py), "bin", "uv")
+    exe = "uv.exe" if sys.platform == "win32" else "uv"
+    cand = os.path.join(user_scripts(py), exe)
     if os.path.exists(cand):
         return cand
     found = which("uv")

@@ -188,6 +188,19 @@ def _probe_version_via_launcher(py_exe: str) -> "str | None":
         return None
 
 
+def daemon_pythonw() -> "str | None":
+    """The pythonw.exe the daemon should run on: the neural venv's when neural is
+    enabled AND it probes >=3.10, else the system pythonw. Windows analog of
+    cli._daemon_python, yielding the windowless interpreter for the background daemon."""
+    from sonari import kokoro_provision as kp, paths
+    if kp.neural_enabled():
+        venv_py = paths.kokoro_venv_python()
+        ver = _probe_python_version(venv_py)
+        if ver is not None and ver >= (3, 10):
+            return _find_pythonw(venv_py) or venv_py
+    return resolve_python_windows()
+
+
 def resolve_python_windows() -> "str | None":
     """Return pythonw.exe path for the best Python 3 >= 3.9, or None.
 
@@ -719,7 +732,7 @@ class WinSupervisorBackend(SupervisorBackend):
     def launch_spec(self) -> tuple:
         """Return (argv, spawn_kwargs) for lazy daemon start."""
         from sonari import paths
-        pw = self.resolve_python() or "pythonw.exe"
+        pw = daemon_pythonw() or "pythonw.exe"
         argv = [pw, "-m", "sonari.daemon"]
         # The daemon runs in a fresh process; without PYTHONPATH it cannot import
         # 'sonari' -> it exits instantly -> every hook event respawns it (a
@@ -799,6 +812,7 @@ class WinSupervisorBackend(SupervisorBackend):
         return rows
 
     def install(self, python: str, app_dir: str) -> None:
+        pythonw = _find_pythonw(python) or python  # background daemon/hooks: no console window
         # 1. Exec-form hooks FIRST. This is the step that can fail on a malformed
         #    user settings.json (it raises ValueError); doing it before the Task
         #    Scheduler registration means a failure leaves no orphaned autostart
@@ -819,12 +833,18 @@ class WinSupervisorBackend(SupervisorBackend):
                 print("Sonari plugin enabled; hooks come from the plugin "
                       "(nothing written to {0}).".format(settings))
         else:
-            merge_hooks_into_settings(settings, python, _hook_py())
+            merge_hooks_into_settings(settings, pythonw, _hook_py())
             print("Wrote Sonari hooks to: {0}".format(settings))
         # 2. Task Scheduler autostart (pythonw runs the supervisor loop).
         supervisor_py = os.path.join(app_dir, "sonari", "platform",
                                      "windows", "supervisor_loop.py")
-        rc = task_install(python, supervisor_py)
+        # Best-effort stop the running task before overwriting its definition, so a
+        # stale daemon on the OLD interpreter doesn't linger (parity with macOS
+        # launchctl unload+load). /end is async and /create does not auto-start, so
+        # the new interpreter activates on the NEXT daemon start (next logon, or the
+        # lazy-start path which now resolves the venv pythonw via daemon_pythonw()).
+        self._schtasks(["/end", "/tn", TASK_NAME])
+        rc = task_install(pythonw, supervisor_py)
         if rc == 0:
             print("Registered Task Scheduler task: {0}".format(TASK_NAME))
         else:

@@ -102,11 +102,17 @@ def run_supervisor_loop(pythonw: str) -> None:
         time.sleep(delay)
 
 
+def _main() -> None:
+    _ensure_importable()  # MUST run before importing sonari (script-path launch)
+    if sys.platform == "win32":
+        # Run the daemon on the interpreter Task Scheduler launched us with (the venv
+        # pythonw when neural is enabled — baked in at install). Re-resolving here
+        # discarded it and forced system python (no kokoro). macOS bakes the python
+        # into the plist; this is the Windows parity.
+        run_supervisor_loop(sys.executable)
+
+
 # Entry point when Task Scheduler launches this file directly:
 # schtasks Action: pythonw.exe "<path>/supervisor_loop.py"
 if __name__ == "__main__":
-    _ensure_importable()  # MUST run before importing sonari (script-path launch)
-    from sonari.platform.windows.supervisor import WinSupervisorBackend
-    pw = WinSupervisorBackend().resolve_python()
-    if pw:
-        run_supervisor_loop(pw)
+    _main()

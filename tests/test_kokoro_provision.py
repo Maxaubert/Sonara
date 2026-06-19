@@ -36,10 +36,8 @@ def test_ensure_uv_returns_path_when_already_present():
 
 def test_ensure_uv_bootstraps_via_pip_when_absent(tmp_path):
     calls = []
-    userbase = tmp_path
-    bindir = userbase / "bin"
-    bindir.mkdir(parents=True)
-    (bindir / "uv").write_text("")  # pip install lands uv here
+    scripts_dir = tmp_path
+    (scripts_dir / "uv").write_text("")  # pip install lands uv here (posix: no bin/ subdir)
 
     def fake_run(cmd, **k):
         calls.append(cmd)
@@ -48,9 +46,9 @@ def test_ensure_uv_bootstraps_via_pip_when_absent(tmp_path):
         which=lambda name: None,                     # not on PATH
         run=fake_run,
         base_python="/usr/bin/python3",
-        user_base=lambda py: str(userbase),
+        user_scripts=lambda py: str(scripts_dir),
     )
-    assert got == str(bindir / "uv")
+    assert got == str(scripts_dir / "uv")
     assert any("pip" in c and "uv" in c for c in calls)  # bootstrap ran
 
 
@@ -58,8 +56,20 @@ def test_ensure_uv_raises_actionable_when_unfindable(tmp_path):
     with pytest.raises(RuntimeError) as ei:
         kp.ensure_uv(which=lambda name: None, run=lambda *a, **k: None,
                      base_python="/usr/bin/python3",
-                     user_base=lambda py: str(tmp_path))  # no uv ever appears
+                     user_scripts=lambda py: str(tmp_path))  # no uv ever appears
     assert "uv" in str(ei.value).lower()
+
+
+def test_ensure_uv_windows_uses_scripts_uv_exe(monkeypatch, tmp_path):
+    monkeypatch.setattr(kp.sys, "platform", "win32")
+    (tmp_path / "uv.exe").write_text("")
+    got = kp.ensure_uv(
+        which=lambda n: None,
+        run=lambda *a, **k: None,
+        base_python="py",
+        user_scripts=lambda py: str(tmp_path),
+    )
+    assert got == str(tmp_path / "uv.exe")
 
 
 # ---------------------------------------------------------------------------

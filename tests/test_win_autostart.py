@@ -52,3 +52,25 @@ def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch
     assert kwargs["stdin"] is subprocess.DEVNULL
     assert kwargs["stdout"] is subprocess.DEVNULL
     kwargs["stderr"].close()
+
+
+# ---------------------------------------------------------------------------
+# FIX C: _main() uses sys.executable and is guarded by sys.platform == 'win32'
+# ---------------------------------------------------------------------------
+
+def test_main_runs_loop_with_sys_executable_on_win32(monkeypatch):
+    monkeypatch.setattr(sl, "_ensure_importable", lambda: None)
+    monkeypatch.setattr(sl.sys, "platform", "win32")
+    calls = []
+    monkeypatch.setattr(sl, "run_supervisor_loop", lambda pw: calls.append(pw))
+    sl._main()
+    assert calls == [sl.sys.executable]
+
+
+def test_main_skips_loop_off_win32(monkeypatch):
+    monkeypatch.setattr(sl, "_ensure_importable", lambda: None)
+    monkeypatch.setattr(sl.sys, "platform", "darwin")
+    calls = []
+    monkeypatch.setattr(sl, "run_supervisor_loop", lambda pw: calls.append(pw))
+    sl._main()
+    assert calls == []
