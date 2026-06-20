@@ -2,7 +2,7 @@
 
 Items are NOT discarded as they are spoken — the cursor advances over them — so a
 channel can resume from where it left off (auto hand-off) or replay from the start
-(pin re-pin). A new prompt wipes the channel.
+(session-change revisit). A new prompt wipes the channel.
 """
 from __future__ import annotations
 
