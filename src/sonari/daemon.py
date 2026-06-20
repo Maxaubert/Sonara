@@ -29,7 +29,7 @@ MINQUEUE_MIN = 1
 MINQUEUE_MAX = 10
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
-# accidental/rapid double-tap doesn't flip pin/pause/mute several times (and pile
+# accidental/rapid double-tap doesn't flip pause/mute/session several times (and pile
 # up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced —
 # repeated presses there are intentional.
 _HOTKEY_DEBOUNCE_S = 0.30
