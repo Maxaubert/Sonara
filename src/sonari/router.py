@@ -15,7 +15,7 @@ class Router:
     def __init__(self, sessions, minqueue, announce_text) -> None:
         self.sessions = sessions          # exposes pinned()/foreground()/folder()
         self._minqueue = minqueue          # () -> int
-        self._announce_text = announce_text  # (folder) -> str
+        self._announce_text = announce_text  # (folder, replay=False) -> str
         self.channels: "dict[str, SessionChannel]" = {}
         self.active: "str | None" = None
         self._last_active: "str | None" = None   # last session that actually read (persists across idle gaps)
