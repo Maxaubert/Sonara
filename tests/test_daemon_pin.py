@@ -85,6 +85,17 @@ def test_pinned_session_blocks_background_from_being_served():
     assert speaker.spoken == ["Foreground sentence here."]
 
 
+def test_pin_confirmation_interrupts_current_utterance():
+    """Pin cancels the speaker so 'Pinned.' is immediate, like pause/mute (it must
+    not wait for the in-progress item to finish)."""
+    from sonari.queue import SpeechItem
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    daemon._current_item = SpeechItem(id=1, session="A", kind="prose",
+                                      text="mid-utterance", is_decision=False)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PIN_TOGGLE})
+    assert speaker.cancels >= 1
+
+
 def test_repin_replays_pinned_channel_from_start():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "One. Two. ", 0, True))

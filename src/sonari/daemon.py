@@ -482,6 +482,10 @@ class SpeechDaemon:
             # always hears it; with no session there is nothing to pin, so we speak
             # WHY (via the CONTROL channel) instead of an opaque error beep.
             action, folder = self.sessions.pin_toggle()
+            # Interrupt the current utterance so the confirmation is immediate,
+            # exactly like pause/mute (otherwise it waits for the in-progress item
+            # to finish). The pinned case replays from the start, so nothing is lost.
+            self.speaker.cancel()
             if action == "none":
                 self.speaker.earcon("error")
                 self._speak_cue(None, "No active session to pin.", exempt_mute=True)
