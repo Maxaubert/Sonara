@@ -204,46 +204,6 @@ def test_cooperative_handoff_waits_for_current_session():
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — Re-pin replays from the start of the pinned channel
-# ---------------------------------------------------------------------------
-
-def test_repin_replays_from_start():
-    """PIN_TOGGLE after A has spoken resets A's channel cursor to 0.
-
-    The first item from A must be replayed (channel.reset() is called).
-    """
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
-
-    # Give A two items and drain them so the cursor is at the end.
-    daemon.handle_message(_prose("A", "First sentence. "))
-    daemon.router.channel("A").turn_done = True
-    # Drain A's items (advance the cursor).
-    _drain(daemon, n=5)
-    assert "First sentence." in speaker.spoken
-
-    # Remember position before pin.
-    ch_a = daemon.router.channel("A")
-    cursor_before = ch_a.cursor
-    assert cursor_before > 0, "Cursor should have advanced after draining A."
-
-    # Toggle pin: this calls router.repin_reset() which calls channel.reset().
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PIN_TOGGLE})
-
-    # After repin, cursor must be back at 0.
-    assert ch_a.cursor == 0, (
-        f"Cursor was not rewound after PIN_TOGGLE. cursor={ch_a.cursor}"
-    )
-
-    # Drain again: the first item must be re-spoken.
-    spoken_before = list(speaker.spoken)
-    _drain(daemon, n=5)
-    new_items = speaker.spoken[len(spoken_before):]
-    assert "First sentence." in new_items, (
-        f"Pin replay did not re-speak the first item. New items: {new_items!r}"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Test 5a — Background session's tool announcement is suppressed, then heard
 # ---------------------------------------------------------------------------
 

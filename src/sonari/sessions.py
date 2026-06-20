@@ -19,7 +19,6 @@ class SessionManager:
         # list/cycle is stable; membership/`in`/len behave like the old set.
         self._sessions: "dict[str, str | None]" = {}
         self._foreground: "str | None" = None
-        self._pinned: "str | None" = None      # None = auto (follow last prompt)
 
     def _record(self, session: str, cwd) -> None:
         folder = _basename(cwd)
@@ -33,9 +32,8 @@ class SessionManager:
         self._foreground = session
 
     def foreground(self) -> "str | None":
-        """The session that owns the voice: the pinned one if pinned, else the last
-        session to submit a prompt / start."""
-        return self._pinned if self._pinned is not None else self._foreground
+        """The session that owns the voice: the last session to submit a prompt / start."""
+        return self._foreground
 
     def is_foreground(self, session: str) -> bool:
         fg = self.foreground()
@@ -48,8 +46,6 @@ class SessionManager:
         self._sessions.pop(session, None)
         if self._foreground == session:
             self._foreground = None
-        if self._pinned == session:             # pinned session ended -> auto
-            self._pinned = None
 
     def should_speak(self, session: str) -> bool:
         """Whether the router may serve this session in the oldest-waiting slot.
@@ -60,24 +56,6 @@ class SessionManager:
             return self.is_foreground(session)
         return True
 
-    def pinned(self) -> "str | None":
-        return self._pinned
-
     def folder(self, session: str) -> "str | None":
         return self._sessions.get(session)
 
-    def pin_toggle(self) -> "tuple[str, str | None]":
-        """Toggle the pin against the RAW last-prompt foreground.
-
-        - no foreground          -> ("none", None), no change
-        - already pinned to it   -> unpin -> ("unpinned", folder)
-        - otherwise              -> pin it -> ("pinned", folder)
-        """
-        cur = self._foreground
-        if cur is None:
-            return ("none", None)
-        if self._pinned == cur:
-            self._pinned = None
-            return ("unpinned", self._sessions.get(cur))
-        self._pinned = cur
-        return ("pinned", self._sessions.get(cur))

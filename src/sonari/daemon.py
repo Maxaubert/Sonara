@@ -487,30 +487,6 @@ class SpeechDaemon:
             self._wake.set()
             return None
 
-        if t == MsgType.PIN_TOGGLE:
-            # Pin the voice to the current (last-prompt) session, or unpin it.
-            # The pin overrides "foreground", so a later SET_FOREGROUND from another
-            # session can't steal the voice. Confirmation is mute_exempt so the user
-            # always hears it; with no session there is nothing to pin, so we speak
-            # WHY (via the CONTROL channel) instead of an opaque error beep.
-            action, folder = self.sessions.pin_toggle()
-            # Interrupt the current utterance so the confirmation is immediate,
-            # exactly like pause/mute (otherwise it waits for the in-progress item
-            # to finish). The pinned case replays from the start, so nothing is lost.
-            self.speaker.cancel()
-            if action == "none":
-                self.speaker.earcon("error")
-                self._speak_cue(None, "No active session to pin.", exempt_mute=True)
-                return None
-            fg = self.sessions.foreground()
-            if action == "pinned":
-                self.router.repin_reset()
-                text = "Pinned {0}.".format(folder) if folder else "Pinned."
-            else:
-                text = "Auto."
-            self._speak_cue(fg, text, exempt_mute=True)
-            return None
-
         if t == MsgType.NEXT_SESSION:
             # Manual session-change: switch the active reader to another session and
             # confirm immediately (cancel the current item, like pause/mute). The

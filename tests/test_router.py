@@ -4,8 +4,7 @@ from sonari.queue import SpeechItem
 
 
 class FakeSessions:
-    def __init__(self): self._pin = None; self._fg = None; self._folders = {}
-    def pinned(self): return self._pin
+    def __init__(self): self._fg = None; self._folders = {}
     def foreground(self): return self._fg
     def folder(self, s): return self._folders.get(s)
 
@@ -90,19 +89,6 @@ def test_decision_preempts_current_reader():
     b = r.channel("B"); b.append(_item("B", "Pick?", is_decision=True))
     assert r.next_item().text == "Session changed: beta."   # preempts A
     assert r.next_item().text == "Pick?"
-
-
-def test_pin_locks_and_repin_resets_cursor():
-    r, s = _router()
-    s._folders = {"A": "alpha", "B": "beta"}
-    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
-    s._pin = "A"
-    assert r.next_item().text == "a1"
-    assert r.next_item().text == "a2"
-    assert r.next_item() is None               # caught up, pinned -> no handoff
-    # re-pin to A replays from the start
-    r.repin_reset()
-    assert r.next_item().text == "a1"
 
 
 def test_next_session_advances_one_slot_in_fixed_order():

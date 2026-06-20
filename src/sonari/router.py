@@ -13,7 +13,7 @@ CONTROL = "\x00sonari-control"
 
 class Router:
     def __init__(self, sessions, minqueue, announce_text) -> None:
-        self.sessions = sessions          # exposes pinned()/foreground()/folder()
+        self.sessions = sessions          # exposes foreground()/folder()
         self._minqueue = minqueue          # () -> int
         self._announce_text = announce_text  # (folder, replay=False) -> str
         self.channels: "dict[str, SessionChannel]" = {}
@@ -42,14 +42,6 @@ class Router:
         if self._pending_announce == session:
             self._pending_announce = None
         self._replay_authorized.discard(session)
-
-    def repin_reset(self) -> None:
-        """On a change of pinned target, replay the pinned channel from the start."""
-        pinned = self.sessions.pinned()
-        if pinned is not None and pinned in self.channels:
-            self.channels[pinned].reset()
-        self.active = None          # force re-selection
-        # _last_active intentionally NOT reset: pin replay is not an auto handoff.
 
     def next_session(self) -> "tuple[str | None, bool]":
         """Manual session-change: a pure round-robin. Advance the active reader to
@@ -90,9 +82,6 @@ class Router:
         return ch.ready(self._minqueue())
 
     def _pick(self) -> "str | None":
-        pinned = self.sessions.pinned()
-        if pinned is not None:
-            return pinned if pinned in self.channels else None
         # decisions preempt -- even when idle (user-blocking; I1 fix).
         # Still respect the background-policy gate: earcon_only mode suppresses
         # decision TEXT for non-fg sessions (the earcon itself fires separately
@@ -157,8 +146,7 @@ class Router:
             # from the LAST one that read. The first-ever reader (no prior
             # _last_active) does not announce -> single session never announces;
             # returning to the same session after an idle gap does not announce.
-            if (self.sessions.pinned() is None
-                    and self._last_active is not None
+            if (self._last_active is not None
                     and target != self._last_active):
                 self._pending_announce = target
                 self._last_active = target

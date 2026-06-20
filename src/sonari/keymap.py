@@ -31,8 +31,7 @@ ACTION_MESSAGES = {
     "nav_last": {"type": "nav", "to": "last"},
     "pause": {"type": "pause"},     # play/pause toggle
     "mute": {"type": "mute"},       # sticky per-session mute toggle
-    "pin_toggle": {"type": "pin_toggle"},   # pin/unpin the voice to the current session (#31)
-    "next_session": {"type": "next_session"},   # cycle the active reader (replaces pin)
+    "next_session": {"type": "next_session"},   # cycle the active reader
     "faster": {"type": "set_rate", "delta": 25},
     "slower": {"type": "set_rate", "delta": -25},
 }

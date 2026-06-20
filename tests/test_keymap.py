@@ -237,47 +237,12 @@ def test_resolve_nav_action_message(win):
     assert json.loads(resolved[0]["message"]) == {"type": "nav", "to": "next"}
 
 
-def test_pin_toggle_action_message():
-    from sonari.keymap import ACTION_MESSAGES
-    assert ACTION_MESSAGES["pin_toggle"] == {"type": "pin_toggle"}
-
-
-def test_pin_toggle_default_binding_is_p():
-    from sonari.keymap import default_keymap
-    km = default_keymap()
-    # 'p' has moved to next_session; pin_toggle no longer has a default key binding.
-    # pause is on 's'. NOT 'f': the macOS default chord is Ctrl+Cmd and
-    # Ctrl+Cmd+F is the system "Enter Full Screen" shortcut.
-    assert "pin_toggle" not in km          # pin_toggle is unbound by default (Task 2+)
-    assert km["pause"]["key"] == "s"       # pause is on 's'
-    assert km["next_session"]["key"] == "p"   # 'p' now belongs to next_session
-
-
 def test_no_two_default_actions_share_a_key():
     # Default bindings share one chord, so each must use a distinct key — else
     # resolve_keymap emits two entries for the same keyCode and one silently loses.
     from sonari.keymap import default_keymap
     keys = [b["key"] for b in default_keymap().values()]
     assert len(keys) == len(set(keys))
-
-
-def test_pin_toggle_resolves_to_its_message():
-    import json
-    from sonari.keymap import resolve_keymap, ACTION_MESSAGES
-    from sonari.platform import get_platform
-    mods = list(get_platform().hotkey.default_mods())
-    # pin_toggle is not in the default keymap, but it is still a valid action
-    resolved = resolve_keymap({"pin_toggle": {"key": "p", "mods": mods}})
-    msgs = [json.loads(e["message"]) for e in resolved]
-    assert {"type": "pin_toggle"} in msgs
-
-
-def test_pin_toggle_is_clearable():
-    # an unknown action raises; a known one does not -> proves it is registered
-    from sonari.keymap import resolve_keymap
-    from sonari.platform import get_platform
-    mods = list(get_platform().hotkey.default_mods())
-    resolve_keymap({"pin_toggle": {"key": "", "mods": mods}})   # cleared -> no raise
 
 
 def test_next_session_action_message():
