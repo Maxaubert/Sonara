@@ -61,11 +61,10 @@ def test_action_messages_faster_has_delta_25():
 
 def test_default_keymap_macos_uses_ctrl_cmd(mac):
     d = keymap.default_keymap()
-    # only nav/pause/mute/next_session are bound by default; every binding carries the chord
-    assert set(d.keys()) == {"nav_prev", "nav_next",
-                             "pause", "mute", "next_session"}
+    # only nav/mute/next_session are bound by default; every binding carries the chord
+    assert set(d.keys()) == {"nav_prev", "nav_next", "mute", "next_session"}
     assert d["nav_next"]["key"] == "right" and d["nav_next"]["mods"] == ["ctrl", "cmd"]
-    assert d["pause"]["key"] == "s" and d["mute"]["key"] == "m"   # pause moved off 'p' (next_session owns it)
+    assert d["mute"]["key"] == "m" and "pause" not in d   # pause ships UNBOUND
 
 
 def test_default_keymap_windows_uses_ctrl_shift_alt(win):
@@ -100,22 +99,22 @@ def test_resolve_faster_message_is_json_with_delta(mac):
 
 
 def test_default_keymap_binds_only_nav_pause_mute():
-    # The default keymap binds nav/pause/mute/next_session. faster/slower are valid actions
-    # but ship UNBOUND (blank by default); every default binding is a real action.
+    # The default keymap binds nav/mute/next_session. pause/faster/slower are valid
+    # actions but ship UNBOUND (blank by default); every default binding is a real action.
     km = keymap.default_keymap()
-    assert set(km.keys()) == {"nav_prev", "nav_next",
-                              "pause", "mute", "next_session"}
+    assert set(km.keys()) == {"nav_prev", "nav_next", "mute", "next_session"}
     assert set(km.keys()) <= set(keymap.ACTION_MESSAGES.keys())
+    assert "pause" in keymap.ACTION_MESSAGES and "pause" not in km
     assert "faster" in keymap.ACTION_MESSAGES and "faster" not in km
     assert "slower" in keymap.ACTION_MESSAGES and "slower" not in km
 
 
-def test_default_keymap_binds_nav_pause_mute():
-    """Regression: nav_next/prev/first/last, pause and mute were defined in
-    ACTION_MESSAGES but absent from _DEFAULT_KEYS, so no hotkey was ever
-    registered for them on a default install."""
+def test_default_keymap_binds_nav_mute():
+    """Regression: nav_next/prev, mute were defined in ACTION_MESSAGES but absent
+    from _DEFAULT_KEYS, so no hotkey was ever registered for them on a default
+    install. (pause is intentionally UNBOUND now.)"""
     km = keymap.default_keymap()
-    for action in ("nav_next", "nav_prev", "pause", "mute"):
+    for action in ("nav_next", "nav_prev", "mute", "next_session"):
         assert action in km, f"{action} has no default binding"
         assert km[action]["key"], f"{action} default binding has no key"
 

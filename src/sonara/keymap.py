@@ -27,8 +27,8 @@ ACTION_MESSAGES = {
     # Message-cursor navigation over the current turn (next/prev item).
     "nav_next": {"type": "nav", "to": "next"},
     "nav_prev": {"type": "nav", "to": "prev"},
-    "pause": {"type": "pause"},     # play/pause toggle
-    "mute": {"type": "mute"},       # sticky per-session mute toggle
+    "pause": {"type": "pause"},     # play/pause toggle (valid action; UNBOUND by default — mute covers it)
+    "mute": {"type": "mute"},       # global mute cycle (unmuted/muted/super muted)
     "next_session": {"type": "next_session"},   # cycle the active reader
     "faster": {"type": "set_rate", "delta": 25},
     "slower": {"type": "set_rate", "delta": -25},
@@ -36,12 +36,12 @@ ACTION_MESSAGES = {
 
 # Shared action -> default key. The chord modifiers are platform-defaulted (macOS:
 # Ctrl+Cmd; Windows: Ctrl+Shift+Alt) via the active backend's default_mods().
-# Only navigation + play/pause + mute are bound out of the box; faster/slower are
-# valid actions but ship UNBOUND (blank by default) so the default keymap stays
-# minimal — users add a key for them in keymap.json if they want one.
+# Only navigation + mute + next_session are bound out of the box; pause and
+# faster/slower are valid actions but ship UNBOUND (blank by default) so the
+# default keymap stays minimal — users add a key in keymap.json if they want one.
 _DEFAULT_KEYS = {
     "nav_prev": "left", "nav_next": "right",
-    "pause": "s", "mute": "m", "next_session": "p",   # next_session owns 'p'; pause moved to 's'. 'f' avoided (Ctrl+Cmd+F = macOS Full Screen)
+    "mute": "m", "next_session": "p",   # next_session owns 'p'. pause unbound ('s' free); mute covers it.
 }
 
 
