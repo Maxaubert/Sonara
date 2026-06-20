@@ -361,8 +361,7 @@ def test_idle_gap_handoff_announces():
     r_sessions_map = {}
 
     class FakeSessions:
-        def __init__(self): self._pin = None; self._fg = "A"; self._folders = {"A": "alpha", "B": "beta"}
-        def pinned(self): return self._pin
+        def __init__(self): self._fg = "A"; self._folders = {"A": "alpha", "B": "beta"}
         def foreground(self): return self._fg
         def folder(self, s): return self._folders.get(s)
 
@@ -414,8 +413,7 @@ def test_background_decision_while_idle_is_read():
     from sonari.queue import SpeechItem
 
     class FakeSessions:
-        def __init__(self): self._pin = None; self._fg = "A"
-        def pinned(self): return self._pin
+        def __init__(self): self._fg = "A"
         def foreground(self): return self._fg
         def folder(self, s): return None
 
@@ -456,8 +454,7 @@ def test_muted_foreground_falls_through_to_ready_background():
     from sonari.queue import SpeechItem
 
     class FakeSessions:
-        def __init__(self): self._pin = None; self._fg = "A"
-        def pinned(self): return self._pin
+        def __init__(self): self._fg = "A"
         def foreground(self): return self._fg
         def folder(self, s): return {"A": "alpha", "B": "beta"}.get(s)
 

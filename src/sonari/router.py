@@ -41,6 +41,7 @@ class Router:
             self._last_active = None
         if self._pending_announce == session:
             self._pending_announce = None
+            self._pending_announce_replay = False
         self._replay_authorized.discard(session)
 
     def next_session(self) -> "tuple[str | None, bool]":
@@ -149,6 +150,7 @@ class Router:
             if (self._last_active is not None
                     and target != self._last_active):
                 self._pending_announce = target
+                self._pending_announce_replay = False
                 self._last_active = target
                 return self.next_item()
             self._last_active = target

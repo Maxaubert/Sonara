@@ -135,3 +135,18 @@ def test_next_session_single_session_lands_on_itself():
 def test_next_session_none_when_no_channels():
     r, s = _router()
     assert r.next_session() == (None, False)       # nothing registered
+
+
+def test_drop_clears_replay_flag_so_later_handoff_is_not_reading_again():
+    r, s = _router()
+    s._folders = {"A": "alpha", "B": "beta"}
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True; b.next()  # B read
+    r.active = "A"
+    target, replay = r.next_session()              # lands on B (read) -> replay armed
+    assert (target, replay) == ("B", True)
+    r.drop("B")                                    # B ends before the announcement plays
+    # now a normal auto handoff to A must NOT say "reading again"
+    r.active = None; r._last_active = "X"          # force an auto announce on next pick
+    item = r.next_item()
+    assert item is not None and "reading again" not in item.text
