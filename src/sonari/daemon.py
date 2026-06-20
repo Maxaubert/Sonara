@@ -34,7 +34,7 @@ MINQUEUE_MAX = 10
 # repeated presses there are intentional.
 _HOTKEY_DEBOUNCE_S = 0.30
 _DEBOUNCED_HOTKEYS = (
-    MsgType.PAUSE, MsgType.MUTE, MsgType.PIN_TOGGLE, MsgType.CYCLE_VERBOSITY,
+    MsgType.PAUSE, MsgType.MUTE, MsgType.NEXT_SESSION, MsgType.CYCLE_VERBOSITY,
 )
 
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
@@ -54,7 +54,9 @@ class SpeechDaemon:
         self.router = Router(
             self.sessions,
             minqueue=self._minqueue,
-            announce_text=lambda folder: "Session changed: {0}.".format(folder),
+            announce_text=lambda folder, replay=False: (
+                "Session changed: {0}, reading again.".format(folder) if replay
+                else "Session changed: {0}.".format(folder)),
         )
         self._running = threading.Event()
         self._wake = threading.Event()
@@ -507,6 +509,18 @@ class SpeechDaemon:
             else:
                 text = "Auto."
             self._speak_cue(fg, text, exempt_mute=True)
+            return None
+
+        if t == MsgType.NEXT_SESSION:
+            # Manual session-change: switch the active reader to another session and
+            # confirm immediately (cancel the current item, like pause/mute). The
+            # router arms the "Session changed" announcement; on no other session we
+            # speak a soft cue.
+            target, _replay = self.router.next_session()
+            self.speaker.cancel()
+            if target is None:
+                self._speak_cue(None, "No session.", exempt_mute=True)
+            self._wake.set()
             return None
 
         if t == MsgType.RELOAD_KEYMAP:

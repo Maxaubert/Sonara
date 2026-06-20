@@ -415,7 +415,7 @@ def test_idle_gap_handoff_announces():
 
     fs = FakeSessions()
     router = Router(fs, minqueue=lambda: 1,
-                    announce_text=lambda f: "Session changed: {0}.".format(f))
+                    announce_text=lambda f, replay=False: "Session changed: {0}.".format(f))
 
     # A reads and fully drains.
     ch_a = router.channel("A")
@@ -465,7 +465,7 @@ def test_background_decision_while_idle_is_read():
 
     fs = FakeSessions()
     router = Router(fs, minqueue=lambda: 1,
-                    announce_text=lambda f: "Session changed: {0}.".format(f or "another session"))
+                    announce_text=lambda f, replay=False: "Session changed: {0}.".format(f or "another session"))
 
     # fg (A) has nothing. B has a blocking decision.
     ch_b = router.channel("B")
@@ -507,7 +507,7 @@ def test_muted_foreground_falls_through_to_ready_background():
 
     fs = FakeSessions()
     router = Router(fs, minqueue=lambda: 1,
-                    announce_text=lambda f: "Session changed: {0}.".format(f))
+                    announce_text=lambda f, replay=False: "Session changed: {0}.".format(f))
 
     # A is fg but muted with normal (non-exempt) prose.
     ch_a = router.channel("A")

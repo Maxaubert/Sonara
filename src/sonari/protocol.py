@@ -23,6 +23,7 @@ class MsgType:
     PAUSE = "pause"      # toggle play/pause of the whole speak loop
     MUTE = "mute"        # toggle a sticky per-session mute (earcons still fire)
     PIN_TOGGLE = "pin_toggle"   # pin/unpin the voice to the current session (#31)
+    NEXT_SESSION = "next_session"   # hotkey: cycle the active reader to another session
     REPEAT = "repeat"
     JUMP_DECISION = "jump_decision"
     CATCH_UP = "catch_up"
