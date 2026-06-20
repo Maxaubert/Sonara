@@ -77,7 +77,7 @@ one:
 2. Click **System Voice → Manage Voices…**.
 3. Pick an English voice marked **(Enhanced)** or **(Premium)** — e.g. *Ava (Premium)*,
    *Zoe (Premium)*, or *Allison* — and download it.
-4. Run `sonari doctor` to confirm Sonari picks it up, or pin it explicitly:
+4. Run `sonari doctor` to confirm Sonari picks it up, or set it explicitly:
 
 ```bash
 sonari voice "Ava (Premium)"
@@ -105,6 +105,7 @@ permission is needed.
 | Ctrl+Cmd+[ | Speak slower |
 | Ctrl+Cmd+V | Cycle verbosity (everything / medium / quiet) |
 | Ctrl+Cmd+O | Re-read the current prompt's options (numbers, descriptions, multi-select announce) |
+| Ctrl+Cmd+P | Cycle the voice to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
 ### Selecting options
 
@@ -163,6 +164,12 @@ Sonari tracks a single **foreground** session (set by `SessionStart` and each
 background sessions still fire decision **earcons** so you are alerted, but their prose and
 decision text are not read aloud until you bring that session forward. Submitting a new
 prompt or stopping flushes the queue, so the voice always resumes at what is current.
+
+To manually cycle the voice to another session without switching windows, press
+**Ctrl+Cmd+P** (macOS) or the platform equivalent. Sonari advances to the next session in a
+fixed round-robin order, plays a short chime, and says "Session changed: &lt;folder&gt;." An
+unread session resumes from where it left off; a fully-read session is replayed from the
+top.
 
 ## Doctor and troubleshooting
 

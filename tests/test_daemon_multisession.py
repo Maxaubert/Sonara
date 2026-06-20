@@ -489,3 +489,44 @@ def test_muted_foreground_falls_through_to_ready_background():
     assert item.text == "b item", (
         f"Expected B's item. Got: {item.text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 10 — NEXT_SESSION hotkey: cycles sessions, chime fires, both heard
+# ---------------------------------------------------------------------------
+
+def test_session_change_cycles_and_revisits():
+    """Pressing NEXT_SESSION while reading session A switches to B,
+    fires the 'session_change' chime earcon, and both sessions' text are heard.
+
+    Procedure:
+    - A is fg; both A and B have prose queued and turn_done.
+    - One drain call starts reading A (sets active=A, speaks 'Alpha message.').
+    - NEXT_SESSION cycles active A→B and arms the session-change announcement.
+    - 12 more drains: earcon fires, announcement spoken, B's item spoken.
+    - Assertions: both messages heard; 'session_change' earcon in speaker.earcons.
+    """
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    for s, cwd in (("A", "/u/alpha"), ("B", "/u/beta")):
+        daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
+                               "session": s, "cwd": cwd, "plugin_version": ""})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "A"})
+    daemon.handle_message(_prose("A", "Alpha message. "))
+    daemon.router.channel("A").turn_done = True
+    daemon.handle_message(_prose("B", "Beta message. "))
+    daemon.router.channel("B").turn_done = True
+    # One drain: auto-selects A (fg), reads 'Alpha message.', sets active=A.
+    daemon._speak_loop_once()
+    # NEXT_SESSION: cycles from active=A to B; arms the session-change announcement.
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
+    # B is now the active reader (bypasses earcon_only gate via "current reader
+    # keeps floor" path in _pick), so it is served without _replay_authorized.
+    for _ in range(12):
+        daemon._speak_loop_once()
+    assert "Alpha message." in speaker.spoken and "Beta message." in speaker.spoken, (
+        f"Both sessions must be heard. Spoken: {speaker.spoken!r}"
+    )
+    assert "session_change" in speaker.earcons, (
+        f"'session_change' chime must fire on the manual NEXT_SESSION switch. "
+        f"earcons: {speaker.earcons!r}"
+    )
