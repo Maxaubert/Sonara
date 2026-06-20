@@ -129,8 +129,11 @@ def test_reread_after_choice_reenqueues_same_text():
     item = queue.pop_next()
     assert item is not None
     assert item.text == spoken
-    # kind is "prose" because _speak_cue always uses kind="prose" for cue items
-    assert item.session == "fg"
+    # kind is "prose" because _speak_cue always uses kind="prose" for cue items.
+    # The reread cue rides the reserved CONTROL channel so it plays immediately,
+    # bypassing the originating session's minqueue gate (same path as mute/pause cues).
+    from sonara.router import CONTROL
+    assert item.session == CONTROL
     assert item.is_decision is False
 
 

@@ -55,6 +55,18 @@ def test_muted_keeps_beeps_super_mute_silences_them():
     assert "permission" not in speaker.earcons
 
 
+def test_mute_cue_plays_immediately_while_streaming_below_minqueue():
+    """Repro: pressing mute mid-stream (session channel below minqueue, turn not
+    done) must speak 'Muted.' IMMEDIATELY, not queue it behind the gated prose
+    (which caused a later burst of muted/unmuted/super cues)."""
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.config["minqueue"] = 5
+    daemon.handle_message(_prose("A", "One. Two. ", 0, False))   # 2 items, NOT ready
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
+    daemon._speak_loop_once()
+    assert "Muted." in speaker.spoken           # heard now, not after the turn flushes
+
+
 def test_super_mute_confirmation_is_still_spoken():
     """The spoken state confirmation plays even in Super Muted, so you can tell the
     state and toggle out."""

@@ -930,22 +930,21 @@ class SpeechDaemon:
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
                    pause_exempt: bool = False) -> None:
-        """Insert a one-off confirmation cue at the active read position so it is
-        always heard (before any normal queued items). mute_exempt/pause_exempt
-        flags ensure it plays through holds and mutes. When *session* is falsy (no
-        foreground/active session) the cue goes to the reserved CONTROL channel,
-        which the router serves ahead of everything — so global controls
-        (pause/mute) are still announced even when no session is registered."""
+        """Speak a one-off confirmation/feedback cue (pause/mute/repeat/reread/...).
+        These ALWAYS go to the reserved CONTROL channel, which the router serves
+        ahead of every session on `pending() > 0` — bypassing the minqueue gate. A
+        session channel is gated by `ready()` (minqueue items / turn_done), so a cue
+        placed there during a live stream would sit unplayed and then burst out when
+        the turn flushed; CONTROL makes the cue immediate regardless of stream state.
+        The *session* arg is accepted for call-site clarity but no longer routes."""
         from sonara.router import CONTROL
-        if not session:
-            session = CONTROL
-        ch = self.router.channel(session)
-        if session == CONTROL and ch.caught_up():
+        ch = self.router.channel(CONTROL)
+        if ch.caught_up():
             ch.wipe()                      # control cues don't replay; keep it small
-        item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
+        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
                           pause_exempt=pause_exempt)
-        ch.items.insert(ch.cursor, item)   # speak next, then continue
+        ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
 
     def _speak_loop_once(self) -> None:
