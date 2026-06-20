@@ -128,9 +128,11 @@ class Router:
             self._pending_announce = None
             self._pending_announce_replay = False
             # kind "session_change" lets the speak loop fire the session-switch
-            # earcon (chime) just before voicing the announcement.
+            # earcon (chime) just before voicing the announcement. NOT mute_exempt:
+            # global mute silences hand-offs too (both the chime and the spoken
+            # announcement) — mute means silence.
             return SpeechItem(id=0, session=self.active or "", kind="session_change",
-                              text=text, is_decision=False, mute_exempt=True)
+                              text=text, is_decision=False, mute_exempt=False)
         # Global control cues (pause/mute/rate confirmations) are served ahead of
         # every session and never announce or change _last_active — so they are
         # heard even when no session is registered/foreground.

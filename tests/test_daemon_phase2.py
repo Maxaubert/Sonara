@@ -249,7 +249,7 @@ def test_immediate_warning_independent_per_session():
     # The router may emit a session-change announcement cue when switching
     # active readers; drain it if present, then check the choice item.
     nxt = queue.pop_next()
-    if nxt is not None and nxt.mute_exempt and "Session changed" in nxt.text:
+    if nxt is not None and "Session changed" in nxt.text:
         nxt = queue.pop_next()   # skip the hand-off announcement
     assert nxt is not None
     assert WARN in nxt.text

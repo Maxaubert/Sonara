@@ -158,6 +158,30 @@ def test_session_change_fires_chime_earcon():
         f"session-change chime not fired on hand-off. earcons: {speaker.earcons!r}")
 
 
+def test_global_mute_silences_the_session_change_announcement_and_chime():
+    """When globally muted, a hand-off must not voice 'Session changed: ...' nor
+    fire the session_change chime — mute means silence, including hand-offs."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
+                           "session": "A", "cwd": "/home/user/alpha", "plugin_version": ""})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
+                           "session": "B", "cwd": "/home/user/beta", "plugin_version": ""})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "A"})
+    daemon.handle_message(_prose("A", "A one. "))
+    daemon.router.channel("A").turn_done = True
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # global mute
+    daemon._speak_loop_once()                                             # consume "Muted." cue
+    speaker.spoken.clear(); speaker.earcons.clear()
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "B"})
+    daemon.handle_message(_prose("B", "B one. "))
+    daemon.router.channel("B").turn_done = True
+    _drain(daemon, n=10)
+    assert not any(t.startswith("Session changed") for t in speaker.spoken), (
+        f"hand-off announcement spoken despite mute. spoken: {speaker.spoken!r}")
+    assert "session_change" not in speaker.earcons, (
+        f"session-change chime fired despite mute. earcons: {speaker.earcons!r}")
+
+
 # ---------------------------------------------------------------------------
 # Test 3 — Cooperative hand-off: active reader keeps the floor until its
 # batch drains, THEN the new foreground takes over.
