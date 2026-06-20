@@ -80,6 +80,35 @@ def test_dispatch_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
     assert locked_during_call == [True]
 
 
+def test_debounce_suppresses_rapid_repeat_of_same_toggle():
+    """A second pin/pause/mute within the debounce window is ignored; one after the
+    window passes is honored."""
+    from sonari.protocol import MsgType
+    from sonari.daemon import _HOTKEY_DEBOUNCE_S
+    daemon = make_daemon()[0]
+    assert daemon._debounce_suppress(MsgType.PIN_TOGGLE, 100.0) is False   # first fires
+    assert daemon._debounce_suppress(MsgType.PIN_TOGGLE, 100.10) is True   # +100ms: dropped
+    assert daemon._debounce_suppress(MsgType.PIN_TOGGLE, 100.0 + _HOTKEY_DEBOUNCE_S + 0.01) is False  # window passed
+
+
+def test_debounce_is_per_action_not_global():
+    """Debouncing pin must not suppress a different toggle pressed right after."""
+    from sonari.protocol import MsgType
+    daemon = make_daemon()[0]
+    assert daemon._debounce_suppress(MsgType.PIN_TOGGLE, 50.0) is False
+    assert daemon._debounce_suppress(MsgType.MUTE, 50.05) is False   # different action: not debounced
+
+
+def test_nav_and_repeat_are_not_debounced():
+    """Directional/idempotent keys pass through every time (rapid nav is intentional)."""
+    from sonari.protocol import MsgType
+    daemon = make_daemon()[0]
+    assert daemon._debounce_suppress(MsgType.NAV, 10.0) is False
+    assert daemon._debounce_suppress(MsgType.NAV, 10.01) is False   # not suppressed
+    assert daemon._debounce_suppress(MsgType.REPEAT, 10.0) is False
+    assert daemon._debounce_suppress(MsgType.REPEAT, 10.01) is False
+
+
 def test_one_bad_hotkey_does_not_raise(monkeypatch):
     pb = _FakePlatform()
     monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)

@@ -28,6 +28,15 @@ RATE_MAX = 400
 MINQUEUE_MIN = 1
 MINQUEUE_MAX = 10
 
+# Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
+# accidental/rapid double-tap doesn't flip pin/pause/mute several times (and pile
+# up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced —
+# repeated presses there are intentional.
+_HOTKEY_DEBOUNCE_S = 0.30
+_DEBOUNCED_HOTKEYS = (
+    MsgType.PAUSE, MsgType.MUTE, MsgType.PIN_TOGGLE, MsgType.CYCLE_VERBOSITY,
+)
+
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
 # (one request each), so this bound is generous; it just stops a misbehaving or
 # hostile peer from leaking unbounded threads by opening many connections.
@@ -60,6 +69,7 @@ class SpeechDaemon:
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._paused = threading.Event()          # play/pause: set == speech halted
         self._muted = False                       # global mute: drop all prose/cues
+        self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
         self._guided_sessions: set = set()
@@ -831,11 +841,28 @@ class SpeechDaemon:
         thread), so this is deadlock-free. An enqueue-based action (repeat /
         skip_back / catch_up) is likewise safe from losing its item to that race.
         """
+        import time as _t
+        if self._debounce_suppress(message.get("type"), _t.monotonic()):
+            return   # a too-fast repeat of the same toggle -> ignore
         try:
             with self._lock:
                 self.handle_message(message)
         except Exception:  # noqa: BLE001 - one bad hotkey must not kill the pump
             pass
+
+    def _debounce_suppress(self, mtype, now) -> bool:
+        """True if *mtype* is a repeat of the same TOGGLE hotkey within the debounce
+        window — collapses an accidental/rapid double-tap into one action. Only the
+        toggles in _DEBOUNCED_HOTKEYS are debounced; nav/repeat/skip pass through so
+        repeated directional presses still register. Runs on the single hotkey pump
+        thread, so the unlocked _hotkey_last access is race-free."""
+        if mtype not in _DEBOUNCED_HOTKEYS:
+            return False
+        last = self._hotkey_last.get(mtype)
+        if last is not None and (now - last) < _HOTKEY_DEBOUNCE_S:
+            return True
+        self._hotkey_last[mtype] = now
+        return False
 
     def _speak_loop(self) -> None:
         self._running.set()
