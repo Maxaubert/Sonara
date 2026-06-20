@@ -13,12 +13,12 @@ off.
 - **Ordered narration** — prose, plans, questions, and permissions are spoken in order, never out of sequence.
 - **Per-decision earcons** — a distinct sound the moment a question, plan, permission, or error appears.
 - **Selection by number** — answer prompts with the option's number; no key injection.
-- **Global hotkeys** — stop, repeat, skip, jump-to-decision, catch-up, rate, verbosity, re-read (work mid-speech).
+- **Global hotkeys** — navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
 - **Self-contained** — runs on the Windows system Python; no `pip`, no third-party packages.
 
 ## Requirements
 
-- Windows (Sonara uses the built-in Windows speech engine for `say` and `winsound`
+- Windows (Sonara uses the built-in Windows speech engine for text-to-speech and `winsound`
   for earcons).
 - Python 3.9 or newer. Sonara picks the best `python` >= 3.9 it can find
   automatically.
@@ -91,18 +91,18 @@ commands inside a session.
 Default modifier is **Ctrl+Shift+Alt** (rebindable via `~/.sonara/keymap.json`). The daemon
 registers these as Windows global hotkeys, so no extra accessibility permission is needed.
 
+Only four actions are bound by default (kept minimal so Sonara doesn't hog
+hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** —
+add a key in `~/.sonara/keymap.json` if you want one. Everything else (stop,
+repeat, skip, jump-to-decision, catch-up, re-read) lives in the CLI / slash
+commands below.
+
 | Hotkey | Effect |
 |---|---|
-| Ctrl+Shift+Alt+S | Stop now and clear the queue |
-| Ctrl+Shift+Alt+R | Re-speak the entire last message |
-| Ctrl+Shift+Alt+. | Skip the current item |
-| Ctrl+Shift+Alt+D | Jump to the pending decision |
-| Ctrl+Shift+Alt+L | Replay everything you haven't heard (after stop, or from a session you left), then mark it heard |
-| Ctrl+Shift+Alt+] | Speak faster |
-| Ctrl+Shift+Alt+[ | Speak slower |
-| Ctrl+Shift+Alt+V | Cycle verbosity (everything / medium / quiet) |
-| Ctrl+Shift+Alt+O | Re-read the current prompt's options (numbers, descriptions, multi-select announce) |
-| Ctrl+Shift+Alt+P | Cycle the voice to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
+| Ctrl+Shift+Alt+Left | Previous item — step back through the current turn |
+| Ctrl+Shift+Alt+Right | Next item — step forward through the current turn |
+| Ctrl+Shift+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
+| Ctrl+Shift+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
 ### Selecting options
 
@@ -116,18 +116,22 @@ they apply.
 
 ### Slash commands and CLI
 
+Eight of these ship as `/sonara:` slash commands (the files in `commands/`); the
+rest are CLI-only (run `sonara <cmd>` in a terminal).
+
 | Slash command | CLI | Effect |
 |---|---|---|
-| `/sonara:install` | `sonara install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
-| `/sonara:uninstall` | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
+| — | `sonara install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
+| — | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
 | `/sonara:status` | `sonara status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
 | `/sonara:verbosity <level>` | `sonara verbosity <level>` | Set `everything` / `medium` / `quiet` |
-| `/sonara:voice <name>` | `sonara voice <name>` | Set the `say` voice |
+| `/sonara:voice <name>` | `sonara voice <name>` | Set the speech voice (omit the name to list voices) |
+| `/sonara:voices` | `sonara voices` | Install or remove Kokoro neural voices |
 | `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
 | `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
-| `/sonara:repeat` | `sonara repeat` | Re-speak the last item |
-| `/sonara:skip` | `sonara skip` | Skip the current item |
-| `/sonara:stop` | `sonara stop` | Stop now and clear the queue |
+| — | `sonara repeat` | Re-speak the last item |
+| — | `sonara skip` | Skip the current item |
+| — | `sonara stop` | Stop now and clear the queue |
 | `/sonara:doctor` | `sonara doctor` | Run all health checks |
 | `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
 
