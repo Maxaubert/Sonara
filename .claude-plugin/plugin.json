@@ -2,13 +2,17 @@
   "name": "sonara",
   "displayName": "Sonara",
   "version": "0.5.0",
-  "description": "Eyes-free text-to-speech layer for Claude Code (macOS)",
+  "description": "Eyes-free text-to-speech layer for Claude Code (Windows). Forked from Sonari by Nima Hakimi.",
   "author": {
-    "name": "Nima Hakimi",
-    "email": "hakimi.nima1@gmail.com"
+    "name": "Max Aubert",
+    "email": "aubert@post.com"
   },
   "license": "MIT",
   "homepage": "https://github.com/Maxaubert/sonara",
   "repository": "https://github.com/Maxaubert/sonara",
-  "keywords": ["accessibility", "tts", "speech"]
+  "keywords": [
+    "accessibility",
+    "tts",
+    "speech"
+  ]
 }

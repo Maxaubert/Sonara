@@ -1,10 +1,10 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "sonara",
-  "description": "Sonara — eyes-free text-to-speech for Claude Code (blind/low-vision developers)",
+  "description": "Sonara \u2014 eyes-free text-to-speech for Claude Code (blind/low-vision developers)",
   "owner": {
-    "name": "Nima Hakimi",
-    "email": "hakimi.nima1@gmail.com"
+    "name": "Max Aubert",
+    "email": "aubert@post.com"
   },
   "plugins": [
     {
@@ -12,7 +12,7 @@
       "version": "0.5.0",
       "description": "Eyes-free text-to-speech layer for Claude Code (macOS): narrates prose, options, plans, and permissions with a single ordered speech queue and per-type earcons.",
       "author": {
-        "name": "Nima Hakimi"
+        "name": "Max Aubert"
       },
       "category": "accessibility",
       "homepage": "https://github.com/Maxaubert/sonara",
