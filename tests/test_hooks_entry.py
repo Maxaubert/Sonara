@@ -76,14 +76,14 @@ def test_ask_user_question_from_fixture():
     assert all(m["v"] == PROTOCOL_VERSION for m in msgs)
 
 
-def test_exit_plan_mode_earcon_then_plan():
+def test_exit_plan_mode_speaks_plan_without_earcon():
     payload = {
         "session_id": "sess-1",
         "tool_name": "ExitPlanMode",
         "tool_input": {"plan": "Step one. Step two."},
     }
+    # The 'plan' chime was removed; the plan is still spoken, with no earcon.
     assert handle_event("PreToolUse", payload) == [
-        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "plan"},
         {
             "v": PROTOCOL_VERSION,
             "type": MsgType.PLAN,
@@ -96,10 +96,9 @@ def test_exit_plan_mode_earcon_then_plan():
 def test_exit_plan_mode_from_fixture():
     payload = _load("PreToolUse-ExitPlanMode.json")
     msgs = handle_event("PreToolUse", payload)
-    assert [m["type"] for m in msgs] == [MsgType.EARCON, MsgType.PLAN]
-    assert msgs[0]["kind"] == "plan"
-    assert msgs[1]["session"] == payload["session_id"]
-    assert msgs[1]["text"] == payload["tool_input"]["plan"]
+    assert [m["type"] for m in msgs] == [MsgType.PLAN]   # no earcon, just the plan
+    assert msgs[0]["session"] == payload["session_id"]
+    assert msgs[0]["text"] == payload["tool_input"]["plan"]
     assert all(m["v"] == PROTOCOL_VERSION for m in msgs)
 
 
@@ -203,11 +202,11 @@ def test_notification_permission_prompt_via_matcher_fallback():
     assert msgs[1]["action"] == "Edit file cli.py"
 
 
-def test_notification_idle_prompt():
+def test_notification_idle_prompt_is_silent():
     payload = {"session_id": "sess-1", "notification_type": "idle_prompt"}
-    assert handle_event("Notification", payload) == [
-        {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "ready"}
-    ]
+    # The 'ready' idle chime was removed (it fired unpredictably whenever Claude
+    # went idle); idle_prompt now produces nothing.
+    assert handle_event("Notification", payload) == []
 
 
 def test_notification_permission_prompt_from_fixture():
@@ -222,7 +221,7 @@ def test_notification_permission_prompt_from_fixture():
 def test_notification_idle_prompt_from_fixture():
     payload = _load("Notification-idle_prompt.json")
     msgs = handle_event("Notification", payload)
-    assert msgs == [{"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "ready"}]
+    assert msgs == []   # idle chime removed
 
 
 def test_unknown_notification_type_is_empty():
