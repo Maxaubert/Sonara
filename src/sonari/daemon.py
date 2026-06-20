@@ -765,6 +765,15 @@ class SpeechDaemon:
                 self.router._replay_authorized.add(session)
         self._wake.set()
 
+    def _reading_msg_id(self, session: str):
+        """The message id of the item currently being spoken for *session*, or None
+        (idle / nothing in flight). Used to anchor nav on the live read position."""
+        cur = self._current_item
+        if cur is None or cur.session != session:
+            return None
+        entry = self._pending_heard.get(cur.id)
+        return entry.msg_id if entry is not None else None
+
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
         Returns "moved" if the cursor actually moved, else "edge" (already at the
@@ -788,6 +797,12 @@ class SpeechDaemon:
         # in append ids without shifting where the cursor points. Unset/stale ->
         # the latest. The cursor only clears on a new prompt (FLUSH).
         cur_id = self._nav_cursor.get(session)
+        if cur_id is None:
+            # No parked nav cursor (the user hasn't navigated yet this turn):
+            # anchor on the message currently being READ, so next/prev move
+            # relative to what the user hears — not the latest message (which made
+            # 'next' during a live read jump to the end with an edge chime).
+            cur_id = self._reading_msg_id(session)
         cur = ids.index(cur_id) if cur_id in ids else n - 1
         if to == "next":
             new = min(cur + 1, n - 1)

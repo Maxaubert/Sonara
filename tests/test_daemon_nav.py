@@ -54,6 +54,46 @@ def test_prev_steps_back_one_message_then_plays_forward():
     assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
 
 
+def _start_reading(daemon, session, msg_id):
+    """Simulate the speak loop currently reading a given message: point
+    _current_item at an item whose history entry has that msg_id."""
+    from sonari.queue import SpeechItem
+    entry = daemon.history.entries_for_message(session, msg_id)[0]
+    item = SpeechItem(id=9000 + msg_id, session=session, kind="prose",
+                      text=entry.text, is_decision=False)
+    daemon._pending_heard[item.id] = entry
+    daemon._current_item = item
+
+
+def test_nav_next_while_reading_earlier_message_anchors_on_it_not_latest():
+    # Bug repro: reading m1 (msg 1) of a 3-message turn, pressing next must go to
+    # m2 (the message AFTER what's playing), NOT jump to the latest with an edge
+    # chime. Anchor = the message currently being read, not n-1.
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)                                    # messages 0, 1, 2 (m2 latest)
+    _start_reading(daemon, "fg", 1)                  # currently hearing m1
+    _nav(daemon, "next")
+    assert speaker.earcons[-1] == "nav"              # moved, NOT nav_edge
+    assert [s.text for s in _drain_channel(daemon)] == ["m2"]
+
+
+def test_nav_prev_while_reading_anchors_on_current_not_latest():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    _start_reading(daemon, "fg", 1)                  # hearing m1
+    _nav(daemon, "prev")                             # -> m0 (before m1)
+    assert speaker.earcons[-1] == "nav"
+    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
+
+
+def test_nav_next_while_reading_the_latest_message_edges():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    _start_reading(daemon, "fg", 2)                  # hearing the newest (m2)
+    _nav(daemon, "next")                             # nothing after -> edge
+    assert speaker.earcons[-1] == "nav_edge"
+
+
 def test_prev_clamps_at_first():
     daemon, *_ = make_daemon(foreground="fg")
     _seed(daemon)
