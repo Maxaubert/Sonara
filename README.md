@@ -1,5 +1,7 @@
 # Sonari
 
+> The Windows line of Sonari, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari) (the macOS line). Developed and released independently.
+
 **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS — an
 accessibility tool for blind and low-vision developers.**
 
@@ -28,8 +30,8 @@ off.
 Sonari installs from a Claude Code marketplace. You start hearing Claude as soon as the
 plugin is enabled; one more command turns on global hotkeys and autostart.
 
-1. Add the marketplace: `/plugin marketplace add nimkimi/sonari` (or, in a shell,
-   `claude plugin marketplace add nimkimi/sonari`).
+1. Add the marketplace: `/plugin marketplace add Maxaubert/sonara` (or, in a shell,
+   `claude plugin marketplace add Maxaubert/sonara`).
 2. Install the plugin: `/plugin install sonari@sonari` (or
    `claude plugin install sonari@sonari`). The marketplace is named `sonari`, so the
    install target is `sonari@sonari`. You will start hearing Claude immediately — the

@@ -65,4 +65,4 @@ date above revised accordingly.
 ## Contact
 
 Questions about privacy? Open an issue at
-<https://github.com/nimkimi/sonari/issues> or email hakimi.nima1@gmail.com.
+<https://github.com/Maxaubert/sonara/issues> or email hakimi.nima1@gmail.com.
