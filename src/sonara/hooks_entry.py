@@ -56,8 +56,8 @@ def handle_event(event: str, payload: dict) -> list[dict]:
                 ),
             ]
         if tool == "ExitPlanMode":
+            # No 'plan' chime (removed per user request); the plan is still spoken.
             return [
-                _msg(type=MsgType.EARCON, kind="plan"),
                 _msg(type=MsgType.PLAN, session=session, text=ti.get("plan", "")),
             ]
         return [
@@ -81,8 +81,8 @@ def handle_event(event: str, payload: dict) -> list[dict]:
                     message=payload.get("message", ""),
                 ),
             ]
-        if nt == "idle_prompt":
-            return [_msg(type=MsgType.EARCON, kind="ready")]
+        # No 'ready' chime on idle_prompt (removed per user request): Claude Code
+        # fires this whenever it goes idle, so the beep felt random and untriggered.
         return []
 
     if event == "Stop":
