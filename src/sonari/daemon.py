@@ -445,8 +445,9 @@ class SpeechDaemon:
                 # it is always heard even if the session is also muted.
                 self._paused.clear()
                 self._wake.set()
-                if target is not None:
-                    self._speak_cue(target, "Resumed.", exempt_mute=True)
+                # target may be None (no session) -> _speak_cue routes to the
+                # CONTROL channel so the confirmation is still heard.
+                self._speak_cue(target, "Resumed.", exempt_mute=True)
             else:
                 self._paused.set()
                 # cancel() bumps the speaker's epoch so even an in-progress
@@ -454,11 +455,9 @@ class SpeechDaemon:
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
-                # scans for and voices it while holding everything else (bypassing
-                # the normal mute gate). mute_exempt is NOT needed here for that
-                # reason; we omit it to keep the flag truthful.
-                if target is not None:
-                    self._speak_cue(target, "Paused.", pause_exempt=True)
+                # scans for and voices it while holding everything else. target may
+                # be None -> CONTROL channel (still scanned by take_pause_exempt).
+                self._speak_cue(target, "Paused.", pause_exempt=True)
             return None
 
         if t == MsgType.MUTE:
@@ -469,9 +468,10 @@ class SpeechDaemon:
             if self._muted:
                 self.speaker.cancel()           # stop the current utterance now
             target = self.router.active or self.sessions.foreground()
-            if target is not None:
-                self._speak_cue(target, "Muted." if self._muted else "Unmuted.",
-                                exempt_mute=True)
+            # target may be None -> _speak_cue routes to the CONTROL channel so the
+            # confirmation is heard even when no session is registered.
+            self._speak_cue(target, "Muted." if self._muted else "Unmuted.",
+                            exempt_mute=True)
             self._wake.set()
             return None
 
@@ -866,15 +866,23 @@ class SpeechDaemon:
         except Exception:  # noqa: BLE001 - logging failure must not wedge the loop
             pass
 
-    def _speak_cue(self, session: str, text: str, exempt_mute: bool = False,
+    def _speak_cue(self, session, text: str, exempt_mute: bool = False,
                    pause_exempt: bool = False) -> None:
         """Insert a one-off confirmation cue at the active read position so it is
         always heard (before any normal queued items). mute_exempt/pause_exempt
-        flags ensure it plays through holds and mutes."""
+        flags ensure it plays through holds and mutes. When *session* is falsy (no
+        foreground/active session) the cue goes to the reserved CONTROL channel,
+        which the router serves ahead of everything — so global controls
+        (pause/mute) are still announced even when no session is registered."""
+        from sonari.router import CONTROL
+        if not session:
+            session = CONTROL
+        ch = self.router.channel(session)
+        if session == CONTROL and ch.caught_up():
+            ch.wipe()                      # control cues don't replay; keep it small
         item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
                           pause_exempt=pause_exempt)
-        ch = self.router.channel(session)
         ch.items.insert(ch.cursor, item)   # speak next, then continue
         self._wake.set()
 

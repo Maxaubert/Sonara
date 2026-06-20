@@ -63,6 +63,22 @@ def test_unmute_confirmation_is_spoken():
     assert speaker.spoken == ["Unmuted."]
 
 
+def test_pause_cue_heard_with_no_session():
+    """Pause confirms audibly even when NO session is registered (fg/active None):
+    the cue routes to the CONTROL channel, which the loop still voices."""
+    daemon, queue, speaker, *_ = make_daemon(foreground=None)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+    daemon._speak_loop_once()
+    assert "Paused." in speaker.spoken
+
+
+def test_mute_cue_heard_with_no_session():
+    daemon, queue, speaker, *_ = make_daemon(foreground=None)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
+    daemon._speak_loop_once()
+    assert "Muted." in speaker.spoken
+
+
 # ---------------------------------------------------------------------------
 # PAUSE tests
 # ---------------------------------------------------------------------------

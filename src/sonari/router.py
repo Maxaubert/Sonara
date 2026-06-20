@@ -5,6 +5,11 @@ from __future__ import annotations
 from sonari.channel import SessionChannel
 from sonari.queue import SpeechItem
 
+# Reserved channel for GLOBAL control confirmations (pause/mute/rate/...). It is
+# served ahead of every session and never announces, so a control cue is heard
+# even when no real session is registered or foreground.
+CONTROL = "\x00sonari-control"
+
 
 class Router:
     def __init__(self, sessions, minqueue, announce_text) -> None:
@@ -107,6 +112,12 @@ class Router:
             # earcon (chime) just before voicing the announcement.
             return SpeechItem(id=0, session=self.active or "", kind="session_change",
                               text=text, is_decision=False, mute_exempt=True)
+        # Global control cues (pause/mute/rate confirmations) are served ahead of
+        # every session and never announce or change _last_active — so they are
+        # heard even when no session is registered/foreground.
+        ctrl = self.channels.get(CONTROL)
+        if ctrl is not None and ctrl.pending() > 0:
+            return ctrl.next()
         target = self._pick()
         if target is None:
             self.active = None
