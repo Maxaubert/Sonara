@@ -60,12 +60,13 @@ def test_set_foreground_message_carries_cwd_into_announcement():
     assert speaker.spoken == ["Pinned proj."]
 
 
-def test_pin_toggle_with_no_session_beeps_error_only():
+def test_pin_toggle_with_no_session_beeps_and_explains():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground=None)
     daemon.handle_message({"type": "pin_toggle", "session": ""})
     assert sessions.pinned() is None
-    assert speaker.earcons == ["error"]      # only the error earcon, nothing else
-    assert speaker.spoken == []
+    assert speaker.earcons == ["error"]      # error earcon still fires...
+    daemon._speak_loop_once()                # ...and the reason is spoken (CONTROL channel)
+    assert speaker.spoken == ["No active session to pin."]
 
 
 def test_pinned_session_blocks_background_from_being_served():
@@ -91,5 +92,6 @@ def test_repin_replays_pinned_channel_from_start():
     speaker.spoken.clear()
     sessions.set_foreground("A")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PIN_TOGGLE})  # pin A
-    daemon._speak_loop_once()
-    assert speaker.spoken[-1] == "One."     # replayed from the start
+    daemon._speak_loop_once(); daemon._speak_loop_once(); daemon._speak_loop_once()
+    # Confirmation first ("Pinned."), then the message replays from the start.
+    assert speaker.spoken == ["Pinned.", "One.", "Two."]

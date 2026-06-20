@@ -479,11 +479,12 @@ class SpeechDaemon:
             # Pin the voice to the current (last-prompt) session, or unpin it.
             # The pin overrides "foreground", so a later SET_FOREGROUND from another
             # session can't steal the voice. Confirmation is mute_exempt so the user
-            # always hears it; the no-session case has nothing to speak through, so
-            # it is an error earcon only.
+            # always hears it; with no session there is nothing to pin, so we speak
+            # WHY (via the CONTROL channel) instead of an opaque error beep.
             action, folder = self.sessions.pin_toggle()
             if action == "none":
                 self.speaker.earcon("error")
+                self._speak_cue(None, "No active session to pin.", exempt_mute=True)
                 return None
             fg = self.sessions.foreground()
             if action == "pinned":
@@ -491,7 +492,7 @@ class SpeechDaemon:
                 text = "Pinned {0}.".format(folder) if folder else "Pinned."
             else:
                 text = "Auto."
-            self._enqueue(fg, "prose", text, False, mute_exempt=True)
+            self._speak_cue(fg, text, exempt_mute=True)
             return None
 
         if t == MsgType.RELOAD_KEYMAP:
