@@ -16,7 +16,10 @@ def _item(session, text, is_decision=False):
 
 def _router(mq=1):
     s = FakeSessions()
-    r = Router(s, minqueue=lambda: mq, announce_text=lambda f: "Session changed: {0}.".format(f))
+    r = Router(s, minqueue=lambda: mq,
+               announce_text=lambda f, replay=False: (
+                   "Session changed: {0}, reading again.".format(f) if replay
+                   else "Session changed: {0}.".format(f)))
     return r, s
 
 
@@ -100,3 +103,49 @@ def test_pin_locks_and_repin_resets_cursor():
     # re-pin to A replays from the start
     r.repin_reset()
     assert r.next_item().text == "a1"
+
+
+def test_next_session_advances_one_slot_in_fixed_order():
+    r, s = _router()
+    for name in ("A", "B", "C"):
+        ch = r.channel(name); ch.append(_item(name, name.lower())); ch.turn_done = True
+    r.active = "A"
+    assert r.next_session()[0] == "B"              # A -> B (next in insertion order)
+    assert r.next_session()[0] == "C"              # B -> C
+    assert r.next_session()[0] == "A"              # C -> A (wrap)
+
+
+def test_next_session_resumes_an_unread_target_no_replay():
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.append(_item("B", "b2")); b.turn_done = True
+    b.next()                                       # B partially read (still unread)
+    r.active = "A"
+    target, replay = r.next_session()
+    assert (target, replay) == ("B", False)        # unread -> resume, not replay
+    assert r.channels["B"].cursor == 1             # cursor NOT reset
+    assert r.active == "B"
+
+
+def test_next_session_replays_a_read_target():
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    b.next()                                       # B fully read (caught up)
+    r.active = "A"
+    assert r.channels["B"].caught_up() is True
+    target, replay = r.next_session()
+    assert (target, replay) == ("B", True)         # read -> replay
+    assert r.channels["B"].cursor == 0             # cursor reset for replay
+
+
+def test_next_session_single_session_lands_on_itself():
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True; a.next()  # read
+    r.active = "A"
+    assert r.next_session() == ("A", True)         # wraps to itself; read -> replay
+
+
+def test_next_session_none_when_no_channels():
+    r, s = _router()
+    assert r.next_session() == (None, False)       # nothing registered

@@ -20,6 +20,7 @@ class Router:
         self.active: "str | None" = None
         self._last_active: "str | None" = None   # last session that actually read (persists across idle gaps)
         self._pending_announce: "str | None" = None
+        self._pending_announce_replay = False
         # Sessions explicitly authorized to bypass the background-policy gate
         # (set by catch_up / nav cross-session replay so their replayed items
         # are voiced even when the session is not the current foreground).
@@ -49,6 +50,33 @@ class Router:
             self.channels[pinned].reset()
         self.active = None          # force re-selection
         # _last_active intentionally NOT reset: pin replay is not an auto handoff.
+
+    def next_session(self) -> "tuple[str | None, bool]":
+        """Manual session-change: a pure round-robin. Advance the active reader to
+        the next session after the current one in a FIXED order (channel insertion
+        order, excluding CONTROL), wrapping; with one session it lands on itself.
+        A read (caught-up) target is reset to 0 and replayed (replay=True); an
+        unread target resumes from its cursor (replay=False). Returns (None, False)
+        only when there are no channels. Arms the session-change announcement."""
+        keys = [s for s in self.channels if s != CONTROL]
+        if not keys:
+            return (None, False)
+        if self.active in keys:
+            i = keys.index(self.active)
+            target = keys[(i + 1) % len(keys)]     # next in the fixed ring (wraps)
+        else:
+            target = keys[0]
+        replay = self.channels[target].caught_up()
+        if replay:
+            self.channels[target].reset()
+        self._arm_switch(target, replay)
+        return (target, replay)
+
+    def _arm_switch(self, target: str, replay: bool) -> None:
+        self.active = target
+        self._last_active = target                 # auto won't re-announce after
+        self._pending_announce = target
+        self._pending_announce_replay = replay
 
     def _ready(self, session: str) -> bool:
         ch = self.channels.get(session)
@@ -106,8 +134,9 @@ class Router:
         # emit a queued hand-off announcement before the new reader's first item
         if self._pending_announce is not None:
             folder = self.sessions.folder(self._pending_announce) or "another session"
-            text = self._announce_text(folder)
+            text = self._announce_text(folder, self._pending_announce_replay)
             self._pending_announce = None
+            self._pending_announce_replay = False
             # kind "session_change" lets the speak loop fire the session-switch
             # earcon (chime) just before voicing the announcement.
             return SpeechItem(id=0, session=self.active or "", kind="session_change",
