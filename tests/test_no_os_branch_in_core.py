@@ -1,11 +1,10 @@
 """Guard: the portable core must never branch on the OS or import a concrete
 backend. The ONLY sys.platform branch in the whole codebase lives in
-platform/__init__.py's get_platform() factory.
+platform/__init__.py's get_platform() factory (the win32 guard that selects the
+Windows backend).
 
-keymap.py is intentionally NOT in CORE: it re-exports KEY_CODES/MOD_MASKS from
-platform.macos.keytables (a concrete-backend import). M3 adds the Windows
-keytables + a resolver-injection that removes even that; until then keymap.py is
-a documented macOS-coupled module.
+keymap.py is intentionally NOT in CORE: it re-exports keytables from the
+concrete Windows backend, so it is a documented platform-coupled module.
 """
 import pathlib
 

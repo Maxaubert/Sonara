@@ -212,6 +212,6 @@ class WinHotkeyBackend(HotkeyBackend):
     def uninstall(self) -> None:
         self.stop()
 
-    def install(self, log_path: str, agent_path, launchctl_fn) -> tuple:
+    def install(self) -> tuple:
         # Windows hotkeys are started by the daemon (start()), not `sonara install`.
         return (True, "Windows hotkeys run in-process; started by the daemon.")

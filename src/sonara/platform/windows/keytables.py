@@ -15,7 +15,7 @@ KEY_CODES = {
     "down": 0x28, "downarrow": 0x28,
 }
 
-# RegisterHotKey fsModifiers (WinUser.h). NOT the Carbon masks.
+# RegisterHotKey fsModifiers (WinUser.h).
 MOD_MASKS = {
     "alt": 0x0001, "ctrl": 0x0002, "control": 0x0002,
     "shift": 0x0004, "win": 0x0008, "cmd": 0x0008,  # 'cmd' -> Win key for portability

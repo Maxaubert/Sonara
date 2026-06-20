@@ -47,9 +47,10 @@ def test_acquire_singleton_is_exclusive(tmp_path):
     f2.close()
 
 
-def test_acquire_singleton_windows_branch(tmp_path, monkeypatch):
+def test_acquire_singleton_windows_branch(tmp_path):
+    # acquire_singleton is now unconditionally the Windows msvcrt path (the POSIX
+    # fcntl branch was removed with macOS support), so no platform forcing needed.
     import sonara.platform.transport as tr
-    monkeypatch.setattr(tr.sys, "platform", "win32")
     lock = tmp_path / "daemon.singleton"
     f1 = tr.acquire_singleton(lock)
     assert f1 is not None

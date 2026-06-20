@@ -2,14 +2,14 @@
 
 _Last updated: 2026-06-05_
 
-Sonara is a macOS accessibility plugin for [Claude Code](https://claude.ai/code) that reads
+Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud so you can work eyes-free. This policy explains exactly what it
 does — and does not do — with your data.
 
 ## The short version
 
-**Sonara runs entirely on your own Mac. It does not collect, transmit, sell, or share any of
-your data.** There are no servers, no accounts, no telemetry, no analytics, no crash
+**Sonara runs entirely on your own computer. It does not collect, transmit, sell, or share any
+of your data.** There are no servers, no accounts, no telemetry, no analytics, no crash
 reporting, and no third-party services.
 
 ## What Sonara processes
@@ -19,7 +19,7 @@ plugin hooks — assistant prose, the options in multiple-choice questions, plan
 permission-prompt actions. That text is:
 
 - processed **in memory** on your machine,
-- handed to the built-in macOS `say` command to be spoken, and
+- handed to the built-in Windows speech engine to be spoken, and
 - **not stored and not sent anywhere.**
 
 Sonara's components talk to each other only over a **local socket** on your machine. Nothing
@@ -27,8 +27,8 @@ Sonara handles ever leaves your computer.
 
 ## What Sonara stores on your machine
 
-Sonara keeps a few small local files under `~/.sonara/` (and LaunchAgent files under
-`~/Library/LaunchAgents/`):
+Sonara keeps a few small local files under `~/.sonara/` (and an autostart entry registered
+with Windows):
 
 - `config.json` — your preferences (voice, speech rate, verbosity).
 - `keymap.json` and `hotkeyd.resolved.json` — your global-hotkey bindings.
@@ -55,7 +55,7 @@ profile or track usage, and contains no analytics or third-party data processors
 ## Removing your data
 
 Run `sonara uninstall` and delete the `~/.sonara/` folder to remove all of Sonara's local
-files.
+files (uninstall also removes the Windows autostart entry).
 
 ## Changes to this policy
 

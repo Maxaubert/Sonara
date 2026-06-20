@@ -11,17 +11,20 @@ def test_ensure_running_noop_when_socket_connectable():
     popen.assert_not_called()
 
 
-def test_ensure_running_spawns_detached_when_socket_absent():
+def test_ensure_running_spawns_via_platform_launch_spec_when_socket_absent():
+    # ensure_running asks the platform supervisor for its (argv, kwargs) launch
+    # spec and Popens it verbatim. On Windows that's [pythonw, -m, sonara.daemon]
+    # with detach creationflags — no POSIX start_new_session, no bin shim.
+    fake_argv = ["pythonw.exe", "-m", "sonara.daemon"]
+    fake_kwargs = {"creationflags": 0x208}
+    sup = mock.Mock()
+    sup.launch_spec.return_value = (fake_argv, dict(fake_kwargs))
+    plat = mock.Mock(supervisor=sup)
     with mock.patch("sonara.daemon.socket_connectable", return_value=False), \
+         mock.patch("sonara.platform.get_platform", return_value=plat), \
          mock.patch("sonara.daemon.subprocess.Popen") as popen:
         daemon_mod.ensure_running()
-    assert popen.call_count == 1
-    args, kwargs = popen.call_args
-    # spawned detached
-    assert kwargs.get("start_new_session") is True
-    # spawns the bin/sonara-daemon shim
-    cmd = args[0]
-    assert any("sonara-daemon" in str(part) for part in cmd)
+    popen.assert_called_once_with(fake_argv, **fake_kwargs)
 
 
 def test_main_builds_components_and_runs():

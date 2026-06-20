@@ -29,15 +29,15 @@ def test_neural_enabled_reflects_venv_python_existence(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_ensure_uv_returns_path_when_already_present():
-    got = kp.ensure_uv(which=lambda name: "/usr/local/bin/uv",
+    got = kp.ensure_uv(which=lambda name: "C:/tools/uv.exe",
                        run=lambda *a, **k: pytest.fail("must not bootstrap"))
-    assert got == "/usr/local/bin/uv"
+    assert got == "C:/tools/uv.exe"
 
 
 def test_ensure_uv_bootstraps_via_pip_when_absent(tmp_path):
     calls = []
     scripts_dir = tmp_path
-    (scripts_dir / "uv").write_text("")  # pip install lands uv here (posix: no bin/ subdir)
+    (scripts_dir / "uv.exe").write_text("")  # pip install lands uv.exe in the Scripts dir
 
     def fake_run(cmd, **k):
         calls.append(cmd)
@@ -45,10 +45,10 @@ def test_ensure_uv_bootstraps_via_pip_when_absent(tmp_path):
     got = kp.ensure_uv(
         which=lambda name: None,                     # not on PATH
         run=fake_run,
-        base_python="/usr/bin/python3",
+        base_python="python.exe",
         user_scripts=lambda py: str(scripts_dir),
     )
-    assert got == str(scripts_dir / "uv")
+    assert got == str(scripts_dir / "uv.exe")
     assert any("pip" in c and "uv" in c for c in calls)  # bootstrap ran
 
 

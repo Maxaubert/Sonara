@@ -839,8 +839,8 @@ class WinSupervisorBackend(SupervisorBackend):
         supervisor_py = os.path.join(app_dir, "sonara", "platform",
                                      "windows", "supervisor_loop.py")
         # Best-effort stop the running task before overwriting its definition, so a
-        # stale daemon on the OLD interpreter doesn't linger (parity with macOS
-        # launchctl unload+load). /end is async and /create does not auto-start, so
+        # stale daemon on the OLD interpreter doesn't linger. /end is async and
+        # /create does not auto-start, so
         # the new interpreter activates on the NEXT daemon start (next logon, or the
         # lazy-start path which now resolves the venv pythonw via daemon_pythonw()).
         self._schtasks(["/end", "/tn", TASK_NAME])

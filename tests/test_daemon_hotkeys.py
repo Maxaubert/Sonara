@@ -120,8 +120,7 @@ def test_one_bad_hotkey_does_not_raise(monkeypatch):
 
 def test_reload_keymap_delegates_to_backend_reload(monkeypatch):
     # RELOAD_KEYMAP delegates to the platform backend's reload() seam (Windows:
-    # thread-joined stop+start; macOS: rewrite resolved + reload hotkeyd). The
-    # daemon passes its dispatch callback through.
+    # thread-joined stop+start). The daemon passes its dispatch callback through.
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     monkeypatch.setattr("os.path.exists", lambda p: False)   # no kill-switch flag

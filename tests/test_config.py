@@ -21,8 +21,9 @@ def test_defaults_scalar_values():
 
 
 def test_defaults_no_longer_carries_earcons():
-    # Earcon defaults now live in the platform backend (MacEarconBackend);
-    # the daemon backfills them at startup, so config DEFAULTS must not own them.
+    # Earcon defaults now live in the platform backend (the Windows earcon
+    # backend); the daemon backfills them at startup, so config DEFAULTS must not
+    # own them.
     assert "earcons" not in DEFAULTS
 
 

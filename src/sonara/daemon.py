@@ -134,7 +134,7 @@ class SpeechDaemon:
 
         Throttle: at most once per session (recorded whether or not a cue fires).
         Silent when healthy. The check is a few file stats + a version compare
-        (no launchctl) and never raises.
+        (no subprocess) and never raises.
         """
         if session in self._guided_sessions:
             return
@@ -266,9 +266,9 @@ class SpeechDaemon:
         "not_installed" -> no install.json or launcher (never ran `sonara install`)
         "version_drift" -> installed but plugin_version differs from this session's
 
-        Cheap: a few file stats + a string compare. No launchctl. Never raises.
-        The hotkeyd binary is deliberately NOT part of this check so a deliberate
-        speech-only user (no swiftc) is never nagged.
+        Cheap: a few file stats + a string compare. No subprocess. Never raises.
+        Hotkey availability is deliberately NOT part of this check so a deliberate
+        speech-only user is never nagged.
         """
         rec = self._read_install_record()
         installed = (rec is not None and self._launcher_present())

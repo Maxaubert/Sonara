@@ -30,7 +30,7 @@ def test_setup_health_not_installed_when_launcher_missing(tmp_path, monkeypatch)
 
 
 def test_setup_health_ok_speech_only_no_hotkeyd(tmp_path, monkeypatch):
-    # install.json + launcher present, hotkeyd binary ABSENT, versions match.
+    # install.json + launcher present, hotkeys not yet started, versions match.
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path, plugin_version="0.4.0")
     monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))

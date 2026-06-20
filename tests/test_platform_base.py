@@ -37,16 +37,22 @@ def test_platform_backend_bundles_the_four():
     assert isinstance(pb.supervisor, base.SupervisorBackend)
 
 
-def test_macos_hotkey_exposes_keytables_and_default_mods():
-    from sonara.platform.macos.hotkeys import MacHotkeyBackend
-    hk = MacHotkeyBackend()
-    assert hk.key_codes()["s"] == 1 and hk.mod_masks()["cmd"] == 256
-    assert hk.default_mods() == ["ctrl", "cmd"]
+class _BareHotkey(base.HotkeyBackend):
+    """Minimal concrete backend exercising only the portable base defaults."""
+    def install(self): return (True, "")
+    def uninstall(self): return None
+    def display_combo(self, modifiers, key_code): return ""
+
+
+def test_base_hotkey_keytable_defaults_are_empty():
+    hk = _BareHotkey()
+    assert hk.key_codes() == {}
+    assert hk.mod_masks() == {}
+    assert hk.default_mods() == []
 
 
 def test_base_hotkey_lifecycle_defaults_are_noops():
-    from sonara.platform.macos.hotkeys import MacHotkeyBackend
-    hk = MacHotkeyBackend()
-    hk.start(lambda msg: None)   # macOS: hotkeyd is a separate process -> no-op
+    hk = _BareHotkey()
+    hk.start(lambda msg: None)   # base default -> no-op
     hk.stop()
     assert hk.doctor_rows() == []

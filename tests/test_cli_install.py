@@ -170,47 +170,6 @@ def test_copy_app_raises_oserror_when_source_missing(tmp_path):
     assert raised is True
 
 
-def test_install_macos_stdout_locks_hotkeyd_and_speechd_lines(tmp_path, monkeypatch, capsys):
-    # Guard the macOS install stdout against drift: force the REAL macOS backend
-    # (mechanics patched) and assert the LaunchAgent/launcher/voice lines survive
-    # the seam refactor. This is the macOS-fidelity net the Windows test box can
-    # still run (the mac backend is pure Python under patched OS calls).
-    import sonara.platform.macos.supervisor as ms
-    import sonara.platform.macos.hotkeys as mh
-    from sonara.platform.macos import make_backend
-    speechd = tmp_path / "com.sonara.speechd.plist"
-    hotkeyd = tmp_path / "com.sonara.hotkeyd.plist"
-    monkeypatch.setattr(ms, "LAUNCH_AGENT_PATH", str(speechd))
-    monkeypatch.setattr(mh, "LAUNCH_AGENT_PATH", str(hotkeyd))
-    monkeypatch.setattr(ms, "_launcher_path", lambda: str(tmp_path / "sonara"))
-    monkeypatch.setattr(mh.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonara-hotkeyd")
-    monkeypatch.setattr(ms.shutil, "which", lambda n: "/usr/bin/" + n)  # swiftc present
-    monkeypatch.setattr(ms.MacSupervisorBackend, "launchctl", lambda self, a: 0)
-    monkeypatch.setattr(mh.MacHotkeyBackend, "build", lambda self: (True, "built"))
-    monkeypatch.setattr("sonara.platform.macos.tts.MacTtsBackend.best_voice",
-                        lambda self: "Ava (Premium)")
-    pb = make_backend()
-    monkeypatch.setattr(pb.supervisor, "resolve_python", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(pb.supervisor, "_probe_python_version", lambda p: (3, 12))
-    monkeypatch.setattr(cli, "_platform", lambda: pb)
-    monkeypatch.setattr(cli, "_copy_app", lambda root: str(tmp_path / "app"))
-    monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
-    monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
-    monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
-    monkeypatch.setattr("sonara.keymap.write_resolved", lambda: None)
-    monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
-
-    rc = cli.install()
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "Wrote LaunchAgent: {0}".format(speechd) in out
-    assert "Loaded LaunchAgent com.sonara.speechd." in out
-    assert "Wrote LaunchAgent: {0}".format(hotkeyd) in out      # regression guard
-    assert "Loaded LaunchAgent com.sonara.hotkeyd." in out       # regression guard
-    assert "Placed launcher:" in out
-    assert "Voice: Ava (Premium)." in out
-
-
 # --- neural-aware daemon interpreter selection (_daemon_python) ---
 
 def test_daemon_python_prefers_venv_when_neural_enabled(monkeypatch):

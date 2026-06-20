@@ -161,7 +161,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("wpm", type=int)
     sp.set_defaults(func=_cmd_rate)
 
-    sp = sub.add_parser("voice", help="set the say voice (omit name to list voices)")
+    sp = sub.add_parser("voice", help="set the speech voice (omit name to list voices)")
     sp.add_argument("name", nargs="*", help="voice name; omit to list installed voices")
     sp.set_defaults(func=_cmd_voice)
 
@@ -186,10 +186,10 @@ def doctor() -> list:
     """Return a list of (check, ok, detail) health-check tuples."""
     results = []
 
-    # Platform-specific rows supplied by the OS backend (macOS: say/afplay/
-    # swiftc/LaunchAgents/...; Windows: schtasks/Task/pythonw/neural voice/...).
+    # Platform-specific rows supplied by the OS backend (Windows:
+    # schtasks/Task/pythonw/neural voice/...).
     results.extend(_platform().supervisor.doctor_rows())
-    # Hotkey diagnostics (Windows: collisions + UIPI/elevation; macOS: none here).
+    # Hotkey diagnostics (Windows: collisions + UIPI/elevation).
     results.extend(_platform().hotkey.doctor_rows())
 
     # Neutral rows (portable, keep inline).
@@ -338,8 +338,8 @@ def _copy_app(plugin_root: str) -> str:
     """Copy the plugin's sonara package into the stable APP_DIR. Returns APP_DIR.
 
     Overwrites on every install so a plugin update fully refreshes the copy
-    (stale modules from a prior version do not linger). The daemon LaunchAgent
-    points PYTHONPATH at APP_DIR, decoupling the long-lived daemon from the
+    (stale modules from a prior version do not linger). The daemon's scheduled
+    task points PYTHONPATH at APP_DIR, decoupling the long-lived daemon from the
     version-pinned marketplace cache.
     """
     app_dir = str(paths.APP_DIR)
@@ -355,8 +355,8 @@ def _copy_app(plugin_root: str) -> str:
 def install() -> int:
     """Install Sonara: resolve python, copy the runtime, write the install
     record, then delegate OS-specific autostart + hooks + launcher + hotkeys to
-    the platform backend (macOS: LaunchAgents + hotkeyd; Windows: Task Scheduler
-    + settings.json hooks + sonara.cmd)."""
+    the platform backend (Windows: Task Scheduler + settings.json hooks +
+    sonara.cmd)."""
     paths.ensure_sonara_dir()
     sup = _platform().supervisor
 
@@ -395,12 +395,9 @@ def install() -> int:
     # 5. OS-specific autostart + hooks + launcher (the platform backend owns it).
     sup.install(python, app_dir)
 
-    # 6. Global hotkeys. Each backend prints its own outcome (macOS: build +
-    #    load hotkeyd; Windows: deferred to M3, announced in post_install_notes).
-    hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
-    launchctl_fn = getattr(sup, "launchctl", None) or (lambda a: 0)
-    _platform().hotkey.install(
-        log_path=hk_log, agent_path=None, launchctl_fn=launchctl_fn)
+    # 6. Global hotkeys. Windows hotkeys run in-process and are started by the
+    #    daemon (deferred to M3, announced in post_install_notes).
+    _platform().hotkey.install()
 
     # 7. Voice check (best_voice() is a display-name str on every platform).
     try:
@@ -511,10 +508,10 @@ def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
-    sub.add_parser("install", help="install the LaunchAgent + SONARA_DIR").set_defaults(
+    sub.add_parser("install", help="install the scheduled task + SONARA_DIR").set_defaults(
         func=_cmd_install)
     sub.add_parser("uninstall",
-                   help="remove Sonara (LaunchAgents, launcher, runtime files)").set_defaults(
+                   help="remove Sonara (scheduled task, launcher, runtime files)").set_defaults(
         func=_cmd_uninstall)
     sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
         func=_cmd_daemon)
