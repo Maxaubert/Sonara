@@ -18,28 +18,33 @@ cleanly.
 ## 2. Behavior
 
 A single new hotkey action, **`next_session`** (default **Ctrl+Alt+P**, the key pin
-freed). On each press the daemon moves the active reader to another session:
+freed). It is a **pure round-robin** over all registered sessions in a **fixed
+order** (channel insertion order) — the ring never reorders based on queue state,
+so "press N times to reach session X" stays predictable. On each press:
 
-- **Pass 1 — next unread.** Scan sessions in round-robin order starting *after* the
-  current active (wrapping), and switch to the first **other** session that has
-  unread content (`channel.pending() > 0`). Resume it **from its cursor** (continue
-  where it left off — manual switch bypasses the minqueue gate; any pending counts).
-  Announce **"Session changed: {folder}."** + the session-change chime.
-- **Pass 2 — revisit a read session.** If no other session is unread, switch to the
-  next **read** (caught-up) session, **reset its cursor to 0** (replay from start),
-  and announce **"Session changed: {folder}, reading again."** + chime.
-- **Pass 3 — nowhere to go.** If there is no other session at all, emit a soft cue
-  **"No other session."** (the existing `repeat` hotkey already replays the current
-  session, so we do not duplicate that here).
+- **Advance one slot.** Move the active reader to the **next session after the
+  current one** in the fixed ring, wrapping around. With a single session it lands
+  on itself.
+- **Landing on a read session** (`channel.caught_up()`): **reset its cursor to 0**
+  and replay from the start. Announce **"Session changed: {folder}, reading
+  again."** + the session-change chime.
+- **Landing on an unread session** (`channel.pending() > 0`): resume it **from its
+  cursor** (continue where it left off; the manual switch bypasses the minqueue
+  gate — any pending counts). Announce **"Session changed: {folder}."** + chime.
+- **No session registered at all** (no channels yet): a soft cue **"No session."**
 
 **Read vs unread** is the channel's existing state — no new flag:
 - unread = `channel.pending() > 0` (cursor before the end)
 - read   = `channel.caught_up()` (cursor at the end; the session was fully heard)
 
 **Leaving the current session** does nothing to it: its cursor stays put, so it
-remains unread and round-robin-reachable on a later press. A session becomes "read"
-only by being fully heard (the speak loop draining its cursor to the end), never by
-being left.
+remains unread and reachable on the next time around the ring. A session becomes
+"read" only by being fully heard (the speak loop draining its cursor to the end),
+never by being left.
+
+**Fixed order:** sessions occupy the ring in the order their channels were first
+created (first output). New sessions append at the end; ended sessions drop out.
+The order does not shuffle by read/unread state.
 
 ## 3. How the switch sticks
 
@@ -56,11 +61,13 @@ the lock/state complexity we are removing); reordering the per-session queues
 ## 4. Components
 
 - **`Router`** gains `next_session() -> (target|None, replay: bool)`: pure
-  round-robin selection (pass 1 then pass 2 over `self.channels` in insertion
-  order, starting after `self.active`), resets the target's cursor when `replay`,
-  sets `self.active = target`, and arms the announcement (reusing the existing
-  `_pending_announce` + `session_change` item path, with a "reading again" variant
-  when `replay`). Returns `(None, False)` when there is no other session.
+  round-robin selection — the next session after `self.active` in `self.channels`
+  insertion order (excluding the CONTROL channel), wrapping; with one session it
+  returns that session. `replay` is true when the target was caught-up (it then
+  resets the target's cursor). Sets `self.active = target` and arms the
+  announcement (reusing the existing `_pending_announce` + `session_change` item
+  path, with a "reading again" variant when `replay`). Returns `(None, False)` only
+  when there are no channels at all.
 - **`Router`** loses `repin_reset()`, the `pinned()` checks in `_pick`/`next_item`,
   and any pin bookkeeping.
 - **`SessionManager`** loses `pin_toggle()`, `_pinned`, `pinned()`.
@@ -77,8 +84,11 @@ the lock/state complexity we are removing); reordering the per-session queues
 
 ## 5. Edge cases
 
-- **Single session, mid-read:** pass 1 finds no *other* unread, pass 2 finds no
-  *other* read → "No other session." (use `repeat` to replay the current one).
+- **Single session:** the ring lands on itself — if read, replay ("reading
+  again"); if mid-read (unread), it resumes from the cursor (no audible jump, since
+  it is already the active reader). `repeat` remains the way to force a replay of a
+  mid-read message.
+- **No channels yet** (hotkey pressed before any output): "No session." cue.
 - **Switch target drains, auto resumes:** after the manually-selected session is
   fully heard, `_pick` falls back to foreground-first auto — expected.
 - **Muted (global):** `next_session` still switches and announces (the chime +
@@ -89,11 +99,12 @@ the lock/state complexity we are removing); reordering the per-session queues
 
 ## 6. Testing
 
-- **`Router.next_session`** (pure): next-unread selection with wrap; pass-2
-  read-revisit with cursor reset + replay flag; `(None, False)` for no-other; does
-  not pick the current session in pass 1; round-robin order from `active`.
+- **`Router.next_session`** (pure): advances one slot in fixed insertion order
+  (wrapping); resumes an unread target (no cursor reset); resets + replays a read
+  target (replay=True); single session lands on itself; `(None, False)` when there
+  are no channels.
 - **Daemon-level:** switch-and-resume (continue from cursor, normal announcement);
-  revisit-replay ("reading again" + chime + cursor reset); "No other session." cue;
+  revisit-replay ("reading again" + chime + cursor reset); "No session." cue;
   `NEXT_SESSION` is debounced.
 - **Removal:** the pin tests are deleted; no test asserts on `pin_toggle`/`_pinned`/
   `repin_reset`/`PIN_TOGGLE` after this change.
