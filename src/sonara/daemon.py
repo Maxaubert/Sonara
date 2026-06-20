@@ -70,7 +70,8 @@ class SpeechDaemon:
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._paused = threading.Event()          # play/pause: set == speech halted
-        self._muted = False                       # global mute: drop all prose/cues
+        self._mute_level = 0                       # mute cycle: 0=unmuted,
+        # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
         self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
@@ -81,6 +82,18 @@ class SpeechDaemon:
     def _alloc_id(self) -> int:
         self._next_id += 1
         return self._next_id
+
+    @property
+    def _muted(self) -> bool:
+        """True when speech is muted (level 1 muted OR level 2 super muted). Used by
+        the speak loop to drop non-exempt prose in both muted states."""
+        return self._mute_level >= 1
+
+    def _earcon(self, kind: str) -> None:
+        """Fire an earcon unless super-muted (level 2). At level 0/1 beeps play; at
+        level 2 every beep is suppressed (full mute)."""
+        if self._mute_level < 2:
+            self.speaker.earcon(kind)
 
     def _assembler(self, session: str) -> ProseAssembler:
         a = self._assemblers.get(session)
@@ -373,7 +386,7 @@ class SpeechDaemon:
             # Instant: the Windows earcon backend plays on a separate audio path
             # that mixes with the speech, so it no longer cuts the reading.
             kind = msg.get("kind", "")
-            self.speaker.earcon(kind)
+            self._earcon(kind)
             if kind == "turn_done":
                 # End-of-turn boundary: safety-net flush in case the final PROSE
                 # flag never arrived.
@@ -444,10 +457,10 @@ class SpeechDaemon:
             # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
             fg = self.sessions.foreground()
             if fg is None:
-                self.speaker.earcon("nav_edge")
+                self._earcon("nav_edge")
                 return None
             result = self._nav(fg, msg.get("to", "prev"))
-            self.speaker.earcon("nav" if result == "moved" else "nav_edge")
+            self._earcon("nav" if result == "moved" else "nav_edge")
             return None
 
         if t == MsgType.PAUSE:
@@ -478,17 +491,19 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.MUTE:
-            # Global mute toggle: silence ALL sessions at once. Earcons still fire
-            # (alerts), and the "Muted."/"Unmuted." confirmation is always heard
-            # (mute_exempt). The speak loop drops every non-exempt item while muted.
-            self._muted = not self._muted
-            if self._muted:
+            # Global mute CYCLE: Unmuted -> Muted -> Super Muted -> Unmuted.
+            #   1 Muted:       prose silenced, beeps (earcons) still fire.
+            #   2 Super Muted: prose AND beeps silenced (full mute).
+            # The spoken state confirmation is mute_exempt (always heard via TTS, not
+            # an earcon) so the user can tell the state and toggle out.
+            self._mute_level = (self._mute_level + 1) % 3
+            if self._mute_level >= 1:
                 self.speaker.cancel()           # stop the current utterance now
+            cue = {1: "Muted.", 2: "Super muted.", 0: "Unmuted."}[self._mute_level]
             target = self.router.active or self.sessions.foreground()
             # target may be None -> _speak_cue routes to the CONTROL channel so the
             # confirmation is heard even when no session is registered.
-            self._speak_cue(target, "Muted." if self._muted else "Unmuted.",
-                            exempt_mute=True)
+            self._speak_cue(target, cue, exempt_mute=True)
             self._wake.set()
             return None
 
@@ -903,7 +918,7 @@ class SpeechDaemon:
         loop. Call only from within an active `except` block (print_exc reads the
         handled exception)."""
         try:
-            self.speaker.earcon("error")
+            self._earcon("error")
         except Exception:  # noqa: BLE001 - signaling failure must not wedge the loop
             pass
         try:
@@ -980,7 +995,7 @@ class SpeechDaemon:
             # Play the session-switch chime (it mixes with the spoken announcement
             # on a separate audio path). A missing chime must not wedge the loop.
             try:
-                self.speaker.earcon("session_change")
+                self._earcon("session_change")
             except Exception:  # noqa: BLE001
                 pass
         try:

@@ -26,12 +26,44 @@ def test_global_mute_silences_all_sessions():
     assert speaker.spoken == []                       # all silent, not just the active one
 
 
-def test_global_mute_toggles():
+def test_mute_cycles_unmuted_muted_super_unmuted():
+    """The mute hotkey cycles 3 states: Unmuted -> Muted -> Super Muted -> Unmuted,
+    speaking the state each press."""
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    assert daemon._muted is True
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
-    assert daemon._muted is False
+    M = {"v": PROTOCOL_VERSION, "type": MsgType.MUTE}
+    daemon.handle_message(M); assert daemon._mute_level == 1
+    daemon._speak_loop_once(); assert speaker.spoken[-1] == "Muted."
+    daemon.handle_message(M); assert daemon._mute_level == 2
+    daemon._speak_loop_once(); assert speaker.spoken[-1] == "Super muted."
+    daemon.handle_message(M); assert daemon._mute_level == 0
+    daemon._speak_loop_once(); assert speaker.spoken[-1] == "Unmuted."
+
+
+def test_muted_keeps_beeps_super_mute_silences_them():
+    """Level 1 (Muted): prose off but earcons (beeps) still fire. Level 2 (Super
+    Muted): earcons silenced too."""
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    earc = {"v": PROTOCOL_VERSION, "type": MsgType.EARCON, "kind": "permission", "session": "A"}
+    # Muted: beep still fires
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # -> 1
+    daemon.handle_message(earc)
+    assert "permission" in speaker.earcons
+    speaker.earcons.clear()
+    # Super Muted: beep suppressed
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # -> 2
+    daemon.handle_message(earc)
+    assert "permission" not in speaker.earcons
+
+
+def test_super_mute_confirmation_is_still_spoken():
+    """The spoken state confirmation plays even in Super Muted, so you can tell the
+    state and toggle out."""
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # Muted
+    daemon._speak_loop_once(); speaker.spoken.clear()
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # Super Muted
+    daemon._speak_loop_once()
+    assert "Super muted." in speaker.spoken
 
 
 def test_mute_cancels_currently_speaking_item():
@@ -55,10 +87,11 @@ def test_mute_confirmation_is_heard_despite_mute():
 
 def test_unmute_confirmation_is_spoken():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})  # mute
-    daemon._speak_loop_once()                  # "Muted."
+    M = {"v": PROTOCOL_VERSION, "type": MsgType.MUTE}
+    daemon.handle_message(M); daemon._speak_loop_once()   # Muted
+    daemon.handle_message(M); daemon._speak_loop_once()   # Super Muted
     speaker.spoken.clear()
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})  # unmute
+    daemon.handle_message(M)                               # -> Unmuted (3rd press)
     daemon._speak_loop_once()
     assert speaker.spoken == ["Unmuted."]
 
