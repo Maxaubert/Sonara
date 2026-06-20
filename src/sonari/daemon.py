@@ -439,10 +439,15 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.NAV:
+            # Every nav press chimes: the "nav" earcon when the cursor moves to a
+            # message, the "nav_edge" earcon at a boundary / nothing to navigate
+            # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
             fg = self.sessions.foreground()
             if fg is None:
+                self.speaker.earcon("nav_edge")
                 return None
-            self._nav(fg, msg.get("to", "prev"))
+            result = self._nav(fg, msg.get("to", "prev"))
+            self.speaker.earcon("nav" if result == "moved" else "nav_edge")
             return None
 
         if t == MsgType.PAUSE:
@@ -760,8 +765,11 @@ class SpeechDaemon:
                 self.router._replay_authorized.add(session)
         self._wake.set()
 
-    def _nav(self, session: str, to: str) -> None:
+    def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
+        Returns "moved" if the cursor actually moved, else "edge" (already at the
+        boundary, or nothing to navigate) — the NAV handler uses this to pick the
+        nav vs nav-edge chime.
 
         The cursor indexes the current turn's messages (history resets each
         prompt), oldest..newest; absent == the latest. 'next'/'prev' step one
@@ -774,7 +782,7 @@ class SpeechDaemon:
         ids = self.history.message_ids(session)
         if not ids:
             self._enqueue(session, "prose", "Nothing to navigate yet.", False)
-            return
+            return "edge"
         n = len(ids)
         # Anchor on a STABLE message id, not a position: new paragraphs streaming
         # in append ids without shifting where the cursor points. Unset/stale ->
@@ -790,7 +798,8 @@ class SpeechDaemon:
         elif to == "last":
             new = n - 1
         else:
-            return
+            return "edge"
+        moved = new != cur                       # did the cursor actually move?
         if new >= n - 1:
             # Reached the latest message: clear the cursor so it tracks the live
             # edge again (absent == latest), and so a following 'prev' steps back
@@ -812,6 +821,7 @@ class SpeechDaemon:
         for mid in ids[new:]:
             entries.extend(self.history.entries_for_message(session, mid))
         self._replay(session, entries)
+        return "moved" if moved else "edge"
 
     def _resume(self) -> None:
         """Clear pause and wake the speak loop. The interrupted utterance was

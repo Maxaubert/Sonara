@@ -62,7 +62,7 @@ def test_action_messages_faster_has_delta_25():
 def test_default_keymap_macos_uses_ctrl_cmd(mac):
     d = keymap.default_keymap()
     # only nav/pause/mute/next_session are bound by default; every binding carries the chord
-    assert set(d.keys()) == {"nav_prev", "nav_next", "nav_first", "nav_last",
+    assert set(d.keys()) == {"nav_prev", "nav_next",
                              "pause", "mute", "next_session"}
     assert d["nav_next"]["key"] == "right" and d["nav_next"]["mods"] == ["ctrl", "cmd"]
     assert d["pause"]["key"] == "s" and d["mute"]["key"] == "m"   # pause moved off 'p' (next_session owns it)
@@ -103,7 +103,7 @@ def test_default_keymap_binds_only_nav_pause_mute():
     # The default keymap binds nav/pause/mute/next_session. faster/slower are valid actions
     # but ship UNBOUND (blank by default); every default binding is a real action.
     km = keymap.default_keymap()
-    assert set(km.keys()) == {"nav_prev", "nav_next", "nav_first", "nav_last",
+    assert set(km.keys()) == {"nav_prev", "nav_next",
                               "pause", "mute", "next_session"}
     assert set(km.keys()) <= set(keymap.ACTION_MESSAGES.keys())
     assert "faster" in keymap.ACTION_MESSAGES and "faster" not in km
@@ -115,7 +115,7 @@ def test_default_keymap_binds_nav_pause_mute():
     ACTION_MESSAGES but absent from _DEFAULT_KEYS, so no hotkey was ever
     registered for them on a default install."""
     km = keymap.default_keymap()
-    for action in ("nav_next", "nav_prev", "nav_first", "nav_last", "pause", "mute"):
+    for action in ("nav_next", "nav_prev", "pause", "mute"):
         assert action in km, f"{action} has no default binding"
         assert km[action]["key"], f"{action} default binding has no key"
 
@@ -148,11 +148,11 @@ def test_resolve_skips_unbound_entries():
 
 def test_unbind_action_default_writes_unbound_override(monkeypatch, tmp_path):
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
-    keymap.unbind_action("nav_first")            # nav_first HAS a default binding
+    keymap.unbind_action("nav_next")             # nav_next HAS a default binding
     user = json.loads(km.read_text(encoding="utf-8"))
-    assert user["nav_first"]["key"] is None      # explicit unbound override
+    assert user["nav_next"]["key"] is None       # explicit unbound override
     resolved = keymap.resolve_keymap(keymap.load_keymap())
-    assert "nav_first" not in {e["action"] for e in resolved}
+    assert "nav_next" not in {e["action"] for e in resolved}
 
 
 def test_unbind_action_non_default_just_drops(monkeypatch, tmp_path):

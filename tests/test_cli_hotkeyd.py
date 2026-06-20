@@ -93,8 +93,7 @@ def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeyp
         rc = cli.main(["keymap"])
         assert rc == 0
         out = capsys.readouterr().out
-        for action in ("nav_next", "nav_prev", "nav_first", "nav_last",
-                       "pause", "mute"):
+        for action in ("nav_next", "nav_prev", "pause", "mute"):
             assert action in out
         # faster/slower are listed too, marked unbound (the keymap lists every action)
         assert "faster" in out and "slower" in out
@@ -110,10 +109,10 @@ def test_keymap_clear_unbinds_and_requests_live_reload(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
     sent = []
     with mock.patch("sonari.client.send", side_effect=lambda m, **k: sent.append(m)):
-        rc = cli.main(["keymap", "nav_first", "clear"])
+        rc = cli.main(["keymap", "nav_next", "clear"])
     assert rc == 0
     user = json.loads((tmp_path / "keymap.json").read_text(encoding="utf-8"))
-    assert user["nav_first"]["key"] is None                 # unbound override written
+    assert user["nav_next"]["key"] is None                  # unbound override written
     assert any(m.get("type") == "reload_keymap" for m in sent)  # live reload requested
 
 

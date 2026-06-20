@@ -84,6 +84,43 @@ def test_first_and_last_jump():
     assert [s.text for s in _drain_channel(daemon)] == ["m2"]
 
 
+# --- nav chimes: 'nav' when a move lands, 'nav_edge' at a boundary/no-op -------
+
+def test_nav_move_fires_nav_chime(speakerless=None):
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    _nav(daemon, "first")          # cursor was at latest -> moving to first MOVES
+    assert speaker.earcons[-1] == "nav"
+
+
+def test_nav_at_edge_fires_nav_edge_chime():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    _nav(daemon, "last")           # already at the latest -> no move -> edge
+    assert speaker.earcons[-1] == "nav_edge"
+
+
+def test_nav_prev_at_first_fires_nav_edge():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    _nav(daemon, "first")          # move to first (nav)
+    speaker.earcons.clear()
+    _nav(daemon, "prev")           # already first -> edge
+    assert speaker.earcons == ["nav_edge"]
+
+
+def test_nav_with_no_history_fires_nav_edge():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")   # no messages seeded
+    _nav(daemon, "next")
+    assert speaker.earcons[-1] == "nav_edge"
+
+
+def test_nav_with_no_foreground_fires_nav_edge():
+    daemon, queue, speaker, *_ = make_daemon(foreground=None)
+    daemon.handle_message({"type": "nav", "to": "next", "session": "x"})
+    assert speaker.earcons == ["nav_edge"]
+
+
 def test_streaming_content_does_not_move_the_cursor_but_flush_resets_it():
     # The streaming-nav bug fix: new paragraphs arriving while you navigate must
     # NOT yank the cursor to latest; only a new prompt (FLUSH) clears it.

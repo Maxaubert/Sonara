@@ -24,11 +24,9 @@ from sonari.paths import (
 # is deliberately small: navigation, play/pause, mute, and speech-rate. (stop /
 # repeat / skip stay reachable via the CLI; they are just not hotkey actions.)
 ACTION_MESSAGES = {
-    # Message-cursor navigation over the current turn (next/prev/first/last item).
+    # Message-cursor navigation over the current turn (next/prev item).
     "nav_next": {"type": "nav", "to": "next"},
     "nav_prev": {"type": "nav", "to": "prev"},
-    "nav_first": {"type": "nav", "to": "first"},
-    "nav_last": {"type": "nav", "to": "last"},
     "pause": {"type": "pause"},     # play/pause toggle
     "mute": {"type": "mute"},       # sticky per-session mute toggle
     "next_session": {"type": "next_session"},   # cycle the active reader
@@ -42,7 +40,7 @@ ACTION_MESSAGES = {
 # valid actions but ship UNBOUND (blank by default) so the default keymap stays
 # minimal — users add a key for them in keymap.json if they want one.
 _DEFAULT_KEYS = {
-    "nav_prev": "left", "nav_next": "right", "nav_first": "up", "nav_last": "down",
+    "nav_prev": "left", "nav_next": "right",
     "pause": "s", "mute": "m", "next_session": "p",   # next_session owns 'p'; pause moved to 's'. 'f' avoided (Ctrl+Cmd+F = macOS Full Screen)
 }
 
