@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from sonari import keymap
-import sonari.platform as platform
+from sonara import keymap
+import sonara.platform as platform
 
 
 def _force(monkeypatch, plat):
@@ -30,8 +30,8 @@ def _patch_keymap_paths(monkeypatch, tmp_path):
     resolved = tmp_path / "hotkeyd.resolved.json"
     monkeypatch.setattr(keymap, "KEYMAP_PATH", km)
     monkeypatch.setattr(keymap, "HOTKEYD_RESOLVED_PATH", resolved)
-    monkeypatch.setattr(keymap, "SONARI_DIR", tmp_path)
-    monkeypatch.setattr(keymap, "ensure_sonari_dir",
+    monkeypatch.setattr(keymap, "SONARA_DIR", tmp_path)
+    monkeypatch.setattr(keymap, "ensure_sonara_dir",
                         lambda: tmp_path.mkdir(parents=True, exist_ok=True))
     return km, resolved
 
@@ -240,17 +240,17 @@ def test_resolve_nav_action_message(win):
 def test_no_two_default_actions_share_a_key():
     # Default bindings share one chord, so each must use a distinct key — else
     # resolve_keymap emits two entries for the same keyCode and one silently loses.
-    from sonari.keymap import default_keymap
+    from sonara.keymap import default_keymap
     keys = [b["key"] for b in default_keymap().values()]
     assert len(keys) == len(set(keys))
 
 
 def test_next_session_action_message():
-    from sonari.keymap import ACTION_MESSAGES
+    from sonara.keymap import ACTION_MESSAGES
     assert ACTION_MESSAGES["next_session"] == {"type": "next_session"}
 
 
 def test_next_session_default_binding_is_p():
-    from sonari.keymap import default_keymap
+    from sonara.keymap import default_keymap
     km = default_keymap()
     assert km["next_session"]["key"] == "p"

@@ -1,5 +1,5 @@
 from tests.daemon_helpers import make_daemon
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 
 def _prose(s, delta, idx, final):

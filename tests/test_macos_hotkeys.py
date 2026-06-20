@@ -1,5 +1,5 @@
 # tests/test_macos_hotkeys.py
-from sonari.platform.macos.hotkeys import MacHotkeyBackend
+from sonara.platform.macos.hotkeys import MacHotkeyBackend
 
 
 def test_display_combo_labels_ctrl_cmd_o():
@@ -9,7 +9,7 @@ def test_display_combo_labels_ctrl_cmd_o():
 
 
 def test_display_tables_cover_every_keycode_and_modifier():
-    from sonari.platform.macos import keytables
+    from sonara.platform.macos import keytables
     hk = MacHotkeyBackend()
     for code in keytables.KEY_CODES.values():
         assert code in hk._keycode_display
@@ -18,10 +18,10 @@ def test_display_tables_cover_every_keycode_and_modifier():
 
 
 def test_hotkey_install_defaults_agent_path_and_loads(tmp_path, monkeypatch):
-    import sonari.platform.macos.hotkeys as mh
-    agent = tmp_path / "com.sonari.hotkeyd.plist"
+    import sonara.platform.macos.hotkeys as mh
+    agent = tmp_path / "com.sonara.hotkeyd.plist"
     monkeypatch.setattr(mh, "LAUNCH_AGENT_PATH", str(agent))
-    monkeypatch.setattr(mh.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd")
+    monkeypatch.setattr(mh.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonara-hotkeyd")
     monkeypatch.setattr(mh.MacHotkeyBackend, "build", lambda self: (True, "built"))
     calls = []
     ok, _ = mh.MacHotkeyBackend().install(
@@ -36,16 +36,16 @@ def test_reload_rewrites_resolved_and_reloads_hotkeyd_agent(tmp_path, monkeypatc
     keymap the Swift hotkeyd reads, then reloading its LaunchAgent (unload+load) so
     it re-reads the file. start()/stop() are no-ops on macOS, so without this the
     change never reached the hotkeyd."""
-    import sonari.platform.macos.hotkeys as mh
-    import sonari.keymap as km
-    agent = tmp_path / "com.sonari.hotkeyd.plist"
+    import sonara.platform.macos.hotkeys as mh
+    import sonara.keymap as km
+    agent = tmp_path / "com.sonara.hotkeyd.plist"
     agent.write_text("<plist/>")
     monkeypatch.setattr(mh, "LAUNCH_AGENT_PATH", str(agent))
     wrote = []
     monkeypatch.setattr(km, "write_resolved", lambda: wrote.append(True))
     calls = []
     monkeypatch.setattr(
-        "sonari.platform.macos.supervisor.MacSupervisorBackend.launchctl",
+        "sonara.platform.macos.supervisor.MacSupervisorBackend.launchctl",
         lambda self, a: calls.append(a) or 0)
 
     mh.MacHotkeyBackend().reload(dispatch=None)
@@ -56,25 +56,25 @@ def test_reload_rewrites_resolved_and_reloads_hotkeyd_agent(tmp_path, monkeypatc
 
 
 def test_reload_is_noop_when_hotkeyd_not_installed(tmp_path, monkeypatch):
-    import sonari.platform.macos.hotkeys as mh
-    import sonari.keymap as km
+    import sonara.platform.macos.hotkeys as mh
+    import sonara.keymap as km
     monkeypatch.setattr(mh, "LAUNCH_AGENT_PATH", str(tmp_path / "absent.plist"))
     monkeypatch.setattr(km, "write_resolved", lambda: None)
     calls = []
     monkeypatch.setattr(
-        "sonari.platform.macos.supervisor.MacSupervisorBackend.launchctl",
+        "sonara.platform.macos.supervisor.MacSupervisorBackend.launchctl",
         lambda self, a: calls.append(a) or 0)
     mh.MacHotkeyBackend().reload(dispatch=None)
     assert calls == []                           # nothing to reload
 
 
 def test_hotkey_uninstall_removes_agent_and_binary(tmp_path, monkeypatch):
-    import sonari.platform.macos.hotkeys as mh
-    agent = tmp_path / "com.sonari.hotkeyd.plist"; agent.write_text("<plist/>")
-    binp = tmp_path / "sonari-hotkeyd"; binp.write_text("bin")
+    import sonara.platform.macos.hotkeys as mh
+    agent = tmp_path / "com.sonara.hotkeyd.plist"; agent.write_text("<plist/>")
+    binp = tmp_path / "sonara-hotkeyd"; binp.write_text("bin")
     monkeypatch.setattr(mh, "LAUNCH_AGENT_PATH", str(agent))
     monkeypatch.setattr(mh.paths, "HOTKEYD_BIN_PATH", binp)
-    monkeypatch.setattr("sonari.platform.macos.supervisor.MacSupervisorBackend.launchctl",
+    monkeypatch.setattr("sonara.platform.macos.supervisor.MacSupervisorBackend.launchctl",
                         lambda self, a: 0)
     mh.MacHotkeyBackend().uninstall()
     assert not agent.exists() and not binp.exists()

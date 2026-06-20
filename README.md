@@ -1,11 +1,11 @@
-# Sonari
+# Sonara
 
-> The Windows line of Sonari, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari) (the macOS line). Developed and released independently.
+> The Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari) (the macOS line). Developed and released independently.
 
 **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS — an
 accessibility tool for blind and low-vision developers.**
 
-Sonari reads Claude Code's output aloud — prose, plans, multiple-choice questions, and
+Sonara reads Claude Code's output aloud — prose, plans, multiple-choice questions, and
 permission prompts — in order, plays a distinct sound the instant a decision needs you, and
 lets you answer and control the speech without looking. Run a full session with the screen
 off.
@@ -18,8 +18,8 @@ off.
 
 ## Requirements
 
-- macOS (Sonari uses the built-in `say` and `afplay` commands).
-- Python 3.9 or newer — macOS ships `/usr/bin/python3`, which is enough. Sonari
+- macOS (Sonara uses the built-in `say` and `afplay` commands).
+- Python 3.9 or newer — macOS ships `/usr/bin/python3`, which is enough. Sonara
   picks the best `python3 >= 3.9` it can find automatically.
 - Xcode Command Line Tools for global hotkeys — `xcode-select --install`. (Speech
   works without them; only the hotkeys need `swiftc`.)
@@ -27,35 +27,35 @@ off.
 
 ## Install
 
-Sonari installs from a Claude Code marketplace. You start hearing Claude as soon as the
+Sonara installs from a Claude Code marketplace. You start hearing Claude as soon as the
 plugin is enabled; one more command turns on global hotkeys and autostart.
 
 1. Add the marketplace: `/plugin marketplace add Maxaubert/sonara` (or, in a shell,
    `claude plugin marketplace add Maxaubert/sonara`).
-2. Install the plugin: `/plugin install sonari@sonari` (or
-   `claude plugin install sonari@sonari`). The marketplace is named `sonari`, so the
-   install target is `sonari@sonari`. You will start hearing Claude immediately — the
+2. Install the plugin: `/plugin install sonara@sonara` (or
+   `claude plugin install sonara@sonara`). The marketplace is named `sonara`, so the
+   install target is `sonara@sonara`. You will start hearing Claude immediately — the
    daemon lazy-starts on the first hook.
-3. Run `/sonari:install` from inside Claude Code to finish setup (each step is printed and
-   spoken). Until you run it, every new session Sonari reminds you once: *"Sonari is reading
-   aloud. To enable hotkeys and autostart, run /sonari:install."*
-4. Run `/sonari:doctor` to confirm everything is green (the only expected failure is
+3. Run `/sonara:install` from inside Claude Code to finish setup (each step is printed and
+   spoken). Until you run it, every new session Sonara reminds you once: *"Sonara is reading
+   aloud. To enable hotkeys and autostart, run /sonara:install."*
+4. Run `/sonara:doctor` to confirm everything is green (the only expected failure is
    `swiftc` / Xcode Command Line Tools on a machine without them — speech still works;
    only the hotkeys need them).
 
 For local development you can skip the marketplace and load the repo per session with
-`claude --plugin-dir <path-to-sonari>`.
+`claude --plugin-dir <path-to-sonara>`.
 
-If you already have `sonari` on your PATH, the CLI equivalent of step 3 is:
+If you already have `sonara` on your PATH, the CLI equivalent of step 3 is:
 
 ```bash
-sonari install
+sonara install
 ```
 
-`sonari install` resolves the best `python3 >= 3.9`, **copies the runtime to
-`~/.sonari/app`** (so it survives plugin auto-updates), builds the hotkey
-daemon, writes both LaunchAgents, and places the `~/.local/bin/sonari` launcher.
-After a plugin update, Sonari says once — *"Sonari was updated. Run /sonari:install
+`sonara install` resolves the best `python3 >= 3.9`, **copies the runtime to
+`~/.sonara/app`** (so it survives plugin auto-updates), builds the hotkey
+daemon, writes both LaunchAgents, and places the `~/.local/bin/sonara` launcher.
+After a plugin update, Sonara says once — *"Sonara was updated. Run /sonara:install
 to apply."* — so you can refresh the copy.
 
 ### Development
@@ -71,7 +71,7 @@ The public install path above does **not** use `pip` — the venv is for tests o
 
 ## Enhanced-voice setup (recommended)
 
-Sonari defaults to the best enhanced/neural English voice it can find and falls back to
+Sonara defaults to the best enhanced/neural English voice it can find and falls back to
 **Samantha**. Enhanced voices sound dramatically better and are free and offline. To install
 one:
 
@@ -79,20 +79,20 @@ one:
 2. Click **System Voice → Manage Voices…**.
 3. Pick an English voice marked **(Enhanced)** or **(Premium)** — e.g. *Ava (Premium)*,
    *Zoe (Premium)*, or *Allison* — and download it.
-4. Run `sonari doctor` to confirm Sonari picks it up, or set it explicitly:
+4. Run `sonara doctor` to confirm Sonara picks it up, or set it explicitly:
 
 ```bash
-sonari voice "Ava (Premium)"
+sonara voice "Ava (Premium)"
 ```
 
 ## Controls and slash commands
 
-Control is via global hotkeys (work even mid-speech), the `sonari` CLI, and namespaced slash
+Control is via global hotkeys (work even mid-speech), the `sonara` CLI, and namespaced slash
 commands inside a session.
 
 ### Global hotkeys
 
-Default modifier is **Ctrl+Cmd** (rebindable via `~/.sonari/keymap.json`). A tiny Swift
+Default modifier is **Ctrl+Cmd** (rebindable via `~/.sonara/keymap.json`). A tiny Swift
 helper registers these with Carbon `RegisterEventHotKey`, so no macOS accessibility
 permission is needed.
 
@@ -116,25 +116,25 @@ When a question, permission prompt, or plan (`AskUserQuestion` / permission /
 cancel — using Claude Code's native numeric selection, no key injection. For a
 **multi-select** question, press each option's number (or `Space` on the highlighted item),
 then `Enter` to confirm. If a question has **more than nine options**, numbers cover 1-9;
-use the **arrow keys** plus `Enter` for the tenth and beyond. Sonari speaks these cues when
+use the **arrow keys** plus `Enter` for the tenth and beyond. Sonara speaks these cues when
 they apply.
 
 ### Slash commands and CLI
 
 | Slash command | CLI | Effect |
 |---|---|---|
-| `/sonari:install` | `sonari install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonari/app`) |
-| `/sonari:uninstall` | `sonari uninstall` | Remove LaunchAgents, hotkey helper, launcher, and `~/.sonari/app` (keeps your settings) |
-| `/sonari:status` | `sonari status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
-| `/sonari:verbosity <level>` | `sonari verbosity <level>` | Set `everything` / `medium` / `quiet` |
-| `/sonari:voice <name>` | `sonari voice <name>` | Set the `say` voice |
-| `/sonari:rate <wpm>` | `sonari rate <wpm>` | Set words-per-minute |
-| `/sonari:minqueue <n>` | `sonari minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
-| `/sonari:repeat` | `sonari repeat` | Re-speak the last item |
-| `/sonari:skip` | `sonari skip` | Skip the current item |
-| `/sonari:stop` | `sonari stop` | Stop now and clear the queue |
-| `/sonari:doctor` | `sonari doctor` | Run all health checks |
-| `/sonari:keymap` | `sonari keymap` | Show the active global hotkey bindings |
+| `/sonara:install` | `sonara install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
+| `/sonara:uninstall` | `sonara uninstall` | Remove LaunchAgents, hotkey helper, launcher, and `~/.sonara/app` (keeps your settings) |
+| `/sonara:status` | `sonara status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
+| `/sonara:verbosity <level>` | `sonara verbosity <level>` | Set `everything` / `medium` / `quiet` |
+| `/sonara:voice <name>` | `sonara voice <name>` | Set the `say` voice |
+| `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
+| `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
+| `/sonara:repeat` | `sonara repeat` | Re-speak the last item |
+| `/sonara:skip` | `sonara skip` | Skip the current item |
+| `/sonara:stop` | `sonara stop` | Stop now and clear the queue |
+| `/sonara:doctor` | `sonara doctor` | Run all health checks |
+| `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
 
 ## Verbosity
 
@@ -149,7 +149,7 @@ Three live-switchable levels (earcons fire in **all** of them):
 
 ## How ordering works
 
-Sonari's voice never jumps ahead of you. Spoken content is **strictly first-in, first-out**: a
+Sonara's voice never jumps ahead of you. Spoken content is **strictly first-in, first-out**: a
 question, plan, or permission is voiced *in its natural place* — after the prose that
 explains it — so if the voice is mid-sentence when a permission appears, you still hear the
 remaining sentences first, then the permission. What *is* instant is the **alert**: the
@@ -161,57 +161,57 @@ sound,"* never *"speak it out of order."*
 
 ## Per-session behavior
 
-Sonari tracks a single **foreground** session (set by `SessionStart` and each
+Sonara tracks a single **foreground** session (set by `SessionStart` and each
 `UserPromptSubmit`). Only the foreground session is *spoken*; if you run multiple sessions,
 background sessions still fire decision **earcons** so you are alerted, but their prose and
 decision text are not read aloud until you bring that session forward. Submitting a new
 prompt or stopping flushes the queue, so the voice always resumes at what is current.
 
 To manually cycle the voice to another session without switching windows, press
-**Ctrl+Cmd+P** (macOS) or the platform equivalent. Sonari advances to the next session in a
+**Ctrl+Cmd+P** (macOS) or the platform equivalent. Sonara advances to the next session in a
 fixed round-robin order, plays a short chime, and says "Session changed: &lt;folder&gt;." An
 unread session resumes from where it left off; a fully-read session is replayed from the
 top.
 
 ## Doctor and troubleshooting
 
-Run `sonari doctor` first — it reports each check as pass/fail. Common issues:
+Run `sonara doctor` first — it reports each check as pass/fail. Common issues:
 
-- **No speech at all.** Confirm `sonari status` shows your session as the foreground. The
-  daemon starts lazily on the first hook; if the socket is unreachable, run `sonari install`
-  to (re)load the daemon (`sonari doctor` tells you whether the socket is reachable), or
-  check `~/.sonari/speechd.log`.
+- **No speech at all.** Confirm `sonara status` shows your session as the foreground. The
+  daemon starts lazily on the first hook; if the socket is unreachable, run `sonara install`
+  to (re)load the daemon (`sonara doctor` tells you whether the socket is reachable), or
+  check `~/.sonara/speechd.log`.
 - **Robotic voice.** No enhanced voice is installed; see *Enhanced-voice setup* above.
-- **Hooks not firing.** Re-enable `sonari` via `/plugin` (or re-launch with
-  `claude --plugin-dir /path/to/sonari`), then run `sonari doctor` and confirm the
+- **Hooks not firing.** Re-enable `sonara` via `/plugin` (or re-launch with
+  `claude --plugin-dir /path/to/sonara`), then run `sonara doctor` and confirm the
   `plugin hooks.json` check passes.
-- **Speech too fast/slow.** `sonari rate 180` (default is 200 wpm).
-- **Too chatty.** `sonari verbosity medium` or `sonari verbosity quiet`.
-- **Everything is stuck.** `sonari stop` clears the queue and cancels the current utterance.
+- **Speech too fast/slow.** `sonara rate 180` (default is 200 wpm).
+- **Too chatty.** `sonara verbosity medium` or `sonara verbosity quiet`.
+- **Everything is stuck.** `sonara stop` clears the queue and cancels the current utterance.
 
-State, config, the socket, and logs all live under `~/.sonari/`
+State, config, the socket, and logs all live under `~/.sonara/`
 (`config.json`, `speechd.sock`, `speechd.log`).
 
 ## Uninstall
 
-To remove Sonari, disable the `sonari` plugin via `/plugin` (or stop passing
+To remove Sonara, disable the `sonara` plugin via `/plugin` (or stop passing
 `--plugin-dir`), then run:
 
 ```bash
-sonari uninstall
+sonara uninstall
 ```
 
-`sonari uninstall` removes the LaunchAgents, the hotkey helper, and the
-`~/.local/bin/sonari` launcher. It preserves your `~/.sonari/config.json` and
-`~/.sonari/keymap.json` so your settings survive a reinstall.
+`sonara uninstall` removes the LaunchAgents, the hotkey helper, and the
+`~/.local/bin/sonara` launcher. It preserves your `~/.sonara/config.json` and
+`~/.sonara/keymap.json` so your settings survive a reinstall.
 
-The in-session equivalent is `/sonari:uninstall`. Uninstall also removes the
-stable app copy at `~/.sonari/app`, and **preserves** your `config.json` and
+The in-session equivalent is `/sonara:uninstall`. Uninstall also removes the
+stable app copy at `~/.sonara/app`, and **preserves** your `config.json` and
 `keymap.json`.
 
 ## Privacy
 
-Sonari runs entirely on your own Mac. It collects nothing, sends nothing over the network,
+Sonara runs entirely on your own Mac. It collects nothing, sends nothing over the network,
 and has no servers, telemetry, or analytics — the text it speaks is processed locally and is
 never stored or transmitted. See [PRIVACY.md](PRIVACY.md) for the full details.
 

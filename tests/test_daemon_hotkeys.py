@@ -35,7 +35,7 @@ class _FakePlatform:
 
 def test_start_hotkeys_passes_a_dispatch_callback(monkeypatch):
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
     daemon._start_hotkeys()
     assert callable(pb.hotkey.started)
@@ -43,7 +43,7 @@ def test_start_hotkeys_passes_a_dispatch_callback(monkeypatch):
 
 def test_dispatch_routes_through_handle_message(monkeypatch):
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
     daemon._start_hotkeys()
     handled = []
@@ -54,7 +54,7 @@ def test_dispatch_routes_through_handle_message(monkeypatch):
 
 def test_stop_stops_the_hotkey_listener(monkeypatch):
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
     daemon._stop_hotkeys()
     assert pb.hotkey.stopped is True
@@ -66,7 +66,7 @@ def test_dispatch_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
     does, or it races the speak loop -> 'list changed size' crash / corruption.
     Regression for the unlocked-dispatch concurrency bug (#5)."""
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
     locked_during_call = []
     real = daemon.handle_message
@@ -83,8 +83,8 @@ def test_dispatch_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
 def test_debounce_suppresses_rapid_repeat_of_same_toggle():
     """A second next_session/pause/mute within the debounce window is ignored; one after the
     window passes is honored."""
-    from sonari.protocol import MsgType
-    from sonari.daemon import _HOTKEY_DEBOUNCE_S
+    from sonara.protocol import MsgType
+    from sonara.daemon import _HOTKEY_DEBOUNCE_S
     daemon = make_daemon()[0]
     assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 100.0) is False   # first fires
     assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 100.10) is True   # +100ms: dropped
@@ -93,7 +93,7 @@ def test_debounce_suppresses_rapid_repeat_of_same_toggle():
 
 def test_debounce_is_per_action_not_global():
     """Debouncing next_session must not suppress a different toggle pressed right after."""
-    from sonari.protocol import MsgType
+    from sonara.protocol import MsgType
     daemon = make_daemon()[0]
     assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 50.0) is False
     assert daemon._debounce_suppress(MsgType.MUTE, 50.05) is False   # different action: not debounced
@@ -101,7 +101,7 @@ def test_debounce_is_per_action_not_global():
 
 def test_nav_and_repeat_are_not_debounced():
     """Directional/idempotent keys pass through every time (rapid nav is intentional)."""
-    from sonari.protocol import MsgType
+    from sonara.protocol import MsgType
     daemon = make_daemon()[0]
     assert daemon._debounce_suppress(MsgType.NAV, 10.0) is False
     assert daemon._debounce_suppress(MsgType.NAV, 10.01) is False   # not suppressed
@@ -111,7 +111,7 @@ def test_nav_and_repeat_are_not_debounced():
 
 def test_one_bad_hotkey_does_not_raise(monkeypatch):
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
     monkeypatch.setattr(daemon, "handle_message",
                         lambda m: (_ for _ in ()).throw(RuntimeError("boom")))
@@ -123,9 +123,9 @@ def test_reload_keymap_delegates_to_backend_reload(monkeypatch):
     # thread-joined stop+start; macOS: rewrite resolved + reload hotkeyd). The
     # daemon passes its dispatch callback through.
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     monkeypatch.setattr("os.path.exists", lambda p: False)   # no kill-switch flag
-    monkeypatch.delenv("SONARI_DISABLE_HOTKEYS", raising=False)
+    monkeypatch.delenv("SONARA_DISABLE_HOTKEYS", raising=False)
     daemon = make_daemon(foreground="fg")[0]
     daemon.handle_message({"type": "reload_keymap"})
     # The reload runs on a short-lived thread (off the daemon lock), so wait for it.
@@ -136,8 +136,8 @@ def test_reload_keymap_delegates_to_backend_reload(monkeypatch):
 def test_reload_keymap_honors_kill_switch(monkeypatch):
     # With the kill switch set, reload must NOT re-register hotkeys; it just stops.
     pb = _FakePlatform()
-    monkeypatch.setattr("sonari.platform.get_platform", lambda: pb)
-    monkeypatch.setenv("SONARI_DISABLE_HOTKEYS", "1")
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    monkeypatch.setenv("SONARA_DISABLE_HOTKEYS", "1")
     daemon = make_daemon(foreground="fg")[0]
     daemon.handle_message({"type": "reload_keymap"})
     assert _wait_until(lambda: pb.hotkey.stopped)

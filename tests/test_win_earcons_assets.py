@@ -1,6 +1,6 @@
 from __future__ import annotations
 import pathlib
-from sonari.platform.windows.earcons import default_earcons, _cache
+from sonara.platform.windows.earcons import default_earcons, _cache
 
 
 def test_default_earcons_has_6():

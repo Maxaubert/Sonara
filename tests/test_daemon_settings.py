@@ -1,6 +1,6 @@
 from unittest import mock
 
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
 
 
@@ -14,7 +14,7 @@ def _msg(mtype, session=None, **extra):
 
 def test_set_rate_updates_config_and_speaker_and_saves():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("sonari.daemon.save_config") as save:
+    with mock.patch("sonara.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_RATE, rate=150))
     assert config["rate"] == 150
     assert speaker.rates == [150]
@@ -27,7 +27,7 @@ def test_set_rate_absolute_rejects_non_numeric():
     # utterance, silently muting the daemon until the bad config is removed.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     before = config["rate"]
-    with mock.patch("sonari.daemon.save_config") as save:
+    with mock.patch("sonara.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_RATE, rate="abc"))
     assert config["rate"] == before
     assert speaker.rates == []
@@ -36,17 +36,17 @@ def test_set_rate_absolute_rejects_non_numeric():
 
 def test_set_rate_absolute_clamps_out_of_range():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("sonari.daemon.save_config"):
+    with mock.patch("sonara.daemon.save_config"):
         daemon.handle_message(_msg(MsgType.SET_RATE, rate=999999))
     assert config["rate"] == 400           # clamped to RATE_MAX
-    with mock.patch("sonari.daemon.save_config"):
+    with mock.patch("sonara.daemon.save_config"):
         daemon.handle_message(_msg(MsgType.SET_RATE, rate=1))
     assert config["rate"] == 100           # clamped to RATE_MIN
 
 
 def test_set_voice_updates_config_and_speaker_and_saves():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("sonari.daemon.save_config") as save:
+    with mock.patch("sonara.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_VOICE, voice="Ava (Premium)"))
     assert config["voice"] == "Ava (Premium)"
     assert speaker.voices == ["Ava (Premium)"]
@@ -55,7 +55,7 @@ def test_set_voice_updates_config_and_speaker_and_saves():
 
 def test_set_verbosity_updates_config_and_saves_no_speaker_call():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("sonari.daemon.save_config") as save:
+    with mock.patch("sonara.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_VERBOSITY, verbosity="quiet"))
     assert config["verbosity"] == "quiet"
     assert speaker.rates == []
@@ -65,7 +65,7 @@ def test_set_verbosity_updates_config_and_saves_no_speaker_call():
 
 def test_set_minqueue_updates_config_and_saves():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("sonari.daemon.save_config") as save:
+    with mock.patch("sonara.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=3))
     assert config["minqueue"] == 3
     save.assert_called_once_with(config)
@@ -73,10 +73,10 @@ def test_set_minqueue_updates_config_and_saves():
 
 def test_set_minqueue_clamps_out_of_range():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    with mock.patch("sonari.daemon.save_config"):
+    with mock.patch("sonara.daemon.save_config"):
         daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=999))
     assert config["minqueue"] == 10          # clamped to MINQUEUE_MAX
-    with mock.patch("sonari.daemon.save_config"):
+    with mock.patch("sonara.daemon.save_config"):
         daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=0))
     assert config["minqueue"] == 1           # clamped to MINQUEUE_MIN
 
@@ -84,7 +84,7 @@ def test_set_minqueue_clamps_out_of_range():
 def test_set_minqueue_rejects_non_numeric():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     before = config["minqueue"]
-    with mock.patch("sonari.daemon.save_config") as save:
+    with mock.patch("sonara.daemon.save_config") as save:
         daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue="abc"))
     assert config["minqueue"] == before
     save.assert_not_called()

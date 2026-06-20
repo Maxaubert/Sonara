@@ -1,30 +1,30 @@
 from unittest import mock
 
-from sonari import cli
+from sonara import cli
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
 
 def test_uninstall_dispatches_and_cleans_shared_artifacts_preserving_user_files(
         tmp_path, monkeypatch):
-    sonari_dir = tmp_path / ".sonari"
-    sonari_dir.mkdir()
+    sonara_dir = tmp_path / ".sonara"
+    sonara_dir.mkdir()
     # Runtime artifacts uninstall should remove (shared cleanup in cli).
-    log = sonari_dir / "speechd.log"; log.write_text("log")
-    resolved = sonari_dir / "hotkeyd.resolved.json"; resolved.write_text("[]")
-    record = sonari_dir / "install.json"; record.write_text("{}")
-    lock = sonari_dir / "daemon.lock"; lock.write_text("{}")
-    hk_log = sonari_dir / "hotkeyd.log"; hk_log.write_text("x")
-    app_dir = sonari_dir / "app"
-    (app_dir / "sonari").mkdir(parents=True)
-    (app_dir / "sonari" / "__init__.py").write_text("# pkg\n")
+    log = sonara_dir / "speechd.log"; log.write_text("log")
+    resolved = sonara_dir / "hotkeyd.resolved.json"; resolved.write_text("[]")
+    record = sonara_dir / "install.json"; record.write_text("{}")
+    lock = sonara_dir / "daemon.lock"; lock.write_text("{}")
+    hk_log = sonara_dir / "hotkeyd.log"; hk_log.write_text("x")
+    app_dir = sonara_dir / "app"
+    (app_dir / "sonara").mkdir(parents=True)
+    (app_dir / "sonara" / "__init__.py").write_text("# pkg\n")
     # PRESERVED across uninstall: user keymap AND config.
-    keymap = sonari_dir / "keymap.json"; keymap.write_text('{"custom": true}')
-    config = sonari_dir / "config.json"; config.write_text('{"rate": 180}')
+    keymap = sonara_dir / "keymap.json"; keymap.write_text('{"custom": true}')
+    config = sonara_dir / "config.json"; config.write_text('{"rate": 180}')
 
     sup = FakeSupervisor()
     hk = FakeHotkey()
     monkeypatch.setattr(cli, "_platform", lambda: fake_platform(supervisor=sup, hotkey=hk))
-    with mock.patch.object(cli.paths, "SONARI_DIR", sonari_dir), \
+    with mock.patch.object(cli.paths, "SONARA_DIR", sonara_dir), \
          mock.patch.object(cli.paths, "CONFIG_PATH", config), \
          mock.patch.object(cli.paths, "LOG_PATH", log), \
          mock.patch.object(cli.paths, "LOCK_PATH", lock), \
@@ -47,7 +47,7 @@ def test_uninstall_dispatches_and_cleans_shared_artifacts_preserving_user_files(
 
 
 def test_uninstall_subcommand_invokes_uninstall():
-    with mock.patch("sonari.cli.uninstall", return_value=0) as un:
+    with mock.patch("sonara.cli.uninstall", return_value=0) as un:
         rc = cli.main(["uninstall"])
     un.assert_called_once()
     assert rc == 0

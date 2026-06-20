@@ -8,7 +8,7 @@ this test makes the rest of the package keep it.
 import os
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(REPO, "src", "sonari")
+SRC = os.path.join(REPO, "src", "sonara")
 
 FUTURE = "from __future__ import annotations"
 

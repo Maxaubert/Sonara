@@ -1,5 +1,5 @@
 import socket, threading
-from sonari.platform import transport
+from sonara.platform import transport
 
 
 def test_write_then_read_lockfile_roundtrips(tmp_path):
@@ -48,7 +48,7 @@ def test_acquire_singleton_is_exclusive(tmp_path):
 
 
 def test_acquire_singleton_windows_branch(tmp_path, monkeypatch):
-    import sonari.platform.transport as tr
+    import sonara.platform.transport as tr
     monkeypatch.setattr(tr.sys, "platform", "win32")
     lock = tmp_path / "daemon.singleton"
     f1 = tr.acquire_singleton(lock)

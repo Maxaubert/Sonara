@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sonari"
+name = "sonara"
 version = "0.5.0"
 description = "Eyes-free text-to-speech layer for Claude Code (macOS + Windows)"
 requires-python = ">=3.9"
@@ -11,7 +11,7 @@ authors = [{ name = "Nima Hakimi", email = "hakimi.nima1@gmail.com" }]
 license = { text = "MIT" }
 
 [project.scripts]
-sonari = "sonari.cli:main"
+sonara = "sonara.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
@@ -24,7 +24,7 @@ windows = [
 ]
 # Kokoro-82M neural voices (optional, cross-platform). One ~310 MB model + a 6 MB
 # voices file (auto-downloaded on first use) provide all 28 voices. Imported lazily
-# only when a Kokoro voice is selected, so base Sonari runs without these.
+# only when a Kokoro voice is selected, so base Sonara runs without these.
 kokoro = [
     "kokoro-onnx>=0.3.0",
     "onnxruntime",
@@ -35,4 +35,4 @@ kokoro = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-sonari = ["platform/windows/earcons/*.wav"]
+sonara = ["platform/windows/earcons/*.wav"]

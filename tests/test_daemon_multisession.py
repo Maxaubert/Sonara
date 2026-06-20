@@ -8,7 +8,7 @@ session.
 from __future__ import annotations
 
 from tests.daemon_helpers import make_daemon
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +263,9 @@ def test_background_decision_preempts_current_reader():
     Scenario: A has prose; while A is active, B (background, policy-allowed)
     raises a blocking choice. Router preempts A mid-batch to serve B's decision.
     """
-    from sonari.sessions import SessionManager as SM
-    from sonari.daemon import SpeechDaemon
-    from sonari.config import DEFAULTS
+    from sonara.sessions import SessionManager as SM
+    from sonara.daemon import SpeechDaemon
+    from sonara.config import DEFAULTS
 
     speaker_obj = speaker_class = None
     # Inline FakeSpeaker to avoid import cycle
@@ -365,8 +365,8 @@ def test_idle_gap_handoff_announces():
         def foreground(self): return self._fg
         def folder(self, s): return self._folders.get(s)
 
-    from sonari.router import Router
-    from sonari.queue import SpeechItem
+    from sonara.router import Router
+    from sonara.queue import SpeechItem
 
     def _item(session, text):
         return SpeechItem(id=0, session=session, kind="prose", text=text,
@@ -409,8 +409,8 @@ def test_background_decision_while_idle_is_read():
     """When the router is idle (active=None / fg has nothing), a background
     session's decision must be served immediately (I1 fix).
     """
-    from sonari.router import Router
-    from sonari.queue import SpeechItem
+    from sonara.router import Router
+    from sonara.queue import SpeechItem
 
     class FakeSessions:
         def __init__(self): self._fg = "A"
@@ -450,8 +450,8 @@ def test_muted_foreground_falls_through_to_ready_background():
     fg is muted + a ready background session -> next_item serves the
     background session (with announce if applicable), NOT None.
     """
-    from sonari.router import Router
-    from sonari.queue import SpeechItem
+    from sonara.router import Router
+    from sonara.queue import SpeechItem
 
     class FakeSessions:
         def __init__(self): self._fg = "A"

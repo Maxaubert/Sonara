@@ -4,7 +4,7 @@ import wave
 import numpy as np
 import pytest
 
-from sonari import kokoro
+from sonara import kokoro
 
 
 def test_voices_has_28_including_af_heart_and_asmr():

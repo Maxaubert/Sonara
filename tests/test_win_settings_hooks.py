@@ -8,16 +8,16 @@ import os
 
 import pytest
 
-from sonari.platform.windows import supervisor as sup
-from sonari.platform.windows.supervisor import (
+from sonara.platform.windows import supervisor as sup
+from sonara.platform.windows.supervisor import (
     merge_hooks_into_settings,
     remove_hooks_from_settings,
-    settings_has_sonari_hooks,
-    settings_has_sonari_plugin,
+    settings_has_sonara_hooks,
+    settings_has_sonara_plugin,
 )
 
 PW = r"C:\Py\pythonw.exe"
-HOOK = r"C:\plug\bin\sonari-hook"
+HOOK = r"C:\plug\bin\sonara-hook"
 
 
 def _read(p):
@@ -25,13 +25,13 @@ def _read(p):
         return json.load(fh)
 
 
-def test_merge_creates_file_with_sonari_hooks(tmp_path):
+def test_merge_creates_file_with_sonara_hooks(tmp_path):
     sp = str(tmp_path / "settings.json")
     merge_hooks_into_settings(sp, PW, HOOK)
     data = _read(sp)
     md = data["hooks"]["MessageDisplay"][0]["hooks"][0]
     assert md["command"] == PW and md["args"] == [HOOK, "MessageDisplay"]
-    assert settings_has_sonari_hooks(sp)
+    assert settings_has_sonara_hooks(sp)
 
 
 def test_merge_preserves_unrelated_keys_and_hooks(tmp_path):
@@ -45,7 +45,7 @@ def test_merge_preserves_unrelated_keys_and_hooks(tmp_path):
     data = _read(str(sp))
     assert data["theme"] == "dark"
     stop_cmds = [h["command"] for e in data["hooks"]["Stop"] for h in e["hooks"]]
-    assert "other.exe" in stop_cmds and PW in stop_cmds   # unrelated kept, sonari added
+    assert "other.exe" in stop_cmds and PW in stop_cmds   # unrelated kept, sonara added
 
 
 def test_merge_is_idempotent(tmp_path):
@@ -53,19 +53,19 @@ def test_merge_is_idempotent(tmp_path):
     merge_hooks_into_settings(sp, PW, HOOK)
     merge_hooks_into_settings(sp, PW, HOOK)
     data = _read(sp)
-    sonari = [h for e in data["hooks"]["MessageDisplay"] for h in e["hooks"]
-              if "sonari-hook" in (h.get("command", "") + " ".join(h.get("args", [])))]
-    assert len(sonari) == 1   # not duplicated
+    sonara = [h for e in data["hooks"]["MessageDisplay"] for h in e["hooks"]
+              if "sonara-hook" in (h.get("command", "") + " ".join(h.get("args", [])))]
+    assert len(sonara) == 1   # not duplicated
 
 
-def test_remove_drops_only_sonari_entries(tmp_path):
+def test_remove_drops_only_sonara_entries(tmp_path):
     sp = tmp_path / "settings.json"
     sp.write_text(json.dumps({"hooks": {"Stop": [{"matcher": "", "hooks": [
         {"type": "command", "command": "other.exe", "args": ["x"]}]}]}}), encoding="utf-8")
     merge_hooks_into_settings(str(sp), PW, HOOK)
     remove_hooks_from_settings(str(sp), HOOK)
     data = _read(str(sp))
-    assert not settings_has_sonari_hooks(str(sp))
+    assert not settings_has_sonara_hooks(str(sp))
     stop_cmds = [h["command"] for e in data["hooks"]["Stop"] for h in e["hooks"]]
     assert stop_cmds == ["other.exe"]   # unrelated survived
 
@@ -90,22 +90,22 @@ def test_invalid_json_aborts_without_clobber(tmp_path):
     '"just a string"',
     '42',
 ])
-def test_settings_has_sonari_hooks_tolerates_malformed_shapes(tmp_path, blob):
+def test_settings_has_sonara_hooks_tolerates_malformed_shapes(tmp_path, blob):
     sp = tmp_path / "settings.json"
     sp.write_text(blob, encoding="utf-8")
-    assert settings_has_sonari_hooks(str(sp)) is False   # no exception, just False
+    assert settings_has_sonara_hooks(str(sp)) is False   # no exception, just False
 
 
 @pytest.mark.parametrize("blob", [
-    '{"enabledPlugins": ["sonari@sonari"]}',      # list, not a dict
-    '{"enabledPlugins": "sonari"}',
+    '{"enabledPlugins": ["sonara@sonara"]}',      # list, not a dict
+    '{"enabledPlugins": "sonara"}',
     '[1, 2, 3]',
     '"x"',
 ])
-def test_settings_has_sonari_plugin_tolerates_malformed_shapes(tmp_path, blob):
+def test_settings_has_sonara_plugin_tolerates_malformed_shapes(tmp_path, blob):
     sp = tmp_path / "settings.json"
     sp.write_text(blob, encoding="utf-8")
-    assert settings_has_sonari_plugin(str(sp)) is False
+    assert settings_has_sonara_plugin(str(sp)) is False
 
 
 # --- #11: atomic write (must never corrupt the user's shared settings.json) ---
@@ -122,31 +122,31 @@ def test_write_settings_failure_preserves_original(tmp_path, monkeypatch):
 
 
 # --- #23: structured marker (a look-alike user hook must not be clobbered) ---
-def test_settings_has_sonari_hooks_ignores_lookalike_user_hooks(tmp_path):
+def test_settings_has_sonara_hooks_ignores_lookalike_user_hooks(tmp_path):
     sp = tmp_path / "settings.json"
     sp.write_text(json.dumps({"hooks": {"Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "my-sonari-hook-wrapper.exe"}]}]}}),
+        {"type": "command", "command": "my-sonara-hook-wrapper.exe"}]}]}}),
         encoding="utf-8")
-    assert settings_has_sonari_hooks(str(sp)) is False
+    assert settings_has_sonara_hooks(str(sp)) is False
 
 
-def test_user_hook_containing_sonari_substring_survives_uninstall(tmp_path):
+def test_user_hook_containing_sonara_substring_survives_uninstall(tmp_path):
     sp = tmp_path / "settings.json"
     sp.write_text(json.dumps({"hooks": {"Stop": [{"matcher": "", "hooks": [
-        {"type": "command", "command": "my-sonari-hook-wrapper.exe", "args": []}]}]}}),
+        {"type": "command", "command": "my-sonara-hook-wrapper.exe", "args": []}]}]}}),
         encoding="utf-8")
     merge_hooks_into_settings(str(sp), PW, HOOK)
     remove_hooks_from_settings(str(sp), HOOK)
     data = _read(str(sp))
     cmds = [h["command"] for e in data.get("hooks", {}).get("Stop", [])
             for h in e["hooks"]]
-    assert "my-sonari-hook-wrapper.exe" in cmds
+    assert "my-sonara-hook-wrapper.exe" in cmds
 
 
 # --- #8: doctor goes red when the baked hook script path no longer exists ---
 def test_hooks_doctor_row_red_when_baked_hook_path_missing(tmp_path, monkeypatch):
     sp = tmp_path / "settings.json"
-    missing = str(tmp_path / "gone" / "sonari-hook")
+    missing = str(tmp_path / "gone" / "sonara-hook")
     merge_hooks_into_settings(str(sp), PW, missing)
     monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
     name, ok, detail = sup.WinSupervisorBackend().hooks_doctor_row()
@@ -185,7 +185,7 @@ def test_install_merges_hooks_before_registering_the_task(tmp_path, monkeypatch)
 
 def _enable_plugin(sp_path):
     data = _read(sp_path) if os.path.exists(sp_path) else {}
-    data["enabledPlugins"] = {"sonari@sonari": True}
+    data["enabledPlugins"] = {"sonara@sonara": True}
     with open(sp_path, "w", encoding="utf-8") as fh:
         json.dump(data, fh)
 
@@ -202,10 +202,10 @@ def _install_with_settings(monkeypatch, sp_path, app_dir):
 def test_install_skips_settings_hooks_when_plugin_enabled(tmp_path, monkeypatch):
     sp = str(tmp_path / "settings.json")
     with open(sp, "w", encoding="utf-8") as fh:
-        json.dump({"enabledPlugins": {"sonari@sonari": True}, "theme": "dark"}, fh)
+        json.dump({"enabledPlugins": {"sonara@sonara": True}, "theme": "dark"}, fh)
     _install_with_settings(monkeypatch, sp, str(tmp_path))
-    assert settings_has_sonari_hooks(sp) is False        # not double-registered
-    assert settings_has_sonari_plugin(sp) is True        # plugin enablement kept
+    assert settings_has_sonara_hooks(sp) is False        # not double-registered
+    assert settings_has_sonara_plugin(sp) is True        # plugin enablement kept
     assert _read(sp)["theme"] == "dark"                  # unrelated keys preserved
 
 
@@ -213,10 +213,10 @@ def test_install_heals_existing_duplicate_when_plugin_enabled(tmp_path, monkeypa
     sp = str(tmp_path / "settings.json")
     merge_hooks_into_settings(sp, PW, HOOK)              # a prior bad install
     _enable_plugin(sp)
-    assert settings_has_sonari_hooks(sp) is True         # precondition: duplicate
+    assert settings_has_sonara_hooks(sp) is True         # precondition: duplicate
     _install_with_settings(monkeypatch, sp, str(tmp_path))
-    assert settings_has_sonari_hooks(sp) is False        # healed
-    assert settings_has_sonari_plugin(sp) is True
+    assert settings_has_sonara_hooks(sp) is False        # healed
+    assert settings_has_sonara_plugin(sp) is True
 
 
 def test_install_writes_settings_hooks_when_plugin_not_enabled(tmp_path, monkeypatch):
@@ -224,13 +224,13 @@ def test_install_writes_settings_hooks_when_plugin_not_enabled(tmp_path, monkeyp
     with open(sp, "w", encoding="utf-8") as fh:
         json.dump({"theme": "dark"}, fh)
     _install_with_settings(monkeypatch, sp, str(tmp_path))
-    assert settings_has_sonari_hooks(sp) is True         # non-plugin path unchanged
+    assert settings_has_sonara_hooks(sp) is True         # non-plugin path unchanged
 
 
 def test_hooks_doctor_row_red_when_plugin_and_settings_hooks_both_present(
         tmp_path, monkeypatch):
     sp = str(tmp_path / "settings.json")
-    hook = tmp_path / "sonari-hook"
+    hook = tmp_path / "sonara-hook"
     hook.write_text("#!/usr/bin/env python\n", encoding="utf-8")  # path must exist
     merge_hooks_into_settings(sp, PW, str(hook))
     _enable_plugin(sp)

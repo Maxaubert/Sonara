@@ -1,4 +1,4 @@
-from sonari.platform.windows import keytables as wk
+from sonara.platform.windows import keytables as wk
 
 
 def test_vk_codes_for_default_action_keys():

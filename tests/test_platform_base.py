@@ -1,6 +1,6 @@
 import abc
 import pytest
-from sonari.platform import base
+from sonara.platform import base
 
 
 def test_backends_are_abstract():
@@ -38,14 +38,14 @@ def test_platform_backend_bundles_the_four():
 
 
 def test_macos_hotkey_exposes_keytables_and_default_mods():
-    from sonari.platform.macos.hotkeys import MacHotkeyBackend
+    from sonara.platform.macos.hotkeys import MacHotkeyBackend
     hk = MacHotkeyBackend()
     assert hk.key_codes()["s"] == 1 and hk.mod_masks()["cmd"] == 256
     assert hk.default_mods() == ["ctrl", "cmd"]
 
 
 def test_base_hotkey_lifecycle_defaults_are_noops():
-    from sonari.platform.macos.hotkeys import MacHotkeyBackend
+    from sonara.platform.macos.hotkeys import MacHotkeyBackend
     hk = MacHotkeyBackend()
     hk.start(lambda msg: None)   # macOS: hotkeyd is a separate process -> no-op
     hk.stop()

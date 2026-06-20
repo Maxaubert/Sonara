@@ -2,8 +2,8 @@ from unittest import mock
 
 import pytest
 
-from sonari import cli
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara import cli
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 
 def _sent(send_mock):
@@ -15,7 +15,7 @@ def _sent(send_mock):
 def test_status_sends_status_and_prints(capsys):
     reply = {"verbosity": "everything", "rate": 200, "voice": None,
              "foreground": "abc", "queue_len": 3}
-    with mock.patch("sonari.client.send", return_value=reply) as send:
+    with mock.patch("sonara.client.send", return_value=reply) as send:
         rc = cli.main(["status"])
     msg, args, kwargs = _sent(send)
     assert rc == 0
@@ -27,14 +27,14 @@ def test_status_sends_status_and_prints(capsys):
 
 
 def test_status_handles_no_reply(capsys):
-    with mock.patch("sonari.client.send", return_value=None):
+    with mock.patch("sonara.client.send", return_value=None):
         rc = cli.main(["status"])
     assert rc == 1
     assert "no response" in capsys.readouterr().out.lower()
 
 
 def test_verbosity_sends_set_verbosity():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["verbosity", "quiet"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -43,14 +43,14 @@ def test_verbosity_sends_set_verbosity():
 
 
 def test_verbosity_rejects_bad_value():
-    with mock.patch("sonari.client.send") as send:
+    with mock.patch("sonara.client.send") as send:
         with pytest.raises(SystemExit):
             cli.main(["verbosity", "loud"])
     send.assert_not_called()
 
 
 def test_rate_sends_int_set_rate():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["rate", "260"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -59,7 +59,7 @@ def test_rate_sends_int_set_rate():
 
 
 def test_minqueue_sends_int_set_minqueue():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["minqueue", "3"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -69,14 +69,14 @@ def test_minqueue_sends_int_set_minqueue():
 
 
 def test_minqueue_rejects_non_integer():
-    with mock.patch("sonari.client.send") as send:
+    with mock.patch("sonara.client.send") as send:
         with pytest.raises(SystemExit):
             cli.main(["minqueue", "lots"])
     send.assert_not_called()
 
 
 def test_voice_sends_set_voice():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["voice", "Ava (Premium)"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -87,7 +87,7 @@ def test_voice_sends_set_voice():
 def test_voice_joins_multiword_name_without_quotes():
     # "Microsoft David" arrives as two argv tokens; the CLI joins them so the user
     # doesn't have to quote multi-word voice names.
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["voice", "Microsoft", "David"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -102,8 +102,8 @@ def test_voice_no_arg_lists_voices_without_changing_anything(capsys):
 
     fake = mock.Mock()
     fake.tts.list_voices.return_value = [_V("Microsoft David"), _V("Microsoft Zira")]
-    with mock.patch("sonari.cli._platform", return_value=fake), \
-            mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.cli._platform", return_value=fake), \
+            mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["voice"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -112,21 +112,21 @@ def test_voice_no_arg_lists_voices_without_changing_anything(capsys):
 
 
 def test_repeat_sends_repeat():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         cli.main(["repeat"])
     msg, _, _ = _sent(send)
     assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.REPEAT}
 
 
 def test_stop_sends_stop():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         cli.main(["stop"])
     msg, _, _ = _sent(send)
     assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.STOP}
 
 
 def test_skip_sends_skip():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         cli.main(["skip"])
     msg, _, _ = _sent(send)
     assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SKIP}
@@ -140,7 +140,7 @@ def test_no_args_prints_help_and_returns_2(capsys):
 
 
 def test_rate_rejects_non_integer_wpm():
-    with mock.patch("sonari.client.send") as send:
+    with mock.patch("sonara.client.send") as send:
         with pytest.raises(SystemExit):
             cli.main(["rate", "fast"])
     send.assert_not_called()
@@ -165,10 +165,10 @@ CONTROL_SUBCOMMANDS = [
 def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, capsys):
     """When the daemon is down all control subcommands must print a friendly
     message to stderr and return non-zero — no raw traceback."""
-    from sonari.client import DaemonNotRunning
+    from sonara.client import DaemonNotRunning
 
-    with mock.patch("sonari.client.send", side_effect=DaemonNotRunning(
-        "Sonari daemon is not running. Run: sonari install"
+    with mock.patch("sonara.client.send", side_effect=DaemonNotRunning(
+        "Sonara daemon is not running. Run: sonara install"
     )):
         rc = cli.main(argv)
 
@@ -176,7 +176,7 @@ def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, capsys):
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     # Must contain a human-readable hint
-    assert "sonari install" in combined.lower() or "not running" in combined.lower(), (
+    assert "sonara install" in combined.lower() or "not running" in combined.lower(), (
         f"No friendly message found in output: {combined!r}"
     )
     # Must NOT contain a raw traceback
@@ -187,23 +187,23 @@ def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, capsys):
 
 def test_daemon_down_message_goes_to_stderr(capsys):
     """The friendly daemon-down message must go to stderr, not stdout."""
-    from sonari.client import DaemonNotRunning
+    from sonara.client import DaemonNotRunning
 
-    with mock.patch("sonari.client.send", side_effect=DaemonNotRunning(
-        "Sonari daemon is not running. Run: sonari install"
+    with mock.patch("sonara.client.send", side_effect=DaemonNotRunning(
+        "Sonara daemon is not running. Run: sonara install"
     )):
         rc = cli.main(["stop"])
 
     assert rc != 0
     captured = capsys.readouterr()
-    assert "not running" in captured.err.lower() or "sonari install" in captured.err.lower()
+    assert "not running" in captured.err.lower() or "sonara install" in captured.err.lower()
 
 
 def test_client_send_raises_daemon_not_running_on_connection_refused(tmp_path, monkeypatch):
     """send() must raise DaemonNotRunning (not a raw OSError) when the
     lockfile is absent, making the error cleanly catchable."""
-    import sonari.client as client_mod
-    from sonari.client import DaemonNotRunning
+    import sonara.client as client_mod
+    from sonara.client import DaemonNotRunning
 
     missing_lock = tmp_path / "daemon.lock"  # nonexistent -> transport.connect raises
     monkeypatch.setattr(client_mod, "LOCK_PATH", missing_lock, raising=False)
@@ -213,7 +213,7 @@ def test_client_send_raises_daemon_not_running_on_connection_refused(tmp_path, m
 
 
 def test_rate_subcommand_sends_absolute_set_rate():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["rate", "300"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -222,7 +222,7 @@ def test_rate_subcommand_sends_absolute_set_rate():
 
 
 def test_voice_subcommand_sends_set_voice():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["voice", "Zoe (Premium)"])
     msg, _, _ = _sent(send)
     assert rc == 0
@@ -231,7 +231,7 @@ def test_voice_subcommand_sends_set_voice():
 
 
 def test_skip_subcommand_sends_skip():
-    with mock.patch("sonari.client.send", return_value=None) as send:
+    with mock.patch("sonara.client.send", return_value=None) as send:
         rc = cli.main(["skip"])
     msg, _, _ = _sent(send)
     assert rc == 0

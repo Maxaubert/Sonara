@@ -1,7 +1,7 @@
 from unittest import mock
 
-from sonari import cli
-from sonari import kokoro_provision as kp
+from sonara import cli
+from sonara import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
 
@@ -14,12 +14,12 @@ def _patches(rows=None, hooks_row=None, send=None, install_record=None):
     return sup, [
         mock.patch.object(cli, "_platform", lambda: fake_platform(supervisor=sup)),
         mock.patch("os.access", return_value=True),
-        mock.patch("sonari.paths.ensure_sonari_dir"),
-        mock.patch("sonari.client.send",
+        mock.patch("sonara.paths.ensure_sonara_dir"),
+        mock.patch("sonara.client.send",
                    return_value=(send if send is not None else {"ok": True})),
         mock.patch.object(
             cli, "_read_install_record",
-            return_value=install_record or {"app_path": "/home/u/.sonari/app"}),
+            return_value=install_record or {"app_path": "/home/u/.sonara/app"}),
         mock.patch("os.path.exists", return_value=True),
     ]
 
@@ -54,26 +54,26 @@ def test_doctor_includes_os_rows_and_neutral_rows():
     # OS rows came from the platform supervisor.
     assert d["say"][0] is True and d["afplay"][0] is True
     # Neutral rows added by cli.
-    for key in ("SONARI_DIR writable", "daemon socket", "hooks installed",
+    for key in ("SONARA_DIR writable", "daemon socket", "hooks installed",
                 "keymap resolves", "python3", "plugin path resolved"):
         assert key in d, key
 
 
 def test_doctor_socket_unreachable():
     _, patches = _patches()
-    patches[3] = mock.patch("sonari.client.send", side_effect=ConnectionRefusedError())
+    patches[3] = mock.patch("sonara.client.send", side_effect=ConnectionRefusedError())
     d = _as_dict(_run(patches))
     assert d["daemon socket"][0] is False
 
 
 def test_doctor_hooks_row_comes_from_backend():
-    _, patches = _patches(hooks_row=("hooks installed", False, "no Sonari hooks"))
+    _, patches = _patches(hooks_row=("hooks installed", False, "no Sonara hooks"))
     d = _as_dict(_run(patches))
     assert d["hooks installed"][0] is False
 
 
 def test_doctor_subcommand_prints_and_returns(capsys):
-    with mock.patch("sonari.cli.doctor",
+    with mock.patch("sonara.cli.doctor",
                     return_value=[("say", True, "/usr/bin/say"),
                                   ("afplay", False, "not found")]):
         rc = cli.main(["doctor"])
@@ -83,7 +83,7 @@ def test_doctor_subcommand_prints_and_returns(capsys):
 
 
 def test_doctor_subcommand_all_ok_returns_zero(capsys):
-    with mock.patch("sonari.cli.doctor", return_value=[("say", True, "ok")]):
+    with mock.patch("sonara.cli.doctor", return_value=[("say", True, "ok")]):
         rc = cli.main(["doctor"])
     assert rc == 0
     assert "say" in capsys.readouterr().out
@@ -100,8 +100,8 @@ def test_doctor_includes_hotkey_rows(monkeypatch):
     pb.hotkey = HK()
     monkeypatch.setattr(cli, "_platform", lambda: pb)
     monkeypatch.setattr("os.access", lambda *a, **k: True)
-    monkeypatch.setattr("sonari.paths.ensure_sonari_dir", lambda: None)
-    monkeypatch.setattr("sonari.client.send", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
+    monkeypatch.setattr("sonara.client.send", lambda *a, **k: {"ok": True})
     monkeypatch.setattr(cli, "_read_install_record", lambda: {"app_path": "/a"})
     monkeypatch.setattr("os.path.exists", lambda p: True)
     names = {r[0] for r in cli.doctor()}
@@ -134,7 +134,7 @@ def test_doctor_neural_row_ready_when_healthy(monkeypatch):
     """Healthy venv -> (True, detail containing "ready") with the venv python path."""
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(kp, "neural_healthy", lambda app: True)
-    monkeypatch.setattr("sonari.paths.kokoro_venv_python", lambda: "/venv/bin/python")
+    monkeypatch.setattr("sonara.paths.kokoro_venv_python", lambda: "/venv/bin/python")
     rows = _doctor_rows(monkeypatch)
     ok, detail = rows["neural voices"]
     assert ok is True and "ready" in detail

@@ -2,4 +2,4 @@
 .venv39/
 __pycache__/
 *.pyc
-.sonari/
+.sonara/

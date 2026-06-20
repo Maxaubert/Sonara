@@ -10,7 +10,7 @@ import subprocess
 
 import pytest
 
-from sonari.platform.windows.tts import WinTtsBackend, wpm_to_speaking_rate
+from sonara.platform.windows.tts import WinTtsBackend, wpm_to_speaking_rate
 
 
 def test_list_voices():
@@ -45,7 +45,7 @@ def test_terminate_sets_returncode_one():
 
 def test_wait_timeout_raises(monkeypatch):
     # A "long" clip: the completion timer hasn't fired, so a tiny wait must raise.
-    import sonari.platform.windows.tts as tts
+    import sonara.platform.windows.tts as tts
     monkeypatch.setattr(tts, "_wav_duration", lambda data: 100.0)
     h = WinTtsBackend().run("hello", None, 200)
     try:
@@ -100,28 +100,28 @@ def test_terminate_issues_a_real_stop_playsound_call():
 
 
 def test_init_sweeps_stale_temp_wavs(tmp_path, monkeypatch):
-    # A crashed/killed daemon can leak sonari-tts-*.wav in %TEMP%. Backend init
+    # A crashed/killed daemon can leak sonara-tts-*.wav in %TEMP%. Backend init
     # sweeps OLD ones (never a possibly-in-flight recent file, never foreign
     # files). (#26)
     import os, tempfile, time
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
-    stale = tmp_path / "sonari-tts-OLD.wav"
-    fresh = tmp_path / "sonari-tts-NEW.wav"
+    stale = tmp_path / "sonara-tts-OLD.wav"
+    fresh = tmp_path / "sonara-tts-NEW.wav"
     foreign = tmp_path / "someone-elses.wav"
     for f in (stale, fresh, foreign):
         f.write_bytes(b"x")
     old = time.time() - 10_000
     os.utime(str(stale), (old, old))
     WinTtsBackend()  # __init__ sweeps
-    assert not stale.exists()   # old sonari temp removed
+    assert not stale.exists()   # old sonara temp removed
     assert fresh.exists()       # recent one kept (may be in-flight)
-    assert foreign.exists()     # non-sonari file untouched
+    assert foreign.exists()     # non-sonara file untouched
 
 
 def test_run_raises_actionable_error_when_winrt_missing(monkeypatch):
     # A Windows box without PyWinRT installed must get an actionable error at the
     # synth path, not silent no-speech (doctor also goes red — see supervisor). (#7)
-    import sonari.platform.windows.tts as tts
+    import sonara.platform.windows.tts as tts
     monkeypatch.setattr(tts, "_winrt_available", lambda: False)
     with pytest.raises(RuntimeError, match="(?i)pywinrt|winrt"):
         WinTtsBackend().run("hello", None, 200)

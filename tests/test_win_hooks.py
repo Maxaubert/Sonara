@@ -1,11 +1,11 @@
 """Task 8 — exec-form hooks.json builder tests.
 
 Verifies that build_hooks_json() produces valid JSON with Windows paths
-correctly escaped, in exec-form (command + args) for all Sonari events.
+correctly escaped, in exec-form (command + args) for all Sonara events.
 """
 import json
 import pytest
-from sonari.platform.windows.supervisor import build_hooks_json
+from sonara.platform.windows.supervisor import build_hooks_json
 
 EXPECTED_EVENTS = {
     "MessageDisplay",
@@ -19,7 +19,7 @@ EXPECTED_EVENTS = {
 
 
 def test_hooks_json_is_exec_form_with_escaped_paths():
-    s = build_hooks_json(r"C:\u\.sonari\pythonw.exe", r"C:\plug\hook.py")
+    s = build_hooks_json(r"C:\u\.sonara\pythonw.exe", r"C:\plug\hook.py")
     data = json.loads(s)  # valid JSON (backslashes doubled)
     md = data["hooks"]["MessageDisplay"][0]["hooks"][0]
     assert md["type"] == "command"
@@ -30,7 +30,7 @@ def test_hooks_json_is_exec_form_with_escaped_paths():
 def test_hooks_json_contains_all_expected_events():
     """All seven hook event types must be present; a silent omission would
     break Windows installs without failing the JSON-validity check."""
-    s = build_hooks_json(r"C:\u\.sonari\pythonw.exe", r"C:\plug\hook.py")
+    s = build_hooks_json(r"C:\u\.sonara\pythonw.exe", r"C:\plug\hook.py")
     data = json.loads(s)
     assert set(data["hooks"]) == EXPECTED_EVENTS
 
@@ -38,7 +38,7 @@ def test_hooks_json_contains_all_expected_events():
 @pytest.mark.parametrize("event", sorted(EXPECTED_EVENTS))
 def test_hooks_json_event_is_exec_form(event: str):
     """Every event entry must use exec-form (type=command, command, args)."""
-    s = build_hooks_json(r"C:\u\.sonari\pythonw.exe", r"C:\plug\hook.py")
+    s = build_hooks_json(r"C:\u\.sonara\pythonw.exe", r"C:\plug\hook.py")
     data = json.loads(s)
     for entry in data["hooks"][event]:
         hook = entry["hooks"][0]

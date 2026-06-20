@@ -12,10 +12,10 @@ import subprocess
 
 import pytest
 
-from sonari.platform.macos import tts as mod
-from sonari.platform.macos.tts import MacTtsBackend
-from sonari import kokoro
-from sonari import kokoro_provision as kp
+from sonara.platform.macos import tts as mod
+from sonara.platform.macos.tts import MacTtsBackend
+from sonara import kokoro
+from sonara import kokoro_provision as kp
 
 
 def _bare_backend():
@@ -190,7 +190,7 @@ def test_play_wav_bytes_writes_temp_wav_and_spawns_afplay(monkeypatch, tmp_path)
     handle = mod._play_wav_bytes(b"RIFF....WAVE")
     path = captured["argv"][1]
     assert captured["argv"][0] == "afplay"
-    assert os.path.basename(path).startswith("sonari-tts-")
+    assert os.path.basename(path).startswith("sonara-tts-")
     assert path.endswith(".wav")
     assert os.path.exists(path)
     with open(path, "rb") as f:
@@ -254,7 +254,7 @@ def test_play_wav_bytes_write_failure_unlinks_and_reraises(monkeypatch, tmp_path
 
     with pytest.raises(OSError):
         mod._play_wav_bytes(b"data")
-    assert list(tmp_path.glob("sonari-tts-*.wav")) == []
+    assert list(tmp_path.glob("sonara-tts-*.wav")) == []
 
 
 def test_wait_timeout_propagates_and_does_not_unlink(monkeypatch, tmp_path):
@@ -344,8 +344,8 @@ def test_init_sweeps_stale_wavs_on_startup(monkeypatch):
 
 def test_sweep_stale_wavs_deletes_old_keeps_fresh_and_foreign(monkeypatch, tmp_path):
     _use_tmp_tempdir(monkeypatch, tmp_path)
-    old = tmp_path / "sonari-tts-old.wav"
-    fresh = tmp_path / "sonari-tts-fresh.wav"
+    old = tmp_path / "sonara-tts-old.wav"
+    fresh = tmp_path / "sonara-tts-fresh.wav"
     foreign = tmp_path / "other.wav"
     for p in (old, fresh, foreign):
         p.write_bytes(b"x")
@@ -363,5 +363,5 @@ def test_tmp_prefix_matches_windows_for_cross_sweep():
     # Byte-identical to the Windows prefix so either backend's startup sweep
     # reclaims the other's crash-leaked WAVs (#26). Pin against the Windows value
     # itself (not just a literal) so drift in EITHER backend fails this test.
-    from sonari.platform.windows import tts as wtts  # imports cleanly on macOS (lazy winrt)
-    assert mod._TMP_PREFIX == wtts._TMP_PREFIX == "sonari-tts-"
+    from sonara.platform.windows import tts as wtts  # imports cleanly on macOS (lazy winrt)
+    assert mod._TMP_PREFIX == wtts._TMP_PREFIX == "sonara-tts-"

@@ -1,4 +1,4 @@
-from sonari.assembler import ProseAssembler
+from sonara.assembler import ProseAssembler
 
 
 def test_two_sentences_across_two_feeds_emit_both_and_hold_nothing():
@@ -90,7 +90,7 @@ def test_fence_spanning_multiple_feed_calls_emits_n_line_summary():
 
 
 def test_paragraph_break_emitted_between_paragraphs():
-    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    from sonara.assembler import ProseAssembler, PARAGRAPH_BREAK
     a = ProseAssembler()
     out = a.feed("First paragraph here.\n\nSecond paragraph here.", 0, True)
     assert "First paragraph here." in out and "Second paragraph here." in out
@@ -99,14 +99,14 @@ def test_paragraph_break_emitted_between_paragraphs():
 
 
 def test_no_paragraph_break_within_one_paragraph():
-    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    from sonara.assembler import ProseAssembler, PARAGRAPH_BREAK
     a = ProseAssembler()
     out = a.feed("One sentence. Two sentences. Still one paragraph.", 0, True)
     assert PARAGRAPH_BREAK not in out
 
 
 def test_three_paragraphs_two_breaks():
-    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    from sonara.assembler import ProseAssembler, PARAGRAPH_BREAK
     a = ProseAssembler()
     out = a.feed("Para one.\n\nPara two.\n\nPara three.", 0, True)
     assert out.count(PARAGRAPH_BREAK) == 2
@@ -118,7 +118,7 @@ def test_blank_line_split_across_deltas_still_breaks_paragraphs():
     was overwritten with whitespace-collapsed text between deltas, erasing the
     trailing newline of a straddling blank line, so the heading merged into the
     next paragraph and reading stalled/garbled at every blank line."""
-    from sonari.assembler import ProseAssembler, PARAGRAPH_BREAK
+    from sonara.assembler import ProseAssembler, PARAGRAPH_BREAK
     a = ProseAssembler()
     out = []
     out += a.feed("The headline issue\n", 0, False)        # heading, no period, ends with \n

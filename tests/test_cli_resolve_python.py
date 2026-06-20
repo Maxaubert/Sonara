@@ -1,6 +1,6 @@
 from unittest import mock
 
-from sonari.platform.macos.supervisor import MacSupervisorBackend
+from sonara.platform.macos.supervisor import MacSupervisorBackend
 
 
 def test_resolve_prefers_usr_bin_python3_when_it_qualifies():

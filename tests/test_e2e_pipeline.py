@@ -8,11 +8,11 @@ Proves the ordering contract from the design spec section 4:
   - a turn_done earcon ends the turn.
 No real audio is ever produced: the Speaker is replaced by a recorder.
 """
-from sonari.hooks_entry import handle_event
-from sonari.protocol import PROTOCOL_VERSION
-from sonari.sessions import SessionManager
-from sonari.daemon import SpeechDaemon
-from sonari.config import DEFAULTS
+from sonara.hooks_entry import handle_event
+from sonara.protocol import PROTOCOL_VERSION
+from sonara.sessions import SessionManager
+from sonara.daemon import SpeechDaemon
+from sonara.config import DEFAULTS
 
 
 SID = "sess-e2e-1"
@@ -80,7 +80,7 @@ def make_daemon():
 
 def feed_event(daemon, event, payload):
     """Run a hook event through the real handle_event and feed every
-    resulting protocol message into the real daemon, just like bin/sonari-hook
+    resulting protocol message into the real daemon, just like bin/sonara-hook
     -> client -> daemon would in production."""
     for msg in handle_event(event, payload):
         assert msg["v"] == PROTOCOL_VERSION

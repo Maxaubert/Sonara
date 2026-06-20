@@ -4,7 +4,7 @@ import struct
 import wave
 from unittest import mock
 
-from sonari.platform.windows.earcon import WinEarconBackend
+from sonara.platform.windows.earcon import WinEarconBackend
 
 
 def _wav(tmp_path):

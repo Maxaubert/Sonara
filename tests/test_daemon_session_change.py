@@ -1,5 +1,5 @@
 from tests.daemon_helpers import make_daemon
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 
 def _prose(s, d, i, f):
@@ -50,7 +50,7 @@ def test_next_session_revisit_read_session_says_reading_again():
 
 
 def test_next_session_is_debounced():
-    from sonari.protocol import MsgType
+    from sonara.protocol import MsgType
     daemon = make_daemon()[0]
     assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 1.0) is False
     assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 1.10) is True   # rapid repeat dropped

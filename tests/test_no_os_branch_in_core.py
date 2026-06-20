@@ -13,7 +13,7 @@ CORE = [
     "assembler.py", "cleaner.py", "queue.py", "history.py", "sessions.py",
     "protocol.py", "hooks_entry.py", "speaker.py", "config.py",
 ]
-SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "sonari"
+SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "sonara"
 
 
 def test_core_modules_have_no_sys_platform_branch():

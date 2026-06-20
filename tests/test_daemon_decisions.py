@@ -1,5 +1,5 @@
-from sonari.protocol import MsgType, PROTOCOL_VERSION
-from sonari.queue import SpeechItem
+from sonara.protocol import MsgType, PROTOCOL_VERSION
+from sonara.queue import SpeechItem
 from tests.daemon_helpers import make_daemon
 
 
@@ -110,7 +110,7 @@ def test_tool_announce_lands_in_background_channel_not_spoken_until_active():
     # channel regardless of foreground. The Router decides when it is read: it serves
     # a session's channel only when that session is the active reader, so the bg tool
     # text must NOT be spoken while a different session holds the voice.
-    from sonari.protocol import PROTOCOL_VERSION
+    from sonara.protocol import PROTOCOL_VERSION
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
     # Give "fg" some prose so it stays the active reader.
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,

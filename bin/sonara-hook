@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Sonara hook entrypoint.
+
+Invoked by Claude Code as: bin/sonara-hook <Event>  (payload JSON on stdin).
+Thin shim: parse argv/stdin, optionally capture raw stdin, map the event to
+protocol messages via the PURE sonara.hooks_entry.handle_event, ensure the daemon
+is up, and send each message. Wrapped in a total try/except and ALWAYS exits 0
+so a failure here can never break the Claude session. Keep total work tiny.
+"""
+import os
+import sys
+
+
+def main() -> None:
+    # Read raw stdin first so we can capture it even if everything else fails.
+    try:
+        raw = sys.stdin.buffer.read()
+    except Exception:
+        raw = b""
+
+    # Optional golden-payload capture: dump raw stdin BEFORE any other work.
+    capture_dir = os.environ.get("SONARA_CAPTURE")
+    if capture_dir:
+        try:
+            event_for_name = sys.argv[1] if len(sys.argv) > 1 else "unknown"
+            os.makedirs(capture_dir, exist_ok=True)
+            out_path = os.path.join(capture_dir, f"{event_for_name}-{os.getpid()}.json")
+            with open(out_path, "wb") as f:
+                f.write(raw)
+        except Exception:
+            pass
+
+    # Resolve the package from the plugin's own src/ (self-contained; never rely
+    # on an installed 'sonara'). Insert src at sys.path[0] so it unconditionally
+    # wins over any stale global 'sonara' copy already on sys.path (mirrors the
+    # convention in tests/conftest.py). Remove any existing src entry first so a
+    # src already present further down PYTHONPATH is moved to the front, not left
+    # behind a shadowing copy.
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = os.path.join(os.path.dirname(here), "src")
+    if src in sys.path:
+        sys.path.remove(src)
+    sys.path.insert(0, src)
+
+    from sonara.hooks_entry import handle_event
+    from sonara import client
+
+    # Resolve plugin version (advisory) so the SessionStart message can carry it.
+    if not os.environ.get("CLAUDE_PLUGIN_VERSION"):
+        try:
+            import json as _json
+            root = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(here)
+            with open(os.path.join(root, ".claude-plugin", "plugin.json"),
+                      "r", encoding="utf-8") as _f:
+                _v = _json.load(_f).get("version")
+            if isinstance(_v, str) and _v:
+                os.environ["CLAUDE_PLUGIN_VERSION"] = _v
+        except Exception:
+            pass
+
+    event = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    # Tolerant stdin parse: empty/invalid -> {}.
+    import json
+
+    try:
+        text = raw.decode("utf-8").strip()
+        payload = json.loads(text) if text else {}
+        if not isinstance(payload, dict):
+            payload = {}
+    except Exception:
+        payload = {}
+
+    msgs = handle_event(event, payload)
+    if not msgs:
+        return
+
+    try:
+        client.ensure_daemon()
+    except Exception:
+        pass
+    for m in msgs:
+        try:
+            client.send(m)
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        # Never let a hook failure surface to Claude.
+        pass
+    sys.exit(0)

@@ -1,4 +1,4 @@
-from sonari.cleaner import clean_markdown
+from sonara.cleaner import clean_markdown
 
 
 def test_inline_code_backticks_removed():

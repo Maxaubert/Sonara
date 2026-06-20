@@ -1,13 +1,13 @@
 ---
-description: Set how many items Sonari batches before reading (1 = read immediately)
+description: Set how many items Sonara batches before reading (1 = read immediately)
 argument-hint: <n>
 ---
 
-Run the Sonari minqueue command with the Bash tool, forwarding the requested
+Run the Sonara minqueue command with the Bash tool, forwarding the requested
 item count (1-10):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/bin/sonari" minqueue $ARGUMENTS
+bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" minqueue $ARGUMENTS
 ```
 
 A value above 1 holds prose until that many items accumulate, then reads them in

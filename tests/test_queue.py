@@ -1,6 +1,6 @@
 """SpeechQueue was removed in Task 8; its tests are retired.
 SpeechItem is still imported and used throughout the codebase."""
-from sonari.queue import SpeechItem
+from sonara.queue import SpeechItem
 
 
 def test_speech_item_is_importable():

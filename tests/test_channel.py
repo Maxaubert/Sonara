@@ -1,5 +1,5 @@
-from sonari.channel import SessionChannel
-from sonari.queue import SpeechItem
+from sonara.channel import SessionChannel
+from sonara.queue import SpeechItem
 
 
 def _item(text, is_decision=False):

@@ -4,8 +4,8 @@ import time
 
 import pytest
 
-from sonari.platform.windows.hotkeys import WinHotkeyBackend
-from sonari.platform.base import HotkeyBackend
+from sonara.platform.windows.hotkeys import WinHotkeyBackend
+from sonara.platform.base import HotkeyBackend
 
 # These two tests start the REAL Win32 message-pump thread, whose _run() calls
 # ctypes.windll.kernel32.GetCurrentThreadId() — absent off Windows. The fakes
@@ -129,7 +129,7 @@ def test_display_combo_arrow_labels():
 def _start_with_fakes(monkeypatch, registered, unregistered, quit_evt):
     """Start a backend whose ctypes are faked: registration records ids, the pump
     blocks in _get_message until quit_evt is set (modeling GetMessage/WM_QUIT)."""
-    import sonari.keymap as km
+    import sonara.keymap as km
     hk = WinHotkeyBackend()
     monkeypatch.setattr(km, "load_keymap", lambda: {})
     monkeypatch.setattr(km, "resolve_keymap", lambda m: [

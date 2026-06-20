@@ -1,5 +1,5 @@
-from sonari import config
-from sonari.config import DEFAULTS
+from sonara import config
+from sonara.config import DEFAULTS
 
 
 def test_defaults_has_documented_top_level_keys():
@@ -36,7 +36,7 @@ import copy
 
 def _patch_config_paths(monkeypatch, tmp_path):
     cfg_path = tmp_path / "config.json"
-    monkeypatch.setattr(config, "SONARI_DIR", tmp_path)
+    monkeypatch.setattr(config, "SONARA_DIR", tmp_path)
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_path)
     return cfg_path
 
@@ -145,21 +145,21 @@ def test_load_config_corrupt_returns_independent_copy(monkeypatch, tmp_path):
 
 
 def _patch_config_paths_nested(monkeypatch, tmp_path):
-    sonari_dir = tmp_path / ".sonari"
-    cfg_path = sonari_dir / "config.json"
-    monkeypatch.setattr(config, "SONARI_DIR", sonari_dir)
+    sonara_dir = tmp_path / ".sonara"
+    cfg_path = sonara_dir / "config.json"
+    monkeypatch.setattr(config, "SONARA_DIR", sonara_dir)
     monkeypatch.setattr(config, "CONFIG_PATH", cfg_path)
     monkeypatch.setattr(
         config,
-        "ensure_sonari_dir",
-        lambda: sonari_dir.mkdir(parents=True, exist_ok=True),
+        "ensure_sonara_dir",
+        lambda: sonara_dir.mkdir(parents=True, exist_ok=True),
     )
-    return sonari_dir, cfg_path
+    return sonara_dir, cfg_path
 
 
 def test_save_config_creates_dir_and_round_trips(monkeypatch, tmp_path):
-    sonari_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
-    assert not sonari_dir.exists()
+    sonara_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
+    assert not sonara_dir.exists()
 
     cfg = config.load_config()
     cfg["rate"] = 175
@@ -168,10 +168,10 @@ def test_save_config_creates_dir_and_round_trips(monkeypatch, tmp_path):
     cfg["earcons"] = {"choice": "/custom/choice.aiff"}
     config.save_config(cfg)
 
-    assert sonari_dir.exists()
+    assert sonara_dir.exists()
     assert cfg_path.exists()
     # no temp artifact left behind after os.replace
-    leftovers = list(sonari_dir.glob("*.tmp"))
+    leftovers = list(sonara_dir.glob("*.tmp"))
     assert leftovers == []
 
     reloaded = config.load_config()
@@ -185,7 +185,7 @@ def test_save_config_creates_dir_and_round_trips(monkeypatch, tmp_path):
 
 
 def test_save_config_writes_valid_json_on_disk(monkeypatch, tmp_path):
-    sonari_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
+    sonara_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
     cfg = config.load_config()
     cfg["rate"] = 123
     config.save_config(cfg)
@@ -194,8 +194,8 @@ def test_save_config_writes_valid_json_on_disk(monkeypatch, tmp_path):
 
 
 def test_save_config_is_atomic_on_replace_failure(monkeypatch, tmp_path):
-    sonari_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
-    sonari_dir.mkdir(parents=True, exist_ok=True)
+    sonara_dir, cfg_path = _patch_config_paths_nested(monkeypatch, tmp_path)
+    sonara_dir.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(_json.dumps({"rate": 200}), encoding="utf-8")
 
     def _boom(src, dst):

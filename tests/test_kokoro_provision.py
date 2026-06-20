@@ -1,7 +1,7 @@
 import os
 import sys
 import pytest
-from sonari import paths, kokoro_provision as kp
+from sonara import paths, kokoro_provision as kp
 
 
 def test_kokoro_venv_python_path_is_platform_correct(monkeypatch, tmp_path):

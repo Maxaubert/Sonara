@@ -8,8 +8,8 @@ longer hotkey actions (removed from ACTION_MESSAGES), but the daemon still handl
 those protocol commands (stop/skip/repeat ship via the CLI), so they are exercised
 here with literal messages."""
 
-from sonari import keymap
-from sonari.protocol import MsgType
+from sonara import keymap
+from sonara.protocol import MsgType
 from tests.daemon_helpers import make_daemon
 
 
@@ -29,7 +29,7 @@ def test_all_action_messages_are_known_msgtypes():
 
 
 def test_stop_message_clears_and_cancels():
-    from sonari.queue import SpeechItem
+    from sonara.queue import SpeechItem
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose",
                              text="x", is_decision=False))
@@ -45,7 +45,7 @@ def test_skip_message_cancels():
 
 
 def test_repeat_message_reenqueues_last_spoken():
-    from sonari.protocol import MsgType, PROTOCOL_VERSION
+    from sonara.protocol import MsgType, PROTOCOL_VERSION
     # Repeat is now history-based: enqueue prose first, drain it, then repeat.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
@@ -92,7 +92,7 @@ def test_jump_decision_message_cancels():
 
 def test_catch_up_message_replays_unheard_backlog():
     # catch_up now replays unheard history rather than discarding the queue.
-    from sonari.protocol import MsgType, PROTOCOL_VERSION
+    from sonara.protocol import MsgType, PROTOCOL_VERSION
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
                            "session": "fg", "delta": "Unheard item. ",

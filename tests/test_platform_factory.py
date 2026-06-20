@@ -1,5 +1,5 @@
-import sonari.platform as platform
-from sonari.platform import base
+import sonara.platform as platform
+from sonara.platform import base
 
 
 def test_get_platform_returns_macos_backend_on_darwin(monkeypatch):

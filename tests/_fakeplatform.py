@@ -30,7 +30,7 @@ class FakeSupervisor:
 
     def post_install_notes(self):
         self.calls.append(("notes",))
-        print("Run 'sonari doctor' to confirm everything is green.")
+        print("Run 'sonara doctor' to confirm everything is green.")
 
     def doctor_rows(self):
         return list(self._rows)

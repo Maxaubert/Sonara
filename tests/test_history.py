@@ -1,4 +1,4 @@
-from sonari.history import SessionHistory
+from sonara.history import SessionHistory
 
 
 def test_record_and_last_message_groups_by_message_boundary():
@@ -91,7 +91,7 @@ def test_other_session_excludes_the_given_session():
 
 
 def test_nth_last_message_walks_back_through_groups():
-    from sonari.history import SessionHistory
+    from sonara.history import SessionHistory
     h = SessionHistory()
     # group 0: two prose sentences
     h.record("s", "prose", "a1"); h.record("s", "prose", "a2"); h.end_message("s")
@@ -108,7 +108,7 @@ def test_nth_last_message_walks_back_through_groups():
 
 
 def test_message_ids_and_entries_for_message():
-    from sonari.history import SessionHistory
+    from sonara.history import SessionHistory
     h = SessionHistory()
     h.record("s", "prose", "a1"); h.record("s", "prose", "a2"); h.end_message("s")
     h.record("s", "choice", "b1"); h.end_message("s")

@@ -2,7 +2,7 @@
 Each move cuts current speech, inserts replay items at the channel cursor, and
 replays the target message forward; next/prev clamp at the ends (no wrap);
 new content appends after the replay without interleaving."""
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
 
 
@@ -57,7 +57,7 @@ def test_prev_steps_back_one_message_then_plays_forward():
 def _start_reading(daemon, session, msg_id):
     """Simulate the speak loop currently reading a given message: point
     _current_item at an item whose history entry has that msg_id."""
-    from sonari.queue import SpeechItem
+    from sonara.queue import SpeechItem
     entry = daemon.history.entries_for_message(session, msg_id)[0]
     item = SpeechItem(id=9000 + msg_id, session=session, kind="prose",
                       text=entry.text, is_decision=False)

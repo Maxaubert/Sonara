@@ -8,15 +8,15 @@ import os
 import plistlib
 from unittest import mock
 
-from sonari import cli
-from sonari.platform.macos.hotkeys import (
+from sonara import cli
+from sonara.platform.macos.hotkeys import (
     MacHotkeyBackend, _hotkeyd_plist, LAUNCH_AGENT_LABEL as HOTKEYD_LAUNCH_AGENT_LABEL,
 )
 
 
 def test_hotkeyd_plist_is_valid_and_complete():
-    binary = "/Users/u/.sonari/sonari-hotkeyd"
-    log = "/Users/u/.sonari/hotkeyd.log"
+    binary = "/Users/u/.sonara/sonara-hotkeyd"
+    log = "/Users/u/.sonara/hotkeyd.log"
     xml = _hotkeyd_plist(binary, log)
     assert isinstance(xml, str) and xml.startswith("<?xml")
     data = plistlib.loads(xml.encode("utf-8"))
@@ -36,28 +36,28 @@ def test_build_hotkeyd_missing_swiftc_returns_false():
 def test_build_hotkeyd_compiles_when_swiftc_present(tmp_path):
     with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
          mock.patch("subprocess.call", return_value=0) as call, \
-         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"):
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonara-hotkeyd"):
         ok, detail = MacHotkeyBackend().build()
     assert ok is True
     args = call.call_args.args[0]
     assert args[0] == "swiftc"
-    assert args[1].endswith(os.path.join("hotkeyd", "sonari-hotkeyd.swift"))
-    assert args[-1] == str(tmp_path / "sonari-hotkeyd")
+    assert args[1].endswith(os.path.join("hotkeyd", "sonara-hotkeyd.swift"))
+    assert args[-1] == str(tmp_path / "sonara-hotkeyd")
 
 
 def test_build_hotkeyd_nonzero_returncode_is_failure(tmp_path):
     with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
          mock.patch("subprocess.call", return_value=1), \
-         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonari-hotkeyd"):
+         mock.patch.object(cli.paths, "HOTKEYD_BIN_PATH", tmp_path / "sonara-hotkeyd"):
         ok, _ = MacHotkeyBackend().build()
     assert ok is False
 
 
 def test_build_hotkeyd_skips_recompile_when_source_unchanged(tmp_path, monkeypatch):
-    binp = tmp_path / "sonari-hotkeyd"
+    binp = tmp_path / "sonara-hotkeyd"
     binp.write_text("pretend-built binary")
     monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", binp)
-    monkeypatch.setattr(cli.paths, "SONARI_DIR", tmp_path)
+    monkeypatch.setattr(cli.paths, "SONARA_DIR", tmp_path)
     with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
          mock.patch("subprocess.call", return_value=0) as call1:
         ok1, _ = MacHotkeyBackend().build()
@@ -70,11 +70,11 @@ def test_build_hotkeyd_skips_recompile_when_source_unchanged(tmp_path, monkeypat
 
 
 def test_build_hotkeyd_recompiles_when_source_changes(tmp_path, monkeypatch):
-    binp = tmp_path / "sonari-hotkeyd"
+    binp = tmp_path / "sonara-hotkeyd"
     binp.write_text("pretend-built binary")
     (tmp_path / ".hotkeyd.srchash").write_text("a-stale-hash-from-old-source")
     monkeypatch.setattr(cli.paths, "HOTKEYD_BIN_PATH", binp)
-    monkeypatch.setattr(cli.paths, "SONARI_DIR", tmp_path)
+    monkeypatch.setattr(cli.paths, "SONARA_DIR", tmp_path)
     with mock.patch("shutil.which", return_value="/usr/bin/swiftc"), \
          mock.patch("subprocess.call", return_value=0) as call:
         ok, _ = MacHotkeyBackend().build()
@@ -84,7 +84,7 @@ def test_build_hotkeyd_recompiles_when_source_changes(tmp_path, monkeypatch):
 def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeypatch):
     # Force the REAL platform to macOS so BOTH resolve_keymap (keytables) and
     # display_combo (labels) agree -> deterministic Ctrl+Cmd output on any host.
-    import sonari.platform as platform
+    import sonara.platform as platform
     monkeypatch.setattr(platform.sys, "platform", "darwin")
     platform._CACHE = None
     cli._PLATFORM = None
@@ -108,7 +108,7 @@ def test_keymap_clear_unbinds_and_requests_live_reload(monkeypatch, tmp_path):
     import json
     monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
     sent = []
-    with mock.patch("sonari.client.send", side_effect=lambda m, **k: sent.append(m)):
+    with mock.patch("sonara.client.send", side_effect=lambda m, **k: sent.append(m)):
         rc = cli.main(["keymap", "nav_next", "clear"])
     assert rc == 0
     user = json.loads((tmp_path / "keymap.json").read_text(encoding="utf-8"))
@@ -118,6 +118,6 @@ def test_keymap_clear_unbinds_and_requests_live_reload(monkeypatch, tmp_path):
 
 def test_keymap_clear_rejects_unknown_action(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
-    with mock.patch("sonari.client.send"):
+    with mock.patch("sonara.client.send"):
         rc = cli.main(["keymap", "bogus", "clear"])
     assert rc == 1

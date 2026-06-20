@@ -1,8 +1,8 @@
-# Sonari Phase 2.1 — Eyes-free prompt interaction — Spec
+# Sonara Phase 2.1 — Eyes-free prompt interaction — Spec
 
 > **projectType:** claude-plugin
 > Status: draft from the brainstorm (live interview with Nima, 2026-06-09); consumed by /stack → /issues.
-> Scope: a **minor update** to the existing Sonari plugin (`~/projects/private/claude-tts`).
+> Scope: a **minor update** to the existing Sonara plugin (`~/projects/private/claude-tts`).
 >
 > **Update (2026-06-10) — shipped EXCEPT caret tracking.** Built + deployed: the history substrate, `repeat`,
 > `catch_up`, `reread_options` (incl. reading the permission `message` field), and voice continuity. The
@@ -13,7 +13,7 @@
 > host support from Claude Code to expose the selection).
 
 ## 1. Core
-- **Problem:** Sonari's Phase 2 eyes-free controls fail exactly when an eyes-free / low-vision user needs them most — during Claude's prompts and after interruptions. Three "re-speak" hotkeys (`reread_options`, `repeat`, `catch_up`) read only the live TTS **queue tail** — usually a one-sentence fragment — instead of the meaningful content; `catch_up` doesn't work at all; multi-select **Submit** can't be reached without sighted arrow-navigation; and a focus-bound voice loses everything a non-focused session says.
+- **Problem:** Sonara's Phase 2 eyes-free controls fail exactly when an eyes-free / low-vision user needs them most — during Claude's prompts and after interruptions. Three "re-speak" hotkeys (`reread_options`, `repeat`, `catch_up`) read only the live TTS **queue tail** — usually a one-sentence fragment — instead of the meaningful content; `catch_up` doesn't work at all; multi-select **Submit** can't be reached without sighted arrow-navigation; and a focus-bound voice loses everything a non-focused session says.
 - **Target user:** Nima and other eyes-free / low-vision Claude Code users — people driving Claude by ear, who can't fall back on reading the screen to recover options, repeats, or missed output.
 - **MVP scope:**
   - **In v1 (this minor update):** (1) fix `reread_options`; (2) caret tracking on arrow-nav inside known prompts (incl. a virtual Submit); (3) fix `repeat` (whole last message); (4) fix `catch_up` (per-session backlog replay); (5) the shared **substrate** — per-session rolling narration history + sentence-granular heard-marker, with silent capture of non-voice-owning sessions; (6) the **voice-continuity** rule.
@@ -29,7 +29,7 @@
 - **Hard constraints:**
   - **Runtime performance (HARD):** hotkeys feel instant; **no model/LLM call on the hotkey path** (catch_up is verbatim, never a generated summary); per-session history bounded to cap memory.
   - **One voice only** — never two sessions speaking at once.
-  - macOS; relies on the existing Accessibility-API hotkey daemon (`sonari-hotkeyd`) + the speech daemon.
+  - macOS; relies on the existing Accessibility-API hotkey daemon (`sonara-hotkeyd`) + the speech daemon.
 
 ## 2. Behaviors
 
@@ -54,7 +54,7 @@
 - **Outputs:** speak the focused item as the cursor moves; **"Submit"** announced as a virtual item past the last option.
 - **States:** cursor on option *i* · cursor on virtual Submit · no known prompt open (inert).
 - **Behavior:** makes option navigation **and** submission fully eyes-free; arrow onto Submit → *"Submit"* → Enter submits the current selection.
-- **Edges / risk:** the mirrored cursor can **desync** from the TUI's real highlight (page-scroll, Home/End, reorder) → needs a **re-sync anchor** (snap to known top on each fresh prompt). Out of scope: Tier-2 narration of native menus where Sonari holds no structured list.
+- **Edges / risk:** the mirrored cursor can **desync** from the TUI's real highlight (page-scroll, Home/End, reorder) → needs a **re-sync anchor** (snap to known top on each fresh prompt). Out of scope: Tier-2 narration of native menus where Sonara holds no structured list.
 
 ### `repeat` (Ctrl+Cmd+R) — re-speak the last message
 - **Inputs:** hotkey; the focused session's history.
@@ -78,8 +78,8 @@
 ## 3. Plugin surface · Config · Manifests (claude-plugin type-specific)
 
 ### Plugin surface
-- **Hooks (intake):** Sonari consumes Claude Code hook events for (a) narration text, (b) **structured prompt options** (permission + question), and (c) a **stable session id** to key per-session history. No new hook events are *required* of the host; if the host emits no intra-prompt navigation event, caret tracking is driven by the hotkey daemon observing arrow keys (below).
-- **Hotkey daemon (`sonari-hotkeyd`):** existing global bindings keep their keys — `reread_options` (Ctrl+Cmd+O), `repeat` (Ctrl+Cmd+R), `catch_up` (Ctrl+Cmd+L), `stop` (Ctrl+Cmd+S), `skip` (Ctrl+Cmd+.). **New:** while a known prompt is open, hotkeyd **observes arrow ↑/↓** to drive caret tracking (mirroring, not replacing, the TUI's own navigation). **No new bindings** are added (scope decision).
+- **Hooks (intake):** Sonara consumes Claude Code hook events for (a) narration text, (b) **structured prompt options** (permission + question), and (c) a **stable session id** to key per-session history. No new hook events are *required* of the host; if the host emits no intra-prompt navigation event, caret tracking is driven by the hotkey daemon observing arrow keys (below).
+- **Hotkey daemon (`sonara-hotkeyd`):** existing global bindings keep their keys — `reread_options` (Ctrl+Cmd+O), `repeat` (Ctrl+Cmd+R), `catch_up` (Ctrl+Cmd+L), `stop` (Ctrl+Cmd+S), `skip` (Ctrl+Cmd+.). **New:** while a known prompt is open, hotkeyd **observes arrow ↑/↓** to drive caret tracking (mirroring, not replacing, the TUI's own navigation). **No new bindings** are added (scope decision).
 - **Output contract:** all behaviors emit to the speech daemon; none block the host's critical path (runtime-perf constraint).
 
 ### Config
@@ -90,7 +90,7 @@
 - No new `.claude-plugin/plugin.json` or `marketplace.json` surfaces. The change is internal to the daemons + hook handlers; the keymap gains arrow-observation behavior (conditional on a known prompt being open), not a new bound action.
 
 ## 4. Open assumptions (→ resolved by the build/technical agents)
-- The exact **session-identity + "frontmost window → session" mapping** mechanism (Nima: delegate to technical agents; Sonari already has partial multi-session support).
+- The exact **session-identity + "frontmost window → session" mapping** mechanism (Nima: delegate to technical agents; Sonara already has partial multi-session support).
 - That **arrow-key observation coexists** with the TUI's own navigation without breaking normal input (mirror, don't intercept-and-swallow, unless required).
 - That hook payloads reliably carry **structured options**, **narration text**, and a **stable session id**.
 

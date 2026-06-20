@@ -1,5 +1,5 @@
-from sonari.platform.macos import earcon as mod
-from sonari.platform.macos.earcon import MacEarconBackend
+from sonara.platform.macos import earcon as mod
+from sonara.platform.macos.earcon import MacEarconBackend
 
 
 def test_play_invokes_afplay_with_path(monkeypatch):

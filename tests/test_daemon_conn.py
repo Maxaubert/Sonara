@@ -1,6 +1,6 @@
 """Connection-handling robustness: message-dispatch guard (#13) and the
 concurrent-handler cap (#14)."""
-from sonari.daemon import _MAX_CONN_THREADS
+from sonara.daemon import _MAX_CONN_THREADS
 from tests.daemon_helpers import make_daemon
 
 

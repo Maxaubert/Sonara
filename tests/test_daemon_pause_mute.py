@@ -1,6 +1,6 @@
 """Pause (global full-silence halt) + per-session mute on the active reader."""
 from tests.daemon_helpers import make_daemon
-from sonari.protocol import MsgType, PROTOCOL_VERSION
+from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 
 def _prose(s, d, i, f):
@@ -36,7 +36,7 @@ def test_global_mute_toggles():
 
 def test_mute_cancels_currently_speaking_item():
     """MUTE cancels the speaker so the live utterance stops immediately."""
-    from sonari.queue import SpeechItem
+    from sonara.queue import SpeechItem
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon._current_item = SpeechItem(id=1, session="A", kind="prose",
                                       text="mid-utterance", is_decision=False)

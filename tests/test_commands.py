@@ -26,7 +26,7 @@ def test_no_colon_named_or_dropped_command_files():
     # form, and the hotkey-mirror / CLI-only verbs ship no file at all. This locks
     # in the Windows-safe rename so a regression can't reintroduce colon names.
     for verb in COMMANDS + DROPPED:
-        assert not os.path.exists(os.path.join(CMD, "sonari:" + verb + ".md")), verb
+        assert not os.path.exists(os.path.join(CMD, "sonara:" + verb + ".md")), verb
     for verb in DROPPED:
         assert not os.path.exists(os.path.join(CMD, verb + ".md")), verb
 
@@ -34,7 +34,7 @@ def test_no_colon_named_or_dropped_command_files():
 def test_every_command_invokes_its_verb_through_the_launcher():
     for verb in COMMANDS:
         txt = _read(verb + ".md")
-        assert 'bin/sonari" {0}'.format(verb) in txt, verb
+        assert 'bin/sonara" {0}'.format(verb) in txt, verb
         assert "Bash tool" in txt, verb
         assert txt.lstrip().startswith("---"), verb   # YAML front-matter
         assert "description:" in txt, verb

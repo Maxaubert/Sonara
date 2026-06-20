@@ -1,16 +1,16 @@
 import pytest
 
-from sonari.platform.macos import tts as mod
-from sonari.platform.macos.tts import MacTtsBackend, _parse_listing
-from sonari import kokoro
-from sonari import kokoro_provision as kp
+from sonara.platform.macos import tts as mod
+from sonara.platform.macos.tts import MacTtsBackend, _parse_listing
+from sonara import kokoro
+from sonara import kokoro_provision as kp
 
 
 @pytest.fixture(autouse=True)
 def _no_neural_venv(monkeypatch):
-    """Isolate list_voices() tests from any real ~/.sonari/venv on the dev machine.
+    """Isolate list_voices() tests from any real ~/.sonara/venv on the dev machine.
     list_voices now gates the Kokoro voices on is_installed() OR neural_enabled() (a
-    filesystem check), so a machine that has run `sonari voices install` would append
+    filesystem check), so a machine that has run `sonara voices install` would append
     the 28 neural voices and break the exact-list assertions here. Default neural OFF;
     the kokoro-specific suite (test_macos_tts_kokoro.py) overrides as needed."""
     monkeypatch.setattr(kp, "neural_enabled", lambda: False)

@@ -1,6 +1,6 @@
 {
-  "name": "sonari",
-  "displayName": "Sonari",
+  "name": "sonara",
+  "displayName": "Sonara",
   "version": "0.5.0",
   "description": "Eyes-free text-to-speech layer for Claude Code (macOS)",
   "author": {

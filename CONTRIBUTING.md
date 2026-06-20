@@ -1,6 +1,6 @@
-# Contributing to Sonari
+# Contributing to Sonara
 
-Sonari is maintained by two people on two operating systems (macOS and Windows).
+Sonara is maintained by two people on two operating systems (macOS and Windows).
 The whole workflow is built around one fact: **neither maintainer can verify the
 other's platform.** Machines check the portable logic; humans check their own
 platform's runtime.
@@ -11,8 +11,8 @@ platform's runtime.
   integration branches.
 - **Branch off `main`, one concern per branch, short-lived.** Name it
   `area/short-desc`:
-  - `win/...` — Windows backend (`src/sonari/platform/windows/**`)
-  - `macos/...` — macOS backend (`src/sonari/platform/macos/**`)
+  - `win/...` — Windows backend (`src/sonara/platform/windows/**`)
+  - `macos/...` — macOS backend (`src/sonara/platform/macos/**`)
   - `core/...` — shared core (daemon, assembler, speaker, protocol, keymap)
   - `docs/...`, `test/...` — docs and test-only changes
 - **One concern per PR.** If a change spans three layers (e.g. a port + a UX
@@ -26,8 +26,8 @@ platform's runtime.
 
 | Area | Owner | Review rule |
 |------|-------|-------------|
-| `src/sonari/platform/windows/**` | Max | Max approves; Nima reviews for design |
-| `src/sonari/platform/macos/**` | Nima | Nima approves; Max reviews for design |
+| `src/sonara/platform/windows/**` | Max | Max approves; Nima reviews for design |
+| `src/sonara/platform/macos/**` | Nima | Nima approves; Max reviews for design |
 | Shared core + everything else | both | **both** approve |
 
 The owner of a platform is the only person who can sign off that platform's
@@ -59,7 +59,7 @@ accepted it on hardware.
 
 ## Platform discipline
 
-The platform seam (`src/sonari/platform/`) keeps OS-specific code isolated. **No
+The platform seam (`src/sonara/platform/`) keeps OS-specific code isolated. **No
 Windows-only import may appear on any shared or macOS code path, and vice versa.**
 This is what lets each owner trust that the other's platform work can't regress
 their own.
@@ -75,7 +75,7 @@ their own.
 
 ## Behavior changes
 
-Sonari is an eyes-free tool — changes to core controls (hotkeys, what gets
+Sonara is an eyes-free tool — changes to core controls (hotkeys, what gets
 spoken, default bindings) are user-facing decisions. **Call them out explicitly**
 in the PR description (a `⚠️ behavior change` line) rather than burying them in a
 feature branch, and raise anything that removes or remaps a default before you

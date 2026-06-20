@@ -24,8 +24,8 @@ if sys.platform != "win32":
     _fake_winreg.QueryValueEx = lambda *a, **kw: (_ for _ in ()).throw(OSError())
     sys.modules.setdefault("winreg", _fake_winreg)
 
-from sonari.platform.windows import supervisor as sup_mod
-from sonari.platform.windows.supervisor import (
+from sonara.platform.windows import supervisor as sup_mod
+from sonara.platform.windows.supervisor import (
     WinSupervisorBackend, TASK_NAME, TASK_XML_TEMPLATE, _SPAWN_FLAGS,
     daemon_pythonw,
 )
@@ -37,8 +37,8 @@ def test_task_xml_logon_trigger_user_id():
     xml_str = TASK_XML_TEMPLATE.format(
         user_id="DESKTOP-ABC\\nima",
         pythonw=r"C:\Python311\pythonw.exe",
-        supervisor_py=r"C:\sonari\supervisor_loop.py",
-        work_dir=r"C:\sonari",
+        supervisor_py=r"C:\sonara\supervisor_loop.py",
+        work_dir=r"C:\sonara",
     )
     root = ET.fromstring(xml_str)
     uid_el = root.find(f".//{{{_NS}}}LogonTrigger/{{{_NS}}}UserId")
@@ -70,7 +70,7 @@ def test_launch_spec_creationflags(monkeypatch):
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
     argv, kwargs = WinSupervisorBackend().launch_spec()
     assert argv[0].endswith("pythonw.exe")
-    assert argv[-1] == "sonari.daemon"
+    assert argv[-1] == "sonara.daemon"
     flags = kwargs["creationflags"]
     assert flags & 0x08000000, "CREATE_NO_WINDOW must be set"
     assert flags & 0x00000008, "DETACHED_PROCESS must be set"
@@ -79,17 +79,17 @@ def test_launch_spec_creationflags(monkeypatch):
 
 
 def test_launch_spec_sets_pythonpath_to_src(monkeypatch):
-    # The lazily-spawned daemon runs `pythonw -m sonari.daemon` in a fresh
-    # process; without PYTHONPATH it cannot import sonari, dies instantly, and
+    # The lazily-spawned daemon runs `pythonw -m sonara.daemon` in a fresh
+    # process; without PYTHONPATH it cannot import sonara, dies instantly, and
     # every hook event respawns it -> a relaunch storm. The spawn env must put
     # the repo's src/ first on PYTHONPATH.
     import os
-    from sonari import paths
+    from sonara import paths
 
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
     argv, kwargs = WinSupervisorBackend().launch_spec()
     env = kwargs.get("env")
-    assert env is not None, "launch_spec must pass an env so the daemon can import sonari"
+    assert env is not None, "launch_spec must pass an env so the daemon can import sonara"
     src = os.path.join(paths.repo_root(), "src")
     assert env.get("PYTHONPATH", "").split(os.pathsep)[0] == src
     kwargs["stderr"].close()
@@ -97,14 +97,14 @@ def test_launch_spec_sets_pythonpath_to_src(monkeypatch):
 
 def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch):
     """The lazily-spawned daemon's stderr must land in the daemon log under
-    SONARI_DIR (paths.LOG_PATH) rather than subprocess.DEVNULL, so the speak-loop
+    SONARA_DIR (paths.LOG_PATH) rather than subprocess.DEVNULL, so the speak-loop
     catch-all traceback survives on Windows. Mirrors the macOS plist
     StandardErrorPath. Regression for #20. stdin/stdout stay DEVNULL."""
     import subprocess
-    from sonari import paths
+    from sonara import paths
 
     log = tmp_path / "speechd.log"
-    monkeypatch.setattr(paths, "SONARI_DIR", tmp_path)
+    monkeypatch.setattr(paths, "SONARA_DIR", tmp_path)
     monkeypatch.setattr(paths, "LOG_PATH", log)
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
 
@@ -121,7 +121,7 @@ def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch
 # ---------------------------------------------------------------------------
 
 def test_daemon_pythonw_prefers_venv_pythonw_when_neural(monkeypatch):
-    from sonari import kokoro_provision, paths
+    from sonara import kokoro_provision, paths
     monkeypatch.setattr(kokoro_provision, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/v/Scripts/python.exe")
     monkeypatch.setattr(sup_mod, "_probe_python_version", lambda c: (3, 12))
@@ -130,14 +130,14 @@ def test_daemon_pythonw_prefers_venv_pythonw_when_neural(monkeypatch):
 
 
 def test_daemon_pythonw_falls_back_to_system_when_no_neural(monkeypatch):
-    from sonari import kokoro_provision
+    from sonara import kokoro_provision
     monkeypatch.setattr(kokoro_provision, "neural_enabled", lambda: False)
     monkeypatch.setattr(sup_mod, "resolve_python_windows", lambda: r"C:\sys\pythonw.exe")
     assert daemon_pythonw() == r"C:\sys\pythonw.exe"
 
 
 def test_daemon_pythonw_falls_back_when_venv_too_old(monkeypatch):
-    from sonari import kokoro_provision, paths
+    from sonara import kokoro_provision, paths
     monkeypatch.setattr(kokoro_provision, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/v/Scripts/python.exe")
     monkeypatch.setattr(sup_mod, "_probe_python_version", lambda c: (3, 9))
@@ -146,7 +146,7 @@ def test_daemon_pythonw_falls_back_when_venv_too_old(monkeypatch):
 
 
 def test_launch_spec_uses_daemon_pythonw(tmp_path, monkeypatch):
-    from sonari import paths
+    from sonara import paths
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: "/v/Scripts/pythonw.exe")
     monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
     argv, kwargs = WinSupervisorBackend().launch_spec()
@@ -167,7 +167,7 @@ def test_doctor_rows_include_task_and_neural_voice(monkeypatch):
     monkeypatch.setattr(sup, "_schtasks", lambda args: 0)
     monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Python311\pythonw.exe")
     monkeypatch.setattr(sup, "_list_neural_voices", lambda: ["Microsoft Aria Online"])
-    monkeypatch.setattr("sonari.paths.socket_connectable", lambda: True)
+    monkeypatch.setattr("sonara.paths.socket_connectable", lambda: True)
     names = [r[0] for r in sup.doctor_rows()]
     assert "Task Scheduler task" in names
     assert "pythonw.exe" in names
@@ -181,8 +181,8 @@ def test_doctor_row_flags_missing_winrt(monkeypatch):
     monkeypatch.setattr(sup, "_schtasks", lambda args: 0)
     monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Py\pythonw.exe")
     monkeypatch.setattr(sup, "_list_neural_voices", lambda: ["X"])
-    monkeypatch.setattr("sonari.paths.socket_connectable", lambda: True)
-    import sonari.platform.windows.tts as tts
+    monkeypatch.setattr("sonara.paths.socket_connectable", lambda: True)
+    import sonara.platform.windows.tts as tts
     monkeypatch.setattr(tts, "_winrt_available", lambda: False, raising=False)
     rows = {r[0]: r for r in sup.doctor_rows()}
     assert "TTS runtime" in rows
@@ -192,7 +192,7 @@ def test_doctor_row_flags_missing_winrt(monkeypatch):
 
 def test_resolve_python_skips_store_stub(monkeypatch, tmp_path):
     # Verify _is_store_stub fast-path (WindowsApps in path)
-    from sonari.platform.windows.supervisor import _is_store_stub
+    from sonara.platform.windows.supervisor import _is_store_stub
     stub = str(tmp_path / "WindowsApps" / "python.exe")
     assert _is_store_stub(stub) is True
 
@@ -205,13 +205,13 @@ def test_spawn_flags_value():
 def test_post_install_notes_are_accurate(capsys):
     # #19: hotkeys ship + start with the daemon, so don't say they "arrive in M3".
     # The plugin's command files were renamed to NTFS-safe names (status.md, ...),
-    # so the /sonari:* slash commands DO work on Windows now — the old #10 "not
+    # so the /sonara:* slash commands DO work on Windows now — the old #10 "not
     # available on NTFS" note is obsolete after the cross-platform-commands fix, and
     # promising a command that doesn't exist would be the inaccuracy to avoid.
     WinSupervisorBackend().post_install_notes()
     out = capsys.readouterr().out
     low = out.lower()
-    assert "sonari doctor" in out
+    assert "sonara doctor" in out
     assert "milestone 3" not in low and "arrive in" not in low   # #19
     assert "hotkey" in low                                        # hotkeys are active now
     assert "slash command" in low                                # available via the plugin
@@ -219,14 +219,14 @@ def test_post_install_notes_are_accurate(capsys):
 
 
 def test_post_install_notes_runs(capsys):
-    from sonari.platform.windows.supervisor import WinSupervisorBackend
+    from sonara.platform.windows.supervisor import WinSupervisorBackend
     WinSupervisorBackend().post_install_notes()
     out = capsys.readouterr().out
-    assert "sonari doctor" in out   # next steps (accuracy covered by test_post_install_notes_are_accurate)
+    assert "sonara doctor" in out   # next steps (accuracy covered by test_post_install_notes_are_accurate)
 
 
 def test_hooks_doctor_row_windows_absent(monkeypatch, tmp_path):
-    from sonari.platform.windows import supervisor as sup
+    from sonara.platform.windows import supervisor as sup
     monkeypatch.setattr(sup, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     name, ok, _ = sup.WinSupervisorBackend().hooks_doctor_row()
@@ -237,42 +237,42 @@ def test_hooks_doctor_row_ok_when_plugin_enabled(monkeypatch, tmp_path):
     # Hooks supplied by the enabled plugin (no hand-wired settings.json block) must
     # pass — not report FAIL as if uninstalled.
     import json
-    from sonari.platform.windows import supervisor as sup
+    from sonara.platform.windows import supervisor as sup
     sp = tmp_path / "settings.json"
-    sp.write_text(json.dumps({"enabledPlugins": {"sonari@sonari": True}}), encoding="utf-8")
+    sp.write_text(json.dumps({"enabledPlugins": {"sonara@sonara": True}}), encoding="utf-8")
     monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
     name, ok, detail = sup.WinSupervisorBackend().hooks_doctor_row()
     assert name == "hooks installed" and ok is True
     assert "plugin" in detail
 
 
-def test_settings_has_sonari_plugin(tmp_path):
+def test_settings_has_sonara_plugin(tmp_path):
     import json
-    from sonari.platform.windows import supervisor as sup
+    from sonara.platform.windows import supervisor as sup
     sp = tmp_path / "settings.json"
-    sp.write_text(json.dumps({"enabledPlugins": {"x@mkt": True, "sonari@sonari": True}}),
+    sp.write_text(json.dumps({"enabledPlugins": {"x@mkt": True, "sonara@sonara": True}}),
                   encoding="utf-8")
-    assert sup.settings_has_sonari_plugin(str(sp))
-    sp.write_text(json.dumps({"enabledPlugins": {"sonari@sonari": False}}), encoding="utf-8")
-    assert not sup.settings_has_sonari_plugin(str(sp))   # disabled doesn't count
+    assert sup.settings_has_sonara_plugin(str(sp))
+    sp.write_text(json.dumps({"enabledPlugins": {"sonara@sonara": False}}), encoding="utf-8")
+    assert not sup.settings_has_sonara_plugin(str(sp))   # disabled doesn't count
     sp.write_text(json.dumps({"enabledPlugins": {}}), encoding="utf-8")
-    assert not sup.settings_has_sonari_plugin(str(sp))
+    assert not sup.settings_has_sonara_plugin(str(sp))
 
 
 def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monkeypatch):
-    from sonari.platform.windows import supervisor as sup
+    from sonara.platform.windows import supervisor as sup
     calls = []
     monkeypatch.setattr(sup, "task_install", lambda pw, spy: calls.append(("task", pw)) or 0)
     monkeypatch.setattr(sup, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
     s = sup.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
     assert ("task", r"C:\Py\pythonw.exe") in calls
-    assert sup.settings_has_sonari_hooks(str(tmp_path / "settings.json"))
-    assert (tmp_path / "bin" / "sonari.cmd").exists()
+    assert sup.settings_has_sonara_hooks(str(tmp_path / "settings.json"))
+    assert (tmp_path / "bin" / "sonara.cmd").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -289,9 +289,9 @@ def test_install_wires_task_and_hooks_with_pythonw(tmp_path, monkeypatch):
                         lambda sp, pw, hp: hook_calls.append(pw))
     monkeypatch.setattr(sup_mod, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
-    monkeypatch.setattr(sup_mod, "settings_has_sonari_plugin", lambda sp: False)
+    monkeypatch.setattr(sup_mod, "settings_has_sonara_plugin", lambda sp: False)
     monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
     launcher_calls = []
     s = sup_mod.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks /end call
@@ -305,19 +305,19 @@ def test_install_wires_task_and_hooks_with_pythonw(tmp_path, monkeypatch):
 
 
 def test_uninstall_removes_task_hooks_and_launcher(tmp_path, monkeypatch):
-    from sonari.platform.windows import supervisor as sup
+    from sonara.platform.windows import supervisor as sup
     monkeypatch.setattr(sup, "task_install", lambda pw, spy: 0)
     monkeypatch.setattr(sup, "task_uninstall", lambda: 0)
     monkeypatch.setattr(sup, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
     s = sup.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
     s.uninstall()
-    assert not sup.settings_has_sonari_hooks(str(tmp_path / "settings.json"))
-    assert not (tmp_path / "bin" / "sonari.cmd").exists()
+    assert not sup.settings_has_sonara_hooks(str(tmp_path / "settings.json"))
+    assert not (tmp_path / "bin" / "sonara.cmd").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -332,9 +332,9 @@ def test_install_ends_task_before_reregister(tmp_path, monkeypatch):
                         lambda sp, pw, hp: None)
     monkeypatch.setattr(sup_mod, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
-    monkeypatch.setattr(sup_mod, "settings_has_sonari_plugin", lambda sp: False)
+    monkeypatch.setattr(sup_mod, "settings_has_sonara_plugin", lambda sp: False)
     monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonari.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
     s = sup_mod.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: schtasks_calls.append(tuple(args)) or 0)
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))

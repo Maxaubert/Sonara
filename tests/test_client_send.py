@@ -2,10 +2,10 @@ import json
 import socket
 import threading
 
-from sonari import paths
-from sonari.client import send
-from sonari.platform import transport
-from sonari.protocol import PROTOCOL_VERSION, encode
+from sonara import paths
+from sonara.client import send
+from sonara.platform import transport
+from sonara.protocol import PROTOCOL_VERSION, encode
 
 
 def _reply_server(lock_path, ready, captured, token="tok"):
@@ -52,7 +52,7 @@ def _reply_server(lock_path, ready, captured, token="tok"):
 def test_send_no_reply(tmp_path, monkeypatch):
     lock_path = tmp_path / "daemon.lock"
     monkeypatch.setattr(paths, "LOCK_PATH", lock_path, raising=False)
-    import sonari.client as client_mod
+    import sonara.client as client_mod
     monkeypatch.setattr(client_mod, "LOCK_PATH", lock_path, raising=False)
 
     ready = threading.Event()
@@ -71,7 +71,7 @@ def test_send_no_reply(tmp_path, monkeypatch):
 
 def test_send_round_trip_reply(tmp_path, monkeypatch):
     lock_path = tmp_path / "daemon.lock"
-    import sonari.client as client_mod
+    import sonara.client as client_mod
     monkeypatch.setattr(client_mod, "LOCK_PATH", lock_path, raising=False)
 
     ready = threading.Event()

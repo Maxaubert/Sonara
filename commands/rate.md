@@ -1,13 +1,13 @@
 ---
-description: Set Sonari speech rate in words per minute
+description: Set Sonara speech rate in words per minute
 argument-hint: <wpm>
 ---
 
-Run the Sonari rate command with the Bash tool, forwarding the requested
+Run the Sonara rate command with the Bash tool, forwarding the requested
 words-per-minute value:
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/bin/sonari" rate $ARGUMENTS
+bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" rate $ARGUMENTS
 ```
 
 Print the command's output to the user verbatim. If the command errors (for

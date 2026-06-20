@@ -1,8 +1,8 @@
 import os
 
 import pytest
-from sonari import cli, paths
-from sonari import kokoro_provision as kp
+from sonara import cli, paths
+from sonara import kokoro_provision as kp
 
 
 def test_voices_install_provisions_then_rewires_daemon(monkeypatch, tmp_path):
@@ -19,7 +19,7 @@ def test_voices_install_provisions_then_rewires_daemon(monkeypatch, tmp_path):
 
 def test_voices_install_passes_repo_src_not_app_dir_to_install_kokoro(monkeypatch, tmp_path):
     """install_kokoro must receive repo_root()/src so predownload can import
-    sonari even before install() populates APP_DIR."""
+    sonara even before install() populates APP_DIR."""
     received = []
     monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
     monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))

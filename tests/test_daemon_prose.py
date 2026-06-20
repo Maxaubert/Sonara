@@ -1,5 +1,5 @@
-from sonari.protocol import MsgType, PROTOCOL_VERSION
-from sonari.queue import SpeechItem
+from sonara.protocol import MsgType, PROTOCOL_VERSION
+from sonara.queue import SpeechItem
 from tests.daemon_helpers import make_daemon
 
 

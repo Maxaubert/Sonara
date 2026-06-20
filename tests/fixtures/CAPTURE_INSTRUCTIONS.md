@@ -5,16 +5,16 @@ These serve as golden fixtures for parser and integration tests.
 
 ## How the capture mechanism works
 
-`bin/sonari-hook` reads the env var `SONARI_CAPTURE`. When set to a directory path, the hook
-dumps the raw stdin bytes it receives to `${SONARI_CAPTURE}/<event>-<pid>.json` BEFORE any
+`bin/sonara-hook` reads the env var `SONARA_CAPTURE`. When set to a directory path, the hook
+dumps the raw stdin bytes it receives to `${SONARA_CAPTURE}/<event>-<pid>.json` BEFORE any
 other processing, so even a crash in downstream code leaves the payload on disk.
 
-The relevant code is in `bin/sonari-hook`:
+The relevant code is in `bin/sonara-hook`:
 
 ```python
-if os.environ.get("SONARI_CAPTURE"):
+if os.environ.get("SONARA_CAPTURE"):
     try:
-        cap_dir = os.environ["SONARI_CAPTURE"]
+        cap_dir = os.environ["SONARA_CAPTURE"]
         os.makedirs(cap_dir, exist_ok=True)
         cap_path = os.path.join(cap_dir, f"{event}-{os.getpid()}.json")
         with open(cap_path, "wb") as fh:
@@ -28,12 +28,12 @@ if os.environ.get("SONARI_CAPTURE"):
 1. Create a capture directory and export the env var in the same shell you will launch Claude:
 
 ```bash
-mkdir -p /tmp/sonari-capture
-export SONARI_CAPTURE=/tmp/sonari-capture
+mkdir -p /tmp/sonara-capture
+export SONARA_CAPTURE=/tmp/sonara-capture
 ```
 
-2. Ensure `hooks/hooks.json` is installed/linked so `${CLAUDE_PLUGIN_ROOT}/bin/sonari-hook <Event>`
-   fires for each event. Launch `claude` in the same shell so hook subprocesses inherit `SONARI_CAPTURE`.
+2. Ensure `hooks/hooks.json` is installed/linked so `${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook <Event>`
+   fires for each event. Launch `claude` in the same shell so hook subprocesses inherit `SONARA_CAPTURE`.
 
 3. Trigger each event exactly once:
    - **MessageDisplay**: let Claude stream any normal prose reply
@@ -52,12 +52,12 @@ export SONARI_CAPTURE=/tmp/sonari-capture
 4. Inspect and copy the captured payloads into stable fixture names:
 
 ```bash
-ls -la /tmp/sonari-capture
+ls -la /tmp/sonara-capture
 
 mkdir -p tests/fixtures
 
 # Copy and rename each file (inspect contents to disambiguate PreToolUse variants):
-cp /tmp/sonari-capture/MessageDisplay-*.json        tests/fixtures/MessageDisplay.json
+cp /tmp/sonara-capture/MessageDisplay-*.json        tests/fixtures/MessageDisplay.json
 
 # For PreToolUse: inspect tool_name inside the JSON to pick the right file:
 #   tool_name == "AskUserQuestion" -> PreToolUse-AskUserQuestion.json

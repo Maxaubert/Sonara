@@ -1,6 +1,6 @@
 # tests/test_router.py
-from sonari.router import Router
-from sonari.queue import SpeechItem
+from sonara.router import Router
+from sonara.queue import SpeechItem
 
 
 class FakeSessions:

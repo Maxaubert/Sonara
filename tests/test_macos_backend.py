@@ -1,6 +1,6 @@
 # tests/test_macos_backend.py
-from sonari.platform.macos import make_backend
-from sonari.platform import base
+from sonara.platform.macos import make_backend
+from sonara.platform import base
 
 
 def test_make_backend_returns_full_bundle():

@@ -1,6 +1,6 @@
 import subprocess
 
-from sonari.speaker import Speaker
+from sonara.speaker import Speaker
 
 
 class FakePopen:
@@ -298,13 +298,13 @@ class _KilledProc:
 
 
 def test_speak_returns_true_when_say_completes():
-    from sonari.speaker import Speaker
+    from sonara.speaker import Speaker
     s = Speaker(say_runner=lambda text, voice, rate: _DoneProc())
     assert s.speak("Hello there.") is True
 
 
 def test_speak_returns_false_when_say_terminated():
-    from sonari.speaker import Speaker
+    from sonara.speaker import Speaker
     s = Speaker(say_runner=lambda text, voice, rate: _KilledProc())
     assert s.speak("Hello there.") is False
 

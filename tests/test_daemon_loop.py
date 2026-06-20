@@ -3,8 +3,8 @@ import tempfile
 import threading
 import time
 
-from sonari.queue import SpeechItem
-from sonari.protocol import MsgType, encode, decode
+from sonara.queue import SpeechItem
+from sonara.protocol import MsgType, encode, decode
 from tests.daemon_helpers import make_daemon
 
 

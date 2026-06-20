@@ -3,9 +3,9 @@ Mocks at the seams (_get_kokoro / _synthesize_wav / _play_wav_bytes) so no real
 winrt, winsound, or Kokoro model is touched."""
 import pytest
 
-from sonari.platform.windows import tts as wtts
-from sonari import kokoro
-from sonari import kokoro_provision as kp
+from sonara.platform.windows import tts as wtts
+from sonara import kokoro
+from sonara import kokoro_provision as kp
 
 
 def _bare_backend():

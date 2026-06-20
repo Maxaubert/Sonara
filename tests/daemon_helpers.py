@@ -1,6 +1,6 @@
-from sonari.sessions import SessionManager
-from sonari.daemon import SpeechDaemon
-from sonari.config import DEFAULTS
+from sonara.sessions import SessionManager
+from sonara.daemon import SpeechDaemon
+from sonara.config import DEFAULTS
 
 
 class FakeSpeaker:

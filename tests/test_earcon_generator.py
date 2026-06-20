@@ -3,7 +3,7 @@ import math
 import struct
 import wave
 import pathlib
-from sonari.platform.windows.earcons.generate import generate_earcon, _EARCON_SPECS
+from sonara.platform.windows.earcons.generate import generate_earcon, _EARCON_SPECS
 
 
 def _hdr(p):
@@ -90,7 +90,7 @@ def test_earcon_wav_assets_exist_for_every_spec():
     because _EARCON_NAMES is now derived directly from _EARCON_SPECS.keys().
     """
     import pathlib
-    from sonari.platform.windows.earcons import generate as _gen_mod
+    from sonara.platform.windows.earcons import generate as _gen_mod
     pkg_dir = pathlib.Path(_gen_mod.__file__).parent
     missing = [
         name
@@ -99,5 +99,5 @@ def test_earcon_wav_assets_exist_for_every_spec():
     ]
     assert not missing, (
         f"Missing .wav asset(s) in {pkg_dir}: {missing}\n"
-        "Run: python -m sonari.platform.windows.earcons.generate"
+        "Run: python -m sonara.platform.windows.earcons.generate"
     )
