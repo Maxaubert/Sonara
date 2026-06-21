@@ -16,11 +16,54 @@ from sonara.paths import SONARA_DIR, ensure_sonara_dir
 _DUCK_STATE = SONARA_DIR / "duck_state.json"
 
 
+# Audio-engine / virtual-router processes that must NEVER be ducked: their session
+# IS the aggregated output to the hardware, so lowering it drops the WHOLE mix
+# (including Sonara's own speech), not a single app. audiodg.exe is the Windows
+# audio engine; the rest are common per-app virtual-audio routers (SteelSeries
+# Sonar, VoiceMeeter) whose process represents the final mix on the real device.
+_NEVER_DUCK = frozenset({
+    "audiodg.exe", "steelseriessonar.exe",
+    "voicemeeter.exe", "voicemeeter8.exe", "voicemeeter8x64.exe",
+})
+
+
 def _all_sessions():
-    """All active audio sessions via pycaw. Lazy import; the test seam patches
-    this. Raises if pycaw/COM is unavailable --- callers swallow it."""
-    from pycaw.pycaw import AudioUtilities
-    return AudioUtilities.GetAllSessions()
+    """Active audio sessions across ALL active render devices, not just the default.
+
+    Users with a virtual-audio mixer (SteelSeries Sonar, VoiceMeeter, ...) route
+    different apps to different virtual output devices; the default-device-only
+    pycaw `GetAllSessions()` misses the app actually playing media (e.g. a browser
+    on a non-default 'Media' device). We enumerate every active render endpoint and
+    collect its sessions as pycaw AudioSession objects (same shape GetAllSessions
+    returns: .ProcessId / .Process / .SimpleAudioVolume). Lazy import; the test seam
+    patches this. Raises if pycaw/COM is unavailable --- callers swallow it."""
+    import comtypes
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioSession
+    from pycaw.api.mmdeviceapi import IMMDeviceEnumerator
+    from pycaw.api.audiopolicy import IAudioSessionManager2, IAudioSessionControl2
+    from pycaw.constants import CLSID_MMDeviceEnumerator
+
+    _ERENDER, _DEVICE_STATE_ACTIVE = 0, 0x1
+    enumerator = comtypes.CoCreateInstance(
+        CLSID_MMDeviceEnumerator, IMMDeviceEnumerator, comtypes.CLSCTX_INPROC_SERVER)
+    collection = enumerator.EnumAudioEndpoints(_ERENDER, _DEVICE_STATE_ACTIVE)
+    sessions = []
+    for i in range(collection.GetCount()):
+        try:
+            mgr = collection.Item(i).Activate(
+                IAudioSessionManager2._iid_, CLSCTX_ALL, None)
+            mgr2 = mgr.QueryInterface(IAudioSessionManager2)
+            senum = mgr2.GetSessionEnumerator()
+            for j in range(senum.GetCount()):
+                try:
+                    ctl2 = senum.GetSession(j).QueryInterface(IAudioSessionControl2)
+                    sessions.append(AudioSession(ctl2))
+                except Exception:  # noqa: BLE001 - skip a bad session, keep the rest
+                    continue
+        except Exception:  # noqa: BLE001 - skip a device we can't open
+            continue
+    return sessions
 
 
 def _session_name(session) -> str:
@@ -51,7 +94,8 @@ class AudioDucker:
                 saved, record = [], []
                 for s in _all_sessions():
                     vol = s.SimpleAudioVolume
-                    if vol is None or s.ProcessId in exclude_pids:
+                    if (vol is None or s.ProcessId in exclude_pids
+                            or _session_name(s).lower() in _NEVER_DUCK):
                         continue
                     original = vol.GetMasterVolume()
                     vol.SetMasterVolume(target, None)

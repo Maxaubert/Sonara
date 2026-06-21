@@ -128,3 +128,19 @@ def test_audioducker_methods_are_lock_guarded():
     d = AudioDucker()
     assert hasattr(d, "_lock"), "AudioDucker must have a _lock attribute"
     assert isinstance(d._lock, type(threading.Lock())), "_lock must be a threading.Lock"
+
+
+def test_duck_skips_never_duck_audio_engine_processes(monkeypatch, tmp_path):
+    # The audio engine / virtual-router (audiodg, SteelSeries Sonar, VoiceMeeter)
+    # carries the whole mix; ducking it would lower Sonara's own speech too. It must
+    # be skipped by NAME even when not in exclude_pids, while real media still ducks.
+    monkeypatch.setattr(ducking, "_DUCK_STATE", tmp_path / "duck_state.json")
+    engine = _FakeSession(500, 0.9, "audiodg.exe")
+    router = _FakeSession(501, 0.9, "SteelSeriesSonar.exe")   # case-insensitive
+    media = _FakeSession(600, 0.8, "firefox.exe")
+    _sessions(monkeypatch, [engine, router, media])
+    d = AudioDucker()
+    d.duck(exclude_pids=set(), level=20)
+    assert engine.SimpleAudioVolume.v == 0.9     # audio engine untouched
+    assert router.SimpleAudioVolume.v == 0.9     # virtual router untouched
+    assert media.SimpleAudioVolume.v == 0.2      # real media ducked
