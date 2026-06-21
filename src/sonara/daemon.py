@@ -455,7 +455,7 @@ class SpeechDaemon:
             # Every nav press chimes: the "nav" earcon when the cursor moves to a
             # message, the "nav_edge" earcon at a boundary / nothing to navigate
             # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
-            fg = self.sessions.foreground()
+            fg = self._engaged_session()
             if fg is None:
                 self._earcon("nav_edge")
                 return None
@@ -533,7 +533,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.REPEAT:
-            fg = self.sessions.foreground()
+            fg = self._engaged_session()
             if fg is None:
                 return None
             self._nav_cursor.pop(fg, None)   # repeat returns to the latest message
@@ -545,7 +545,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.REREAD_OPTIONS:
-            fg = self.sessions.foreground()
+            fg = self._engaged_session()
             if fg is None:
                 return None
             text = self._options.get(fg)
@@ -565,8 +565,8 @@ class SpeechDaemon:
                 entry = self._pending_heard.get(cur.id)
                 if entry is not None:
                     entry.heard = True
-            # Advance the foreground channel cursor to the next decision item.
-            fg = self.sessions.foreground()
+            # Advance the engaged session's channel cursor to the next decision item.
+            fg = self._engaged_session()
             if fg is not None:
                 ch = self.router.channel(fg)
                 while ch.cursor < len(ch.items) and not ch.items[ch.cursor].is_decision:
@@ -788,6 +788,15 @@ class SpeechDaemon:
             return None
         entry = self._pending_heard.get(cur.id)
         return entry.msg_id if entry is not None else None
+
+    def _engaged_session(self):
+        """The session the user is currently engaged with: the one being read
+        (router.active), else the one that most recently read (persists across idle
+        gaps), else the foreground. After a session-change the active reader differs
+        from the foreground, so nav/repeat/reread/jump must operate on what the user
+        HEARS, not the last session to submit a prompt."""
+        return (self.router.active or self.router._last_active
+                or self.sessions.foreground())
 
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.

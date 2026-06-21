@@ -25,6 +25,10 @@ class Router:
         # (set by catch_up / nav cross-session replay so their replayed items
         # are voiced even when the session is not the current foreground).
         self._replay_authorized: "set[str]" = set()
+        # Sessions you FORCE-switched away from (manual next_session): not
+        # auto-resumed until they get NEW content. session -> len(items) when
+        # suppressed; a different len (new content or a wipe) lifts it -> auto again.
+        self._suppressed: "dict[str, int]" = {}
 
     def channel(self, session: str) -> SessionChannel:
         ch = self.channels.get(session)
@@ -43,6 +47,19 @@ class Router:
             self._pending_announce = None
             self._pending_announce_replay = False
         self._replay_authorized.discard(session)
+        self._suppressed.pop(session, None)
+
+    def _is_suppressed(self, session: str) -> bool:
+        """True if *session* was force-switched away from and has not changed since.
+        New content or a wipe changes len(items) and lifts the suppression; a
+        dropped channel lifts it too."""
+        if session not in self._suppressed:
+            return False
+        ch = self.channels.get(session)
+        if ch is None or len(ch.items) != self._suppressed[session]:
+            self._suppressed.pop(session, None)
+            return False
+        return True
 
     def next_session(self) -> "tuple[str | None, bool]":
         """Manual session-change: a pure round-robin. Advance the active reader to
@@ -54,11 +71,17 @@ class Router:
         keys = [s for s in self.channels if s != CONTROL]
         if not keys:
             return (None, False)
+        old = self.active
         if self.active in keys:
             i = keys.index(self.active)
             target = keys[(i + 1) % len(keys)]     # next in the fixed ring (wraps)
         else:
             target = keys[0]
+        # Force-switching AWAY from a session suppresses its auto-resume until it
+        # gets new content; landing on a session (manual return) clears suppression.
+        if old is not None and old != target and old in self.channels:
+            self._suppressed[old] = len(self.channels[old].items)
+        self._suppressed.pop(target, None)
         replay = self.channels[target].caught_up()
         if replay:
             self.channels[target].reset()
@@ -89,33 +112,43 @@ class Router:
         # and is always cross-session). _replay_authorized bypasses the gate.
         should_speak = getattr(self.sessions, "should_speak", None)
         for s, ch in self.channels.items():
-            if ch.has_decision and self._ready(s):
-                if (should_speak is None or should_speak(s)
-                        or s in self._replay_authorized):
-                    return s
+            if not (ch.has_decision and self._ready(s)):
+                continue
+            if s in self._replay_authorized:           # manual replay bypasses both
+                return s
+            if self._is_suppressed(s):                 # force-switched-away, no update
+                continue
+            if should_speak is None or should_speak(s):
+                return s
         # the current reader keeps the floor until its batch drains -- minqueue
         # only gates the START of reading; once started, every pending item is
-        # read (unless the channel is muted with no exempt item).
+        # read (unless the channel is muted with no exempt item). The active reader
+        # is never a suppressed session (suppression only targets the session you
+        # switched AWAY from), so no suppression check is needed here.
         if self.active is not None:
             ch = self.channels.get(self.active)
             if ch is not None and ch.pending() > 0:
                 if not ch.muted or self._ready(self.active):
                     return self.active
-        # foreground first, then oldest-waiting (insertion order).
+        # foreground first, then oldest-waiting (insertion order). Both skip a
+        # force-switched-away session until it gets new content (bug: a session you
+        # left mid-read would auto-resume once the new reader drained).
         fg = self.sessions.foreground()
-        if self._ready(fg):
+        if self._ready(fg) and not self._is_suppressed(fg):
             return fg
         for s in self.channels:
             if self._ready(s):
-                # Replay-authorized sessions bypass the policy gate (cross-session
-                # catch_up / nav replay must be voiced even in earcon_only mode).
-                # Auto-evict once drained so authorization doesn't linger.
+                # Replay-authorized sessions bypass the policy gate AND suppression
+                # (cross-session catch_up / nav replay must be voiced even in
+                # earcon_only mode). Auto-evict once drained so it doesn't linger.
                 if s in self._replay_authorized:
                     ch = self.channels.get(s)
                     if ch is None or ch.pending() == 0:
                         self._replay_authorized.discard(s)
                     else:
                         return s
+                elif self._is_suppressed(s):
+                    continue
                 elif should_speak is None or should_speak(s):
                     return s
         return None
