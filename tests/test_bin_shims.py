@@ -22,6 +22,16 @@ def test_bootstrap_ps1_provisions_via_uv_and_hands_off():
     assert "sonara.cli install" in txt
 
 
+def test_sonara_cmd_falls_back_to_recorded_python():
+    assert "python.path" in _read("sonara.cmd")
+
+def test_sonara_hook_cmd_falls_back_to_recorded_pythonw():
+    assert "pythonw.path" in _read("sonara-hook.cmd")
+
+def test_bin_sonara_bash_falls_back_to_recorded_python():
+    assert "python.path" in _read("sonara")
+
+
 def test_sonara_hook_cmd_resolves_interpreter_and_logs_stderr():
     """M10: the Windows hook launcher must not silently mute. It resolves a
     windowless interpreter (pythonw, with a `pyw -3` fallback) and appends stderr
