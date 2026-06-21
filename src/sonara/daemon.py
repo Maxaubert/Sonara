@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import secrets
 import socket
 import subprocess
@@ -78,6 +79,11 @@ class SpeechDaemon:
         self._guided_sessions: set = set()
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
         self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
+        # Hotkey fires are handed to this queue by the Windows pump thread and
+        # applied by a dedicated worker under self._lock — so the pump NEVER blocks
+        # on the lock and presses can't pile up then burst while the daemon is busy
+        # streaming prose (the mute-hang). Drained by _hotkey_worker.
+        self._hotkey_q: "queue.Queue" = queue.Queue()
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -313,7 +319,14 @@ class SpeechDaemon:
                 # correct: items accumulate until the threshold OR the turn ends.
                 self.history.end_message(session)
                 self._options.pop(session, None)
-            self._wake.set()
+            # Wake the speak loop ONLY when a batch is actually ready to read
+            # (>= minqueue, the turn is done, or a decision is waiting). Waking on
+            # every buffered delta made the loop spin on self._lock and starve the
+            # hotkey worker — the root cause of the "thinking" mute-hang. A finished
+            # turn wakes via the turn_done earcon / TOOL / FLUSH paths below; the
+            # speak loop's poll_interval is the safety net if a wake is ever missed.
+            if ch.ready(self._minqueue()):
+                self._wake.set()
             return None
 
         # Decision CONTENT is enqueued (and gated by foreground). The ALERT
@@ -389,8 +402,10 @@ class SpeechDaemon:
             self._earcon(kind)
             if kind == "turn_done":
                 # End-of-turn boundary: safety-net flush in case the final PROSE
-                # flag never arrived.
+                # flag never arrived. Wake the loop so a sub-threshold batch that was
+                # left buffered (no per-delta wake) is read now, not after a poll.
                 self.router.channel(session).turn_done = True
+                self._wake.set()
             return None
 
         if t == MsgType.FLUSH:
@@ -687,6 +702,7 @@ class SpeechDaemon:
     def stop(self) -> None:
         self._running.clear()
         self._wake.set()
+        self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
         self._stop_hotkeys()
         srv = self._server
         if srv is not None:
@@ -870,24 +886,47 @@ class SpeechDaemon:
         self._wake.set()
 
     def _dispatch_hotkey(self, message: dict) -> None:
-        """A hotkey fire is handled exactly like an inbound socket message.
-
-        MUST hold self._lock around handle_message, identical to the socket path
-        (_handle_conn): the hotkey thread mutates shared state (queue, history,
-        config) concurrently with the speak loop, so without the lock it races
-        -> 'list changed size during iteration' / corruption. handle_message and
-        its callees never acquire self._lock (note_spoken/speak run on the speak
-        thread), so this is deadlock-free. An enqueue-based action (repeat /
-        skip_back / catch_up) is likewise safe from losing its item to that race.
-        """
+        """Called ON the Windows hotkey PUMP thread for each fire. It MUST NOT block:
+        debounce (cheap, pump-thread-only state) then hand the message to the worker
+        queue and return to GetMessage immediately. Running handle_message here
+        (under self._lock) used to stall the pump whenever the daemon held the lock
+        streaming prose, so presses queued at the OS level and burst later — the
+        mute-hang. The worker (_hotkey_worker) applies the message under the lock."""
         import time as _t
         if self._debounce_suppress(message.get("type"), _t.monotonic()):
             return   # a too-fast repeat of the same toggle -> ignore
+        self._hotkey_q.put(message)
+
+    def _hotkey_worker(self) -> None:
+        """Drain queued hotkey fires and apply each under self._lock — OFF the pump
+        thread, so a busy daemon can never stall hotkey CAPTURE. Serialized (single
+        worker) like the old synchronous dispatch, and serialized against the socket
+        path via self._lock."""
+        while self._running.is_set():
+            try:
+                message = self._hotkey_q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if message is None:        # shutdown sentinel from stop()
+                break
+            self._process_hotkey(message)
+
+    def _process_hotkey(self, message: dict) -> None:
+        """Apply one hotkey message exactly like an inbound socket message.
+
+        MUST hold self._lock around handle_message, identical to the socket path
+        (_handle_conn): it mutates shared state (channels, history, config)
+        concurrently with the speak loop, so without the lock it races -> 'list
+        changed size during iteration' / corruption. handle_message and its callees
+        never acquire self._lock (note_spoken/speak run on the speak thread), so this
+        is deadlock-free. Contained so one bad hotkey can't kill the worker."""
         try:
             with self._lock:
                 self.handle_message(message)
-        except Exception:  # noqa: BLE001 - one bad hotkey must not kill the pump
-            pass
+        except Exception:  # noqa: BLE001 - one bad hotkey must not kill the worker
+            import sys
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     def _debounce_suppress(self, mtype, now) -> bool:
         """True if *mtype* is a repeat of the same TOGGLE hotkey within the debounce
@@ -1140,8 +1179,11 @@ class SpeechDaemon:
 
         speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
         accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
+        hotkey_worker = threading.Thread(target=self._hotkey_worker,
+                                         name="sonara-hotkey-worker", daemon=True)
         speak_thread.start()
         accept_thread.start()
+        hotkey_worker.start()
         self._start_hotkeys()
 
         try:
