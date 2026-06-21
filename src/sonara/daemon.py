@@ -1187,6 +1187,54 @@ def _arm_faulthandler() -> None:
         pass
 
 
+def _harden_process(k32=None) -> None:
+    """Keep the daemon responsive to global hotkeys even after long idle.
+
+    Windows 11 puts idle, window-less background processes into EcoQoS / power
+    throttling, and the Task Scheduler launches us at BelowNormal priority. A
+    throttled hotkey-pump thread drops/delays the first WM_HOTKEY presses after a
+    long idle (the "press 3-4 times before it registers" bug), and the timing skew
+    occasionally double-fires a toggle. So at startup we (1) opt the process out of
+    power throttling (ControlMask=EXECUTION_SPEED, StateMask=0 => "never throttle
+    me") and (2) raise the priority class to Normal. Best-effort; never raises.
+    *k32* is injectable for tests."""
+    import sys
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        if k32 is None:
+            # Fresh WinDLL so the argtypes/restype we set here never mutate the
+            # shared ctypes.windll.kernel32 used elsewhere. Proper HANDLE typing is
+            # REQUIRED: GetCurrentProcess()'s pseudo-handle is -1, and without a
+            # 64-bit HANDLE restype/argtype ctypes truncates it to a 32-bit value,
+            # so both calls fail with ERROR_INVALID_HANDLE (6) and silently no-op.
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.SetProcessInformation.argtypes = [
+                wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+            k32.SetProcessInformation.restype = wintypes.BOOL
+            k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            k32.SetPriorityClass.restype = wintypes.BOOL
+
+        class _PPTS(ctypes.Structure):
+            _fields_ = [("Version", wintypes.DWORD),
+                        ("ControlMask", wintypes.DWORD),
+                        ("StateMask", wintypes.DWORD)]
+
+        _PROCESS_POWER_THROTTLING = 4            # ProcessPowerThrottling info class
+        _EXECUTION_SPEED = 0x1                   # PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+        _NORMAL_PRIORITY_CLASS = 0x00000020
+        h = k32.GetCurrentProcess()
+        st = _PPTS(1, _EXECUTION_SPEED, 0)       # Version=1, control speed, state OFF
+        k32.SetProcessInformation(h, _PROCESS_POWER_THROTTLING,
+                                  ctypes.byref(st), ctypes.sizeof(st))
+        k32.SetPriorityClass(h, _NORMAL_PRIORITY_CLASS)
+    except Exception:  # noqa: BLE001 - hardening must never break startup
+        pass
+
+
 def main() -> None:
     _arm_faulthandler()
     # Single-instance guard. The fast path avoids work when a daemon is clearly
@@ -1202,6 +1250,9 @@ def main() -> None:
     _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)
     if _SINGLETON is None:
         return  # another daemon already owns the single-instance lock
+
+    _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
+                        # global hotkeys stay responsive after long idle
 
     from sonara.speaker import Speaker
     from sonara.sessions import SessionManager

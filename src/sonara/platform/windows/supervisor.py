@@ -64,7 +64,9 @@ TASK_XML_TEMPLATE = '''<?xml version="1.0" encoding="UTF-16"?>
     <AllowHardTerminate>true</AllowHardTerminate>
     <Hidden>true</Hidden>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-    <Priority>7</Priority>
+    <!-- 5 = NORMAL priority class. The default 7 (BelowNormal) makes Windows
+         power-throttle the idle daemon, delaying global-hotkey response. -->
+    <Priority>5</Priority>
     <RestartOnFailure>
       <Interval>PT5M</Interval>
       <Count>5</Count>
