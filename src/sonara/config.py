@@ -14,7 +14,7 @@ DEFAULTS = {
     "history_cap": 200,
     "minqueue": 1,
     "audio_control": False,   # lower other apps' audio while speaking (opt-in)
-    "duck_level": 20,         # target % volume for other apps while ducked (0-100)
+    "duck_level": 30,         # target % volume for other apps while ducked (0-100)
 }
 
 
