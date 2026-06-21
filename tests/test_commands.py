@@ -8,8 +8,9 @@ CMD = os.path.join(REPO, "commands")
 # ship no command file. `uninstall` invokes the launcher like the rest; `install`
 # is a real command too but routes through the PowerShell bootstrap (so it does
 # NOT match the launcher pattern) and is asserted in test_bin_shims.py instead.
-COMMANDS = ("status", "verbosity", "doctor", "keymap", "voice", "rate", "uninstall")
-ARG_COMMANDS = ("verbosity", "voice", "rate", "keymap")  # forward $ARGUMENTS
+COMMANDS = ("status", "verbosity", "doctor", "keymap", "voice", "rate",
+            "uninstall", "audio-control", "duck-level")
+ARG_COMMANDS = ("verbosity", "voice", "rate", "keymap", "duck-level")  # forward $ARGUMENTS
 DROPPED = ("stop", "skip", "repeat")
 
 
