@@ -22,31 +22,36 @@ off.
 - **Per-decision earcons** — a distinct sound the moment a question, plan, permission, or error appears.
 - **Selection by number** — answer prompts with the option's number; no key injection.
 - **Global hotkeys** — navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
-- **Self-contained** — runs on the Windows system Python; no `pip`, no third-party packages.
+- **Lightweight** — the daemon runs on Python's standard library; the one-time `sonara install` fetches the Windows speech engine (PyWinRT) for you, and neural voices stay optional.
 
 ## Requirements
 
-- Windows (Sonara uses the built-in Windows speech engine for text-to-speech and `winsound`
+- Windows 10 or 11 (Sonara uses the built-in Windows speech engine and `winsound`
   for earcons).
-- Python 3.9 or newer. Sonara picks the best `python` >= 3.9 it can find
-  automatically.
+- Python 3.9 or newer on your PATH — install it from
+  [python.org](https://www.python.org/downloads/windows/) (the Microsoft Store stub is
+  not used). Sonara picks the best `python` >= 3.9 automatically.
 - Claude Code 2.1.162 or newer.
+
+Python is the only thing you need beforehand: `sonara install` (below) fetches the Windows
+speech engine (PyWinRT) for you with one `pip` step.
 
 ## Install
 
-Sonara installs from a Claude Code marketplace. You start hearing Claude as soon as the
-plugin is enabled; one more command turns on global hotkeys and autostart.
+Sonara installs from a Claude Code marketplace, then one required setup command wires up
+the speech engine, autostart, hooks, and hotkeys.
 
 1. Add the marketplace: `/plugin marketplace add Maxaubert/sonara` (or, in a shell,
    `claude plugin marketplace add Maxaubert/sonara`).
 2. Install the plugin: `/plugin install sonara@sonara` (or
    `claude plugin install sonara@sonara`). The marketplace is named `sonara`, so the
-   install target is `sonara@sonara`. You will start hearing Claude immediately — the
-   daemon lazy-starts on the first hook.
-3. Run `/sonara:install` from inside Claude Code to finish setup (each step is printed and
-   spoken). Until you run it, every new session Sonara reminds you once: *"Sonara is reading
-   aloud. To enable hotkeys and autostart, run /sonara:install."*
-4. Run `/sonara:doctor` to confirm everything is green.
+   install target is `sonara@sonara`.
+3. **Run `/sonara:install`** — the required one-time setup. It installs the Windows speech
+   engine (PyWinRT) into your Python, copies the runtime to `~/.sonara/app`, and registers
+   autostart, the Claude Code hooks, and global hotkeys. Each step is printed; it can take
+   a minute (it downloads the speech-engine packages).
+4. Start a new Claude Code session and run `/sonara:doctor` to confirm everything is green.
+   You'll hear Claude read its output from then on.
 
 For local development you can skip the marketplace and load the repo per session with
 `claude --plugin-dir <path-to-sonara>`.
@@ -57,9 +62,11 @@ If you already have `sonara` on your PATH, the CLI equivalent of step 3 is:
 sonara install
 ```
 
-`sonara install` resolves the best `python` >= 3.9, **copies the runtime to
-`~/.sonara/app`** (so it survives plugin auto-updates), registers the Windows
-autostart entry, and places the `sonara` launcher on your PATH.
+`sonara install` resolves the best `python` >= 3.9, **installs the speech engine
+(PyWinRT)**, **copies the runtime to `~/.sonara/app`** (so it survives plugin
+auto-updates), registers the Windows autostart entry, and places the `sonara` launcher on
+your PATH. If it can't install PyWinRT (for example, no network), it prints the exact
+`pip` command to run and exits non-zero, so it never silently leaves you without speech.
 After a plugin update, Sonara says once — *"Sonara was updated. Run /sonara:install
 to apply."* — so you can refresh the copy.
 
@@ -124,13 +131,13 @@ they apply.
 
 ### Slash commands and CLI
 
-Eight of these ship as `/sonara:` slash commands (the files in `commands/`); the
-rest are CLI-only (run `sonara <cmd>` in a terminal).
+Most of these ship as `/sonara:` slash commands (the files in `commands/`); the rest are
+CLI-only (run `sonara <cmd>` in a terminal).
 
 | Slash command | CLI | Effect |
 |---|---|---|
-| — | `sonara install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
-| — | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
+| `/sonara:install` | `sonara install` | One-time setup: speech engine (PyWinRT), autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
+| `/sonara:uninstall` | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
 | `/sonara:status` | `sonara status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
 | `/sonara:verbosity <level>` | `sonara verbosity <level>` | Set `everything` / `medium` / `quiet` |
 | `/sonara:voice <name>` | `sonara voice <name>` | Set the speech voice (omit the name to list voices) |

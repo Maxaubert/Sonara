@@ -14,6 +14,10 @@ def _no_neural_venv(monkeypatch):
     this a machine that has run `sonara voices install` would flip these tests onto
     the venv-interpreter path. Default neural OFF; the venv-path test overrides it."""
     monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    # install() now probes/installs PyWinRT via subprocess; treat it as already
+    # present so install() tests never shell out. _ensure_speech_deps itself is
+    # tested directly below (those tests re-stub _winrt_importable).
+    monkeypatch.setattr(cli, "_winrt_importable", lambda python: True)
 
 
 # --- install() dispatch contract (OS mechanics live in the backend tests) ---
@@ -215,3 +219,29 @@ def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
     cli.install()
     assert ("install", "/venv/bin/python", str(tmp_path / "app")) in sup.calls
+
+
+# --- speech-engine (PyWinRT) auto-install -----------------------------------
+
+def test_ensure_speech_deps_skips_pip_when_winrt_present(monkeypatch):
+    monkeypatch.setattr(cli, "_winrt_importable", lambda python: True)
+    calls = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: calls.append(a))
+    assert cli._ensure_speech_deps("PY") is True
+    assert calls == []   # already importable -> no pip
+
+
+def test_ensure_speech_deps_pip_installs_then_verifies(monkeypatch):
+    states = iter([False, True])   # missing, then present after the pip install
+    monkeypatch.setattr(cli, "_winrt_importable", lambda python: next(states))
+    ran = {}
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **k: ran.update(cmd=cmd))
+    assert cli._ensure_speech_deps("PYX") is True
+    assert ran["cmd"][:4] == ["PYX", "-m", "pip", "install"]
+    assert "winrt-runtime" in ran["cmd"]
+
+
+def test_ensure_speech_deps_false_when_still_missing(monkeypatch):
+    monkeypatch.setattr(cli, "_winrt_importable", lambda python: False)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: None)
+    assert cli._ensure_speech_deps("PY") is False   # pip ran but winrt still absent

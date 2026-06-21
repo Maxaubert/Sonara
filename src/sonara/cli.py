@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 from typing import Optional
 
@@ -352,11 +353,55 @@ def _copy_app(plugin_root: str) -> str:
     return app_dir
 
 
+# The Windows speech engine (PyWinRT / OneCore). Kept in sync with the
+# [windows] extra in pyproject.toml and the hint in platform/windows/tts.py.
+_WINRT_PACKAGES = (
+    "winrt-runtime",
+    "winrt-Windows.Media.SpeechSynthesis",
+    "winrt-Windows.Storage.Streams",
+)
+
+
+def _winrt_importable(python: str) -> bool:
+    """True if PyWinRT's OneCore speech projection imports under *python*."""
+    try:
+        r = subprocess.run(
+            [python, "-c", "import winrt.windows.media.speechsynthesis"],
+            capture_output=True, timeout=20)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ensure_speech_deps(python: str) -> bool:
+    """Make sure the Windows speech engine (PyWinRT) is installed in *python*.
+
+    Speech needs the winrt-* packages, and Claude Code does NOT install a plugin's
+    optional Python dependencies, so without this step a fresh install is silently
+    voiceless. pip-installs them (idempotent: a no-op if already present), then
+    verifies. Returns True iff speech can synthesize afterwards."""
+    if _winrt_importable(python):
+        print("Speech engine (PyWinRT): already installed.")
+        return True
+    print("Installing the Windows speech engine (PyWinRT)...")
+    try:
+        subprocess.run([python, "-m", "pip", "install", "--user", *_WINRT_PACKAGES],
+                       timeout=300)
+    except Exception as exc:  # noqa: BLE001 - fall through to the verify + hint
+        print(f"  pip could not run: {exc}")
+    if _winrt_importable(python):
+        print("Speech engine (PyWinRT): installed.")
+        return True
+    print("  Could not install PyWinRT automatically. Install it manually:\n    "
+          + python + " -m pip install " + " ".join(_WINRT_PACKAGES))
+    return False
+
+
 def install() -> int:
-    """Install Sonara: resolve python, copy the runtime, write the install
-    record, then delegate OS-specific autostart + hooks + launcher + hotkeys to
-    the platform backend (Windows: Task Scheduler + settings.json hooks +
-    sonara.cmd)."""
+    """Install Sonara: resolve python, ensure the speech engine, copy the runtime,
+    write the install record, then delegate OS-specific autostart + hooks +
+    launcher + hotkeys to the platform backend (Windows: Task Scheduler +
+    settings.json hooks + sonara.cmd)."""
     paths.ensure_sonara_dir()
     sup = _platform().supervisor
 
@@ -369,6 +414,11 @@ def install() -> int:
     ver = sup._probe_python_version(python)
     py_ver = "{0}.{1}".format(*ver) if ver else "3.9"
     print(f"Using interpreter: {python} (Python {py_ver})")
+
+    # 1b. Ensure the Windows speech engine (PyWinRT) is installed in that Python.
+    #     Claude Code does NOT install a plugin's optional Python deps, so without
+    #     this a fresh install is silently voiceless. install() owns it.
+    speech_ok = _ensure_speech_deps(python)
 
     plugin_root = os.path.realpath(paths.repo_root())
 
@@ -399,15 +449,28 @@ def install() -> int:
     #    daemon (deferred to M3, announced in post_install_notes).
     _platform().hotkey.install()
 
-    # 7. Voice check (best_voice() is a display-name str on every platform).
-    try:
-        voice = _platform().tts.best_voice()
-        print(f"Voice: {voice}." if voice else "Voice: default.")
-    except Exception:  # noqa: BLE001 - voice check must never break install
-        pass
+    # 7. Voice check. Only meaningful once the speech engine is present; otherwise
+    #    surface the "add a voice" path so N/KN and bare-Windows users aren't stuck.
+    if speech_ok:
+        try:
+            voice = _platform().tts.best_voice()
+            if voice:
+                print(f"Voice: {voice}.")
+            else:
+                print("No speech voice found. Add one in Settings > Time & language "
+                      "> Speech > Add voices, then run: sonara doctor")
+        except Exception:  # noqa: BLE001 - voice check must never break install
+            print("No speech voice found. Add one in Settings > Time & language "
+                  "> Speech > Add voices, then run: sonara doctor")
 
     # 8. OS-specific next steps.
     sup.post_install_notes()
+
+    if not speech_ok:
+        print("\n!!  Sonara is set up, but the SPEECH ENGINE is not installed yet, so "
+              "it will be SILENT. Install PyWinRT (command above), then re-run "
+              "`sonara install` (or `sonara doctor` to confirm).")
+        return 1
     return 0
 
 
