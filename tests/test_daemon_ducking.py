@@ -52,14 +52,27 @@ def test_set_audio_control_off_while_ducked_restores_now(monkeypatch):
 
 
 def test_set_duck_level_clamps_and_persists(monkeypatch):
-    monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
+    saved = {}
+    monkeypatch.setattr("sonara.daemon.save_config", lambda c: saved.update(c))
     daemon, *_ = make_daemon(foreground="fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_DUCK_LEVEL,
                            "level": 150})
     assert daemon.config["duck_level"] == 100   # clamped
+    assert saved.get("duck_level") == 100
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_DUCK_LEVEL,
                            "level": -5})
     assert daemon.config["duck_level"] == 0
+    assert saved.get("duck_level") == 0
+
+
+def test_set_audio_control_missing_enabled_is_noop(monkeypatch):
+    saved = {}
+    monkeypatch.setattr("sonara.daemon.save_config", lambda c: saved.update(c))
+    daemon, *_ = make_daemon(foreground="fg")
+    # malformed message with no "enabled" key must not persist or flip the default
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL})
+    assert daemon.config["audio_control"] is False   # unchanged from default
+    assert saved == {}                               # save_config never called
 
 
 def test_set_duck_level_reapplies_when_ducked(monkeypatch):

@@ -676,6 +676,8 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.SET_AUDIO_CONTROL:
+            if "enabled" not in msg:
+                return None
             enabled = bool(msg.get("enabled"))
             self.config["audio_control"] = enabled
             save_config(self.config)
