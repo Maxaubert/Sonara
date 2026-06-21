@@ -9,6 +9,19 @@ def _read(name):
         return f.read()
 
 
+def test_bootstrap_ps1_provisions_via_uv_and_hands_off():
+    txt = _read("sonara-bootstrap.ps1")
+    # downloads the uv BINARY from GitHub releases (no remote-script execution)
+    assert "astral-sh/uv/releases/download" in txt
+    assert "uv python install 3.12" in txt
+    # rejects the Microsoft Store stub when probing system Python
+    assert "WindowsApps" in txt
+    # writes the interpreter record both consumers read
+    assert "python.path" in txt and "pythonw.path" in txt
+    # hands off to the real installer
+    assert "sonara.cli install" in txt
+
+
 def test_sonara_hook_cmd_resolves_interpreter_and_logs_stderr():
     """M10: the Windows hook launcher must not silently mute. It resolves a
     windowless interpreter (pythonw, with a `pyw -3` fallback) and appends stderr
