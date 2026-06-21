@@ -4,7 +4,7 @@ After the seam refactor, cli.install/uninstall/doctor delegate every OS-specific
 step to get_platform(). These fakes let the cli tests assert the *dispatch
 contract* (what cli calls, in what order) independently of any real OS backend.
 The OS mechanics themselves are tested against the real backends in
-test_macos_supervisor / test_win_supervisor / test_macos_hotkeys.
+test_win_supervisor / test_win_hotkeys.
 """
 import types
 
@@ -45,15 +45,15 @@ class FakeHotkey:
         self._ok = ok
         self._detail = detail
 
-    def install(self, **kwargs):
-        self.calls.append(("install", kwargs))
+    def install(self):
+        self.calls.append(("install",))
         return (self._ok, self._detail)
 
     def uninstall(self):
         self.calls.append(("uninstall",))
 
     def display_combo(self, modifiers, key_code):
-        return "Ctrl+Cmd+O"
+        return "Ctrl+Shift+Alt+O"
 
     def doctor_rows(self):
         return []

@@ -201,6 +201,35 @@ def test_nav_with_empty_history_announces():
     assert any("Nothing to navigate" in it.text for it in ch.items)
 
 
+def test_engaged_session_is_the_active_reader_not_the_foreground():
+    # After a session change the active reader differs from the foreground. The
+    # session the user is ENGAGED with (and navigates) is what they HEAR.
+    daemon, *_ = make_daemon(foreground="B")
+    daemon.router.active = "A"
+    assert daemon._engaged_session() == "A"           # active reader wins
+    daemon.router.active = None
+    daemon.router._last_active = "A"
+    assert daemon._engaged_session() == "A"           # last reader persists across idle
+    daemon.router._last_active = None
+    assert daemon._engaged_session() == "B"           # falls back to foreground
+
+
+def test_nav_navigates_the_engaged_reader_not_the_foreground():
+    # Bug repro: content was read for session A (the active reader) while the
+    # foreground is B (no turn of its own). A nav press must navigate A's history,
+    # not B's -- before the fix it hit foreground B, found nothing, and gave the
+    # "nothing to navigate" edge chime instead of rereading A.
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="B")
+    h = daemon.history
+    h.record("A", "prose", "a0"); h.end_message("A")
+    h.record("A", "prose", "a1")                      # A has a 2-message turn
+    daemon.router.active = "A"                        # A is what the user hears
+    daemon.handle_message({"type": "nav", "to": "prev", "session": "B"})
+    assert speaker.earcons[-1] == "nav"               # moved within A, not nav_edge
+    ch = daemon.router.channel("A")
+    assert [it.text for it in ch.items[ch.cursor:]] == ["a0", "a1"]   # replayed A
+
+
 def test_nav_steps_by_paragraph_within_one_message():
     daemon, *_ = make_daemon(foreground="fg")
     daemon.handle_message({

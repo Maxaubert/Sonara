@@ -12,13 +12,6 @@ def _force(monkeypatch, plat):
 
 
 @pytest.fixture
-def mac(monkeypatch):
-    _force(monkeypatch, "darwin")
-    yield
-    platform._CACHE = None
-
-
-@pytest.fixture
 def win(monkeypatch):
     _force(monkeypatch, "win32")
     yield
@@ -38,14 +31,6 @@ def _patch_keymap_paths(monkeypatch, tmp_path):
 
 # --- keytables come from the active platform backend ------------------------
 
-def test_macos_keytables_via_backend(mac):
-    kc, mm = keymap._keytables()
-    for k in ("s", "r", "d", "l", "v", "o", ".", "]", "["):
-        assert k in kc
-    assert kc["s"] == 1 and kc["."] == 47 and kc["]"] == 30 and kc["["] == 33
-    assert mm["cmd"] == 256 and mm["shift"] == 512 and mm["ctrl"] == 4096
-
-
 def test_windows_keytables_via_backend(win):
     kc, mm = keymap._keytables()
     assert kc["s"] == 0x53 and kc["."] == 0xBE
@@ -59,14 +44,6 @@ def test_action_messages_faster_has_delta_25():
 
 # --- default_keymap: per-OS chord -------------------------------------------
 
-def test_default_keymap_macos_uses_ctrl_cmd(mac):
-    d = keymap.default_keymap()
-    # only nav/mute/next_session are bound by default; every binding carries the chord
-    assert set(d.keys()) == {"nav_prev", "nav_next", "mute", "next_session"}
-    assert d["nav_next"]["key"] == "right" and d["nav_next"]["mods"] == ["ctrl", "cmd"]
-    assert d["mute"]["key"] == "m" and "pause" not in d   # pause ships UNBOUND
-
-
 def test_default_keymap_windows_uses_ctrl_shift_alt(win):
     d = keymap.default_keymap()
     assert d["nav_next"]["mods"] == ["ctrl", "shift", "alt"]
@@ -75,13 +52,6 @@ def test_default_keymap_windows_uses_ctrl_shift_alt(win):
 
 # --- resolve_keymap ---------------------------------------------------------
 
-def test_resolve_macos_carbon_codes(mac):
-    resolved = keymap.resolve_keymap({"pause": {"key": "p", "mods": ["ctrl", "cmd"]}})
-    assert resolved == [{
-        "action": "pause", "keyCode": 35, "modifiers": 4352,  # 4096 | 256
-        "message": '{"type": "pause"}'}]
-
-
 def test_resolve_windows_vk_codes(win):
     resolved = keymap.resolve_keymap(
         {"pause": {"key": "p", "mods": ["ctrl", "shift", "alt"]}})
@@ -89,13 +59,6 @@ def test_resolve_windows_vk_codes(win):
     assert row["keyCode"] == 0x50                            # VK 'P'
     assert row["modifiers"] == (0x0002 | 0x0004 | 0x0001)    # ctrl|shift|alt
     assert row["action"] == "pause"
-
-
-def test_resolve_faster_message_is_json_with_delta(mac):
-    resolved = keymap.resolve_keymap({"faster": {"key": "]", "mods": ["ctrl", "cmd"]}})
-    entry = resolved[0]
-    assert entry["keyCode"] == 30 and entry["modifiers"] == 4352
-    assert json.loads(entry["message"]) == {"type": "set_rate", "delta": 25}
 
 
 def test_default_keymap_binds_only_nav_pause_mute():

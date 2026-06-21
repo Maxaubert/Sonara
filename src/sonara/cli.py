@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import sys
 from typing import Optional
 
@@ -68,6 +69,19 @@ def _cmd_rate(args) -> int:
 def _cmd_minqueue(args) -> int:
     _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_MINQUEUE, "minqueue": args.n})
     print("Min queue set to {0}.".format(args.n))
+    return 0
+
+
+def _cmd_audio_control(args) -> int:
+    enabled = args.state == "on"
+    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL, "enabled": enabled})
+    print("Audio control {0}.".format("on" if enabled else "off"))
+    return 0
+
+
+def _cmd_duck_level(args) -> int:
+    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_DUCK_LEVEL, "level": args.level})
+    print("Duck level set to {0} percent.".format(args.level))
     return 0
 
 
@@ -161,7 +175,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.add_argument("wpm", type=int)
     sp.set_defaults(func=_cmd_rate)
 
-    sp = sub.add_parser("voice", help="set the say voice (omit name to list voices)")
+    sp = sub.add_parser("voice", help="set the speech voice (omit name to list voices)")
     sp.add_argument("name", nargs="*", help="voice name; omit to list installed voices")
     sp.set_defaults(func=_cmd_voice)
 
@@ -169,6 +183,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "minqueue", help="items to batch before reading (1 = read immediately)")
     sp.add_argument("n", type=int)
     sp.set_defaults(func=_cmd_minqueue)
+
+    ap = sub.add_parser("audio-control", help="duck other apps' audio while speaking")
+    ap.add_argument("state", choices=["on", "off"])
+    ap.set_defaults(func=_cmd_audio_control)
+
+    dp = sub.add_parser("duck-level", help="set duck target volume (0-100)")
+    dp.add_argument("level", type=int)
+    dp.set_defaults(func=_cmd_duck_level)
 
     sub.add_parser("repeat", help="repeat the last spoken item").set_defaults(
         func=_cmd_repeat)
@@ -186,10 +208,10 @@ def doctor() -> list:
     """Return a list of (check, ok, detail) health-check tuples."""
     results = []
 
-    # Platform-specific rows supplied by the OS backend (macOS: say/afplay/
-    # swiftc/LaunchAgents/...; Windows: schtasks/Task/pythonw/neural voice/...).
+    # Platform-specific rows supplied by the OS backend (Windows:
+    # schtasks/Task/pythonw/neural voice/...).
     results.extend(_platform().supervisor.doctor_rows())
-    # Hotkey diagnostics (Windows: collisions + UIPI/elevation; macOS: none here).
+    # Hotkey diagnostics (Windows: collisions + UIPI/elevation).
     results.extend(_platform().hotkey.doctor_rows())
 
     # Neutral rows (portable, keep inline).
@@ -338,8 +360,8 @@ def _copy_app(plugin_root: str) -> str:
     """Copy the plugin's sonara package into the stable APP_DIR. Returns APP_DIR.
 
     Overwrites on every install so a plugin update fully refreshes the copy
-    (stale modules from a prior version do not linger). The daemon LaunchAgent
-    points PYTHONPATH at APP_DIR, decoupling the long-lived daemon from the
+    (stale modules from a prior version do not linger). The daemon's scheduled
+    task points PYTHONPATH at APP_DIR, decoupling the long-lived daemon from the
     version-pinned marketplace cache.
     """
     app_dir = str(paths.APP_DIR)
@@ -352,11 +374,56 @@ def _copy_app(plugin_root: str) -> str:
     return app_dir
 
 
+# The Windows speech engine (PyWinRT / OneCore). Kept in sync with the
+# [windows] extra in pyproject.toml and the hint in platform/windows/tts.py.
+_WINRT_PACKAGES = (
+    "winrt-runtime",
+    "winrt-Windows.Media.SpeechSynthesis",
+    "winrt-Windows.Storage.Streams",
+    "pycaw",     # per-app volume control for audio ducking
+)
+
+
+def _winrt_importable(python: str) -> bool:
+    """True if PyWinRT's OneCore speech projection imports under *python*."""
+    try:
+        r = subprocess.run(
+            [python, "-c", "import winrt.windows.media.speechsynthesis"],
+            capture_output=True, timeout=20)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ensure_speech_deps(python: str) -> bool:
+    """Make sure the Windows speech engine (PyWinRT) is installed in *python*.
+
+    Speech needs the winrt-* packages, and Claude Code does NOT install a plugin's
+    optional Python dependencies, so without this step a fresh install is silently
+    voiceless. pip-installs them (idempotent: a no-op if already present), then
+    verifies. Returns True iff speech can synthesize afterwards."""
+    if _winrt_importable(python):
+        print("Speech engine (PyWinRT): already installed.")
+        return True
+    print("Installing the Windows speech engine (PyWinRT)...")
+    try:
+        subprocess.run([python, "-m", "pip", "install", "--user", *_WINRT_PACKAGES],
+                       timeout=300)
+    except Exception as exc:  # noqa: BLE001 - fall through to the verify + hint
+        print(f"  pip could not run: {exc}")
+    if _winrt_importable(python):
+        print("Speech engine (PyWinRT): installed.")
+        return True
+    print("  Could not install PyWinRT automatically. Install it manually:\n    "
+          + python + " -m pip install " + " ".join(_WINRT_PACKAGES))
+    return False
+
+
 def install() -> int:
-    """Install Sonara: resolve python, copy the runtime, write the install
-    record, then delegate OS-specific autostart + hooks + launcher + hotkeys to
-    the platform backend (macOS: LaunchAgents + hotkeyd; Windows: Task Scheduler
-    + settings.json hooks + sonara.cmd)."""
+    """Install Sonara: resolve python, ensure the speech engine, copy the runtime,
+    write the install record, then delegate OS-specific autostart + hooks +
+    launcher + hotkeys to the platform backend (Windows: Task Scheduler +
+    settings.json hooks + sonara.cmd)."""
     paths.ensure_sonara_dir()
     sup = _platform().supervisor
 
@@ -369,6 +436,11 @@ def install() -> int:
     ver = sup._probe_python_version(python)
     py_ver = "{0}.{1}".format(*ver) if ver else "3.9"
     print(f"Using interpreter: {python} (Python {py_ver})")
+
+    # 1b. Ensure the Windows speech engine (PyWinRT) is installed in that Python.
+    #     Claude Code does NOT install a plugin's optional Python deps, so without
+    #     this a fresh install is silently voiceless. install() owns it.
+    speech_ok = _ensure_speech_deps(python)
 
     plugin_root = os.path.realpath(paths.repo_root())
 
@@ -395,22 +467,32 @@ def install() -> int:
     # 5. OS-specific autostart + hooks + launcher (the platform backend owns it).
     sup.install(python, app_dir)
 
-    # 6. Global hotkeys. Each backend prints its own outcome (macOS: build +
-    #    load hotkeyd; Windows: deferred to M3, announced in post_install_notes).
-    hk_log = os.path.join(os.path.dirname(str(paths.LOG_PATH)), "hotkeyd.log")
-    launchctl_fn = getattr(sup, "launchctl", None) or (lambda a: 0)
-    _platform().hotkey.install(
-        log_path=hk_log, agent_path=None, launchctl_fn=launchctl_fn)
+    # 6. Global hotkeys. Windows hotkeys run in-process and are started by the
+    #    daemon (deferred to M3, announced in post_install_notes).
+    _platform().hotkey.install()
 
-    # 7. Voice check (best_voice() is a display-name str on every platform).
-    try:
-        voice = _platform().tts.best_voice()
-        print(f"Voice: {voice}." if voice else "Voice: default.")
-    except Exception:  # noqa: BLE001 - voice check must never break install
-        pass
+    # 7. Voice check. Only meaningful once the speech engine is present; otherwise
+    #    surface the "add a voice" path so N/KN and bare-Windows users aren't stuck.
+    if speech_ok:
+        try:
+            voice = _platform().tts.best_voice()
+            if voice:
+                print(f"Voice: {voice}.")
+            else:
+                print("No speech voice found. Add one in Settings > Time & language "
+                      "> Speech > Add voices, then run: sonara doctor")
+        except Exception:  # noqa: BLE001 - voice check must never break install
+            print("No speech voice found. Add one in Settings > Time & language "
+                  "> Speech > Add voices, then run: sonara doctor")
 
     # 8. OS-specific next steps.
     sup.post_install_notes()
+
+    if not speech_ok:
+        print("\n!!  Sonara is set up, but the SPEECH ENGINE is not installed yet, so "
+              "it will be SILENT. Install PyWinRT (command above), then re-run "
+              "`sonara install` (or `sonara doctor` to confirm).")
+        return 1
     return 0
 
 
@@ -511,10 +593,10 @@ def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
-    sub.add_parser("install", help="install the LaunchAgent + SONARA_DIR").set_defaults(
+    sub.add_parser("install", help="install the scheduled task + SONARA_DIR").set_defaults(
         func=_cmd_install)
     sub.add_parser("uninstall",
-                   help="remove Sonara (LaunchAgents, launcher, runtime files)").set_defaults(
+                   help="remove Sonara (scheduled task, launcher, runtime files)").set_defaults(
         func=_cmd_uninstall)
     sub.add_parser("daemon", help="run the speech daemon in the foreground").set_defaults(
         func=_cmd_daemon)

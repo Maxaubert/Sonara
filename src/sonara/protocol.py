@@ -30,6 +30,8 @@ class MsgType:
     SET_VERBOSITY = "set_verbosity"
     SET_VOICE = "set_voice"
     SET_MINQUEUE = "set_minqueue"
+    SET_AUDIO_CONTROL = "set_audio_control"   # enable/disable audio ducking
+    SET_DUCK_LEVEL = "set_duck_level"         # set duck target volume (0-100)
     STATUS = "status"
     PING = "ping"
     REREAD_OPTIONS = "reread_options"

@@ -70,7 +70,7 @@ def test_run_falls_back_when_voice_name_unknown():
 def test_run_raises_actionable_error_when_no_voices(monkeypatch):
     # On a box with no OneCore voices, run() must surface the actionable
     # "install a voice" RuntimeError — NOT the raw FileNotFoundError that real
-    # SpeechSynthesizer activation throws. Regression: nimkimi/sonari#2.
+    # SpeechSynthesizer activation throws. Regression for the no-voices error.
     import winrt.windows.media.speechsynthesis as ss
     monkeypatch.setattr(ss.SpeechSynthesizer, "all_voices", [])
     with pytest.raises(RuntimeError, match="No TTS voices installed"):

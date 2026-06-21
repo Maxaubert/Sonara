@@ -1,5 +1,4 @@
 import os
-import subprocess
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(REPO, "bin")
@@ -10,22 +9,27 @@ def _read(name):
         return f.read()
 
 
-def test_sonara_daemon_prefers_usr_bin_python3_first():
-    txt = _read("sonara-daemon")
-    # The /usr/bin/python3 preference must appear BEFORE any `command -v python3`.
-    pref = txt.index("[ -x /usr/bin/python3 ]")
-    cmdv = txt.index("command -v python3")
-    assert pref < cmdv, "shim must prefer /usr/bin/python3 before PATH lookup"
+def test_bootstrap_ps1_provisions_via_uv_and_hands_off():
+    txt = _read("sonara-bootstrap.ps1")
+    # downloads the uv BINARY from GitHub releases (no remote-script execution)
+    assert "astral-sh/uv/releases/download" in txt
+    assert "uv python install 3.12" in txt
+    # rejects the Microsoft Store stub when probing system Python
+    assert "WindowsApps" in txt
+    # writes the interpreter record both consumers read
+    assert "python.path" in txt and "pythonw.path" in txt
+    # hands off to the real installer
+    assert "sonara.cli install" in txt
 
 
-def test_sonara_prefers_usr_bin_python3_first():
-    # On macOS/Linux (the non-Windows branch) /usr/bin/python3 must be preferred
-    # before its PATH fallback. Windows uses `python` instead (OS guard below).
-    txt = _read("sonara")
-    assert 'OS' in txt and 'Windows_NT' in txt   # OS-aware: Windows -> python
-    pref = txt.index("[ -x /usr/bin/python3 ]")
-    cmdv = txt.index("command -v python3", pref)  # the PATH fallback AFTER it
-    assert pref < cmdv, "shim must prefer /usr/bin/python3 before PATH lookup"
+def test_sonara_cmd_falls_back_to_recorded_python():
+    assert "python.path" in _read("sonara.cmd")
+
+def test_sonara_hook_cmd_falls_back_to_recorded_pythonw():
+    assert "pythonw.path" in _read("sonara-hook.cmd")
+
+def test_bin_sonara_bash_falls_back_to_recorded_python():
+    assert "python.path" in _read("sonara")
 
 
 def test_sonara_hook_cmd_resolves_interpreter_and_logs_stderr():
@@ -42,26 +46,10 @@ def test_sonara_hook_cmd_resolves_interpreter_and_logs_stderr():
     assert "exit /b 0" in low                      # a hook must never fail loudly
 
 
-def test_sonara_daemon_picks_usr_bin_python3_even_when_stub_python3_on_path(tmp_path):
-    # A fake `python3` earlier on PATH writes a marker; the shim must NOT pick it
-    # because /usr/bin/python3 exists and is preferred. We verify by capturing
-    # which interpreter the shim selects via a one-shot `--version`-style probe.
-    stub_dir = tmp_path / "stub"
-    stub_dir.mkdir()
-    marker = tmp_path / "stub-was-used"
-    stub = stub_dir / "python3"
-    stub.write_text(
-        "#!/bin/sh\n"
-        f'echo used > "{marker}"\n'
-        'exit 0\n'
-    )
-    stub.chmod(0o755)
-    env = dict(os.environ)
-    env["PATH"] = f"{stub_dir}:{env.get('PATH','')}"
-    # Run the shim with a no-op subcommand path: `-m sonara.cli --help`-style.
-    # We pass `status` which exits quickly; the daemon shim runs sonara.daemon,
-    # so use the CLI shim for a deterministic quick exit.
-    subprocess.run([os.path.join(BIN, "sonara"), "--help"], env=env,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # If /usr/bin/python3 was preferred, the stub marker is NEVER written.
-    assert not marker.exists(), "shim used the PATH stub instead of /usr/bin/python3"
+def test_install_command_routes_through_bootstrap():
+    import os
+    p = os.path.join(REPO, "commands", "install.md")
+    with open(p, encoding="utf-8") as f:
+        txt = f.read()
+    assert "sonara-bootstrap.ps1" in txt   # provisions Python if absent
+    assert "powershell" in txt.lower()

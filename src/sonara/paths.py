@@ -14,14 +14,32 @@ HOTKEYD_RESOLVED_PATH = SONARA_DIR / "hotkeyd.resolved.json"
 HOTKEYD_BIN_PATH = SONARA_DIR / "sonara-hotkeyd"
 INSTALL_RECORD_PATH = SONARA_DIR / "install.json"
 KOKORO_VENV = SONARA_DIR / "venv"   # opt-in uv-managed venv for neural voices
+PYTHON_RECORD_PATH = SONARA_DIR / "python.path"     # recorded console python.exe
+PYTHONW_RECORD_PATH = SONARA_DIR / "pythonw.path"   # recorded windowless pythonw.exe
+
+
+def _read_recorded(record: "Path") -> "str | None":
+    """The interpreter path written in *record*, iff it still exists as a file."""
+    try:
+        path = record.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return path if path and Path(path).is_file() else None
+
+
+def recorded_python() -> "str | None":
+    """The console interpreter the bootstrap recorded (python.exe), or None."""
+    return _read_recorded(PYTHON_RECORD_PATH)
+
+
+def recorded_pythonw() -> "str | None":
+    """The windowless interpreter the bootstrap recorded (pythonw.exe), or None."""
+    return _read_recorded(PYTHONW_RECORD_PATH)
 
 
 def kokoro_venv_python() -> str:
     """Absolute path to the neural venv's Python interpreter (may not exist)."""
-    import sys
-    if sys.platform == "win32":
-        return str(KOKORO_VENV / "Scripts" / "python.exe")
-    return str(KOKORO_VENV / "bin" / "python")
+    return str(KOKORO_VENV / "Scripts" / "python.exe")
 
 
 def ensure_sonara_dir() -> None:

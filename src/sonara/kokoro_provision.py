@@ -1,9 +1,9 @@
 """Provision + wire the opt-in Kokoro neural-voice environment.
 
 Kokoro needs Python >=3.10 (kokoro-onnx requires onnxruntime>=1.20.1 + numpy>=2),
-but the daemon defaults to system /usr/bin/python3 (3.9). This module provisions a
-uv-managed venv at paths.KOKORO_VENV and the daemon is repointed at it. "Neural
-enabled" is derived from the venv's existence — no separate flag to drift.
+which the system Python may not satisfy. This module provisions a uv-managed venv
+at paths.KOKORO_VENV and the daemon is repointed at it. "Neural enabled" is derived
+from the venv's existence — no separate flag to drift.
 
 All subprocess work goes through an injected ``run`` callable so the logic is
 unit-testable without touching uv, the network, or a real venv.
@@ -43,8 +43,7 @@ def ensure_uv(which=shutil.which, run=subprocess.check_call,
         return found
     py = base_python or sys.executable
     run([py, "-m", "pip", "install", "--user", "--quiet", "uv"])
-    exe = "uv.exe" if sys.platform == "win32" else "uv"
-    cand = os.path.join(user_scripts(py), exe)
+    cand = os.path.join(user_scripts(py), "uv.exe")
     if os.path.exists(cand):
         return cand
     found = which("uv")

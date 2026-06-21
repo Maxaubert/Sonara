@@ -1,7 +1,14 @@
 @echo off
-rem Windows launcher for the Sonara CLI (mirrors the macOS bin/sonara bash script).
-rem Runs the plugin's own src with no installed 'sonara' on PATH. Uses python.exe
-rem (console) so subcommands like `status` can print their output.
-setlocal
+rem Windows launcher for the Sonara CLI. Prefers system python.exe; falls back to
+rem the interpreter recorded by /sonara:install when none is on PATH (zero-Python).
+setlocal enabledelayedexpansion
 set "PYTHONPATH=%~dp0..\src;%PYTHONPATH%"
-python -m sonara.cli %*
+where python >nul 2>nul && ( python -m sonara.cli %* & exit /b )
+set "REC=%USERPROFILE%\.sonara\python.path"
+if exist "%REC%" (
+  set /p PY=<"%REC%"
+  "!PY!" -m sonara.cli %*
+) else (
+  echo No Python found. Run /sonara:install to set up Sonara.
+  exit /b 1
+)

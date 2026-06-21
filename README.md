@@ -1,9 +1,17 @@
-# Sonara
+<div align="center">
+  <img src="assets/sonara-logo.png" alt="Sonara" width="128">
+
+  # Sonara
+
+  **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on Windows, an accessibility tool for blind and low-vision developers.**
+
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](https://github.com/Maxaubert/Sonara)
+  [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square)](https://github.com/Maxaubert/Sonara)
+</div>
+
+---
 
 > The Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari) (the macOS line). Developed and released independently.
-
-**Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS — an
-accessibility tool for blind and low-vision developers.**
 
 Sonara reads Claude Code's output aloud — prose, plans, multiple-choice questions, and
 permission prompts — in order, plays a distinct sound the instant a decision needs you, and
@@ -13,35 +21,37 @@ off.
 - **Ordered narration** — prose, plans, questions, and permissions are spoken in order, never out of sequence.
 - **Per-decision earcons** — a distinct sound the moment a question, plan, permission, or error appears.
 - **Selection by number** — answer prompts with the option's number; no key injection.
-- **Global hotkeys** — stop, repeat, skip, jump-to-decision, catch-up, rate, verbosity, re-read (work mid-speech).
-- **Self-contained** — runs on the macOS system Python; no `pip`, no third-party packages.
+- **Global hotkeys** — navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
+- **Lightweight** — the daemon runs on Python's standard library; the one-time `sonara install` fetches the Windows speech engine (PyWinRT) for you, and neural voices stay optional.
 
 ## Requirements
 
-- macOS (Sonara uses the built-in `say` and `afplay` commands).
-- Python 3.9 or newer — macOS ships `/usr/bin/python3`, which is enough. Sonara
-  picks the best `python3 >= 3.9` it can find automatically.
-- Xcode Command Line Tools for global hotkeys — `xcode-select --install`. (Speech
-  works without them; only the hotkeys need `swiftc`.)
+- Windows 10 or 11 (Sonara uses the built-in Windows speech engine and `winsound`
+  for earcons).
+- Python 3.9 or newer on your PATH — install it from
+  [python.org](https://www.python.org/downloads/windows/) (the Microsoft Store stub is
+  not used). Sonara picks the best `python` >= 3.9 automatically.
 - Claude Code 2.1.162 or newer.
+
+Python is the only thing you need beforehand: `sonara install` (below) fetches the Windows
+speech engine (PyWinRT) for you with one `pip` step.
 
 ## Install
 
-Sonara installs from a Claude Code marketplace. You start hearing Claude as soon as the
-plugin is enabled; one more command turns on global hotkeys and autostart.
+Sonara installs from a Claude Code marketplace, then one required setup command wires up
+the speech engine, autostart, hooks, and hotkeys.
 
 1. Add the marketplace: `/plugin marketplace add Maxaubert/sonara` (or, in a shell,
    `claude plugin marketplace add Maxaubert/sonara`).
 2. Install the plugin: `/plugin install sonara@sonara` (or
    `claude plugin install sonara@sonara`). The marketplace is named `sonara`, so the
-   install target is `sonara@sonara`. You will start hearing Claude immediately — the
-   daemon lazy-starts on the first hook.
-3. Run `/sonara:install` from inside Claude Code to finish setup (each step is printed and
-   spoken). Until you run it, every new session Sonara reminds you once: *"Sonara is reading
-   aloud. To enable hotkeys and autostart, run /sonara:install."*
-4. Run `/sonara:doctor` to confirm everything is green (the only expected failure is
-   `swiftc` / Xcode Command Line Tools on a machine without them — speech still works;
-   only the hotkeys need them).
+   install target is `sonara@sonara`.
+3. **Run `/sonara:install`** — the required one-time setup. It installs the Windows speech
+   engine (PyWinRT) into your Python, copies the runtime to `~/.sonara/app`, and registers
+   autostart, the Claude Code hooks, and global hotkeys. Each step is printed; it can take
+   a minute (it downloads the speech-engine packages).
+4. Start a new Claude Code session and run `/sonara:doctor` to confirm everything is green.
+   You'll hear Claude read its output from then on.
 
 For local development you can skip the marketplace and load the repo per session with
 `claude --plugin-dir <path-to-sonara>`.
@@ -52,9 +62,11 @@ If you already have `sonara` on your PATH, the CLI equivalent of step 3 is:
 sonara install
 ```
 
-`sonara install` resolves the best `python3 >= 3.9`, **copies the runtime to
-`~/.sonara/app`** (so it survives plugin auto-updates), builds the hotkey
-daemon, writes both LaunchAgents, and places the `~/.local/bin/sonara` launcher.
+`sonara install` resolves the best `python` >= 3.9, **installs the speech engine
+(PyWinRT)**, **copies the runtime to `~/.sonara/app`** (so it survives plugin
+auto-updates), registers the Windows autostart entry, and places the `sonara` launcher on
+your PATH. If it can't install PyWinRT (for example, no network), it prints the exact
+`pip` command to run and exits non-zero, so it never silently leaves you without speech.
 After a plugin update, Sonara says once — *"Sonara was updated. Run /sonara:install
 to apply."* — so you can refresh the copy.
 
@@ -62,27 +74,26 @@ to apply."* — so you can refresh the copy.
 
 Contributors can run the test suite from a venv:
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
-.venv/bin/python -m pytest -q
+```powershell
+python -m venv .venv; .venv\Scripts\pip install -e '.[dev]'
+.venv\Scripts\python -m pytest -q
 ```
 
 The public install path above does **not** use `pip` — the venv is for tests only.
 
 ## Enhanced-voice setup (recommended)
 
-Sonara defaults to the best enhanced/neural English voice it can find and falls back to
-**Samantha**. Enhanced voices sound dramatically better and are free and offline. To install
-one:
+Sonara defaults to the best natural/neural English voice it can find. Windows natural voices
+sound dramatically better and are free and offline. To install one:
 
-1. Open **System Settings → Accessibility → Spoken Content**.
-2. Click **System Voice → Manage Voices…**.
-3. Pick an English voice marked **(Enhanced)** or **(Premium)** — e.g. *Ava (Premium)*,
-   *Zoe (Premium)*, or *Allison* — and download it.
+1. Open **Settings → Time & language → Speech**.
+2. Under **Manage voices**, click **Add voices**.
+3. Pick an English voice marked **(Natural)** — e.g. *Microsoft Ava (Natural)* or
+   *Microsoft Andrew (Natural)* — and download it.
 4. Run `sonara doctor` to confirm Sonara picks it up, or set it explicitly:
 
-```bash
-sonara voice "Ava (Premium)"
+```powershell
+sonara voice "Microsoft Ava (Natural)"
 ```
 
 ## Controls and slash commands
@@ -92,22 +103,21 @@ commands inside a session.
 
 ### Global hotkeys
 
-Default modifier is **Ctrl+Cmd** (rebindable via `~/.sonara/keymap.json`). A tiny Swift
-helper registers these with Carbon `RegisterEventHotKey`, so no macOS accessibility
-permission is needed.
+Default modifier is **Ctrl+Shift+Alt** (rebindable via `~/.sonara/keymap.json`). The daemon
+registers these as Windows global hotkeys, so no extra accessibility permission is needed.
+
+Only four actions are bound by default (kept minimal so Sonara doesn't hog
+hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** —
+add a key in `~/.sonara/keymap.json` if you want one. Everything else (stop,
+repeat, skip, jump-to-decision, catch-up, re-read) lives in the CLI / slash
+commands below.
 
 | Hotkey | Effect |
 |---|---|
-| Ctrl+Cmd+S | Stop now and clear the queue |
-| Ctrl+Cmd+R | Re-speak the entire last message |
-| Ctrl+Cmd+. | Skip the current item |
-| Ctrl+Cmd+D | Jump to the pending decision |
-| Ctrl+Cmd+L | Replay everything you haven't heard (after stop, or from a session you left), then mark it heard |
-| Ctrl+Cmd+] | Speak faster |
-| Ctrl+Cmd+[ | Speak slower |
-| Ctrl+Cmd+V | Cycle verbosity (everything / medium / quiet) |
-| Ctrl+Cmd+O | Re-read the current prompt's options (numbers, descriptions, multi-select announce) |
-| Ctrl+Cmd+P | Cycle the voice to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
+| Ctrl+Shift+Alt+Left | Previous item — step back through the current turn |
+| Ctrl+Shift+Alt+Right | Next item — step forward through the current turn |
+| Ctrl+Shift+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
+| Ctrl+Shift+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
 ### Selecting options
 
@@ -121,18 +131,22 @@ they apply.
 
 ### Slash commands and CLI
 
+Most of these ship as `/sonara:` slash commands (the files in `commands/`); the rest are
+CLI-only (run `sonara <cmd>` in a terminal).
+
 | Slash command | CLI | Effect |
 |---|---|---|
-| `/sonara:install` | `sonara install` | One-time setup: autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
-| `/sonara:uninstall` | `sonara uninstall` | Remove LaunchAgents, hotkey helper, launcher, and `~/.sonara/app` (keeps your settings) |
+| `/sonara:install` | `sonara install` | One-time setup: speech engine (PyWinRT), autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
+| `/sonara:uninstall` | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
 | `/sonara:status` | `sonara status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
 | `/sonara:verbosity <level>` | `sonara verbosity <level>` | Set `everything` / `medium` / `quiet` |
-| `/sonara:voice <name>` | `sonara voice <name>` | Set the `say` voice |
+| `/sonara:voice <name>` | `sonara voice <name>` | Set the speech voice (omit the name to list voices) |
+| `/sonara:voices` | `sonara voices` | Install or remove Kokoro neural voices |
 | `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
 | `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
-| `/sonara:repeat` | `sonara repeat` | Re-speak the last item |
-| `/sonara:skip` | `sonara skip` | Skip the current item |
-| `/sonara:stop` | `sonara stop` | Stop now and clear the queue |
+| — | `sonara repeat` | Re-speak the last item |
+| — | `sonara skip` | Skip the current item |
+| — | `sonara stop` | Stop now and clear the queue |
 | `/sonara:doctor` | `sonara doctor` | Run all health checks |
 | `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
 
@@ -168,7 +182,7 @@ decision text are not read aloud until you bring that session forward. Submittin
 prompt or stopping flushes the queue, so the voice always resumes at what is current.
 
 To manually cycle the voice to another session without switching windows, press
-**Ctrl+Cmd+P** (macOS) or the platform equivalent. Sonara advances to the next session in a
+**Ctrl+Shift+Alt+P**. Sonara advances to the next session in a
 fixed round-robin order, plays a short chime, and says "Session changed: &lt;folder&gt;." An
 unread session resumes from where it left off; a fully-read session is replayed from the
 top.
@@ -197,12 +211,12 @@ State, config, the socket, and logs all live under `~/.sonara/`
 To remove Sonara, disable the `sonara` plugin via `/plugin` (or stop passing
 `--plugin-dir`), then run:
 
-```bash
+```powershell
 sonara uninstall
 ```
 
-`sonara uninstall` removes the LaunchAgents, the hotkey helper, and the
-`~/.local/bin/sonara` launcher. It preserves your `~/.sonara/config.json` and
+`sonara uninstall` removes the Windows autostart entry and the `sonara` launcher.
+It preserves your `~/.sonara/config.json` and
 `~/.sonara/keymap.json` so your settings survive a reinstall.
 
 The in-session equivalent is `/sonara:uninstall`. Uninstall also removes the
@@ -211,7 +225,7 @@ stable app copy at `~/.sonara/app`, and **preserves** your `config.json` and
 
 ## Privacy
 
-Sonara runs entirely on your own Mac. It collects nothing, sends nothing over the network,
+Sonara runs entirely on your own computer. It collects nothing, sends nothing over the network,
 and has no servers, telemetry, or analytics — the text it speaks is processed locally and is
 never stored or transmitted. See [PRIVACY.md](PRIVACY.md) for the full details.
 

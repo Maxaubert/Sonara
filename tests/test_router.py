@@ -146,7 +146,50 @@ def test_drop_clears_replay_flag_so_later_handoff_is_not_reading_again():
     target, replay = r.next_session()              # lands on B (read) -> replay armed
     assert (target, replay) == ("B", True)
     r.drop("B")                                    # B ends before the announcement plays
-    # now a normal auto handoff to A must NOT say "reading again"
+    # A was force-switched away (suppressed); new content lifts the suppression so
+    # it can auto-resume. The later auto handoff to A must NOT say "reading again".
+    a.append(_item("A", "a2"))                     # new content -> A no longer suppressed
     r.active = None; r._last_active = "X"          # force an auto announce on next pick
     item = r.next_item()
     assert item is not None and "reading again" not in item.text
+
+
+# --- force-switch suppression (bug 2): a session you manually switched AWAY from
+# is not auto-resumed until it gets new content; a manual return clears it. -----
+
+def test_force_switched_away_session_is_not_auto_resumed():
+    # Reading A, force-switch to B. When B drains, A must NOT auto-resume -- the
+    # user left it on purpose. Before the fix, oldest-waiting pulled A right back.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.active = "A"; a.next()                        # A reading; a2 still pending
+    assert r.next_session()[0] == "B"              # force-switch A -> B (suppresses A)
+    assert r._is_suppressed("A")
+    b.next()                                        # B reads its content and drains
+    assert r._pick() is None                       # A has pending a2 but stays suppressed
+
+
+def test_new_content_lifts_suppression_so_session_can_resume():
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.active = "A"; a.next()
+    r.next_session(); b.next()                      # switch A -> B, drain B
+    assert r._pick() is None                        # A suppressed
+    a.append(_item("A", "a3")); a.turn_done = True  # NEW content for A
+    assert not r._is_suppressed("A")                # len(items) changed -> lifted
+    assert r._pick() == "A"                         # A can be auto-picked again
+
+
+def test_manual_return_clears_suppression_and_resumes_from_cursor():
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.active = "A"; a.next()                        # A read a1; a2 pending (cursor=1)
+    r.next_session()                               # A -> B, A suppressed
+    assert r._is_suppressed("A")
+    target, replay = r.next_session()              # B -> A (manual return)
+    assert target == "A" and replay is False       # unread tail -> resume, not replay
+    assert not r._is_suppressed("A")               # manual return clears suppression
+    assert r.channels["A"].cursor == 1             # resumes where it left off

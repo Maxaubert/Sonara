@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import secrets
 import socket
 import subprocess
@@ -44,10 +45,14 @@ _MAX_CONN_THREADS = 32
 
 
 class SpeechDaemon:
-    def __init__(self, speaker, sessions, config) -> None:
+    def __init__(self, speaker, sessions, config, ducker=None) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
+        if ducker is None:
+            from sonara.platform.windows.ducking import NullDucker
+            ducker = NullDucker()
+        self.ducker = ducker
         self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
@@ -78,6 +83,11 @@ class SpeechDaemon:
         self._guided_sessions: set = set()
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
         self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
+        # Hotkey fires are handed to this queue by the Windows pump thread and
+        # applied by a dedicated worker under self._lock — so the pump NEVER blocks
+        # on the lock and presses can't pile up then burst while the daemon is busy
+        # streaming prose (the mute-hang). Drained by _hotkey_worker.
+        self._hotkey_q: "queue.Queue" = queue.Queue()
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -134,7 +144,7 @@ class SpeechDaemon:
 
         Throttle: at most once per session (recorded whether or not a cue fires).
         Silent when healthy. The check is a few file stats + a version compare
-        (no launchctl) and never raises.
+        (no subprocess) and never raises.
         """
         if session in self._guided_sessions:
             return
@@ -266,9 +276,9 @@ class SpeechDaemon:
         "not_installed" -> no install.json or launcher (never ran `sonara install`)
         "version_drift" -> installed but plugin_version differs from this session's
 
-        Cheap: a few file stats + a string compare. No launchctl. Never raises.
-        The hotkeyd binary is deliberately NOT part of this check so a deliberate
-        speech-only user (no swiftc) is never nagged.
+        Cheap: a few file stats + a string compare. No subprocess. Never raises.
+        Hotkey availability is deliberately NOT part of this check so a deliberate
+        speech-only user is never nagged.
         """
         rec = self._read_install_record()
         installed = (rec is not None and self._launcher_present())
@@ -313,7 +323,14 @@ class SpeechDaemon:
                 # correct: items accumulate until the threshold OR the turn ends.
                 self.history.end_message(session)
                 self._options.pop(session, None)
-            self._wake.set()
+            # Wake the speak loop ONLY when a batch is actually ready to read
+            # (>= minqueue, the turn is done, or a decision is waiting). Waking on
+            # every buffered delta made the loop spin on self._lock and starve the
+            # hotkey worker — the root cause of the "thinking" mute-hang. A finished
+            # turn wakes via the turn_done earcon / TOOL / FLUSH paths below; the
+            # speak loop's poll_interval is the safety net if a wake is ever missed.
+            if ch.ready(self._minqueue()):
+                self._wake.set()
             return None
 
         # Decision CONTENT is enqueued (and gated by foreground). The ALERT
@@ -389,8 +406,10 @@ class SpeechDaemon:
             self._earcon(kind)
             if kind == "turn_done":
                 # End-of-turn boundary: safety-net flush in case the final PROSE
-                # flag never arrived.
+                # flag never arrived. Wake the loop so a sub-threshold batch that was
+                # left buffered (no per-delta wake) is read now, not after a poll.
                 self.router.channel(session).turn_done = True
+                self._wake.set()
             return None
 
         if t == MsgType.FLUSH:
@@ -455,7 +474,7 @@ class SpeechDaemon:
             # Every nav press chimes: the "nav" earcon when the cursor moves to a
             # message, the "nav_edge" earcon at a boundary / nothing to navigate
             # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
-            fg = self.sessions.foreground()
+            fg = self._engaged_session()
             if fg is None:
                 self._earcon("nav_edge")
                 return None
@@ -484,6 +503,7 @@ class SpeechDaemon:
                 # utterance aborts. The speak loop re-queues the interrupted item
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
+                self._maybe_restore()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
@@ -533,7 +553,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.REPEAT:
-            fg = self.sessions.foreground()
+            fg = self._engaged_session()
             if fg is None:
                 return None
             self._nav_cursor.pop(fg, None)   # repeat returns to the latest message
@@ -545,7 +565,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.REREAD_OPTIONS:
-            fg = self.sessions.foreground()
+            fg = self._engaged_session()
             if fg is None:
                 return None
             text = self._options.get(fg)
@@ -565,8 +585,8 @@ class SpeechDaemon:
                 entry = self._pending_heard.get(cur.id)
                 if entry is not None:
                     entry.heard = True
-            # Advance the foreground channel cursor to the next decision item.
-            fg = self.sessions.foreground()
+            # Advance the engaged session's channel cursor to the next decision item.
+            fg = self._engaged_session()
             if fg is not None:
                 ch = self.router.channel(fg)
                 while ch.cursor < len(ch.items) and not ch.items[ch.cursor].is_decision:
@@ -656,6 +676,35 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
+        if t == MsgType.SET_AUDIO_CONTROL:
+            if "enabled" not in msg:
+                return None
+            enabled = bool(msg.get("enabled"))
+            self.config["audio_control"] = enabled
+            save_config(self.config)
+            if not enabled and self.ducker.is_ducked():
+                self.ducker.restore()      # un-duck immediately on turn-off
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Audio control on." if enabled else "Audio control off.",
+                            exempt_mute=True)
+            self._wake.set()
+            return None
+
+        if t == MsgType.SET_DUCK_LEVEL:
+            try:
+                level = max(0, min(100, int(msg.get("level"))))
+            except (TypeError, ValueError):
+                return None
+            self.config["duck_level"] = level
+            save_config(self.config)
+            if self._audio_control_on() and self.ducker.is_ducked():  # re-apply at the new level
+                self.ducker.restore()
+                self.ducker.duck(self._duck_exclude_pids(), level)
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Duck level {0} percent.".format(level), exempt_mute=True)
+            self._wake.set()
+            return None
+
         if t == MsgType.CYCLE_VERBOSITY:
             order = ["everything", "medium", "quiet"]
             cur = self.config.get("verbosity", "everything")
@@ -687,6 +736,8 @@ class SpeechDaemon:
     def stop(self) -> None:
         self._running.clear()
         self._wake.set()
+        self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
+        self._maybe_restore()       # never leave other apps' audio ducked
         self._stop_hotkeys()
         srv = self._server
         if srv is not None:
@@ -789,6 +840,15 @@ class SpeechDaemon:
         entry = self._pending_heard.get(cur.id)
         return entry.msg_id if entry is not None else None
 
+    def _engaged_session(self):
+        """The session the user is currently engaged with: the one being read
+        (router.active), else the one that most recently read (persists across idle
+        gaps), else the foreground. After a session-change the active reader differs
+        from the foreground, so nav/repeat/reread/jump must operate on what the user
+        HEARS, not the last session to submit a prompt."""
+        return (self.router.active or self.router._last_active
+                or self.sessions.foreground())
+
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
         Returns "moved" if the cursor actually moved, else "edge" (already at the
@@ -861,24 +921,47 @@ class SpeechDaemon:
         self._wake.set()
 
     def _dispatch_hotkey(self, message: dict) -> None:
-        """A hotkey fire is handled exactly like an inbound socket message.
-
-        MUST hold self._lock around handle_message, identical to the socket path
-        (_handle_conn): the hotkey thread mutates shared state (queue, history,
-        config) concurrently with the speak loop, so without the lock it races
-        -> 'list changed size during iteration' / corruption. handle_message and
-        its callees never acquire self._lock (note_spoken/speak run on the speak
-        thread), so this is deadlock-free. An enqueue-based action (repeat /
-        skip_back / catch_up) is likewise safe from losing its item to that race.
-        """
+        """Called ON the Windows hotkey PUMP thread for each fire. It MUST NOT block:
+        debounce (cheap, pump-thread-only state) then hand the message to the worker
+        queue and return to GetMessage immediately. Running handle_message here
+        (under self._lock) used to stall the pump whenever the daemon held the lock
+        streaming prose, so presses queued at the OS level and burst later — the
+        mute-hang. The worker (_hotkey_worker) applies the message under the lock."""
         import time as _t
         if self._debounce_suppress(message.get("type"), _t.monotonic()):
             return   # a too-fast repeat of the same toggle -> ignore
+        self._hotkey_q.put(message)
+
+    def _hotkey_worker(self) -> None:
+        """Drain queued hotkey fires and apply each under self._lock — OFF the pump
+        thread, so a busy daemon can never stall hotkey CAPTURE. Serialized (single
+        worker) like the old synchronous dispatch, and serialized against the socket
+        path via self._lock."""
+        while self._running.is_set():
+            try:
+                message = self._hotkey_q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if message is None:        # shutdown sentinel from stop()
+                break
+            self._process_hotkey(message)
+
+    def _process_hotkey(self, message: dict) -> None:
+        """Apply one hotkey message exactly like an inbound socket message.
+
+        MUST hold self._lock around handle_message, identical to the socket path
+        (_handle_conn): it mutates shared state (channels, history, config)
+        concurrently with the speak loop, so without the lock it races -> 'list
+        changed size during iteration' / corruption. handle_message and its callees
+        never acquire self._lock (note_spoken/speak run on the speak thread), so this
+        is deadlock-free. Contained so one bad hotkey can't kill the worker."""
         try:
             with self._lock:
                 self.handle_message(message)
-        except Exception:  # noqa: BLE001 - one bad hotkey must not kill the pump
-            pass
+        except Exception:  # noqa: BLE001 - one bad hotkey must not kill the worker
+            import sys
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     def _debounce_suppress(self, mtype, now) -> bool:
         """True if *mtype* is a repeat of the same TOGGLE hotkey within the debounce
@@ -930,27 +1013,55 @@ class SpeechDaemon:
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
                    pause_exempt: bool = False) -> None:
-        """Insert a one-off confirmation cue at the active read position so it is
-        always heard (before any normal queued items). mute_exempt/pause_exempt
-        flags ensure it plays through holds and mutes. When *session* is falsy (no
-        foreground/active session) the cue goes to the reserved CONTROL channel,
-        which the router serves ahead of everything — so global controls
-        (pause/mute) are still announced even when no session is registered."""
+        """Speak a one-off confirmation/feedback cue (pause/mute/repeat/reread/...).
+        These ALWAYS go to the reserved CONTROL channel, which the router serves
+        ahead of every session on `pending() > 0` — bypassing the minqueue gate. A
+        session channel is gated by `ready()` (minqueue items / turn_done), so a cue
+        placed there during a live stream would sit unplayed and then burst out when
+        the turn flushed; CONTROL makes the cue immediate regardless of stream state.
+        The *session* arg is accepted for call-site clarity but no longer routes."""
         from sonara.router import CONTROL
-        if not session:
-            session = CONTROL
-        ch = self.router.channel(session)
-        if session == CONTROL and ch.caught_up():
+        ch = self.router.channel(CONTROL)
+        if ch.caught_up():
             ch.wipe()                      # control cues don't replay; keep it small
-        item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
+        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
                           pause_exempt=pause_exempt)
-        ch.items.insert(ch.cursor, item)   # speak next, then continue
+        ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
+
+    def _audio_control_on(self) -> bool:
+        return bool(self.config.get("audio_control"))
+
+    def _duck_level(self) -> int:
+        try:
+            return max(0, min(100, int(self.config.get("duck_level", 20))))
+        except (TypeError, ValueError):
+            return 20
+
+    def _duck_exclude_pids(self) -> "set[int]":
+        pids = {os.getpid()}
+        try:
+            pids.update(self.speaker.earcon_pids())
+        except AttributeError:
+            pass
+        return pids
+
+    def _maybe_duck(self) -> None:
+        if self._audio_control_on() and not self.ducker.is_ducked():
+            self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
+
+    def _maybe_restore(self) -> None:
+        if self.ducker.is_ducked():
+            self.ducker.restore()
 
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
+            # Idempotently restore other apps' audio while paused — closes the window
+            # where a re-duck slipped in during the pause transition. Safe to call
+            # repeatedly: _maybe_restore() is a no-op when not ducked.
+            self._maybe_restore()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
             # pause rewinds the cursor past where _speak_cue inserted the cue, so a
@@ -986,6 +1097,7 @@ class SpeechDaemon:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
         if item is None:
+            self._maybe_restore()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
@@ -998,6 +1110,7 @@ class SpeechDaemon:
                 self._earcon("session_change")
             except Exception:  # noqa: BLE001
                 pass
+        self._maybe_duck()
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
         except Exception:  # noqa: BLE001
@@ -1132,8 +1245,11 @@ class SpeechDaemon:
 
         speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
         accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
+        hotkey_worker = threading.Thread(target=self._hotkey_worker,
+                                         name="sonara-hotkey-worker", daemon=True)
         speak_thread.start()
         accept_thread.start()
+        hotkey_worker.start()
         self._start_hotkeys()
 
         try:
@@ -1260,6 +1376,8 @@ def main() -> None:
     from sonara.platform import get_platform
 
     _backend = get_platform()
+    from sonara.platform.windows.ducking import restore_from_state_file
+    restore_from_state_file()   # un-duck anything a crashed prior daemon left down
     cfg = load_config()
     if "earcons" not in cfg:
         cfg["earcons"] = _backend.earcon.default_earcons()
@@ -1271,7 +1389,7 @@ def main() -> None:
         earcons=cfg.get("earcons"),
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))
-    daemon = SpeechDaemon(speaker, sessions, cfg)
+    daemon = SpeechDaemon(speaker, sessions, cfg, ducker=_backend.ducker)
     daemon.run()
 
 

@@ -3,7 +3,7 @@ PATH, so sys.path[0] is the file's own dir, not the package root. The loop must
 self-bootstrap so `import sonara` resolves, and the daemon it spawns must inherit
 PYTHONPATH. Regression for the dead-autostart bug (#6).
 
-These run on macOS: launched bare, resolve_python() returns None there, so the
+On a non-Windows host (a dev box / CI) resolve_python() returns None, so the
 restart loop is skipped and the process exits 0 once the import succeeds.
 """
 import os

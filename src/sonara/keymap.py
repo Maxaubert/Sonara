@@ -1,8 +1,8 @@
-"""Sonara Phase 2 keymap: ALL hotkey logic lives here (the Swift binary is dumb).
+"""Sonara keymap: ALL hotkey logic lives here.
 
-Maps key names -> macOS virtual key codes, modifier names -> Carbon masks, and
-actions -> speechd protocol messages. Produces the resolved JSON array that the
-Swift hotkeyd reads, registers, and sends on fire.
+Maps key names -> Windows virtual key codes, modifier names -> RegisterHotKey
+modifier masks, and actions -> speechd protocol messages. Produces the resolved
+JSON array that the daemon's in-process hotkey listener registers and fires on.
 """
 from __future__ import annotations
 

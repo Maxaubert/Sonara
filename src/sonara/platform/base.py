@@ -1,6 +1,6 @@
 """Platform backend interfaces. The portable core depends ONLY on these
-abstractions; concrete macOS/Windows implementations live in sibling packages
-and are wired in by get_platform() (the only sys.platform branch for backend
+abstractions; the concrete Windows implementation lives in a sibling package
+and is wired in by get_platform() (the only sys.platform guard for backend
 SELECTION; transport.py branches separately for its stdlib lock primitive)."""
 from __future__ import annotations
 
@@ -37,13 +37,11 @@ class EarconBackend(abc.ABC):
 
 class HotkeyBackend(abc.ABC):
     @abc.abstractmethod
-    def install(self, log_path: str, agent_path: str, launchctl_fn) -> "tuple":
+    def install(self) -> "tuple":
         """Set up the global-hotkey mechanism. Return (ok: bool, detail: str).
 
-        *log_path*     – path to the hotkey daemon log file.
-        *agent_path*   – path where the LaunchAgent plist is written.
-        *launchctl_fn* – callable(args) → int; abstracted so tests can patch it.
-        """
+        On Windows the hotkeys run in-process and are started by the daemon, so
+        there is nothing to provision here."""
 
     @abc.abstractmethod
     def uninstall(self) -> None:
@@ -66,10 +64,10 @@ class HotkeyBackend(abc.ABC):
         """The platform's default modifier chord (e.g. ['ctrl','cmd'])."""
         return []
 
-    # --- in-process lifecycle (Windows runs a thread; macOS runs a process) ---
+    # --- in-process lifecycle (Windows runs the listener on a daemon thread) ---
     def start(self, dispatch) -> None:
         """Begin listening for global hotkeys. *dispatch* is callable(message: dict)
-        invoked on each fire. Default: no-op (macOS hotkeyd is a separate process)."""
+        invoked on each fire. Default: no-op."""
         return None
 
     def stop(self) -> None:
@@ -78,11 +76,9 @@ class HotkeyBackend(abc.ABC):
 
     def reload(self, dispatch) -> None:
         """Re-apply the current keymap to the live listener after keymap.json
-        changed. Default: a full stop()+start() cycle (correct for an in-process
-        listener like Windows, whose stop() releases its chords before start()
-        re-registers them). Platforms whose hotkeys run in a SEPARATE process
-        (macOS) override this to rewrite the resolved keymap and reload that
-        process instead — stop()/start() are no-ops there."""
+        changed. Default: a full stop()+start() cycle, which is the Windows
+        in-process reload path — stop() releases the live chords before start()
+        re-registers the updated keymap on a fresh pump thread."""
         self.stop()
         self.start(dispatch)
 
@@ -128,3 +124,4 @@ class PlatformBackend:
     earcon: EarconBackend
     hotkey: HotkeyBackend
     supervisor: SupervisorBackend
+    ducker: object = None     # AudioDucker/NullDucker; duck-typed (duck/restore/is_ducked)

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sonara"
 version = "0.5.0"
-description = "Eyes-free text-to-speech layer for Claude Code (macOS + Windows)"
+description = "Eyes-free text-to-speech layer for Claude Code (Windows)"
 requires-python = ">=3.9"
 authors = [{ name = "Nima Hakimi", email = "hakimi.nima1@gmail.com" }]
 license = { text = "MIT" }
@@ -21,6 +21,7 @@ windows = [
     "winrt-runtime; sys_platform == 'win32'",
     "winrt-Windows.Media.SpeechSynthesis; sys_platform == 'win32'",
     "winrt-Windows.Storage.Streams; sys_platform == 'win32'",
+    "pycaw; sys_platform == 'win32'",
 ]
 # Kokoro-82M neural voices (optional, cross-platform). One ~310 MB model + a 6 MB
 # voices file (auto-downloaded on first use) provide all 28 voices. Imported lazily

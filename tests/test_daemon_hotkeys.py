@@ -48,8 +48,29 @@ def test_dispatch_routes_through_handle_message(monkeypatch):
     daemon._start_hotkeys()
     handled = []
     monkeypatch.setattr(daemon, "handle_message", lambda m: handled.append(m))
-    pb.hotkey.started({"type": "skip"})       # simulate a hotkey fire
+    pb.hotkey.started({"type": "skip"})       # simulate a hotkey fire (enqueues)
+    # The fire is handed to the worker queue, not handled on the pump thread; drain
+    # it the way the worker would.
+    daemon._process_hotkey(daemon._hotkey_q.get_nowait())
     assert handled == [{"type": "skip"}]
+
+
+def test_hotkey_dispatch_never_blocks_on_the_lock(monkeypatch):
+    """The mute-hang root cause: the Windows hotkey PUMP thread used to run
+    handle_message under self._lock, so a busy daemon (streaming prose under the
+    lock) stalled the pump and presses piled up then burst. The pump must only
+    enqueue and return; the worker applies it later."""
+    from sonara.protocol import MsgType
+    pb = _FakePlatform()
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    daemon = make_daemon(foreground="fg")[0]
+    handled = []
+    monkeypatch.setattr(daemon, "handle_message", lambda m: handled.append(m))
+    daemon._dispatch_hotkey({"type": MsgType.MUTE})
+    assert handled == []                          # NOT processed on the pump thread
+    assert not daemon._hotkey_q.empty()           # enqueued for the worker
+    daemon._process_hotkey(daemon._hotkey_q.get_nowait())
+    assert handled == [{"type": MsgType.MUTE}]     # worker applies it
 
 
 def test_stop_stops_the_hotkey_listener(monkeypatch):
@@ -60,11 +81,12 @@ def test_stop_stops_the_hotkey_listener(monkeypatch):
     assert pb.hotkey.stopped is True
 
 
-def test_dispatch_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
+def test_process_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
     """A hotkey fire mutates shared daemon state (queue/history/config) via
-    handle_message; it MUST hold self._lock the way the socket path (_handle_conn)
-    does, or it races the speak loop -> 'list changed size' crash / corruption.
-    Regression for the unlocked-dispatch concurrency bug (#5)."""
+    handle_message; the WORKER that applies it MUST hold self._lock the way the
+    socket path (_handle_conn) does, or it races the speak loop -> 'list changed
+    size' crash / corruption. The dispatch moved off the pump thread to the worker,
+    but this lock invariant is preserved (regression for #5)."""
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
@@ -76,7 +98,7 @@ def test_dispatch_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
         return real(msg)
 
     monkeypatch.setattr(daemon, "handle_message", spy)
-    daemon._dispatch_hotkey({"type": "skip"})
+    daemon._process_hotkey({"type": "skip"})
     assert locked_during_call == [True]
 
 
@@ -109,19 +131,18 @@ def test_nav_and_repeat_are_not_debounced():
     assert daemon._debounce_suppress(MsgType.REPEAT, 10.01) is False
 
 
-def test_one_bad_hotkey_does_not_raise(monkeypatch):
+def test_one_bad_hotkey_does_not_kill_the_worker(monkeypatch):
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
     monkeypatch.setattr(daemon, "handle_message",
                         lambda m: (_ for _ in ()).throw(RuntimeError("boom")))
-    daemon._dispatch_hotkey({"type": "stop"})   # swallowed, no raise
+    daemon._process_hotkey({"type": "stop"})    # swallowed, no raise
 
 
 def test_reload_keymap_delegates_to_backend_reload(monkeypatch):
     # RELOAD_KEYMAP delegates to the platform backend's reload() seam (Windows:
-    # thread-joined stop+start; macOS: rewrite resolved + reload hotkeyd). The
-    # daemon passes its dispatch callback through.
+    # thread-joined stop+start). The daemon passes its dispatch callback through.
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     monkeypatch.setattr("os.path.exists", lambda p: False)   # no kill-switch flag
@@ -143,3 +164,42 @@ def test_reload_keymap_honors_kill_switch(monkeypatch):
     assert _wait_until(lambda: pb.hotkey.stopped)
     assert pb.hotkey.reloaded is None
     assert pb.hotkey.stopped is True
+
+
+# --- speak-loop wake gating (the other half of the mute-hang fix) --------------
+# While prose streams in and is buffered below minqueue, waking the speak loop on
+# every delta made it spin (wake -> lock -> nothing ready -> repeat), saturating
+# self._lock and starving the hotkey worker. Wake only when a batch is actually
+# ready (>= minqueue, turn done, or a decision), so the loop stays asleep while
+# buffering and the lock is free for the hotkey worker.
+
+def test_buffered_prose_below_minqueue_does_not_wake_the_loop():
+    daemon, _q, _spk, _sess, config = make_daemon(foreground="fg")
+    config["minqueue"] = 5
+    ch = daemon.router.channel("fg")
+    daemon._wake.clear()
+    daemon.handle_message({"type": "prose", "session": "fg",
+                           "delta": "Short.", "index": 0, "final": True})
+    assert 0 < ch.pending() < 5 and not ch.turn_done      # buffered, turn not done
+    assert not daemon._wake.is_set()                       # loop left asleep
+
+
+def test_prose_reaching_minqueue_wakes_the_loop():
+    daemon, _q, _spk, _sess, config = make_daemon(foreground="fg")
+    config["minqueue"] = 2
+    ch = daemon.router.channel("fg")
+    daemon._wake.clear()
+    daemon.handle_message({"type": "prose", "session": "fg",
+                           "delta": "One. Two. Three.", "index": 0, "final": True})
+    assert ch.pending() >= 2                               # threshold reached
+    assert daemon._wake.is_set()                           # wake fired
+
+
+def test_turn_done_earcon_wakes_loop_to_flush_subthreshold_batch():
+    daemon, _q, _spk, _sess, config = make_daemon(foreground="fg")
+    config["minqueue"] = 5
+    daemon.handle_message({"type": "prose", "session": "fg",
+                           "delta": "Tiny.", "index": 0, "final": True})
+    daemon._wake.clear()
+    daemon.handle_message({"type": "earcon", "kind": "turn_done", "session": "fg"})
+    assert daemon._wake.is_set()                           # turn end wakes the loop

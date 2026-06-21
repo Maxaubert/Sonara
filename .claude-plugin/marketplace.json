@@ -10,7 +10,7 @@
     {
       "name": "sonara",
       "version": "0.5.0",
-      "description": "Eyes-free text-to-speech layer for Claude Code (macOS): narrates prose, options, plans, and permissions with a single ordered speech queue and per-type earcons.",
+      "description": "Eyes-free text-to-speech layer for Claude Code (Windows): narrates prose, options, plans, and permissions per session with per-type earcons.",
       "author": {
         "name": "Max Aubert"
       },

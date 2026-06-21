@@ -12,11 +12,8 @@ def get_platform() -> PlatformBackend:
     global _CACHE
     if _CACHE is not None:
         return _CACHE
-    if sys.platform == "darwin":
-        from sonara.platform.macos import make_backend
-    elif sys.platform == "win32":
-        from sonara.platform.windows import make_backend
-    else:
-        raise RuntimeError("Unsupported platform: {0}".format(sys.platform))
+    if sys.platform != "win32":
+        raise RuntimeError("Sonara is Windows-only")
+    from sonara.platform.windows import make_backend
     _CACHE = make_backend()
     return _CACHE
