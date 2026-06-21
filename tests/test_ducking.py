@@ -104,6 +104,16 @@ def test_duck_never_raises_on_pycaw_failure(monkeypatch, tmp_path):
     d.restore()                                # must swallow
 
 
+def test_restore_from_state_file_never_raises_on_pycaw_failure(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    import json
+    state.write_text(json.dumps({"sessions": [{"pid": 1, "name": "x.exe", "original": 0.5}]}), encoding="utf-8")
+    monkeypatch.setattr(ducking, "_all_sessions", lambda: (_ for _ in ()).throw(RuntimeError("no COM")))
+    ducking.restore_from_state_file()        # must swallow
+    assert not state.exists()                # and still clear the file
+
+
 def test_null_ducker_is_noop():
     n = NullDucker()
     assert n.is_ducked() is False

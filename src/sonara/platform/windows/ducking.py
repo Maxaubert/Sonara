@@ -110,7 +110,7 @@ def restore_from_state_file() -> None:
     try:
         with open(_DUCK_STATE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (FileNotFoundError, ValueError, OSError):
+    except Exception:  # noqa: BLE001 - no/unreadable state -> nothing to restore
         return
     try:
         by_pid, by_name = {}, {}
