@@ -44,3 +44,12 @@ def test_sonara_hook_cmd_resolves_interpreter_and_logs_stderr():
     assert "hook.log" in low                       # stderr is logged...
     assert "2>>" in low                            # ...via append-redirect, not discarded
     assert "exit /b 0" in low                      # a hook must never fail loudly
+
+
+def test_install_command_routes_through_bootstrap():
+    import os
+    p = os.path.join(REPO, "commands", "install.md")
+    with open(p, encoding="utf-8") as f:
+        txt = f.read()
+    assert "sonara-bootstrap.ps1" in txt   # provisions Python if absent
+    assert "powershell" in txt.lower()
