@@ -675,6 +675,33 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
+        if t == MsgType.SET_AUDIO_CONTROL:
+            enabled = bool(msg.get("enabled"))
+            self.config["audio_control"] = enabled
+            save_config(self.config)
+            if not enabled and self.ducker.is_ducked():
+                self.ducker.restore()      # un-duck immediately on turn-off
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Audio control on." if enabled else "Audio control off.",
+                            exempt_mute=True)
+            self._wake.set()
+            return None
+
+        if t == MsgType.SET_DUCK_LEVEL:
+            try:
+                level = max(0, min(100, int(msg.get("level"))))
+            except (TypeError, ValueError):
+                return None
+            self.config["duck_level"] = level
+            save_config(self.config)
+            if self.ducker.is_ducked():        # re-apply at the new level
+                self.ducker.restore()
+                self.ducker.duck(self._duck_exclude_pids(), level)
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Duck level {0} percent.".format(level), exempt_mute=True)
+            self._wake.set()
+            return None
+
         if t == MsgType.CYCLE_VERBOSITY:
             order = ["everything", "medium", "quiet"]
             cur = self.config.get("verbosity", "everything")
@@ -998,6 +1025,14 @@ class SpeechDaemon:
                           pause_exempt=pause_exempt)
         ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
+
+    def _duck_exclude_pids(self) -> "set[int]":
+        pids = {os.getpid()}
+        try:
+            pids.update(self.speaker.earcon_pids())
+        except AttributeError:
+            pass
+        return pids
 
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
