@@ -29,6 +29,9 @@ class FakeSpeaker:
         self.cancels += 1
         self._epoch += 1
 
+    def earcon_pids(self):
+        return list(getattr(self, "_earcon_pids", []))
+
     def set_rate(self, r: int) -> None:
         self.rates.append(r)
 

@@ -83,3 +83,58 @@ def test_set_duck_level_reapplies_when_ducked(monkeypatch):
                            "level": 35})
     assert daemon.ducker.restore_calls == 1                 # restored then re-ducked
     assert daemon.ducker.duck_calls[-1][1] == 35
+
+
+# ---------------------------------------------------------------------------
+# Task 4: speak-loop duck/restore hooks
+# ---------------------------------------------------------------------------
+from sonara.queue import SpeechItem
+
+
+def _prose_item(session, text):
+    return SpeechItem(id=0, session=session, kind="prose", text=text, is_decision=False)
+
+
+def test_no_duck_when_audio_control_off():
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
+    daemon.config["audio_control"] = False
+    queue.enqueue(_prose_item("fg", "Hello."))
+    daemon._speak_loop_once()                       # speaks the item
+    assert daemon.ducker.duck_calls == []
+
+
+def test_duck_once_then_restore_only_at_global_idle():
+    # The hold/no-flap behavior: many queued items => exactly ONE duck and ONE
+    # restore (at global idle), not one per item. (Restore fires only when
+    # next_item() returns None, which is also true across multiple sessions, since
+    # the idle condition is global — so one session proves the mechanism without
+    # the session-change announcements that would make the count non-deterministic.)
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
+    daemon.config["audio_control"] = True
+    queue.enqueue(_prose_item("fg", "One."))
+    queue.enqueue(_prose_item("fg", "Two."))
+    queue.enqueue(_prose_item("fg", "Three."))
+    for _ in range(3):                               # drain every queued item
+        daemon._speak_loop_once()
+    assert len(daemon.ducker.duck_calls) == 1        # ducked once at first speak
+    assert daemon.ducker.restore_calls == 0          # still speaking -> held
+    daemon._speak_loop_once()                        # next_item() now None -> idle
+    assert daemon.ducker.restore_calls == 1          # restored only at global idle
+
+
+def test_duck_excludes_daemon_and_earcon_pids():
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
+    daemon.config["audio_control"] = True
+    speaker._earcon_pids = [4242]                    # see Speaker.earcon_pids() below
+    queue.enqueue(_prose_item("fg", "Hi."))
+    daemon._speak_loop_once()
+    import os
+    exclude = daemon.ducker.duck_calls[0][0]
+    assert os.getpid() in exclude and 4242 in exclude
+
+
+def test_stop_restores_if_ducked():
+    daemon, *_ = make_daemon(foreground="fg")
+    daemon.ducker._ducked = True
+    daemon.stop()
+    assert daemon.ducker.restore_calls == 1

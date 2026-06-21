@@ -503,6 +503,7 @@ class SpeechDaemon:
                 # utterance aborts. The speak loop re-queues the interrupted item
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
+                self._maybe_restore()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
@@ -736,6 +737,7 @@ class SpeechDaemon:
         self._running.clear()
         self._wake.set()
         self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
+        self._maybe_restore()       # never leave other apps' audio ducked
         self._stop_hotkeys()
         srv = self._server
         if srv is not None:
@@ -1028,6 +1030,15 @@ class SpeechDaemon:
         ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
 
+    def _audio_control_on(self) -> bool:
+        return bool(self.config.get("audio_control"))
+
+    def _duck_level(self) -> int:
+        try:
+            return max(0, min(100, int(self.config.get("duck_level", 20))))
+        except (TypeError, ValueError):
+            return 20
+
     def _duck_exclude_pids(self) -> "set[int]":
         pids = {os.getpid()}
         try:
@@ -1035,6 +1046,14 @@ class SpeechDaemon:
         except AttributeError:
             pass
         return pids
+
+    def _maybe_duck(self) -> None:
+        if self._audio_control_on() and not self.ducker.is_ducked():
+            self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
+
+    def _maybe_restore(self) -> None:
+        if self.ducker.is_ducked():
+            self.ducker.restore()
 
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
@@ -1074,6 +1093,7 @@ class SpeechDaemon:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
         if item is None:
+            self._maybe_restore()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
@@ -1086,6 +1106,7 @@ class SpeechDaemon:
                 self._earcon("session_change")
             except Exception:  # noqa: BLE001
                 pass
+        self._maybe_duck()
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
         except Exception:  # noqa: BLE001

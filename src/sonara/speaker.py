@@ -97,6 +97,14 @@ class Speaker:
         if proc is not None and hasattr(proc, "poll"):
             self._earcon_procs.append(proc)
 
+    def earcon_pids(self) -> "list[int]":
+        """PIDs of the live earcon helper subprocesses (so the ducker excludes
+        Sonara's own beeps). Test seam: a `_earcon_pids` attribute overrides."""
+        injected = getattr(self, "_earcon_pids", None)
+        if injected is not None:
+            return list(injected)
+        return [p.pid for p in self._earcon_procs if p.poll() is None]
+
     def set_voice(self, v) -> None:
         self._voice = v
 
