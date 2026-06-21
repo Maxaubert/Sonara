@@ -345,3 +345,20 @@ def test_install_ends_task_before_reregister(tmp_path, monkeypatch):
     assert all(end_idx < ci for ci in create_indices), (
         "/end must come before any /create: {0}".format(schtasks_calls)
     )
+
+
+def test_resolve_python_windows_falls_back_to_recorded(monkeypatch):
+    from sonara.platform.windows import supervisor as sup
+    from sonara import paths
+    # No system Python anywhere.
+    monkeypatch.setattr(sup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(paths, "recorded_pythonw", lambda: r"C:\uv\pythonw.exe")
+    assert sup.resolve_python_windows() == r"C:\uv\pythonw.exe"
+
+
+def test_resolve_python_windows_none_when_no_system_and_no_record(monkeypatch):
+    from sonara.platform.windows import supervisor as sup
+    from sonara import paths
+    monkeypatch.setattr(sup.shutil, "which", lambda name: None)
+    monkeypatch.setattr(paths, "recorded_pythonw", lambda: None)
+    assert sup.resolve_python_windows() is None
