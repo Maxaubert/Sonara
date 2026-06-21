@@ -120,3 +120,11 @@ def test_null_ducker_is_noop():
     n.duck({1, 2}, 20)
     n.restore()
     assert n.is_ducked() is False
+
+
+def test_audioducker_methods_are_lock_guarded():
+    """AudioDucker must have a threading.Lock that serializes duck/restore/is_ducked."""
+    import threading
+    d = AudioDucker()
+    assert hasattr(d, "_lock"), "AudioDucker must have a _lock attribute"
+    assert isinstance(d._lock, type(threading.Lock())), "_lock must be a threading.Lock"

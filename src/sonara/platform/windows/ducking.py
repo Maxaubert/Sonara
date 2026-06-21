@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 
 from sonara.paths import SONARA_DIR, ensure_sonara_dir
 
@@ -33,44 +34,48 @@ class AudioDucker:
     """Lower every other app's audio session to a target level, then restore."""
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._saved = []          # list[(session, original_scalar)]
         self._ducked = False
 
     def is_ducked(self) -> bool:
-        return self._ducked
+        with self._lock:
+            return self._ducked
 
     def duck(self, exclude_pids, level: int) -> None:
-        if self._ducked:
-            return
-        try:
-            target = max(0, min(100, int(level))) / 100.0
-            saved, record = [], []
-            for s in _all_sessions():
-                vol = s.SimpleAudioVolume
-                if vol is None or s.ProcessId in exclude_pids:
-                    continue
-                original = vol.GetMasterVolume()
-                vol.SetMasterVolume(target, None)
-                saved.append((s, original))
-                record.append({"pid": s.ProcessId, "name": _session_name(s),
-                               "original": original})
-            self._saved = saved
-            self._ducked = True
-            _write_state(record)
-        except Exception:  # noqa: BLE001 - best-effort; never break speech
-            pass
+        with self._lock:
+            if self._ducked:
+                return
+            try:
+                target = max(0, min(100, int(level))) / 100.0
+                saved, record = [], []
+                for s in _all_sessions():
+                    vol = s.SimpleAudioVolume
+                    if vol is None or s.ProcessId in exclude_pids:
+                        continue
+                    original = vol.GetMasterVolume()
+                    vol.SetMasterVolume(target, None)
+                    saved.append((s, original))
+                    record.append({"pid": s.ProcessId, "name": _session_name(s),
+                                   "original": original})
+                self._saved = saved
+                self._ducked = True
+                _write_state(record)
+            except Exception:  # noqa: BLE001 - best-effort; never break speech
+                pass
 
     def restore(self) -> None:
-        try:
-            for s, original in self._saved:
-                try:
-                    s.SimpleAudioVolume.SetMasterVolume(original, None)
-                except Exception:  # noqa: BLE001 - one bad session must not block the rest
-                    pass
-        finally:
-            self._saved = []
-            self._ducked = False
-            _clear_state()
+        with self._lock:
+            try:
+                for s, original in self._saved:
+                    try:
+                        s.SimpleAudioVolume.SetMasterVolume(original, None)
+                    except Exception:  # noqa: BLE001 - one bad session must not block the rest
+                        pass
+            finally:
+                self._saved = []
+                self._ducked = False
+                _clear_state()
 
 
 class NullDucker:

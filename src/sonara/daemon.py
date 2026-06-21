@@ -697,7 +697,7 @@ class SpeechDaemon:
                 return None
             self.config["duck_level"] = level
             save_config(self.config)
-            if self.ducker.is_ducked():        # re-apply at the new level
+            if self._audio_control_on() and self.ducker.is_ducked():  # re-apply at the new level
                 self.ducker.restore()
                 self.ducker.duck(self._duck_exclude_pids(), level)
             target = self.router.active or self.sessions.foreground()
@@ -1058,6 +1058,10 @@ class SpeechDaemon:
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
+            # Idempotently restore other apps' audio while paused — closes the window
+            # where a re-duck slipped in during the pause transition. Safe to call
+            # repeatedly: _maybe_restore() is a no-op when not ducked.
+            self._maybe_restore()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
             # pause rewinds the cursor past where _speak_cue inserted the cue, so a

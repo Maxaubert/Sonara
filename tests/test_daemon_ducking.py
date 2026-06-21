@@ -78,6 +78,7 @@ def test_set_audio_control_missing_enabled_is_noop(monkeypatch):
 def test_set_duck_level_reapplies_when_ducked(monkeypatch):
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
     daemon, *_ = make_daemon(foreground="fg")
+    daemon.config["audio_control"] = True   # must be on for re-duck to fire
     daemon.ducker._ducked = True
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_DUCK_LEVEL,
                            "level": 35})
@@ -138,3 +139,27 @@ def test_stop_restores_if_ducked():
     daemon.ducker._ducked = True
     daemon.stop()
     assert daemon.ducker.restore_calls == 1
+
+
+# ---------------------------------------------------------------------------
+# New tests: pause-branch restore + SET_DUCK_LEVEL guard
+# ---------------------------------------------------------------------------
+
+def test_paused_branch_restores_if_ducked():
+    """The paused branch of _speak_loop_once must call restore() when ducked."""
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
+    daemon.ducker._ducked = True
+    daemon._paused.set()
+    daemon._speak_loop_once()
+    assert daemon.ducker.restore_calls >= 1
+
+
+def test_set_duck_level_does_not_reduck_when_audio_control_off(monkeypatch):
+    """SET_DUCK_LEVEL must not re-duck when audio_control is off."""
+    monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
+    daemon, *_ = make_daemon(foreground="fg")
+    # audio_control defaults to False; leave it that way
+    daemon.ducker._ducked = True
+    daemon.handle_message({"v": 1, "type": MsgType.SET_DUCK_LEVEL, "level": 30})
+    # The restore may happen (ducker was ducked), but no NEW duck call
+    assert daemon.ducker.duck_calls == []
