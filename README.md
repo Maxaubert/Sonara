@@ -1,9 +1,17 @@
-# Sonara
+<div align="center">
+  <img src="assets/sonara-logo.png" alt="Sonara" width="128">
+
+  # Sonara
+
+  **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on Windows, an accessibility tool for blind and low-vision developers.**
+
+  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](https://github.com/Maxaubert/Sonara)
+  [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square)](https://github.com/Maxaubert/Sonara)
+</div>
+
+---
 
 > The Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari) (the macOS line). Developed and released independently.
-
-**Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on Windows — an
-accessibility tool for blind and low-vision developers.**
 
 Sonara reads Claude Code's output aloud — prose, plans, multiple-choice questions, and
 permission prompts — in order, plays a distinct sound the instant a decision needs you, and
