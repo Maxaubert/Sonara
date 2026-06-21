@@ -4,11 +4,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CMD = os.path.join(REPO, "commands")
 
 # The shipped slash-commands. Files use NTFS-safe names (no colon) so they check
-# out and work on Windows too. stop/skip/repeat are pure hotkey mirrors and
-# install/uninstall are CLI-only, so none of them ship a command file.
-COMMANDS = ("status", "verbosity", "doctor", "keymap", "voice", "rate")
+# out and work on Windows too. stop/skip/repeat are pure hotkey mirrors, so they
+# ship no command file. `uninstall` invokes the launcher like the rest; `install`
+# is a real command too but routes through the PowerShell bootstrap (so it does
+# NOT match the launcher pattern) and is asserted in test_bin_shims.py instead.
+COMMANDS = ("status", "verbosity", "doctor", "keymap", "voice", "rate", "uninstall")
 ARG_COMMANDS = ("verbosity", "voice", "rate", "keymap")  # forward $ARGUMENTS
-DROPPED = ("stop", "skip", "repeat", "install", "uninstall")
+DROPPED = ("stop", "skip", "repeat")
 
 
 def _read(name):
