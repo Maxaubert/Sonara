@@ -45,10 +45,14 @@ _MAX_CONN_THREADS = 32
 
 
 class SpeechDaemon:
-    def __init__(self, speaker, sessions, config) -> None:
+    def __init__(self, speaker, sessions, config, ducker=None) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
+        if ducker is None:
+            from sonara.platform.windows.ducking import NullDucker
+            ducker = NullDucker()
+        self.ducker = ducker
         self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
@@ -1310,6 +1314,8 @@ def main() -> None:
     from sonara.platform import get_platform
 
     _backend = get_platform()
+    from sonara.platform.windows.ducking import restore_from_state_file
+    restore_from_state_file()   # un-duck anything a crashed prior daemon left down
     cfg = load_config()
     if "earcons" not in cfg:
         cfg["earcons"] = _backend.earcon.default_earcons()
@@ -1321,7 +1327,7 @@ def main() -> None:
         earcons=cfg.get("earcons"),
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))
-    daemon = SpeechDaemon(speaker, sessions, cfg)
+    daemon = SpeechDaemon(speaker, sessions, cfg, ducker=_backend.ducker)
     daemon.run()
 
 

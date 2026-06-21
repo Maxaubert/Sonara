@@ -5,6 +5,7 @@ from sonara.platform.windows.tts import WinTtsBackend
 from sonara.platform.windows.earcon import WinEarconBackend
 from sonara.platform.windows.hotkeys import WinHotkeyBackend
 from sonara.platform.windows.supervisor import WinSupervisorBackend
+from sonara.platform.windows.ducking import AudioDucker
 
 
 def make_backend() -> PlatformBackend:
@@ -13,4 +14,5 @@ def make_backend() -> PlatformBackend:
         earcon=WinEarconBackend(),
         hotkey=WinHotkeyBackend(),
         supervisor=WinSupervisorBackend(),
+        ducker=AudioDucker(),
     )

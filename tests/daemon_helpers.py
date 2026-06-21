@@ -70,6 +70,21 @@ class ChannelQueueProxy:
         return sum(ch.pending() for ch in self._daemon.router.channels.values())
 
 
+class FakeDucker:
+    def __init__(self):
+        self.duck_calls = []     # list of (exclude_pids, level)
+        self.restore_calls = 0
+        self._ducked = False
+
+    def is_ducked(self): return self._ducked
+
+    def duck(self, exclude_pids, level):
+        self.duck_calls.append((set(exclude_pids), level)); self._ducked = True
+
+    def restore(self):
+        self.restore_calls += 1; self._ducked = False
+
+
 def make_daemon(verbosity: str = "everything", foreground: "str | None" = "fg"):
     """Build a SpeechDaemon wired to a FakeSpeaker.
 
@@ -84,6 +99,7 @@ def make_daemon(verbosity: str = "everything", foreground: "str | None" = "fg"):
         sessions.set_foreground(foreground)
     config = {k: (v.copy() if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
     config["verbosity"] = verbosity
-    daemon = SpeechDaemon(speaker, sessions, config)
+    ducker = FakeDucker()
+    daemon = SpeechDaemon(speaker, sessions, config, ducker=ducker)
     queue = ChannelQueueProxy(daemon)
     return daemon, queue, speaker, sessions, config
