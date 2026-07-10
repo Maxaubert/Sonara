@@ -37,10 +37,11 @@ ACTION_MESSAGES = {
 }
 
 # Shared action -> default key. The chord modifiers are platform-defaulted (macOS:
-# Ctrl+Cmd; Windows: Ctrl+Shift+Alt) via the active backend's default_mods().
-# Only navigation + mute + next_session are bound out of the box; pause and
-# faster/slower are valid actions but ship UNBOUND (blank by default) so the
-# default keymap stays minimal — users add a key in keymap.json if they want one.
+# Ctrl+Cmd; Windows: Ctrl+Alt) via the active backend's default_mods().
+# Only navigation (incl. nav_start/flush) + mute + next_session are bound out of
+# the box; pause and faster/slower are valid actions but ship UNBOUND (blank by
+# default) so the default keymap stays minimal: users add a key in keymap.json if
+# they want one.
 _DEFAULT_KEYS = {
     "nav_prev": "left", "nav_next": "right",
     "nav_start": "up", "flush": "down",
