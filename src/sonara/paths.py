@@ -13,6 +13,7 @@ KEYMAP_PATH = SONARA_DIR / "keymap.json"
 HOTKEYD_RESOLVED_PATH = SONARA_DIR / "hotkeyd.resolved.json"
 HOTKEYD_BIN_PATH = SONARA_DIR / "sonara-hotkeyd"
 INSTALL_RECORD_PATH = SONARA_DIR / "install.json"
+SESSIONS_PATH = SONARA_DIR / "sessions.json"        # durable session id -> folder name map
 KOKORO_VENV = SONARA_DIR / "venv"   # opt-in uv-managed venv for neural voices
 PYTHON_RECORD_PATH = SONARA_DIR / "python.path"     # recorded console python.exe
 PYTHONW_RECORD_PATH = SONARA_DIR / "pythonw.path"   # recorded windowless pythonw.exe

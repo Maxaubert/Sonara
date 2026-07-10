@@ -13,7 +13,7 @@ from sonara.assembler import ProseAssembler
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
-    INSTALL_RECORD_PATH,
+    INSTALL_RECORD_PATH, SESSIONS_PATH,
 )
 from sonara.platform import transport
 
@@ -1416,7 +1416,8 @@ def main() -> None:
         earcon_player=_backend.earcon.play,
         earcons=cfg.get("earcons"),
     )
-    sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))
+    sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"),
+                              store_path=SESSIONS_PATH)
     daemon = SpeechDaemon(speaker, sessions, cfg, ducker=_backend.ducker)
     daemon.run()
 
