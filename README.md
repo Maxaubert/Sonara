@@ -107,17 +107,17 @@ Default modifier is **Ctrl+Alt** (rebindable via `~/.sonara/keymap.json`). The d
 registers these as Windows global hotkeys, so no extra accessibility permission is needed.
 
 Only these actions are bound by default (kept minimal so Sonara doesn't hog
-hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** —
+hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** –
 add a key in `~/.sonara/keymap.json` if you want one. Everything else (stop,
 repeat, skip, jump-to-decision, catch-up, re-read) lives in the CLI / slash
 commands below.
 
 | Hotkey | Effect |
 |---|---|
-| Ctrl+Alt+Left | Previous item — step back through the current turn |
-| Ctrl+Alt+Right | Next item — step forward through the current turn |
+| Ctrl+Alt+Left | Previous item – step back through the current turn |
+| Ctrl+Alt+Right | Next item – step forward through the current turn |
 | Ctrl+Alt+Up | Jump to the start of the current turn and replay from the top |
-| Ctrl+Alt+Down | Flush — skip the rest of this session's queue and go quiet (recoverable via catch-up) |
+| Ctrl+Alt+Down | Flush – skip the rest of this session's queue and go quiet (recoverable via catch-up) |
 | Ctrl+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
 | Ctrl+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
