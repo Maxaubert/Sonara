@@ -103,10 +103,10 @@ commands inside a session.
 
 ### Global hotkeys
 
-Default modifier is **Ctrl+Shift+Alt** (rebindable via `~/.sonara/keymap.json`). The daemon
+Default modifier is **Ctrl+Alt** (rebindable via `~/.sonara/keymap.json`). The daemon
 registers these as Windows global hotkeys, so no extra accessibility permission is needed.
 
-Only four actions are bound by default (kept minimal so Sonara doesn't hog
+Only these actions are bound by default (kept minimal so Sonara doesn't hog
 hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** —
 add a key in `~/.sonara/keymap.json` if you want one. Everything else (stop,
 repeat, skip, jump-to-decision, catch-up, re-read) lives in the CLI / slash
@@ -114,10 +114,12 @@ commands below.
 
 | Hotkey | Effect |
 |---|---|
-| Ctrl+Shift+Alt+Left | Previous item — step back through the current turn |
-| Ctrl+Shift+Alt+Right | Next item — step forward through the current turn |
-| Ctrl+Shift+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
-| Ctrl+Shift+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
+| Ctrl+Alt+Left | Previous item — step back through the current turn |
+| Ctrl+Alt+Right | Next item — step forward through the current turn |
+| Ctrl+Alt+Up | Jump to the start of the current turn and replay from the top |
+| Ctrl+Alt+Down | Flush — skip the rest of this session's queue and go quiet (recoverable via catch-up) |
+| Ctrl+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
+| Ctrl+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
 ### Selecting options
 
@@ -182,7 +184,7 @@ decision text are not read aloud until you bring that session forward. Submittin
 prompt or stopping flushes the queue, so the voice always resumes at what is current.
 
 To manually cycle the voice to another session without switching windows, press
-**Ctrl+Shift+Alt+P**. Sonara advances to the next session in a
+**Ctrl+Alt+P**. Sonara advances to the next session in a
 fixed round-robin order, plays a short chime, and says "Session changed: &lt;folder&gt;." An
 unread session resumes from where it left off; a fully-read session is replayed from the
 top.
