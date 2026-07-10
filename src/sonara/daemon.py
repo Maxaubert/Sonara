@@ -596,6 +596,32 @@ class SpeechDaemon:
             self.speaker.cancel()
             return None
 
+        if t == MsgType.FLUSH_SESSION:
+            # Flush to end: skip ALL pending items for the engaged session and go
+            # idle. Non-destructive — skipped items keep their history entries
+            # UNHEARD (we pop their _pending_heard markers so note_spoken never
+            # flips them True), so CATCH_UP / REPEAT can bring them back. Mirrors
+            # JUMP_DECISION but advances the cursor to the very end, not the next
+            # decision. Nothing is wiped; this is a cursor move.
+            fg = self._engaged_session()
+            if fg is None:
+                self._earcon("nav_edge")
+                return None
+            ch = self.router.channel(fg)
+            skipped = 0
+            while ch.cursor < len(ch.items):
+                self._pending_heard.pop(ch.items[ch.cursor].id, None)
+                ch.cursor += 1
+                skipped += 1
+            ch.has_decision = False        # any pending decision was skipped
+            cur = self._current_item
+            cutting = cur is not None and cur.session == fg
+            if cutting:
+                self.speaker.cancel()      # cut the in-progress utterance for fg
+            self._earcon("nav" if (skipped or cutting) else "nav_edge")
+            self._wake.set()
+            return None
+
         if t == MsgType.CATCH_UP:
             fg = self.sessions.foreground()
             if fg is None:
