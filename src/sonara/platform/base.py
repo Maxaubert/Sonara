@@ -124,3 +124,4 @@ class PlatformBackend:
     earcon: EarconBackend
     hotkey: HotkeyBackend
     supervisor: SupervisorBackend
+    ducker: object = None     # AudioDucker/NullDucker; duck-typed (duck/restore/is_ducked)

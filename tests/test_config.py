@@ -10,6 +10,8 @@ def test_defaults_has_documented_top_level_keys():
         "background_policy",
         "history_cap",
         "minqueue",
+        "audio_control",
+        "duck_level",
     }
 
 

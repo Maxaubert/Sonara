@@ -24,5 +24,5 @@ MOD_MASKS = {
 # MOD_NOREPEAT (0x4000) is OR-ed in at register time, not part of a chord.
 MOD_NOREPEAT = 0x4000
 
-# Default chord: Ctrl+Shift+Alt clears AltGr / Win-reserved / terminal / layout collisions.
-DEFAULT_MODS = ["ctrl", "shift", "alt"]
+# Default chord: Ctrl+Alt clears AltGr / Win-reserved / terminal / layout collisions.
+DEFAULT_MODS = ["ctrl", "alt"]

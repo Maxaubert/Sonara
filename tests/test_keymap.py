@@ -44,9 +44,9 @@ def test_action_messages_faster_has_delta_25():
 
 # --- default_keymap: per-OS chord -------------------------------------------
 
-def test_default_keymap_windows_uses_ctrl_shift_alt(win):
+def test_default_keymap_windows_uses_ctrl_alt(win):
     d = keymap.default_keymap()
-    assert d["nav_next"]["mods"] == ["ctrl", "shift", "alt"]
+    assert d["nav_next"]["mods"] == ["ctrl", "alt"]
     assert d["mute"]["key"] == "m"
 
 
@@ -65,7 +65,8 @@ def test_default_keymap_binds_only_nav_pause_mute():
     # The default keymap binds nav/mute/next_session. pause/faster/slower are valid
     # actions but ship UNBOUND (blank by default); every default binding is a real action.
     km = keymap.default_keymap()
-    assert set(km.keys()) == {"nav_prev", "nav_next", "mute", "next_session"}
+    assert set(km.keys()) == {"nav_prev", "nav_next", "nav_start", "flush",
+                              "mute", "next_session"}
     assert set(km.keys()) <= set(keymap.ACTION_MESSAGES.keys())
     assert "pause" in keymap.ACTION_MESSAGES and "pause" not in km
     assert "faster" in keymap.ACTION_MESSAGES and "faster" not in km
@@ -216,3 +217,73 @@ def test_next_session_default_binding_is_p():
     from sonara.keymap import default_keymap
     km = default_keymap()
     assert km["next_session"]["key"] == "p"
+
+
+def test_nav_start_action_message_is_nav_first():
+    assert keymap.ACTION_MESSAGES["nav_start"] == {"type": "nav", "to": "first"}
+
+
+def test_flush_action_message():
+    assert keymap.ACTION_MESSAGES["flush"] == {"type": "flush_session"}
+
+
+def test_nav_start_and_flush_default_to_up_and_down():
+    km = keymap.default_keymap()
+    assert km["nav_start"]["key"] == "up"
+    assert km["flush"]["key"] == "down"
+
+
+def test_arrow_cluster_default_keys_are_distinct():
+    km = keymap.default_keymap()
+    arrows = {km[a]["key"] for a in ("nav_prev", "nav_next", "nav_start", "flush")}
+    assert arrows == {"left", "right", "up", "down"}
+
+
+# --- migrate_default_chord ---------------------------------------------------
+
+def test_migrate_rewrites_legacy_chord_entries(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "shift", "alt"]},
+        "mute": {"key": "m", "mods": ["ctrl", "shift", "alt"]},
+    }), encoding="utf-8")
+    assert keymap.migrate_default_chord() is True
+    user = json.loads(km.read_text(encoding="utf-8"))
+    assert user["nav_prev"]["mods"] == ["ctrl", "alt"]
+    assert user["mute"]["mods"] == ["ctrl", "alt"]
+    assert user["nav_prev"]["key"] == "left"      # key preserved
+
+
+def test_migrate_preserves_customized_bindings(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "shift"]},        # custom mods
+        "mute": {"key": "j", "mods": ["ctrl", "shift", "alt"]},         # custom key
+    }), encoding="utf-8")
+    assert keymap.migrate_default_chord() is False
+    user = json.loads(km.read_text(encoding="utf-8"))
+    assert user["nav_prev"]["mods"] == ["ctrl", "shift"]
+    assert user["mute"]["key"] == "j" and user["mute"]["mods"] == ["ctrl", "shift", "alt"]
+
+
+def test_migrate_is_idempotent(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({"nav_prev": {"key": "left", "mods": ["ctrl", "shift", "alt"]}}),
+                  encoding="utf-8")
+    assert keymap.migrate_default_chord() is True     # first run migrates
+    assert keymap.migrate_default_chord() is False    # second run is a no-op
+
+
+def test_migrate_missing_file_is_noop(win, monkeypatch, tmp_path):
+    _patch_keymap_paths(monkeypatch, tmp_path)         # no file written
+    assert keymap.migrate_default_chord() is False
+
+
+def test_migrate_then_resolve_uses_ctrl_alt(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({"nav_next": {"key": "right", "mods": ["ctrl", "shift", "alt"]}}),
+                  encoding="utf-8")
+    keymap.migrate_default_chord()
+    resolved = keymap.resolve_keymap(keymap.load_keymap())
+    row = next(e for e in resolved if e["action"] == "nav_next")
+    assert row["modifiers"] == (0x0002 | 0x0001)       # ctrl|alt, no shift (0x0004)

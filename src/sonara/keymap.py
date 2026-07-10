@@ -27,6 +27,8 @@ ACTION_MESSAGES = {
     # Message-cursor navigation over the current turn (next/prev item).
     "nav_next": {"type": "nav", "to": "next"},
     "nav_prev": {"type": "nav", "to": "prev"},
+    "nav_start": {"type": "nav", "to": "first"},   # jump to start of turn + replay
+    "flush": {"type": "flush_session"},            # flush the engaged session to the end
     "pause": {"type": "pause"},     # play/pause toggle (valid action; UNBOUND by default — mute covers it)
     "mute": {"type": "mute"},       # global mute cycle (unmuted/muted/super muted)
     "next_session": {"type": "next_session"},   # cycle the active reader
@@ -35,12 +37,14 @@ ACTION_MESSAGES = {
 }
 
 # Shared action -> default key. The chord modifiers are platform-defaulted (macOS:
-# Ctrl+Cmd; Windows: Ctrl+Shift+Alt) via the active backend's default_mods().
-# Only navigation + mute + next_session are bound out of the box; pause and
-# faster/slower are valid actions but ship UNBOUND (blank by default) so the
-# default keymap stays minimal — users add a key in keymap.json if they want one.
+# Ctrl+Cmd; Windows: Ctrl+Alt) via the active backend's default_mods().
+# Only navigation (incl. nav_start/flush) + mute + next_session are bound out of
+# the box; pause and faster/slower are valid actions but ship UNBOUND (blank by
+# default) so the default keymap stays minimal: users add a key in keymap.json if
+# they want one.
 _DEFAULT_KEYS = {
     "nav_prev": "left", "nav_next": "right",
+    "nav_start": "up", "flush": "down",
     "mute": "m", "next_session": "p",   # next_session owns 'p'. pause unbound ('s' free); mute covers it.
 }
 
@@ -167,6 +171,42 @@ def unbind_action(action: str) -> None:
     else:
         user.pop(action, None)
     _write_user_keymap(user)
+
+
+# The Windows default chord dropped Shift (Ctrl+Shift+Alt -> Ctrl+Alt). Existing
+# installs have a keymap.json materialized by an earlier `sonara install` with the
+# legacy chord; this constant lets migrate_default_chord() spot those stale defaults.
+_LEGACY_WINDOWS_MODS = ["ctrl", "shift", "alt"]
+
+
+def migrate_default_chord() -> bool:
+    """Upgrade a keymap.json still pinned to the legacy Ctrl+Shift+Alt default.
+
+    Rewrites, in place, ONLY entries that exactly match a legacy default binding
+    (the action's default key AND the legacy mods) to the current default chord, so
+    a genuinely customized binding (different key or different mods) is preserved. A
+    user who deliberately re-adds Shift can do so again. Idempotent and safe: a
+    missing/corrupt keymap.json, or nothing to migrate, is a no-op returning False.
+    Returns True iff it wrote a change."""
+    from sonara.platform import get_platform
+    user = _read_user_keymap()
+    if not user:
+        return False
+    new_mods = list(get_platform().hotkey.default_mods())
+    if new_mods == _LEGACY_WINDOWS_MODS:
+        return False                     # current default already IS the legacy chord
+    changed = False
+    for action, default_key in _DEFAULT_KEYS.items():
+        entry = user.get(action)
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("key") == default_key
+                and list(entry.get("mods", [])) == _LEGACY_WINDOWS_MODS):
+            entry["mods"] = list(new_mods)
+            changed = True
+    if changed:
+        _write_user_keymap(user)
+    return changed
 
 
 def write_default_keymap_if_absent() -> bool:

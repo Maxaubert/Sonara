@@ -45,10 +45,14 @@ _MAX_CONN_THREADS = 32
 
 
 class SpeechDaemon:
-    def __init__(self, speaker, sessions, config) -> None:
+    def __init__(self, speaker, sessions, config, ducker=None) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
+        if ducker is None:
+            from sonara.platform.windows.ducking import NullDucker
+            ducker = NullDucker()
+        self.ducker = ducker
         self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
@@ -499,6 +503,7 @@ class SpeechDaemon:
                 # utterance aborts. The speak loop re-queues the interrupted item
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
+                self._maybe_restore()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
@@ -591,6 +596,32 @@ class SpeechDaemon:
             self.speaker.cancel()
             return None
 
+        if t == MsgType.FLUSH_SESSION:
+            # Flush to end: skip ALL pending items for the engaged session and go
+            # idle. Non-destructive: skipped items keep their history entries
+            # UNHEARD (we pop their _pending_heard markers so note_spoken never
+            # flips them True), so CATCH_UP / REPEAT can bring them back. Mirrors
+            # JUMP_DECISION but advances the cursor to the very end, not the next
+            # decision. Nothing is wiped; this is a cursor move.
+            fg = self._engaged_session()
+            if fg is None:
+                self._earcon("nav_edge")
+                return None
+            ch = self.router.channel(fg)
+            skipped = 0
+            while ch.cursor < len(ch.items):
+                self._pending_heard.pop(ch.items[ch.cursor].id, None)
+                ch.cursor += 1
+                skipped += 1
+            ch.has_decision = False        # any pending decision was skipped
+            cur = self._current_item
+            cutting = cur is not None and cur.session == fg
+            if cutting:
+                self.speaker.cancel()      # cut the in-progress utterance for fg
+            self._earcon("nav" if (skipped or cutting) else "nav_edge")
+            self._wake.set()
+            return None
+
         if t == MsgType.CATCH_UP:
             fg = self.sessions.foreground()
             if fg is None:
@@ -671,6 +702,35 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
+        if t == MsgType.SET_AUDIO_CONTROL:
+            if "enabled" not in msg:
+                return None
+            enabled = bool(msg.get("enabled"))
+            self.config["audio_control"] = enabled
+            save_config(self.config)
+            if not enabled and self.ducker.is_ducked():
+                self.ducker.restore()      # un-duck immediately on turn-off
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Audio control on." if enabled else "Audio control off.",
+                            exempt_mute=True)
+            self._wake.set()
+            return None
+
+        if t == MsgType.SET_DUCK_LEVEL:
+            try:
+                level = max(0, min(100, int(msg.get("level"))))
+            except (TypeError, ValueError):
+                return None
+            self.config["duck_level"] = level
+            save_config(self.config)
+            if self._audio_control_on() and self.ducker.is_ducked():  # re-apply at the new level
+                self.ducker.restore()
+                self.ducker.duck(self._duck_exclude_pids(), level)
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Duck level {0} percent.".format(level), exempt_mute=True)
+            self._wake.set()
+            return None
+
         if t == MsgType.CYCLE_VERBOSITY:
             order = ["everything", "medium", "quiet"]
             cur = self.config.get("verbosity", "everything")
@@ -703,6 +763,7 @@ class SpeechDaemon:
         self._running.clear()
         self._wake.set()
         self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
+        self._maybe_restore()       # never leave other apps' audio ducked
         self._stop_hotkeys()
         srv = self._server
         if srv is not None:
@@ -724,6 +785,8 @@ class SpeechDaemon:
             return
         from sonara.platform import get_platform
         try:
+            from sonara import keymap
+            keymap.migrate_default_chord()   # one-time upgrade of the legacy chord
             get_platform().hotkey.start(self._dispatch_hotkey)
         except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
             pass
@@ -995,9 +1058,38 @@ class SpeechDaemon:
         ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
 
+    def _audio_control_on(self) -> bool:
+        return bool(self.config.get("audio_control"))
+
+    def _duck_level(self) -> int:
+        try:
+            return max(0, min(100, int(self.config.get("duck_level", 20))))
+        except (TypeError, ValueError):
+            return 20
+
+    def _duck_exclude_pids(self) -> "set[int]":
+        pids = {os.getpid()}
+        try:
+            pids.update(self.speaker.earcon_pids())
+        except AttributeError:
+            pass
+        return pids
+
+    def _maybe_duck(self) -> None:
+        if self._audio_control_on() and not self.ducker.is_ducked():
+            self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
+
+    def _maybe_restore(self) -> None:
+        if self.ducker.is_ducked():
+            self.ducker.restore()
+
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
+            # Idempotently restore other apps' audio while paused — closes the window
+            # where a re-duck slipped in during the pause transition. Safe to call
+            # repeatedly: _maybe_restore() is a no-op when not ducked.
+            self._maybe_restore()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
             # pause rewinds the cursor past where _speak_cue inserted the cue, so a
@@ -1033,6 +1125,7 @@ class SpeechDaemon:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
         if item is None:
+            self._maybe_restore()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
@@ -1045,6 +1138,7 @@ class SpeechDaemon:
                 self._earcon("session_change")
             except Exception:  # noqa: BLE001
                 pass
+        self._maybe_duck()
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
         except Exception:  # noqa: BLE001
@@ -1310,6 +1404,8 @@ def main() -> None:
     from sonara.platform import get_platform
 
     _backend = get_platform()
+    from sonara.platform.windows.ducking import restore_from_state_file
+    restore_from_state_file()   # un-duck anything a crashed prior daemon left down
     cfg = load_config()
     if "earcons" not in cfg:
         cfg["earcons"] = _backend.earcon.default_earcons()
@@ -1321,7 +1417,7 @@ def main() -> None:
         earcons=cfg.get("earcons"),
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"))
-    daemon = SpeechDaemon(speaker, sessions, cfg)
+    daemon = SpeechDaemon(speaker, sessions, cfg, ducker=_backend.ducker)
     daemon.run()
 
 

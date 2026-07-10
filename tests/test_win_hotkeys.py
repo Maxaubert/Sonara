@@ -36,7 +36,7 @@ def _backend_with_fake_user32(monkeypatch, *, fail_ids=()):
 def test_keytables_and_default_mods():
     hk = WinHotkeyBackend()
     assert hk.key_codes()["s"] == 0x53 and hk.mod_masks()["ctrl"] == 0x0002
-    assert hk.default_mods() == ["ctrl", "shift", "alt"]
+    assert hk.default_mods() == ["ctrl", "alt"]
     assert isinstance(hk, HotkeyBackend)
 
 

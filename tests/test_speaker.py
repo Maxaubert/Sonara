@@ -369,3 +369,19 @@ def test_speak_without_external_epoch_uses_current_baseline():
     sp.speak("hello")                      # next speak starts clean
     assert made[0].wait_calls == 1         # played, not retroactively cancelled
     assert made[0].terminate_calls == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 4: earcon_pids()
+# ---------------------------------------------------------------------------
+
+
+class _P:
+    def __init__(self, pid, alive): self.pid = pid; self._a = alive
+    def poll(self): return None if self._a else 0
+
+
+def test_earcon_pids_returns_live_helper_pids():
+    s = Speaker(say_runner=lambda *a: None)
+    s._earcon_procs = [_P(11, True), _P(22, False), _P(33, True)]
+    assert set(s.earcon_pids()) == {11, 33}     # only live ones
