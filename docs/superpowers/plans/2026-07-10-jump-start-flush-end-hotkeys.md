@@ -434,6 +434,163 @@ git commit -m "docs: Ctrl+Alt modifier + Up/Down (start/flush) hotkeys in README
 
 ---
 
+### Task 6: One-time keymap.json migration to the Ctrl+Alt chord
+
+**Context (why this exists):** the final whole-branch review found that existing
+users who ran an earlier `sonara install` have a `keymap.json` on disk pinning
+`nav_prev/nav_next/mute/next_session` to the old `["ctrl","shift","alt"]` chord
+(`write_default_keymap_if_absent` materializes the full default). After Task 4 they
+would keep the old chord for those actions while the new `nav_start`/`flush` default
+to `Ctrl+Alt` — a split cluster, and the README (Task 5) would misdescribe their
+bindings. This task adds a safe, idempotent migration that rewrites ONLY entries
+still exactly matching a legacy default binding.
+
+**Files:**
+- Modify: `src/sonara/keymap.py` (add `_LEGACY_WINDOWS_MODS` + `migrate_default_chord()` near `unbind_action`)
+- Modify: `src/sonara/daemon.py` (`_start_hotkeys`, ~line 775-788: call the migration before starting the backend; ensure `from sonara import keymap` is imported)
+- Modify: `src/sonara/cli.py` (install path, ~line 458: call the migration before `write_default_keymap_if_absent()`)
+- Test: `tests/test_keymap.py` (add migration tests)
+
+**Interfaces:**
+- Consumes: `_DEFAULT_KEYS` (now includes `nav_start`/`flush` from Task 3), `_read_user_keymap()`, `_write_user_keymap()`, `get_platform().hotkey.default_mods()` (returns `["ctrl","alt"]` after Task 4).
+- Produces: `keymap.migrate_default_chord() -> bool` — rewrites legacy-default entries in place, returns True iff it wrote a change.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/test_keymap.py` (end of file). These reuse the existing `win` fixture and `_patch_keymap_paths` helper already in that file:
+
+```python
+def test_migrate_rewrites_legacy_chord_entries(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "shift", "alt"]},
+        "mute": {"key": "m", "mods": ["ctrl", "shift", "alt"]},
+    }), encoding="utf-8")
+    assert keymap.migrate_default_chord() is True
+    user = json.loads(km.read_text(encoding="utf-8"))
+    assert user["nav_prev"]["mods"] == ["ctrl", "alt"]
+    assert user["mute"]["mods"] == ["ctrl", "alt"]
+    assert user["nav_prev"]["key"] == "left"      # key preserved
+
+
+def test_migrate_preserves_customized_bindings(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "shift"]},        # custom mods
+        "mute": {"key": "j", "mods": ["ctrl", "shift", "alt"]},         # custom key
+    }), encoding="utf-8")
+    assert keymap.migrate_default_chord() is False
+    user = json.loads(km.read_text(encoding="utf-8"))
+    assert user["nav_prev"]["mods"] == ["ctrl", "shift"]
+    assert user["mute"]["key"] == "j" and user["mute"]["mods"] == ["ctrl", "shift", "alt"]
+
+
+def test_migrate_is_idempotent(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({"nav_prev": {"key": "left", "mods": ["ctrl", "shift", "alt"]}}),
+                  encoding="utf-8")
+    assert keymap.migrate_default_chord() is True     # first run migrates
+    assert keymap.migrate_default_chord() is False    # second run is a no-op
+
+
+def test_migrate_missing_file_is_noop(win, monkeypatch, tmp_path):
+    _patch_keymap_paths(monkeypatch, tmp_path)         # no file written
+    assert keymap.migrate_default_chord() is False
+
+
+def test_migrate_then_resolve_uses_ctrl_alt(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({"nav_next": {"key": "right", "mods": ["ctrl", "shift", "alt"]}}),
+                  encoding="utf-8")
+    keymap.migrate_default_chord()
+    resolved = keymap.resolve_keymap(keymap.load_keymap())
+    row = next(e for e in resolved if e["action"] == "nav_next")
+    assert row["modifiers"] == (0x0002 | 0x0001)       # ctrl|alt, no shift (0x0004)
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `./.venv/Scripts/python.exe -m pytest tests/test_keymap.py -q`
+Expected: FAIL — `migrate_default_chord` does not exist (AttributeError).
+
+- [ ] **Step 3: Add the migration function**
+
+In `src/sonara/keymap.py`, after `unbind_action` (around line 169), add:
+
+```python
+# The Windows default chord dropped Shift (Ctrl+Shift+Alt -> Ctrl+Alt). Existing
+# installs have a keymap.json materialized by an earlier `sonara install` with the
+# legacy chord; this constant lets migrate_default_chord() spot those stale defaults.
+_LEGACY_WINDOWS_MODS = ["ctrl", "shift", "alt"]
+
+
+def migrate_default_chord() -> bool:
+    """Upgrade a keymap.json still pinned to the legacy Ctrl+Shift+Alt default.
+
+    Rewrites, in place, ONLY entries that exactly match a legacy default binding
+    (the action's default key AND the legacy mods) to the current default chord, so
+    a genuinely customized binding (different key or different mods) is preserved. A
+    user who deliberately re-adds Shift can do so again. Idempotent and safe: a
+    missing/corrupt keymap.json, or nothing to migrate, is a no-op returning False.
+    Returns True iff it wrote a change."""
+    from sonara.platform import get_platform
+    user = _read_user_keymap()
+    if not user:
+        return False
+    new_mods = list(get_platform().hotkey.default_mods())
+    if new_mods == _LEGACY_WINDOWS_MODS:
+        return False                     # current default already IS the legacy chord
+    changed = False
+    for action, default_key in _DEFAULT_KEYS.items():
+        entry = user.get(action)
+        if not isinstance(entry, dict):
+            continue
+        if (entry.get("key") == default_key
+                and list(entry.get("mods", [])) == _LEGACY_WINDOWS_MODS):
+            entry["mods"] = list(new_mods)
+            changed = True
+    if changed:
+        _write_user_keymap(user)
+    return changed
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `./.venv/Scripts/python.exe -m pytest tests/test_keymap.py -q`
+Expected: PASS (all, including the 5 new migration tests).
+
+- [ ] **Step 5: Wire the migration into daemon startup and install**
+
+In `src/sonara/daemon.py`, in `_start_hotkeys()` (the method that starts the backend at ~line 775-788), call the migration right before starting the platform backend. daemon.py does NOT import `keymap` at module top and uses lazy imports elsewhere, so use a LOCAL import inside `_start_hotkeys` (avoids any import-cycle risk). The call goes just before `get_platform().hotkey.start(self._dispatch_hotkey)`:
+
+```python
+            from sonara import keymap
+            keymap.migrate_default_chord()   # one-time upgrade of the legacy chord
+            get_platform().hotkey.start(self._dispatch_hotkey)
+```
+
+In `src/sonara/cli.py`, in the install path (around line 458, just before `keymap.write_default_keymap_if_absent()`), add:
+
+```python
+    keymap.migrate_default_chord()
+    keymap.write_default_keymap_if_absent()
+    keymap.write_resolved()
+```
+
+- [ ] **Step 6: Run the keymap + cli + daemon suites for regressions**
+
+Run: `./.venv/Scripts/python.exe -m pytest tests/test_keymap.py tests/test_cli_install.py tests/test_daemon_hotkeys.py -q`
+Expected: PASS (the daemon/cli tests must not regress from the new call site).
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/sonara/keymap.py src/sonara/daemon.py src/sonara/cli.py tests/test_keymap.py
+git commit -m "feat(keymap): migrate legacy Ctrl+Shift+Alt keymaps to Ctrl+Alt"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
