@@ -44,9 +44,9 @@ def test_action_messages_faster_has_delta_25():
 
 # --- default_keymap: per-OS chord -------------------------------------------
 
-def test_default_keymap_windows_uses_ctrl_shift_alt(win):
+def test_default_keymap_windows_uses_ctrl_alt(win):
     d = keymap.default_keymap()
-    assert d["nav_next"]["mods"] == ["ctrl", "shift", "alt"]
+    assert d["nav_next"]["mods"] == ["ctrl", "alt"]
     assert d["mute"]["key"] == "m"
 
 

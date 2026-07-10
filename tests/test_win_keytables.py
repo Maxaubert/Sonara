@@ -13,8 +13,8 @@ def test_mod_masks_are_registerhotkey_fsmodifiers():
     assert wk.MOD_MASKS["shift"] == 0x0004 and wk.MOD_MASKS["win"] == 0x0008
 
 
-def test_default_mods_is_ctrl_shift_alt():
-    assert wk.DEFAULT_MODS == ["ctrl", "shift", "alt"]
+def test_default_mods_is_ctrl_alt():
+    assert wk.DEFAULT_MODS == ["ctrl", "alt"]
 
 
 def test_arrow_key_vk_codes():
