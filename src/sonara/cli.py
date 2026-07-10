@@ -455,6 +455,7 @@ def install() -> int:
     print(f"Copied runtime to: {app_dir}")
 
     # 3. Keymap setup.
+    keymap.migrate_default_chord()
     keymap.write_default_keymap_if_absent()
     keymap.write_resolved()
 

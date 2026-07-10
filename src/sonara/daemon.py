@@ -785,6 +785,8 @@ class SpeechDaemon:
             return
         from sonara.platform import get_platform
         try:
+            from sonara import keymap
+            keymap.migrate_default_chord()   # one-time upgrade of the legacy chord
             get_platform().hotkey.start(self._dispatch_hotkey)
         except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
             pass
