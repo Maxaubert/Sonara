@@ -598,7 +598,7 @@ class SpeechDaemon:
 
         if t == MsgType.FLUSH_SESSION:
             # Flush to end: skip ALL pending items for the engaged session and go
-            # idle. Non-destructive — skipped items keep their history entries
+            # idle. Non-destructive: skipped items keep their history entries
             # UNHEARD (we pop their _pending_heard markers so note_spoken never
             # flips them True), so CATCH_UP / REPEAT can bring them back. Mirrors
             # JUMP_DECISION but advances the cursor to the very end, not the next
