@@ -27,6 +27,8 @@ ACTION_MESSAGES = {
     # Message-cursor navigation over the current turn (next/prev item).
     "nav_next": {"type": "nav", "to": "next"},
     "nav_prev": {"type": "nav", "to": "prev"},
+    "nav_start": {"type": "nav", "to": "first"},   # jump to start of turn + replay
+    "flush": {"type": "flush_session"},            # flush the engaged session to the end
     "pause": {"type": "pause"},     # play/pause toggle (valid action; UNBOUND by default — mute covers it)
     "mute": {"type": "mute"},       # global mute cycle (unmuted/muted/super muted)
     "next_session": {"type": "next_session"},   # cycle the active reader
@@ -41,6 +43,7 @@ ACTION_MESSAGES = {
 # default keymap stays minimal — users add a key in keymap.json if they want one.
 _DEFAULT_KEYS = {
     "nav_prev": "left", "nav_next": "right",
+    "nav_start": "up", "flush": "down",
     "mute": "m", "next_session": "p",   # next_session owns 'p'. pause unbound ('s' free); mute covers it.
 }
 

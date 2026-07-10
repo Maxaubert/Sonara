@@ -65,7 +65,8 @@ def test_default_keymap_binds_only_nav_pause_mute():
     # The default keymap binds nav/mute/next_session. pause/faster/slower are valid
     # actions but ship UNBOUND (blank by default); every default binding is a real action.
     km = keymap.default_keymap()
-    assert set(km.keys()) == {"nav_prev", "nav_next", "mute", "next_session"}
+    assert set(km.keys()) == {"nav_prev", "nav_next", "nav_start", "flush",
+                              "mute", "next_session"}
     assert set(km.keys()) <= set(keymap.ACTION_MESSAGES.keys())
     assert "pause" in keymap.ACTION_MESSAGES and "pause" not in km
     assert "faster" in keymap.ACTION_MESSAGES and "faster" not in km
@@ -216,3 +217,23 @@ def test_next_session_default_binding_is_p():
     from sonara.keymap import default_keymap
     km = default_keymap()
     assert km["next_session"]["key"] == "p"
+
+
+def test_nav_start_action_message_is_nav_first():
+    assert keymap.ACTION_MESSAGES["nav_start"] == {"type": "nav", "to": "first"}
+
+
+def test_flush_action_message():
+    assert keymap.ACTION_MESSAGES["flush"] == {"type": "flush_session"}
+
+
+def test_nav_start_and_flush_default_to_up_and_down():
+    km = keymap.default_keymap()
+    assert km["nav_start"]["key"] == "up"
+    assert km["flush"]["key"] == "down"
+
+
+def test_arrow_cluster_default_keys_are_distinct():
+    km = keymap.default_keymap()
+    arrows = {km[a]["key"] for a in ("nav_prev", "nav_next", "nav_start", "flush")}
+    assert arrows == {"left", "right", "up", "down"}
