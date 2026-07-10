@@ -20,6 +20,7 @@ class MsgType:
     STOP = "stop"
     SKIP = "skip"
     NAV = "nav"          # message-cursor navigation: msg["to"] in next|prev|first|last
+    FLUSH_SESSION = "flush_session"   # hotkey: flush the engaged session's queue to the end
     PAUSE = "pause"      # toggle play/pause of the whole speak loop
     MUTE = "mute"        # toggle a sticky per-session mute (earcons still fire)
     NEXT_SESSION = "next_session"   # hotkey: cycle the active reader to another session
