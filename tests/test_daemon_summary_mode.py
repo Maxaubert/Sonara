@@ -183,3 +183,42 @@ def test_worker_forwards_config_to_summarizer(monkeypatch):
     daemon._summarize_fn = fake
     daemon._summary_worker(*calls[0])
     assert seen == {"model": "haiku", "command": "claude", "timeout": 20}
+
+
+# --- FLUSH supersedes in-flight summary; recap kind excludes re-gather --
+
+def test_flush_supersedes_inflight_summary(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # gen 1 in flight
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
+                           "session": "fg"})             # new prompt
+    daemon._summarize_fn = lambda text, **kw: "Stale recap."
+    daemon._summary_worker(*calls[0])                    # late gen-1 result
+    ch = daemon.router.channel("fg")
+    assert "Stale recap." not in [it.text for it in ch.items[ch.cursor:]]
+    assert not daemon.history.unheard("fg")              # nothing recorded either
+
+
+def test_recorded_summary_is_not_resummarized(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The recap."
+    daemon._summary_worker(*calls[0])                    # recap recorded
+    _turn_done(daemon)                                   # second turn_done, no flush
+    assert len(calls) == 2
+    _, _, text2 = calls[1]
+    assert "The recap." not in text2                     # recap excluded from gather
+
+
+def test_session_end_clears_summary_gen(monkeypatch):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._summary_gen["fg"] = 3
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
+                           "session": "fg"})
+    assert "fg" not in daemon._summary_gen

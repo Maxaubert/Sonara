@@ -428,6 +428,9 @@ class SpeechDaemon:
             self.router.channel(session).wipe()
             self._assemblers.pop(session, None)
             self.history.reset(session)
+            # A new prompt supersedes any in-flight turn summary: advance the
+            # generation so a stale recap is dropped, not spoken into this turn.
+            self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
             self._nav_cursor.pop(session, None)
             self._paused.clear()
             self._wake.set()
@@ -459,6 +462,7 @@ class SpeechDaemon:
             self._options.pop(session, None)
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
+            self._summary_gen.pop(session, None)
             return None
 
         if t == MsgType.STOP:
@@ -941,8 +945,8 @@ class SpeechDaemon:
             if self._summary_gen.get(session) != gen:
                 return                   # superseded: a newer turn owns the voice
             if summary:
-                entry = self.history.record(session, "prose", summary)
-                self._enqueue(session, "prose", summary, False, entry=entry)
+                entry = self.history.record(session, "summary", summary)
+                self._enqueue(session, "summary", summary, False, entry=entry)
                 self.router.channel(session).turn_done = True
                 self._wake.set()
             else:
