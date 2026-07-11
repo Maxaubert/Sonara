@@ -68,11 +68,21 @@ to summary mode being off.
 1. **`src/sonara/summarizer.py`** (new): pure-ish module.
    - `build_prompt() -> str`: the fixed summarizer instruction.
    - `summarize(text, *, model, command, timeout, runner=None) -> str | None`:
-     builds argv (`[command, "-p", "--model", model]`), feeds `text` on stdin via
-     `runner` (an injectable callable defaulting to a `subprocess.run` wrapper with
+     builds argv (`[command, "-p", "--model", model, "--tools", ""]` with the fixed
+     instruction as the prompt argument), feeds `text` on stdin via `runner` (an
+     injectable callable defaulting to a `subprocess.run` wrapper with
      `CREATE_NO_WINDOW` on Windows and the timeout), returns the trimmed stdout, or
      `None` on any failure (non-zero exit, timeout, empty, exception). The injectable
      `runner` keeps tests from spawning `claude`.
+   - **Isolation:** the subprocess runs tool-disabled and with `cwd` set to a
+     neutral directory (the user home, not the project), so the throwaway call is
+     a pure text-in/text-out summarizer: it cannot read files, run commands, or
+     pick up a project CLAUDE.md. It sees ONLY the piped message text. (Exact
+     tool-disable flag verified at implementation time against the installed
+     claude CLI; if unsupported, fall back to the most restrictive available
+     mode.) The call reuses the user's existing Claude Code login; its tokens
+     count against the user's plan (one small Haiku call per foreground turn) -
+     noted in the README section.
 
 2. **`src/sonara/daemon.py`**:
    - Turn-end trigger: in the `EARCON` handler for `turn_done` (or the turn-end
