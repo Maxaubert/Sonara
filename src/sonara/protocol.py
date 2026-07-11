@@ -33,6 +33,7 @@ class MsgType:
     SET_MINQUEUE = "set_minqueue"
     SET_AUDIO_CONTROL = "set_audio_control"   # enable/disable audio ducking
     SET_DUCK_LEVEL = "set_duck_level"         # set duck target volume (0-100)
+    SET_SUMMARY_MODE = "set_summary_mode"     # toggle spoken turn summaries
     STATUS = "status"
     PING = "ping"
     REREAD_OPTIONS = "reread_options"
