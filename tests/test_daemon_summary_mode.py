@@ -70,3 +70,116 @@ def test_status_reports_summary_mode(monkeypatch):
     _set_mode(daemon, True)
     reply = daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.STATUS})
     assert reply["summary_mode"] is True
+
+
+# --- turn-end summary dispatch ------------------------------------------
+
+def _turn_done(daemon, session="fg"):
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": session})
+
+
+def _capture_spawn(daemon, monkeypatch):
+    calls = []
+    monkeypatch.setattr(daemon, "_start_summary_thread",
+                        lambda session, gen, text: calls.append((session, gen, text)))
+    return calls
+
+
+def _enable_and_feed(daemon, monkeypatch, session="fg"):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose(session, "First part. ", 0, True))
+    daemon.handle_message(_prose(session, "Second part. ", 1, True))
+
+
+def test_turn_done_dispatches_summary_for_foreground(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    assert len(calls) == 1
+    session, gen, text = calls[0]
+    assert session == "fg"
+    assert "First part." in text and "Second part." in text
+
+
+def test_turn_done_does_not_dispatch_when_mode_off(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    daemon.handle_message(_prose("fg", "Text. "))
+    _turn_done(daemon)
+    assert calls == []
+
+
+def test_turn_done_does_not_dispatch_for_background_session(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch, session="bg")
+    _turn_done(daemon, session="bg")
+    assert calls == []
+
+
+def test_turn_done_with_no_prose_does_not_dispatch(monkeypatch):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _set_mode(daemon, True)
+    _turn_done(daemon)                                   # decision-only / empty turn
+    assert calls == []
+
+
+def test_worker_success_enqueues_summary(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The gist."
+    daemon._summary_worker(*calls[0])                    # run inline, outside the lock
+    ch = daemon.router.channel("fg")
+    texts = [it.text for it in ch.items[ch.cursor:]]
+    assert "The gist." in texts
+
+
+def test_worker_failure_fires_cue_and_enqueues_nothing(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: None
+    daemon._summary_worker(*calls[0])
+    assert speaker.earcons[-1] == "summary_failed"
+    assert daemon.router.channel("fg").pending() == 0
+
+
+def test_superseded_worker_result_is_dropped(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # gen 1
+    daemon.handle_message(_prose("fg", "More text. ", 2, True))
+    _turn_done(daemon)                                   # gen 2 supersedes
+    daemon._summarize_fn = lambda text, **kw: "Stale summary."
+    daemon._summary_worker(*calls[0])                    # gen-1 result arrives late
+    ch = daemon.router.channel("fg")
+    assert "Stale summary." not in [it.text for it in ch.items[ch.cursor:]]
+
+
+def test_worker_forwards_config_to_summarizer(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    config["summary_model"] = "haiku"
+    config["summary_command"] = "claude"
+    config["summary_timeout"] = 20
+    _turn_done(daemon)
+    seen = {}
+
+    def fake(text, **kw):
+        seen.update(kw)
+        return "Recap."
+    daemon._summarize_fn = fake
+    daemon._summary_worker(*calls[0])
+    assert seen == {"model": "haiku", "command": "claude", "timeout": 20}

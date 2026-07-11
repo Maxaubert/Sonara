@@ -88,6 +88,10 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
+        # Summary mode: per-session generation counter; a new turn-end supersedes
+        # any older in-flight summarizer so a stale result is dropped, not spoken.
+        self._summary_gen: dict = {}
+        self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -413,6 +417,7 @@ class SpeechDaemon:
                 # left buffered (no per-delta wake) is read now, not after a poll.
                 self.router.channel(session).turn_done = True
                 self._wake.set()
+                self._maybe_summarize(session)
             return None
 
         if t == MsgType.FLUSH:
@@ -893,6 +898,55 @@ class SpeechDaemon:
         HEARS, not the last session to submit a prompt."""
         return (self.router.active or self.router._last_active
                 or self.sessions.foreground())
+
+    def _maybe_summarize(self, session: str) -> None:
+        """Summary mode: on turn end, recap the foreground session's prose via a
+        separate throwaway claude -p call (see summarizer.py). Runs under the
+        daemon lock, so it only gathers text and spawns the worker thread; the
+        subprocess itself runs OFF-lock in _summary_worker."""
+        if not self.config.get("summary_mode"):
+            return
+        if not self.sessions.is_foreground(session):
+            return                       # v1: foreground turns only
+        texts = []
+        for mid in self.history.message_ids(session):
+            for e in self.history.entries_for_message(session, mid):
+                if e.kind == "prose":
+                    texts.append(e.text)
+        text = " ".join(texts).strip()
+        if not text:
+            return                       # decision-only / empty turn: nothing to recap
+        gen = self._summary_gen.get(session, 0) + 1
+        self._summary_gen[session] = gen
+        self._start_summary_thread(session, gen, text)
+
+    def _start_summary_thread(self, session: str, gen: int, text: str) -> None:
+        threading.Thread(target=self._summary_worker, args=(session, gen, text),
+                         name="sonara-summary", daemon=True).start()
+
+    def _summary_worker(self, session: str, gen: int, text: str) -> None:
+        """Run the summarizer subprocess OFF-lock, then apply the result under the
+        lock: enqueue the spoken summary, or fire the failure cue. A result whose
+        generation was superseded by a newer turn end is dropped silently."""
+        from sonara import summarizer
+        fn = self._summarize_fn or summarizer.summarize
+        try:
+            summary = fn(text,
+                         model=self.config.get("summary_model", "haiku"),
+                         command=self.config.get("summary_command", "claude"),
+                         timeout=self.config.get("summary_timeout", 20))
+        except Exception:  # noqa: BLE001 - a summary failure must never crash the daemon
+            summary = None
+        with self._lock:
+            if self._summary_gen.get(session) != gen:
+                return                   # superseded: a newer turn owns the voice
+            if summary:
+                entry = self.history.record(session, "prose", summary)
+                self._enqueue(session, "prose", summary, False, entry=entry)
+                self.router.channel(session).turn_done = True
+                self._wake.set()
+            else:
+                self._earcon("summary_failed")
 
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
