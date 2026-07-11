@@ -311,7 +311,10 @@ class SpeechDaemon:
                 entry = self.history.record(session, "prose", chunk)
                 # At "quiet" verbosity prose is recorded in history (for catch_up)
                 # but NOT enqueued for speech.
-                if verbosity != "quiet":
+                # quiet verbosity AND summary mode both record prose to history
+                # without enqueueing speech (summary mode reads a recap at turn
+                # end instead; catch_up / re-read still work from history).
+                if verbosity != "quiet" and not self.config.get("summary_mode"):
                     item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
                                       text=chunk, is_decision=False)
                     self._pending_heard[item.id] = entry
@@ -731,6 +734,19 @@ class SpeechDaemon:
             self._wake.set()
             return None
 
+        if t == MsgType.SET_SUMMARY_MODE:
+            if "enabled" not in msg:
+                return None
+            enabled = bool(msg.get("enabled"))
+            self.config["summary_mode"] = enabled
+            save_config(self.config)
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target,
+                            "Summary mode on." if enabled else "Summary mode off.",
+                            exempt_mute=True)
+            self._wake.set()
+            return None
+
         if t == MsgType.CYCLE_VERBOSITY:
             order = ["everything", "medium", "quiet"]
             cur = self.config.get("verbosity", "everything")
@@ -752,6 +768,7 @@ class SpeechDaemon:
                 "voice": self.config.get("voice"),
                 "foreground": self.sessions.foreground(),
                 "minqueue": self.config.get("minqueue"),
+                "summary_mode": bool(self.config.get("summary_mode")),
             }
 
         if t == MsgType.PING:
