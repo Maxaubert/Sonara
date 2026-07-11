@@ -1,0 +1,61 @@
+"""The out-of-band turn summarizer: a throwaway tool-disabled `claude -p` call.
+All tests inject a fake runner; nothing here spawns a real process."""
+import pytest
+
+from sonara import summarizer
+
+
+def _ok_runner(result="A short recap."):
+    calls = []
+
+    def run(argv, text, timeout):
+        calls.append({"argv": argv, "text": text, "timeout": timeout})
+        return 0, result
+    return run, calls
+
+
+def test_success_returns_trimmed_stdout():
+    run, calls = _ok_runner("  The gist of it.\n")
+    out = summarizer.summarize("long text", model="haiku", runner=run)
+    assert out == "The gist of it."
+    assert calls[0]["text"] == "long text"
+    assert calls[0]["timeout"] == 20            # default timeout
+
+
+def test_argv_is_headless_tool_disabled_call():
+    argv = summarizer.build_argv("claude", "haiku")
+    assert argv[0] == "claude"
+    assert "-p" in argv
+    assert "--model" in argv and argv[argv.index("--model") + 1] == "haiku"
+    # --tools "" disables every tool: pure text-in/text-out
+    assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
+
+
+def test_nonzero_exit_returns_none():
+    out = summarizer.summarize("t", model="haiku", runner=lambda a, t, s: (1, "oops"))
+    assert out is None
+
+
+def test_empty_stdout_returns_none():
+    out = summarizer.summarize("t", model="haiku", runner=lambda a, t, s: (0, "  \n"))
+    assert out is None
+
+
+def test_runner_exception_returns_none():
+    def boom(argv, text, timeout):
+        raise RuntimeError("spawn failed")
+    assert summarizer.summarize("t", model="haiku", runner=boom) is None
+
+
+def test_empty_text_short_circuits_without_calling_runner():
+    def never(argv, text, timeout):
+        raise AssertionError("runner must not be called for empty text")
+    assert summarizer.summarize("   ", model="haiku", runner=never) is None
+
+
+def test_command_and_timeout_are_forwarded():
+    run, calls = _ok_runner()
+    summarizer.summarize("t", model="haiku", command="claude-custom",
+                         timeout=5, runner=run)
+    assert calls[0]["argv"][0] == "claude-custom"
+    assert calls[0]["timeout"] == 5
