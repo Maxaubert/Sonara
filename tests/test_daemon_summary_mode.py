@@ -90,8 +90,11 @@ def _enable_and_feed(daemon, monkeypatch, session="fg"):
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
     _set_mode(daemon, True)
-    daemon.handle_message(_prose(session, "First part. ", 0, True))
-    daemon.handle_message(_prose(session, "Second part. ", 1, True))
+    # Pad both parts past the short-turn threshold (_SUMMARY_MIN_CHARS), so
+    # these fixtures exercise the summarizer dispatch, not the pass-through.
+    pad = "This filler sentence carries the turn well past the threshold. "
+    daemon.handle_message(_prose(session, "First part. " + pad * 3, 0, True))
+    daemon.handle_message(_prose(session, "Second part. " + pad * 3, 1, True))
 
 
 def test_turn_done_dispatches_summary_for_foreground(monkeypatch):
@@ -222,3 +225,34 @@ def test_session_end_clears_summary_gen(monkeypatch):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
                            "session": "fg"})
     assert "fg" not in daemon._summary_gen
+
+
+# --- short turns skip the summarizer and speak the original text ----------
+
+def test_short_turn_speaks_original_without_summarizer(monkeypatch):
+    # Digesting an already-short message adds nothing and risks the model
+    # emitting spoken meta-text on borderline "trivial" input (observed live).
+    # Below the threshold the daemon replays the original prose directly.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Back on. ", 0, True))
+    _turn_done(daemon)
+    assert calls == []                                    # no summarizer spawned
+    ch = daemon.router.channel("fg")
+    texts = [it.text for it in ch.items[ch.cursor:]]
+    assert any("Back on." in t for t in texts)            # original spoken instead
+
+
+def test_long_turn_still_dispatches_summarizer(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    long_text = "This sentence pads the turn well past the threshold. " * 12
+    daemon.handle_message(_prose("fg", long_text, 0, True))
+    _turn_done(daemon)
+    assert len(calls) == 1

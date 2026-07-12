@@ -35,7 +35,7 @@ Output: The assistant asks which model is used for summaries.
 Input: <message>Let me check the config first. Okay, found it: the login bug was a missing null check in the auth module, so I added one and re-ran the suite. All 40 tests pass. I recommend deploying to staging next. Want me to?</message>
 Output: The login bug turned out to be a missing null check in the auth module, and it is fixed with all tests passing. The assistant recommends deploying to staging next and asks whether to go ahead.
 
-OUTPUT: exactly the digest and nothing else. Empty or trivial input: output nothing."""
+OUTPUT: exactly the digest and nothing else. If the message is empty or has nothing worth speaking, reply with exactly: SKIP"""
 
 
 def build_argv(command: str, model: str) -> list:
@@ -97,4 +97,10 @@ def summarize(text, *, model, command: str = "claude", timeout=20, runner=None):
     if code != 0:
         return None
     out = (out or "").strip()
+    # The nothing-to-say sentinel: the model replies "SKIP" (it cannot reply
+    # with literally nothing without verbalizing meta-text like "no content
+    # to be spoken", which then got READ ALOUD - observed live). Map it to
+    # None so the daemon stays silent.
+    if out.strip(".! ").lower() == "skip":
+        return None
     return out or None

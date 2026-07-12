@@ -107,3 +107,19 @@ def test_command_and_timeout_are_forwarded():
                          timeout=5, runner=run)
     assert calls[0]["argv"][0] == "claude-custom"
     assert calls[0]["timeout"] == 5
+
+
+def test_skip_sentinel_maps_to_none():
+    # "Output nothing" was verbalized by the model as spoken meta-text
+    # ("no substantive content to be spoken yet") - a model cannot emit
+    # nothing, so the instruction now demands the SKIP sentinel and the
+    # code maps it to None (silence).
+    for raw in ("SKIP", "skip", "  Skip.\n"):
+        out = summarizer.summarize("t", model="haiku",
+                                   runner=lambda a, t, s, _r=raw: (0, _r))
+        assert out is None, raw
+
+
+def test_instruction_uses_skip_not_output_nothing():
+    assert "SKIP" in summarizer.INSTRUCTION
+    assert "output nothing" not in summarizer.INSTRUCTION.lower()

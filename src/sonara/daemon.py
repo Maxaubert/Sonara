@@ -38,6 +38,11 @@ _DEBOUNCED_HOTKEYS = (
     MsgType.PAUSE, MsgType.MUTE, MsgType.NEXT_SESSION, MsgType.CYCLE_VERBOSITY,
 )
 
+# Summary mode: a turn whose prose is already shorter than this is spoken
+# as-is instead of being digested (a digest of a short message adds nothing,
+# costs a model call, and risks spoken meta-text on borderline input).
+_SUMMARY_MIN_CHARS = 280
+
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
 # (one request each), so this bound is generous; it just stops a misbehaving or
 # hostile peer from leaking unbounded threads by opening many connections.
@@ -910,14 +915,21 @@ class SpeechDaemon:
             return
         if not self.sessions.is_foreground(session):
             return                       # v1: foreground turns only
-        texts = []
+        entries = []
         for mid in self.history.message_ids(session):
             for e in self.history.entries_for_message(session, mid):
                 if e.kind == "prose":
-                    texts.append(e.text)
-        text = " ".join(texts).strip()
+                    entries.append(e)
+        text = " ".join(e.text for e in entries).strip()
         if not text:
             return                       # decision-only / empty turn: nothing to recap
+        if len(text) < _SUMMARY_MIN_CHARS:
+            # An already-short turn needs no digest: replay the original prose
+            # instead. Digesting borderline-trivial input made the model
+            # verbalize meta-text ("no content to be spoken") that was then
+            # read aloud; speaking the original is faster and free.
+            self._replay(session, entries)
+            return
         gen = self._summary_gen.get(session, 0) + 1
         self._summary_gen[session] = gen
         self._start_summary_thread(session, gen, text)
