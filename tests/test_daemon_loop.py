@@ -31,7 +31,7 @@ def test_speak_loop_survives_a_speaker_exception():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     spoken = []
 
-    def boom(text, cancel_epoch=None):
+    def boom(text, cancel_epoch=None, on_play=None):
         if text == "bad":
             raise RuntimeError("synth blew up")
         spoken.append(text)
