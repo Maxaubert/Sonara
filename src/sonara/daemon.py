@@ -186,6 +186,25 @@ class SpeechDaemon:
             if entry is not None and completed:
                 entry.heard = True
 
+    def _requeue_or_note(self, item, completed) -> bool:
+        """On a pause-interrupted utterance, re-queue it so resume re-speaks it and
+        return True (skip note_spoken). Returns False otherwise (caller notes it).
+        A session-change announcement owns no channel cursor position (it comes
+        from the router's pending-announce, id 0), so re-arm the announcement
+        instead of rewinding a real content item (which double-spoke/lost it)."""
+        with self._lock:
+            if not (not completed and self._paused.is_set()):
+                return False
+            if item.kind == "session_change":
+                self.router._pending_announce = item.session
+                self.router._pending_announce_replay = False
+            else:
+                ch = self.router.channels.get(item.session)
+                if ch is not None and ch.cursor > 0:
+                    ch.cursor -= 1
+            self._current_item = None
+            return True
+
     @staticmethod
     def _choice_text(msg) -> str:
         parts = []
@@ -1299,16 +1318,7 @@ class SpeechDaemon:
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False
-        requeued = False
-        with self._lock:
-            if not completed and self._paused.is_set():
-                # paused mid-utterance: rewind the cursor so resume re-speaks it
-                ch = self.router.channels.get(item.session)
-                if ch is not None and ch.cursor > 0:
-                    ch.cursor -= 1
-                self._current_item = None
-                requeued = True
-        if not requeued:
+        if not self._requeue_or_note(item, completed):
             self.note_spoken(item, completed)
 
     def _handle_conn(self, conn) -> None:
