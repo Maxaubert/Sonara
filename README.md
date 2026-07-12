@@ -133,7 +133,9 @@ The threshold is configurable via `chatterbox_min_free_vram_gb` in `~/.sonara/co
 When the model is loaded, it idles for 10 minutes before unloading to free VRAM back to your
 system (configurable via `chatterbox_idle_unload_s`). On any failure (missing weights, GPU
 error, timeout), Sonara automatically falls back to Kokoro and logs the reason to
-`~/.sonara/speechd.log`.
+`~/.sonara/speechd.log`. The first fallback in a daemon run also speaks a short
+notice ("Chatterbox unavailable, using Heart") so you know why the voice changed;
+later fallbacks in the same run stay quiet apart from the log.
 
 **Limitation:**
 
