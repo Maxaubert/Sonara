@@ -303,6 +303,11 @@ class _ChatterboxHandle:
             except queue.Empty:
                 pass
             if self._producer is not None:
+                # The join may TIME OUT by design: synth_one is a blocking worker
+                # RPC that does not poll _abort, so a chunk already mid-synth when
+                # terminate() lands finishes (bounded by the worker timeout) and
+                # the producer self-reaps just after. wait() has already stopped
+                # playback, so this is a background tail, not a hang.
                 self._producer.join(timeout=1.0)
                 self._producer = None
         return self.returncode
