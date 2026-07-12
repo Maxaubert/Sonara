@@ -109,6 +109,22 @@ def test_producer_thread_stops_after_wait():
     assert h._producer is None or not h._producer.is_alive()   # no leaked thread
 
 
+def test_play_exception_does_not_leak_thread_or_hang():
+    # If _play raises, wait() must still return (not hang), set a non-None
+    # returncode, and stop the producer thread (no leak, no spin-loop).
+    def boom_play(wav):
+        raise OSError("winsound failed")
+    h = _ChatterboxHandle("x", synth_one=lambda c: c.encode(),
+                          play=boom_play, split=_split)
+    t = threading.Thread(target=h.wait)
+    t.start()
+    t.join(3.0)
+    assert not t.is_alive()                       # returned, did not hang
+    assert h.returncode is not None               # not left as "still running"
+    time.sleep(0.2)
+    assert h._producer is None or not h._producer.is_alive()   # no leaked producer
+
+
 def test_split_text_is_exposed_on_chatterbox_module():
     from sonara import chatterbox
     chunks = chatterbox.split_text("One. Two. Three.", max_chars=8)

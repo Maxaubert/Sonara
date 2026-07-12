@@ -255,46 +255,56 @@ class _ChatterboxHandle:
         self._producer.start()
         played_any = False
         rc = 1
-        while True:
-            if self._abort.is_set():
-                break
-            try:
-                item = self._q.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            if self._abort.is_set():
-                break
-            if item is _DONE:
-                rc = 0
-                break
-            if not played_any and self._on_play is not None:
-                try:
-                    self._on_play()
-                except Exception:  # noqa: BLE001 - ducking must never block speech
-                    pass
-                played_any = True
-            sub = self._play(item)
-            self._cur_sub = sub
-            try:
-                sub.wait(timeout=self._chunk_play_timeout)
-            except Exception:  # noqa: BLE001 - a stuck chunk must not wedge the loop
-                try:
-                    sub.terminate()
-                except Exception:  # noqa: BLE001
-                    pass
-            self._cur_sub = None
-        self.returncode = rc
-        self._abort.set()      # in case rc came from the top-of-loop break: stop the producer
-        # Drain any leftover item so a producer still retrying put() sees room
-        # and exits promptly, then join it so no thread is ever leaked.
         try:
             while True:
-                self._q.get_nowait()
-        except queue.Empty:
-            pass
-        if self._producer is not None:
-            self._producer.join(timeout=1.0)
-            self._producer = None
+                if self._abort.is_set():
+                    break
+                try:
+                    item = self._q.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if self._abort.is_set():
+                    break
+                if item is _DONE:
+                    rc = 0
+                    break
+                if not played_any and self._on_play is not None:
+                    try:
+                        self._on_play()
+                    except Exception:  # noqa: BLE001 - ducking must never block speech
+                        pass
+                    played_any = True
+                try:
+                    sub = self._play(item)
+                except Exception:  # noqa: BLE001 - a chunk that fails to play is a
+                    # fatal playback error for this utterance: stop (rc stays 1)
+                    # instead of busy-looping; finally below still cleans up.
+                    break
+                self._cur_sub = sub
+                try:
+                    sub.wait(timeout=self._chunk_play_timeout)
+                except Exception:  # noqa: BLE001 - a stuck chunk must not wedge the loop
+                    try:
+                        sub.terminate()
+                    except Exception:  # noqa: BLE001
+                        pass
+                self._cur_sub = None
+        finally:
+            # Always runs, even if _play (or anything else above) raised, so a
+            # failed chunk can never leave returncode None (poll() reporting
+            # "still running" forever) or leak the producer thread.
+            self.returncode = rc
+            self._abort.set()  # in case rc came from a break above: stop the producer
+            # Drain any leftover item so a producer still retrying put() sees room
+            # and exits promptly, then join it so no thread is ever leaked.
+            try:
+                while True:
+                    self._q.get_nowait()
+            except queue.Empty:
+                pass
+            if self._producer is not None:
+                self._producer.join(timeout=1.0)
+                self._producer = None
         return self.returncode
 
     def terminate(self) -> None:
