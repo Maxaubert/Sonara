@@ -460,29 +460,31 @@ class WinTtsBackend(TtsBackend):
         reader.read_bytes(buf)
         return bytes(buf)
 
-    def _chatterbox_or_fallback(self, text: str, voice, rate: int) -> bytes:
-        """Chatterbox WAV bytes, or Kokoro-default WAV bytes on ANY failure.
-        Never raises for chatterbox reasons; never silent. Speech rate does not
-        apply to chatterbox (the model has no rate control)."""
-        import sys
-        from sonara import chatterbox, kokoro
-        from sonara.config import load_config
-        cfg = load_config()
-        reason = None
-        if not chatterbox.is_provisioned():
-            reason = "not provisioned (run: sonara voices install chatterbox)"
-        elif not chatterbox.gate_ok(cfg):
-            reason = "VRAM below threshold; using Kokoro this utterance"
-        else:
-            try:
-                return chatterbox.CLIENT.synth_wav(text, voice, cfg)
-            except chatterbox.ChatterboxError as exc:
-                reason = str(exc)
-        print("[chatterbox] fallback: {0}".format(reason), file=sys.stderr, flush=True)
-        chatterbox._set_fallback_notice(reason)
+    def _kokoro_wav(self, text, rate):
+        """Kokoro-default WAV bytes, used as the fallback synth path for both the
+        whole-utterance case (not-provisioned/gate-miss) and per-chunk fallback."""
+        from sonara import kokoro
         kokoro.require_installed()
         return self._get_kokoro().wav_bytes(
             text, kokoro.DEFAULT_VOICE, kokoro.rate_to_speed(rate))
+
+    def _chatterbox_synth_one(self, voice, cfg, rate):
+        """Return a synth_one(chunk) -> wav bytes closure: try the worker, fall
+        back to the Kokoro default voice per chunk on any ChatterboxError so the
+        stream never goes silent. A real failure arms the once-per-run notice and
+        logs; the caller has already passed the up-front gate."""
+        import sys
+        from sonara import chatterbox
+
+        def synth_one(chunk):
+            try:
+                return chatterbox.CLIENT.synth_wav(chunk, voice, cfg)
+            except chatterbox.ChatterboxError as exc:
+                print("[chatterbox] fallback: {0}".format(exc),
+                      file=sys.stderr, flush=True)
+                chatterbox._set_fallback_notice(str(exc))
+                return self._kokoro_wav(chunk, rate)
+        return synth_one
 
     def run(self, text: str, voice, rate: int, on_play=None):
         """Synthesize *text* and start async winsound playback, returning a
@@ -504,7 +506,24 @@ class WinTtsBackend(TtsBackend):
         must never block speech."""
         from sonara import kokoro, chatterbox
         if (not kokoro.is_kokoro_voice(voice)) and chatterbox.is_chatterbox_voice(voice):
-            data = self._chatterbox_or_fallback(text, voice, rate)
+            import sys
+            from sonara.config import load_config
+            cfg = load_config()
+            if not chatterbox.is_provisioned():
+                print("[chatterbox] fallback: not provisioned", file=sys.stderr, flush=True)
+                chatterbox._set_fallback_notice(
+                    "not provisioned (run: sonara voices install chatterbox)")
+            elif not chatterbox.gate_ok(cfg):
+                # A gate-miss is expected/transient (busy GPU). Quietly use Kokoro
+                # this utterance; do NOT announce or burn the once-per-run notice.
+                print("[chatterbox] gate: VRAM below threshold, using Kokoro",
+                      file=sys.stderr, flush=True)
+            else:
+                return _ChatterboxHandle(
+                    text, self._chatterbox_synth_one(voice, cfg, rate),
+                    on_play=on_play)
+            # fell through: whole-utterance Kokoro (not-provisioned or gate-miss)
+            data = self._kokoro_wav(text, rate)
             if on_play is not None:
                 try:
                     on_play()

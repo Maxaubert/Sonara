@@ -22,7 +22,7 @@ DEFAULTS = {
     "chatterbox_variant": "turbo",        # default variant for voices without a sidecar
     "chatterbox_min_free_vram_gb": 5,     # VRAM gate; 0 = always try
     "chatterbox_idle_unload_s": 600,      # worker frees the model after this idle time
-    "chatterbox_timeout": 120,            # seconds per synthesis request
+    "chatterbox_timeout": 30,             # seconds per-chunk synthesis worker timeout
 }
 
 

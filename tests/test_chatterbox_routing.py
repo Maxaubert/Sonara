@@ -21,37 +21,94 @@ def _bare_backend():
 
 # --- tts.run routing ---------------------------------------------------------
 
-def test_chatterbox_voice_routes_to_worker(monkeypatch):
+class _FakeSub:
+    """Minimal Popen-like sub-handle for driving _ChatterboxHandle.wait()."""
+    def wait(self, timeout=None):
+        return 0
+
+    def terminate(self):
+        pass
+
+
+def test_chatterbox_voice_returns_streaming_handle(monkeypatch):
     b = _bare_backend()
-    seen = {}
-    calls = []
+
+    monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda name: True)
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
+    monkeypatch.setattr(chatterbox, "gate_ok", lambda cfg: True)
+    monkeypatch.setattr(chatterbox.CLIENT, "synth_wav",
+                        lambda *a: pytest.fail("synth must not start before wait()"))
+    monkeypatch.setattr(b, "_get_kokoro",
+                        lambda: pytest.fail("kokoro must not be built for the streaming path"))
+
+    handle = b.run("hello there", "calm-lady", 200)
+
+    assert type(handle).__name__ == "_ChatterboxHandle"
+
+
+def test_on_play_flows_into_streaming_handle(monkeypatch):
+    b = _bare_backend()
 
     monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda name: True)
     monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
     monkeypatch.setattr(chatterbox, "gate_ok", lambda cfg: True)
 
-    def _synth_wav(text, name, cfg):
-        calls.append((text, name))
-        return b"RIFF..."
+    def _on_play():
+        pass
+
+    handle = b.run("hello there", "calm-lady", 200, on_play=_on_play)
+
+    assert handle._on_play is _on_play
+
+
+def test_synth_one_falls_back_to_kokoro_per_chunk(monkeypatch, capsys):
+    from sonara import kokoro
+    b = _bare_backend()
+    synth_calls = []
+    played = []
+
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
+    monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda name: True)
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
+    monkeypatch.setattr(chatterbox, "gate_ok", lambda cfg: True)
+    monkeypatch.setattr(chatterbox, "split_text",
+                        lambda text, max_chars=280: ["c1", "c2", "c3"])
+
+    def _synth_wav(chunk, name, cfg):
+        if chunk == "c2":
+            raise chatterbox.ChatterboxError("worker crashed")
+        return ("CB:" + chunk).encode()
 
     monkeypatch.setattr(chatterbox.CLIENT, "synth_wav", _synth_wav)
-    monkeypatch.setattr(b, "_get_kokoro",
-                        lambda: pytest.fail("kokoro used for a chatterbox voice"))
-    monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: seen.setdefault("played", data))
 
-    played_order = []
+    class FakeEngine:
+        def wav_bytes(self, text, voice, speed):
+            synth_calls.append((text, voice, speed))
+            return ("KOKORO:" + text).encode()
 
-    def _on_play():
-        played_order.append("on_play")
+    monkeypatch.setattr(b, "_get_kokoro", lambda: FakeEngine())
 
-    b.run("hello there", "calm-lady", 200, on_play=_on_play)
+    def _play(data):
+        played.append(data)
+        return _FakeSub()
 
-    assert calls == [("hello there", "calm-lady")]
-    assert seen["played"] == b"RIFF..."
-    assert played_order == ["on_play"]
+    monkeypatch.setattr(wtts, "_play_wav_bytes", _play)
+
+    notice = []
+    monkeypatch.setattr(chatterbox, "_set_fallback_notice", lambda reason: notice.append(reason))
+
+    handle = b.run("hello there", "calm-lady", 200)
+    assert type(handle).__name__ == "_ChatterboxHandle"
+    rc = handle.wait()
+
+    assert rc == 0
+    assert played == [b"CB:c1", b"KOKORO:c2", b"CB:c3"]
+    assert synth_calls == [("c2", "af_heart", pytest.approx(1.0))]
+    assert notice == ["worker crashed"]
+    assert "[chatterbox] fallback:" in capsys.readouterr().err
 
 
-def test_gate_failure_falls_back_to_kokoro(monkeypatch):
+def test_gate_miss_uses_whole_utterance_kokoro_without_notice(monkeypatch, capsys):
     from sonara import kokoro
     b = _bare_backend()
     seen = {}
@@ -72,48 +129,19 @@ def test_gate_failure_falls_back_to_kokoro(monkeypatch):
     monkeypatch.setattr(b, "_get_kokoro", lambda: FakeEngine())
     monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: seen.setdefault("played", data))
 
-    notice = []
-    monkeypatch.setattr(chatterbox, "_set_fallback_notice", lambda reason: notice.append(reason))
+    monkeypatch.setattr(chatterbox, "_set_fallback_notice",
+                        lambda reason: pytest.fail("gate-miss must not arm the notice"))
 
-    b.run("hi", "calm-lady", 200)
+    handle = b.run("hi", "calm-lady", 200)
 
+    assert type(handle).__name__ != "_ChatterboxHandle"
     assert synth_calls[0][1] == "af_heart"
     assert seen["played"] == b"KOKORO_WAV"
-    assert notice and notice[0]
+    assert chatterbox.pop_fallback_notice() is None
+    assert "[chatterbox] gate:" in capsys.readouterr().err
 
 
-def test_worker_error_falls_back_to_kokoro(monkeypatch):
-    from sonara import kokoro
-    b = _bare_backend()
-    seen = {}
-
-    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
-    monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda name: True)
-    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
-    monkeypatch.setattr(chatterbox, "gate_ok", lambda cfg: True)
-
-    def _synth_wav(text, name, cfg):
-        raise chatterbox.ChatterboxError("worker crashed")
-
-    monkeypatch.setattr(chatterbox.CLIENT, "synth_wav", _synth_wav)
-
-    class FakeEngine:
-        def wav_bytes(self, text, voice, speed):
-            return b"KOKORO_WAV"
-
-    monkeypatch.setattr(b, "_get_kokoro", lambda: FakeEngine())
-    monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: seen.setdefault("played", data))
-
-    notice = []
-    monkeypatch.setattr(chatterbox, "_set_fallback_notice", lambda reason: notice.append(reason))
-
-    b.run("hi", "calm-lady", 200)
-
-    assert seen["played"] == b"KOKORO_WAV"
-    assert notice == ["worker crashed"]
-
-
-def test_not_provisioned_falls_back(monkeypatch):
+def test_not_provisioned_uses_kokoro_with_notice(monkeypatch):
     from sonara import kokoro
     b = _bare_backend()
     seen = {}
@@ -136,8 +164,9 @@ def test_not_provisioned_falls_back(monkeypatch):
     notice = []
     monkeypatch.setattr(chatterbox, "_set_fallback_notice", lambda reason: notice.append(reason))
 
-    b.run("hi", "calm-lady", 200)
+    handle = b.run("hi", "calm-lady", 200)
 
+    assert type(handle).__name__ != "_ChatterboxHandle"
     assert seen["played"] == b"KOKORO_WAV"
     assert notice and notice[0]
 
