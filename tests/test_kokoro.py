@@ -101,3 +101,50 @@ def test_require_installed_raises_actionable_when_absent(monkeypatch):
 def test_require_installed_noop_when_present(monkeypatch):
     monkeypatch.setattr(kokoro, "is_installed", lambda: True)
     kokoro.require_installed()                     # must not raise
+
+
+def test_synth_bisects_on_token_overflow():
+    # kokoro_onnx's batch splitter can emit a >510-phoneme batch on unusual
+    # text (multi-paragraph digests hit this), and _create_audio then raises
+    # IndexError: index 510 out of bounds. synth() must recover by bisecting
+    # the text and concatenating the halves instead of failing the utterance.
+    import numpy as np
+    from sonara.kokoro import KokoroEngine
+
+    class FakeK:
+        def __init__(self):
+            self.calls = []
+
+        def create(self, text, voice, speed, lang):
+            self.calls.append(text)
+            if len(text) > 40:                      # "too long" stand-in
+                raise IndexError("index 510 is out of bounds for axis 0 with size 510")
+            return np.ones(8, dtype=np.float32), 24000
+
+    eng = KokoroEngine.__new__(KokoroEngine)
+    eng._k = FakeK()
+    import threading
+    eng._lock = threading.Lock()
+    long_text = ("Sentence one is here. " * 4).strip()   # > 40 chars
+    audio, sr = eng.synth(long_text, "af_heart")
+    assert sr == 24000
+    assert len(audio) >= 16                        # both halves concatenated
+    assert len(eng._k.calls) >= 3                  # whole, then bisected halves
+
+
+def test_synth_overflow_single_word_reraises():
+    # A single unsplittable chunk that still overflows must raise (nothing to
+    # bisect) - the speak loop's failure path handles it.
+    import pytest
+    from sonara.kokoro import KokoroEngine
+
+    class AlwaysOverflow:
+        def create(self, text, voice, speed, lang):
+            raise IndexError("index 510 is out of bounds")
+
+    eng = KokoroEngine.__new__(KokoroEngine)
+    eng._k = AlwaysOverflow()
+    import threading
+    eng._lock = threading.Lock()
+    with pytest.raises(IndexError):
+        eng.synth("supercalifragilistic", "af_heart")

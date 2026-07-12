@@ -178,12 +178,40 @@ class KokoroEngine:
         return self._k
 
     def synth(self, text: str, voice: str, speed: float = 1.0):
-        """Synthesize *text* with *voice* at *speed*. Returns (float32 audio, sr)."""
+        """Synthesize *text* with *voice* at *speed*. Returns (float32 audio, sr).
+
+        kokoro_onnx batches phonemes to a 510-token cap, but its splitter can
+        emit an over-long batch on unusual text (multi-paragraph summary
+        digests hit this live), and the model then raises IndexError: index
+        510 out of bounds. Recover by bisecting the text at a whitespace
+        boundary and synthesizing the halves; a single unsplittable chunk
+        re-raises so the speak loop's failure path takes over."""
         k = self._ensure_loaded()
-        audio, sample_rate = k.create(
-            text, voice=normalize_voice(voice) or DEFAULT_VOICE,
-            speed=float(speed), lang="en-us")
-        return audio, int(sample_rate)
+        v = normalize_voice(voice) or DEFAULT_VOICE
+        return self._synth_split(k, text, v, float(speed))
+
+    def _synth_split(self, k, text: str, voice: str, speed: float):
+        try:
+            audio, sample_rate = k.create(text, voice=voice, speed=speed,
+                                          lang="en-us")
+            return audio, int(sample_rate)
+        except IndexError:
+            mid = len(text) // 2
+            # Split at the whitespace nearest the middle so words stay whole.
+            left = text.rfind(" ", 0, mid)
+            right = text.find(" ", mid)
+            cut = left
+            if right != -1 and (cut == -1 or (mid - left) > (right - mid)):
+                cut = right
+            if cut in (-1, 0) or cut >= len(text) - 1:
+                raise                    # nothing to bisect: genuine failure
+            head, tail = text[:cut].strip(), text[cut:].strip()
+            if not head or not tail:
+                raise
+            import numpy as np
+            a1, sr = self._synth_split(k, head, voice, speed)
+            a2, _ = self._synth_split(k, tail, voice, speed)
+            return np.concatenate([a1, a2]), int(sr)
 
     def wav_bytes(self, text: str, voice: str, speed: float = 1.0) -> bytes:
         """Synthesize and encode straight to 16-bit PCM mono WAV bytes."""
