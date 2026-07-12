@@ -313,9 +313,7 @@ class SpeechDaemon:
                     self.history.end_message(session)
                     continue
                 entry = self.history.record(session, "prose", chunk)
-                # At "quiet" verbosity prose is recorded in history (for catch_up)
-                # but NOT enqueued for speech.
-                # quiet verbosity AND summary mode both record prose to history
+                # Quiet verbosity AND summary mode both record prose to history
                 # without enqueueing speech (summary mode reads a recap at turn
                 # end instead; catch_up / re-read still work from history).
                 if verbosity != "quiet" and not self.config.get("summary_mode"):
