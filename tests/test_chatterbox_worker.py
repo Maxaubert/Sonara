@@ -107,3 +107,16 @@ def test_isolate_from_own_dir_removes_worker_dir():
     w._isolate_from_own_dir(path)
     assert all(os.path.abspath(p) != here for p in path)
     assert "/some/other/dir" in path        # unrelated entries preserved
+
+
+def test_use_clean_stdout_reserves_protocol_and_redirects_noise(monkeypatch):
+    import sys, io
+    real_out, real_err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", real_out)
+    monkeypatch.setattr(sys, "stderr", real_err)
+    proto = w._use_clean_stdout()
+    assert proto is real_out                 # protocol keeps the original stdout
+    print("library noise")                   # a library-style stdout print
+    assert sys.stdout is real_err            # now goes to stderr
+    assert "library noise" in real_err.getvalue()
+    assert real_out.getvalue() == ""         # protocol channel stays clean

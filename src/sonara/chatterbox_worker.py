@@ -114,7 +114,20 @@ def handle_request(state, req, now=time.time):
         return {"ok": False, "error": "{0}: {1}".format(type(exc).__name__, exc)}
 
 
+def _use_clean_stdout():
+    """Reserve the real stdout for the JSON protocol and redirect everything else
+    to stderr. chatterbox/torch/perth print progress and warnings ("loaded
+    PerthNet...", "S3 Token -> Mel Inference...") to sys.stdout during load and
+    synth; on the protocol channel the client's line reader mistakes the first
+    such line for the response, cannot parse it, and declares the worker dead
+    (verified live). Returns the reserved protocol stream to write responses to."""
+    proto = sys.stdout
+    sys.stdout = sys.stderr
+    return proto
+
+
 def main():
+    proto_out = _use_clean_stdout()
     idle = 600.0
     if len(sys.argv) > 1:
         try:
@@ -139,8 +152,8 @@ def main():
             resp = {"ok": False, "error": "bad json"}
         else:
             resp = handle_request(state, req)
-        sys.stdout.write(json.dumps(resp) + "\n")
-        sys.stdout.flush()
+        proto_out.write(json.dumps(resp) + "\n")
+        proto_out.flush()
 
 
 if __name__ == "__main__":
