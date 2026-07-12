@@ -20,6 +20,7 @@ def test_defaults_has_documented_top_level_keys():
         "chatterbox_min_free_vram_gb",
         "chatterbox_idle_unload_s",
         "chatterbox_timeout",
+        "chatterbox_warm_timeout",
     }
 
 
@@ -244,3 +245,8 @@ def test_chatterbox_defaults():
     assert DEFAULTS["chatterbox_min_free_vram_gb"] == 5
     assert DEFAULTS["chatterbox_idle_unload_s"] == 600
     assert DEFAULTS["chatterbox_timeout"] == 30
+
+
+def test_chatterbox_warm_timeout_default():
+    from sonara.config import DEFAULTS
+    assert DEFAULTS["chatterbox_warm_timeout"] == 90

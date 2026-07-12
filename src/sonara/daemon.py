@@ -718,6 +718,7 @@ class SpeechDaemon:
             self.config["voice"] = voice
             self.speaker.set_voice(voice)
             save_config(self.config)
+            self._maybe_prewarm_chatterbox()   # switching TO a cb voice warms it
             return None
 
         if t == MsgType.SET_VERBOSITY:
@@ -819,6 +820,30 @@ class SpeechDaemon:
                 srv.close()
             except OSError:
                 pass
+
+    def _maybe_prewarm_chatterbox(self) -> None:
+        """If the selected voice is a Chatterbox voice, the engine is provisioned,
+        and the GPU has room, load the model in the worker in the BACKGROUND so the
+        first digest does not pay the ~40s cold load. Best-effort: never blocks the
+        caller and never crashes it (chatterbox is optional). Called at daemon
+        startup and when the user switches TO a chatterbox voice."""
+        try:
+            from sonara import chatterbox
+            voice = self.config.get("voice")
+            if not (chatterbox.is_provisioned()
+                    and chatterbox.is_chatterbox_voice(voice)
+                    and chatterbox.gate_ok(self.config)):
+                return
+        except Exception:  # noqa: BLE001 - optional engine; never break startup
+            return
+
+        def _warm():
+            try:
+                from sonara import chatterbox
+                chatterbox.CLIENT.warm(self.config)
+            except Exception:  # noqa: BLE001 - warming is best-effort
+                pass
+        threading.Thread(target=_warm, name="sonara-cb-warm", daemon=True).start()
 
     def _start_hotkeys(self) -> None:
         """Start the platform's global-hotkey listener. On Windows this spawns an
@@ -1444,6 +1469,7 @@ class SpeechDaemon:
         accept_thread.start()
         hotkey_worker.start()
         self._start_hotkeys()
+        self._maybe_prewarm_chatterbox()   # warm the model at startup if cb voice
 
         try:
             while self._running.is_set():

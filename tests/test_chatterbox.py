@@ -167,3 +167,24 @@ def test_spawn_isolates_path_and_strips_pythonpath(monkeypatch):
     assert "W.py" in captured["argv"]
     assert "PYTHONPATH" not in captured["env"]
     assert captured["env"]["HF_HOME"]
+
+
+def test_warm_sends_warm_request_and_reports_ok(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    # extend the fake worker to answer warm; _client's FAKE_WORKER answers ping
+    # and synth. Drive warm via a direct request to confirm the method shape.
+    import sys
+    calls = []
+    monkeypatch.setattr(c, "_request",
+                        lambda payload, timeout, config: calls.append((payload, timeout)) or {"ok": True, "loaded": True})
+    assert c.warm({"chatterbox_variant": "turbo", "chatterbox_warm_timeout": 90}) is True
+    assert calls[0][0] == {"type": "warm", "variant": "turbo"}
+    assert calls[0][1] == 90
+
+
+def test_warm_returns_false_on_error(tmp_path, monkeypatch):
+    c = _client(tmp_path, monkeypatch)
+    def boom(payload, timeout, config):
+        raise cb.ChatterboxError("dead")
+    monkeypatch.setattr(c, "_request", boom)
+    assert c.warm({"chatterbox_variant": "turbo"}) is False

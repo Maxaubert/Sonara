@@ -157,3 +157,13 @@ def test_synth_chunks_long_text_and_concatenates_audio():
     with wave.open(io.BytesIO(base64.b64decode(out["wav_b64"]))) as f:
         frames = f.getnframes()
     assert frames == 24 * len(s.model.calls)           # concatenated (fake=24/chunk)
+
+
+def test_warm_request_loads_model_without_synth():
+    # Pre-warm: a "warm" request loads the model (paying the cold load) so the
+    # first real synth is fast, but produces no audio.
+    s = _state()
+    out = w.handle_request(s, {"type": "warm", "variant": "turbo"}, now=lambda: 1.0)
+    assert out == {"ok": True, "loaded": True}
+    assert s.model is not None and s.variant == "turbo"
+    assert not getattr(s.model, "calls", [])          # generate() never called

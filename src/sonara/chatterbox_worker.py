@@ -139,6 +139,18 @@ def handle_request(state, req, now=time.time):
         rtype = req.get("type")
         if rtype == "ping":
             return {"ok": True, "loaded": state.model is not None}
+        if rtype == "warm":
+            # Load the model ahead of the first synth (pays the cold load now),
+            # producing no audio, so the first real digest is fast.
+            variant = req.get("variant") or "turbo"
+            with state.lock:
+                if state.model is None or state.variant != variant:
+                    state.model = None
+                    _free_cuda()
+                    state.model = state.loader(variant)
+                    state.variant = variant
+                state.last_used = now()
+            return {"ok": True, "loaded": True}
         if rtype != "synth":
             return {"ok": False, "error": "unknown request type: {0!r}".format(rtype)}
         variant = req.get("variant") or "turbo"

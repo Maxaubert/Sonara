@@ -313,6 +313,18 @@ class ChatterboxClient:
                 raise ChatterboxError("chatterbox worker is unavailable")
             return resp
 
+    def warm(self, config) -> bool:
+        """Load the model in the worker ahead of the first synth (best-effort), so
+        the first digest does not pay the ~40s cold load. Returns True on success.
+        Uses a generous timeout since a warm IS the cold load."""
+        variant = config.get("chatterbox_variant", "turbo")
+        timeout = config.get("chatterbox_warm_timeout", 90)
+        try:
+            resp = self._request({"type": "warm", "variant": variant}, timeout, config)
+        except ChatterboxError:
+            return False
+        return bool(resp.get("ok"))
+
     def synth_wav(self, text, name, config) -> bytes:
         """Synthesize *text* with voice *name*. Raises ChatterboxError on failure.
 
