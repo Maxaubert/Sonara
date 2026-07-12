@@ -962,8 +962,14 @@ class SpeechDaemon:
                          debug_log=_log)
         except Exception:  # noqa: BLE001 - a summary failure must never crash the daemon
             summary = None
+        if summary:
+            # Success trail: when a digest sounds wrong (truncated, odd), the
+            # log shows exactly what the model returned vs what was spoken.
+            _log("digest ok: {0} chars in, {1} chars out: {2!r}".format(
+                len(text), len(summary), summary[:120]))
         with self._lock:
             if self._summary_gen.get(session) != gen:
+                _log("digest dropped: superseded by a newer turn")
                 return                   # superseded: a newer turn owns the voice
             if not summary:
                 self._earcon("summary_failed")
