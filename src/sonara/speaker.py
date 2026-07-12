@@ -34,7 +34,7 @@ class Speaker:
         with self._current_lock:
             return self._cancel_epoch
 
-    def speak(self, text: str, cancel_epoch=None) -> bool:
+    def speak(self, text: str, cancel_epoch=None, on_play=None) -> bool:
         """Speak text, blocking. Return True iff the utterance COMPLETED
         (say exited 0). A cancelled/terminated utterance returns False so the
         caller can leave it marked unheard (sentence-granular replay).
@@ -43,7 +43,13 @@ class Speaker:
         at the moment it claims the item (under its lock) and passes it here; a
         cancel() arriving between the claim and this call bumps the live epoch past
         the captured baseline, so we still detect it. When None, the baseline is the
-        epoch read here (the prior single-call behavior)."""
+        epoch read here (the prior single-call behavior).
+
+        *on_play*, when given, is forwarded to the say_runner, which fires it at
+        PLAYBACK start (after synthesis). The daemon passes its audio-duck routine
+        here so other apps' audio dips when the voice starts, not seconds earlier
+        while a slow neural voice is still synthesizing. Omitted -> the classic
+        three-arg say_runner call, so existing runners keep working."""
         if self._say_runner is None:
             return False
         # Establish the baseline epoch BEFORE synthesis. say_runner (TTS synthesis)
@@ -54,7 +60,10 @@ class Speaker:
         # reporting the utterance as NOT completed (so the caller replays it).
         with self._current_lock:
             epoch = self._cancel_epoch if cancel_epoch is None else cancel_epoch
-        proc = self._say_runner(text, self._voice, self._rate)
+        if on_play is None:
+            proc = self._say_runner(text, self._voice, self._rate)
+        else:
+            proc = self._say_runner(text, self._voice, self._rate, on_play)
         with self._current_lock:
             interrupted = self._cancel_epoch != epoch
             if not interrupted:

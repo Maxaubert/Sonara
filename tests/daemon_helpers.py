@@ -15,7 +15,11 @@ class FakeSpeaker:
         self.complete = True          # next speak() reports completed?
         self._epoch = 0
 
-    def speak(self, text: str, cancel_epoch=None) -> bool:
+    def speak(self, text: str, cancel_epoch=None, on_play=None) -> bool:
+        # Mirror the real backend contract: on_play fires at playback start
+        # (the daemon passes its duck routine here - see duck-timing tests).
+        if on_play is not None:
+            on_play()
         self.spoken.append(text)
         return self.complete
 

@@ -318,14 +318,19 @@ class WinTtsBackend(TtsBackend):
         reader.read_bytes(buf)
         return bytes(buf)
 
-    def run(self, text: str, voice, rate: int):
+    def run(self, text: str, voice, rate: int, on_play=None):
         """Synthesize *text* and start async winsound playback, returning a
         _TtsHandle the caller can .wait()/.terminate()/.poll().
 
         A Kokoro voice (af_heart, af_nicole, ...) is synthesized by the Kokoro
         engine; anything else by the native WinRT/OneCore engine. Both paths produce
         WAV bytes played through the same winsound handle (so cancel/interrupt,
-        earcon mixing, and cleanup are identical)."""
+        earcon mixing, and cleanup are identical).
+
+        *on_play* fires here, AFTER synthesis and right before playback begins:
+        Kokoro synthesis of a long text takes seconds, and ducking other apps'
+        audio through that silent stretch was audibly wrong. A failing on_play
+        must never block speech."""
         from sonara import kokoro
         if kokoro.is_kokoro_voice(voice):
             kokoro.require_installed()   # actionable error instead of a raw ImportError
@@ -334,4 +339,9 @@ class WinTtsBackend(TtsBackend):
         else:
             _require_winrt()   # actionable error instead of a raw ImportError (#7)
             data = self._synthesize_wav(text, voice, rate)
+        if on_play is not None:
+            try:
+                on_play()
+            except Exception:  # noqa: BLE001 - ducking must never block speech
+                pass
         return _play_wav_bytes(data)

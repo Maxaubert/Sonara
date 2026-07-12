@@ -1223,9 +1223,13 @@ class SpeechDaemon:
                 self._earcon("session_change")
             except Exception:  # noqa: BLE001
                 pass
-        self._maybe_duck()
+        # Duck at PLAYBACK start, not here: synthesis (a slow neural voice can
+        # take seconds on a long digest) would otherwise hold other apps' audio
+        # down through the silence. The backend fires on_play right before the
+        # first sample plays.
         try:
-            completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
+            completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
+                                           on_play=self._maybe_duck)
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False

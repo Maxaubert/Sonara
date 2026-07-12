@@ -224,7 +224,7 @@ def test_paused_cue_spoken_after_mid_utterance_pause():
     # speaker, inserts "Paused." at cursor). speak() then returns False.
     original_speak = speaker.speak
 
-    def speak_that_pauses(text, cancel_epoch=None):
+    def speak_that_pauses(text, cancel_epoch=None, on_play=None):
         if text == "Item one.":
             # PAUSE arrives mid-utterance
             daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
@@ -264,7 +264,7 @@ def test_mid_utterance_pause_rewinds_and_resumes_interrupted_item():
 
     original_speak = speaker.speak
 
-    def speak_that_pauses(text, cancel_epoch=None):
+    def speak_that_pauses(text, cancel_epoch=None, on_play=None):
         if text == "Alpha.":
             daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
             return False
@@ -305,7 +305,7 @@ def test_pause_replay_preserves_heard_marker():
 
     original_speak = speaker.speak
 
-    def speak_that_pauses(text, cancel_epoch=None):
+    def speak_that_pauses(text, cancel_epoch=None, on_play=None):
         if text == "Marked.":
             daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
             return False
