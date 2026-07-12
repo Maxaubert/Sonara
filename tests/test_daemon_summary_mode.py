@@ -116,12 +116,50 @@ def test_turn_done_does_not_dispatch_when_mode_off(monkeypatch):
     assert calls == []
 
 
-def test_turn_done_does_not_dispatch_for_background_session(monkeypatch):
+def test_background_turn_dispatches_summary_too(monkeypatch):
+    # Multi-session: a background session's finished turn is summarized as
+    # well (its digest speaks prefixed with the session folder). Foreground-
+    # only gating silently dropped digests whenever the user prompted another
+    # session mid-turn (observed live).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch, session="bg")
     _turn_done(daemon, session="bg")
-    assert calls == []
+    assert len(calls) == 1 and calls[0][0] == "bg"
+
+
+def test_background_digest_speaks_prefixed_via_control(monkeypatch):
+    from sonara.router import CONTROL
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    sessions.register("bg", cwd="/home/me/otherproj")
+    _enable_and_feed(daemon, monkeypatch, session="bg")
+    _turn_done(daemon, session="bg")
+    daemon._summarize_fn = lambda text, **kw: "The gist of it."
+    daemon._summary_worker(*calls[0])
+    ctrl = daemon.router.channel(CONTROL)
+    texts = [it.text for it in ctrl.items[ctrl.cursor:]]
+    assert "Session otherproj: The gist of it." in texts
+    # and nothing landed in the bg session's own (unvoiced) channel
+    bg = daemon.router.channel("bg")
+    assert all("gist" not in it.text for it in bg.items[bg.cursor:])
+
+
+def test_background_short_turn_speaks_original_prefixed(monkeypatch):
+    from sonara.router import CONTROL
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    sessions.register("bg", cwd="/home/me/otherproj")
+    daemon.handle_message(_prose("bg", "All done here. ", 0, True))
+    _turn_done(daemon, session="bg")
+    assert calls == []                                    # no summarizer for short
+    ctrl = daemon.router.channel(CONTROL)
+    texts = [it.text for it in ctrl.items[ctrl.cursor:]]
+    assert any(t.startswith("Session otherproj: ") and "All done here." in t
+               for t in texts)
 
 
 def test_turn_done_with_no_prose_does_not_dispatch(monkeypatch):

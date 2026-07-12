@@ -913,8 +913,6 @@ class SpeechDaemon:
         subprocess itself runs OFF-lock in _summary_worker."""
         if not self.config.get("summary_mode"):
             return
-        if not self.sessions.is_foreground(session):
-            return                       # v1: foreground turns only
         entries = []
         for mid in self.history.message_ids(session):
             for e in self.history.entries_for_message(session, mid):
@@ -924,11 +922,16 @@ class SpeechDaemon:
         if not text:
             return                       # decision-only / empty turn: nothing to recap
         if len(text) < _SUMMARY_MIN_CHARS:
-            # An already-short turn needs no digest: replay the original prose
+            # An already-short turn needs no digest: speak the original prose
             # instead. Digesting borderline-trivial input made the model
             # verbalize meta-text ("no content to be spoken") that was then
             # read aloud; speaking the original is faster and free.
-            self._replay(session, entries)
+            if self.sessions.is_foreground(session):
+                self._replay(session, entries)
+            else:
+                # Background sessions are not voiced from their own channel;
+                # speak the short turn immediately, named, via CONTROL.
+                self._enqueue_background_digest(session, text)
             return
         gen = self._summary_gen.get(session, 0) + 1
         self._summary_gen[session] = gen
@@ -962,13 +965,37 @@ class SpeechDaemon:
         with self._lock:
             if self._summary_gen.get(session) != gen:
                 return                   # superseded: a newer turn owns the voice
-            if summary:
+            if not summary:
+                self._earcon("summary_failed")
+                return
+            if self.sessions.is_foreground(session):
                 entry = self.history.record(session, "summary", summary)
                 self._enqueue(session, "summary", summary, False, entry=entry)
                 self.router.channel(session).turn_done = True
                 self._wake.set()
             else:
-                self._earcon("summary_failed")
+                # The user moved on while this digest was cooking (or the turn
+                # belonged to a background session all along): speak it named,
+                # via CONTROL, as soon as the voice is free.
+                self._enqueue_background_digest(session, summary)
+
+    def _enqueue_background_digest(self, session: str, text: str) -> None:
+        """Speak a background session's digest immediately (queued behind the
+        current utterance, never cutting one off) prefixed with the session's
+        folder name. Uses the CONTROL channel: a background session's own
+        channel is not voiced under the earcon_only policy, and routing through
+        the session channel would fire the "Session changed" announcement
+        machinery for what is just an interjection. Caller holds self._lock."""
+        folder = self.sessions.folder(session) or "another session"
+        entry = self.history.record(session, "summary", text)
+        from sonara.router import CONTROL
+        ch = self.router.channel(CONTROL)
+        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="summary",
+                          text="Session {0}: {1}".format(folder, text),
+                          is_decision=False)
+        self._pending_heard[item.id] = entry
+        ch.items.append(item)            # behind any queued control cues
+        self._wake.set()
 
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
