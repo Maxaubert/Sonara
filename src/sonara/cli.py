@@ -85,6 +85,19 @@ def _cmd_duck_level(args) -> int:
     return 0
 
 
+def _cmd_summary(args) -> int:
+    if not args.state:
+        from sonara.config import load_config
+        on = bool(load_config().get("summary_mode"))
+        print("Summary mode is {0}.".format("on" if on else "off"))
+        return 0
+    enabled = args.state == "on"
+    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_SUMMARY_MODE,
+           "enabled": enabled})
+    print("Summary mode {0}.".format("on" if enabled else "off"))
+    return 0
+
+
 def _cmd_voice(args) -> int:
     # No name -> list the installed voices so the user can pick one (changes
     # nothing). A name -> set it; the name may be several words ("Microsoft David"),
@@ -192,6 +205,11 @@ def _build_parser() -> argparse.ArgumentParser:
     dp.add_argument("level", type=int)
     dp.set_defaults(func=_cmd_duck_level)
 
+    sp = sub.add_parser(
+        "summary", help="speak an AI recap of each finished turn (on|off)")
+    sp.add_argument("state", nargs="?", choices=["on", "off"])
+    sp.set_defaults(func=_cmd_summary)
+
     sub.add_parser("repeat", help="repeat the last spoken item").set_defaults(
         func=_cmd_repeat)
     sub.add_parser("stop", help="stop all speech and clear the queue").set_defaults(
@@ -242,6 +260,23 @@ def doctor() -> list:
         results.append(("keymap resolves", True, "ok"))
     except Exception as exc:  # noqa: BLE001
         results.append(("keymap resolves", False, f"error: {exc}"))
+
+    # Summary mode: the summarizer command must resolve when the mode is on
+    # (the daemon spawns it per turn; a missing command means a failure cue
+    # on every turn with no visible cause).
+    try:
+        from sonara.config import load_config as _load_cfg
+        _cfg = _load_cfg()
+        if not _cfg.get("summary_mode"):
+            results.append(("summary command", True, "summary mode off"))
+        else:
+            import shutil as _shutil
+            _cmd = _cfg.get("summary_command", "claude")
+            _found = _shutil.which(_cmd)
+            results.append(("summary command", bool(_found),
+                            _found or "'{0}' not found on PATH".format(_cmd)))
+    except Exception as exc:  # noqa: BLE001 - doctor must never raise
+        results.append(("summary command", False, f"error: {exc}"))
 
     try:
         from sonara import kokoro_provision as kp
