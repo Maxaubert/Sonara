@@ -1191,6 +1191,21 @@ class SpeechDaemon:
         ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
 
+    def _maybe_announce_chatterbox_fallback(self) -> None:
+        """Speak the pending Chatterbox fallback notice, if any, exactly once per
+        daemon run. Called outside self._lock (_speak_cue does not take it)."""
+        if getattr(self, "_cb_fallback_announced", False):
+            return
+        try:
+            from sonara import chatterbox
+            reason = chatterbox.pop_fallback_notice()
+        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
+            return
+        if reason:
+            self._cb_fallback_announced = True
+            self._speak_cue(None, "Chatterbox unavailable, using Heart.",
+                            exempt_mute=True)
+
     def _audio_control_on(self) -> bool:
         return bool(self.config.get("audio_control"))
 
@@ -1257,6 +1272,9 @@ class SpeechDaemon:
             if muted:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
+        # Chatterbox fallback notice: spoken once per daemon run so an eyes-free
+        # user knows WHY the voice changed (the reason is already in the log).
+        self._maybe_announce_chatterbox_fallback()
         if item is None:
             self._maybe_restore()
             self._wake.wait(self._poll_interval)

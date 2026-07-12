@@ -236,7 +236,12 @@ class WinTtsBackend(TtsBackend):
         # via the venv, so gating on is_installed alone hid them from `sonara voice`.
         neural = kokoro.is_installed() or kokoro_provision.neural_enabled()
         kokoro_voices = list(kokoro.VOICES) if neural else []
-        return native + kokoro_voices
+        # Chatterbox voices are only advertised when the opt-in venv is provisioned
+        # (same reasoning as Kokoro above: an unreachable voice would silently fall
+        # back to Kokoro on first speak, which is confusing if the user never opted in).
+        from sonara import chatterbox
+        cb_voices = chatterbox.list_voices() if chatterbox.is_provisioned() else []
+        return native + kokoro_voices + cb_voices
 
     def _best_voice_info(self, lang_prefix: str = "en-US"):
         """Select a VoiceInformation in priority order:
@@ -318,20 +323,57 @@ class WinTtsBackend(TtsBackend):
         reader.read_bytes(buf)
         return bytes(buf)
 
+    def _chatterbox_or_fallback(self, text: str, voice, rate: int) -> bytes:
+        """Chatterbox WAV bytes, or Kokoro-default WAV bytes on ANY failure.
+        Never raises for chatterbox reasons; never silent. Speech rate does not
+        apply to chatterbox (the model has no rate control)."""
+        import sys
+        from sonara import chatterbox, kokoro
+        from sonara.config import load_config
+        cfg = load_config()
+        reason = None
+        if not chatterbox.is_provisioned():
+            reason = "not provisioned (run: sonara voices install chatterbox)"
+        elif not chatterbox.gate_ok(cfg):
+            reason = "VRAM below threshold; using Kokoro this utterance"
+        else:
+            try:
+                return chatterbox.CLIENT.synth_wav(text, voice, cfg)
+            except chatterbox.ChatterboxError as exc:
+                reason = str(exc)
+        print("[chatterbox] fallback: {0}".format(reason), file=sys.stderr, flush=True)
+        chatterbox._set_fallback_notice(reason)
+        kokoro.require_installed()
+        return self._get_kokoro().wav_bytes(
+            text, kokoro.DEFAULT_VOICE, kokoro.rate_to_speed(rate))
+
     def run(self, text: str, voice, rate: int, on_play=None):
         """Synthesize *text* and start async winsound playback, returning a
         _TtsHandle the caller can .wait()/.terminate()/.poll().
 
         A Kokoro voice (af_heart, af_nicole, ...) is synthesized by the Kokoro
-        engine; anything else by the native WinRT/OneCore engine. Both paths produce
-        WAV bytes played through the same winsound handle (so cancel/interrupt,
-        earcon mixing, and cleanup are identical).
+        engine; a Chatterbox voice (cb_default or a registered clip stem) is
+        synthesized by the worker, falling back to Kokoro-default on any failure;
+        anything else by the native WinRT/OneCore engine. Kokoro names are fixed
+        and take precedence, so a user clip that happens to be named like a Kokoro
+        voice (e.g. `af_heart.wav`) is ignored by chatterbox routing and still
+        speaks through Kokoro. All paths produce WAV bytes played through the same
+        winsound handle (so cancel/interrupt, earcon mixing, and cleanup are
+        identical).
 
         *on_play* fires here, AFTER synthesis and right before playback begins:
         Kokoro synthesis of a long text takes seconds, and ducking other apps'
         audio through that silent stretch was audibly wrong. A failing on_play
         must never block speech."""
-        from sonara import kokoro
+        from sonara import kokoro, chatterbox
+        if (not kokoro.is_kokoro_voice(voice)) and chatterbox.is_chatterbox_voice(voice):
+            data = self._chatterbox_or_fallback(text, voice, rate)
+            if on_play is not None:
+                try:
+                    on_play()
+                except Exception:  # noqa: BLE001 - ducking must never block speech
+                    pass
+            return _play_wav_bytes(data)
         if kokoro.is_kokoro_voice(voice):
             kokoro.require_installed()   # actionable error instead of a raw ImportError
             data = self._get_kokoro().wav_bytes(
