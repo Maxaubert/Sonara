@@ -114,8 +114,11 @@ def test_play_exception_does_not_leak_thread_or_hang():
     # returncode, and stop the producer thread (no leak, no spin-loop).
     def boom_play(wav):
         raise OSError("winsound failed")
+    # >=4 chunks (queue maxsize 2) so the producer genuinely saturates; without
+    # the fix setting abort on the _play exception it would spin-loop forever.
+    six = lambda _t, max_chars=280: ["c1", "c2", "c3", "c4", "c5", "c6"]
     h = _ChatterboxHandle("x", synth_one=lambda c: c.encode(),
-                          play=boom_play, split=_split)
+                          play=boom_play, split=six)
     t = threading.Thread(target=h.wait)
     t.start()
     t.join(3.0)
