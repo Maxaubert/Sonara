@@ -135,7 +135,11 @@ system (configurable via `chatterbox_idle_unload_s`). On any failure (missing we
 error, timeout), Sonara automatically falls back to Kokoro and logs the reason to
 `~/.sonara/speechd.log`. The first fallback in a daemon run also speaks a short
 notice ("Chatterbox unavailable, using Heart") so you know why the voice changed;
-later fallbacks in the same run stay quiet apart from the log.
+later fallbacks in the same run stay quiet apart from the log. The fallback voice
+is Kokoro's af_heart, so keep the Kokoro voices installed alongside Chatterbox.
+Also expect a one-time pause of roughly 10 to 40 seconds before the first
+Chatterbox utterance after a daemon start or an idle unload - that is the model
+loading onto the GPU; later utterances start immediately.
 
 **Limitation:**
 
