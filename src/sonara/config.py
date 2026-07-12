@@ -19,6 +19,10 @@ DEFAULTS = {
     "summary_model": "haiku",           # model alias for the throwaway claude -p call
     "summary_command": "claude",        # executable for the summarizer subprocess
     "summary_timeout": 60,              # seconds before a summarizer call is abandoned (typical run ~12s; claude cold start adds several more)
+    "chatterbox_variant": "turbo",        # default variant for voices without a sidecar
+    "chatterbox_min_free_vram_gb": 5,     # VRAM gate; 0 = always try
+    "chatterbox_idle_unload_s": 600,      # worker frees the model after this idle time
+    "chatterbox_timeout": 120,            # seconds per synthesis request
 }
 
 
