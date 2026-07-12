@@ -24,6 +24,12 @@ def test_list_voices_discovers_clips(monkeypatch, tmp_path):
     assert cb.list_voices() == ["cb_default", "calm-lady", "deep"]
 
 
+def test_cb_default_clip_does_not_duplicate(monkeypatch, tmp_path):
+    d = _reg(monkeypatch, tmp_path)
+    (d / "cb_default.wav").write_bytes(b"RIFF")
+    assert cb.list_voices().count("cb_default") == 1
+
+
 def test_is_chatterbox_voice_forms(monkeypatch, tmp_path):
     d = _reg(monkeypatch, tmp_path)
     (d / "calm-lady.wav").write_bytes(b"RIFF")
@@ -45,6 +51,14 @@ def test_voice_spec_reads_sidecar_and_defaults(monkeypatch, tmp_path):
     assert spec["voice_path"].endswith("deep.wav")
     default = cb.voice_spec("cb_default", cfg)
     assert default == {"voice_path": None, "variant": "turbo", "exaggeration": None}
+
+
+def test_voice_spec_tolerates_non_dict_sidecar(monkeypatch, tmp_path):
+    d = _reg(monkeypatch, tmp_path)
+    (d / "odd.wav").write_bytes(b"RIFF")
+    (d / "odd.json").write_text("0.8", encoding="utf-8")
+    spec = cb.voice_spec("odd", {"chatterbox_variant": "turbo"})
+    assert spec["variant"] == "turbo" and spec["exaggeration"] is None
 
 
 # --- VRAM gate ---------------------------------------------------------------

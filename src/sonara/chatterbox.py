@@ -50,8 +50,12 @@ def _clip_stems() -> "list[str]":
 
 
 def list_voices() -> "list[str]":
-    """["cb_default"] plus every registered voice-clip stem, sorted."""
-    return [DEFAULT_VOICE] + _clip_stems()
+    """["cb_default"] plus every registered voice-clip stem, sorted.
+
+    `cb_default` is reserved for the built-in voice; a user clip that happens
+    to share that stem is de-duplicated out rather than listed twice.
+    """
+    return [DEFAULT_VOICE] + [stem for stem in _clip_stems() if stem != DEFAULT_VOICE]
 
 
 def normalize_voice(name) -> "str | None":
@@ -102,6 +106,8 @@ def voice_spec(name, config) -> dict:
             data = json.loads(sidecar.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
+        if not isinstance(data, dict):
+            data = {}
         variant = data.get("variant", default_variant)
         exaggeration = data.get("exaggeration")
     return {"voice_path": str(voice_path), "variant": variant, "exaggeration": exaggeration}
@@ -109,7 +115,14 @@ def voice_spec(name, config) -> dict:
 
 # --- VRAM gate -----------------------------------------------------------------
 
-def free_vram_gb(run=subprocess.check_output) -> "float | None":
+def _default_smi_run(argv, **kwargs):
+    """subprocess.check_output, but windowless on Windows (no console flash)."""
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.check_output(argv, **kwargs)
+
+
+def free_vram_gb(run=_default_smi_run) -> "float | None":
     """Free GPU VRAM in GiB via nvidia-smi. None if it cannot be determined."""
     try:
         out = run(
@@ -125,7 +138,7 @@ def free_vram_gb(run=subprocess.check_output) -> "float | None":
         return None
 
 
-def gate_ok(config, run=subprocess.check_output) -> bool:
+def gate_ok(config, run=_default_smi_run) -> bool:
     """Safe to try Chatterbox: threshold<=0, VRAM unknown, or free >= threshold."""
     threshold = config.get("chatterbox_min_free_vram_gb", 5)
     if threshold is None or threshold <= 0:
