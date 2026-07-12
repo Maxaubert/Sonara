@@ -10,10 +10,13 @@ from dataclasses import dataclass
 
 class TtsBackend(abc.ABC):
     @abc.abstractmethod
-    def run(self, text: str, voice, rate: int):
+    def run(self, text: str, voice, rate: int, on_play=None):
         """Start speaking *text*; return a proc-like handle exposing
         .wait(timeout=None), .terminate(), and .returncode (0 == completed).
-        This is the say_runner the Speaker orchestrates."""
+        This is the say_runner the Speaker orchestrates. *on_play*, when given,
+        MUST be invoked at playback start (after synthesis): the daemon hooks
+        audio ducking there so other apps' audio dips when sound begins, not
+        through a multi-second synthesis."""
 
     @abc.abstractmethod
     def best_voice(self) -> str:

@@ -236,3 +236,31 @@ def test_skip_subcommand_sends_skip():
     msg, _, _ = _sent(send)
     assert rc == 0
     assert msg == {"v": PROTOCOL_VERSION, "type": MsgType.SKIP}
+
+
+def test_summary_on_sends_set_summary_mode():
+    from unittest import mock
+    from sonara import cli
+    sent = []
+    with mock.patch("sonara.client.send", side_effect=lambda m, **k: sent.append(m)):
+        rc = cli.main(["summary", "on"])
+    assert rc == 0
+    assert sent[-1]["type"] == "set_summary_mode" and sent[-1]["enabled"] is True
+
+
+def test_summary_off_sends_disabled():
+    from unittest import mock
+    from sonara import cli
+    sent = []
+    with mock.patch("sonara.client.send", side_effect=lambda m, **k: sent.append(m)):
+        rc = cli.main(["summary", "off"])
+    assert rc == 0
+    assert sent[-1]["enabled"] is False
+
+
+def test_bare_summary_prints_state(capsys, monkeypatch, tmp_path):
+    from sonara import cli, config
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
+    rc = cli.main(["summary"])
+    assert rc == 0
+    assert "off" in capsys.readouterr().out.lower()      # default state

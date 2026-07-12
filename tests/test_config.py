@@ -12,6 +12,10 @@ def test_defaults_has_documented_top_level_keys():
         "minqueue",
         "audio_control",
         "duck_level",
+        "summary_mode",
+        "summary_model",
+        "summary_command",
+        "summary_timeout",
     }
 
 
@@ -216,3 +220,11 @@ def test_save_config_is_atomic_on_replace_failure(monkeypatch, tmp_path):
     # original file content is untouched: os.replace never overwrote it
     on_disk = _json.loads(cfg_path.read_text(encoding="utf-8"))
     assert on_disk == {"rate": 200}
+
+
+def test_summary_mode_defaults():
+    from sonara.config import DEFAULTS
+    assert DEFAULTS["summary_mode"] is False
+    assert DEFAULTS["summary_model"] == "haiku"
+    assert DEFAULTS["summary_command"] == "claude"
+    assert DEFAULTS["summary_timeout"] == 60

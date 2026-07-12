@@ -102,6 +102,7 @@ def test_status_returns_documented_dict():
         "voice": "Samantha",
         "foreground": "fg",
         "minqueue": 4,
+        "summary_mode": False,
     }
 
 

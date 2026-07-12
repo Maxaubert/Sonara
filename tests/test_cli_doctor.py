@@ -138,3 +138,24 @@ def test_doctor_neural_row_ready_when_healthy(monkeypatch):
     rows = _doctor_rows(monkeypatch)
     ok, detail = rows["neural voices"]
     assert ok is True and "ready" in detail
+
+
+def test_doctor_summary_row_ok_when_mode_off(monkeypatch, tmp_path):
+    from sonara import config
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.json")
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["summary command"]
+    assert ok is True and "off" in detail
+
+
+def test_doctor_summary_row_fails_when_command_missing(monkeypatch, tmp_path):
+    import json
+    from sonara import config
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps({"summary_mode": True,
+                                    "summary_command": "definitely-not-a-cmd-xyz"}),
+                        encoding="utf-8")
+    monkeypatch.setattr(config, "CONFIG_PATH", cfg_path)
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["summary command"]
+    assert ok is False

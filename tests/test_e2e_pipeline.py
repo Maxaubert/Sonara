@@ -33,7 +33,7 @@ class FakeSpeaker:
         self.cancelled = 0
         self._epoch = 0
 
-    def speak(self, text, cancel_epoch=None):
+    def speak(self, text, cancel_epoch=None, on_play=None):
         self.log.append(("text", text))
 
     def cancel_epoch(self):

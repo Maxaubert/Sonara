@@ -385,3 +385,35 @@ def test_earcon_pids_returns_live_helper_pids():
     s = Speaker(say_runner=lambda *a: None)
     s._earcon_procs = [_P(11, True), _P(22, False), _P(33, True)]
     assert set(s.earcon_pids()) == {11, 33}     # only live ones
+
+
+class OnPlayRecordingRunner(RecordingRunner):
+    """Records the on_play callback passed as the 4th say_runner arg."""
+
+    def __init__(self):
+        super().__init__()
+        self.on_plays = []
+
+    def __call__(self, text, voice, rate, on_play=None):
+        self.on_plays.append(on_play)
+        return super().__call__(text, voice, rate)
+
+
+def test_speak_forwards_on_play_to_say_runner():
+    # Ducking timing: the daemon hands its duck routine to speak(); the
+    # backend fires it at PLAYBACK start (after synthesis), so other apps'
+    # audio is not held down for the whole multi-second synthesis.
+    runner = OnPlayRecordingRunner()
+    sp = Speaker(voice="Ava", rate=180, say_runner=runner)
+    marker = lambda: None
+    sp.speak("hello", on_play=marker)
+    assert runner.on_plays == [marker]
+
+
+def test_speak_without_on_play_keeps_three_arg_call():
+    # Backward compatibility: no on_play -> say_runner called with the classic
+    # (text, voice, rate) signature, so existing runners keep working.
+    runner = RecordingRunner()          # would raise on a 4th positional arg
+    sp = Speaker(voice="Ava", rate=180, say_runner=runner)
+    sp.speak("hello")
+    assert runner.calls == [("hello", "Ava", 180)]

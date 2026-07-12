@@ -295,7 +295,7 @@ def test_background_decision_preempts_current_reader():
     # Inline FakeSpeaker to avoid import cycle
     class FS:
         def __init__(self): self.spoken = []; self._epoch = 0
-        def speak(self, t, cancel_epoch=None): self.spoken.append(t); return True
+        def speak(self, t, cancel_epoch=None, on_play=None): self.spoken.append(t); return True
         def cancel_epoch(self): return self._epoch
         def cancel(self): self._epoch += 1
         def earcon(self, k): pass

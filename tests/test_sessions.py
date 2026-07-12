@@ -1,3 +1,5 @@
+import json
+
 from sonara.sessions import SessionManager
 
 
@@ -89,4 +91,72 @@ def test_empty_cwd_does_not_clobber_known_folder():
     sm.register("s1", cwd="/x/myapp")
     sm.set_foreground("s1", cwd="")       # later message with no cwd
     assert sm.folder("s1") == "myapp"     # keep the good name
+
+
+# --- folder-map persistence (survives daemon restart) --------------------
+
+def test_store_writes_folder_map_on_record(tmp_path):
+    p = tmp_path / "sessions.json"
+    sm = SessionManager(store_path=p)
+    sm.register("s1", cwd="/home/me/myapp")
+    assert json.loads(p.read_text(encoding="utf-8")).get("s1") == "myapp"
+
+
+def test_store_reload_recovers_folder(tmp_path):
+    p = tmp_path / "sessions.json"
+    SessionManager(store_path=p).set_foreground("s1", cwd="C:\\Users\\me\\proj")
+    sm2 = SessionManager(store_path=p)               # fresh manager == daemon restart
+    assert sm2.folder("s1") == "proj"
+
+
+def test_no_store_path_is_pure(tmp_path):
+    p = tmp_path / "sessions.json"
+    sm = SessionManager()                            # default: no persistence
+    sm.register("s1", cwd="/x/myapp")
+    assert not p.exists()                            # nothing written when no store
+    assert sm.folder("s1") == "myapp"                # in-memory behavior unchanged
+
+
+def test_none_folder_is_not_persisted(tmp_path):
+    p = tmp_path / "sessions.json"
+    sm = SessionManager(store_path=p)
+    sm.register("s1", cwd=None)                       # unknown folder
+    sm.register("s2", cwd="/x/known")
+    data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    assert "s1" not in data                          # nothing useful to save
+    assert data.get("s2") == "known"
+
+
+def test_unregister_persists_removal(tmp_path):
+    p = tmp_path / "sessions.json"
+    sm = SessionManager(store_path=p)
+    sm.register("s1", cwd="/x/myapp")
+    sm.unregister("s1")
+    data = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    assert "s1" not in data
+
+
+def test_store_caps_to_most_recent(tmp_path):
+    p = tmp_path / "sessions.json"
+    sm = SessionManager(store_path=p, store_cap=3)
+    for i in range(5):
+        sm.register("s{0}".format(i), cwd="/x/folder{0}".format(i))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert set(data) == {"s2", "s3", "s4"}           # oldest two dropped from the file
+
+
+def test_load_tolerates_missing_and_corrupt(tmp_path):
+    assert SessionManager(store_path=tmp_path / "nope.json").folder("x") is None
+    corrupt = tmp_path / "bad.json"
+    corrupt.write_text("{ not json", encoding="utf-8")
+    assert SessionManager(store_path=corrupt).folder("x") is None
+
+
+def test_reload_does_not_override_live_record(tmp_path):
+    p = tmp_path / "sessions.json"
+    SessionManager(store_path=p).register("s1", cwd="/x/old")
+    sm2 = SessionManager(store_path=p)
+    sm2.register("s1", cwd="/x/new")                 # folder moved this run
+    assert sm2.folder("s1") == "new"
+    assert json.loads(p.read_text(encoding="utf-8"))["s1"] == "new"
 

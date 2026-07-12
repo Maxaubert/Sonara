@@ -15,6 +15,10 @@ DEFAULTS = {
     "minqueue": 1,
     "audio_control": False,   # lower other apps' audio while speaking (opt-in)
     "duck_level": 30,         # target % volume for other apps while ducked (0-100)
+    "summary_mode": False,    # speak an AI recap of each finished turn (opt-in)
+    "summary_model": "haiku",           # model alias for the throwaway claude -p call
+    "summary_command": "claude",        # executable for the summarizer subprocess
+    "summary_timeout": 60,              # seconds before a summarizer call is abandoned (typical run ~12s; claude cold start adds several more)
 }
 
 
