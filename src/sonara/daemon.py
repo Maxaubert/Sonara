@@ -505,14 +505,26 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.NAV:
+            to = msg.get("to", "prev")
+            fg = self._engaged_session()
+            if self.config.get("summary_mode"):
+                # Summary mode speaks ONE digest per turn, not the raw per-message
+                # prose. Message-cursor nav (prev/next) is meaningless here, so it
+                # is a SILENT no-op: no chime, and nothing enqueued onto the gated
+                # session channel (which otherwise piled up and burst at turn end,
+                # issue #11). Only Up (nav 'first') acts, re-reading the last
+                # digest. Flush ('go to end', Ctrl+Alt+Down) is a separate handler
+                # and still cuts the foreground digest.
+                if to == "first" and fg is not None:
+                    self._reread_last(fg)
+                return None
             # Every nav press chimes: the "nav" earcon when the cursor moves to a
             # message, the "nav_edge" earcon at a boundary / nothing to navigate
             # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
-            fg = self._engaged_session()
             if fg is None:
                 self._earcon("nav_edge")
                 return None
-            result = self._nav(fg, msg.get("to", "prev"))
+            result = self._nav(fg, to)
             self._earcon("nav" if result == "moved" else "nav_edge")
             return None
 
@@ -1117,6 +1129,15 @@ class SpeechDaemon:
             entries.extend(self.history.entries_for_message(session, mid))
         self._replay(session, entries)
         return "moved" if moved else "edge"
+
+    def _reread_last(self, session: str) -> None:
+        """Replay the last message immediately, like REPEAT. In summary mode the
+        last message is the turn's digest, so this is the summary-mode Up ('re-read
+        the message') action (issue #11). No-op when there is nothing recorded."""
+        self._nav_cursor.pop(session, None)
+        entries = self.history.last_message(session)
+        if entries:
+            self._replay(session, entries)
 
     def _resume(self) -> None:
         """Clear pause and wake the speak loop. The interrupted utterance was
