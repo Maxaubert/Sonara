@@ -241,10 +241,16 @@ class _ChatterboxHandle:
                     continue    # consumer is still draining; keep checking abort
             if not put_ok:
                 break
-        try:
-            self._q.put(_DONE, timeout=0.5)
-        except queue.Full:
-            pass   # consumer aborted and stopped draining; wait() will drain us out
+        # The _DONE sentinel MUST reach the consumer, so retry until it lands (or
+        # we are aborting). Dropping it - the old put(timeout=0.5)+pass - left the
+        # consumer spinning on get() forever whenever real (slow) playback kept the
+        # maxsize queue full at the moment the producer finished (verified live).
+        while not self._abort.is_set():
+            try:
+                self._q.put(_DONE, timeout=0.1)
+                break
+            except queue.Full:
+                continue   # consumer is still draining; room frees as it pops
 
     def wait(self, timeout=None) -> int:
         if not self._chunks:
