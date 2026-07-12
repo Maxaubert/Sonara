@@ -12,19 +12,30 @@ def test_chatterbox_requirements_file_pins_chatterbox_tts():
 
 def test_provision_creates_venv_and_installs(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "CHATTERBOX_VENV", tmp_path / "venv")
-    monkeypatch.setattr(paths, "chatterbox_venv_python",
-                        lambda: str(tmp_path / "venv" / "Scripts" / "python.exe"))
+    venv_python = str(tmp_path / "venv" / "Scripts" / "python.exe")
+    monkeypatch.setattr(paths, "chatterbox_venv_python", lambda: venv_python)
     cmds = []
     cbp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd))
+
+    # Full verified sequence from docs/superpowers/specs/2026-07-12-chatterbox-
+    # smoke.md: torch cu128, chatterbox-tts (which downgrades torch/torchaudio
+    # to CPU builds), torch cu128 --reinstall, torchaudio cu128 --reinstall.
+    # Pinned in full so a future "simplification" of the order fails here.
+    assert len(cmds) == 5
     assert cmds[0] == ["/bin/uv", "venv", str(tmp_path / "venv"), "--python", "3.12"]
-    # torch AND torchaudio must both come from the cu128 index (deviation from
-    # the brief: see docs/superpowers/specs/2026-07-12-chatterbox-smoke.md -
-    # a bare `chatterbox.tts` import fails without a cu128 torchaudio).
-    assert cmds[1][:4] == ["/bin/uv", "pip", "install", "--python"]
-    assert "torch" in cmds[1] and "torchaudio" in cmds[1]
-    assert cmds[1][-2:] == ["--index-url", cbp._TORCH_INDEX]
-    assert cmds[2][:4] == ["/bin/uv", "pip", "install", "--python"]
-    assert "-r" in cmds[2] and cbp.chatterbox_requirements_path() in cmds[2]
+
+    assert cmds[1] == ["/bin/uv", "pip", "install", "--python", venv_python,
+                        "torch", "--index-url", cbp._TORCH_INDEX]
+
+    assert cmds[2] == ["/bin/uv", "pip", "install", "--python", venv_python,
+                        "-r", cbp.chatterbox_requirements_path()]
+
+    assert cmds[3] == ["/bin/uv", "pip", "install", "--python", venv_python,
+                        "torch", "--index-url", cbp._TORCH_INDEX, "--reinstall"]
+
+    assert cmds[4] == ["/bin/uv", "pip", "install", "--python", venv_python,
+                        "torchaudio", "--index-url", cbp._TORCH_INDEX,
+                        "--reinstall"]
 
 
 def test_warmup_runs_worker_ping(monkeypatch, tmp_path):
@@ -40,6 +51,10 @@ def test_warmup_runs_worker_ping(monkeypatch, tmp_path):
     assert seen["env"]["HF_HOME"] == str(tmp_path / "hf-cache")
     assert "PYTHONPATH" in seen["env"]
     assert "handle_request" in seen["cmd"][-1]
+    # A CPU-only torch install (see the smoke doc's "silent downgrade" gotcha)
+    # must fail warmup loudly rather than succeed silently on CPU.
+    assert "cuda.is_available" in seen["cmd"][-1]
+    assert "assert cuda_ok" in seen["cmd"][-1]
 
 
 def test_uninstall_removes_venv_and_cache(monkeypatch, tmp_path):
