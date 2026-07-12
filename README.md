@@ -126,20 +126,22 @@ standard voice.
 **VRAM gate and fallback:**
 
 Before synthesis, Sonara checks free GPU VRAM. If below the threshold (default 5 GB), the
-utterance speaks via Kokoro instead, keeping Chatterbox reserved for when the GPU has room.
-The threshold is configurable via `chatterbox_min_free_vram_gb` in `~/.sonara/config.json`
-(set to 0 to always try, or to a lower value if your workflow needs the GPU freed).
+utterance speaks via Kokoro instead, quietly and without announcement, keeping Chatterbox
+reserved for when the GPU has room. The threshold is configurable via
+`chatterbox_min_free_vram_gb` in `~/.sonara/config.json` (set to 0 to always try, or to a
+lower value if your workflow needs the GPU freed).
 
 When the model is loaded, it idles for 10 minutes before unloading to free VRAM back to your
 system (configurable via `chatterbox_idle_unload_s`). On any failure (missing weights, GPU
-error, timeout), Sonara automatically falls back to Kokoro and logs the reason to
-`~/.sonara/speechd.log`. The first fallback in a daemon run also speaks a short
-notice ("Chatterbox unavailable, using Heart") so you know why the voice changed;
-later fallbacks in the same run stay quiet apart from the log. The fallback voice
-is Kokoro's af_heart, so keep the Kokoro voices installed alongside Chatterbox.
-Also expect a one-time pause of roughly 10 to 40 seconds before the first
-Chatterbox utterance after a daemon start or an idle unload - that is the model
-loading onto the GPU; later utterances start immediately.
+error, or timeout), Sonara automatically and quietly falls back to Kokoro, logging the reason
+to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so keep the Kokoro
+voices installed alongside Chatterbox. When the GPU frees, Chatterbox resumes automatically.
+Speech is synthesized and played in chunks, so hotkeys (mute, navigate, pause, skip) take
+effect within a chunk (roughly 2 seconds) rather than waiting for the whole utterance. The
+`chatterbox_timeout` setting (default 30 seconds) bounds each chunk, not the entire utterance.
+Also expect a one-time pause of roughly 10 to 40 seconds before the first Chatterbox
+utterance after a daemon start or an idle unload; that is the model loading onto the GPU.
+Later utterances start immediately.
 
 **Limitation:**
 
