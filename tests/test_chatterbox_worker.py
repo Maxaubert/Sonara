@@ -95,3 +95,15 @@ def test_synth_error_returns_ok_false():
 def test_unknown_request_type_is_an_error():
     out = w.handle_request(_state(), {"type": "dance"}, now=lambda: 100.0)
     assert out["ok"] is False
+
+
+def test_isolate_from_own_dir_removes_worker_dir():
+    # Regression: the worker's own dir (which holds sonara's chatterbox.py) must
+    # be stripped so `import chatterbox` finds the pip package, not sonara's
+    # same-named module (live bug: ModuleNotFoundError: No module named 'sonara').
+    import os
+    here = os.path.dirname(os.path.abspath(w.__file__))
+    path = [here, "/some/other/dir", os.path.join(here, "sub", "..")]
+    w._isolate_from_own_dir(path)
+    assert all(os.path.abspath(p) != here for p in path)
+    assert "/some/other/dir" in path        # unrelated entries preserved

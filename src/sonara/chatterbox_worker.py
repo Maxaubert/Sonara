@@ -23,9 +23,24 @@ import time
 import wave
 
 
+def _isolate_from_own_dir(path_list):
+    """Drop this file's own directory from *path_list* in place. The worker runs
+    from the sonara package dir (a plain `python worker.py` puts the script's dir
+    on sys.path[0]), and that dir also holds sonara's own `chatterbox.py`. Without
+    this, `from chatterbox...` resolves to sonara's module (which imports sonara)
+    instead of the pip `chatterbox` package the worker needs -> ModuleNotFoundError:
+    No module named 'sonara'. Called right before the real import so tests, which
+    inject a fake loader, never touch it."""
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    path_list[:] = [p for p in path_list if os.path.abspath(p) != here]
+
+
 def _load_model(variant):
     # Verified against docs/superpowers/specs/2026-07-12-chatterbox-smoke.md;
     # adjust there first if the package API changes.
+    import sys
+    _isolate_from_own_dir(sys.path)
     if variant == "original":
         from chatterbox.tts import ChatterboxTTS
         return ChatterboxTTS.from_pretrained(device="cuda")
