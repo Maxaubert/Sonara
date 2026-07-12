@@ -48,10 +48,57 @@ def _load_model(variant):
     return ChatterboxTurboTTS.from_pretrained(device="cuda")
 
 
-def _to_wav_b64(tensor, sr):
+_MAX_CHUNK_CHARS = 280
+
+
+def _split_text(text, max_chars=_MAX_CHUNK_CHARS):
+    """Split *text* into speakable chunks no longer than *max_chars*, breaking on
+    sentence boundaries. Chatterbox degrades into gibberish on long input (its
+    reliable context is short, which is why the demos cap the box), so a whole
+    paragraph digest must be synthesized in pieces. A single sentence longer than
+    the budget is hard-split on spaces."""
+    import re
+    text = (text or "").strip()
+    if not text:
+        return []
+    sentences = re.findall(r"[^.!?]*[.!?]+|\S[^.!?]*$", text)
+    chunks = []
+    cur = ""
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        if len(s) > max_chars:
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            buf = ""
+            for word in s.split(" "):
+                if buf and len(buf) + 1 + len(word) > max_chars:
+                    chunks.append(buf)
+                    buf = word
+                else:
+                    buf = (buf + " " + word).strip()
+            if buf:
+                cur = buf
+        elif cur and len(cur) + 1 + len(s) > max_chars:
+            chunks.append(cur)
+            cur = s
+        else:
+            cur = (cur + " " + s).strip()
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _to_float_mono(tensor):
     import numpy as np
-    pcm = np.asarray(tensor.squeeze().cpu().numpy(), dtype="float32")
-    pcm = (pcm.clip(-1.0, 1.0) * 32767.0).astype("<i2")
+    return np.asarray(tensor.squeeze().cpu().numpy(), dtype="float32").reshape(-1)
+
+
+def _pcm_to_wav_b64(pcm_float, sr):
+    import numpy as np
+    pcm = (np.asarray(pcm_float, dtype="float32").clip(-1.0, 1.0) * 32767.0).astype("<i2")
     buf = io.BytesIO()
     with wave.open(buf, "wb") as f:
         f.setnchannels(1)
@@ -107,9 +154,13 @@ def handle_request(state, req, now=time.time):
                 kwargs["audio_prompt_path"] = req["voice_path"]
             if req.get("exaggeration") is not None:
                 kwargs["exaggeration"] = req["exaggeration"]
-            wav = state.model.generate(req.get("text") or "", **kwargs)
+            import numpy as np
+            chunks = _split_text(req.get("text") or "") or [""]
+            parts = [_to_float_mono(state.model.generate(c, **kwargs)) for c in chunks]
+            audio = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
+            sr = state.model.sr
             state.last_used = now()
-        return {"ok": True, "wav_b64": _to_wav_b64(wav, state.model.sr)}
+        return {"ok": True, "wav_b64": _pcm_to_wav_b64(audio, sr)}
     except Exception as exc:  # noqa: BLE001 - report, never crash the loop
         return {"ok": False, "error": "{0}: {1}".format(type(exc).__name__, exc)}
 

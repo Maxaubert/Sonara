@@ -120,3 +120,40 @@ def test_use_clean_stdout_reserves_protocol_and_redirects_noise(monkeypatch):
     assert sys.stdout is real_err            # now goes to stderr
     assert "library noise" in real_err.getvalue()
     assert real_out.getvalue() == ""         # protocol channel stays clean
+
+
+def test_split_text_short_is_one_chunk():
+    assert w._split_text("Hello there. How are you?") == ["Hello there. How are you?"]
+
+
+def test_split_text_packs_sentences_under_limit():
+    # many sentences -> multiple chunks, each within the char budget, split on
+    # sentence boundaries (chatterbox hallucinates into gibberish on long input).
+    text = " ".join("This is sentence number {0} here.".format(i) for i in range(40))
+    chunks = w._split_text(text, max_chars=120)
+    assert len(chunks) > 1
+    assert all(len(c) <= 120 for c in chunks)
+    # every sentence preserved (nothing dropped)
+    assert "".join(chunks).replace(" ", "") == text.replace(" ", "")
+
+
+def test_split_text_hard_splits_a_too_long_sentence():
+    long_sentence = "word " * 100                      # 500 chars, no terminator
+    chunks = w._split_text(long_sentence.strip(), max_chars=90)
+    assert len(chunks) > 1 and all(len(c) <= 90 for c in chunks)
+
+
+def test_synth_chunks_long_text_and_concatenates_audio():
+    # A long digest must be synthesized in pieces and stitched, so the audio is
+    # the sum of the chunks (and the model is never handed the whole paragraph).
+    s = _state()
+    long_text = " ".join("Sentence {0} of the digest.".format(i) for i in range(30))
+    out = w.handle_request(s, {"type": "synth", "text": long_text,
+                               "voice_path": None, "variant": "turbo",
+                               "exaggeration": None}, now=lambda: 1.0)
+    assert out["ok"] is True
+    assert len(s.model.calls) >= 2                     # chunked, not one shot
+    import base64, io, wave
+    with wave.open(io.BytesIO(base64.b64decode(out["wav_b64"]))) as f:
+        frames = f.getnframes()
+    assert frames == 24 * len(s.model.calls)           # concatenated (fake=24/chunk)
