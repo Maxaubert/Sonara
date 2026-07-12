@@ -296,3 +296,33 @@ def test_long_turn_still_dispatches_summarizer(monkeypatch):
     daemon.handle_message(_prose("fg", long_text, 0, True))
     _turn_done(daemon)
     assert len(calls) == 1
+
+
+def test_foreground_digest_is_prefixed_with_its_folder(monkeypatch):
+    # "Always announce the session speaking": every digest names its session,
+    # foreground included (the user could not tell which session a digest
+    # belonged to when sessions interleaved).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    sessions.set_foreground("fg", cwd="/home/me/myrepo")
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The gist."
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    texts = [it.text for it in ch.items[ch.cursor:]]
+    assert "Session myrepo: The gist." in texts
+
+
+def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):
+    # No folder name -> nothing useful to announce; speak the digest bare
+    # rather than "Session another session: ...".
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The gist."
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    texts = [it.text for it in ch.items[ch.cursor:]]
+    assert "The gist." in texts

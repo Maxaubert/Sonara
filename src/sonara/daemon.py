@@ -969,8 +969,15 @@ class SpeechDaemon:
                 self._earcon("summary_failed")
                 return
             if self.sessions.is_foreground(session):
+                # Every digest names its session ("always announce" per user):
+                # with interleaved sessions an unprefixed digest was ambiguous.
+                # History records the bare digest (repeat/catch_up replay it
+                # without the prefix); only the spoken item carries the name.
+                folder = self.sessions.folder(session)
+                spoken = ("Session {0}: {1}".format(folder, summary)
+                          if folder else summary)
                 entry = self.history.record(session, "summary", summary)
-                self._enqueue(session, "summary", summary, False, entry=entry)
+                self._enqueue(session, "summary", spoken, False, entry=entry)
                 self.router.channel(session).turn_done = True
                 self._wake.set()
             else:
