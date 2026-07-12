@@ -12,6 +12,8 @@ Protocol (one request per line):
 The model idle-unloads after idle_unload_s without requests (VRAM freed);
 the process stays and reloads lazily on the next synth.
 """
+from __future__ import annotations
+
 import base64
 import io
 import json
