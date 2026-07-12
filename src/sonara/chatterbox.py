@@ -113,6 +113,47 @@ def voice_spec(name, config) -> dict:
     return {"voice_path": str(voice_path), "variant": variant, "exaggeration": exaggeration}
 
 
+def split_text(text, max_chars=280):
+    """Split *text* into speakable chunks no longer than *max_chars*, on sentence
+    boundaries (a too-long sentence is hard-split on spaces). Chatterbox degrades
+    on long input, so the daemon drives chunking for pipelined, interruptible
+    playback. NOTE: chatterbox_worker.py keeps its own _split_text as a defensive
+    net; the worker cannot import sonara, so the small pure logic is duplicated on
+    purpose. Keep the two in sync."""
+    import re
+    text = (text or "").strip()
+    if not text:
+        return []
+    sentences = re.findall(r"[^.!?]*[.!?]+|\S[^.!?]*$", text)
+    chunks = []
+    cur = ""
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        if len(s) > max_chars:
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            buf = ""
+            for word in s.split(" "):
+                if buf and len(buf) + 1 + len(word) > max_chars:
+                    chunks.append(buf)
+                    buf = word
+                else:
+                    buf = (buf + " " + word).strip()
+            if buf:
+                cur = buf
+        elif cur and len(cur) + 1 + len(s) > max_chars:
+            chunks.append(cur)
+            cur = s
+        else:
+            cur = (cur + " " + s).strip()
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 # --- VRAM gate -----------------------------------------------------------------
 
 def _default_smi_run(argv, **kwargs):

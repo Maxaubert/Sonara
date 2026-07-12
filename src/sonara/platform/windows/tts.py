@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import io
 import os
+import queue
 import subprocess
 import tempfile
 import threading
@@ -181,6 +182,132 @@ def _play_wav_bytes(data: bytes):
             pass
         raise
     return _TtsHandle(path, duration)
+
+
+# Sentinel for "producer is finished all chunks". Deliberately distinct from
+# None: a synth_one chunk that returns None means "produced nothing, skip
+# this chunk" and is simply never queued (see _ChatterboxHandle._produce), so
+# a skipped chunk can never be confused with the queue's completion signal.
+_DONE = object()
+
+
+class _ChatterboxHandle:
+    """Pipelined, interruptible playback of a chatterbox utterance. tts.run
+    returns this BEFORE any synthesis, so the speaker sets it as _current at
+    once (a cancel mid-synth then reaches terminate(), closing the synth-gap).
+    wait() runs a producer thread that synthesizes chunks ~1-2 ahead into a
+    bounded queue while the consumer plays them in order; terminate() aborts
+    within one chunk. Fits the say_runner handle contract
+    (wait/terminate/poll/returncode).
+
+    self._abort (a threading.Event) is the single source of truth for
+    "stop": both the producer and the consumer poll it, and terminate() only
+    ever sets it (plus terminating whatever sub-handle is currently playing).
+    The producer's queue put() uses a short timeout and re-checks _abort each
+    iteration so an aborted consumer can never wedge it waiting for room.
+    """
+
+    def __init__(self, text, synth_one, on_play=None, play=None, split=None,
+                 chunk_play_timeout=60):
+        from sonara import chatterbox
+        self._chunks = (split or chatterbox.split_text)(text)
+        self._synth_one = synth_one
+        self._on_play = on_play
+        self._play = play or _play_wav_bytes
+        self._chunk_play_timeout = chunk_play_timeout
+        self._abort = threading.Event()
+        self._q = queue.Queue(maxsize=2)      # synth at most ~2 chunks ahead
+        self._producer = None
+        self._cur_sub = None
+        self.returncode = None
+
+    def _produce(self) -> None:
+        for chunk in self._chunks:
+            if self._abort.is_set():
+                break
+            try:
+                wav = self._synth_one(chunk)
+            except Exception:  # noqa: BLE001 - synth_one owns its own fallback; guard anyway
+                wav = None
+            if wav is None:
+                continue        # produced nothing: skip, do NOT enqueue anything
+            put_ok = False
+            while not self._abort.is_set():
+                try:
+                    self._q.put(wav, timeout=0.1)
+                    put_ok = True
+                    break
+                except queue.Full:
+                    continue    # consumer is still draining; keep checking abort
+            if not put_ok:
+                break
+        try:
+            self._q.put(_DONE, timeout=0.5)
+        except queue.Full:
+            pass   # consumer aborted and stopped draining; wait() will drain us out
+
+    def wait(self, timeout=None) -> int:
+        if not self._chunks:
+            self.returncode = 0
+            return 0
+        self._producer = threading.Thread(target=self._produce,
+                                          name="sonara-cb-synth", daemon=True)
+        self._producer.start()
+        played_any = False
+        rc = 1
+        while True:
+            if self._abort.is_set():
+                break
+            try:
+                item = self._q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if self._abort.is_set():
+                break
+            if item is _DONE:
+                rc = 0
+                break
+            if not played_any and self._on_play is not None:
+                try:
+                    self._on_play()
+                except Exception:  # noqa: BLE001 - ducking must never block speech
+                    pass
+                played_any = True
+            sub = self._play(item)
+            self._cur_sub = sub
+            try:
+                sub.wait(timeout=self._chunk_play_timeout)
+            except Exception:  # noqa: BLE001 - a stuck chunk must not wedge the loop
+                try:
+                    sub.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._cur_sub = None
+        self.returncode = rc
+        self._abort.set()      # in case rc came from the top-of-loop break: stop the producer
+        # Drain any leftover item so a producer still retrying put() sees room
+        # and exits promptly, then join it so no thread is ever leaked.
+        try:
+            while True:
+                self._q.get_nowait()
+        except queue.Empty:
+            pass
+        if self._producer is not None:
+            self._producer.join(timeout=1.0)
+            self._producer = None
+        return self.returncode
+
+    def terminate(self) -> None:
+        self._abort.set()
+        sub = self._cur_sub
+        if sub is not None:
+            try:
+                sub.terminate()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def poll(self):
+        return self.returncode
 
 
 class WinTtsBackend(TtsBackend):
