@@ -57,6 +57,14 @@ profile or track usage, and contains no analytics or third-party data processors
 Run `sonara uninstall` and delete the `~/.sonara/` folder to remove all of Sonara's local
 files (uninstall also removes the Windows autostart entry).
 
+## Voice engines (neural and Chatterbox)
+
+Kokoro neural voices and Chatterbox voices require a one-time download of the model weights
+from Hugging Face during installation (`sonara voices install kokoro` or `sonara voices
+install chatterbox`). After installation, those models stay in `~/.sonara/` and synthesis is
+fully local; no data is sent to Hugging Face or anywhere else. What you type and what you
+hear never leaves your machine.
+
 ## Summary mode (opt-in)
 
 With summary mode ON (`sonara summary on`, off by default), each finished
