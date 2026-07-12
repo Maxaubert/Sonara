@@ -146,6 +146,7 @@ CLI-only (run `sonara <cmd>` in a terminal).
 | `/sonara:voices` | `sonara voices` | Install or remove Kokoro neural voices |
 | `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
 | `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
+| `/sonara:summary [on\|off]` | `sonara summary [on\|off]` | Speak an AI recap of each finished turn instead of full narration (off = full narration; bare prints state) |
 | — | `sonara repeat` | Re-speak the last item |
 | — | `sonara skip` | Skip the current item |
 | — | `sonara stop` | Stop now and clear the queue |
@@ -162,6 +163,23 @@ Three live-switchable levels (earcons fire in **all** of them):
   routine tool announcements.
 - **quiet** — decisions only (questions / plans / permissions); drops both tool
   announcements **and** prose narration. Earcons still fire at every level.
+
+## Summary mode
+
+`sonara summary on` switches Sonara to a recap style: instead of narrating a whole
+response, Sonara waits for the message to finish and reads a 1-2 sentence summary.
+Decisions (questions, plans, permission prompts) are still read in full, every
+earcon still fires, and the full text stays in history, so `sonara repeat` and
+catch-up can still read everything.
+
+How it works: when a turn finishes, Sonara runs a separate, throwaway
+`claude -p` call (default model: Haiku, tool-disabled) with only that message's
+text and speaks the result. Your main Claude session is untouched, and nothing is
+added to its context. The recap call reuses your existing Claude Code login and its
+tokens count against your plan (one small call per finished message); expect a few
+seconds between the message finishing and the recap being spoken. If the call
+fails (offline, timeout), Sonara plays a brief cue and stays quiet, the full text
+remains available via catch-up. Summary mode is off by default.
 
 ## How ordering works
 
@@ -227,7 +245,8 @@ stable app copy at `~/.sonara/app`, and **preserves** your `config.json` and
 
 ## Privacy
 
-Sonara runs entirely on your own computer. It collects nothing, sends nothing over the network,
+Sonara runs entirely on your own computer. It collects nothing, sends nothing over the network
+(except, if you opt in, summary mode's local `claude -p` call described above),
 and has no servers, telemetry, or analytics — the text it speaks is processed locally and is
 never stored or transmitted. See [PRIVACY.md](PRIVACY.md) for the full details.
 

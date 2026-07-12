@@ -23,7 +23,7 @@ permission-prompt actions. That text is:
 - **not stored and not sent anywhere.**
 
 Sonara's components talk to each other only over a **local socket** on your machine. Nothing
-Sonara handles ever leaves your computer.
+Sonara handles ever leaves your computer, except when summary mode is enabled (see below).
 
 ## What Sonara stores on your machine
 
@@ -56,6 +56,15 @@ profile or track usage, and contains no analytics or third-party data processors
 
 Run `sonara uninstall` and delete the `~/.sonara/` folder to remove all of Sonara's local
 files (uninstall also removes the Windows autostart entry).
+
+## Summary mode (opt-in)
+
+With summary mode ON (`sonara summary on`, off by default), each finished
+assistant message is sent to a separate local `claude -p` process to produce the
+short spoken recap. That call is made with your own Claude Code login and is
+subject to Anthropic's terms, exactly like the Claude Code session that produced
+the message; Sonara itself still stores nothing and operates no servers. With
+summary mode OFF (the default), Sonara sends nothing anywhere, as described above.
 
 ## Changes to this policy
 
