@@ -12,6 +12,14 @@ import sys
 
 
 def main() -> None:
+    # Recursion guard: summary mode spawns a throwaway `claude -p` child whose
+    # env carries SONARA_SUMMARIZER=1. If hooks fire inside that child session,
+    # feeding them to the daemon would make it summarize its own summarizer
+    # (foreground steal + turn_done chime + a fresh child, every few seconds).
+    # The child is not a user session; send nothing.
+    if os.environ.get("SONARA_SUMMARIZER"):
+        return
+
     # Read raw stdin first so we can capture it even if everything else fails.
     try:
         raw = sys.stdin.buffer.read()

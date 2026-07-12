@@ -184,3 +184,18 @@ def test_hook_src_wins_over_stale_extend_path_namespace(tmp_path):
         pythonpath_prefix=[str(stale)],
     )
     _assert_real_package_won(res, sent_log)
+
+
+def test_hook_is_inert_inside_summarizer_child(tmp_path):
+    # Recursion guard: the summary-mode subprocess (claude -p) sets
+    # SONARA_SUMMARIZER=1 in its env. If Sonara's hooks somehow fire inside
+    # that child session anyway, the shim must send NOTHING and exit 0 -
+    # otherwise the daemon summarizes its own summarizer in an endless
+    # foreground-steal / turn_done-chime loop.
+    sent_log = tmp_path / "sent.jsonl"
+    payload = json.dumps({"session_id": "sum1", "delta": "recap text.",
+                          "index": 0, "final": True}).encode()
+    res = _run("MessageDisplay", payload,
+               {"SONARA_FAKE_SENT_LOG": str(sent_log), "SONARA_SUMMARIZER": "1"})
+    assert res.returncode == 0, res.stderr.decode()
+    assert not sent_log.exists() or sent_log.read_text().strip() == ""

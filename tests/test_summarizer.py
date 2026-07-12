@@ -29,6 +29,33 @@ def test_argv_is_headless_tool_disabled_call():
     assert "--model" in argv and argv[argv.index("--model") + 1] == "haiku"
     # --tools "" disables every tool: pure text-in/text-out
     assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
+    # --setting-sources "" stops the child loading settings/plugins, so Sonara's
+    # own hooks can NEVER fire inside the summarizer session (the recursion that
+    # made the daemon summarize its own summarizer in a chime loop).
+    assert ("--setting-sources" in argv
+            and argv[argv.index("--setting-sources") + 1] == "")
+
+
+def test_default_runner_marks_child_as_summarizer(monkeypatch):
+    # Belt and braces for the recursion guard: the child env must carry
+    # SONARA_SUMMARIZER=1 so the hook shim bails even if settings DO load.
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = b"ok"
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen.update(kwargs)
+        return _Proc()
+
+    monkeypatch.setattr(summarizer.subprocess, "run", fake_run)
+    code, out = summarizer._default_runner(["claude", "-p"], "text", 5)
+    assert code == 0 and out == "ok"
+    assert seen["env"]["SONARA_SUMMARIZER"] == "1"
+    assert seen["timeout"] == 5
+    assert seen["input"] == b"text"
 
 
 def test_nonzero_exit_returns_none():

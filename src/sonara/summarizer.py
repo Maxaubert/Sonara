@@ -21,16 +21,28 @@ INSTRUCTION = (
 
 def build_argv(command: str, model: str) -> list:
     """The headless summarizer invocation. --tools "" disables every tool, so the
-    call is pure text-in/text-out: it cannot read files or run commands."""
-    return [command, "-p", INSTRUCTION, "--model", model, "--tools", ""]
+    call is pure text-in/text-out: it cannot read files or run commands.
+    --setting-sources "" stops the child loading ANY settings, so plugins (and
+    with them Sonara's own hooks) never run inside the summarizer session.
+    Without it the child's UserPromptSubmit/Stop hooks steal the foreground and
+    make the daemon summarize its own summarizer: an endless chime loop that
+    spawns a new claude process every few seconds (verified live)."""
+    return [command, "-p", INSTRUCTION, "--model", model, "--tools", "",
+            "--setting-sources", ""]
 
 
 def _default_runner(argv, text: str, timeout):
     """Spawn the real subprocess: text on stdin, neutral cwd (the user home, so a
     project CLAUDE.md is never picked up), no console window on Windows. Resolve
     the command via shutil.which because Windows CreateProcess does not apply
-    PATHEXT to a bare name like 'claude' (an npm .cmd shim)."""
+    PATHEXT to a bare name like 'claude' (an npm .cmd shim).
+
+    SONARA_SUMMARIZER=1 marks the child so the hook shim (bin/sonara-hook)
+    bails out instantly if hooks ever DO fire inside it - the second, redundant
+    layer of the recursion guard described in build_argv."""
     exe = shutil.which(argv[0]) or argv[0]
+    env = dict(os.environ)
+    env["SONARA_SUMMARIZER"] = "1"
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -40,6 +52,7 @@ def _default_runner(argv, text: str, timeout):
         capture_output=True,
         timeout=timeout,
         cwd=os.path.expanduser("~"),
+        env=env,
         **kwargs
     )
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
