@@ -137,3 +137,33 @@ def test_fallback_notice_pops_once():
     cb._set_fallback_notice("no vram")
     assert cb.pop_fallback_notice() == "no vram"
     assert cb.pop_fallback_notice() is None
+
+
+def test_spawn_isolates_path_and_strips_pythonpath(monkeypatch):
+    # Live bug: the worker inherited PYTHONPATH pointing at the sonara package
+    # and Python prepended the worker's own dir, so `import platform` grabbed
+    # sonara's platform/ subpackage -> platform.machine() AttributeError. Spawn
+    # with -P (isolated sys.path) and no PYTHONPATH so only stdlib/venv win.
+    captured = {}
+
+    class FakeProc:
+        stdin = None
+        stdout = None
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kw):
+        captured["argv"] = argv
+        captured["env"] = kw.get("env")
+        return FakeProc()
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(cb, "chatterbox_venv_python", lambda: "PY.exe")
+    monkeypatch.setattr(cb, "worker_script_path", lambda: "W.py")
+    monkeypatch.setenv("PYTHONPATH", "C:/whatever/sonara")
+    cb.ChatterboxClient()._spawn({"chatterbox_idle_unload_s": 600})
+    assert captured["argv"][0] == "PY.exe"
+    assert "-P" in captured["argv"] and captured["argv"].index("-P") == 1
+    assert "W.py" in captured["argv"]
+    assert "PYTHONPATH" not in captured["env"]
+    assert captured["env"]["HF_HOME"]

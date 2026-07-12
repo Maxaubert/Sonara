@@ -182,8 +182,15 @@ class ChatterboxClient:
 
     def _spawn(self, config) -> None:
         idle_s = config.get("chatterbox_idle_unload_s", 600)
-        argv = [chatterbox_venv_python(), worker_script_path(), str(idle_s)]
+        # -P (isolated: do not prepend the script's own dir to sys.path) plus a
+        # stripped PYTHONPATH so the worker's directory (the sonara package, which
+        # holds same-named modules: platform/, queue.py, chatterbox.py) can never
+        # shadow the venv's stdlib/pip packages. Without this the worker imported
+        # sonara.platform for `import platform`, and torch's platform.machine()
+        # crashed every synth into a silent Kokoro fallback (verified live).
+        argv = [chatterbox_venv_python(), "-P", worker_script_path(), str(idle_s)]
         env = dict(os.environ)
+        env.pop("PYTHONPATH", None)
         env["HF_HOME"] = str(CHATTERBOX_HF_CACHE)
         kwargs = {}
         if os.name == "nt":
