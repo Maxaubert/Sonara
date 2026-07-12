@@ -132,9 +132,11 @@ reserved for when the GPU has room. The threshold is configurable via
 lower value if your workflow needs the GPU freed).
 
 When the model is loaded, it idles for 10 minutes before unloading to free VRAM back to your
-system (configurable via `chatterbox_idle_unload_s`). On any failure (missing weights, GPU
-error, or timeout), Sonara automatically and quietly falls back to Kokoro, logging the reason
-to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so keep the Kokoro
+system (configurable via `chatterbox_idle_unload_s`). A busy-GPU gate miss (above) is quiet.
+A genuine failure (missing weights, worker error, or timeout) also falls back to Kokoro, and
+the first such failure in a daemon run speaks a short notice ("Chatterbox unavailable, using
+Heart") so you know why the voice changed; later failures stay quiet. Every fallback logs its
+reason to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so keep the Kokoro
 voices installed alongside Chatterbox. When the GPU frees, Chatterbox resumes automatically.
 Speech is synthesized and played in chunks, so hotkeys (mute, navigate, pause, skip) take
 effect within a chunk (roughly 2 seconds) rather than waiting for the whole utterance. The
