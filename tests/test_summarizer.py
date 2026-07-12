@@ -18,8 +18,26 @@ def test_success_returns_trimmed_stdout():
     run, calls = _ok_runner("  The gist of it.\n")
     out = summarizer.summarize("long text", model="haiku", runner=run)
     assert out == "The gist of it."
-    assert calls[0]["text"] == "long text"
     assert calls[0]["timeout"] == 20            # default timeout
+
+
+def test_prompt_carries_instruction_and_delimited_message():
+    # The whole prompt travels on stdin: the fixed instruction followed by the
+    # message wrapped in <message> tags, so the model treats the text as content
+    # to recap and never as something addressed to it.
+    run, calls = _ok_runner()
+    summarizer.summarize("Is this a question for you?", model="haiku", runner=run)
+    sent = calls[0]["text"]
+    assert sent.startswith(summarizer.INSTRUCTION)
+    assert "<message>\nIs this a question for you?\n</message>" in sent
+
+
+def test_instruction_has_the_not_addressed_to_you_firewall():
+    # The core defense against the model answering the message instead of
+    # recapping it (observed live: a question-shaped message got answered).
+    assert "NEVER addressed to you" in summarizer.INSTRUCTION
+    assert "<message>" in summarizer.INSTRUCTION      # names the delimiters
+    assert "Input:" in summarizer.INSTRUCTION         # contains examples
 
 
 def test_argv_is_headless_tool_disabled_call():
@@ -29,6 +47,9 @@ def test_argv_is_headless_tool_disabled_call():
     assert "--model" in argv and argv[argv.index("--model") + 1] == "haiku"
     # --tools "" disables every tool: pure text-in/text-out
     assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
+    # The prompt is NOT an argv element (it travels on stdin with the message);
+    # a multi-line instruction in argv is fragile under Windows quoting.
+    assert summarizer.INSTRUCTION not in argv
     # --setting-sources "" stops the child loading settings/plugins, so Sonara's
     # own hooks can NEVER fire inside the summarizer session (the recursion that
     # made the daemon summarize its own summarizer in a chime loop).
