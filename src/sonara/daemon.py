@@ -942,13 +942,21 @@ class SpeechDaemon:
         """Run the summarizer subprocess OFF-lock, then apply the result under the
         lock: enqueue the spoken summary, or fire the failure cue. A result whose
         generation was superseded by a newer turn end is dropped silently."""
+        import sys
         from sonara import summarizer
+
+        def _log(reason):
+            # stderr reaches speechd.log via the supervisor redirect, so a
+            # silent recap failure is diagnosable instead of a mystery.
+            print("[summary] {0}".format(reason), file=sys.stderr, flush=True)
+
         fn = self._summarize_fn or summarizer.summarize
         try:
             summary = fn(text,
                          model=self.config.get("summary_model", "haiku"),
                          command=self.config.get("summary_command", "claude"),
-                         timeout=self.config.get("summary_timeout", 20))
+                         timeout=self.config.get("summary_timeout", 60),
+                         debug_log=_log)
         except Exception:  # noqa: BLE001 - a summary failure must never crash the daemon
             summary = None
         with self._lock:

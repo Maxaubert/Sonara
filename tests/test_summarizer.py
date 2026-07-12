@@ -18,7 +18,7 @@ def test_success_returns_trimmed_stdout():
     run, calls = _ok_runner("  The gist of it.\n")
     out = summarizer.summarize("long text", model="haiku", runner=run)
     assert out == "The gist of it."
-    assert calls[0]["timeout"] == 20            # default timeout
+    assert calls[0]["timeout"] == 60            # default timeout
 
 
 def test_prompt_carries_instruction_and_delimited_message():
@@ -123,3 +123,27 @@ def test_skip_sentinel_maps_to_none():
 def test_instruction_uses_skip_not_output_nothing():
     assert "SKIP" in summarizer.INSTRUCTION
     assert "output nothing" not in summarizer.INSTRUCTION.lower()
+
+
+def test_debug_log_reports_each_failure_reason():
+    # Failures were invisible: no earcon wav configured means silence, and
+    # nothing was logged (a real timeout produced an undiagnosable "it never
+    # spoke"). Every failure path now reports a reason.
+    logs = []
+    log = logs.append
+    summarizer.summarize("t", model="haiku", debug_log=log,
+                         runner=lambda a, t, s: (1, "boom-stderr"))
+    assert any("exit 1" in m and "boom-stderr" in m for m in logs)
+
+    def raiser(argv, text, timeout):
+        raise RuntimeError("spawn failed")
+    summarizer.summarize("t", model="haiku", debug_log=log, runner=raiser)
+    assert any("spawn failed" in m for m in logs)
+
+    summarizer.summarize("t", model="haiku", debug_log=log,
+                         runner=lambda a, t, s: (0, "SKIP"))
+    assert any("skip" in m.lower() for m in logs)
+
+    summarizer.summarize("t", model="haiku", debug_log=log,
+                         runner=lambda a, t, s: (0, "  "))
+    assert any("empty" in m.lower() for m in logs)

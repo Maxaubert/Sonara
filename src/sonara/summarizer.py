@@ -78,25 +78,42 @@ def _default_runner(argv, text: str, timeout):
         env=env,
         **kwargs
     )
+    if proc.returncode != 0:
+        # stdout is unused on failure; hand back stderr so the failure log
+        # says WHY claude exited non-zero.
+        return proc.returncode, proc.stderr.decode("utf-8", "replace")
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
-def summarize(text, *, model, command: str = "claude", timeout=20, runner=None):
-    """A 1-2 sentence spoken summary of *text*, or None on ANY failure
-    (non-zero exit, timeout, empty output, spawn error, empty input).
+def summarize(text, *, model, command: str = "claude", timeout=60, runner=None,
+              debug_log=None):
+    """A spoken digest of *text*, or None on ANY failure (non-zero exit,
+    timeout, empty output, spawn error, empty input).
 
     The full prompt travels on stdin: the INSTRUCTION followed by the message
     wrapped in <message> tags, so the model treats the text strictly as content
-    to recap, never as something addressed to it."""
+    to recap, never as something addressed to it.
+
+    *debug_log*, when given, receives one short reason string per failure -
+    the None paths are otherwise indistinguishable from silence (no earcon wav
+    configured), which made a live timeout an undiagnosable "it never spoke"."""
+    def _log(reason):
+        if debug_log is not None:
+            try:
+                debug_log(reason)
+            except Exception:  # noqa: BLE001 - logging must never break the recap
+                pass
     if not (text or "").strip():
         return None
     prompt = "{0}\n\n<message>\n{1}\n</message>".format(INSTRUCTION, text)
     run = runner or _default_runner
     try:
         code, out = run(build_argv(command, model), prompt, timeout)
-    except Exception:  # noqa: BLE001 - a summarizer failure must never propagate
+    except Exception as exc:  # noqa: BLE001 - a summarizer failure must never propagate
+        _log("summarizer spawn/timeout failure: {0!r}".format(exc))
         return None
     if code != 0:
+        _log("summarizer exit {0}: {1}".format(code, (out or "")[:300]))
         return None
     out = (out or "").strip()
     # The nothing-to-say sentinel: the model replies "SKIP" (it cannot reply
@@ -104,5 +121,9 @@ def summarize(text, *, model, command: str = "claude", timeout=20, runner=None):
     # to be spoken", which then got READ ALOUD - observed live). Map it to
     # None so the daemon stays silent.
     if out.strip(".! ").lower() == "skip":
+        _log("summarizer returned the SKIP sentinel")
         return None
-    return out or None
+    if not out:
+        _log("summarizer returned empty output")
+        return None
+    return out

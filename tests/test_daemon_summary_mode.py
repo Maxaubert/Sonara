@@ -185,7 +185,9 @@ def test_worker_forwards_config_to_summarizer(monkeypatch):
         return "Recap."
     daemon._summarize_fn = fake
     daemon._summary_worker(*calls[0])
-    assert seen == {"model": "haiku", "command": "claude", "timeout": 20}
+    assert seen["model"] == "haiku" and seen["command"] == "claude"
+    assert seen["timeout"] == 20                      # explicit config wins
+    assert callable(seen["debug_log"])                # failure-reason sink wired
 
 
 # --- FLUSH supersedes in-flight summary; recap kind excludes re-gather --

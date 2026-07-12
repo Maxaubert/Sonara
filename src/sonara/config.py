@@ -18,7 +18,7 @@ DEFAULTS = {
     "summary_mode": False,    # speak an AI recap of each finished turn (opt-in)
     "summary_model": "haiku",           # model alias for the throwaway claude -p call
     "summary_command": "claude",        # executable for the summarizer subprocess
-    "summary_timeout": 20,              # seconds before a summarizer call is abandoned
+    "summary_timeout": 60,              # seconds before a summarizer call is abandoned (typical run ~12s; claude cold start adds several more)
 }
 
 

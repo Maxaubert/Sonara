@@ -227,4 +227,4 @@ def test_summary_mode_defaults():
     assert DEFAULTS["summary_mode"] is False
     assert DEFAULTS["summary_model"] == "haiku"
     assert DEFAULTS["summary_command"] == "claude"
-    assert DEFAULTS["summary_timeout"] == 20
+    assert DEFAULTS["summary_timeout"] == 60
