@@ -301,7 +301,8 @@ def test_pause_during_session_change_announcement_does_not_rewind_content(monkey
     ch = daemon.router.channel("A")
     ch.append(SpeechItem(id=5, session="A", kind="prose", text="real content.",
                          is_decision=False))
-    ch_cursor_before = ch.cursor
+    ch.cursor = 1                       # a real content item sits at the cursor;
+    ch_cursor_before = ch.cursor        # the old bug would decrement THIS to 0
     ann = SpeechItem(id=0, session="A", kind="session_change",
                      text="Session changed: A.", is_decision=False)
     daemon._current_item = ann
