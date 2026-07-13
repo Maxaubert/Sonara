@@ -176,6 +176,34 @@ def test_spawn_failure_raises_chatterbox_error(monkeypatch):
         cb.ChatterboxClient()._spawn({"chatterbox_idle_unload_s": 600})
 
 
+def test_cooldown_after_worker_failure_fails_fast(monkeypatch):
+    # After a worker failure, further requests must fail FAST for a while
+    # (cooldown) so the per-chunk Kokoro fallback fires immediately, instead of
+    # re-paying spawn+timeout for EVERY chunk of every utterance (audit #21).
+    import pytest
+    monkeypatch.setattr(cb, "chatterbox_venv_python", lambda: "missing-python.exe")
+    monkeypatch.setattr(cb, "worker_script_path", lambda: "worker.py")
+    c = cb.ChatterboxClient()
+    with pytest.raises(cb.ChatterboxError):
+        c._request({"type": "ping"}, 1, {})          # spawn fails -> cooldown armed
+    spawns = []
+    monkeypatch.setattr(c, "_spawn", lambda config: spawns.append(1))
+    with pytest.raises(cb.ChatterboxError):
+        c._request({"type": "ping"}, 1, {})          # cooldown: no new spawn attempt
+    assert spawns == []
+
+
+def test_cooldown_expires_and_success_resets_it(tmp_path, monkeypatch):
+    import time
+    c = _client(tmp_path, monkeypatch)
+    c._cooldown_until = time.monotonic() - 1         # expired cooldown
+    # unique text: the module-level synth cache must not satisfy this (a cache
+    # hit would bypass _request and never clear the memo)
+    out = c.synth_wav("cooldown reset probe", "cb_default", {"chatterbox_timeout": 5})
+    assert out == b"RIFFfake"                        # request went through
+    assert c._cooldown_until == 0.0                  # success cleared the memo
+
+
 def test_fallback_notice_pops_once():
     cb._set_fallback_notice("no vram")
     assert cb.pop_fallback_notice() == "no vram"

@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from sonara.config import DEFAULTS as _CONFIG_DEFAULTS
@@ -243,6 +244,12 @@ def _synth_cache_put(key, wav) -> None:
 
 # --- client --------------------------------------------------------------------
 
+# After a worker failure, refuse further requests for this long so each chunk's
+# Kokoro fallback fires FAST instead of re-paying spawn+timeout per chunk. A
+# success clears it immediately (audit #21).
+_COOLDOWN_S = 60.0
+
+
 class ChatterboxClient:
     """Owns (at most) one chatterbox_worker.py subprocess, spawned on demand.
 
@@ -255,6 +262,7 @@ class ChatterboxClient:
     def __init__(self) -> None:
         self._proc = None
         self._lock = threading.Lock()
+        self._cooldown_until = 0.0   # monotonic deadline; 0 = healthy
 
     def _spawn(self, config) -> None:
         idle_s = config.get("chatterbox_idle_unload_s", 600)
@@ -344,17 +352,27 @@ class ChatterboxClient:
 
     def _request(self, payload, timeout, config) -> dict:
         with self._lock:
-            self._ensure_proc(config)
-            resp = self._try_request(payload, timeout)
-            if resp is not None:
-                return resp
-            # Dead pipe: kill, respawn once, retry.
-            self._kill()
-            self._spawn(config)
-            resp = self._try_request(payload, timeout)
-            if resp is None:
-                self._kill()
-                raise ChatterboxError("chatterbox worker is unavailable")
+            # Failure memo (audit #21): while cooling down after a failure, fail
+            # IMMEDIATELY so the caller's per-chunk Kokoro fallback fires fast --
+            # a persistently broken worker was otherwise respawned and re-paid
+            # (spawn + timeout, GPU thrash) for every chunk of every utterance.
+            if time.monotonic() < self._cooldown_until:
+                raise ChatterboxError("chatterbox worker cooling down after failure")
+            try:
+                self._ensure_proc(config)
+                resp = self._try_request(payload, timeout)
+                if resp is None:
+                    # Dead pipe: kill, respawn once, retry.
+                    self._kill()
+                    self._spawn(config)
+                    resp = self._try_request(payload, timeout)
+                if resp is None:
+                    self._kill()
+                    raise ChatterboxError("chatterbox worker is unavailable")
+            except ChatterboxError:
+                self._cooldown_until = time.monotonic() + _COOLDOWN_S
+                raise
+            self._cooldown_until = 0.0   # healthy again: clear the memo
             return resp
 
     def warm(self, config) -> bool:

@@ -624,6 +624,12 @@ def _cmd_voices_install(args) -> int:
             print(f"Chatterbox setup failed: {exc}", file=sys.stderr)
             cbp.uninstall_chatterbox()  # revert any half-built venv
             return 1
+        except BaseException:
+            # Ctrl+C / kill mid-download: still revert -- a half-built venv reads
+            # as fully provisioned forever (the python.exe existence check is
+            # true after step 1 of a multi-GB install) (audit #21).
+            cbp.uninstall_chatterbox()
+            raise
         print("Chatterbox voices ready. Pick one with: sonara voice chatterbox:cb_default")
         return 0
 
@@ -638,6 +644,11 @@ def _cmd_voices_install(args) -> int:
         print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
         kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
         return 1
+    except BaseException:
+        # Ctrl+C / kill mid-download: still revert so neural_enabled() cannot be
+        # left True over a half-built venv (audit #21).
+        kp.uninstall_kokoro()
+        raise
     rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
     if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
         print("Neural voices ready. Pick one with: sonara voice af_heart")
