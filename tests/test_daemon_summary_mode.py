@@ -129,6 +129,58 @@ def test_new_prompt_clears_stored_reread_text(monkeypatch):
     assert "fg" not in daemon._last_digest_text
 
 
+def _choice(daemon, session="fg"):
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": session,
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+
+
+def test_blocking_question_voices_short_lead_in_prose(monkeypatch):
+    # A question blocks the turn (no turn_done -> no digest). The short lead-in
+    # prose must still be voiced (raw), BEFORE the question, not silently dropped.
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Here is the short context. "))
+    _choice(daemon)
+    ch = daemon.router.channel("fg")
+    items = ch.items[ch.cursor:]
+    prose_idx = next(i for i, it in enumerate(items) if "short context" in it.text)
+    dec_idx = next(i for i, it in enumerate(items) if it.is_decision)
+    assert prose_idx < dec_idx                 # context read before the question
+
+
+def test_blocking_question_digests_long_lead_in_prose(monkeypatch):
+    # Long lead-in prose gets the AI digest dispatched (summarized/cleaned), and
+    # the question is still enqueued as-is.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)      # long prose, past the threshold
+    _choice(daemon)
+    assert len(calls) == 1                      # digest dispatched for the lead-in
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])   # question enqueued
+
+
+def test_lead_in_prose_not_double_voiced_at_turn_end(monkeypatch):
+    # After the question voices the lead-in prose, a later turn_done (once the
+    # user answers and the turn ends with no new prose) must NOT re-voice it.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)
+    assert len(calls) == 1
+    _turn_done(daemon)                          # turn ends, no new prose
+    assert len(calls) == 1                       # not re-dispatched
+
+
+def test_new_prompt_resets_voiced_prose_count(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._voiced_prose_count["fg"] = 3
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    assert "fg" not in daemon._voiced_prose_count
+
+
 def test_turn_done_does_not_dispatch_when_mode_off(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -221,8 +273,9 @@ def test_superseded_worker_result_is_dropped(monkeypatch):
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
     _turn_done(daemon)                                   # gen 1
-    daemon.handle_message(_prose("fg", "More text. ", 2, True))
-    _turn_done(daemon)                                   # gen 2 supersedes
+    _pad = "This filler sentence carries the turn past the threshold. "
+    daemon.handle_message(_prose("fg", "More text. " + _pad * 6, 2, True))
+    _turn_done(daemon)                                   # gen 2 supersedes (new prose)
     daemon._summarize_fn = lambda text, **kw: "Stale summary."
     daemon._summary_worker(*calls[0])                    # gen-1 result arrives late
     ch = daemon.router.channel("fg")
@@ -271,11 +324,14 @@ def test_recorded_summary_is_not_resummarized(monkeypatch):
     _enable_and_feed(daemon, monkeypatch)
     _turn_done(daemon)
     daemon._summarize_fn = lambda text, **kw: "The recap."
-    daemon._summary_worker(*calls[0])                    # recap recorded
-    _turn_done(daemon)                                   # second turn_done, no flush
+    daemon._summary_worker(*calls[0])                    # recap recorded (kind=summary)
+    _pad = "This filler sentence carries the turn past the threshold. "
+    daemon.handle_message(_prose("fg", "New content. " + _pad * 6, 2, True))
+    _turn_done(daemon)                                   # second dispatch (new prose)
     assert len(calls) == 2
     _, _, text2 = calls[1]
-    assert "The recap." not in text2                     # recap excluded from gather
+    assert "The recap." not in text2                     # recap (summary kind) excluded
+    assert "New content." in text2                       # new prose IS summarized
 
 
 def test_session_end_clears_summary_gen(monkeypatch):

@@ -80,6 +80,7 @@ class SpeechDaemon:
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
+        self._voiced_prose_count: dict = {}       # session -> # prose entries already voiced this turn (summary mode: a blocking question and turn-end must not double-voice)
         self._paused = threading.Event()          # play/pause: set == speech halted
         self._mute_level = 0                       # mute cycle: 0=unmuted,
         # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
@@ -369,6 +370,10 @@ class SpeechDaemon:
         # MsgType.EARCON branch below, so the earcon fires instantly and
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
+            # A question BLOCKS the turn (no turn_done -> no end-of-turn digest), so
+            # voice the lead-in prose now; otherwise the context is silently dropped
+            # and only the question is heard. The question itself is spoken as-is.
+            self._maybe_summarize(session)
             text = self._choice_text(msg)
             extras = [e for e in (self._choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
@@ -385,6 +390,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.PLAN:
+            self._maybe_summarize(session)   # voice lead-in prose before the blocking plan
             text = self._plan_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
@@ -400,6 +406,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.PERMISSION:
+            self._maybe_summarize(session)   # voice lead-in prose before the blocking permission
             text = self._permission_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
@@ -456,6 +463,7 @@ class SpeechDaemon:
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
             self._nav_cursor.pop(session, None)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
+            self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -971,10 +979,15 @@ class SpeechDaemon:
                 or self.sessions.foreground())
 
     def _maybe_summarize(self, session: str) -> None:
-        """Summary mode: on turn end, recap the foreground session's prose via a
-        separate throwaway claude -p call (see summarizer.py). Runs under the
-        daemon lock, so it only gathers text and spawns the worker thread; the
-        subprocess itself runs OFF-lock in _summary_worker."""
+        """Summary mode: recap the session's prose not yet voiced this turn via a
+        throwaway claude -p call (see summarizer.py), or speak it raw when short.
+        Runs under the daemon lock, so it only gathers text and spawns the worker
+        thread; the subprocess itself runs OFF-lock in _summary_worker.
+
+        Called at turn end AND when a blocking decision arrives: a question never
+        reaches turn_done, so its lead-in prose would otherwise be silently dropped.
+        Only prose recorded SINCE the last call this turn is voiced (tracked by
+        _voiced_prose_count), so the two triggers never double-voice the same text."""
         if not self.config.get("summary_mode"):
             return
         entries = []
@@ -982,9 +995,12 @@ class SpeechDaemon:
             for e in self.history.entries_for_message(session, mid):
                 if e.kind == "prose":
                     entries.append(e)
+        start = self._voiced_prose_count.get(session, 0)
+        entries = entries[start:]        # only prose not yet voiced this turn
         text = " ".join(e.text for e in entries).strip()
         if not text:
-            return                       # decision-only / empty turn: nothing to recap
+            return                       # decision-only / empty / already-voiced
+        self._voiced_prose_count[session] = start + len(entries)
         if len(text) < _SUMMARY_MIN_CHARS:
             # An already-short turn needs no digest: speak the original prose
             # instead. Digesting borderline-trivial input made the model
