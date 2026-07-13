@@ -1106,11 +1106,14 @@ class SpeechDaemon:
                         self._earcon("summary_failed")
                         return
                     summary = text
-                if self.sessions.is_foreground(session):
+                # A held question's context goes via the SESSION channel even when
+                # the session is not foreground: it is a real handoff, so the router
+                # must announce "Session changed" BEFORE the context (not at the
+                # question). A plain background digest (no held question) stays on
+                # CONTROL -- it is a silent interjection that must not announce.
+                if self.sessions.is_foreground(session) or held is not None:
                     # Every digest names its session ("always announce"): with
-                    # interleaved sessions an unprefixed digest was ambiguous, and
-                    # a lead-in digest for a held question names it too so the user
-                    # hears which session the upcoming question belongs to.
+                    # interleaved sessions an unprefixed digest was ambiguous.
                     # History records the bare digest (repeat/catch_up replay it
                     # without the prefix); only the spoken item carries the name.
                     folder = self.sessions.folder(session)

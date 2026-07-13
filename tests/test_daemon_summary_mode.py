@@ -190,6 +190,26 @@ def test_no_lead_in_question_not_held(monkeypatch):
     assert any(it.is_decision for it in ch.items[ch.cursor:])
 
 
+def test_held_question_context_for_other_session_uses_session_channel(monkeypatch):
+    # Multi-session: a question from a NON-foreground session is a real handoff, so
+    # its context digest must go via THAT session's channel (which announces the
+    # "Session changed" switch BEFORE the context), not CONTROL (a silent
+    # interjection that would leave the announcement to fire at the question).
+    from sonara.router import CONTROL
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    sessions.register("bg", cwd="/home/me/sonari")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch, session="bg")   # long prose to bg
+    _choice(daemon, session="bg")                          # holds bg's question
+    daemon._summarize_fn = lambda text, **kw: "The context."
+    daemon._summary_worker(*calls[0])
+    bg = daemon.router.channel("bg")
+    ctrl = daemon.router.channel(CONTROL)
+    assert any("The context." in it.text for it in bg.items)          # digest on bg channel
+    assert not any("The context." in it.text for it in ctrl.items)    # NOT via CONTROL
+    assert any(it.is_decision for it in bg.items)                     # question follows it
+
+
 def test_held_question_falls_back_to_raw_context_on_skip(monkeypatch):
     # Confirmed via sequence capture: Haiku SKIP'd a trivial lead-in (summarize ->
     # None), so the held question played with no context. A held question must fall
