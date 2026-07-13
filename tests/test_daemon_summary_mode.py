@@ -59,6 +59,7 @@ def test_decisions_still_spoken_with_summary_mode_on(monkeypatch):
                            "session": "fg",
                            "questions": [{"question": "Pick one?",
                                           "options": ["a", "b"]}]})
+    _fire_settle(daemon, "fg")                   # question content settles then enqueues (#16)
     ch = daemon.router.channel("fg")
     assert any(it.is_decision for it in ch.items[ch.cursor:])
 
@@ -145,6 +146,7 @@ def test_new_prompt_clears_stored_reread_text(monkeypatch):
 def _choice(daemon, session="fg"):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": session,
                            "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    _fire_settle(daemon, session)   # question content is deferred through the settle (#16)
 
 
 def test_blocking_question_voices_short_lead_in_prose(monkeypatch):
@@ -605,6 +607,70 @@ def test_foreground_digest_is_unprefixed(monkeypatch):
     texts = [it.text for it in ch.items[ch.cursor:]]
     assert "The gist." in texts
     assert not any(t.startswith("Session myrepo:") for t in texts)   # no prefix
+
+
+# --- question lead-in settle (#16) ---------------------------------------
+
+def test_question_lead_in_after_choice_not_stranded(monkeypatch):
+    # The bug: CHOICE arrives before its lead-in prose. With the settle window the
+    # late lead-in is digested and the question is held after it (#16).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": "fg",
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    _pad = "This filler sentence carries the lead-in past the threshold. "
+    daemon.handle_message(_prose("fg", "The context here. " + _pad * 6, 0, True))  # late lead-in
+    daemon._settle_fire("fg", scheduled[-1][1])
+    assert len(calls) == 1
+    _, _, text = calls[0]
+    assert "The context here." in text                     # lead-in digested, not empty
+    assert daemon._held_decision.get("fg") is not None      # question held until digest
+
+
+def test_choice_defers_question_until_settle(monkeypatch):
+    # CHOICE alone does not enqueue the question; only the settle fire does (#16).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Short context. ", 0, True))
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": "fg",
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    ch = daemon.router.channel("fg")
+    assert not any(it.is_decision for it in ch.items[ch.cursor:])   # deferred
+    daemon._settle_fire("fg", scheduled[-1][1])
+    assert any(it.is_decision for it in ch.items[ch.cursor:])       # enqueued after fire
+
+
+def test_flush_cancels_pending_question_settle(monkeypatch):
+    # A new prompt during a question's settle window drops the pending question;
+    # a late fire is a no-op (#16, consistent with #13/#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": "fg",
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    stale = scheduled[-1][1]
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    daemon._settle_fire("fg", stale)
+    ch = daemon.router.channel("fg")
+    assert not any(it.is_decision for it in ch.items[ch.cursor:])   # dropped
+    assert "fg" not in daemon._pending_decision
 
 
 def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):

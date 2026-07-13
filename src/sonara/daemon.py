@@ -111,6 +111,7 @@ class SpeechDaemon:
         self._settle_timers: dict = {}     # session -> threading.Timer
         self._settle_gen: dict = {}        # session -> int (stale-fire guard)
         self._settle_pending: set = set()  # sessions with a window armed
+        self._pending_decision: dict = {}  # session -> question item awaiting its lead-in (#16)
         self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
 
     def _alloc_id(self) -> int:
@@ -401,10 +402,11 @@ class SpeechDaemon:
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
             # A question BLOCKS the turn (no turn_done -> no end-of-turn digest), so
-            # voice the lead-in prose now; otherwise the context is silently dropped
-            # and only the question is heard. The question itself is spoken as-is,
-            # but HELD until the lead-in digest lands so context is heard first.
-            digesting = self._maybe_summarize(session)
+            # its lead-in prose must be voiced before the question. But the CHOICE
+            # can reach the daemon BEFORE its lead-in prose (separate hook processes
+            # race), so gathering the lead-in now would find nothing and speak the
+            # question alone. Build the question item now, then DEFER the lead-in
+            # gather + hold/enqueue through the settle window (#16).
             text = self._choice_text(msg)
             extras = [e for e in (self._choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
@@ -419,8 +421,17 @@ class SpeechDaemon:
             # AskUserQuestion ALSO fires a permission-prompt notification ~5-6s
             # later; mark the question unanswered so that redundant permission
             # (earcon + text) is suppressed until the turn moves on (issue #11 f/u).
+            # Set this NOW (not at settle fire) so the suppression is armed before
+            # the permission can arrive.
             self._await_choice.add(session)
-            self._enqueue_or_hold_decision(session, item, digesting)
+            # Summary mode: defer the lead-in digest + question through the settle
+            # window so late lead-in prose is included, heard before the question.
+            # Non-summary speaks prose live, so enqueue the question immediately.
+            if self.config.get("summary_mode"):
+                self._pending_decision[session] = item
+                self._arm_settle(session)
+            else:
+                self._enqueue_or_hold_decision(session, item, False)
             return None
 
         if t == MsgType.PLAN:
@@ -520,6 +531,7 @@ class SpeechDaemon:
             self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
             self._await_choice.discard(session)          # new prompt: no question pending
             self._held_decision.pop(session, None)       # new prompt: drop any held question
+            self._pending_decision.pop(session, None)    # drop a question awaiting its lead-in (#16)
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -553,6 +565,7 @@ class SpeechDaemon:
             self._summary_gen.pop(session, None)
             self._cancel_settle(session)
             self._settle_gen.pop(session, None)
+            self._pending_decision.pop(session, None)
             return None
 
         if t == MsgType.STOP:
@@ -1117,7 +1130,14 @@ class SpeechDaemon:
                 return
             self._settle_pending.discard(session)
             self._settle_timers.pop(session, None)
-            self._maybe_summarize(session)
+            item = self._pending_decision.pop(session, None)
+            if item is not None:
+                # A question was waiting on its lead-in: gather it now (present
+                # after the settle) and hold the question after the context (#16).
+                digesting = self._maybe_summarize(session)
+                self._enqueue_or_hold_decision(session, item, digesting)
+            else:
+                self._maybe_summarize(session)
 
     def _cancel_settle(self, session: str) -> None:
         """Drop any pending settle window: a new prompt abandons the turn. Bumps
