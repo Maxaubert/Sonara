@@ -103,6 +103,14 @@ class SpeechDaemon:
         # since it was dispatched. A turn merely ending does NOT advance it, so the
         # system never drops a finished message -- only the user cancels (#13).
         self._summary_gen: dict = {}
+        # Summary mode: per-session turn-end SETTLE window (#14). turn_done can
+        # reach the daemon before a turn's final prose (separate hook processes
+        # race under multi-session load), so digesting immediately summarizes an
+        # incomplete/empty turn. Arm a short window on turn_done, reset it on each
+        # new prose delta, and digest only once the session is quiet.
+        self._settle_timers: dict = {}     # session -> threading.Timer
+        self._settle_gen: dict = {}        # session -> int (stale-fire guard)
+        self._settle_pending: set = set()  # sessions with a window armed
         self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
 
     def _alloc_id(self) -> int:
@@ -365,6 +373,10 @@ class SpeechDaemon:
             # hotkey worker — the root cause of the "thinking" mute-hang. A finished
             # turn wakes via the turn_done earcon / TOOL / FLUSH paths below; the
             # speak loop's poll_interval is the safety net if a wake is ever missed.
+            # Late prose after turn_done: reset the settle window so the turn-end
+            # digest waits for the full turn to land (#14). Only when armed.
+            if session in self._settle_pending:
+                self._arm_settle(session)
             if ch.ready(self._minqueue()):
                 self._wake.set()
             return None
@@ -469,7 +481,12 @@ class SpeechDaemon:
                 # left buffered (no per-delta wake) is read now, not after a poll.
                 self.router.channel(session).turn_done = True
                 self._wake.set()
-                self._maybe_summarize(session)
+                # Do NOT digest yet: the turn's final prose can arrive after this
+                # signal (separate hook processes race). Arm a settle window and
+                # digest once the session is quiet (#14). Non-summary mode has no
+                # digest, so nothing to defer there.
+                if self.config.get("summary_mode"):
+                    self._arm_settle(session)
             return None
 
         if t == MsgType.FLUSH:
@@ -484,6 +501,7 @@ class SpeechDaemon:
             # epoch so any digest dispatched before now is dropped when it lands,
             # rather than spoken into the new turn (#13).
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
+            self._cancel_settle(session)      # new prompt abandons any settling turn (#14)
             self._nav_cursor.pop(session, None)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
             self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
@@ -520,6 +538,8 @@ class SpeechDaemon:
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
             self._summary_gen.pop(session, None)
+            self._cancel_settle(session)
+            self._settle_gen.pop(session, None)
             return None
 
         if t == MsgType.STOP:
@@ -1050,6 +1070,48 @@ class SpeechDaemon:
         gen = self._summary_gen.get(session, 0)
         self._start_summary_thread(session, gen, text)
         return True                      # async digest in flight -> caller holds
+
+    def _arm_settle(self, session: str) -> None:
+        """Defer the turn-end digest until the session's prose settles. Restart the
+        window on every new prose delta; fire once quiet (#14). Caller holds the
+        lock (this runs from handle_message)."""
+        gen = self._settle_gen.get(session, 0) + 1
+        self._settle_gen[session] = gen
+        self._settle_pending.add(session)
+        old = self._settle_timers.pop(session, None)
+        if old is not None:
+            old.cancel()
+        self._settle_schedule(session, gen)
+
+    def _settle_schedule(self, session: str, gen: int) -> None:
+        """Start the real settle timer. Test seam: tests replace this to drive
+        _settle_fire deterministically instead of waiting on the clock."""
+        settle_s = self.config.get("summary_settle_ms", 600) / 1000.0
+        t = threading.Timer(settle_s, self._settle_fire, args=(session, gen))
+        t.daemon = True
+        self._settle_timers[session] = t
+        t.start()
+
+    def _settle_fire(self, session: str, gen: int) -> None:
+        """The settle window elapsed with no new prose: dispatch the turn-end
+        digest now that the full turn has landed. Runs on the Timer thread, so it
+        takes the lock. A stale fire (re-armed by later prose, or cancelled by
+        FLUSH) is a no-op via the generation guard."""
+        with self._lock:
+            if self._settle_gen.get(session) != gen:
+                return
+            self._settle_pending.discard(session)
+            self._settle_timers.pop(session, None)
+            self._maybe_summarize(session)
+
+    def _cancel_settle(self, session: str) -> None:
+        """Drop any pending settle window: a new prompt abandons the turn. Bumps
+        the generation so an already-scheduled fire becomes a no-op."""
+        self._settle_pending.discard(session)
+        self._settle_gen[session] = self._settle_gen.get(session, 0) + 1
+        t = self._settle_timers.pop(session, None)
+        if t is not None:
+            t.cancel()
 
     def _enqueue_or_hold_decision(self, session: str, item, digesting: bool) -> None:
         """Enqueue a decision item now, OR hold it until the lead-in digest lands

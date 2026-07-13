@@ -77,6 +77,19 @@ def test_status_reports_summary_mode(monkeypatch):
 def _turn_done(daemon, session="fg"):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
                            "kind": "turn_done", "session": session})
+    _fire_settle(daemon, session)
+
+
+def _fire_settle(daemon, session="fg"):
+    # Deterministic settle: cancel the real timer and fire synchronously, so
+    # turn-end tests do not wait on the clock (#14).
+    gen = daemon._settle_gen.get(session)
+    if gen is None:
+        return
+    t = daemon._settle_timers.pop(session, None)
+    if t is not None:
+        t.cancel()
+    daemon._settle_fire(session, gen)
 
 
 def _capture_spawn(daemon, monkeypatch):
@@ -605,3 +618,84 @@ def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):
     ch = daemon.router.channel("fg")
     texts = [it.text for it in ch.items[ch.cursor:]]
     assert "The gist." in texts
+
+
+# --- turn-end settle window (#14) ----------------------------------------
+
+def test_turn_done_defers_digest_until_settle(monkeypatch):
+    # turn_done alone must NOT dispatch: the turn's final prose may still be in
+    # flight (separate hook processes race). Only the settle fire dispatches (#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    _enable_and_feed(daemon, monkeypatch)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})
+    assert calls == []                       # deferred: no digest yet
+    assert scheduled and scheduled[-1][0] == "fg"
+    daemon._settle_fire("fg", scheduled[-1][1])
+    assert len(calls) == 1                    # settle fired -> dispatched
+
+
+def test_late_prose_included_after_turn_done(monkeypatch):
+    # The bug: turn_done arrives before the paragraph body. With the settle
+    # window, the late body is included and the turn takes the digest path (#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Here is another one:", 0, True))   # short lead-in
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})           # arms window
+    _pad = "This filler sentence carries the turn well past the threshold. "
+    daemon.handle_message(_prose("fg", " " + _pad * 6, 1, True))            # late body -> re-arm
+    daemon._settle_fire("fg", scheduled[-1][1])                            # window fires
+    assert len(calls) == 1
+    _, _, text = calls[0]
+    assert "Here is another one:" in text and "filler sentence" in text     # FULL turn digested
+
+
+def test_settle_window_resets_on_new_prose(monkeypatch):
+    # New prose after turn_done re-arms the window; a fire from the superseded
+    # (earlier) window is a no-op, only the latest fire dispatches (#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    _enable_and_feed(daemon, monkeypatch)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})
+    first_gen = scheduled[-1][1]
+    _pad = "This filler sentence carries the turn well past the threshold. "
+    daemon.handle_message(_prose("fg", " " + _pad * 6, 2, True))            # re-arms
+    second_gen = scheduled[-1][1]
+    assert second_gen != first_gen
+    daemon._settle_fire("fg", first_gen)                                    # stale
+    assert calls == []
+    daemon._settle_fire("fg", second_gen)                                  # current
+    assert len(calls) == 1
+
+
+def test_flush_cancels_pending_settle(monkeypatch):
+    # A new prompt during the settle window abandons the turn: a late fire from
+    # the cancelled window dispatches nothing (#14, consistent with #13).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    _enable_and_feed(daemon, monkeypatch)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})
+    stale_gen = scheduled[-1][1]
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    daemon._settle_fire("fg", stale_gen)
+    assert calls == []
+    assert "fg" not in daemon._settle_pending
