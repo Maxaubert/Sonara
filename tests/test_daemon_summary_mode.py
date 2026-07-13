@@ -376,7 +376,10 @@ def test_background_digest_announced_before_it_plays(monkeypatch):
     assert ann < dig                                     # announcement precedes the digest
 
 
-def test_background_short_turn_speaks_original_prefixed(monkeypatch):
+def test_background_short_turn_announced_via_session_channel(monkeypatch):
+    # A short background turn now goes via its OWN channel (announced with a chime,
+    # unprefixed, authorized), not the silent CONTROL lane that played out of order
+    # and survived FLUSH.
     from sonara.router import CONTROL
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -387,10 +390,11 @@ def test_background_short_turn_speaks_original_prefixed(monkeypatch):
     daemon.handle_message(_prose("bg", "All done here. ", 0, True))
     _turn_done(daemon, session="bg")
     assert calls == []                                    # no summarizer for short
+    bg = daemon.router.channel("bg")
     ctrl = daemon.router.channel(CONTROL)
-    texts = [it.text for it in ctrl.items[ctrl.cursor:]]
-    assert any(t.startswith("Session otherproj: ") and "All done here." in t
-               for t in texts)
+    assert any("All done here." in it.text for it in bg.items)        # on bg channel
+    assert not any("All done here." in it.text for it in ctrl.items)  # NOT on CONTROL
+    assert "bg" in daemon.router._replay_authorized
 
 
 def test_turn_done_with_no_prose_does_not_dispatch(monkeypatch):

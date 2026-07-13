@@ -1138,22 +1138,18 @@ class SpeechDaemon:
                     self._wake.set()
 
     def _enqueue_background_digest(self, session: str, text: str) -> None:
-        """Speak a background session's digest immediately (queued behind the
-        current utterance, never cutting one off) prefixed with the session's
-        folder name. Uses the CONTROL channel: a background session's own
-        channel is not voiced under the earcon_only policy, and routing through
-        the session channel would fire the "Session changed" announcement
-        machinery for what is just an interjection. Caller holds self._lock."""
-        folder = self.sessions.folder(session) or "another session"
+        """Speak a background session's short-turn content via ITS OWN channel, so
+        the router announces the handoff ("Session changed: folder" + chime) before
+        it -- matching the digest path. Was on the CONTROL lane, which is silent
+        (no chime), plays out of order, and survives a new prompt's FLUSH (so stale
+        content lingered and replayed). Unprefixed (the announcement names it) and
+        replay-authorized so the background policy does not mute it. Caller holds
+        self._lock."""
         entry = self.history.record(session, "summary", text)
-        from sonara.router import CONTROL
-        ch = self.router.channel(CONTROL)
-        spoken = "Session {0}: {1}".format(folder, text)
-        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="summary",
-                          text=spoken, is_decision=False)
-        self._pending_heard[item.id] = entry
-        ch.items.append(item)            # behind any queued control cues
-        self._last_digest_text[session] = spoken   # Up re-reads this verbatim
+        self._enqueue(session, "summary", text, False, entry=entry)
+        self._last_digest_text[session] = text   # Up re-reads this verbatim
+        self.router.channel(session).turn_done = True
+        self.router._replay_authorized.add(session)
         self._wake.set()
 
     def _nav(self, session: str, to: str) -> str:
