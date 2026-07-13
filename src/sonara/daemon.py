@@ -515,8 +515,9 @@ class SpeechDaemon:
                 # issue #11). Only Up (nav 'first') acts, re-reading the last
                 # digest. Flush ('go to end', Ctrl+Alt+Down) is a separate handler
                 # and still cuts the foreground digest.
-                if to == "first" and fg is not None:
-                    self._reread_last(fg)
+                if to == "first":
+                    moved = self._reread_last(fg) if fg is not None else False
+                    self._earcon("nav" if moved else "nav_edge")
                 return None
             # Every nav press chimes: the "nav" earcon when the cursor moves to a
             # message, the "nav_edge" earcon at a boundary / nothing to navigate
@@ -664,6 +665,11 @@ class SpeechDaemon:
             cutting = cur is not None and cur.session == fg
             if cutting:
                 self.speaker.cancel()      # cut the in-progress utterance for fg
+                # Clear now so a rapid SECOND press (before the speak loop's
+                # note_spoken runs) sees nothing left to cut and gives the edge
+                # chime -- "go to end" is top/bottom, it should only move once
+                # (issue #11). note_spoken also nulls this later; idempotent.
+                self._current_item = None
             self._earcon("nav" if (skipped or cutting) else "nav_edge")
             self._wake.set()
             return None
@@ -1130,14 +1136,25 @@ class SpeechDaemon:
         self._replay(session, entries)
         return "moved" if moved else "edge"
 
-    def _reread_last(self, session: str) -> None:
-        """Replay the last message immediately, like REPEAT. In summary mode the
-        last message is the turn's digest, so this is the summary-mode Up ('re-read
-        the message') action (issue #11). No-op when there is nothing recorded."""
-        self._nav_cursor.pop(session, None)
+    def _reread_last(self, session: str) -> bool:
+        """Re-read the last message immediately (summary-mode Up, issue #11). In
+        summary mode the last message is the turn's digest. Cuts the current read
+        and restarts from the top so the press takes effect AT ONCE (not after the
+        current finishes), mirroring _nav's seek-and-play. Returns True if there was
+        something to re-read (caller chimes "nav"), else False (caller chimes the
+        edge)."""
         entries = self.history.last_message(session)
-        if entries:
-            self._replay(session, entries)
+        if not entries:
+            return False
+        self._nav_cursor.pop(session, None)
+        self.speaker.cancel()                    # restart now, don't wait out the read
+        ch = self.router.channel(session)
+        for it in ch.items[ch.cursor:]:          # drop pending so the re-read is it
+            self._pending_heard.pop(it.id, None)
+        del ch.items[ch.cursor:]
+        self._replay(session, entries)
+        self._wake.set()
+        return True
 
     def _resume(self) -> None:
         """Clear pause and wake the speak loop. The interrupted utterance was

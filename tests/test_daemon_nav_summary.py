@@ -76,6 +76,32 @@ def test_summary_nav_first_rereads_last_digest():
     assert played == ["The short digest."]             # the digest, not the prose
 
 
+def test_summary_nav_first_cancels_current_and_chimes():
+    # Up while the digest is being read must restart NOW (cut the current read),
+    # not wait it out, and must chime "nav" like the down key does (issue #11 f/u).
+    from sonara.queue import SpeechItem
+    daemon, speaker = _summary_daemon()
+    _seed_turn_with_digest(daemon)
+    daemon._current_item = SpeechItem(id=99, session="fg", kind="summary",
+                                      text="The short digest.", is_decision=False)
+    speaker.earcons.clear()
+    _nav(daemon, "first")
+    assert speaker.cancels == 1                         # cut current -> restart now
+    assert speaker.earcons == ["nav"]                   # click sound, like down
+    played = [it.text for it in _drain(daemon)]
+    assert played == ["The short digest."]              # re-read from the top
+
+
+def test_summary_nav_first_edges_when_nothing_to_reread():
+    # Up with no digest recorded yet must give the barrier chime, not silence.
+    daemon, speaker = _summary_daemon()
+    speaker.earcons.clear()
+    _nav(daemon, "first")
+    assert speaker.cancels == 0
+    assert speaker.earcons == ["nav_edge"]              # barrier, nothing to re-read
+    assert daemon.router.channel("fg").pending() == 0
+
+
 def test_nav_prev_unchanged_when_summary_mode_off():
     # Regression guard: summary OFF -> prev still replays messages and chimes "nav".
     daemon, _queue, speaker, _sessions, _config = make_daemon(foreground="fg")
