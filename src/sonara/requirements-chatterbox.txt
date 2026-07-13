@@ -1,0 +1,8 @@
+# Chatterbox worker venv (Python 3.12). torch and torchaudio are installed
+# separately with --index-url https://download.pytorch.org/whl/cu128 (RTX
+# 5090 / Blackwell needs cu128); verified torch==2.11.0+cu128 and
+# torchaudio==2.11.0+cu128 on 2026-07-12. See
+# docs/superpowers/specs/2026-07-12-chatterbox-smoke.md for the full
+# install order and gotchas (chatterbox-tts downgrades torch on install;
+# torch AND torchaudio must be reinstalled from the cu128 index afterward).
+chatterbox-tts==0.1.7

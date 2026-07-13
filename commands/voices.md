@@ -1,17 +1,19 @@
 ---
-description: Install or remove Sonara neural (Kokoro) voices
-argument-hint: install | uninstall
+description: Install or remove neural voices (Kokoro or Chatterbox)
+argument-hint: install|uninstall [kokoro|chatterbox]
 ---
 
 Run the Sonara voices command with the Bash tool, forwarding the requested
-action (`install` or `uninstall`):
+action (`install` or `uninstall`) and optional engine (default: `kokoro`):
 
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" voices $ARGUMENTS
 ```
 
-`install` provisions a uv-managed Python environment with the Kokoro neural-voice
-engine (a one-time ~316 MB download) and repoints the daemon at it; `uninstall`
-removes it and reverts to the system voice. Print the command's output verbatim.
-If it succeeded, tell the user to pick a neural voice with /sonara:voice af_heart.
+`install kokoro` provisions a uv-managed Python environment with the Kokoro neural-voice
+engine (a one-time ~316 MB download) and repoints the daemon at it. `install chatterbox`
+downloads the Chatterbox Turbo model (~2 GB) for GPU-accelerated synthesis with reference-clip
+voices. `uninstall` removes the specified engine and reverts to the system voice (or Kokoro
+if Chatterbox is removed). Print the command's output verbatim.
+If install succeeded, tell the user to pick a voice with /sonara:voice or /sonara:voice list.
 If it errors, report the error briefly.

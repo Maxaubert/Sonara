@@ -108,6 +108,224 @@ def test_turn_done_dispatches_summary_for_foreground(monkeypatch):
     assert "First part." in text and "Second part." in text
 
 
+def test_foreground_digest_stores_exact_spoken_text_for_reread(monkeypatch):
+    # The exact spoken digest text is stored so summary-mode Up re-reads it
+    # verbatim -> the cached audio replays instead of regenerating (issue #11 f/u).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The digest body."
+    daemon._summary_worker(*calls[0])
+    assert daemon._last_digest_text.get("fg") == "The digest body."
+
+
+def test_new_prompt_clears_stored_reread_text(monkeypatch):
+    # A new prompt supersedes the previous turn: Up should not re-read a stale
+    # digest, so the stored text is cleared on FLUSH.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._last_digest_text["fg"] = "old digest"
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    assert "fg" not in daemon._last_digest_text
+
+
+def _choice(daemon, session="fg"):
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": session,
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+
+
+def test_blocking_question_voices_short_lead_in_prose(monkeypatch):
+    # A question blocks the turn (no turn_done -> no digest). The short lead-in
+    # prose must still be voiced (raw), BEFORE the question, not silently dropped.
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Here is the short context. "))
+    _choice(daemon)
+    ch = daemon.router.channel("fg")
+    items = ch.items[ch.cursor:]
+    prose_idx = next(i for i, it in enumerate(items) if "short context" in it.text)
+    dec_idx = next(i for i, it in enumerate(items) if it.is_decision)
+    assert prose_idx < dec_idx                 # context read before the question
+
+
+def test_blocking_question_holds_until_long_lead_in_digest_lands(monkeypatch):
+    # Long lead-in gets the AI digest dispatched, and the question is HELD (not
+    # enqueued) until the digest lands, so context is heard BEFORE the question.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)      # long prose, past the threshold
+    _choice(daemon)
+    assert len(calls) == 1                      # digest dispatched for the lead-in
+    ch = daemon.router.channel("fg")
+    assert not any(it.is_decision for it in ch.items[ch.cursor:])  # question HELD
+    assert daemon._held_decision.get("fg") is not None
+    daemon._summarize_fn = lambda text, **kw: "The context recap."
+    daemon._summary_worker(*calls[0])           # digest lands
+    kinds = [it.kind for it in ch.items[ch.cursor:]]
+    assert kinds.index("summary") < kinds.index("choice")   # context before question
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_short_lead_in_question_not_held(monkeypatch):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Short context. "))
+    _choice(daemon)
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])   # short = synchronous
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_no_lead_in_question_not_held(monkeypatch):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _set_mode(daemon, True)
+    _choice(daemon)                             # no prose to voice
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])
+
+
+def test_held_question_context_for_other_session_uses_session_channel(monkeypatch):
+    # Multi-session: a question from a NON-foreground session is a real handoff, so
+    # its context digest must go via THAT session's channel (which announces the
+    # "Session changed" switch BEFORE the context), not CONTROL (a silent
+    # interjection that would leave the announcement to fire at the question).
+    from sonara.router import CONTROL
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    sessions.register("bg", cwd="/home/me/sonari")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch, session="bg")   # long prose to bg
+    _choice(daemon, session="bg")                          # holds bg's question
+    daemon._summarize_fn = lambda text, **kw: "The context."
+    daemon._summary_worker(*calls[0])
+    bg = daemon.router.channel("bg")
+    ctrl = daemon.router.channel(CONTROL)
+    assert any("The context." in it.text for it in bg.items)          # digest on bg channel
+    assert not any("The context." in it.text for it in ctrl.items)    # NOT via CONTROL
+    assert any(it.is_decision for it in bg.items)                     # question follows it
+
+
+def test_held_question_falls_back_to_raw_context_on_skip(monkeypatch):
+    # Confirmed via sequence capture: Haiku SKIP'd a trivial lead-in (summarize ->
+    # None), so the held question played with no context. A held question must fall
+    # back to the RAW lead-in, spoken before the question, so it is never alone.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)               # "First part. ... Second part. ..."
+    _choice(daemon)                                      # holds the question
+    daemon._summarize_fn = lambda text, **kw: None       # SKIP / empty digest
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    items = ch.items[ch.cursor:]
+    summ_idx = next(i for i, it in enumerate(items) if it.kind == "summary")
+    dec_idx = next(i for i, it in enumerate(items) if it.is_decision)
+    assert summ_idx < dec_idx                            # raw context before the question
+    assert "First part." in items[summ_idx].text         # the raw lead-in, not dropped
+
+
+def test_turn_end_skip_falls_back_to_raw(monkeypatch):
+    # A session's LATEST message is always read (spec): if the summarizer SKIPs a
+    # plain turn-end digest, fall back to the RAW text rather than dropping it.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)                # "First part. ... Second part. ..."
+    _turn_done(daemon)                                   # no held question
+    daemon._summarize_fn = lambda text, **kw: None       # SKIP
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    summ = next((it for it in ch.items[ch.cursor:] if it.kind == "summary"), None)
+    assert summ is not None and "First part." in summ.text   # raw, not dropped
+
+
+def test_empty_turn_stays_silent(monkeypatch):
+    # A genuinely empty turn (no text at all) still stays silent -- nothing to read.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.config["summary_mode"] = True
+    # dispatch a worker directly with empty text
+    daemon._summarize_fn = lambda text, **kw: None
+    daemon._summary_gen["fg"] = 1
+    daemon._summary_worker("fg", 1, "   ")
+    ch = daemon.router.channel("fg")
+    assert not any(it.kind == "summary" for it in ch.items[ch.cursor:])
+
+
+def test_held_question_played_even_if_digest_fails(monkeypatch):
+    # A blocking prompt must never be lost: if the digest fails, the held question
+    # is still enqueued (finally).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)
+    daemon._summarize_fn = lambda text, **kw: None
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])   # question still played
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_held_question_lead_in_digest_names_its_session(monkeypatch):
+    # The context digest for a HELD question names its session too, so the user
+    # hears which session the upcoming question belongs to.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    sessions.register("fg", cwd="/home/me/scenario")     # folder = scenario
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)                                       # holds the question
+    daemon._summarize_fn = lambda text, **kw: "The context."
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
+    assert summ.text == "Session scenario: The context."
+
+
+def test_normal_turn_end_digest_keeps_session_prefix(monkeypatch):
+    # A plain turn-end digest (no held question) still names its session.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    sessions.register("fg", cwd="/home/me/scenario")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The recap."
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
+    assert summ.text == "Session scenario: The recap."    # prefix kept
+
+
+def test_new_prompt_clears_held_question(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)
+    assert daemon._held_decision.get("fg") is not None
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_lead_in_prose_not_double_voiced_at_turn_end(monkeypatch):
+    # After the question voices the lead-in prose, a later turn_done (once the
+    # user answers and the turn ends with no new prose) must NOT re-voice it.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)
+    assert len(calls) == 1
+    _turn_done(daemon)                          # turn ends, no new prose
+    assert len(calls) == 1                       # not re-dispatched
+
+
+def test_new_prompt_resets_voiced_prose_count(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._voiced_prose_count["fg"] = 3
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    assert "fg" not in daemon._voiced_prose_count
+
+
 def test_turn_done_does_not_dispatch_when_mode_off(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -128,7 +346,12 @@ def test_background_turn_dispatches_summary_too(monkeypatch):
     assert len(calls) == 1 and calls[0][0] == "bg"
 
 
-def test_background_digest_speaks_prefixed_via_control(monkeypatch):
+def test_background_digest_announced_via_session_channel(monkeypatch):
+    # A background session's digest now goes via ITS OWN channel so the router
+    # announces "Session changed" (with the chime) before speaking it -- not the
+    # silent CONTROL lane that played out of order, chime-less (multi-session bug).
+    # It is unprefixed (the announcement names the session) and authorized so the
+    # background policy does not mute it.
     from sonara.router import CONTROL
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -137,15 +360,40 @@ def test_background_digest_speaks_prefixed_via_control(monkeypatch):
     _turn_done(daemon, session="bg")
     daemon._summarize_fn = lambda text, **kw: "The gist of it."
     daemon._summary_worker(*calls[0])
-    ctrl = daemon.router.channel(CONTROL)
-    texts = [it.text for it in ctrl.items[ctrl.cursor:]]
-    assert "Session otherproj: The gist of it." in texts
-    # and nothing landed in the bg session's own (unvoiced) channel
     bg = daemon.router.channel("bg")
-    assert all("gist" not in it.text for it in bg.items[bg.cursor:])
+    ctrl = daemon.router.channel(CONTROL)
+    assert any(it.text == "The gist of it." for it in bg.items)   # on bg channel, unprefixed
+    assert not any("gist" in it.text for it in ctrl.items)        # NOT on CONTROL
+    assert "bg" in daemon.router._replay_authorized               # policy-bypassed for voicing
 
 
-def test_background_short_turn_speaks_original_prefixed(monkeypatch):
+def test_background_digest_announced_before_it_plays(monkeypatch):
+    # End-to-end: the router announces "Session changed: otherproj" (a chime-
+    # carrying session_change item) BEFORE the background digest is spoken.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    sessions.register("bg", cwd="/home/me/otherproj")
+    daemon.router.active = "fg"
+    daemon.router._last_active = "fg"                     # a switch to bg will announce
+    _enable_and_feed(daemon, monkeypatch, session="bg")
+    _turn_done(daemon, session="bg")
+    daemon._summarize_fn = lambda text, **kw: "The gist of it."
+    daemon._summary_worker(*calls[0])
+    seq = []
+    for _ in range(6):
+        it = daemon.router.next_item()
+        if it is None:
+            break
+        seq.append((it.kind, it.text))
+    ann = next(i for i, (k, t) in enumerate(seq) if k == "session_change" and "otherproj" in t)
+    dig = next(i for i, (k, t) in enumerate(seq) if t == "The gist of it.")
+    assert ann < dig                                     # announcement precedes the digest
+
+
+def test_background_short_turn_announced_via_session_channel(monkeypatch):
+    # A short background turn now goes via its OWN channel (announced with a chime,
+    # unprefixed, authorized), not the silent CONTROL lane that played out of order
+    # and survived FLUSH.
     from sonara.router import CONTROL
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -156,10 +404,11 @@ def test_background_short_turn_speaks_original_prefixed(monkeypatch):
     daemon.handle_message(_prose("bg", "All done here. ", 0, True))
     _turn_done(daemon, session="bg")
     assert calls == []                                    # no summarizer for short
+    bg = daemon.router.channel("bg")
     ctrl = daemon.router.channel(CONTROL)
-    texts = [it.text for it in ctrl.items[ctrl.cursor:]]
-    assert any(t.startswith("Session otherproj: ") and "All done here." in t
-               for t in texts)
+    assert any("All done here." in it.text for it in bg.items)        # on bg channel
+    assert not any("All done here." in it.text for it in ctrl.items)  # NOT on CONTROL
+    assert "bg" in daemon.router._replay_authorized
 
 
 def test_turn_done_with_no_prose_does_not_dispatch(monkeypatch):
@@ -184,15 +433,18 @@ def test_worker_success_enqueues_summary(monkeypatch):
     assert "The gist." in texts
 
 
-def test_worker_failure_fires_cue_and_enqueues_nothing(monkeypatch):
+def test_worker_failure_falls_back_to_raw(monkeypatch):
+    # A summarizer failure (returns None) now falls back to the RAW text -- the
+    # session's latest message is always read (spec), never silently dropped.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
     _turn_done(daemon)
     daemon._summarize_fn = lambda text, **kw: None
     daemon._summary_worker(*calls[0])
-    assert speaker.earcons[-1] == "summary_failed"
-    assert daemon.router.channel("fg").pending() == 0
+    ch = daemon.router.channel("fg")
+    summ = next((it for it in ch.items[ch.cursor:] if it.kind == "summary"), None)
+    assert summ is not None and "First part." in summ.text   # read raw, not dropped
 
 
 def test_superseded_worker_result_is_dropped(monkeypatch):
@@ -200,8 +452,9 @@ def test_superseded_worker_result_is_dropped(monkeypatch):
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
     _turn_done(daemon)                                   # gen 1
-    daemon.handle_message(_prose("fg", "More text. ", 2, True))
-    _turn_done(daemon)                                   # gen 2 supersedes
+    _pad = "This filler sentence carries the turn past the threshold. "
+    daemon.handle_message(_prose("fg", "More text. " + _pad * 6, 2, True))
+    _turn_done(daemon)                                   # gen 2 supersedes (new prose)
     daemon._summarize_fn = lambda text, **kw: "Stale summary."
     daemon._summary_worker(*calls[0])                    # gen-1 result arrives late
     ch = daemon.router.channel("fg")
@@ -250,11 +503,14 @@ def test_recorded_summary_is_not_resummarized(monkeypatch):
     _enable_and_feed(daemon, monkeypatch)
     _turn_done(daemon)
     daemon._summarize_fn = lambda text, **kw: "The recap."
-    daemon._summary_worker(*calls[0])                    # recap recorded
-    _turn_done(daemon)                                   # second turn_done, no flush
+    daemon._summary_worker(*calls[0])                    # recap recorded (kind=summary)
+    _pad = "This filler sentence carries the turn past the threshold. "
+    daemon.handle_message(_prose("fg", "New content. " + _pad * 6, 2, True))
+    _turn_done(daemon)                                   # second dispatch (new prose)
     assert len(calls) == 2
     _, _, text2 = calls[1]
-    assert "The recap." not in text2                     # recap excluded from gather
+    assert "The recap." not in text2                     # recap (summary kind) excluded
+    assert "New content." in text2                       # new prose IS summarized
 
 
 def test_session_end_clears_summary_gen(monkeypatch):

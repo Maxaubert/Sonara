@@ -96,6 +96,66 @@ sound dramatically better and are free and offline. To install one:
 sonara voice "Microsoft Ava (Natural)"
 ```
 
+## Chatterbox voices (optional, GPU)
+
+Sonara can use **Resemble AI Chatterbox** (MIT) as a third voice engine alongside Windows
+native and Kokoro. Chatterbox runs on your GPU via a persistent worker subprocess; voices are
+your own 10-second reference WAV clips, which the model imitates for unlimited voice
+variety. Requires an NVIDIA GPU.
+
+**One-time setup:**
+
+```powershell
+sonara voices install chatterbox
+```
+
+This downloads the Chatterbox Turbo model (~2 GB) and cached weights to `~/.sonara/chatterbox/`.
+Network is required; the setup includes a smoke-test synthesis to measure your GPU latency and
+VRAM footprint. After installation, voice models stay on disk; synthesis is fully local.
+
+**Adding voices:**
+
+Drop 10-second clean speech WAV clips into `~/.sonara/voices/chatterbox/`. The filename
+(without `.wav`) becomes the voice name. For example, `alice.wav` creates the voice `alice`.
+Run `sonara voice` to list all available voices across all engines, or `sonara voice alice`
+to select.
+
+The built-in `cb_default` voice is always available (no clip needed) and uses the model's
+standard voice.
+
+**VRAM gate and fallback:**
+
+Before synthesis, Sonara checks free GPU VRAM. If below the threshold (default 5 GB), the
+utterance speaks via Kokoro instead, quietly and without announcement, keeping Chatterbox
+reserved for when the GPU has room. The threshold is configurable via
+`chatterbox_min_free_vram_gb` in `~/.sonara/config.json` (set to 0 to always try, or to a
+lower value if your workflow needs the GPU freed).
+
+When the model is loaded, it idles for 10 minutes before unloading to free VRAM back to your
+system (configurable via `chatterbox_idle_unload_s`). A busy-GPU gate miss (above) is quiet.
+A genuine failure (missing weights, worker error, or timeout) also falls back to Kokoro, and
+the first such failure in a daemon run speaks a short notice ("Chatterbox unavailable, using
+Heart") so you know why the voice changed; later failures stay quiet. Every fallback logs its
+reason to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so keep the Kokoro
+voices installed alongside Chatterbox. When the GPU frees, Chatterbox resumes automatically.
+Speech is synthesized and played in chunks, so hotkeys (mute, navigate, pause, skip) take
+effect within a chunk (roughly 2 seconds) rather than waiting for the whole utterance. The
+`chatterbox_timeout` setting (default 30 seconds) bounds each chunk, not the entire utterance.
+Also expect a one-time pause of roughly 10 to 40 seconds before the first Chatterbox
+utterance after a daemon start or an idle unload; that is the model loading onto the GPU.
+Later utterances start immediately.
+
+**Limitation:**
+
+The `sonara rate <wpm>` speech-rate setting does not affect Chatterbox voices (the model has
+no rate control). Kokoro rate changes apply normally.
+
+**To remove:**
+
+```powershell
+sonara voices uninstall chatterbox
+```
+
 ## Controls and slash commands
 
 Control is via global hotkeys (work even mid-speech), the `sonara` CLI, and namespaced slash
@@ -143,7 +203,7 @@ CLI-only (run `sonara <cmd>` in a terminal).
 | `/sonara:status` | `sonara status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
 | `/sonara:verbosity <level>` | `sonara verbosity <level>` | Set `everything` / `medium` / `quiet` |
 | `/sonara:voice <name>` | `sonara voice <name>` | Set the speech voice (omit the name to list voices) |
-| `/sonara:voices` | `sonara voices` | Install or remove Kokoro neural voices |
+| `/sonara:voices` | `sonara voices` | Install or remove neural voices (Kokoro or Chatterbox) |
 | `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
 | `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
 | `/sonara:summary [on\|off]` | `sonara summary [on\|off]` | Speak an AI recap of each finished turn instead of full narration (off = full narration; bare prints state) |

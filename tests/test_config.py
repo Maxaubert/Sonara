@@ -16,6 +16,11 @@ def test_defaults_has_documented_top_level_keys():
         "summary_model",
         "summary_command",
         "summary_timeout",
+        "chatterbox_variant",
+        "chatterbox_min_free_vram_gb",
+        "chatterbox_idle_unload_s",
+        "chatterbox_timeout",
+        "chatterbox_warm_timeout",
     }
 
 
@@ -24,6 +29,10 @@ def test_defaults_scalar_values():
     assert DEFAULTS["rate"] == 200
     assert DEFAULTS["verbosity"] == "everything"
     assert DEFAULTS["background_policy"] == "earcon_only"
+
+
+def test_chatterbox_timeout_default_is_30():
+    assert DEFAULTS["chatterbox_timeout"] == 30
 
 
 def test_defaults_no_longer_carries_earcons():
@@ -228,3 +237,16 @@ def test_summary_mode_defaults():
     assert DEFAULTS["summary_model"] == "haiku"
     assert DEFAULTS["summary_command"] == "claude"
     assert DEFAULTS["summary_timeout"] == 60
+
+
+def test_chatterbox_defaults():
+    from sonara.config import DEFAULTS
+    assert DEFAULTS["chatterbox_variant"] == "turbo"
+    assert DEFAULTS["chatterbox_min_free_vram_gb"] == 5
+    assert DEFAULTS["chatterbox_idle_unload_s"] == 600
+    assert DEFAULTS["chatterbox_timeout"] == 30
+
+
+def test_chatterbox_warm_timeout_default():
+    from sonara.config import DEFAULTS
+    assert DEFAULTS["chatterbox_warm_timeout"] == 90

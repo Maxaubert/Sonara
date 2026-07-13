@@ -152,3 +152,10 @@ def test_recorded_pythonw_reads_its_own_file(tmp_path, monkeypatch):
     (tmp_path / "pyw.exe").write_text("")
     monkeypatch.setattr(paths, "PYTHONW_RECORD_PATH", rec)
     assert paths.recorded_pythonw() == str(tmp_path / "pyw.exe")
+
+
+def test_chatterbox_paths_are_under_sonara_dir():
+    from sonara import paths
+    assert str(paths.CHATTERBOX_VENV).startswith(str(paths.SONARA_DIR))
+    assert str(paths.CHATTERBOX_VOICES_DIR).startswith(str(paths.SONARA_DIR))
+    assert paths.chatterbox_venv_python().endswith("python.exe")

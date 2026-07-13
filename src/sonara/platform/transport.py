@@ -79,3 +79,42 @@ def acquire_singleton(path):
     except OSError:
         pass
     return fh
+
+
+# Windows named-mutex single-instance guard. The byte-lock above is fragile: it
+# is tied to the lock FILE's identity, so a deleted/recreated lock file (or two
+# daemons racing to create it) yields locks on different inodes that no longer
+# exclude -> a daemon explosion (observed live). A named kernel mutex is keyed by
+# NAME, shared by every process regardless of any file, and the kernel releases it
+# on process death. This is the AUTHORITATIVE single-instance guard on Windows.
+_MUTEX_NAME = "Global\\Sonara-Daemon-Singleton-v1"
+_ERROR_ALREADY_EXISTS = 183
+
+
+def acquire_singleton_mutex(name: str = _MUTEX_NAME):
+    """Create/own the named single-instance mutex. Returns an opaque handle to
+    hold for the process's lifetime, or None if another process already owns it.
+    Non-Windows (no such API): returns a truthy sentinel so callers don't gate on
+    it (the byte-lock remains the guard there)."""
+    if os.name != "nt":
+        return True
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    handle = kernel32.CreateMutexW(None, True, name)   # bInitialOwner=True
+    if not handle:
+        return None
+    if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        return None
+    return handle
+
+
+def release_singleton_mutex(handle) -> None:
+    """Release a handle from acquire_singleton_mutex (the OS also frees it on
+    process death, so this is only needed for explicit early teardown / tests)."""
+    if os.name != "nt" or not handle or handle is True:
+        return
+    import ctypes
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle(ctypes.c_void_p(handle))

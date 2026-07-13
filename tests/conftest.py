@@ -59,6 +59,26 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
         paths, "HOTKEYD_BIN_PATH", sonara_dir / "sonara-hotkeyd", raising=False)
     monkeypatch.setattr(
         paths, "INSTALL_RECORD_PATH", sonara_dir / "install.json", raising=False)
+    # CHATTERBOX_* are SONARA_DIR-derived but bound at import time (not live),
+    # same trap as APP_DIR above: without repointing them here, a test that
+    # doesn't explicitly monkeypatch sonara.chatterbox's copies (which import
+    # these by value) would fall back to the real ~/.sonara paths.
+    monkeypatch.setattr(
+        paths, "CHATTERBOX_VENV", sonara_dir / "chatterbox-venv", raising=False)
+    monkeypatch.setattr(
+        paths, "CHATTERBOX_HF_CACHE", sonara_dir / "chatterbox" / "hf-cache", raising=False)
+    monkeypatch.setattr(
+        paths, "CHATTERBOX_VOICES_DIR", sonara_dir / "voices" / "chatterbox", raising=False)
+
+    # sonara.chatterbox imports CHATTERBOX_HF_CACHE/CHATTERBOX_VOICES_DIR by value
+    # at import time, so patching paths.* alone leaves its copies pointed at the
+    # real ~/.sonara. Repoint the chatterbox module's copies too.
+    import sonara.chatterbox as chatterbox
+
+    monkeypatch.setattr(
+        chatterbox, "CHATTERBOX_HF_CACHE", sonara_dir / "chatterbox" / "hf-cache", raising=False)
+    monkeypatch.setattr(
+        chatterbox, "CHATTERBOX_VOICES_DIR", sonara_dir / "voices" / "chatterbox", raising=False)
 
     # Modules that bound these names at import time need their copies repointed too.
     import sonara.config as config

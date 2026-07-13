@@ -291,6 +291,41 @@ def test_mid_utterance_pause_rewinds_and_resumes_interrupted_item():
     )
 
 
+def test_pause_during_session_change_announcement_does_not_rewind_content(monkeypatch):
+    # Bug: pausing while a "Session changed" announcement (kind session_change,
+    # id 0) is speaking rewound the active session's channel cursor, double-
+    # speaking or losing a real content item. It must re-arm the announcement
+    # instead and leave content cursors untouched.
+    from sonara.queue import SpeechItem
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    ch = daemon.router.channel("A")
+    ch.append(SpeechItem(id=5, session="A", kind="prose", text="real content.",
+                         is_decision=False))
+    ch.cursor = 1                       # a real content item sits at the cursor;
+    ch_cursor_before = ch.cursor        # the old bug would decrement THIS to 0
+    ann = SpeechItem(id=0, session="A", kind="session_change",
+                     text="Session changed: A.", is_decision=False)
+    daemon._current_item = ann
+    daemon._paused.set()
+    # simulate the requeue path for the announcement item with completed=False
+    daemon._requeue_or_note(ann, completed=False)   # extract the guard into a helper
+    assert daemon.router.channel("A").cursor == ch_cursor_before   # content NOT rewound
+    assert daemon.router._pending_announce == "A"                  # announcement re-armed
+
+
+def test_pause_requeues_normal_item_for_resume(monkeypatch):
+    from sonara.queue import SpeechItem
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    ch = daemon.router.channel("A")
+    ch.append(SpeechItem(id=7, session="A", kind="prose", text="hi.", is_decision=False))
+    ch.cursor = 1                                     # router advanced past the item
+    item = ch.items[0]
+    daemon._current_item = item
+    daemon._paused.set()
+    daemon._requeue_or_note(item, completed=False)
+    assert ch.cursor == 0                             # rewound so resume re-speaks it
+
+
 def test_pause_replay_preserves_heard_marker():
     """The interrupted item's _pending_heard entry must survive the cursor rewind
     so that when it is eventually spoken (completed), its history entry is marked

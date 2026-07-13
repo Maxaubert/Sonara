@@ -50,6 +50,24 @@ def test_flush_clears_pending_decision_flag():
     assert ch.has_decision is False
 
 
+def test_flush_second_press_after_cutting_edges_not_moved():
+    # "Go to end" is top/bottom: a rapid second press (before the speak loop has
+    # cleared _current_item) must give the barrier chime, not another "nav". The
+    # cut clears _current_item so the re-press sees nothing left to cut (issue #11).
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
+    ch = daemon.router.channel("fg")
+    ch.append(SpeechItem(id=1, session="fg", kind="summary", text="digest", is_decision=False))
+    ch.cursor = 1                              # already reading it (cursor past it)
+    daemon._current_item = SpeechItem(id=1, session="fg", kind="summary",
+                                      text="digest", is_decision=False)
+    _flush(daemon)                             # first press: cut the current digest
+    assert speaker.earcons[-1] == "nav"
+    assert speaker.cancels == 1
+    _flush(daemon)                             # rapid second press
+    assert speaker.earcons[-1] == "nav_edge"  # nothing left to cut -> barrier
+    assert speaker.cancels == 1               # did not cancel again
+
+
 def test_flush_with_nothing_pending_is_a_safe_edge_no_op():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     _flush(daemon)

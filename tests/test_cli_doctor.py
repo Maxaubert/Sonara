@@ -1,6 +1,6 @@
 from unittest import mock
 
-from sonara import cli
+from sonara import cli, chatterbox, paths
 from sonara import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
@@ -159,3 +159,36 @@ def test_doctor_summary_row_fails_when_command_missing(monkeypatch, tmp_path):
     rows = _doctor_rows(monkeypatch)
     ok, detail = rows["summary command"]
     assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# Task 5: chatterbox doctor row
+# ---------------------------------------------------------------------------
+
+def test_doctor_chatterbox_rows_absent_ok(monkeypatch):
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: False)
+    rows = _doctor_rows(monkeypatch)
+    assert "chatterbox" in rows
+    ok, detail = rows["chatterbox"]
+    assert ok is True and "not installed" in detail
+
+
+def test_doctor_chatterbox_provisioned_checks_python(monkeypatch, tmp_path):
+    fake_py = tmp_path / "python.exe"
+    fake_py.write_text("")
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
+    monkeypatch.setattr(paths, "chatterbox_venv_python", lambda: str(fake_py))
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["chatterbox"]
+    assert ok is True
+    assert str(fake_py) in detail
+
+
+def test_doctor_chatterbox_fails_when_venv_python_missing(monkeypatch, tmp_path):
+    missing_py = tmp_path / "no-such-venv" / "python.exe"
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
+    monkeypatch.setattr(paths, "chatterbox_venv_python", lambda: str(missing_py))
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["chatterbox"]
+    assert ok is False
+    assert "voices install chatterbox" in detail

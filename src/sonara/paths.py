@@ -43,6 +43,16 @@ def kokoro_venv_python() -> str:
     return str(KOKORO_VENV / "Scripts" / "python.exe")
 
 
+CHATTERBOX_VENV = SONARA_DIR / "chatterbox-venv"    # opt-in uv venv for Chatterbox
+CHATTERBOX_HF_CACHE = SONARA_DIR / "chatterbox" / "hf-cache"
+CHATTERBOX_VOICES_DIR = SONARA_DIR / "voices" / "chatterbox"
+
+
+def chatterbox_venv_python() -> str:
+    """Absolute path to the Chatterbox venv's Python (may not exist)."""
+    return str(CHATTERBOX_VENV / "Scripts" / "python.exe")
+
+
 def ensure_sonara_dir() -> None:
     SONARA_DIR.mkdir(parents=True, exist_ok=True)
 

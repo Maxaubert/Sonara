@@ -19,6 +19,7 @@ from sonara.platform import transport
 
 # Holds the single-instance flock for this process's lifetime (see main()).
 _SINGLETON = None
+_MUTEX = None       # process-lifetime handle to the named single-instance mutex
 
 
 RATE_MIN = 100
@@ -79,6 +80,10 @@ class SpeechDaemon:
         self._options: "dict[str, str]" = {}
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
+        self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
+        self._voiced_prose_count: dict = {}       # session -> # prose entries already voiced this turn (summary mode: a blocking question and turn-end must not double-voice)
+        self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
+        self._held_decision: dict = {}            # session -> decision item held until its lead-in digest lands (context-first ordering)
         self._paused = threading.Event()          # play/pause: set == speech halted
         self._mute_level = 0                       # mute cycle: 0=unmuted,
         # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
@@ -185,6 +190,25 @@ class SpeechDaemon:
             entry = self._pending_heard.pop(item.id, None)
             if entry is not None and completed:
                 entry.heard = True
+
+    def _requeue_or_note(self, item, completed) -> bool:
+        """On a pause-interrupted utterance, re-queue it so resume re-speaks it and
+        return True (skip note_spoken). Returns False otherwise (caller notes it).
+        A session-change announcement owns no channel cursor position (it comes
+        from the router's pending-announce, id 0), so re-arm the announcement
+        instead of rewinding a real content item (which double-spoke/lost it)."""
+        with self._lock:
+            if not (not completed and self._paused.is_set()):
+                return False
+            if item.kind == "session_change":
+                self.router._pending_announce = item.session
+                self.router._pending_announce_replay = False
+            else:
+                ch = self.router.channels.get(item.session)
+                if ch is not None and ch.cursor > 0:
+                    ch.cursor -= 1
+            self._current_item = None
+            return True
 
     @staticmethod
     def _choice_text(msg) -> str:
@@ -349,6 +373,11 @@ class SpeechDaemon:
         # MsgType.EARCON branch below, so the earcon fires instantly and
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
+            # A question BLOCKS the turn (no turn_done -> no end-of-turn digest), so
+            # voice the lead-in prose now; otherwise the context is silently dropped
+            # and only the question is heard. The question itself is spoken as-is,
+            # but HELD until the lead-in digest lands so context is heard first.
+            digesting = self._maybe_summarize(session)
             text = self._choice_text(msg)
             extras = [e for e in (self._choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
@@ -360,11 +389,15 @@ class SpeechDaemon:
             item = SpeechItem(id=self._alloc_id(), session=session, kind="choice",
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
-            self.router.channel(session).append(item)
-            self._wake.set()
+            # AskUserQuestion ALSO fires a permission-prompt notification ~5-6s
+            # later; mark the question unanswered so that redundant permission
+            # (earcon + text) is suppressed until the turn moves on (issue #11 f/u).
+            self._await_choice.add(session)
+            self._enqueue_or_hold_decision(session, item, digesting)
             return None
 
         if t == MsgType.PLAN:
+            digesting = self._maybe_summarize(session)   # voice lead-in before the blocking plan
             text = self._plan_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
@@ -375,11 +408,20 @@ class SpeechDaemon:
             item = SpeechItem(id=self._alloc_id(), session=session, kind="plan",
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
-            self.router.channel(session).append(item)
-            self._wake.set()
+            self._enqueue_or_hold_decision(session, item, digesting)
             return None
 
         if t == MsgType.PERMISSION:
+            # Redundant permission that pairs with an unanswered AskUserQuestion:
+            # the question was already announced, so drop this one. CONSUME the
+            # guard here (the permission it exists to suppress has now arrived) --
+            # do NOT rely on unrelated prose/turn_done to clear it, since the
+            # pre-question prose streams in AFTER the choice and would clear it
+            # early (confirmed via message-sequence capture, issue #11 f/u).
+            if session in self._await_choice or (not session and self._await_choice):
+                self._await_choice.discard(session)
+                return None
+            digesting = self._maybe_summarize(session)   # voice lead-in before the blocking permission
             text = self._permission_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
@@ -390,11 +432,11 @@ class SpeechDaemon:
             item = SpeechItem(id=self._alloc_id(), session=session, kind="permission",
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
-            self.router.channel(session).append(item)
-            self._wake.set()
+            self._enqueue_or_hold_decision(session, item, digesting)
             return None
 
         if t == MsgType.TOOL:
+            self._await_choice.discard(session)  # a tool ran -> the question was answered
             if verbosity == "everything":
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
@@ -413,6 +455,11 @@ class SpeechDaemon:
             # Instant: the Windows earcon backend plays on a separate audio path
             # that mixes with the speech, so it no longer cuts the reading.
             kind = msg.get("kind", "")
+            # Suppress the redundant permission chime that pairs with an unanswered
+            # AskUserQuestion (its message carries no session, so gate on "any
+            # question awaiting"). Real permission chimes still fire (issue #11 f/u).
+            if kind == "permission" and self._await_choice:
+                return None
             self._earcon(kind)
             if kind == "turn_done":
                 # End-of-turn boundary: safety-net flush in case the final PROSE
@@ -435,6 +482,10 @@ class SpeechDaemon:
             # generation so a stale recap is dropped, not spoken into this turn.
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
             self._nav_cursor.pop(session, None)
+            self._last_digest_text.pop(session, None)   # no re-reading a stale digest
+            self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
+            self._await_choice.discard(session)          # new prompt: no question pending
+            self._held_decision.pop(session, None)       # new prompt: drop any held question
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -486,14 +537,27 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.NAV:
+            to = msg.get("to", "prev")
+            fg = self._engaged_session()
+            if self.config.get("summary_mode"):
+                # Summary mode speaks ONE digest per turn, not the raw per-message
+                # prose. Message-cursor nav (prev/next) is meaningless here, so it
+                # is a SILENT no-op: no chime, and nothing enqueued onto the gated
+                # session channel (which otherwise piled up and burst at turn end,
+                # issue #11). Only Up (nav 'first') acts, re-reading the last
+                # digest. Flush ('go to end', Ctrl+Alt+Down) is a separate handler
+                # and still cuts the foreground digest.
+                if to == "first":
+                    moved = self._reread_last(fg) if fg is not None else False
+                    self._earcon("nav" if moved else "nav_edge")
+                return None
             # Every nav press chimes: the "nav" earcon when the cursor moves to a
             # message, the "nav_edge" earcon at a boundary / nothing to navigate
             # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
-            fg = self._engaged_session()
             if fg is None:
                 self._earcon("nav_edge")
                 return None
-            result = self._nav(fg, msg.get("to", "prev"))
+            result = self._nav(fg, to)
             self._earcon("nav" if result == "moved" else "nav_edge")
             return None
 
@@ -633,6 +697,11 @@ class SpeechDaemon:
             cutting = cur is not None and cur.session == fg
             if cutting:
                 self.speaker.cancel()      # cut the in-progress utterance for fg
+                # Clear now so a rapid SECOND press (before the speak loop's
+                # note_spoken runs) sees nothing left to cut and gives the edge
+                # chime -- "go to end" is top/bottom, it should only move once
+                # (issue #11). note_spoken also nulls this later; idempotent.
+                self._current_item = None
             self._earcon("nav" if (skipped or cutting) else "nav_edge")
             self._wake.set()
             return None
@@ -699,6 +768,7 @@ class SpeechDaemon:
             self.config["voice"] = voice
             self.speaker.set_voice(voice)
             save_config(self.config)
+            self._maybe_prewarm_chatterbox()   # switching TO a cb voice warms it
             return None
 
         if t == MsgType.SET_VERBOSITY:
@@ -800,6 +870,30 @@ class SpeechDaemon:
                 srv.close()
             except OSError:
                 pass
+
+    def _maybe_prewarm_chatterbox(self) -> None:
+        """If the selected voice is a Chatterbox voice, the engine is provisioned,
+        and the GPU has room, load the model in the worker in the BACKGROUND so the
+        first digest does not pay the ~40s cold load. Best-effort: never blocks the
+        caller and never crashes it (chatterbox is optional). Called at daemon
+        startup and when the user switches TO a chatterbox voice."""
+        try:
+            from sonara import chatterbox
+            voice = self.config.get("voice")
+            if not (chatterbox.is_provisioned()
+                    and chatterbox.is_chatterbox_voice(voice)
+                    and chatterbox.gate_ok(self.config)):
+                return
+        except Exception:  # noqa: BLE001 - optional engine; never break startup
+            return
+
+        def _warm():
+            try:
+                from sonara import chatterbox
+                chatterbox.CLIENT.warm(self.config)
+            except Exception:  # noqa: BLE001 - warming is best-effort
+                pass
+        threading.Thread(target=_warm, name="sonara-cb-warm", daemon=True).start()
 
     def _start_hotkeys(self) -> None:
         """Start the platform's global-hotkey listener. On Windows this spawns an
@@ -906,21 +1000,33 @@ class SpeechDaemon:
         return (self.router.active or self.router._last_active
                 or self.sessions.foreground())
 
-    def _maybe_summarize(self, session: str) -> None:
-        """Summary mode: on turn end, recap the foreground session's prose via a
-        separate throwaway claude -p call (see summarizer.py). Runs under the
-        daemon lock, so it only gathers text and spawns the worker thread; the
-        subprocess itself runs OFF-lock in _summary_worker."""
+    def _maybe_summarize(self, session: str) -> bool:
+        """Summary mode: recap the session's prose not yet voiced this turn via a
+        throwaway claude -p call (see summarizer.py), or speak it raw when short.
+        Runs under the daemon lock, so it only gathers text and spawns the worker
+        thread; the subprocess itself runs OFF-lock in _summary_worker.
+
+        Called at turn end AND when a blocking decision arrives: a question never
+        reaches turn_done, so its lead-in prose would otherwise be silently dropped.
+        Only prose recorded SINCE the last call this turn is voiced (tracked by
+        _voiced_prose_count), so the two triggers never double-voice the same text.
+
+        Returns True iff an ASYNC digest was dispatched (long lead-in) -- the
+        decision handlers use this to HOLD the question until the digest lands, so
+        the context is heard before the question rather than ~6s after it."""
         if not self.config.get("summary_mode"):
-            return
+            return False
         entries = []
         for mid in self.history.message_ids(session):
             for e in self.history.entries_for_message(session, mid):
                 if e.kind == "prose":
                     entries.append(e)
+        start = self._voiced_prose_count.get(session, 0)
+        entries = entries[start:]        # only prose not yet voiced this turn
         text = " ".join(e.text for e in entries).strip()
         if not text:
-            return                       # decision-only / empty turn: nothing to recap
+            return False                 # decision-only / empty / already-voiced
+        self._voiced_prose_count[session] = start + len(entries)
         if len(text) < _SUMMARY_MIN_CHARS:
             # An already-short turn needs no digest: speak the original prose
             # instead. Digesting borderline-trivial input made the model
@@ -932,10 +1038,22 @@ class SpeechDaemon:
                 # Background sessions are not voiced from their own channel;
                 # speak the short turn immediately, named, via CONTROL.
                 self._enqueue_background_digest(session, text)
-            return
+            return False                 # spoken synchronously; no need to hold
         gen = self._summary_gen.get(session, 0) + 1
         self._summary_gen[session] = gen
         self._start_summary_thread(session, gen, text)
+        return True                      # async digest in flight -> caller holds
+
+    def _enqueue_or_hold_decision(self, session: str, item, digesting: bool) -> None:
+        """Enqueue a decision item now, OR hold it until the lead-in digest lands
+        (context-first ordering). Held items are appended by _summary_worker after
+        the digest; if the digest fails or is superseded the worker still enqueues
+        the held item, so a blocking question is never lost."""
+        if digesting:
+            self._held_decision[session] = item
+        else:
+            self.router.channel(session).append(item)
+        self._wake.set()
 
     def _start_summary_thread(self, session: str, gen: int, text: str) -> None:
         threading.Thread(target=self._summary_worker, args=(session, gen, text),
@@ -968,46 +1086,69 @@ class SpeechDaemon:
             _log("digest ok: {0} chars in, {1} chars out: {2!r}".format(
                 len(text), len(summary), summary[:120]))
         with self._lock:
-            if self._summary_gen.get(session) != gen:
-                _log("digest dropped: superseded by a newer turn")
-                return                   # superseded: a newer turn owns the voice
-            if not summary:
-                self._earcon("summary_failed")
-                return
-            if self.sessions.is_foreground(session):
-                # Every digest names its session ("always announce" per user):
-                # with interleaved sessions an unprefixed digest was ambiguous.
-                # History records the bare digest (repeat/catch_up replay it
-                # without the prefix); only the spoken item carries the name.
+            # A question whose lead-in this digest recaps was HELD for context-first
+            # ordering; append it AFTER the digest below. The finally guarantees it
+            # plays even on a dropped/failed digest -- a blocking prompt is never lost
+            # (a new prompt clears it via FLUSH, so a stale question is not replayed).
+            held = self._held_decision.pop(session, None)
+            try:
+                if self._summary_gen.get(session) != gen:
+                    _log("digest dropped: superseded by a newer turn")
+                    return               # superseded: a newer turn owns the voice
+                if not summary:
+                    # SKIP / empty / failed digest. A session's LATEST message must
+                    # ALWAYS be read (user spec: never skip the last message --
+                    # digested or not). This digest is the latest (it was not
+                    # superseded above), so fall back to the RAW text rather than
+                    # dropping it. Only a genuinely empty turn stays silent.
+                    if not (text or "").strip():
+                        self._earcon("summary_failed")
+                        return
+                    summary = text
+                # A held question's context goes via the SESSION channel even when
+                # the session is not foreground: it is a real handoff, so the router
+                # must announce "Session changed" BEFORE the context (not at the
+                # question). A plain background digest (no held question) stays on
+                # CONTROL -- it is a silent interjection that must not announce.
+                # Route EVERY digest via its own session channel so a reader switch
+                # announces the handoff ("Session changed: folder" + chime) BEFORE
+                # the digest -- even when the user has moved to another session
+                # while this one cooked (previously such digests went out silently
+                # on the CONTROL lane and played out of order, chime-less). A
+                # foreground digest does NOT switch the reader (no announcement), so
+                # it names itself with the "Session X:" prefix; a switched-to digest
+                # WILL be announced, so it stays unprefixed to avoid double-naming.
+                fg = self.sessions.is_foreground(session)
                 folder = self.sessions.folder(session)
                 spoken = ("Session {0}: {1}".format(folder, summary)
-                          if folder else summary)
+                          if (fg and folder) else summary)
                 entry = self.history.record(session, "summary", summary)
                 self._enqueue(session, "summary", spoken, False, entry=entry)
+                self._last_digest_text[session] = spoken   # Up re-reads this verbatim
                 self.router.channel(session).turn_done = True
+                if not fg:
+                    # Let it be voiced + announced regardless of background policy
+                    # (earcon_only would otherwise mute a non-foreground session).
+                    self.router._replay_authorized.add(session)
                 self._wake.set()
-            else:
-                # The user moved on while this digest was cooking (or the turn
-                # belonged to a background session all along): speak it named,
-                # via CONTROL, as soon as the voice is free.
-                self._enqueue_background_digest(session, summary)
+            finally:
+                if held is not None:
+                    self.router.channel(held.session).append(held)  # question after context
+                    self._wake.set()
 
     def _enqueue_background_digest(self, session: str, text: str) -> None:
-        """Speak a background session's digest immediately (queued behind the
-        current utterance, never cutting one off) prefixed with the session's
-        folder name. Uses the CONTROL channel: a background session's own
-        channel is not voiced under the earcon_only policy, and routing through
-        the session channel would fire the "Session changed" announcement
-        machinery for what is just an interjection. Caller holds self._lock."""
-        folder = self.sessions.folder(session) or "another session"
+        """Speak a background session's short-turn content via ITS OWN channel, so
+        the router announces the handoff ("Session changed: folder" + chime) before
+        it -- matching the digest path. Was on the CONTROL lane, which is silent
+        (no chime), plays out of order, and survives a new prompt's FLUSH (so stale
+        content lingered and replayed). Unprefixed (the announcement names it) and
+        replay-authorized so the background policy does not mute it. Caller holds
+        self._lock."""
         entry = self.history.record(session, "summary", text)
-        from sonara.router import CONTROL
-        ch = self.router.channel(CONTROL)
-        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="summary",
-                          text="Session {0}: {1}".format(folder, text),
-                          is_decision=False)
-        self._pending_heard[item.id] = entry
-        ch.items.append(item)            # behind any queued control cues
+        self._enqueue(session, "summary", text, False, entry=entry)
+        self._last_digest_text[session] = text   # Up re-reads this verbatim
+        self.router.channel(session).turn_done = True
+        self.router._replay_authorized.add(session)
         self._wake.set()
 
     def _nav(self, session: str, to: str) -> str:
@@ -1073,6 +1214,29 @@ class SpeechDaemon:
             entries.extend(self.history.entries_for_message(session, mid))
         self._replay(session, entries)
         return "moved" if moved else "edge"
+
+    def _reread_last(self, session: str) -> bool:
+        """Re-read the last digest immediately (summary-mode Up, issue #11). Speaks
+        the EXACT text that was spoken (stored verbatim, prefix and all) so the
+        rendered audio is a cache hit and replays byte-identically instead of
+        regenerating (~2s + drifting intonation each time). Cuts the current read
+        and restarts from the top so the press takes effect AT ONCE. Returns True if
+        there was a digest to re-read (caller chimes "nav"), else False (edge)."""
+        text = self._last_digest_text.get(session)
+        if not text:
+            return False
+        self._nav_cursor.pop(session, None)
+        self.speaker.cancel()                    # restart now, don't wait out the read
+        ch = self.router.channel(session)
+        for it in ch.items[ch.cursor:]:          # drop pending so the re-read is it
+            self._pending_heard.pop(it.id, None)
+        del ch.items[ch.cursor:]
+        ch.items.insert(ch.cursor, SpeechItem(
+            id=self._alloc_id(), session=session, kind="summary",
+            text=text, is_decision=False))
+        ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
+        self._wake.set()
+        return True
 
     def _resume(self) -> None:
         """Clear pause and wake the speak loop. The interrupted utterance was
@@ -1191,6 +1355,21 @@ class SpeechDaemon:
         ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
         self._wake.set()
 
+    def _maybe_announce_chatterbox_fallback(self) -> None:
+        """Speak the pending Chatterbox fallback notice, if any, exactly once per
+        daemon run. Called outside self._lock (_speak_cue does not take it)."""
+        if getattr(self, "_cb_fallback_announced", False):
+            return
+        try:
+            from sonara import chatterbox
+            reason = chatterbox.pop_fallback_notice()
+        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
+            return
+        if reason:
+            self._cb_fallback_announced = True
+            self._speak_cue(None, "Chatterbox unavailable, using Heart.",
+                            exempt_mute=True)
+
     def _audio_control_on(self) -> bool:
         return bool(self.config.get("audio_control"))
 
@@ -1257,6 +1436,9 @@ class SpeechDaemon:
             if muted:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
+        # Chatterbox fallback notice: spoken once per daemon run so an eyes-free
+        # user knows WHY the voice changed (the reason is already in the log).
+        self._maybe_announce_chatterbox_fallback()
         if item is None:
             self._maybe_restore()
             self._wake.wait(self._poll_interval)
@@ -1281,16 +1463,7 @@ class SpeechDaemon:
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False
-        requeued = False
-        with self._lock:
-            if not completed and self._paused.is_set():
-                # paused mid-utterance: rewind the cursor so resume re-speaks it
-                ch = self.router.channels.get(item.session)
-                if ch is not None and ch.cursor > 0:
-                    ch.cursor -= 1
-                self._current_item = None
-                requeued = True
-        if not requeued:
+        if not self._requeue_or_note(item, completed):
             self.note_spoken(item, completed)
 
     def _handle_conn(self, conn) -> None:
@@ -1416,6 +1589,7 @@ class SpeechDaemon:
         accept_thread.start()
         hotkey_worker.start()
         self._start_hotkeys()
+        self._maybe_prewarm_chatterbox()   # warm the model at startup if cb voice
 
         try:
             while self._running.is_set():
@@ -1525,13 +1699,18 @@ def main() -> None:
     # AF_UNIX path), so socket_connectable() alone is racy and lets concurrent
     # lazy-starts each bind their own port -> a daemon explosion. The flock lets
     # exactly one process win; the rest exit. The lock auto-releases on death.
-    global _SINGLETON
+    global _SINGLETON, _MUTEX
     if socket_connectable():
         return
     ensure_sonara_dir()
-    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)
-    if _SINGLETON is None:
-        return  # another daemon already owns the single-instance lock
+    # AUTHORITATIVE single-instance guard: a named kernel mutex. The byte-lock
+    # below is tied to the lock FILE's inode, so a deleted/recreated file or two
+    # daemons racing to create it stop excluding -> a daemon explosion (observed
+    # live). The mutex is keyed by name, immune to that, and frees on death.
+    _MUTEX = transport.acquire_singleton_mutex()
+    if _MUTEX is None:
+        return  # another daemon already owns the single-instance mutex
+    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
 
     _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
                         # global hotkeys stay responsive after long idle
