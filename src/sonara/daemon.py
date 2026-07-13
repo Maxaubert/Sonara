@@ -81,6 +81,7 @@ class SpeechDaemon:
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
         self._voiced_prose_count: dict = {}       # session -> # prose entries already voiced this turn (summary mode: a blocking question and turn-end must not double-voice)
+        self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
         self._paused = threading.Event()          # play/pause: set == speech halted
         self._mute_level = 0                       # mute cycle: 0=unmuted,
         # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
@@ -329,6 +330,7 @@ class SpeechDaemon:
         verbosity = self.config.get("verbosity", "everything")
 
         if t == MsgType.PROSE:
+            self._await_choice.discard(session)  # streaming again -> question answered
             final = msg.get("final", False)
             a = self._assembler(session)
             chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), final)
@@ -386,6 +388,10 @@ class SpeechDaemon:
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
             self.router.channel(session).append(item)
+            # AskUserQuestion ALSO fires a permission-prompt notification ~5-6s
+            # later; mark the question unanswered so that redundant permission
+            # (earcon + text) is suppressed until the turn moves on (issue #11 f/u).
+            self._await_choice.add(session)
             self._wake.set()
             return None
 
@@ -406,6 +412,10 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.PERMISSION:
+            # Redundant permission that pairs with an unanswered AskUserQuestion:
+            # the question was already announced, so drop this one (issue #11 f/u).
+            if session in self._await_choice or (not session and self._await_choice):
+                return None
             self._maybe_summarize(session)   # voice lead-in prose before the blocking permission
             text = self._permission_text(msg)
             cue = self._selection_cue(session, verbosity)
@@ -422,6 +432,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.TOOL:
+            self._await_choice.discard(session)  # a tool ran -> question answered
             if verbosity == "everything":
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
@@ -440,8 +451,14 @@ class SpeechDaemon:
             # Instant: the Windows earcon backend plays on a separate audio path
             # that mixes with the speech, so it no longer cuts the reading.
             kind = msg.get("kind", "")
+            # Suppress the redundant permission chime that pairs with an unanswered
+            # AskUserQuestion (its message carries no session, so gate on "any
+            # question awaiting"). Real permission chimes still fire (issue #11 f/u).
+            if kind == "permission" and self._await_choice:
+                return None
             self._earcon(kind)
             if kind == "turn_done":
+                self._await_choice.discard(session)  # turn ended -> question answered
                 # End-of-turn boundary: safety-net flush in case the final PROSE
                 # flag never arrived. Wake the loop so a sub-threshold batch that was
                 # left buffered (no per-delta wake) is read now, not after a poll.
@@ -464,6 +481,7 @@ class SpeechDaemon:
             self._nav_cursor.pop(session, None)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
             self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
+            self._await_choice.discard(session)          # new prompt: no question pending
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
