@@ -988,7 +988,7 @@ class SpeechDaemon:
             except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
                 pass
 
-    def _replay(self, session: str, entries) -> None:
+    def _replay(self, session: str, entries, append: bool = False) -> None:
         """Insert history entries as replay items at the active channel cursor.
 
         Items are inserted in order at the current cursor position so they read
@@ -1004,7 +1004,12 @@ class SpeechDaemon:
         repeat). The caller (CATCH_UP) already speaks a "Catching up..." preamble
         when crossing sessions; the auto-announce would be a spurious duplicate."""
         ch = self.router.channel(session)
-        at = ch.cursor
+        # append=True adds at the END (after any queued decision), like the long
+        # digest path -- so a new short turn never overtakes a queued question
+        # (#17). append=False keeps cursor-insert for explicit user replay
+        # (catch_up / nav / repeat), which should read next.
+        at = len(ch.items) if append else ch.cursor
+        n = 0
         for e in entries:
             item = SpeechItem(
                 id=self._alloc_id(),
@@ -1016,7 +1021,8 @@ class SpeechDaemon:
             self._pending_heard[item.id] = e
             ch.items.insert(at, item)
             at += 1
-        if at > ch.cursor:  # only if we actually inserted items
+            n += 1
+        if n > 0:  # only if we actually inserted items
             # Mark channel ready: replayed items should be spoken without
             # waiting for minqueue threshold.
             ch.turn_done = True
@@ -1082,7 +1088,9 @@ class SpeechDaemon:
             # verbalize meta-text ("no content to be spoken") that was then
             # read aloud; speaking the original is faster and free.
             if self.sessions.is_foreground(session):
-                self._replay(session, entries)
+                # Append (not cursor-insert) so a short turn never overtakes a
+                # queued question -- consistent with the long digest path (#17).
+                self._replay(session, entries, append=True)
             else:
                 # Background sessions are not voiced from their own channel;
                 # speak the short turn immediately, named, via CONTROL.

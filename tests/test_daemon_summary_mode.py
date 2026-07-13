@@ -673,6 +673,26 @@ def test_flush_cancels_pending_question_settle(monkeypatch):
     assert "fg" not in daemon._pending_decision
 
 
+# --- queued question is not overtaken by a later short turn (#17) ---------
+
+def test_short_answer_does_not_overtake_held_question(monkeypatch):
+    # Repro of the live bug (#17): answer a question before it is voiced; the short
+    # answer-response must NOT cut ahead of the queued question in the channel.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)           # long lead-in
+    _choice(daemon)                                  # settle -> digest dispatched, question held
+    daemon._summarize_fn = lambda text, **kw: "The context digest."
+    daemon._summary_worker(*calls[0])                # context enqueued + question appended
+    ch = daemon.router.channel("fg")
+    daemon.handle_message(_prose("fg", "Short answer. ", 0, True))   # short answer-response
+    _turn_done(daemon)                               # settle -> short path
+    texts = [it.text for it in ch.items]
+    q_idx = next(i for i, t in enumerate(texts) if "Pick one?" in t)
+    a_idx = next(i for i, t in enumerate(texts) if "Short answer." in t)
+    assert q_idx < a_idx                             # question stays ahead of the later short answer
+
+
 def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):
     # No folder name -> nothing useful to announce; speak the digest bare
     # rather than "Session another session: ...".
