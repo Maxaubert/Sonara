@@ -150,16 +150,68 @@ def test_blocking_question_voices_short_lead_in_prose(monkeypatch):
     assert prose_idx < dec_idx                 # context read before the question
 
 
-def test_blocking_question_digests_long_lead_in_prose(monkeypatch):
-    # Long lead-in prose gets the AI digest dispatched (summarized/cleaned), and
-    # the question is still enqueued as-is.
+def test_blocking_question_holds_until_long_lead_in_digest_lands(monkeypatch):
+    # Long lead-in gets the AI digest dispatched, and the question is HELD (not
+    # enqueued) until the digest lands, so context is heard BEFORE the question.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)      # long prose, past the threshold
     _choice(daemon)
     assert len(calls) == 1                      # digest dispatched for the lead-in
     ch = daemon.router.channel("fg")
-    assert any(it.is_decision for it in ch.items[ch.cursor:])   # question enqueued
+    assert not any(it.is_decision for it in ch.items[ch.cursor:])  # question HELD
+    assert daemon._held_decision.get("fg") is not None
+    daemon._summarize_fn = lambda text, **kw: "The context recap."
+    daemon._summary_worker(*calls[0])           # digest lands
+    kinds = [it.kind for it in ch.items[ch.cursor:]]
+    assert kinds.index("summary") < kinds.index("choice")   # context before question
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_short_lead_in_question_not_held(monkeypatch):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Short context. "))
+    _choice(daemon)
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])   # short = synchronous
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_no_lead_in_question_not_held(monkeypatch):
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _set_mode(daemon, True)
+    _choice(daemon)                             # no prose to voice
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])
+
+
+def test_held_question_played_even_if_digest_fails(monkeypatch):
+    # A blocking prompt must never be lost: if the digest fails, the held question
+    # is still enqueued (finally).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)
+    daemon._summarize_fn = lambda text, **kw: None
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])   # question still played
+    assert daemon._held_decision.get("fg") is None
+
+
+def test_new_prompt_clears_held_question(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _choice(daemon)
+    assert daemon._held_decision.get("fg") is not None
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    assert daemon._held_decision.get("fg") is None
 
 
 def test_lead_in_prose_not_double_voiced_at_turn_end(monkeypatch):

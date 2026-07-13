@@ -82,6 +82,7 @@ class SpeechDaemon:
         self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
         self._voiced_prose_count: dict = {}       # session -> # prose entries already voiced this turn (summary mode: a blocking question and turn-end must not double-voice)
         self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
+        self._held_decision: dict = {}            # session -> decision item held until its lead-in digest lands (context-first ordering)
         self._paused = threading.Event()          # play/pause: set == speech halted
         self._mute_level = 0                       # mute cycle: 0=unmuted,
         # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
@@ -374,8 +375,9 @@ class SpeechDaemon:
         if t == MsgType.CHOICE:
             # A question BLOCKS the turn (no turn_done -> no end-of-turn digest), so
             # voice the lead-in prose now; otherwise the context is silently dropped
-            # and only the question is heard. The question itself is spoken as-is.
-            self._maybe_summarize(session)
+            # and only the question is heard. The question itself is spoken as-is,
+            # but HELD until the lead-in digest lands so context is heard first.
+            digesting = self._maybe_summarize(session)
             text = self._choice_text(msg)
             extras = [e for e in (self._choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
@@ -387,16 +389,15 @@ class SpeechDaemon:
             item = SpeechItem(id=self._alloc_id(), session=session, kind="choice",
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
-            self.router.channel(session).append(item)
             # AskUserQuestion ALSO fires a permission-prompt notification ~5-6s
             # later; mark the question unanswered so that redundant permission
             # (earcon + text) is suppressed until the turn moves on (issue #11 f/u).
             self._await_choice.add(session)
-            self._wake.set()
+            self._enqueue_or_hold_decision(session, item, digesting)
             return None
 
         if t == MsgType.PLAN:
-            self._maybe_summarize(session)   # voice lead-in prose before the blocking plan
+            digesting = self._maybe_summarize(session)   # voice lead-in before the blocking plan
             text = self._plan_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
@@ -407,8 +408,7 @@ class SpeechDaemon:
             item = SpeechItem(id=self._alloc_id(), session=session, kind="plan",
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
-            self.router.channel(session).append(item)
-            self._wake.set()
+            self._enqueue_or_hold_decision(session, item, digesting)
             return None
 
         if t == MsgType.PERMISSION:
@@ -416,7 +416,7 @@ class SpeechDaemon:
             # the question was already announced, so drop this one (issue #11 f/u).
             if session in self._await_choice or (not session and self._await_choice):
                 return None
-            self._maybe_summarize(session)   # voice lead-in prose before the blocking permission
+            digesting = self._maybe_summarize(session)   # voice lead-in before the blocking permission
             text = self._permission_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
@@ -427,8 +427,7 @@ class SpeechDaemon:
             item = SpeechItem(id=self._alloc_id(), session=session, kind="permission",
                               text=text, is_decision=True)
             self._pending_heard[item.id] = entry
-            self.router.channel(session).append(item)
-            self._wake.set()
+            self._enqueue_or_hold_decision(session, item, digesting)
             return None
 
         if t == MsgType.TOOL:
@@ -482,6 +481,7 @@ class SpeechDaemon:
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
             self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
             self._await_choice.discard(session)          # new prompt: no question pending
+            self._held_decision.pop(session, None)       # new prompt: drop any held question
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -996,7 +996,7 @@ class SpeechDaemon:
         return (self.router.active or self.router._last_active
                 or self.sessions.foreground())
 
-    def _maybe_summarize(self, session: str) -> None:
+    def _maybe_summarize(self, session: str) -> bool:
         """Summary mode: recap the session's prose not yet voiced this turn via a
         throwaway claude -p call (see summarizer.py), or speak it raw when short.
         Runs under the daemon lock, so it only gathers text and spawns the worker
@@ -1005,9 +1005,13 @@ class SpeechDaemon:
         Called at turn end AND when a blocking decision arrives: a question never
         reaches turn_done, so its lead-in prose would otherwise be silently dropped.
         Only prose recorded SINCE the last call this turn is voiced (tracked by
-        _voiced_prose_count), so the two triggers never double-voice the same text."""
+        _voiced_prose_count), so the two triggers never double-voice the same text.
+
+        Returns True iff an ASYNC digest was dispatched (long lead-in) -- the
+        decision handlers use this to HOLD the question until the digest lands, so
+        the context is heard before the question rather than ~6s after it."""
         if not self.config.get("summary_mode"):
-            return
+            return False
         entries = []
         for mid in self.history.message_ids(session):
             for e in self.history.entries_for_message(session, mid):
@@ -1017,7 +1021,7 @@ class SpeechDaemon:
         entries = entries[start:]        # only prose not yet voiced this turn
         text = " ".join(e.text for e in entries).strip()
         if not text:
-            return                       # decision-only / empty / already-voiced
+            return False                 # decision-only / empty / already-voiced
         self._voiced_prose_count[session] = start + len(entries)
         if len(text) < _SUMMARY_MIN_CHARS:
             # An already-short turn needs no digest: speak the original prose
@@ -1030,10 +1034,22 @@ class SpeechDaemon:
                 # Background sessions are not voiced from their own channel;
                 # speak the short turn immediately, named, via CONTROL.
                 self._enqueue_background_digest(session, text)
-            return
+            return False                 # spoken synchronously; no need to hold
         gen = self._summary_gen.get(session, 0) + 1
         self._summary_gen[session] = gen
         self._start_summary_thread(session, gen, text)
+        return True                      # async digest in flight -> caller holds
+
+    def _enqueue_or_hold_decision(self, session: str, item, digesting: bool) -> None:
+        """Enqueue a decision item now, OR hold it until the lead-in digest lands
+        (context-first ordering). Held items are appended by _summary_worker after
+        the digest; if the digest fails or is superseded the worker still enqueues
+        the held item, so a blocking question is never lost."""
+        if digesting:
+            self._held_decision[session] = item
+        else:
+            self.router.channel(session).append(item)
+        self._wake.set()
 
     def _start_summary_thread(self, session: str, gen: int, text: str) -> None:
         threading.Thread(target=self._summary_worker, args=(session, gen, text),
@@ -1066,30 +1082,40 @@ class SpeechDaemon:
             _log("digest ok: {0} chars in, {1} chars out: {2!r}".format(
                 len(text), len(summary), summary[:120]))
         with self._lock:
-            if self._summary_gen.get(session) != gen:
-                _log("digest dropped: superseded by a newer turn")
-                return                   # superseded: a newer turn owns the voice
-            if not summary:
-                self._earcon("summary_failed")
-                return
-            if self.sessions.is_foreground(session):
-                # Every digest names its session ("always announce" per user):
-                # with interleaved sessions an unprefixed digest was ambiguous.
-                # History records the bare digest (repeat/catch_up replay it
-                # without the prefix); only the spoken item carries the name.
-                folder = self.sessions.folder(session)
-                spoken = ("Session {0}: {1}".format(folder, summary)
-                          if folder else summary)
-                entry = self.history.record(session, "summary", summary)
-                self._enqueue(session, "summary", spoken, False, entry=entry)
-                self._last_digest_text[session] = spoken   # Up re-reads this verbatim
-                self.router.channel(session).turn_done = True
-                self._wake.set()
-            else:
-                # The user moved on while this digest was cooking (or the turn
-                # belonged to a background session all along): speak it named,
-                # via CONTROL, as soon as the voice is free.
-                self._enqueue_background_digest(session, summary)
+            # A question whose lead-in this digest recaps was HELD for context-first
+            # ordering; append it AFTER the digest below. The finally guarantees it
+            # plays even on a dropped/failed digest -- a blocking prompt is never lost
+            # (a new prompt clears it via FLUSH, so a stale question is not replayed).
+            held = self._held_decision.pop(session, None)
+            try:
+                if self._summary_gen.get(session) != gen:
+                    _log("digest dropped: superseded by a newer turn")
+                    return               # superseded: a newer turn owns the voice
+                if not summary:
+                    self._earcon("summary_failed")
+                    return
+                if self.sessions.is_foreground(session):
+                    # Every digest names its session ("always announce" per user):
+                    # with interleaved sessions an unprefixed digest was ambiguous.
+                    # History records the bare digest (repeat/catch_up replay it
+                    # without the prefix); only the spoken item carries the name.
+                    folder = self.sessions.folder(session)
+                    spoken = ("Session {0}: {1}".format(folder, summary)
+                              if folder else summary)
+                    entry = self.history.record(session, "summary", summary)
+                    self._enqueue(session, "summary", spoken, False, entry=entry)
+                    self._last_digest_text[session] = spoken   # Up re-reads this verbatim
+                    self.router.channel(session).turn_done = True
+                    self._wake.set()
+                else:
+                    # The user moved on while this digest was cooking (or the turn
+                    # belonged to a background session all along): speak it named,
+                    # via CONTROL, as soon as the voice is free.
+                    self._enqueue_background_digest(session, summary)
+            finally:
+                if held is not None:
+                    self.router.channel(held.session).append(held)  # question after context
+                    self._wake.set()
 
     def _enqueue_background_digest(self, session: str, text: str) -> None:
         """Speak a background session's digest immediately (queued behind the
