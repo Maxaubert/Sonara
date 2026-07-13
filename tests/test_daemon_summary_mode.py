@@ -332,7 +332,12 @@ def test_background_turn_dispatches_summary_too(monkeypatch):
     assert len(calls) == 1 and calls[0][0] == "bg"
 
 
-def test_background_digest_speaks_prefixed_via_control(monkeypatch):
+def test_background_digest_announced_via_session_channel(monkeypatch):
+    # A background session's digest now goes via ITS OWN channel so the router
+    # announces "Session changed" (with the chime) before speaking it -- not the
+    # silent CONTROL lane that played out of order, chime-less (multi-session bug).
+    # It is unprefixed (the announcement names the session) and authorized so the
+    # background policy does not mute it.
     from sonara.router import CONTROL
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -341,12 +346,34 @@ def test_background_digest_speaks_prefixed_via_control(monkeypatch):
     _turn_done(daemon, session="bg")
     daemon._summarize_fn = lambda text, **kw: "The gist of it."
     daemon._summary_worker(*calls[0])
-    ctrl = daemon.router.channel(CONTROL)
-    texts = [it.text for it in ctrl.items[ctrl.cursor:]]
-    assert "Session otherproj: The gist of it." in texts
-    # and nothing landed in the bg session's own (unvoiced) channel
     bg = daemon.router.channel("bg")
-    assert all("gist" not in it.text for it in bg.items[bg.cursor:])
+    ctrl = daemon.router.channel(CONTROL)
+    assert any(it.text == "The gist of it." for it in bg.items)   # on bg channel, unprefixed
+    assert not any("gist" in it.text for it in ctrl.items)        # NOT on CONTROL
+    assert "bg" in daemon.router._replay_authorized               # policy-bypassed for voicing
+
+
+def test_background_digest_announced_before_it_plays(monkeypatch):
+    # End-to-end: the router announces "Session changed: otherproj" (a chime-
+    # carrying session_change item) BEFORE the background digest is spoken.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    sessions.register("bg", cwd="/home/me/otherproj")
+    daemon.router.active = "fg"
+    daemon.router._last_active = "fg"                     # a switch to bg will announce
+    _enable_and_feed(daemon, monkeypatch, session="bg")
+    _turn_done(daemon, session="bg")
+    daemon._summarize_fn = lambda text, **kw: "The gist of it."
+    daemon._summary_worker(*calls[0])
+    seq = []
+    for _ in range(6):
+        it = daemon.router.next_item()
+        if it is None:
+            break
+        seq.append((it.kind, it.text))
+    ann = next(i for i, (k, t) in enumerate(seq) if k == "session_change" and "otherproj" in t)
+    dig = next(i for i, (k, t) in enumerate(seq) if t == "The gist of it.")
+    assert ann < dig                                     # announcement precedes the digest
 
 
 def test_background_short_turn_speaks_original_prefixed(monkeypatch):

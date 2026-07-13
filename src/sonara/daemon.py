@@ -1111,24 +1111,27 @@ class SpeechDaemon:
                 # must announce "Session changed" BEFORE the context (not at the
                 # question). A plain background digest (no held question) stays on
                 # CONTROL -- it is a silent interjection that must not announce.
-                if self.sessions.is_foreground(session) or held is not None:
-                    # Every digest names its session ("always announce"): with
-                    # interleaved sessions an unprefixed digest was ambiguous.
-                    # History records the bare digest (repeat/catch_up replay it
-                    # without the prefix); only the spoken item carries the name.
-                    folder = self.sessions.folder(session)
-                    spoken = ("Session {0}: {1}".format(folder, summary)
-                              if folder else summary)
-                    entry = self.history.record(session, "summary", summary)
-                    self._enqueue(session, "summary", spoken, False, entry=entry)
-                    self._last_digest_text[session] = spoken   # Up re-reads this verbatim
-                    self.router.channel(session).turn_done = True
-                    self._wake.set()
-                else:
-                    # The user moved on while this digest was cooking (or the turn
-                    # belonged to a background session all along): speak it named,
-                    # via CONTROL, as soon as the voice is free.
-                    self._enqueue_background_digest(session, summary)
+                # Route EVERY digest via its own session channel so a reader switch
+                # announces the handoff ("Session changed: folder" + chime) BEFORE
+                # the digest -- even when the user has moved to another session
+                # while this one cooked (previously such digests went out silently
+                # on the CONTROL lane and played out of order, chime-less). A
+                # foreground digest does NOT switch the reader (no announcement), so
+                # it names itself with the "Session X:" prefix; a switched-to digest
+                # WILL be announced, so it stays unprefixed to avoid double-naming.
+                fg = self.sessions.is_foreground(session)
+                folder = self.sessions.folder(session)
+                spoken = ("Session {0}: {1}".format(folder, summary)
+                          if (fg and folder) else summary)
+                entry = self.history.record(session, "summary", summary)
+                self._enqueue(session, "summary", spoken, False, entry=entry)
+                self._last_digest_text[session] = spoken   # Up re-reads this verbatim
+                self.router.channel(session).turn_done = True
+                if not fg:
+                    # Let it be voiced + announced regardless of background policy
+                    # (earcon_only would otherwise mute a non-foreground session).
+                    self.router._replay_authorized.add(session)
+                self._wake.set()
             finally:
                 if held is not None:
                     self.router.channel(held.session).append(held)  # question after context
