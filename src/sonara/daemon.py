@@ -553,6 +553,10 @@ class SpeechDaemon:
             self._cancel_settle(session)
             self._settle_gen.pop(session, None)
             self._pending_decision.pop(session, None)
+            # A stale _await_choice entry from a dead session would suppress
+            # permission chimes DAEMON-WIDE forever: the chime carries no session,
+            # so the suppression check is global truthiness (audit #19).
+            self._await_choice.discard(session)
             return None
 
         if t == MsgType.STOP:

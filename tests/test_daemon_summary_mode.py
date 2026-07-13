@@ -552,6 +552,20 @@ def test_recorded_summary_is_not_resummarized(monkeypatch):
     assert "New content." in text2                       # new prose IS summarized
 
 
+def test_session_end_clears_await_choice(monkeypatch):
+    # A session ending with an unanswered AskUserQuestion must not leave a stale
+    # _await_choice entry: the permission-chime suppression check is GLOBAL
+    # truthiness, so one stale entry would swallow every future permission chime
+    # daemon-wide (audit #19).
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._await_choice.add("fg")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
+                           "session": "fg"})
+    assert "fg" not in daemon._await_choice
+
+
 def test_session_end_clears_summary_gen(monkeypatch):
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)

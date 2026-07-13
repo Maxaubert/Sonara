@@ -59,6 +59,22 @@ def test_active_reader_finishes_before_handoff():
     assert r.next_item().text == "b1"
 
 
+def test_replay_authorization_evicted_once_drained():
+    # The old in-loop eviction sat behind _ready() (which requires pending > 0),
+    # so it could never fire: a one-shot digest authorization leaked for the
+    # channel's lifetime and permanently bypassed the background policy (#19).
+    r, s = _router()
+    s._fg = "A"
+    s.should_speak = lambda sess: sess == "A"       # policy: background B is muted
+    b = r.channel("B"); b.append(_item("B", "digest")); b.turn_done = True
+    r._replay_authorized.add("B")                   # one-shot digest authorization
+    assert r.next_item().text == "digest"           # authorized content is voiced
+    assert r.next_item() is None                    # drained
+    assert "B" not in r._replay_authorized          # authorization evicted
+    b.append(_item("B", "later prose")); b.turn_done = True
+    assert r.next_item() is None                    # policy applies again: silent
+
+
 def test_muted_channel_is_skipped():
     # Spec §3: a muted channel is skipped in auto; hand off past it to
     # the next oldest-waiting ready session.

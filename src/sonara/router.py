@@ -106,6 +106,14 @@ class Router:
         return ch.ready(self._minqueue())
 
     def _pick(self) -> "str | None":
+        # Evict drained replay authorizations FIRST. The old eviction lived inside
+        # the oldest-waiting loop behind _ready() (which requires pending > 0), so
+        # it could never fire: a one-shot digest authorization leaked for the
+        # channel's lifetime and permanently bypassed the background policy (#19).
+        for s in list(self._replay_authorized):
+            ch = self.channels.get(s)
+            if ch is None or ch.pending() == 0:
+                self._replay_authorized.discard(s)
         # decisions preempt -- even when idle (user-blocking; I1 fix).
         # Still respect the background-policy gate: earcon_only mode suppresses
         # decision TEXT for non-fg sessions (the earcon itself fires separately
@@ -140,13 +148,10 @@ class Router:
             if self._ready(s):
                 # Replay-authorized sessions bypass the policy gate AND suppression
                 # (cross-session catch_up / nav replay must be voiced even in
-                # earcon_only mode). Auto-evict once drained so it doesn't linger.
+                # earcon_only mode). Drained authorizations were already evicted
+                # by the sweep at the top, so authorized here implies pending > 0.
                 if s in self._replay_authorized:
-                    ch = self.channels.get(s)
-                    if ch is None or ch.pending() == 0:
-                        self._replay_authorized.discard(s)
-                    else:
-                        return s
+                    return s
                 elif self._is_suppressed(s):
                     continue
                 elif should_speak is None or should_speak(s):
