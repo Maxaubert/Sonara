@@ -928,6 +928,15 @@ class SpeechDaemon:
                 "summary_mode": bool(self.config.get("summary_mode")),
             }
 
+        if t == MsgType.SHUTDOWN:
+            # Reply FIRST (the socket write happens after this handler returns),
+            # then tear down via a short timer: run() unlinks the lockfile and
+            # the OS releases the singleton mutex at process death (#23).
+            timer = threading.Timer(0.2, self.stop)
+            timer.daemon = True
+            timer.start()
+            return {"ok": True}
+
         if t == MsgType.PING:
             return {"ok": True}
 
@@ -1803,6 +1812,9 @@ class SpeechDaemon:
 
 
 def ensure_running() -> None:
+    from sonara import paths as _paths
+    if os.path.exists(str(_paths.STOPPED_SENTINEL_PATH)):
+        return   # explicitly shut down: hook events must not resurrect it (#23)
     if socket_connectable():
         return
     from sonara.platform import get_platform

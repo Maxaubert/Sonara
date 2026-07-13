@@ -80,15 +80,27 @@ def launch_spec(pythonw: str) -> tuple:
     return argv, kwargs
 
 
+def _stop_requested() -> bool:
+    """True when the stop sentinel exists: `sonara shutdown` was issued and no
+    start/install has cleared it, so the loop must EXIT instead of respawning
+    (previously NOTHING could stop the respawn loop, #23)."""
+    _ensure_importable()
+    from sonara import paths
+    return os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
+
+
 def run_supervisor_loop(pythonw: str) -> None:
     """Restart sonara.daemon indefinitely with exponential back-off.
 
     Back-off resets to base when the daemon ran for >= 300 s (healthy restart).
     Sequence (seconds): 2, 4, 8, 16, 32, 64, 120, 120, 120 ...
+    Exits when the stop sentinel appears (`sonara shutdown`, #23).
     """
     BASE, CAP, HEALTHY_UPTIME = 2, 120, 300
     attempt = 0
     while True:
+        if _stop_requested():
+            return
         argv, kwargs = launch_spec(pythonw)
         t_start = time.monotonic()
         proc = subprocess.Popen(argv, **kwargs)
@@ -98,6 +110,8 @@ def run_supervisor_loop(pythonw: str) -> None:
             attempt = 0          # reset debt after a healthy run
         else:
             attempt += 1
+        if _stop_requested():
+            return          # do not sleep out the back-off when told to stop
         delay = min(BASE * (2 ** (attempt - 1)), CAP)
         time.sleep(delay)
 
