@@ -848,7 +848,7 @@ class WinSupervisorBackend(SupervisorBackend):
         # /create does not auto-start, so
         # the new interpreter activates on the NEXT daemon start (next logon, or the
         # lazy-start path which now resolves the venv pythonw via daemon_pythonw()).
-        self._schtasks(["/end", "/tn", TASK_NAME])
+        self.end_task()
         rc = task_install(pythonw, supervisor_py)
         if rc == 0:
             print("Registered Task Scheduler task: {0}".format(TASK_NAME))
@@ -870,6 +870,12 @@ class WinSupervisorBackend(SupervisorBackend):
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(body)
         return path
+
+    def end_task(self) -> None:
+        """Best-effort end of the RUNNING scheduled task (the task-launched
+        supervisor tree). Lazy-started daemons are stopped via the SHUTDOWN
+        protocol message instead; cli.stop_sonara() composes both (#23)."""
+        self._schtasks(["/end", "/tn", TASK_NAME])
 
     def uninstall(self) -> None:
         rc = task_uninstall()

@@ -133,6 +133,77 @@ def test_client_respawns_once_after_dead_worker(tmp_path, monkeypatch):
     assert c.synth_wav("hello", "cb_default", {"chatterbox_timeout": 5}) == b"RIFFfake"
 
 
+def test_synth_timeout_fallback_single_sourced(tmp_path, monkeypatch):
+    # The fallback literal in synth_wav drifted from config DEFAULTS (120 vs 30,
+    # audit #19). The fallback must come FROM DEFAULTS so it cannot drift again.
+    import base64
+    from sonara.config import DEFAULTS
+    c = _client(tmp_path, monkeypatch)
+    seen = {}
+
+    def fake_request(payload, timeout, config):
+        seen["timeout"] = timeout
+        return {"ok": True, "wav_b64": base64.b64encode(b"RIFFfake").decode()}
+    monkeypatch.setattr(c, "_request", fake_request)
+    c.synth_wav("timeout probe", "cb_default", {})   # config missing the key
+    assert seen["timeout"] == DEFAULTS["chatterbox_timeout"]
+
+
+def test_default_smi_run_passes_timeout(monkeypatch):
+    # nvidia-smi can hang on driver resets/resume-from-sleep; without a timeout
+    # the single speak-loop thread wedges forever = total silence (audit #19).
+    seen = {}
+
+    def fake_check_output(argv, **kwargs):
+        seen.update(kwargs)
+        return "1024"
+    monkeypatch.setattr(cb.subprocess, "check_output", fake_check_output)
+    cb.free_vram_gb()
+    assert seen.get("timeout", 0) > 0
+
+
+def test_spawn_failure_raises_chatterbox_error(monkeypatch):
+    # A raw OSError from Popen bypassed the per-chunk Kokoro fallback (which
+    # catches only ChatterboxError), silently dropping the utterance while
+    # reporting success (audit #19). Every spawn failure must funnel into
+    # ChatterboxError.
+    import pytest
+
+    def boom(*a, **k):
+        raise OSError("venv python missing")
+    monkeypatch.setattr(cb.subprocess, "Popen", boom)
+    with pytest.raises(cb.ChatterboxError):
+        cb.ChatterboxClient()._spawn({"chatterbox_idle_unload_s": 600})
+
+
+def test_cooldown_after_worker_failure_fails_fast(monkeypatch):
+    # After a worker failure, further requests must fail FAST for a while
+    # (cooldown) so the per-chunk Kokoro fallback fires immediately, instead of
+    # re-paying spawn+timeout for EVERY chunk of every utterance (audit #21).
+    import pytest
+    monkeypatch.setattr(cb, "chatterbox_venv_python", lambda: "missing-python.exe")
+    monkeypatch.setattr(cb, "worker_script_path", lambda: "worker.py")
+    c = cb.ChatterboxClient()
+    with pytest.raises(cb.ChatterboxError):
+        c._request({"type": "ping"}, 1, {})          # spawn fails -> cooldown armed
+    spawns = []
+    monkeypatch.setattr(c, "_spawn", lambda config: spawns.append(1))
+    with pytest.raises(cb.ChatterboxError):
+        c._request({"type": "ping"}, 1, {})          # cooldown: no new spawn attempt
+    assert spawns == []
+
+
+def test_cooldown_expires_and_success_resets_it(tmp_path, monkeypatch):
+    import time
+    c = _client(tmp_path, monkeypatch)
+    c._cooldown_until = time.monotonic() - 1         # expired cooldown
+    # unique text: the module-level synth cache must not satisfy this (a cache
+    # hit would bypass _request and never clear the memo)
+    out = c.synth_wav("cooldown reset probe", "cb_default", {"chatterbox_timeout": 5})
+    assert out == b"RIFFfake"                        # request went through
+    assert c._cooldown_until == 0.0                  # success cleared the memo
+
+
 def test_fallback_notice_pops_once():
     cb._set_fallback_notice("no vram")
     assert cb.pop_fallback_notice() == "no vram"

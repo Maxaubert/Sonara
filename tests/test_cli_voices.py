@@ -44,6 +44,65 @@ def test_voices_install_reports_failure_without_rewiring(monkeypatch, tmp_path):
     assert uninstall_called, "uninstall_kokoro must be called on failure to revert half-built state"
 
 
+def test_voices_install_reverts_on_keyboard_interrupt(monkeypatch, tmp_path):
+    # Ctrl+C during the download must still revert the half-built venv, which
+    # would otherwise read as fully provisioned forever (venv python exists after
+    # step 1 of a multi-GB install) -- `except Exception` missed it (audit #21).
+    monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
+    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    uninstalled = []
+    def boom(pythonpath):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(kp, "install_kokoro", boom)
+    monkeypatch.setattr(kp, "uninstall_kokoro", lambda: uninstalled.append(True))
+    monkeypatch.setattr(cli, "install", lambda: pytest.fail("must not rewire"))
+    with pytest.raises(KeyboardInterrupt):               # interrupt still propagates
+        cli._cmd_voices_install(object())
+    assert uninstalled
+
+
+def test_voices_install_chatterbox_reverts_on_keyboard_interrupt(monkeypatch):
+    monkeypatch.setattr(paths, "ensure_sonara_dir", lambda: None)
+    uninstalled = []
+    def boom():
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(cbp, "install_chatterbox", boom)
+    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: uninstalled.append(True))
+
+    class Args:
+        engine = "chatterbox"
+    with pytest.raises(KeyboardInterrupt):
+        cli._cmd_voices_install(Args())
+    assert uninstalled
+
+
+def test_voices_uninstall_stops_daemon_first(monkeypatch):
+    # The venv being removed is the interpreter the daemon runs on (kokoro) or
+    # spawns workers from (chatterbox); deleting it live raised a raw
+    # PermissionError and left a half-deleted venv (audit #23). Stop first.
+    order = []
+    monkeypatch.setattr(cli, "stop_sonara",
+                        lambda sup=None: order.append("stop") or True)
+    monkeypatch.setattr(kp, "uninstall_kokoro", lambda: order.append("rm"))
+    monkeypatch.setattr(cli, "install", lambda: order.append("install") or 0)
+    cli._cmd_voices_uninstall(object())
+    assert order.index("stop") < order.index("rm")
+
+
+def test_voices_uninstall_chatterbox_stops_daemon_first(monkeypatch):
+    order = []
+    monkeypatch.setattr(cli, "stop_sonara",
+                        lambda sup=None: order.append("stop") or True)
+    monkeypatch.setattr(cli, "start_sonara", lambda: order.append("start") or 0)
+    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: order.append("rm"))
+
+    class Args:
+        engine = "chatterbox"
+    cli._cmd_voices_uninstall(Args())
+    assert order.index("stop") < order.index("rm")
+    assert "start" in order                               # daemon brought back
+
+
 def test_voices_uninstall_removes_and_reverts(monkeypatch):
     order = []
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: order.append("rm"))

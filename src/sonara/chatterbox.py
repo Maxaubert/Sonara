@@ -19,8 +19,10 @@ import json
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 
+from sonara.config import DEFAULTS as _CONFIG_DEFAULTS
 from sonara.paths import CHATTERBOX_HF_CACHE, CHATTERBOX_VOICES_DIR, chatterbox_venv_python
 
 DEFAULT_VOICE = "cb_default"
@@ -158,7 +160,13 @@ def split_text(text, max_chars=280):
 # --- VRAM gate -----------------------------------------------------------------
 
 def _default_smi_run(argv, **kwargs):
-    """subprocess.check_output, but windowless on Windows (no console flash)."""
+    """subprocess.check_output, but windowless on Windows (no console flash).
+
+    Bounded: nvidia-smi can hang during driver resets/resume-from-sleep, and this
+    runs synchronously on the speak-loop thread -- an unbounded call would wedge
+    ALL speech forever (audit #19). TimeoutExpired falls into free_vram_gb's
+    except -> None -> the gate passes, matching unknown-VRAM semantics."""
+    kwargs.setdefault("timeout", 3)
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return subprocess.check_output(argv, **kwargs)
@@ -236,6 +244,12 @@ def _synth_cache_put(key, wav) -> None:
 
 # --- client --------------------------------------------------------------------
 
+# After a worker failure, refuse further requests for this long so each chunk's
+# Kokoro fallback fires FAST instead of re-paying spawn+timeout per chunk. A
+# success clears it immediately (audit #21).
+_COOLDOWN_S = 60.0
+
+
 class ChatterboxClient:
     """Owns (at most) one chatterbox_worker.py subprocess, spawned on demand.
 
@@ -248,6 +262,7 @@ class ChatterboxClient:
     def __init__(self) -> None:
         self._proc = None
         self._lock = threading.Lock()
+        self._cooldown_until = 0.0   # monotonic deadline; 0 = healthy
 
     def _spawn(self, config) -> None:
         idle_s = config.get("chatterbox_idle_unload_s", 600)
@@ -264,16 +279,25 @@ class ChatterboxClient:
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        self._proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=env,
-            text=True,
-            encoding="utf-8",
-            **kwargs
-        )
+        try:
+            self._proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                text=True,
+                encoding="utf-8",
+                **kwargs
+            )
+        except Exception as exc:  # noqa: BLE001 - venv python gone, spawn denied, ...
+            # Funnel EVERY spawn failure into ChatterboxError: the per-chunk
+            # Kokoro fallback catches only ChatterboxError, so a raw OSError
+            # would bypass it and silently drop the utterance while reporting
+            # success (audit #19).
+            self._proc = None
+            raise ChatterboxError(
+                "failed to spawn chatterbox worker: {0}".format(exc))
 
     def _kill(self) -> None:
         proc, self._proc = self._proc, None
@@ -328,17 +352,27 @@ class ChatterboxClient:
 
     def _request(self, payload, timeout, config) -> dict:
         with self._lock:
-            self._ensure_proc(config)
-            resp = self._try_request(payload, timeout)
-            if resp is not None:
-                return resp
-            # Dead pipe: kill, respawn once, retry.
-            self._kill()
-            self._spawn(config)
-            resp = self._try_request(payload, timeout)
-            if resp is None:
-                self._kill()
-                raise ChatterboxError("chatterbox worker is unavailable")
+            # Failure memo (audit #21): while cooling down after a failure, fail
+            # IMMEDIATELY so the caller's per-chunk Kokoro fallback fires fast --
+            # a persistently broken worker was otherwise respawned and re-paid
+            # (spawn + timeout, GPU thrash) for every chunk of every utterance.
+            if time.monotonic() < self._cooldown_until:
+                raise ChatterboxError("chatterbox worker cooling down after failure")
+            try:
+                self._ensure_proc(config)
+                resp = self._try_request(payload, timeout)
+                if resp is None:
+                    # Dead pipe: kill, respawn once, retry.
+                    self._kill()
+                    self._spawn(config)
+                    resp = self._try_request(payload, timeout)
+                if resp is None:
+                    self._kill()
+                    raise ChatterboxError("chatterbox worker is unavailable")
+            except ChatterboxError:
+                self._cooldown_until = time.monotonic() + _COOLDOWN_S
+                raise
+            self._cooldown_until = 0.0   # healthy again: clear the memo
             return resp
 
     def warm(self, config) -> bool:
@@ -376,7 +410,11 @@ class ChatterboxClient:
             "variant": spec["variant"],
             "exaggeration": spec["exaggeration"],
         }
-        timeout = config.get("chatterbox_timeout", 120)
+        # Fallback comes FROM config DEFAULTS: a second literal here drifted from
+        # DEFAULTS once already (120 vs 30, audit #19) and the 30 broke post-idle
+        # synthesis (cold reload ~40s > 30s timeout -> cascade to Kokoro).
+        timeout = config.get("chatterbox_timeout",
+                             _CONFIG_DEFAULTS["chatterbox_timeout"])
         resp = self._request(payload, timeout, config)
         if not resp.get("ok"):
             raise ChatterboxError(resp.get("error", "unknown chatterbox error"))

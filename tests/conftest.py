@@ -51,6 +51,11 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
     import sonara.client as client_mod
     monkeypatch.setattr(client_mod, "LOCK_PATH", sonara_dir / "daemon.lock", raising=False)
     monkeypatch.setattr(paths, "LOG_PATH", sonara_dir / "speechd.log", raising=False)
+    # STOPPED_SENTINEL_PATH is import-time-bound like the rest; without this a
+    # lifecycle test would write the developer's real ~/.sonara/stopped and
+    # BLOCK the live daemon's respawn paths (#23).
+    monkeypatch.setattr(
+        paths, "STOPPED_SENTINEL_PATH", sonara_dir / "stopped", raising=False)
     monkeypatch.setattr(paths, "KEYMAP_PATH", sonara_dir / "keymap.json", raising=False)
     monkeypatch.setattr(
         paths, "HOTKEYD_RESOLVED_PATH", sonara_dir / "hotkeyd.resolved.json",

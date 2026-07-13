@@ -7,6 +7,10 @@ SONARA_DIR = Path.home() / ".sonara"
 APP_DIR = SONARA_DIR / "app"          # stable copy of the sonara package (PYTHONPATH target)
 CONFIG_PATH = SONARA_DIR / "config.json"
 LOCK_PATH = SONARA_DIR / "daemon.lock"
+# Stop sentinel (#23): existence means "Sonara must not run". Written by
+# `sonara shutdown`, cleared by `sonara start` / install(). Gates BOTH respawn
+# paths (the supervisor loop and the per-hook-event lazy start).
+STOPPED_SENTINEL_PATH = SONARA_DIR / "stopped"
 SINGLETON_PATH = SONARA_DIR / "daemon.singleton"   # held-open flock: single-instance
 LOG_PATH = SONARA_DIR / "speechd.log"
 KEYMAP_PATH = SONARA_DIR / "keymap.json"

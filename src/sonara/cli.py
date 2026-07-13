@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
@@ -419,10 +420,23 @@ def _copy_app(plugin_root: str) -> str:
     app_dir = str(paths.APP_DIR)
     src_pkg = os.path.join(plugin_root, "src", "sonara")
     dst_pkg = os.path.join(app_dir, "sonara")
+    new_pkg = dst_pkg + ".new"
+    old_pkg = dst_pkg + ".old"
     os.makedirs(app_dir, exist_ok=True)
+    # Crash-safe swap (#23): build the fresh copy NEXT TO the live one, then
+    # rename it in. The old rmtree-then-copytree deleted the live app FIRST, so
+    # any failure (classically: the running task's workdir locking a directory)
+    # left a gutted install the respawn loop could not run. A failed copytree
+    # now leaves the live app untouched.
+    for stale in (new_pkg, old_pkg):                # prior-crash residue
+        if os.path.isdir(stale):
+            shutil.rmtree(stale, ignore_errors=True)
+    shutil.copytree(src_pkg, new_pkg)
     if os.path.isdir(dst_pkg):
-        shutil.rmtree(dst_pkg)
-    shutil.copytree(src_pkg, dst_pkg)
+        os.rename(dst_pkg, old_pkg)
+    os.rename(new_pkg, dst_pkg)
+    if os.path.isdir(old_pkg):
+        shutil.rmtree(old_pkg, ignore_errors=True)  # best-effort; retried next install
     return app_dir
 
 
@@ -471,6 +485,70 @@ def _ensure_speech_deps(python: str) -> bool:
     return False
 
 
+def stop_sonara(sup=None) -> bool:
+    """Stop Sonara everywhere (#23): write the stop sentinel (gates the
+    supervisor loop AND the per-hook-event lazy start), end the scheduled task,
+    SHUTDOWN the daemon, and wait for it to be gone. Returns True when the
+    daemon is confirmed gone (a daemon that was not running counts as stopped).
+    install()/uninstall() call this BEFORE mutating files under APP_DIR."""
+    paths.ensure_sonara_dir()
+    try:
+        with open(str(paths.STOPPED_SENTINEL_PATH), "w", encoding="utf-8") as fh:
+            fh.write("sonara shutdown")
+    except OSError:
+        pass
+    if sup is None:
+        sup = _platform().supervisor
+    try:
+        sup.end_task()
+    except Exception:  # noqa: BLE001 - task may not exist; never fail a stop
+        pass
+    try:
+        _send({"v": PROTOCOL_VERSION, "type": MsgType.SHUTDOWN}, expect_reply=True)
+    except Exception:  # noqa: BLE001 - not running IS stopped
+        pass
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not paths.socket_connectable():
+            time.sleep(0.3)     # grace: process exit releases the mutex
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def start_sonara() -> int:
+    """Clear a previous shutdown and start the daemon (#23). This is the
+    'sonara start' that doctor has always told users to run."""
+    try:
+        os.remove(str(paths.STOPPED_SENTINEL_PATH))
+    except OSError:
+        pass
+    from sonara import daemon as daemon_module
+    daemon_module.ensure_running()
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if paths.socket_connectable():
+            print("Sonara daemon is running.")
+            return 0
+        time.sleep(0.1)
+    print("Start requested; the daemon is not accepting yet "
+          "(check ~/.sonara/speechd.log).")
+    return 1
+
+
+def _cmd_shutdown(_args) -> int:
+    if stop_sonara():
+        print("Sonara stopped. It stays stopped until 'sonara start' "
+              "(or 'sonara install').")
+        return 0
+    print("Sonara did not shut down cleanly; a daemon may still be running.")
+    return 1
+
+
+def _cmd_start(_args) -> int:
+    return start_sonara()
+
+
 def install() -> int:
     """Install Sonara: resolve python, ensure the speech engine, copy the runtime,
     write the install record, then delegate OS-specific autostart + hooks +
@@ -496,6 +574,13 @@ def install() -> int:
 
     plugin_root = os.path.realpath(paths.repo_root())
 
+    # 1c. STOP Sonara before touching APP_DIR (#23): the scheduled task's
+    #     working directory sits INSIDE the tree being replaced, so mutating it
+    #     under a running daemon/supervisor half-deleted the app (the documented
+    #     'gutted app' failure). The sentinel also blocks a hook event from
+    #     lazily respawning the daemon mid-install; cleared after step 5.
+    stop_sonara(sup)
+
     # 2. Copy the package into the stable APP_DIR (decouples the long-lived
     #    daemon from the version-pinned marketplace cache; see spec §3.B).
     try:
@@ -519,6 +604,14 @@ def install() -> int:
 
     # 5. OS-specific autostart + hooks + launcher (the platform backend owns it).
     sup.install(python, app_dir)
+
+    # 5b. Install complete enough to run: clear the stop sentinel so the next
+    #     hook event / logon / 'sonara start' brings the daemon up on the
+    #     FRESH code (#23).
+    try:
+        os.remove(str(paths.STOPPED_SENTINEL_PATH))
+    except OSError:
+        pass
 
     # 6. Global hotkeys. Windows hotkeys run in-process and are started by the
     #    daemon (deferred to M3, announced in post_install_notes).
@@ -557,6 +650,10 @@ def uninstall() -> int:
     """Remove Sonara's OS autostart/hooks/launcher (via the platform backend)
     plus the shared runtime artifacts, PRESERVING config.json + keymap.json."""
     sup = _platform().supervisor
+    # STOP everything FIRST (#23): the old order deleted the task definition and
+    # files while the supervisor/daemon kept running (and kept respawning from a
+    # deleted install).
+    stop_sonara(sup)
     sup.uninstall()
     try:
         _platform().hotkey.uninstall()
@@ -571,6 +668,7 @@ def uninstall() -> int:
         paths.LOG_PATH,
         paths.HOTKEYD_RESOLVED_PATH,
         paths.INSTALL_RECORD_PATH,
+        paths.STOPPED_SENTINEL_PATH,   # clean slate: a reinstall starts fresh (#23)
         sonara_dir / "hotkeyd.log",
         sonara_dir / "faulthandler.log",
     ]
@@ -624,6 +722,12 @@ def _cmd_voices_install(args) -> int:
             print(f"Chatterbox setup failed: {exc}", file=sys.stderr)
             cbp.uninstall_chatterbox()  # revert any half-built venv
             return 1
+        except BaseException:
+            # Ctrl+C / kill mid-download: still revert -- a half-built venv reads
+            # as fully provisioned forever (the python.exe existence check is
+            # true after step 1 of a multi-GB install) (audit #21).
+            cbp.uninstall_chatterbox()
+            raise
         print("Chatterbox voices ready. Pick one with: sonara voice chatterbox:cb_default")
         return 0
 
@@ -638,6 +742,11 @@ def _cmd_voices_install(args) -> int:
         print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
         kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
         return 1
+    except BaseException:
+        # Ctrl+C / kill mid-download: still revert so neural_enabled() cannot be
+        # left True over a half-built venv (audit #21).
+        kp.uninstall_kokoro()
+        raise
     rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
     if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
         print("Neural voices ready. Pick one with: sonara voice af_heart")
@@ -646,15 +755,23 @@ def _cmd_voices_install(args) -> int:
 
 def _cmd_voices_uninstall(args) -> int:
     """Remove the requested voice engine's venv. Kokoro reverts the daemon to
-    system Python; chatterbox needs no daemon rewiring."""
+    system Python; chatterbox needs no daemon rewiring.
+
+    STOP the daemon first (#23): the kokoro venv IS the daemon's interpreter
+    (pythonw locks Scripts/) and the chatterbox venv hosts the resident worker;
+    deleting either live raised a raw PermissionError and left a half-deleted
+    venv that still read as provisioned."""
     engine = getattr(args, "engine", "kokoro") or "kokoro"
     if engine == "chatterbox":
         from sonara import chatterbox_provision as cbp
+        stop_sonara()
         cbp.uninstall_chatterbox()
         print("Chatterbox voices removed.")
+        start_sonara()   # nothing to rewire; bring the daemon back up
         return 0
 
     from sonara import kokoro_provision as kp
+    stop_sonara()
     kp.uninstall_kokoro()
     rc = install()  # neural_enabled() now False -> reverts to resolve_python()
     print("Neural voices removed; reverted to the system voice.")
@@ -669,6 +786,13 @@ def _cmd_daemon(_args) -> int:
 
 def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
+    sub.add_parser(
+        "shutdown",
+        help="stop the daemon and supervisor (stays stopped until 'sonara start')",
+    ).set_defaults(func=_cmd_shutdown)
+    sub.add_parser(
+        "start", help="start the daemon (clears a previous shutdown)",
+    ).set_defaults(func=_cmd_start)
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
     sub.add_parser("install", help="install the scheduled task + SONARA_DIR").set_defaults(
