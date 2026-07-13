@@ -336,9 +336,22 @@ class SpeechDaemon:
                     "Sonara was updated. Run, slash sonara install, to apply.")
         return ("ok", None)
 
+    def _seq(self, event, **fields):
+        # DIAGNOSTIC (#13): playback-order trace to speechd.log. Async multi-
+        # session timing is only debuggable from the real order, not by reasoning.
+        import sys, time
+        try:
+            active = (self.router.active or "")[:6]
+        except Exception:  # noqa: BLE001
+            active = "?"
+        parts = " ".join("{0}={1}".format(k, v) for k, v in fields.items())
+        print("[seq] {0:.2f} {1} {2} active={3}".format(
+            time.time(), event, parts, active), file=sys.stderr, flush=True)
+
     def handle_message(self, msg):
         t = msg.get("type")
         session = msg.get("session", "")
+        self._seq("MSG", type=t, sess=(session or "")[:6])
         verbosity = self.config.get("verbosity", "everything")
 
         if t == MsgType.PROSE:
@@ -1068,6 +1081,8 @@ class SpeechDaemon:
         # turn-ends with no user action between them each keep their digest (they
         # queue and play) -- the system never drops a finished message (#13).
         gen = self._summary_gen.get(session, 0)
+        self._seq("DISPATCH", sess=session[:6], gen=gen,
+                  fg=self.sessions.is_foreground(session))
         self._start_summary_thread(session, gen, text)
         return True                      # async digest in flight -> caller holds
 
@@ -1160,6 +1175,10 @@ class SpeechDaemon:
             # plays even on a dropped/failed digest -- a blocking prompt is never lost
             # (a new prompt clears it via FLUSH, so a stale question is not replayed).
             held = self._held_decision.pop(session, None)
+            self._seq("WORKER", sess=session[:6], gen=gen,
+                      cur=self._summary_gen.get(session, 0),
+                      fg=self.sessions.is_foreground(session),
+                      held=(held is not None), summary=bool(summary))
             try:
                 if self._summary_gen.get(session, 0) != gen:
                     _log("digest dropped: user prompted this session since dispatch")
@@ -1526,6 +1545,8 @@ class SpeechDaemon:
         # take seconds on a long digest) would otherwise hold other apps' audio
         # down through the silence. The backend fires on_play right before the
         # first sample plays.
+        self._seq("SPEAK", sess=(item.session or "")[:6], kind=item.kind,
+                  text=repr(item.text[:44]))
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=self._maybe_duck)
