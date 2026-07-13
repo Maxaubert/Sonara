@@ -228,14 +228,28 @@ def test_held_question_falls_back_to_raw_context_on_skip(monkeypatch):
     assert "First part." in items[summ_idx].text         # the raw lead-in, not dropped
 
 
-def test_turn_end_skip_stays_silent(monkeypatch):
-    # A plain turn-end digest (no held question) still respects SKIP -> silent.
+def test_turn_end_skip_falls_back_to_raw(monkeypatch):
+    # A session's LATEST message is always read (spec): if the summarizer SKIPs a
+    # plain turn-end digest, fall back to the RAW text rather than dropping it.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
-    _enable_and_feed(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)                # "First part. ... Second part. ..."
     _turn_done(daemon)                                   # no held question
     daemon._summarize_fn = lambda text, **kw: None       # SKIP
     daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    summ = next((it for it in ch.items[ch.cursor:] if it.kind == "summary"), None)
+    assert summ is not None and "First part." in summ.text   # raw, not dropped
+
+
+def test_empty_turn_stays_silent(monkeypatch):
+    # A genuinely empty turn (no text at all) still stays silent -- nothing to read.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon.config["summary_mode"] = True
+    # dispatch a worker directly with empty text
+    daemon._summarize_fn = lambda text, **kw: None
+    daemon._summary_gen["fg"] = 1
+    daemon._summary_worker("fg", 1, "   ")
     ch = daemon.router.channel("fg")
     assert not any(it.kind == "summary" for it in ch.items[ch.cursor:])
 
@@ -419,15 +433,18 @@ def test_worker_success_enqueues_summary(monkeypatch):
     assert "The gist." in texts
 
 
-def test_worker_failure_fires_cue_and_enqueues_nothing(monkeypatch):
+def test_worker_failure_falls_back_to_raw(monkeypatch):
+    # A summarizer failure (returns None) now falls back to the RAW text -- the
+    # session's latest message is always read (spec), never silently dropped.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
     _turn_done(daemon)
     daemon._summarize_fn = lambda text, **kw: None
     daemon._summary_worker(*calls[0])
-    assert speaker.earcons[-1] == "summary_failed"
-    assert daemon.router.channel("fg").pending() == 0
+    ch = daemon.router.channel("fg")
+    summ = next((it for it in ch.items[ch.cursor:] if it.kind == "summary"), None)
+    assert summ is not None and "First part." in summ.text   # read raw, not dropped
 
 
 def test_superseded_worker_result_is_dropped(monkeypatch):

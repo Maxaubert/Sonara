@@ -1096,13 +1096,12 @@ class SpeechDaemon:
                     _log("digest dropped: superseded by a newer turn")
                     return               # superseded: a newer turn owns the voice
                 if not summary:
-                    # SKIP / empty / failed digest. A plain turn-end digest keeps
-                    # respecting SKIP (stay silent -- that is what SKIP is for). But
-                    # a HELD question must NOT be heard with no context before it,
-                    # so fall back to speaking the RAW lead-in (issue #11 f/u:
-                    # confirmed via sequence capture -- Haiku SKIP'd a trivial
-                    # lead-in and the question then played alone).
-                    if held is None or not (text or "").strip():
+                    # SKIP / empty / failed digest. A session's LATEST message must
+                    # ALWAYS be read (user spec: never skip the last message --
+                    # digested or not). This digest is the latest (it was not
+                    # superseded above), so fall back to the RAW text rather than
+                    # dropping it. Only a genuinely empty turn stays silent.
+                    if not (text or "").strip():
                         self._earcon("summary_failed")
                         return
                     summary = text
