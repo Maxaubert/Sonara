@@ -420,10 +420,23 @@ def _copy_app(plugin_root: str) -> str:
     app_dir = str(paths.APP_DIR)
     src_pkg = os.path.join(plugin_root, "src", "sonara")
     dst_pkg = os.path.join(app_dir, "sonara")
+    new_pkg = dst_pkg + ".new"
+    old_pkg = dst_pkg + ".old"
     os.makedirs(app_dir, exist_ok=True)
+    # Crash-safe swap (#23): build the fresh copy NEXT TO the live one, then
+    # rename it in. The old rmtree-then-copytree deleted the live app FIRST, so
+    # any failure (classically: the running task's workdir locking a directory)
+    # left a gutted install the respawn loop could not run. A failed copytree
+    # now leaves the live app untouched.
+    for stale in (new_pkg, old_pkg):                # prior-crash residue
+        if os.path.isdir(stale):
+            shutil.rmtree(stale, ignore_errors=True)
+    shutil.copytree(src_pkg, new_pkg)
     if os.path.isdir(dst_pkg):
-        shutil.rmtree(dst_pkg)
-    shutil.copytree(src_pkg, dst_pkg)
+        os.rename(dst_pkg, old_pkg)
+    os.rename(new_pkg, dst_pkg)
+    if os.path.isdir(old_pkg):
+        shutil.rmtree(old_pkg, ignore_errors=True)  # best-effort; retried next install
     return app_dir
 
 
@@ -561,6 +574,13 @@ def install() -> int:
 
     plugin_root = os.path.realpath(paths.repo_root())
 
+    # 1c. STOP Sonara before touching APP_DIR (#23): the scheduled task's
+    #     working directory sits INSIDE the tree being replaced, so mutating it
+    #     under a running daemon/supervisor half-deleted the app (the documented
+    #     'gutted app' failure). The sentinel also blocks a hook event from
+    #     lazily respawning the daemon mid-install; cleared after step 5.
+    stop_sonara(sup)
+
     # 2. Copy the package into the stable APP_DIR (decouples the long-lived
     #    daemon from the version-pinned marketplace cache; see spec §3.B).
     try:
@@ -584,6 +604,14 @@ def install() -> int:
 
     # 5. OS-specific autostart + hooks + launcher (the platform backend owns it).
     sup.install(python, app_dir)
+
+    # 5b. Install complete enough to run: clear the stop sentinel so the next
+    #     hook event / logon / 'sonara start' brings the daemon up on the
+    #     FRESH code (#23).
+    try:
+        os.remove(str(paths.STOPPED_SENTINEL_PATH))
+    except OSError:
+        pass
 
     # 6. Global hotkeys. Windows hotkeys run in-process and are started by the
     #    daemon (deferred to M3, announced in post_install_notes).
@@ -622,6 +650,10 @@ def uninstall() -> int:
     """Remove Sonara's OS autostart/hooks/launcher (via the platform backend)
     plus the shared runtime artifacts, PRESERVING config.json + keymap.json."""
     sup = _platform().supervisor
+    # STOP everything FIRST (#23): the old order deleted the task definition and
+    # files while the supervisor/daemon kept running (and kept respawning from a
+    # deleted install).
+    stop_sonara(sup)
     sup.uninstall()
     try:
         _platform().hotkey.uninstall()
@@ -636,6 +668,7 @@ def uninstall() -> int:
         paths.LOG_PATH,
         paths.HOTKEYD_RESOLVED_PATH,
         paths.INSTALL_RECORD_PATH,
+        paths.STOPPED_SENTINEL_PATH,   # clean slate: a reinstall starts fresh (#23)
         sonara_dir / "hotkeyd.log",
         sonara_dir / "faulthandler.log",
     ]
@@ -722,15 +755,23 @@ def _cmd_voices_install(args) -> int:
 
 def _cmd_voices_uninstall(args) -> int:
     """Remove the requested voice engine's venv. Kokoro reverts the daemon to
-    system Python; chatterbox needs no daemon rewiring."""
+    system Python; chatterbox needs no daemon rewiring.
+
+    STOP the daemon first (#23): the kokoro venv IS the daemon's interpreter
+    (pythonw locks Scripts/) and the chatterbox venv hosts the resident worker;
+    deleting either live raised a raw PermissionError and left a half-deleted
+    venv that still read as provisioned."""
     engine = getattr(args, "engine", "kokoro") or "kokoro"
     if engine == "chatterbox":
         from sonara import chatterbox_provision as cbp
+        stop_sonara()
         cbp.uninstall_chatterbox()
         print("Chatterbox voices removed.")
+        start_sonara()   # nothing to rewire; bring the daemon back up
         return 0
 
     from sonara import kokoro_provision as kp
+    stop_sonara()
     kp.uninstall_kokoro()
     rc = install()  # neural_enabled() now False -> reverts to resolve_python()
     print("Neural voices removed; reverted to the system voice.")

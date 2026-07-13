@@ -76,6 +76,33 @@ def test_voices_install_chatterbox_reverts_on_keyboard_interrupt(monkeypatch):
     assert uninstalled
 
 
+def test_voices_uninstall_stops_daemon_first(monkeypatch):
+    # The venv being removed is the interpreter the daemon runs on (kokoro) or
+    # spawns workers from (chatterbox); deleting it live raised a raw
+    # PermissionError and left a half-deleted venv (audit #23). Stop first.
+    order = []
+    monkeypatch.setattr(cli, "stop_sonara",
+                        lambda sup=None: order.append("stop") or True)
+    monkeypatch.setattr(kp, "uninstall_kokoro", lambda: order.append("rm"))
+    monkeypatch.setattr(cli, "install", lambda: order.append("install") or 0)
+    cli._cmd_voices_uninstall(object())
+    assert order.index("stop") < order.index("rm")
+
+
+def test_voices_uninstall_chatterbox_stops_daemon_first(monkeypatch):
+    order = []
+    monkeypatch.setattr(cli, "stop_sonara",
+                        lambda sup=None: order.append("stop") or True)
+    monkeypatch.setattr(cli, "start_sonara", lambda: order.append("start") or 0)
+    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: order.append("rm"))
+
+    class Args:
+        engine = "chatterbox"
+    cli._cmd_voices_uninstall(Args())
+    assert order.index("stop") < order.index("rm")
+    assert "start" in order                               # daemon brought back
+
+
 def test_voices_uninstall_removes_and_reverts(monkeypatch):
     order = []
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: order.append("rm"))
