@@ -9,6 +9,48 @@ def _prose(s, d, i, f):
 
 
 # ---------------------------------------------------------------------------
+# Control-cue ordering + pause exemption (deep audit #25)
+# ---------------------------------------------------------------------------
+
+def test_stacked_control_cues_play_in_order():
+    # _speak_cue used to insert at the CONTROL cursor, so stacked cues played
+    # LIFO (newest state confirmation first) -- misleading for an eyes-free user.
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon._speak_cue(None, "First cue.")
+    daemon._speak_cue(None, "Second cue.")
+    daemon._speak_loop_once()
+    daemon._speak_loop_once()
+    assert speaker.spoken == ["First cue.", "Second cue."]   # FIFO
+
+
+def test_mute_confirmation_heard_while_paused():
+    # State changes made WHILE PAUSED were completely silent (the cues were
+    # mute_exempt but not pause_exempt): the user could not tell what state
+    # they had just toggled into.
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+    daemon._speak_loop_once()                        # "Paused." drains
+    speaker.spoken.clear()
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})
+    daemon._speak_loop_once()                        # paused: only pause_exempt plays
+    assert speaker.spoken == ["Muted."]
+
+
+def test_audio_control_confirmation_heard_while_paused():
+    daemon, queue, speaker, *_ = make_daemon(foreground="A")
+    import sonara.daemon as daemon_module
+    import unittest.mock as mock
+    with mock.patch.object(daemon_module, "save_config", lambda cfg: None):
+        daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PAUSE})
+        daemon._speak_loop_once()
+        speaker.spoken.clear()
+        daemon.handle_message({"v": PROTOCOL_VERSION,
+                               "type": MsgType.SET_AUDIO_CONTROL, "enabled": True})
+        daemon._speak_loop_once()
+        assert speaker.spoken == ["Audio control on."]
+
+
+# ---------------------------------------------------------------------------
 # MUTE tests
 # ---------------------------------------------------------------------------
 

@@ -885,6 +885,55 @@ def test_flush_cancels_pending_question_settle(monkeypatch):
     assert "fg" not in daemon._pending_decision
 
 
+def test_short_foreground_turn_sets_reread_text(monkeypatch):
+    # Deep audit (#25): short FOREGROUND turns never set _last_digest_text, so
+    # summary-mode Up (the only hotkey re-read) gave a dead edge chime after a
+    # short turn -- while short BACKGROUND turns set it and re-read fine.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Back on. ", 0, True))
+    _turn_done(daemon)                                   # short turn, raw replay
+    assert daemon._last_digest_text.get("fg") == "Back on."
+    assert daemon._reread_last("fg") is True             # Up now works
+
+
+def test_flush_clears_inflight_accounting_so_new_question_not_held(monkeypatch):
+    # Deep audit (#25): FLUSH left _inflight_digests/_last_dispatch_token stale,
+    # so a NEW turn's blocking question (short lead-in -> no own digest) was held
+    # behind the FLUSH-cancelled digest and stayed SILENT until the stale worker
+    # landed -- up to summary_timeout in an eyes-free tool.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # digest W1 in flight
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
+                           "session": "fg"})             # new prompt cancels W1
+    daemon.handle_message(_prose("fg", "Short context. ", 0, True))
+    _choice(daemon)                                      # must NOT wait for dead W1
+    ch = daemon.router.channel("fg")
+    assert any(it.is_decision for it in ch.items[ch.cursor:])   # enqueued NOW
+
+
+def test_stale_worker_does_not_steal_postflush_inflight_count(monkeypatch):
+    # Companion (#25): after FLUSH cleared the count, the CANCELLED worker's
+    # finally must not decrement a POST-flush dispatch's count (that would let a
+    # later question jump ahead of its own in-flight context digest).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # W1 (gen 0)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
+                           "session": "fg"})             # gen -> 1; count cleared
+    _pad = "This filler sentence carries the turn well past the threshold. "
+    daemon.handle_message(_prose("fg", "New turn text. " + _pad * 6, 0, True))
+    _turn_done(daemon)                                   # W2 (gen 1), count = 1
+    daemon._summarize_fn = lambda text, **kw: "Stale W1."
+    daemon._summary_worker(*calls[0])                    # stale W1 lands
+    assert daemon._inflight_digests.get("fg", 0) == 1    # W2 still counted
+
+
 # --- queued question is not overtaken by a later short turn (#17) ---------
 
 def test_short_answer_does_not_overtake_held_question(monkeypatch):

@@ -539,6 +539,12 @@ class SpeechDaemon:
             self._await_choice.discard(session)          # new prompt: no question pending
             self._held_decision.pop(session, None)       # new prompt: drop any held question
             self._pending_decision.pop(session, None)    # drop a question awaiting its lead-in (#16)
+            # Cancelled digests no longer count as in flight: a stale count held
+            # the NEW turn's question hostage behind a dead worker (silent up to
+            # summary_timeout, probe-confirmed; deep audit #25). The worker's
+            # finally skips its decrement when its gen is stale (see there).
+            self._inflight_digests.pop(session, None)
+            self._last_dispatch_token.pop(session, None)
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -677,7 +683,9 @@ class SpeechDaemon:
             target = self.router.active or self.sessions.foreground()
             # target may be None -> _speak_cue routes to the CONTROL channel so the
             # confirmation is heard even when no session is registered.
-            self._speak_cue(target, cue, exempt_mute=True)
+            # pause_exempt: a state change made WHILE PAUSED must still be
+            # confirmed, or the user cannot tell what they toggled (deep audit #25).
+            self._speak_cue(target, cue, exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -689,7 +697,8 @@ class SpeechDaemon:
             target, _replay = self.router.next_session()
             self.speaker.cancel()
             if target is None:
-                self._speak_cue(None, "No session.", exempt_mute=True)
+                self._speak_cue(None, "No session.", exempt_mute=True,
+                                pause_exempt=True)
             self._wake.set()
             return None
 
@@ -872,7 +881,7 @@ class SpeechDaemon:
                 self.ducker.restore()      # un-duck immediately on turn-off
             target = self.router.active or self.sessions.foreground()
             self._speak_cue(target, "Audio control on." if enabled else "Audio control off.",
-                            exempt_mute=True)
+                            exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -887,7 +896,8 @@ class SpeechDaemon:
                 self.ducker.restore()
                 self.ducker.duck(self._duck_exclude_pids(), level)
             target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target, "Duck level {0} percent.".format(level), exempt_mute=True)
+            self._speak_cue(target, "Duck level {0} percent.".format(level),
+                            exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -900,7 +910,7 @@ class SpeechDaemon:
             target = self.router.active or self.sessions.foreground()
             self._speak_cue(target,
                             "Summary mode on." if enabled else "Summary mode off.",
-                            exempt_mute=True)
+                            exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -1143,6 +1153,10 @@ class SpeechDaemon:
                 # A turn delivery must ANNOUNCE on a real reader switch (#21).
                 self._replay(session, entries, append=True,
                              suppress_announce=False)
+                # Up re-reads the joined text -- parity with the background
+                # short-turn and digest paths; without this, Up after a short
+                # foreground turn gave a dead edge chime (deep audit #25).
+                self._last_digest_text[session] = text
             else:
                 # Background sessions are not voiced from their own channel;
                 # speak the short turn immediately, named, via CONTROL.
@@ -1318,11 +1332,15 @@ class SpeechDaemon:
             finally:
                 # This worker is done: it no longer counts as in flight (a later
                 # decision must not hold behind a digest that already landed).
-                n = self._inflight_digests.get(session, 0) - 1
-                if n > 0:
-                    self._inflight_digests[session] = n
-                else:
-                    self._inflight_digests.pop(session, None)
+                # ONLY when this worker's gen is still current: FLUSH/SESSION_END
+                # already dropped a cancelled worker's count, so a stale worker
+                # must not steal a POST-flush dispatch's count (deep audit #25).
+                if self._summary_gen.get(session, 0) == gen:
+                    n = self._inflight_digests.get(session, 0) - 1
+                    if n > 0:
+                        self._inflight_digests[session] = n
+                    else:
+                        self._inflight_digests.pop(session, None)
                 if held is not None:
                     self.router.channel(held.session).append(held)  # question after context
                     self._wake.set()
@@ -1553,7 +1571,10 @@ class SpeechDaemon:
         item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
                           pause_exempt=pause_exempt)
-        ch.items.insert(ch.cursor, item)   # speak next (ahead of any sessions)
+        # APPEND, do not cursor-insert: CONTROL is already served ahead of every
+        # session, and inserting at the cursor made STACKED cues play LIFO --
+        # the user heard state confirmations newest-first (deep audit #25).
+        ch.append(item)
         self._wake.set()
 
     def _maybe_announce_chatterbox_fallback(self) -> None:
