@@ -98,8 +98,10 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
-        # Summary mode: per-session generation counter; a new turn-end supersedes
-        # any older in-flight summarizer so a stale result is dropped, not spoken.
+        # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
+        # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
+        # since it was dispatched. A turn merely ending does NOT advance it, so the
+        # system never drops a finished message -- only the user cancels (#13).
         self._summary_gen: dict = {}
         self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
 
@@ -478,8 +480,9 @@ class SpeechDaemon:
             self.router.channel(session).wipe()
             self._assemblers.pop(session, None)
             self.history.reset(session)
-            # A new prompt supersedes any in-flight turn summary: advance the
-            # generation so a stale recap is dropped, not spoken into this turn.
+            # A new prompt is the user cancelling this session: advance the cancel
+            # epoch so any digest dispatched before now is dropped when it lands,
+            # rather than spoken into the new turn (#13).
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
             self._nav_cursor.pop(session, None)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
@@ -1039,8 +1042,12 @@ class SpeechDaemon:
                 # speak the short turn immediately, named, via CONTROL.
                 self._enqueue_background_digest(session, text)
             return False                 # spoken synchronously; no need to hold
-        gen = self._summary_gen.get(session, 0) + 1
-        self._summary_gen[session] = gen
+        # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
+        # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
+        # must never invalidate a previously-dispatched digest. So several
+        # turn-ends with no user action between them each keep their digest (they
+        # queue and play) -- the system never drops a finished message (#13).
+        gen = self._summary_gen.get(session, 0)
         self._start_summary_thread(session, gen, text)
         return True                      # async digest in flight -> caller holds
 
@@ -1092,9 +1099,9 @@ class SpeechDaemon:
             # (a new prompt clears it via FLUSH, so a stale question is not replayed).
             held = self._held_decision.pop(session, None)
             try:
-                if self._summary_gen.get(session) != gen:
-                    _log("digest dropped: superseded by a newer turn")
-                    return               # superseded: a newer turn owns the voice
+                if self._summary_gen.get(session, 0) != gen:
+                    _log("digest dropped: user prompted this session since dispatch")
+                    return               # the user moved on -> this reading is cancelled
                 if not summary:
                     # SKIP / empty / failed digest. A session's LATEST message must
                     # ALWAYS be read (user spec: never skip the last message --

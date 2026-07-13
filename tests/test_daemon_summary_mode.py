@@ -447,18 +447,41 @@ def test_worker_failure_falls_back_to_raw(monkeypatch):
     assert summ is not None and "First part." in summ.text   # read raw, not dropped
 
 
-def test_superseded_worker_result_is_dropped(monkeypatch):
+def test_second_turn_end_keeps_first_digest(monkeypatch):
+    # User-only cancel (#13): two turn-ends on ONE session with NO user action
+    # between them must BOTH be read. A turn merely ending no longer drops the
+    # prior turn's finished digest (was: the second turn superseded the first).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
-    _turn_done(daemon)                                   # gen 1
+    _turn_done(daemon)                                   # first digest dispatched
     _pad = "This filler sentence carries the turn past the threshold. "
     daemon.handle_message(_prose("fg", "More text. " + _pad * 6, 2, True))
-    _turn_done(daemon)                                   # gen 2 supersedes (new prose)
-    daemon._summarize_fn = lambda text, **kw: "Stale summary."
-    daemon._summary_worker(*calls[0])                    # gen-1 result arrives late
+    _turn_done(daemon)                                   # second digest dispatched
+    daemon._summarize_fn = lambda text, **kw: "First digest."
+    daemon._summary_worker(*calls[0])                    # first result lands late
     ch = daemon.router.channel("fg")
-    assert "Stale summary." not in [it.text for it in ch.items[ch.cursor:]]
+    assert "First digest." in [it.text for it in ch.items[ch.cursor:]]  # NOT dropped
+
+
+def test_both_queued_digests_play_without_user_action(monkeypatch):
+    # "Read all queued" (#13): every finished digest of a session is enqueued when
+    # no user action intervenes -- none is superseded by a later turn ending.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # digest 1 dispatched
+    _pad = "This filler sentence carries the turn past the threshold. "
+    daemon.handle_message(_prose("fg", "Second turn. " + _pad * 6, 2, True))
+    _turn_done(daemon)                                   # digest 2 dispatched
+    assert len(calls) == 2
+    results = iter(["Digest one.", "Digest two."])
+    daemon._summarize_fn = lambda text, **kw: next(results)
+    daemon._summary_worker(*calls[0])
+    daemon._summary_worker(*calls[1])
+    ch = daemon.router.channel("fg")
+    texts = [it.text for it in ch.items[ch.cursor:]]
+    assert "Digest one." in texts and "Digest two." in texts
 
 
 def test_worker_forwards_config_to_summarizer(monkeypatch):
