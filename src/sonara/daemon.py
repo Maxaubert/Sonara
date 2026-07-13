@@ -19,6 +19,7 @@ from sonara.platform import transport
 
 # Holds the single-instance flock for this process's lifetime (see main()).
 _SINGLETON = None
+_MUTEX = None       # process-lifetime handle to the named single-instance mutex
 
 
 RATE_MIN = 100
@@ -1688,13 +1689,18 @@ def main() -> None:
     # AF_UNIX path), so socket_connectable() alone is racy and lets concurrent
     # lazy-starts each bind their own port -> a daemon explosion. The flock lets
     # exactly one process win; the rest exit. The lock auto-releases on death.
-    global _SINGLETON
+    global _SINGLETON, _MUTEX
     if socket_connectable():
         return
     ensure_sonara_dir()
-    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)
-    if _SINGLETON is None:
-        return  # another daemon already owns the single-instance lock
+    # AUTHORITATIVE single-instance guard: a named kernel mutex. The byte-lock
+    # below is tied to the lock FILE's inode, so a deleted/recreated file or two
+    # daemons racing to create it stop excluding -> a daemon explosion (observed
+    # live). The mutex is keyed by name, immune to that, and frees on death.
+    _MUTEX = transport.acquire_singleton_mutex()
+    if _MUTEX is None:
+        return  # another daemon already owns the single-instance mutex
+    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
 
     _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
                         # global hotkeys stay responsive after long idle
