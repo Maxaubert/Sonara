@@ -190,6 +190,36 @@ def test_no_lead_in_question_not_held(monkeypatch):
     assert any(it.is_decision for it in ch.items[ch.cursor:])
 
 
+def test_held_question_falls_back_to_raw_context_on_skip(monkeypatch):
+    # Confirmed via sequence capture: Haiku SKIP'd a trivial lead-in (summarize ->
+    # None), so the held question played with no context. A held question must fall
+    # back to the RAW lead-in, spoken before the question, so it is never alone.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)               # "First part. ... Second part. ..."
+    _choice(daemon)                                      # holds the question
+    daemon._summarize_fn = lambda text, **kw: None       # SKIP / empty digest
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    items = ch.items[ch.cursor:]
+    summ_idx = next(i for i, it in enumerate(items) if it.kind == "summary")
+    dec_idx = next(i for i, it in enumerate(items) if it.is_decision)
+    assert summ_idx < dec_idx                            # raw context before the question
+    assert "First part." in items[summ_idx].text         # the raw lead-in, not dropped
+
+
+def test_turn_end_skip_stays_silent(monkeypatch):
+    # A plain turn-end digest (no held question) still respects SKIP -> silent.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # no held question
+    daemon._summarize_fn = lambda text, **kw: None       # SKIP
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    assert not any(it.kind == "summary" for it in ch.items[ch.cursor:])
+
+
 def test_held_question_played_even_if_digest_fails(monkeypatch):
     # A blocking prompt must never be lost: if the digest fails, the held question
     # is still enqueued (finally).
