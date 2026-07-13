@@ -108,6 +108,27 @@ def test_turn_done_dispatches_summary_for_foreground(monkeypatch):
     assert "First part." in text and "Second part." in text
 
 
+def test_foreground_digest_stores_exact_spoken_text_for_reread(monkeypatch):
+    # The exact spoken digest text is stored so summary-mode Up re-reads it
+    # verbatim -> the cached audio replays instead of regenerating (issue #11 f/u).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The digest body."
+    daemon._summary_worker(*calls[0])
+    assert daemon._last_digest_text.get("fg") == "The digest body."
+
+
+def test_new_prompt_clears_stored_reread_text(monkeypatch):
+    # A new prompt supersedes the previous turn: Up should not re-read a stale
+    # digest, so the stored text is cleared on FLUSH.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    daemon._last_digest_text["fg"] = "old digest"
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    assert "fg" not in daemon._last_digest_text
+
+
 def test_turn_done_does_not_dispatch_when_mode_off(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)

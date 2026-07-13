@@ -68,12 +68,14 @@ def test_summary_nav_prev_empty_history_does_not_pile_up():
     assert speaker.earcons == []
 
 
-def test_summary_nav_first_rereads_last_digest():
+def test_summary_nav_first_rereads_exact_spoken_digest():
+    # Up re-reads the EXACT text that was spoken (with its "Session X:" prefix), so
+    # the cached audio replays verbatim instead of regenerating (issue #11 f/u).
     daemon, speaker = _summary_daemon()
-    _seed_turn_with_digest(daemon)
+    daemon._last_digest_text["fg"] = "Session sonari: The short digest."
     _nav(daemon, "first")
     played = [it.text for it in _drain(daemon)]
-    assert played == ["The short digest."]             # the digest, not the prose
+    assert played == ["Session sonari: The short digest."]
 
 
 def test_summary_nav_first_cancels_current_and_chimes():
@@ -81,15 +83,15 @@ def test_summary_nav_first_cancels_current_and_chimes():
     # not wait it out, and must chime "nav" like the down key does (issue #11 f/u).
     from sonara.queue import SpeechItem
     daemon, speaker = _summary_daemon()
-    _seed_turn_with_digest(daemon)
+    daemon._last_digest_text["fg"] = "Session sonari: The short digest."
     daemon._current_item = SpeechItem(id=99, session="fg", kind="summary",
-                                      text="The short digest.", is_decision=False)
+                                      text="Session sonari: The short digest.", is_decision=False)
     speaker.earcons.clear()
     _nav(daemon, "first")
     assert speaker.cancels == 1                         # cut current -> restart now
     assert speaker.earcons == ["nav"]                   # click sound, like down
     played = [it.text for it in _drain(daemon)]
-    assert played == ["The short digest."]              # re-read from the top
+    assert played == ["Session sonari: The short digest."]  # re-read from the top
 
 
 def test_summary_nav_first_edges_when_nothing_to_reread():

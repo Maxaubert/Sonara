@@ -14,6 +14,7 @@ the worker process (and its loaded model) persists across utterances.
 from __future__ import annotations
 
 import base64
+import collections
 import json
 import os
 import subprocess
@@ -206,6 +207,33 @@ def pop_fallback_notice() -> "str | None":
     return _FALLBACK.pop() if _FALLBACK else None
 
 
+# --- synth cache ---------------------------------------------------------------
+
+# Bounded LRU of rendered WAVs keyed by (variant, voice_path, exaggeration, text).
+# Small: a digest is a handful of chunks, and only the most recent utterances are
+# ever re-read. Guarded by a lock because synth_wav runs on the pipelined producer
+# thread and a re-read may start a fresh producer that overlaps the old one.
+_SYNTH_CACHE: "collections.OrderedDict" = collections.OrderedDict()
+_SYNTH_CACHE_LOCK = threading.Lock()
+_SYNTH_CACHE_MAX = 64
+
+
+def _synth_cache_get(key):
+    with _SYNTH_CACHE_LOCK:
+        wav = _SYNTH_CACHE.get(key)
+        if wav is not None:
+            _SYNTH_CACHE.move_to_end(key)
+        return wav
+
+
+def _synth_cache_put(key, wav) -> None:
+    with _SYNTH_CACHE_LOCK:
+        _SYNTH_CACHE[key] = wav
+        _SYNTH_CACHE.move_to_end(key)
+        while len(_SYNTH_CACHE) > _SYNTH_CACHE_MAX:
+            _SYNTH_CACHE.popitem(last=False)
+
+
 # --- client --------------------------------------------------------------------
 
 class ChatterboxClient:
@@ -329,8 +357,18 @@ class ChatterboxClient:
         """Synthesize *text* with voice *name*. Raises ChatterboxError on failure.
 
         Gating is the caller's job (`gate_ok`) - this always tries the worker.
+
+        A rendered result is cached per (variant, voice, exaggeration, text): the
+        summary-mode Up ('re-read the digest') speaks the exact same text, and
+        Chatterbox generation is both slow (~2s/chunk) and non-deterministic (the
+        intonation drifts each render), so re-reads replay byte-identical cached
+        audio instead of regenerating.
         """
         spec = voice_spec(name, config)
+        key = (spec["variant"], spec["voice_path"], spec["exaggeration"], text)
+        cached = _synth_cache_get(key)
+        if cached is not None:
+            return cached
         payload = {
             "type": "synth",
             "text": text,
@@ -342,7 +380,9 @@ class ChatterboxClient:
         resp = self._request(payload, timeout, config)
         if not resp.get("ok"):
             raise ChatterboxError(resp.get("error", "unknown chatterbox error"))
-        return base64.b64decode(resp["wav_b64"])
+        wav = base64.b64decode(resp["wav_b64"])
+        _synth_cache_put(key, wav)
+        return wav
 
 
 CLIENT = ChatterboxClient()

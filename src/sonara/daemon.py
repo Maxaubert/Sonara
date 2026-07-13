@@ -79,6 +79,7 @@ class SpeechDaemon:
         self._options: "dict[str, str]" = {}
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
+        self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
         self._paused = threading.Event()          # play/pause: set == speech halted
         self._mute_level = 0                       # mute cycle: 0=unmuted,
         # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
@@ -454,6 +455,7 @@ class SpeechDaemon:
             # generation so a stale recap is dropped, not spoken into this turn.
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
             self._nav_cursor.pop(session, None)
+            self._last_digest_text.pop(session, None)   # no re-reading a stale digest
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -1046,6 +1048,7 @@ class SpeechDaemon:
                           if folder else summary)
                 entry = self.history.record(session, "summary", summary)
                 self._enqueue(session, "summary", spoken, False, entry=entry)
+                self._last_digest_text[session] = spoken   # Up re-reads this verbatim
                 self.router.channel(session).turn_done = True
                 self._wake.set()
             else:
@@ -1065,11 +1068,12 @@ class SpeechDaemon:
         entry = self.history.record(session, "summary", text)
         from sonara.router import CONTROL
         ch = self.router.channel(CONTROL)
+        spoken = "Session {0}: {1}".format(folder, text)
         item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="summary",
-                          text="Session {0}: {1}".format(folder, text),
-                          is_decision=False)
+                          text=spoken, is_decision=False)
         self._pending_heard[item.id] = entry
         ch.items.append(item)            # behind any queued control cues
+        self._last_digest_text[session] = spoken   # Up re-reads this verbatim
         self._wake.set()
 
     def _nav(self, session: str, to: str) -> str:
@@ -1137,14 +1141,14 @@ class SpeechDaemon:
         return "moved" if moved else "edge"
 
     def _reread_last(self, session: str) -> bool:
-        """Re-read the last message immediately (summary-mode Up, issue #11). In
-        summary mode the last message is the turn's digest. Cuts the current read
-        and restarts from the top so the press takes effect AT ONCE (not after the
-        current finishes), mirroring _nav's seek-and-play. Returns True if there was
-        something to re-read (caller chimes "nav"), else False (caller chimes the
-        edge)."""
-        entries = self.history.last_message(session)
-        if not entries:
+        """Re-read the last digest immediately (summary-mode Up, issue #11). Speaks
+        the EXACT text that was spoken (stored verbatim, prefix and all) so the
+        rendered audio is a cache hit and replays byte-identically instead of
+        regenerating (~2s + drifting intonation each time). Cuts the current read
+        and restarts from the top so the press takes effect AT ONCE. Returns True if
+        there was a digest to re-read (caller chimes "nav"), else False (edge)."""
+        text = self._last_digest_text.get(session)
+        if not text:
             return False
         self._nav_cursor.pop(session, None)
         self.speaker.cancel()                    # restart now, don't wait out the read
@@ -1152,7 +1156,10 @@ class SpeechDaemon:
         for it in ch.items[ch.cursor:]:          # drop pending so the re-read is it
             self._pending_heard.pop(it.id, None)
         del ch.items[ch.cursor:]
-        self._replay(session, entries)
+        ch.items.insert(ch.cursor, SpeechItem(
+            id=self._alloc_id(), session=session, kind="summary",
+            text=text, is_decision=False))
+        ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
         self._wake.set()
         return True
 
