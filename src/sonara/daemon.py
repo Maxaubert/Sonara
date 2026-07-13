@@ -1095,12 +1095,16 @@ class SpeechDaemon:
                     self._earcon("summary_failed")
                     return
                 if self.sessions.is_foreground(session):
-                    # Every digest names its session ("always announce" per user):
+                    # Every turn-end digest names its session ("always announce"):
                     # with interleaved sessions an unprefixed digest was ambiguous.
                     # History records the bare digest (repeat/catch_up replay it
                     # without the prefix); only the spoken item carries the name.
+                    # EXCEPTION: a lead-in digest for a held question skips the
+                    # prefix -- the user is already engaged with that session's
+                    # question, so "Session X:" is redundant noise there.
                     folder = self.sessions.folder(session)
-                    spoken = ("Session {0}: {1}".format(folder, summary)
+                    spoken = (summary if held is not None
+                              else "Session {0}: {1}".format(folder, summary)
                               if folder else summary)
                     entry = self.history.record(session, "summary", summary)
                     self._enqueue(session, "summary", spoken, False, entry=entry)
