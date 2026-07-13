@@ -281,9 +281,9 @@ def test_held_question_played_even_if_digest_fails(monkeypatch):
     assert daemon._held_decision.get("fg") is None
 
 
-def test_held_question_lead_in_digest_names_its_session(monkeypatch):
-    # The context digest for a HELD question names its session too, so the user
-    # hears which session the upcoming question belongs to.
+def test_held_question_lead_in_digest_is_unprefixed(monkeypatch):
+    # The context digest is never prefixed with "Session X:" -- the router's
+    # "Session changed" announcement is the sole session identifier (#15).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     sessions.register("fg", cwd="/home/me/scenario")     # folder = scenario
     calls = _capture_spawn(daemon, monkeypatch)
@@ -293,11 +293,12 @@ def test_held_question_lead_in_digest_names_its_session(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
-    assert summ.text == "Session scenario: The context."
+    assert summ.text == "The context."
 
 
-def test_normal_turn_end_digest_keeps_session_prefix(monkeypatch):
-    # A plain turn-end digest (no held question) still names its session.
+def test_normal_turn_end_digest_is_unprefixed(monkeypatch):
+    # A plain turn-end digest is never prefixed with "Session X:" (#15); the
+    # "Session changed" announcement names the session on a switch instead.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     sessions.register("fg", cwd="/home/me/scenario")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -307,7 +308,7 @@ def test_normal_turn_end_digest_keeps_session_prefix(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
-    assert summ.text == "Session scenario: The recap."    # prefix kept
+    assert summ.text == "The recap."                      # no prefix
 
 
 def test_new_prompt_clears_held_question(monkeypatch):
@@ -590,10 +591,9 @@ def test_long_turn_still_dispatches_summarizer(monkeypatch):
     assert len(calls) == 1
 
 
-def test_foreground_digest_is_prefixed_with_its_folder(monkeypatch):
-    # "Always announce the session speaking": every digest names its session,
-    # foreground included (the user could not tell which session a digest
-    # belonged to when sessions interleaved).
+def test_foreground_digest_is_unprefixed(monkeypatch):
+    # A foreground digest is never prefixed (#15): the user is already in that
+    # session, and a switch would announce "Session changed" on its own.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     sessions.set_foreground("fg", cwd="/home/me/myrepo")
@@ -603,7 +603,8 @@ def test_foreground_digest_is_prefixed_with_its_folder(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     texts = [it.text for it in ch.items[ch.cursor:]]
-    assert "Session myrepo: The gist." in texts
+    assert "The gist." in texts
+    assert not any(t.startswith("Session myrepo:") for t in texts)   # no prefix
 
 
 def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):

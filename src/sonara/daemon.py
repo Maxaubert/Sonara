@@ -1207,9 +1207,11 @@ class SpeechDaemon:
                 # it names itself with the "Session X:" prefix; a switched-to digest
                 # WILL be announced, so it stays unprefixed to avoid double-naming.
                 fg = self.sessions.is_foreground(session)
-                folder = self.sessions.folder(session)
-                spoken = ("Session {0}: {1}".format(folder, summary)
-                          if (fg and folder) else summary)
+                # Never prefix the digest with "Session X:": the router's
+                # "Session changed: X" announcement (on a reader switch) is the
+                # sole session identifier, so a digest that plays without a switch
+                # just reads (the user is already in that session) (#15).
+                spoken = summary
                 entry = self.history.record(session, "summary", summary)
                 self._enqueue(session, "summary", spoken, False, entry=entry)
                 self._last_digest_text[session] = spoken   # Up re-reads this verbatim
