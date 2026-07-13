@@ -15,6 +15,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
@@ -471,6 +472,70 @@ def _ensure_speech_deps(python: str) -> bool:
     return False
 
 
+def stop_sonara(sup=None) -> bool:
+    """Stop Sonara everywhere (#23): write the stop sentinel (gates the
+    supervisor loop AND the per-hook-event lazy start), end the scheduled task,
+    SHUTDOWN the daemon, and wait for it to be gone. Returns True when the
+    daemon is confirmed gone (a daemon that was not running counts as stopped).
+    install()/uninstall() call this BEFORE mutating files under APP_DIR."""
+    paths.ensure_sonara_dir()
+    try:
+        with open(str(paths.STOPPED_SENTINEL_PATH), "w", encoding="utf-8") as fh:
+            fh.write("sonara shutdown")
+    except OSError:
+        pass
+    if sup is None:
+        sup = _platform().supervisor
+    try:
+        sup.end_task()
+    except Exception:  # noqa: BLE001 - task may not exist; never fail a stop
+        pass
+    try:
+        _send({"v": PROTOCOL_VERSION, "type": MsgType.SHUTDOWN}, expect_reply=True)
+    except Exception:  # noqa: BLE001 - not running IS stopped
+        pass
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if not paths.socket_connectable():
+            time.sleep(0.3)     # grace: process exit releases the mutex
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def start_sonara() -> int:
+    """Clear a previous shutdown and start the daemon (#23). This is the
+    'sonara start' that doctor has always told users to run."""
+    try:
+        os.remove(str(paths.STOPPED_SENTINEL_PATH))
+    except OSError:
+        pass
+    from sonara import daemon as daemon_module
+    daemon_module.ensure_running()
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if paths.socket_connectable():
+            print("Sonara daemon is running.")
+            return 0
+        time.sleep(0.1)
+    print("Start requested; the daemon is not accepting yet "
+          "(check ~/.sonara/speechd.log).")
+    return 1
+
+
+def _cmd_shutdown(_args) -> int:
+    if stop_sonara():
+        print("Sonara stopped. It stays stopped until 'sonara start' "
+              "(or 'sonara install').")
+        return 0
+    print("Sonara did not shut down cleanly; a daemon may still be running.")
+    return 1
+
+
+def _cmd_start(_args) -> int:
+    return start_sonara()
+
+
 def install() -> int:
     """Install Sonara: resolve python, ensure the speech engine, copy the runtime,
     write the install record, then delegate OS-specific autostart + hooks +
@@ -680,6 +745,13 @@ def _cmd_daemon(_args) -> int:
 
 def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
+    sub.add_parser(
+        "shutdown",
+        help="stop the daemon and supervisor (stays stopped until 'sonara start')",
+    ).set_defaults(func=_cmd_shutdown)
+    sub.add_parser(
+        "start", help="start the daemon (clears a previous shutdown)",
+    ).set_defaults(func=_cmd_start)
     sub.add_parser("doctor", help="run health checks").set_defaults(
         func=_cmd_doctor)
     sub.add_parser("install", help="install the scheduled task + SONARA_DIR").set_defaults(
