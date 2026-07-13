@@ -59,20 +59,31 @@ def test_genuine_permission_earcon_still_fires():
     assert "permission" in speaker.earcons
 
 
-def test_permission_reenabled_after_question_answered():
-    # Answering the question moves the turn on (prose/tool/turn_done); a later
-    # genuine permission must be spoken again.
+def test_pre_question_prose_does_not_reenable_permission():
+    # THE bug (confirmed via message-sequence capture): the "Here's the question:"
+    # prose streams in AFTER the choice, so clearing the guard on prose let the
+    # permission (6s later) slip through. Prose must NOT reenable it.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _choice(daemon)
-    _prose(daemon)                                        # turn continues -> answered
+    _prose(daemon)                                        # late pre-question prose
     _permission(daemon)
+    assert "permission" not in _pending_kinds(daemon)     # still suppressed
+
+
+def test_permission_reenabled_after_it_suppressed_one():
+    # The guard is CONSUMED by the permission it suppresses: a SECOND permission
+    # (e.g. a genuine one later in the turn) is spoken normally.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _choice(daemon)
+    _permission(daemon)                                   # suppressed + consumes guard
+    assert "permission" not in _pending_kinds(daemon)
+    _permission(daemon)                                   # second one is genuine
     assert "permission" in _pending_kinds(daemon)
 
 
-def test_permission_reenabled_after_turn_done():
+def test_permission_reenabled_after_new_prompt():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _choice(daemon)
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
-                           "kind": "turn_done", "session": "fg"})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
     _permission(daemon)
     assert "permission" in _pending_kinds(daemon)

@@ -204,9 +204,9 @@ def test_held_question_played_even_if_digest_fails(monkeypatch):
     assert daemon._held_decision.get("fg") is None
 
 
-def test_held_question_lead_in_digest_drops_session_prefix(monkeypatch):
-    # The context digest for a HELD question skips the "Session X:" prefix -- the
-    # user is already engaged with that session's question.
+def test_held_question_lead_in_digest_names_its_session(monkeypatch):
+    # The context digest for a HELD question names its session too, so the user
+    # hears which session the upcoming question belongs to.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     sessions.register("fg", cwd="/home/me/scenario")     # folder = scenario
     calls = _capture_spawn(daemon, monkeypatch)
@@ -216,7 +216,7 @@ def test_held_question_lead_in_digest_drops_session_prefix(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
-    assert summ.text == "The context."                    # no "Session scenario:" prefix
+    assert summ.text == "Session scenario: The context."
 
 
 def test_normal_turn_end_digest_keeps_session_prefix(monkeypatch):

@@ -332,7 +332,6 @@ class SpeechDaemon:
         verbosity = self.config.get("verbosity", "everything")
 
         if t == MsgType.PROSE:
-            self._await_choice.discard(session)  # streaming again -> question answered
             final = msg.get("final", False)
             a = self._assembler(session)
             chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), final)
@@ -414,8 +413,13 @@ class SpeechDaemon:
 
         if t == MsgType.PERMISSION:
             # Redundant permission that pairs with an unanswered AskUserQuestion:
-            # the question was already announced, so drop this one (issue #11 f/u).
+            # the question was already announced, so drop this one. CONSUME the
+            # guard here (the permission it exists to suppress has now arrived) --
+            # do NOT rely on unrelated prose/turn_done to clear it, since the
+            # pre-question prose streams in AFTER the choice and would clear it
+            # early (confirmed via message-sequence capture, issue #11 f/u).
             if session in self._await_choice or (not session and self._await_choice):
+                self._await_choice.discard(session)
                 return None
             digesting = self._maybe_summarize(session)   # voice lead-in before the blocking permission
             text = self._permission_text(msg)
@@ -432,7 +436,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.TOOL:
-            self._await_choice.discard(session)  # a tool ran -> question answered
+            self._await_choice.discard(session)  # a tool ran -> the question was answered
             if verbosity == "everything":
                 tool = msg.get("tool", "")
                 summary = (msg.get("summary") or "").strip()
@@ -458,7 +462,6 @@ class SpeechDaemon:
                 return None
             self._earcon(kind)
             if kind == "turn_done":
-                self._await_choice.discard(session)  # turn ended -> question answered
                 # End-of-turn boundary: safety-net flush in case the final PROSE
                 # flag never arrived. Wake the loop so a sub-threshold batch that was
                 # left buffered (no per-delta wake) is read now, not after a poll.
@@ -1096,16 +1099,14 @@ class SpeechDaemon:
                     self._earcon("summary_failed")
                     return
                 if self.sessions.is_foreground(session):
-                    # Every turn-end digest names its session ("always announce"):
-                    # with interleaved sessions an unprefixed digest was ambiguous.
+                    # Every digest names its session ("always announce"): with
+                    # interleaved sessions an unprefixed digest was ambiguous, and
+                    # a lead-in digest for a held question names it too so the user
+                    # hears which session the upcoming question belongs to.
                     # History records the bare digest (repeat/catch_up replay it
                     # without the prefix); only the spoken item carries the name.
-                    # EXCEPTION: a lead-in digest for a held question skips the
-                    # prefix -- the user is already engaged with that session's
-                    # question, so "Session X:" is redundant noise there.
                     folder = self.sessions.folder(session)
-                    spoken = (summary if held is not None
-                              else "Session {0}: {1}".format(folder, summary)
+                    spoken = ("Session {0}: {1}".format(folder, summary)
                               if folder else summary)
                     entry = self.history.record(session, "summary", summary)
                     self._enqueue(session, "summary", spoken, False, entry=entry)
