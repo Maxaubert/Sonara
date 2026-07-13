@@ -98,17 +98,15 @@ turn-end dispatch, so only `FLUSH`/answer advance it) is fixed in the plan.
   a hard requirement," so it is separable from the core change and can ship
   after it.
 
-## Open question for review
+## Resolved decisions
 
 **When one session produces several finished messages in a row with no user
 action between them** (e.g. autonomous multi-step work, or a background session
-generating paragraph after paragraph on separate prompts): read **all** of them
-queued, or only the **most recent**?
-
-- Recommendation: **queue all**. It matches the model ("the system never drops")
-  and the earlier paragraph-after-paragraph test, where each paragraph should be
-  read. Each is only cancelled if the user prompts that session again before it
-  is read.
+generating paragraph after paragraph on separate prompts): **read all of them,
+queued.** (Confirmed 2026-07-13.) It matches the model ("the system never
+drops") and the paragraph-after-paragraph test, where each paragraph should be
+read. Each is only cancelled if the user prompts that session again before it is
+read.
 
 ## Test scenarios (acceptance)
 
