@@ -1,4 +1,4 @@
-from sonara.assembler import ProseAssembler
+from sonara.assembler import ProseAssembler, PARAGRAPH_BREAK
 
 
 def test_two_sentences_across_two_feeds_emit_both_and_hold_nothing():
@@ -21,11 +21,14 @@ def test_partial_is_flushed_on_final():
     assert a.feed("", 1, True) == ["No terminator yet"]
 
 
-def test_repeated_index_is_ignored():
+def test_repeated_nonzero_index_is_ignored():
+    # A duplicate NON-zero index is a redelivery: ignored, no double emission.
+    # (Index 0 is different: a colliding 0 means a NEW block whose predecessor
+    # lost its final -- see test_lost_final_does_not_poison_next_block, #25.)
     a = ProseAssembler()
     assert a.feed("Hello world. ", 0, False) == ["Hello world."]
-    # same index again: must be ignored, no duplicate emission
-    assert a.feed("Hello world. ", 0, False) == []
+    assert a.feed("Second bit. ", 1, False) == ["Second bit."]
+    assert a.feed("Second bit. ", 1, False) == []
 
 
 def test_two_sentences_in_single_delta_emit_both():
@@ -131,3 +134,53 @@ def test_blank_line_split_across_deltas_still_breaks_paragraphs():
     assert out.index("The headline issue") < out.index(PARAGRAPH_BREAK)
     # no word-joining across the lost newline/space
     assert not any("issueThe" in t or "issue The next" in t for t in texts), texts
+
+
+# --- deep audit #25: order inversion, lost-final poisoning, fence closing ----
+
+def test_lead_in_before_fence_spoken_before_fence_summary():
+    # An unterminated lead-in ("Here is the code:") used to be spoken AFTER the
+    # fence's "N-line code block" summary (held as remainder until final flush),
+    # inverting the spoken order for an eyes-free user (deep audit #25).
+    a = ProseAssembler()
+    out = a.feed("Here is the code:\n```python\nx = 1\n```\n", 0, True)
+    texts = [t for t in out if t is not PARAGRAPH_BREAK]
+    lead = next(i for i, t in enumerate(texts) if "Here is the code" in t)
+    fence = next(i for i, t in enumerate(texts) if "code block" in t)
+    assert lead < fence
+
+
+def test_lost_final_does_not_poison_next_block():
+    # A lost final delta left _seen populated; the next block restarts at index
+    # 0, collided, and its opening deltas were silently DROPPED (deep audit #25).
+    a = ProseAssembler()
+    a.feed("First block sentence. ", 0, False)          # final never arrives
+    out = a.feed("Second block starts here. ", 0, False)  # new block, index 0
+    texts = [t for t in out if t is not PARAGRAPH_BREAK]
+    assert any("Second block starts here." in t for t in texts)
+
+
+def test_fence_with_inner_backtick_literal_does_not_close_early():
+    # Closing-fence detection matched ANY ``` occurrence, so code CONTAINING a
+    # ``` literal (or 4-backtick fences) closed early and leaked code as prose
+    # (deep audit #25). A closing fence is its own all-backticks line.
+    a = ProseAssembler()
+    out = a.feed("```md\nuse ``` to open\nmore code\n```\nAfter text. ", 0, True)
+    texts = [t for t in out if t is not PARAGRAPH_BREAK]
+    summaries = [t for t in texts if "code block" in t]
+    assert len(summaries) == 1
+    assert summaries[0].startswith("2-line")             # both lines counted
+    assert any("After text." in t for t in texts)        # prose resumes cleanly
+    assert not any("more code" in t for t in texts)      # code never leaks
+
+
+def test_numbered_list_ordinals_attach_to_their_items():
+    # "1. Install the package\n2. Run the tests" was chunked as "1." /
+    # "Install the package 2." / "Run the tests" -- the ordinal attached to the
+    # WRONG spoken item (deep audit #25).
+    a = ProseAssembler()
+    out = a.feed("1. Install the package\n2. Run the tests\n", 0, True)
+    texts = [t for t in out if t is not PARAGRAPH_BREAK]
+    assert not any(t.rstrip().endswith("2.") for t in texts)   # no orphan ordinal
+    two = next(t for t in texts if "Run the tests" in t)
+    assert "2" in two                                     # ordinal rides its item
