@@ -43,7 +43,7 @@ def _send(msg: dict, expect_reply: bool = False):
 
 
 def _daemon_not_running_message() -> str:
-    return "Sonara daemon is not running. Run: sonara install"
+    return "Sonara daemon is not running. Run: sonara start"
 
 
 def _cmd_status(_args) -> int:
@@ -252,7 +252,7 @@ def doctor() -> list:
                         "reachable" if ok else "no ok reply from daemon"))
     except Exception as exc:  # noqa: BLE001
         results.append(("daemon socket", False,
-                        f"not reachable: {exc} (run 'sonara install')"))
+                        f"not reachable: {exc} (run 'sonara start')"))
 
     results.append(_platform().supervisor.hooks_doctor_row())
 

@@ -15,5 +15,5 @@ engine (a one-time ~316 MB download) and repoints the daemon at it. `install cha
 downloads the Chatterbox Turbo model (~2 GB) for GPU-accelerated synthesis with reference-clip
 voices. `uninstall` removes the specified engine and reverts to the system voice (or Kokoro
 if Chatterbox is removed). Print the command's output verbatim.
-If install succeeded, tell the user to pick a voice with /sonara:voice or /sonara:voice list.
+If install succeeded, tell the user to pick a voice with /sonara:voice <name> (a bare /sonara:voice lists the installed voices).
 If it errors, report the error briefly.

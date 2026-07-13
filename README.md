@@ -140,7 +140,7 @@ reason to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so k
 voices installed alongside Chatterbox. When the GPU frees, Chatterbox resumes automatically.
 Speech is synthesized and played in chunks, so hotkeys (mute, navigate, pause, skip) take
 effect within a chunk (roughly 2 seconds) rather than waiting for the whole utterance. The
-`chatterbox_timeout` setting (default 30 seconds) bounds each chunk, not the entire utterance.
+`chatterbox_timeout` setting (default 120 seconds; it must cover the ~40s post-idle cold model reload) bounds each chunk, not the entire utterance.
 Also expect a one-time pause of roughly 10 to 40 seconds before the first Chatterbox
 utterance after a daemon start or an idle unload; that is the model loading onto the GPU.
 Later utterances start immediately.
@@ -210,6 +210,8 @@ CLI-only (run `sonara <cmd>` in a terminal).
 | — | `sonara repeat` | Re-speak the last item |
 | — | `sonara skip` | Skip the current item |
 | — | `sonara stop` | Stop now and clear the queue |
+| — | `sonara shutdown` | Stop the daemon and supervisor; stays stopped until `sonara start` |
+| — | `sonara start` | Start the daemon (clears a previous shutdown) |
 | `/sonara:doctor` | `sonara doctor` | Run all health checks |
 | `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
 

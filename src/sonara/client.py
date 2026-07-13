@@ -17,7 +17,7 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
         s = transport.connect(LOCK_PATH, timeout=timeout)
     except OSError as exc:
         raise DaemonNotRunning(
-            "Sonara daemon is not running. Run: sonara install"
+            "Sonara daemon is not running. Run: sonara start"
         ) from exc
     try:
         s.sendall(encode(msg))
