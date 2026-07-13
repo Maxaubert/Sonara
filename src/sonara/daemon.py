@@ -98,9 +98,20 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
-        # Summary mode: per-session generation counter; a new turn-end supersedes
-        # any older in-flight summarizer so a stale result is dropped, not spoken.
+        # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
+        # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
+        # since it was dispatched. A turn merely ending does NOT advance it, so the
+        # system never drops a finished message -- only the user cancels (#13).
         self._summary_gen: dict = {}
+        # Summary mode: per-session turn-end SETTLE window (#14). turn_done can
+        # reach the daemon before a turn's final prose (separate hook processes
+        # race under multi-session load), so digesting immediately summarizes an
+        # incomplete/empty turn. Arm a short window on turn_done, reset it on each
+        # new prose delta, and digest only once the session is quiet.
+        self._settle_timers: dict = {}     # session -> threading.Timer
+        self._settle_gen: dict = {}        # session -> int (stale-fire guard)
+        self._settle_pending: set = set()  # sessions with a window armed
+        self._pending_decision: dict = {}  # session -> question item awaiting its lead-in (#16)
         self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
 
     def _alloc_id(self) -> int:
@@ -363,6 +374,10 @@ class SpeechDaemon:
             # hotkey worker — the root cause of the "thinking" mute-hang. A finished
             # turn wakes via the turn_done earcon / TOOL / FLUSH paths below; the
             # speak loop's poll_interval is the safety net if a wake is ever missed.
+            # Late prose after turn_done: reset the settle window so the turn-end
+            # digest waits for the full turn to land (#14). Only when armed.
+            if session in self._settle_pending:
+                self._arm_settle(session)
             if ch.ready(self._minqueue()):
                 self._wake.set()
             return None
@@ -374,10 +389,11 @@ class SpeechDaemon:
         # cross-session WITHOUT being doubled here.
         if t == MsgType.CHOICE:
             # A question BLOCKS the turn (no turn_done -> no end-of-turn digest), so
-            # voice the lead-in prose now; otherwise the context is silently dropped
-            # and only the question is heard. The question itself is spoken as-is,
-            # but HELD until the lead-in digest lands so context is heard first.
-            digesting = self._maybe_summarize(session)
+            # its lead-in prose must be voiced before the question. But the CHOICE
+            # can reach the daemon BEFORE its lead-in prose (separate hook processes
+            # race), so gathering the lead-in now would find nothing and speak the
+            # question alone. Build the question item now, then DEFER the lead-in
+            # gather + hold/enqueue through the settle window (#16).
             text = self._choice_text(msg)
             extras = [e for e in (self._choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
@@ -392,8 +408,17 @@ class SpeechDaemon:
             # AskUserQuestion ALSO fires a permission-prompt notification ~5-6s
             # later; mark the question unanswered so that redundant permission
             # (earcon + text) is suppressed until the turn moves on (issue #11 f/u).
+            # Set this NOW (not at settle fire) so the suppression is armed before
+            # the permission can arrive.
             self._await_choice.add(session)
-            self._enqueue_or_hold_decision(session, item, digesting)
+            # Summary mode: defer the lead-in digest + question through the settle
+            # window so late lead-in prose is included, heard before the question.
+            # Non-summary speaks prose live, so enqueue the question immediately.
+            if self.config.get("summary_mode"):
+                self._pending_decision[session] = item
+                self._arm_settle(session)
+            else:
+                self._enqueue_or_hold_decision(session, item, False)
             return None
 
         if t == MsgType.PLAN:
@@ -467,7 +492,12 @@ class SpeechDaemon:
                 # left buffered (no per-delta wake) is read now, not after a poll.
                 self.router.channel(session).turn_done = True
                 self._wake.set()
-                self._maybe_summarize(session)
+                # Do NOT digest yet: the turn's final prose can arrive after this
+                # signal (separate hook processes race). Arm a settle window and
+                # digest once the session is quiet (#14). Non-summary mode has no
+                # digest, so nothing to defer there.
+                if self.config.get("summary_mode"):
+                    self._arm_settle(session)
             return None
 
         if t == MsgType.FLUSH:
@@ -478,14 +508,17 @@ class SpeechDaemon:
             self.router.channel(session).wipe()
             self._assemblers.pop(session, None)
             self.history.reset(session)
-            # A new prompt supersedes any in-flight turn summary: advance the
-            # generation so a stale recap is dropped, not spoken into this turn.
+            # A new prompt is the user cancelling this session: advance the cancel
+            # epoch so any digest dispatched before now is dropped when it lands,
+            # rather than spoken into the new turn (#13).
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
+            self._cancel_settle(session)      # new prompt abandons any settling turn (#14)
             self._nav_cursor.pop(session, None)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
             self._voiced_prose_count.pop(session, None)  # new turn: nothing voiced yet
             self._await_choice.discard(session)          # new prompt: no question pending
             self._held_decision.pop(session, None)       # new prompt: drop any held question
+            self._pending_decision.pop(session, None)    # drop a question awaiting its lead-in (#16)
             self._paused.clear()
             self._wake.set()
             self._options.pop(session, None)
@@ -517,6 +550,9 @@ class SpeechDaemon:
             self._warned_immediate.discard(session)
             self._guided_sessions.discard(session)
             self._summary_gen.pop(session, None)
+            self._cancel_settle(session)
+            self._settle_gen.pop(session, None)
+            self._pending_decision.pop(session, None)
             return None
 
         if t == MsgType.STOP:
@@ -939,7 +975,7 @@ class SpeechDaemon:
             except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
                 pass
 
-    def _replay(self, session: str, entries) -> None:
+    def _replay(self, session: str, entries, append: bool = False) -> None:
         """Insert history entries as replay items at the active channel cursor.
 
         Items are inserted in order at the current cursor position so they read
@@ -955,7 +991,12 @@ class SpeechDaemon:
         repeat). The caller (CATCH_UP) already speaks a "Catching up..." preamble
         when crossing sessions; the auto-announce would be a spurious duplicate."""
         ch = self.router.channel(session)
-        at = ch.cursor
+        # append=True adds at the END (after any queued decision), like the long
+        # digest path -- so a new short turn never overtakes a queued question
+        # (#17). append=False keeps cursor-insert for explicit user replay
+        # (catch_up / nav / repeat), which should read next.
+        at = len(ch.items) if append else ch.cursor
+        n = 0
         for e in entries:
             item = SpeechItem(
                 id=self._alloc_id(),
@@ -967,7 +1008,8 @@ class SpeechDaemon:
             self._pending_heard[item.id] = e
             ch.items.insert(at, item)
             at += 1
-        if at > ch.cursor:  # only if we actually inserted items
+            n += 1
+        if n > 0:  # only if we actually inserted items
             # Mark channel ready: replayed items should be spoken without
             # waiting for minqueue threshold.
             ch.turn_done = True
@@ -1033,16 +1075,71 @@ class SpeechDaemon:
             # verbalize meta-text ("no content to be spoken") that was then
             # read aloud; speaking the original is faster and free.
             if self.sessions.is_foreground(session):
-                self._replay(session, entries)
+                # Append (not cursor-insert) so a short turn never overtakes a
+                # queued question -- consistent with the long digest path (#17).
+                self._replay(session, entries, append=True)
             else:
                 # Background sessions are not voiced from their own channel;
                 # speak the short turn immediately, named, via CONTROL.
                 self._enqueue_background_digest(session, text)
             return False                 # spoken synchronously; no need to hold
-        gen = self._summary_gen.get(session, 0) + 1
-        self._summary_gen[session] = gen
+        # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
+        # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
+        # must never invalidate a previously-dispatched digest. So several
+        # turn-ends with no user action between them each keep their digest (they
+        # queue and play) -- the system never drops a finished message (#13).
+        gen = self._summary_gen.get(session, 0)
         self._start_summary_thread(session, gen, text)
         return True                      # async digest in flight -> caller holds
+
+    def _arm_settle(self, session: str) -> None:
+        """Defer the turn-end digest until the session's prose settles. Restart the
+        window on every new prose delta; fire once quiet (#14). Caller holds the
+        lock (this runs from handle_message)."""
+        gen = self._settle_gen.get(session, 0) + 1
+        self._settle_gen[session] = gen
+        self._settle_pending.add(session)
+        old = self._settle_timers.pop(session, None)
+        if old is not None:
+            old.cancel()
+        self._settle_schedule(session, gen)
+
+    def _settle_schedule(self, session: str, gen: int) -> None:
+        """Start the real settle timer. Test seam: tests replace this to drive
+        _settle_fire deterministically instead of waiting on the clock."""
+        settle_s = self.config.get("summary_settle_ms", 600) / 1000.0
+        t = threading.Timer(settle_s, self._settle_fire, args=(session, gen))
+        t.daemon = True
+        self._settle_timers[session] = t
+        t.start()
+
+    def _settle_fire(self, session: str, gen: int) -> None:
+        """The settle window elapsed with no new prose: dispatch the turn-end
+        digest now that the full turn has landed. Runs on the Timer thread, so it
+        takes the lock. A stale fire (re-armed by later prose, or cancelled by
+        FLUSH) is a no-op via the generation guard."""
+        with self._lock:
+            if self._settle_gen.get(session) != gen:
+                return
+            self._settle_pending.discard(session)
+            self._settle_timers.pop(session, None)
+            item = self._pending_decision.pop(session, None)
+            if item is not None:
+                # A question was waiting on its lead-in: gather it now (present
+                # after the settle) and hold the question after the context (#16).
+                digesting = self._maybe_summarize(session)
+                self._enqueue_or_hold_decision(session, item, digesting)
+            else:
+                self._maybe_summarize(session)
+
+    def _cancel_settle(self, session: str) -> None:
+        """Drop any pending settle window: a new prompt abandons the turn. Bumps
+        the generation so an already-scheduled fire becomes a no-op."""
+        self._settle_pending.discard(session)
+        self._settle_gen[session] = self._settle_gen.get(session, 0) + 1
+        t = self._settle_timers.pop(session, None)
+        if t is not None:
+            t.cancel()
 
     def _enqueue_or_hold_decision(self, session: str, item, digesting: bool) -> None:
         """Enqueue a decision item now, OR hold it until the lead-in digest lands
@@ -1092,9 +1189,9 @@ class SpeechDaemon:
             # (a new prompt clears it via FLUSH, so a stale question is not replayed).
             held = self._held_decision.pop(session, None)
             try:
-                if self._summary_gen.get(session) != gen:
-                    _log("digest dropped: superseded by a newer turn")
-                    return               # superseded: a newer turn owns the voice
+                if self._summary_gen.get(session, 0) != gen:
+                    _log("digest dropped: user prompted this session since dispatch")
+                    return               # the user moved on -> this reading is cancelled
                 if not summary:
                     # SKIP / empty / failed digest. A session's LATEST message must
                     # ALWAYS be read (user spec: never skip the last message --
@@ -1119,9 +1216,11 @@ class SpeechDaemon:
                 # it names itself with the "Session X:" prefix; a switched-to digest
                 # WILL be announced, so it stays unprefixed to avoid double-naming.
                 fg = self.sessions.is_foreground(session)
-                folder = self.sessions.folder(session)
-                spoken = ("Session {0}: {1}".format(folder, summary)
-                          if (fg and folder) else summary)
+                # Never prefix the digest with "Session X:": the router's
+                # "Session changed: X" announcement (on a reader switch) is the
+                # sole session identifier, so a digest that plays without a switch
+                # just reads (the user is already in that session) (#15).
+                spoken = summary
                 entry = self.history.record(session, "summary", summary)
                 self._enqueue(session, "summary", spoken, False, entry=entry)
                 self._last_digest_text[session] = spoken   # Up re-reads this verbatim

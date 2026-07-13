@@ -59,6 +59,7 @@ def test_decisions_still_spoken_with_summary_mode_on(monkeypatch):
                            "session": "fg",
                            "questions": [{"question": "Pick one?",
                                           "options": ["a", "b"]}]})
+    _fire_settle(daemon, "fg")                   # question content settles then enqueues (#16)
     ch = daemon.router.channel("fg")
     assert any(it.is_decision for it in ch.items[ch.cursor:])
 
@@ -77,6 +78,19 @@ def test_status_reports_summary_mode(monkeypatch):
 def _turn_done(daemon, session="fg"):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
                            "kind": "turn_done", "session": session})
+    _fire_settle(daemon, session)
+
+
+def _fire_settle(daemon, session="fg"):
+    # Deterministic settle: cancel the real timer and fire synchronously, so
+    # turn-end tests do not wait on the clock (#14).
+    gen = daemon._settle_gen.get(session)
+    if gen is None:
+        return
+    t = daemon._settle_timers.pop(session, None)
+    if t is not None:
+        t.cancel()
+    daemon._settle_fire(session, gen)
 
 
 def _capture_spawn(daemon, monkeypatch):
@@ -132,6 +146,7 @@ def test_new_prompt_clears_stored_reread_text(monkeypatch):
 def _choice(daemon, session="fg"):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": session,
                            "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    _fire_settle(daemon, session)   # question content is deferred through the settle (#16)
 
 
 def test_blocking_question_voices_short_lead_in_prose(monkeypatch):
@@ -268,9 +283,9 @@ def test_held_question_played_even_if_digest_fails(monkeypatch):
     assert daemon._held_decision.get("fg") is None
 
 
-def test_held_question_lead_in_digest_names_its_session(monkeypatch):
-    # The context digest for a HELD question names its session too, so the user
-    # hears which session the upcoming question belongs to.
+def test_held_question_lead_in_digest_is_unprefixed(monkeypatch):
+    # The context digest is never prefixed with "Session X:" -- the router's
+    # "Session changed" announcement is the sole session identifier (#15).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     sessions.register("fg", cwd="/home/me/scenario")     # folder = scenario
     calls = _capture_spawn(daemon, monkeypatch)
@@ -280,11 +295,12 @@ def test_held_question_lead_in_digest_names_its_session(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
-    assert summ.text == "Session scenario: The context."
+    assert summ.text == "The context."
 
 
-def test_normal_turn_end_digest_keeps_session_prefix(monkeypatch):
-    # A plain turn-end digest (no held question) still names its session.
+def test_normal_turn_end_digest_is_unprefixed(monkeypatch):
+    # A plain turn-end digest is never prefixed with "Session X:" (#15); the
+    # "Session changed" announcement names the session on a switch instead.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     sessions.register("fg", cwd="/home/me/scenario")
     calls = _capture_spawn(daemon, monkeypatch)
@@ -294,7 +310,7 @@ def test_normal_turn_end_digest_keeps_session_prefix(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
-    assert summ.text == "Session scenario: The recap."    # prefix kept
+    assert summ.text == "The recap."                      # no prefix
 
 
 def test_new_prompt_clears_held_question(monkeypatch):
@@ -447,18 +463,41 @@ def test_worker_failure_falls_back_to_raw(monkeypatch):
     assert summ is not None and "First part." in summ.text   # read raw, not dropped
 
 
-def test_superseded_worker_result_is_dropped(monkeypatch):
+def test_second_turn_end_keeps_first_digest(monkeypatch):
+    # User-only cancel (#13): two turn-ends on ONE session with NO user action
+    # between them must BOTH be read. A turn merely ending no longer drops the
+    # prior turn's finished digest (was: the second turn superseded the first).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
-    _turn_done(daemon)                                   # gen 1
+    _turn_done(daemon)                                   # first digest dispatched
     _pad = "This filler sentence carries the turn past the threshold. "
     daemon.handle_message(_prose("fg", "More text. " + _pad * 6, 2, True))
-    _turn_done(daemon)                                   # gen 2 supersedes (new prose)
-    daemon._summarize_fn = lambda text, **kw: "Stale summary."
-    daemon._summary_worker(*calls[0])                    # gen-1 result arrives late
+    _turn_done(daemon)                                   # second digest dispatched
+    daemon._summarize_fn = lambda text, **kw: "First digest."
+    daemon._summary_worker(*calls[0])                    # first result lands late
     ch = daemon.router.channel("fg")
-    assert "Stale summary." not in [it.text for it in ch.items[ch.cursor:]]
+    assert "First digest." in [it.text for it in ch.items[ch.cursor:]]  # NOT dropped
+
+
+def test_both_queued_digests_play_without_user_action(monkeypatch):
+    # "Read all queued" (#13): every finished digest of a session is enqueued when
+    # no user action intervenes -- none is superseded by a later turn ending.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # digest 1 dispatched
+    _pad = "This filler sentence carries the turn past the threshold. "
+    daemon.handle_message(_prose("fg", "Second turn. " + _pad * 6, 2, True))
+    _turn_done(daemon)                                   # digest 2 dispatched
+    assert len(calls) == 2
+    results = iter(["Digest one.", "Digest two."])
+    daemon._summarize_fn = lambda text, **kw: next(results)
+    daemon._summary_worker(*calls[0])
+    daemon._summary_worker(*calls[1])
+    ch = daemon.router.channel("fg")
+    texts = [it.text for it in ch.items[ch.cursor:]]
+    assert "Digest one." in texts and "Digest two." in texts
 
 
 def test_worker_forwards_config_to_summarizer(monkeypatch):
@@ -554,10 +593,9 @@ def test_long_turn_still_dispatches_summarizer(monkeypatch):
     assert len(calls) == 1
 
 
-def test_foreground_digest_is_prefixed_with_its_folder(monkeypatch):
-    # "Always announce the session speaking": every digest names its session,
-    # foreground included (the user could not tell which session a digest
-    # belonged to when sessions interleaved).
+def test_foreground_digest_is_unprefixed(monkeypatch):
+    # A foreground digest is never prefixed (#15): the user is already in that
+    # session, and a switch would announce "Session changed" on its own.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
     sessions.set_foreground("fg", cwd="/home/me/myrepo")
@@ -567,7 +605,92 @@ def test_foreground_digest_is_prefixed_with_its_folder(monkeypatch):
     daemon._summary_worker(*calls[0])
     ch = daemon.router.channel("fg")
     texts = [it.text for it in ch.items[ch.cursor:]]
-    assert "Session myrepo: The gist." in texts
+    assert "The gist." in texts
+    assert not any(t.startswith("Session myrepo:") for t in texts)   # no prefix
+
+
+# --- question lead-in settle (#16) ---------------------------------------
+
+def test_question_lead_in_after_choice_not_stranded(monkeypatch):
+    # The bug: CHOICE arrives before its lead-in prose. With the settle window the
+    # late lead-in is digested and the question is held after it (#16).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": "fg",
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    _pad = "This filler sentence carries the lead-in past the threshold. "
+    daemon.handle_message(_prose("fg", "The context here. " + _pad * 6, 0, True))  # late lead-in
+    daemon._settle_fire("fg", scheduled[-1][1])
+    assert len(calls) == 1
+    _, _, text = calls[0]
+    assert "The context here." in text                     # lead-in digested, not empty
+    assert daemon._held_decision.get("fg") is not None      # question held until digest
+
+
+def test_choice_defers_question_until_settle(monkeypatch):
+    # CHOICE alone does not enqueue the question; only the settle fire does (#16).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Short context. ", 0, True))
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": "fg",
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    ch = daemon.router.channel("fg")
+    assert not any(it.is_decision for it in ch.items[ch.cursor:])   # deferred
+    daemon._settle_fire("fg", scheduled[-1][1])
+    assert any(it.is_decision for it in ch.items[ch.cursor:])       # enqueued after fire
+
+
+def test_flush_cancels_pending_question_settle(monkeypatch):
+    # A new prompt during a question's settle window drops the pending question;
+    # a late fire is a no-op (#16, consistent with #13/#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE, "session": "fg",
+                           "questions": [{"question": "Pick one?", "options": ["a", "b"]}]})
+    stale = scheduled[-1][1]
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    daemon._settle_fire("fg", stale)
+    ch = daemon.router.channel("fg")
+    assert not any(it.is_decision for it in ch.items[ch.cursor:])   # dropped
+    assert "fg" not in daemon._pending_decision
+
+
+# --- queued question is not overtaken by a later short turn (#17) ---------
+
+def test_short_answer_does_not_overtake_held_question(monkeypatch):
+    # Repro of the live bug (#17): answer a question before it is voiced; the short
+    # answer-response must NOT cut ahead of the queued question in the channel.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)           # long lead-in
+    _choice(daemon)                                  # settle -> digest dispatched, question held
+    daemon._summarize_fn = lambda text, **kw: "The context digest."
+    daemon._summary_worker(*calls[0])                # context enqueued + question appended
+    ch = daemon.router.channel("fg")
+    daemon.handle_message(_prose("fg", "Short answer. ", 0, True))   # short answer-response
+    _turn_done(daemon)                               # settle -> short path
+    texts = [it.text for it in ch.items]
+    q_idx = next(i for i, t in enumerate(texts) if "Pick one?" in t)
+    a_idx = next(i for i, t in enumerate(texts) if "Short answer." in t)
+    assert q_idx < a_idx                             # question stays ahead of the later short answer
 
 
 def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):
@@ -582,3 +705,84 @@ def test_foreground_digest_without_folder_stays_unprefixed(monkeypatch):
     ch = daemon.router.channel("fg")
     texts = [it.text for it in ch.items[ch.cursor:]]
     assert "The gist." in texts
+
+
+# --- turn-end settle window (#14) ----------------------------------------
+
+def test_turn_done_defers_digest_until_settle(monkeypatch):
+    # turn_done alone must NOT dispatch: the turn's final prose may still be in
+    # flight (separate hook processes race). Only the settle fire dispatches (#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    _enable_and_feed(daemon, monkeypatch)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})
+    assert calls == []                       # deferred: no digest yet
+    assert scheduled and scheduled[-1][0] == "fg"
+    daemon._settle_fire("fg", scheduled[-1][1])
+    assert len(calls) == 1                    # settle fired -> dispatched
+
+
+def test_late_prose_included_after_turn_done(monkeypatch):
+    # The bug: turn_done arrives before the paragraph body. With the settle
+    # window, the late body is included and the turn takes the digest path (#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    daemon.handle_message(_prose("fg", "Here is another one:", 0, True))   # short lead-in
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})           # arms window
+    _pad = "This filler sentence carries the turn well past the threshold. "
+    daemon.handle_message(_prose("fg", " " + _pad * 6, 1, True))            # late body -> re-arm
+    daemon._settle_fire("fg", scheduled[-1][1])                            # window fires
+    assert len(calls) == 1
+    _, _, text = calls[0]
+    assert "Here is another one:" in text and "filler sentence" in text     # FULL turn digested
+
+
+def test_settle_window_resets_on_new_prose(monkeypatch):
+    # New prose after turn_done re-arms the window; a fire from the superseded
+    # (earlier) window is a no-op, only the latest fire dispatches (#14).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    _enable_and_feed(daemon, monkeypatch)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})
+    first_gen = scheduled[-1][1]
+    _pad = "This filler sentence carries the turn well past the threshold. "
+    daemon.handle_message(_prose("fg", " " + _pad * 6, 2, True))            # re-arms
+    second_gen = scheduled[-1][1]
+    assert second_gen != first_gen
+    daemon._settle_fire("fg", first_gen)                                    # stale
+    assert calls == []
+    daemon._settle_fire("fg", second_gen)                                  # current
+    assert len(calls) == 1
+
+
+def test_flush_cancels_pending_settle(monkeypatch):
+    # A new prompt during the settle window abandons the turn: a late fire from
+    # the cancelled window dispatches nothing (#14, consistent with #13).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    scheduled = []
+    monkeypatch.setattr(daemon, "_settle_schedule",
+                        lambda session, gen: scheduled.append((session, gen)))
+    _enable_and_feed(daemon, monkeypatch)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
+                           "kind": "turn_done", "session": "fg"})
+    stale_gen = scheduled[-1][1]
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH, "session": "fg"})
+    daemon._settle_fire("fg", stale_gen)
+    assert calls == []
+    assert "fg" not in daemon._settle_pending
