@@ -31,8 +31,11 @@ def test_defaults_scalar_values():
     assert DEFAULTS["background_policy"] == "earcon_only"
 
 
-def test_chatterbox_timeout_default_is_30():
-    assert DEFAULTS["chatterbox_timeout"] == 30
+def test_chatterbox_timeout_default_covers_cold_reload():
+    # 30 drifted below the ~40s post-idle cold model reload, so every post-idle
+    # chunk timed out and cascaded the utterance to Kokoro (audit #19). 120
+    # covers the reload with slack and matches the value long persisted live.
+    assert DEFAULTS["chatterbox_timeout"] == 120
 
 
 def test_defaults_no_longer_carries_earcons():
@@ -244,7 +247,7 @@ def test_chatterbox_defaults():
     assert DEFAULTS["chatterbox_variant"] == "turbo"
     assert DEFAULTS["chatterbox_min_free_vram_gb"] == 5
     assert DEFAULTS["chatterbox_idle_unload_s"] == 600
-    assert DEFAULTS["chatterbox_timeout"] == 30
+    assert DEFAULTS["chatterbox_timeout"] == 120
 
 
 def test_chatterbox_warm_timeout_default():

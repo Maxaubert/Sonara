@@ -22,7 +22,10 @@ DEFAULTS = {
     "chatterbox_variant": "turbo",        # default variant for voices without a sidecar
     "chatterbox_min_free_vram_gb": 5,     # VRAM gate; 0 = always try
     "chatterbox_idle_unload_s": 600,      # worker frees the model after this idle time
-    "chatterbox_timeout": 30,             # seconds per-chunk synthesis worker timeout
+    "chatterbox_timeout": 120,            # seconds per-chunk synthesis worker timeout
+                                          # (must cover the ~40s post-idle cold model
+                                          # reload, or every post-idle chunk times out
+                                          # and cascades to Kokoro -- audit #19)
     "chatterbox_warm_timeout": 90,        # seconds for a pre-warm (covers the cold load)
 }
 

@@ -21,6 +21,7 @@ import subprocess
 import threading
 from pathlib import Path
 
+from sonara.config import DEFAULTS as _CONFIG_DEFAULTS
 from sonara.paths import CHATTERBOX_HF_CACHE, CHATTERBOX_VOICES_DIR, chatterbox_venv_python
 
 DEFAULT_VOICE = "cb_default"
@@ -158,7 +159,13 @@ def split_text(text, max_chars=280):
 # --- VRAM gate -----------------------------------------------------------------
 
 def _default_smi_run(argv, **kwargs):
-    """subprocess.check_output, but windowless on Windows (no console flash)."""
+    """subprocess.check_output, but windowless on Windows (no console flash).
+
+    Bounded: nvidia-smi can hang during driver resets/resume-from-sleep, and this
+    runs synchronously on the speak-loop thread -- an unbounded call would wedge
+    ALL speech forever (audit #19). TimeoutExpired falls into free_vram_gb's
+    except -> None -> the gate passes, matching unknown-VRAM semantics."""
+    kwargs.setdefault("timeout", 3)
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return subprocess.check_output(argv, **kwargs)
@@ -264,16 +271,25 @@ class ChatterboxClient:
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        self._proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=env,
-            text=True,
-            encoding="utf-8",
-            **kwargs
-        )
+        try:
+            self._proc = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                text=True,
+                encoding="utf-8",
+                **kwargs
+            )
+        except Exception as exc:  # noqa: BLE001 - venv python gone, spawn denied, ...
+            # Funnel EVERY spawn failure into ChatterboxError: the per-chunk
+            # Kokoro fallback catches only ChatterboxError, so a raw OSError
+            # would bypass it and silently drop the utterance while reporting
+            # success (audit #19).
+            self._proc = None
+            raise ChatterboxError(
+                "failed to spawn chatterbox worker: {0}".format(exc))
 
     def _kill(self) -> None:
         proc, self._proc = self._proc, None
@@ -376,7 +392,11 @@ class ChatterboxClient:
             "variant": spec["variant"],
             "exaggeration": spec["exaggeration"],
         }
-        timeout = config.get("chatterbox_timeout", 120)
+        # Fallback comes FROM config DEFAULTS: a second literal here drifted from
+        # DEFAULTS once already (120 vs 30, audit #19) and the 30 broke post-idle
+        # synthesis (cold reload ~40s > 30s timeout -> cascade to Kokoro).
+        timeout = config.get("chatterbox_timeout",
+                             _CONFIG_DEFAULTS["chatterbox_timeout"])
         resp = self._request(payload, timeout, config)
         if not resp.get("ok"):
             raise ChatterboxError(resp.get("error", "unknown chatterbox error"))
