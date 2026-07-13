@@ -37,11 +37,21 @@ class ProseAssembler:
     def feed(self, delta: str, index: int, final: bool) -> list[str]:
         out: list[str] = []
         if index in self._seen:
-            # still honor a final flush even on a duplicate index
-            if final:
+            if index == 0:
+                # A NEW message block restarts at index 0. A lost final from the
+                # previous block would otherwise leave _seen poisoned and every
+                # colliding delta of the new block silently DROPPED (deep audit
+                # #25). Flush the stale block and start fresh; a true duplicate
+                # first delta re-speaks at worst, never drops.
+                out.extend(self._consume(force=True))
                 out.extend(self._flush_prose())
                 self._reset()
-            return out
+            else:
+                # still honor a final flush even on a duplicate index
+                if final:
+                    out.extend(self._flush_prose())
+                    self._reset()
+                return out
         self._seen.add(index)
 
         self._pending += delta
@@ -63,32 +73,49 @@ class ProseAssembler:
         while True:
             if self._in_fence:
                 nl = self._pending.find("\n")
-                close = self._pending.find(_FENCE)
-                # closing fence comes before the next newline (or no newline)
-                if close != -1 and (nl == -1 or close < nl):
-                    # everything before the closing fence on this line is content
-                    # (already-collected lines handle full lines; trailing inline
-                    # content before ``` is rare, treat remainder as a line if any)
-                    pre = self._pending[:close]
-                    if pre.strip():
-                        self._fence_lines.append(pre)
-                    self._pending = self._pending[close + len(_FENCE):]
-                    out.append(self._close_fence())
-                    continue
                 if nl != -1:
                     line = self._pending[:nl]
                     self._pending = self._pending[nl + 1:]
+                    stripped = line.strip()
+                    # A closing fence STARTS its line with >= 3 backticks and is
+                    # followed by nothing (or whitespace + trailing prose, which
+                    # resumes as prose). Matching ``` ANYWHERE closed early on
+                    # code that CONTAINS a ``` literal, leaking code lines as
+                    # spoken prose (deep audit #25). Backticks followed directly
+                    # by a word ("```python") are content, not a close.
+                    close_rest = self._closing_fence_rest(stripped)
+                    if close_rest is not None:
+                        out.append(self._close_fence())
+                        if close_rest:
+                            self._pending = close_rest + "\n" + self._pending
+                        continue
                     if not self._fence_opened_line:
                         # first line after opening ``` is the info string
-                        self._fence_lang = line.strip()
+                        self._fence_lang = stripped
                         self._fence_opened_line = True
                     else:
                         self._fence_lines.append(line)
                     continue
-                # no newline and no closing fence yet
+                # no complete line yet
                 if force:
-                    # unterminated fence at EOF: flush what we have
-                    out.append(self._close_fence())
+                    # unterminated fence at EOF: the tail is either a
+                    # (newline-less) closing fence or a final content line
+                    tail = self._pending
+                    self._pending = ""
+                    stripped = tail.strip()
+                    close_rest = self._closing_fence_rest(stripped)
+                    if close_rest is not None:
+                        out.append(self._close_fence())
+                        if close_rest:
+                            self._pending = close_rest
+                            continue        # resume prose scan (still forced)
+                    else:
+                        if stripped:
+                            if self._fence_opened_line:
+                                self._fence_lines.append(tail)
+                            else:
+                                self._fence_lang = stripped
+                        out.append(self._close_fence())
                 break
             else:
                 open_at = self._pending.find(_FENCE)
@@ -97,6 +124,12 @@ class ProseAssembler:
                     self._buf += prose
                     self._pending = self._pending[open_at + len(_FENCE):]
                     out.extend(self._split_sentences())
+                    # An unterminated lead-in ("Here is the code:") must be
+                    # spoken BEFORE the fence summary -- it used to sit as the
+                    # buffered remainder until the final flush and play AFTER
+                    # the block it introduced (deep audit #25). The fence is a
+                    # hard boundary, so the lead-in is complete: flush it now.
+                    out.extend(self._flush_prose())
                     self._in_fence = True
                     self._fence_opened_line = False
                     self._fence_lang = ""
@@ -122,6 +155,22 @@ class ProseAssembler:
                         out.extend(self._split_sentences())
                 break
         return out
+
+    def _closing_fence_rest(self, stripped: str):
+        """If *stripped* (a fence-interior line) is a closing fence, return the
+        trailing prose after it ('' if none); else None. A close = the line
+        STARTS with >= 3 backticks followed by end-of-line or whitespace; a
+        word glued to the backticks ('```python') is content (deep audit #25).
+        Only valid once the info-string line was consumed."""
+        if not self._fence_opened_line or not stripped.startswith(_FENCE):
+            return None
+        ticks = len(stripped) - len(stripped.lstrip("`"))
+        if ticks < 3:
+            return None
+        rest = stripped[ticks:]
+        if rest and rest[0] not in (" ", "\t"):
+            return None
+        return rest.strip()
 
     def _partial_fence_tail_len(self) -> int:
         """How many trailing chars of _pending could be the start of a fence."""

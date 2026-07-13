@@ -3,8 +3,13 @@ PATH, so sys.path[0] is the file's own dir, not the package root. The loop must
 self-bootstrap so `import sonara` resolves, and the daemon it spawns must inherit
 PYTHONPATH. Regression for the dead-autostart bug (#6).
 
-On a non-Windows host (a dev box / CI) resolve_python() returns None, so the
-restart loop is skipped and the process exits 0 once the import succeeds.
+The subprocess run is confined to an ISOLATED home with the stop sentinel
+pre-created: on Windows _main() enters the real respawn loop, and without the
+sentinel this test used to burn its full 30s timeout AND spawn real detached
+`python -m sonara.daemon` processes against the live ~/.sonara (conftest's
+in-process path isolation cannot reach a subprocess) -- deep-audit #25. The
+sentinel makes run_supervisor_loop return immediately, still exercising the
+bare-script-path import resolution this test pins.
 """
 import os
 import subprocess
@@ -16,6 +21,13 @@ import sonara.platform.windows.supervisor_loop as sl
 def test_supervisor_loop_imports_sonara_when_launched_by_script_path(tmp_path):
     loop_py = os.path.abspath(sl.__file__)
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    # Isolated home + pre-created stop sentinel: the loop exits before spawning
+    # anything, and nothing in the subprocess can touch the real ~/.sonara.
+    home = tmp_path / "home"
+    (home / ".sonara").mkdir(parents=True)
+    (home / ".sonara" / "stopped").write_text("test sentinel")
+    env["USERPROFILE"] = str(home)   # Path.home() on Windows
+    env["HOME"] = str(home)          # Path.home() elsewhere
     proc = subprocess.run(
         [sys.executable, loop_py],
         cwd=str(tmp_path), env=env,
