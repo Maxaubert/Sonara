@@ -53,12 +53,11 @@ def _clip_stems() -> "list[str]":
 
 
 def list_voices() -> "list[str]":
-    """["cb_default"] plus every registered voice-clip stem, sorted.
-
-    `cb_default` is reserved for the built-in voice; a user clip that happens
-    to share that stem is de-duplicated out rather than listed twice.
-    """
-    return [DEFAULT_VOICE] + [stem for stem in _clip_stems() if stem != DEFAULT_VOICE]
+    """Every registered voice-clip stem, sorted. The no-clip built-in
+    (`cb_default`) is deliberately NOT advertised (#42): it clutters the
+    picker next to real cloned voices, but it still resolves everywhere
+    (is_chatterbox_voice / voice_spec) so an old config keeps speaking."""
+    return list(_clip_stems())
 
 
 def normalize_voice(name) -> "str | None":

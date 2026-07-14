@@ -14,20 +14,28 @@ def _reg(monkeypatch, tmp_path):
 
 def test_list_voices_always_has_default(monkeypatch, tmp_path):
     _reg(monkeypatch, tmp_path)
-    assert cb.list_voices() == ["cb_default"]
+    assert cb.list_voices() == []          # cb_default no longer advertised (#42)
 
 
 def test_list_voices_discovers_clips(monkeypatch, tmp_path):
     d = _reg(monkeypatch, tmp_path)
     (d / "calm-lady.wav").write_bytes(b"RIFF")
     (d / "deep.wav").write_bytes(b"RIFF")
-    assert cb.list_voices() == ["cb_default", "calm-lady", "deep"]
+    assert cb.list_voices() == ["calm-lady", "deep"]
+
+
+def test_cb_default_still_resolves_as_a_chatterbox_voice():
+    # removed from the LIST, but a config that still says cb_default must keep
+    # working (no-clip default synthesis)
+    assert cb.is_chatterbox_voice("cb_default")
+    spec = cb.voice_spec("cb_default", {"chatterbox_variant": "turbo"})
+    assert spec["voice_path"] is None
 
 
 def test_cb_default_clip_does_not_duplicate(monkeypatch, tmp_path):
     d = _reg(monkeypatch, tmp_path)
     (d / "cb_default.wav").write_bytes(b"RIFF")
-    assert cb.list_voices().count("cb_default") == 1
+    assert cb.list_voices().count("cb_default") == 1   # clip named cb_default lists once
 
 
 def test_is_chatterbox_voice_forms(monkeypatch, tmp_path):

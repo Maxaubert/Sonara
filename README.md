@@ -118,7 +118,7 @@ Drop 10-second clean speech WAV clips into `~/.sonara/voices/chatterbox/`. The f
 Run `sonara voice` to list all available voices across all engines, or `sonara voice alice`
 to select.
 
-The built-in `cb_default` voice is always available (no clip needed) and uses the model's
+Voices are your registered clips; without any, Chatterbox uses the model's
 standard voice.
 
 **VRAM gate and fallback:**
