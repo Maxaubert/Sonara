@@ -1701,27 +1701,34 @@ class SpeechDaemon:
     def preview_voice(self, voice: str) -> bool:
         """Speak a short sample in *voice* WITHOUT changing config (settings
         page, #34). Runs on its own thread via the platform tts runner (same
-        say_runner contract the Speaker uses); coalesced to one at a time."""
-        if getattr(self, "_preview_busy", False):
-            return False
-        runner = getattr(self, "_preview_runner", None)
-        if runner is None:
-            from sonara.platform import get_platform
-            runner = get_platform().tts.run
-        self._preview_busy = True
-        text = "This is {0} speaking for Sonara.".format(voice)
-        rate = self.config.get("rate", 200)
+        say_runner contract the Speaker uses); coalesced to one at a time.
+        The busy check-and-set is under self._lock: HTTP requests run on
+        their own threads, and a bare check-then-act let two previews race."""
+        with self._lock:
+            if getattr(self, "_preview_busy", False):
+                return False
+            self._preview_busy = True
+        try:
+            runner = getattr(self, "_preview_runner", None)
+            if runner is None:
+                from sonara.platform import get_platform
+                runner = get_platform().tts.run
+            text = "This is {0} speaking for Sonara.".format(voice)
+            rate = self.config.get("rate", 200)
 
-        def _run():
-            try:
-                handle = runner(text, voice, rate)
-                handle.wait(30)
-            except Exception:  # noqa: BLE001 - preview must never crash anything
-                pass
-            finally:
-                self._preview_busy = False
-        threading.Thread(target=_run, name="sonara-preview", daemon=True).start()
-        return True
+            def _run():
+                try:
+                    handle = runner(text, voice, rate)
+                    handle.wait(30)
+                except Exception:  # noqa: BLE001 - preview must never crash anything
+                    pass
+                finally:
+                    self._preview_busy = False
+            threading.Thread(target=_run, name="sonara-preview", daemon=True).start()
+            return True
+        except Exception:  # noqa: BLE001 - a failed spawn must not wedge the flag
+            self._preview_busy = False
+            return False
 
     def _duck_exclude_pids(self) -> "set[int]":
         pids = {os.getpid()}
