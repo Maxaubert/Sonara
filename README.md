@@ -121,21 +121,17 @@ to select.
 Voices are your registered clips; without any, Chatterbox uses the model's
 standard voice.
 
-**VRAM gate and fallback:**
+**Fallback:**
 
-Before synthesis, Sonara checks free GPU VRAM. If below the threshold (default 5 GB), the
-utterance speaks via Kokoro instead, quietly and without announcement, keeping Chatterbox
-reserved for when the GPU has room. The threshold is configurable via
-`chatterbox_min_free_vram_gb` in `~/.sonara/config.json` (set to 0 to always try, or to a
-lower value if your workflow needs the GPU freed).
+A chosen Chatterbox voice always tries Chatterbox. When the model is loaded, it idles for 10
+minutes before unloading to free VRAM back to your system (configurable via
+`chatterbox_idle_unload_s`).
 
-When the model is loaded, it idles for 10 minutes before unloading to free VRAM back to your
-system (configurable via `chatterbox_idle_unload_s`). A busy-GPU gate miss (above) is quiet.
-A genuine failure (missing weights, worker error, or timeout) also falls back to Kokoro, and
+A genuine failure (missing weights, worker error, or timeout) falls back to Kokoro, and
 the first such failure in a daemon run speaks a short notice ("Chatterbox unavailable, using
 Heart") so you know why the voice changed; later failures stay quiet. Every fallback logs its
 reason to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so keep the Kokoro
-voices installed alongside Chatterbox. When the GPU frees, Chatterbox resumes automatically.
+voices installed alongside Chatterbox.
 Speech is synthesized and played in chunks, so hotkeys (mute, navigate, pause, skip) take
 effect within a chunk (roughly 2 seconds) rather than waiting for the whole utterance. The
 `chatterbox_timeout` setting (default 120 seconds; it must cover the ~40s post-idle cold model reload) bounds each chunk, not the entire utterance.

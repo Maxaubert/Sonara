@@ -1,4 +1,4 @@
-"""Chatterbox TTS engine (optional, opt-in, GPU-only): registry, VRAM gate, client.
+"""Chatterbox TTS engine (optional, opt-in, GPU-only): registry + client.
 
 Chatterbox voices are cloned from a short reference clip dropped into
 CHATTERBOX_VOICES_DIR (`<stem>.wav`, plus an optional `<stem>.json` sidecar for
@@ -172,46 +172,6 @@ def chunk_chars(config) -> int:
     return max(80, min(280, n))
 
 
-# --- VRAM gate -----------------------------------------------------------------
-
-def _default_smi_run(argv, **kwargs):
-    """subprocess.check_output, but windowless on Windows (no console flash).
-
-    Bounded: nvidia-smi can hang during driver resets/resume-from-sleep, and this
-    runs synchronously on the speak-loop thread -- an unbounded call would wedge
-    ALL speech forever (audit #19). TimeoutExpired falls into free_vram_gb's
-    except -> None -> the gate passes, matching unknown-VRAM semantics."""
-    kwargs.setdefault("timeout", 3)
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return subprocess.check_output(argv, **kwargs)
-
-
-def free_vram_gb(run=_default_smi_run) -> "float | None":
-    """Free GPU VRAM in GiB via nvidia-smi. None if it cannot be determined."""
-    try:
-        out = run(
-            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-            text=True,
-        )
-    except Exception:  # noqa: BLE001 - no nvidia-smi / no GPU / anything else -> unknown
-        return None
-    try:
-        first_line = out.strip().splitlines()[0]
-        return float(first_line.strip()) / 1024.0
-    except (IndexError, ValueError):
-        return None
-
-
-def gate_ok(config, run=_default_smi_run) -> bool:
-    """Safe to try Chatterbox: threshold<=0, VRAM unknown, or free >= threshold."""
-    threshold = config.get("chatterbox_min_free_vram_gb", 5)
-    if threshold is None or threshold <= 0:
-        return True
-    free = free_vram_gb(run=run)
-    if free is None:
-        return True
-    return free >= threshold
 
 
 # --- fallback notice -----------------------------------------------------------
@@ -405,7 +365,7 @@ class ChatterboxClient:
     def synth_wav(self, text, name, config) -> bytes:
         """Synthesize *text* with voice *name*. Raises ChatterboxError on failure.
 
-        Gating is the caller's job (`gate_ok`) - this always tries the worker.
+        This always tries the worker; a genuine failure falls back per chunk.
 
         A rendered result is cached per (variant, voice, exaggeration, text): the
         summary-mode Up ('re-read the digest') speaks the exact same text, and

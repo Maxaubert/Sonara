@@ -524,19 +524,19 @@ class WinTtsBackend(TtsBackend):
                 print("[chatterbox] fallback: not provisioned", file=sys.stderr, flush=True)
                 chatterbox._set_fallback_notice(
                     "not provisioned (run: sonara voices install chatterbox)")
-            elif not chatterbox.gate_ok(cfg):
-                # A gate-miss is expected/transient (busy GPU). Quietly use Kokoro
-                # this utterance; do NOT announce or burn the once-per-run notice.
-                print("[chatterbox] gate: VRAM below threshold, using Kokoro",
-                      file=sys.stderr, flush=True)
             else:
+                # A chosen Chatterbox voice ALWAYS tries Chatterbox (#49): the old
+                # VRAM gate self-sabotaged (the loaded model itself held the VRAM
+                # it was gating on, so an idle machine kept dropping to Kokoro).
+                # A genuinely broken/OOM worker still surfaces as a per-chunk
+                # ChatterboxError and falls back audibly with the once-per-run notice.
                 return _ChatterboxHandle(
                     text, self._chatterbox_synth_one(voice, cfg, rate),
                     on_play=on_play,
                     # configurable synth chunk size for pronunciation A/B (#27)
                     split=lambda t: chatterbox.split_text(
                         t, max_chars=chatterbox.chunk_chars(cfg)))
-            # fell through: whole-utterance Kokoro (not-provisioned or gate-miss)
+            # fell through: whole-utterance Kokoro (not provisioned)
             data = self._kokoro_wav(text, rate)
             if on_play is not None:
                 try:

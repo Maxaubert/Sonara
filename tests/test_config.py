@@ -17,7 +17,6 @@ def test_defaults_has_documented_top_level_keys():
         "summary_command",
         "summary_timeout",
         "chatterbox_variant",
-        "chatterbox_min_free_vram_gb",
         "chatterbox_idle_unload_s",
         "chatterbox_timeout",
         "chatterbox_warm_timeout",
@@ -248,7 +247,7 @@ def test_summary_mode_defaults():
 def test_chatterbox_defaults():
     from sonara.config import DEFAULTS
     assert DEFAULTS["chatterbox_variant"] == "turbo"
-    assert DEFAULTS["chatterbox_min_free_vram_gb"] == 5
+    assert "chatterbox_min_free_vram_gb" not in DEFAULTS   # VRAM gate removed (#49)
     assert DEFAULTS["chatterbox_idle_unload_s"] == 600
     assert DEFAULTS["chatterbox_timeout"] == 120
 

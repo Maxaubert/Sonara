@@ -1025,9 +1025,9 @@ class SpeechDaemon:
                 pass
 
     def _warm_chatterbox_async(self) -> None:
-        """Run the whole prewarm check+warm OFF-thread (#27): gate_ok spawns
-        nvidia-smi, which must never run under the daemon lock (dispatch calls
-        this from handle_message). Coalesced to one warm at a time."""
+        """Run the prewarm warm() OFF-thread (#27): it can spawn/load the GPU
+        worker, which must never run under the daemon lock (dispatch calls this
+        from handle_message). Coalesced to one warm at a time."""
         if getattr(self, "_warm_inflight", False):
             return
         self._warm_inflight = True
@@ -1041,7 +1041,7 @@ class SpeechDaemon:
 
     def _maybe_prewarm_chatterbox(self) -> None:
         """If the selected voice is a Chatterbox voice, the engine is provisioned,
-        and the GPU has room, load the model in the worker in the BACKGROUND so the
+        load the model in the worker in the BACKGROUND so the
         first digest does not pay the ~40s cold load. Best-effort: never blocks the
         caller and never crashes it (chatterbox is optional). Called at daemon
         startup and when the user switches TO a chatterbox voice."""
@@ -1049,8 +1049,7 @@ class SpeechDaemon:
             from sonara import chatterbox
             voice = self.config.get("voice")
             if not (chatterbox.is_provisioned()
-                    and chatterbox.is_chatterbox_voice(voice)
-                    and chatterbox.gate_ok(self.config)):
+                    and chatterbox.is_chatterbox_voice(voice)):
                 return
         except Exception:  # noqa: BLE001 - optional engine; never break startup
             return
