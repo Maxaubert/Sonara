@@ -1732,6 +1732,8 @@ class SpeechDaemon:
             "summary_settle_ms": lambda v: max(0, min(5000, int(v))),
             "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
             "chatterbox_exaggeration": lambda v: max(0.0, min(1.0, float(v))),
+            "chatterbox_variant": lambda v: (str(v)
+                if str(v) in ("turbo", "original") else None),
         }
         fn = clamps.get(key)
         if fn is None:
