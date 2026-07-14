@@ -1,4 +1,4 @@
-# Sonari Phase 3.1 — Packaging Hardening Implementation Plan
+# Sonari Phase 3.1 - Packaging Hardening Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -29,7 +29,7 @@
 
 ---
 
-## Task 1: `paths.py` — `APP_DIR` constant
+## Task 1: `paths.py` - `APP_DIR` constant
 
 **Files:**
 - Modify: `src/sonari/paths.py:7-14`
@@ -76,7 +76,7 @@ git commit -m "feat(paths): add APP_DIR stable app-copy constant"
 
 ---
 
-## Task 2: `cli.py` — `_read_plugin_version()` helper
+## Task 2: `cli.py` - `_read_plugin_version()` helper
 
 Read the plugin's declared `version` from `<plugin_root>/.claude-plugin/plugin.json`, falling back to the `CLAUDE_PLUGIN_VERSION` env var, else `""`. Never raises (version is advisory).
 
@@ -158,15 +158,15 @@ git commit -m "feat(cli): add _read_plugin_version helper (plugin.json + env fal
 
 ---
 
-## Task 3: `cli.py` — durability fix (`_copy_app` + plist → `APP_DIR` + install record fields)
+## Task 3: `cli.py` - durability fix (`_copy_app` + plist → `APP_DIR` + install record fields)
 
 This is the core durability change and the **biggest red-window risk in cli**. It changes `_write_install_record`'s signature, makes `install()` copy the package into `APP_DIR` and point the speechd plist there, and updates `doctor()` to read `app_path`. The three install tests and the install-record test are updated **in this same task** so the suite stays green at the commit.
 
 **Files:**
-- Modify: `src/sonari/cli.py` — `_write_install_record` (345-359), `doctor()` (226-234), `install()` (542-563), add `_copy_app`
+- Modify: `src/sonari/cli.py` - `_write_install_record` (345-359), `doctor()` (226-234), `install()` (542-563), add `_copy_app`
 - Test: `tests/test_cli_install.py` (`test_write_install_record_writes_expected_keys`, `test_install_writes_plist_and_loads`, + new tests), `tests/test_cli_hotkeyd.py` (`test_install_writes_hotkeyd_plist_and_keymap`, `test_install_build_failure_is_nonfatal`)
 
-### Step group A — `_copy_app` helper (TDD)
+### Step group A - `_copy_app` helper (TDD)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -262,7 +262,7 @@ git add src/sonari/cli.py tests/test_cli_install.py
 git commit -m "feat(cli): add _copy_app (remove-then-copy package into stable APP_DIR)"
 ```
 
-### Step group B — `_write_install_record` signature + install() wiring + doctor() (TDD, all in one commit)
+### Step group B - `_write_install_record` signature + install() wiring + doctor() (TDD, all in one commit)
 
 - [ ] **Step 6: Update the failing install-record test**
 
@@ -411,7 +411,7 @@ def test_install_plist_pythonpath_handles_spaces_in_app_dir(tmp_path, capsys):
 - [ ] **Step 9: Run the updated tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_install.py -v`
-Expected: FAIL — `test_write_install_record_writes_expected_keys` fails on the new keyword args (`_write_install_record() got an unexpected keyword argument 'app_path'`); `test_install_writes_plist_and_loads`, `test_install_copy_failure_is_fatal_and_writes_no_plist`, and `test_install_plist_pythonpath_handles_spaces_in_app_dir` fail because `install()` does not yet call `_copy_app`/use `APP_DIR`/handle the OSError.
+Expected: FAIL - `test_write_install_record_writes_expected_keys` fails on the new keyword args (`_write_install_record() got an unexpected keyword argument 'app_path'`); `test_install_writes_plist_and_loads`, `test_install_copy_failure_is_fatal_and_writes_no_plist`, and `test_install_plist_pythonpath_handles_spaces_in_app_dir` fail because `install()` does not yet call `_copy_app`/use `APP_DIR`/handle the OSError.
 
 - [ ] **Step 10: Write the implementation**
 
@@ -528,7 +528,7 @@ Expected: PASS (all)
 - [ ] **Step 14: Run the full cli suite to confirm no regression**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_install.py tests/test_cli_hotkeyd.py tests/test_cli_uninstall.py -v`
-Expected: PASS (uninstall still green — it does not yet exercise APP_DIR; Task 4 adds that)
+Expected: PASS (uninstall still green - it does not yet exercise APP_DIR; Task 4 adds that)
 
 - [ ] **Step 15: Commit**
 
@@ -539,10 +539,10 @@ git commit -m "feat(cli): copy package to stable APP_DIR + record app_path/plugi
 
 ---
 
-## Task 4: `cli.py` — `uninstall()` removes `APP_DIR` (preserving config/keymap)
+## Task 4: `cli.py` - `uninstall()` removes `APP_DIR` (preserving config/keymap)
 
 **Files:**
-- Modify: `src/sonari/cli.py` — `uninstall()` (after the artifacts loop, ~line 668)
+- Modify: `src/sonari/cli.py` - `uninstall()` (after the artifacts loop, ~line 668)
 - Test: `tests/test_cli_uninstall.py`
 
 - [ ] **Step 1: Update `test_uninstall_removes_launchagent_but_preserves_keymap_and_config` to create + assert-remove `APP_DIR`**
@@ -606,7 +606,7 @@ git commit -m "feat(cli): uninstall removes ~/.sonari/app (config/keymap preserv
 
 ---
 
-## Task 5: `hooks_entry.py` + `bin/sonari-hook` — `SessionStart` carries `plugin_version` + `plugin_root`
+## Task 5: `hooks_entry.py` + `bin/sonari-hook` - `SessionStart` carries `plugin_version` + `plugin_root`
 
 The hook shim resolves `CLAUDE_PLUGIN_VERSION` from `plugin.json` if unset (file I/O lives in the shim, which is already wrapped in a total try/except). `hooks_entry.handle_event` stays PURE (env reads only) and adds the two fields to the `SESSION_START` message.
 
@@ -652,7 +652,7 @@ def test_missing_session_id_defaults_to_empty_string(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_hooks_entry.py -k session_start -v`
-Expected: FAIL — `test_session_start_carries_plugin_version_and_root_from_env` and `test_session_start_empty_strings_when_env_unset` fail because the `SESSION_START` message does not yet include `plugin_version`/`plugin_root`.
+Expected: FAIL - `test_session_start_carries_plugin_version_and_root_from_env` and `test_session_start_empty_strings_when_env_unset` fail because the `SESSION_START` message does not yet include `plugin_version`/`plugin_root`.
 
 - [ ] **Step 3: Write the `hooks_entry.py` implementation**
 
@@ -697,7 +697,7 @@ In `bin/sonari-hook`, immediately after `from sonari.hooks_entry import handle_e
 
 - [ ] **Step 6: Smoke-test the shim resolves and exports the version**
 
-Run (the shim sets `CLAUDE_PLUGIN_VERSION` from this repo's plugin.json, which Task 10 will be `0.4.0`; until then it is `0.3.0` — assert it is non-empty so the test is version-agnostic):
+Run (the shim sets `CLAUDE_PLUGIN_VERSION` from this repo's plugin.json, which Task 10 will be `0.4.0`; until then it is `0.3.0` - assert it is non-empty so the test is version-agnostic):
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -733,20 +733,20 @@ git commit -m "feat(hooks): SessionStart carries plugin_version + plugin_root (s
 
 ---
 
-## Task 6: `daemon.py` — detect-and-guide spoken setup health on `SESSION_START`
+## Task 6: `daemon.py` - detect-and-guide spoken setup health on `SESSION_START`
 
 **The biggest red-window risk.** The daemon now evaluates `_setup_health` on `SESSION_START` and may enqueue a spoken cue. Any existing test feeding `SESSION_START` and asserting queue/spoken state breaks unless health is arranged to `"ok"` or the expected output is updated. We add a monkeypatch-friendly path and fix the two affected tests in this same task.
 
 **Existing tests touched (and why):**
-- `tests/test_daemon_control.py::test_session_start_sets_foreground_and_registers` — feeds `SESSION_START` via `handle_message`; would now enqueue a `not_installed` cue (hermetic tmp `~/.sonari` has no install.json). Fix: monkeypatch `SpeechDaemon._setup_health` → `("ok", None)` so it stays focused on foreground/register.
-- `tests/test_e2e_pipeline.py::test_scripted_session_full_ordering` and `test_background_session_is_earcon_only` — drive `SessionStart` with an EXACT expected log; hermetic state is `not_installed`, so a cue would fire and break ordering. Fix: patch `_setup_health` → `("ok", None)` on the daemon so ordering assertions stay focused.
-- `tests/test_daemon_phase2.py` and `tests/test_daemon_decisions.py` — verified: they do **not** feed `SESSION_START`/`session_start` through `handle_message` (they use `sessions.set_foreground(...)` directly and CHOICE/PLAN/PERMISSION/TOOL messages), so they need **no** change.
+- `tests/test_daemon_control.py::test_session_start_sets_foreground_and_registers` - feeds `SESSION_START` via `handle_message`; would now enqueue a `not_installed` cue (hermetic tmp `~/.sonari` has no install.json). Fix: monkeypatch `SpeechDaemon._setup_health` → `("ok", None)` so it stays focused on foreground/register.
+- `tests/test_e2e_pipeline.py::test_scripted_session_full_ordering` and `test_background_session_is_earcon_only` - drive `SessionStart` with an EXACT expected log; hermetic state is `not_installed`, so a cue would fire and break ordering. Fix: patch `_setup_health` → `("ok", None)` on the daemon so ordering assertions stay focused.
+- `tests/test_daemon_phase2.py` and `tests/test_daemon_decisions.py` - verified: they do **not** feed `SESSION_START`/`session_start` through `handle_message` (they use `sessions.set_foreground(...)` directly and CHOICE/PLAN/PERMISSION/TOOL messages), so they need **no** change.
 
 **Files:**
-- Modify: `src/sonari/daemon.py` — imports (line 12), `__init__` (line 35), add `_maybe_guide_setup` (after `_enqueue`, ~line 57), add health helpers (after `_choice_notes`, ~line 119), wire `SESSION_START` (191-195) + `SESSION_END` (197-201)
+- Modify: `src/sonari/daemon.py` - imports (line 12), `__init__` (line 35), add `_maybe_guide_setup` (after `_enqueue`, ~line 57), add health helpers (after `_choice_notes`, ~line 119), wire `SESSION_START` (191-195) + `SESSION_END` (197-201)
 - Test: `tests/test_daemon_setup_health.py` (new), `tests/test_daemon_control.py`, `tests/test_e2e_pipeline.py`
 
-### Step group A — health helpers (`_read_install_record`, `_launcher_present`, `_setup_health`)
+### Step group A - health helpers (`_read_install_record`, `_launcher_present`, `_setup_health`)
 
 - [ ] **Step 1: Write the failing tests (new file)**
 
@@ -844,7 +844,7 @@ def test_read_install_record_returns_none_on_corrupt(tmp_path, monkeypatch):
 Run: `.venv/bin/python -m pytest tests/test_daemon_setup_health.py -v`
 Expected: FAIL with `AttributeError: 'SpeechDaemon' object has no attribute '_setup_health'` (and `_launcher_present`, `_read_install_record`)
 
-- [ ] **Step 3: Write the implementation — imports + health helpers**
+- [ ] **Step 3: Write the implementation - imports + health helpers**
 
 (a) In `src/sonari/daemon.py`, replace the paths import (line 12) with:
 
@@ -855,7 +855,7 @@ from sonari.paths import (
 )
 ```
 
-(Note: `HOTKEYD_BIN_PATH` is deliberately **not** imported — the cue's "installed" check excludes hotkeyd so speech-only users are never nagged. The test patches `sonari.daemon.HOTKEYD_BIN_PATH` only to prove its absence is irrelevant; that monkeypatch target tolerates a missing attribute is **not** guaranteed, so the speech-only test patches it with `raising=False`-equivalent behavior via setattr on a fresh name — to keep it simple, the test above sets it and the absence of the import means the cue logic never reads it. If `monkeypatch.setattr` on a non-existent module attribute errors in your pytest, change that line in the test to `monkeypatch.setattr("sonari.daemon.HOTKEYD_BIN_PATH", ..., raising=False)`.)
+(Note: `HOTKEYD_BIN_PATH` is deliberately **not** imported - the cue's "installed" check excludes hotkeyd so speech-only users are never nagged. The test patches `sonari.daemon.HOTKEYD_BIN_PATH` only to prove its absence is irrelevant; that monkeypatch target tolerates a missing attribute is **not** guaranteed, so the speech-only test patches it with `raising=False`-equivalent behavior via setattr on a fresh name - to keep it simple, the test above sets it and the absence of the import means the cue logic never reads it. If `monkeypatch.setattr` on a non-existent module attribute errors in your pytest, change that line in the test to `monkeypatch.setattr("sonari.daemon.HOTKEYD_BIN_PATH", ..., raising=False)`.)
 
 (b) Add the per-session guard set in `__init__`, immediately after `self._warned_immediate` (line 35):
 
@@ -921,7 +921,7 @@ git add src/sonari/daemon.py tests/test_daemon_setup_health.py
 git commit -m "feat(daemon): setup-health helpers (install record + launcher + version drift)"
 ```
 
-### Step group B — emit the cue on `SESSION_START`, throttled, cleared on `SESSION_END`
+### Step group B - emit the cue on `SESSION_START`, throttled, cleared on `SESSION_END`
 
 - [ ] **Step 6: Write the failing tests (throttle + wiring)**
 
@@ -992,9 +992,9 @@ def test_setup_health_exception_never_breaks_session(monkeypatch):
 - [ ] **Step 7: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_daemon_setup_health.py -k "session_start or session_end or never_breaks" -v`
-Expected: FAIL — `SESSION_START` does not yet call any guidance emitter, so `len(queue) == 1` assertions fail (queue stays empty).
+Expected: FAIL - `SESSION_START` does not yet call any guidance emitter, so `len(queue) == 1` assertions fail (queue stays empty).
 
-- [ ] **Step 8: Write the implementation — emitter + wiring**
+- [ ] **Step 8: Write the implementation - emitter + wiring**
 
 (a) Add the throttled emitter immediately after `_enqueue` (after line 57):
 
@@ -1079,12 +1079,12 @@ git commit -m "feat(daemon): speak one throttled setup-guidance cue on SESSION_S
 
 ---
 
-## Task 7: `daemon.py` — single-instance guard in `main()`
+## Task 7: `daemon.py` - single-instance guard in `main()`
 
 If a daemon is already accepting connections, `main()` exits cleanly instead of unlinking + rebinding the live socket. The guard lives in `main()` (not `run()`) so the in-process test harness that calls `run()` on an isolated socket is unaffected.
 
 **Files:**
-- Modify: `src/sonari/daemon.py` — `main()` (416-430)
+- Modify: `src/sonari/daemon.py` - `main()` (416-430)
 - Test: `tests/test_daemon_single_instance.py` (new)
 
 - [ ] **Step 1: Write the failing tests (new file)**
@@ -1117,7 +1117,7 @@ def test_main_builds_and_runs_when_socket_not_connectable():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_daemon_single_instance.py -v`
-Expected: FAIL — `test_main_exits_without_building_when_socket_connectable` fails because `main()` builds + runs unconditionally (`run.assert_not_called()` fails).
+Expected: FAIL - `test_main_exits_without_building_when_socket_connectable` fails because `main()` builds + runs unconditionally (`run.assert_not_called()` fails).
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1150,7 +1150,7 @@ git commit -m "feat(daemon): single-instance guard in main() (exit if socket con
 
 ---
 
-## Task 8: `bin/sonari-daemon` + `bin/sonari` — prefer `/usr/bin/python3` first
+## Task 8: `bin/sonari-daemon` + `bin/sonari` - prefer `/usr/bin/python3` first
 
 Make the shims prefer `/usr/bin/python3` (stable, matches `_resolve_python`'s preference) and fall back to the first `python3` on PATH. The `bin/sonari-hook` shim is NOT changed.
 
@@ -1218,7 +1218,7 @@ def test_sonari_daemon_picks_usr_bin_python3_even_when_stub_python3_on_path(tmp_
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_bin_shims.py -v`
-Expected: FAIL — the source-grep tests fail with `ValueError: substring not found` (`[ -x /usr/bin/python3 ]` is absent); the stub test may fail because the current shim picks the PATH `python3` first and writes the marker.
+Expected: FAIL - the source-grep tests fail with `ValueError: substring not found` (`[ -x /usr/bin/python3 ]` is absent); the stub test may fail because the current shim picks the PATH `python3` first and writes the marker.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1303,7 +1303,7 @@ def test_uninstall_command_runs_sonari_uninstall():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_commands.py -v`
-Expected: FAIL — `test_all_command_files_exist` fails (`sonari:install.md` missing) and the two new tests fail with `FileNotFoundError`.
+Expected: FAIL - `test_all_command_files_exist` fails (`sonari:install.md` missing) and the two new tests fail with `FileNotFoundError`.
 
 - [ ] **Step 3: Create the command files**
 
@@ -1311,7 +1311,7 @@ Create `commands/sonari:install.md` with exactly this content:
 
 ````markdown
 ---
-description: Install Sonari (autostart, global hotkeys, control CLI) — one-time setup
+description: Install Sonari (autostart, global hotkeys, control CLI) - one-time setup
 ---
 
 Run the Sonari installer using the Bash tool:
@@ -1343,7 +1343,7 @@ helper, the `~/.local/bin/sonari` launcher, and the stable app copy, while prese
 `config.json` and `keymap.json`. Do not add commentary beyond the raw output.
 ````
 
-(When creating these files, write the body WITHOUT the outer four-backtick fence shown above — that fence is only this plan's way of displaying a markdown file that itself contains triple-backtick blocks. The file's first line must be `---`.)
+(When creating these files, write the body WITHOUT the outer four-backtick fence shown above - that fence is only this plan's way of displaying a markdown file that itself contains triple-backtick blocks. The file's first line must be `---`.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1370,7 +1370,7 @@ Bump the version in all three manifests, update `test_manifests.py` assertions (
 - Create: `docs/superpowers/verification/2026-06-06-sonari-phase3.1-cleanroom-checklist.md`
 - Test: `tests/test_manifests.py`
 
-### Step group A — version bump (TDD via manifest tests)
+### Step group A - version bump (TDD via manifest tests)
 
 - [ ] **Step 1: Update the failing manifest tests**
 
@@ -1398,7 +1398,7 @@ def test_marketplace_plugin_version_is_0_4_0():
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_manifests.py -k "0_4_0 or marketplace" -v`
-Expected: FAIL — all three assert `0.4.0` but the manifests still say `0.3.0`.
+Expected: FAIL - all three assert `0.4.0` but the manifests still say `0.3.0`.
 
 - [ ] **Step 3: Bump the versions**
 
@@ -1420,7 +1420,7 @@ git add .claude-plugin/plugin.json pyproject.toml .claude-plugin/marketplace.jso
 git commit -m "chore: bump version to 0.4.0 across all three manifests"
 ```
 
-### Step group B — README + verification checklist doc
+### Step group B - README + verification checklist doc
 
 - [ ] **Step 6: Update the README Install section**
 
@@ -1429,7 +1429,7 @@ In `README.md`, rewrite the Install section (§49-70) to lead with the slash-com
 ```markdown
 ## Install
 
-Enable the plugin, then finish setup entirely from inside Claude Code — no
+Enable the plugin, then finish setup entirely from inside Claude Code - no
 `sonari` on your PATH required:
 
 1. Enable the **Sonari** plugin (via `/plugin`, or per session
@@ -1439,7 +1439,7 @@ Enable the plugin, then finish setup entirely from inside Claude Code — no
    the plugin's `bin/`, so it works before the `~/.local/bin/sonari` launcher
    exists. Each step is printed (and spoken) so you can follow along eyes-free.
 3. Run `/sonari:doctor` to confirm everything is green (or to hear the only
-   expected failure — `swiftc`/Command Line Tools — on a machine without them).
+   expected failure - `swiftc`/Command Line Tools - on a machine without them).
 
 If you already have `sonari` on your PATH, the CLI equivalent is:
 
@@ -1481,7 +1481,7 @@ stable app copy at `~/.sonari/app`, and **preserves** your `config.json` and
 Create `docs/superpowers/verification/2026-06-06-sonari-phase3.1-cleanroom-checklist.md`:
 
 ```markdown
-# Sonari Phase 3.1 — Manual Clean-Room Verification Checklist
+# Sonari Phase 3.1 - Manual Clean-Room Verification Checklist
 
 Run on a Mac with a clean profile, against the public marketplace
 (`github.com/nimkimi/sonari`). Mirrors design spec §9.
@@ -1530,7 +1530,7 @@ git add README.md docs/superpowers/verification/2026-06-06-sonari-phase3.1-clean
 git commit -m "docs: slash-command install flow, durability note, clean-room checklist"
 ```
 
-### Step group C — final dual-interpreter gate
+### Step group C - final dual-interpreter gate
 
 - [ ] **Step 11: Full suite under Python 3.13 (zero warnings)**
 
@@ -1549,7 +1549,7 @@ git add -A
 git commit -m "test: full suite green under .venv (3.13) and .venv39 (3.9), 0 warnings"
 ```
 
-(If there is nothing to commit, skip this step — every prior task already committed its own changes.)
+(If there is nothing to commit, skip this step - every prior task already committed its own changes.)
 
 ---
 
@@ -1569,7 +1569,7 @@ git commit -m "test: full suite green under .venv (3.13) and .venv39 (3.9), 0 wa
 | §3.C.3 | `_maybe_guide_setup`, wire `SESSION_START`, clear on `SESSION_END`, throttle | 6 (group B) |
 | §3.D.1 | single-instance guard in `main()` | 7 |
 | §3.D.2 | shims prefer `/usr/bin/python3` (sonari-hook unchanged) | 8 |
-| §3.D.3 | launcher defensive verification in `install()` | **3 (covered below)** — see note |
+| §3.D.3 | launcher defensive verification in `install()` | **3 (covered below)** - see note |
 | §4 | README slash-flow + durability note + uninstall note + table; version 0.4.0 (3 manifests) | 10 |
 | §5 | copy-failure fatal-with-guidance; empty-version no drift cue; no launchctl on hot path; SET_FOREGROUND-only no guidance | 3 (copy-fail test), 6 (empty-version + SET_FOREGROUND-only behavior) |
 | §6 | single-instance is best-effort, no lock file | 7 (guard only; no lock file added) |
@@ -1620,8 +1620,8 @@ And in Task 3 Step 7's `test_install_writes_plist_and_loads`, change the
     mock.patch.object(cli, "_place_launcher", return_value=str(launcher_path)) as place_launcher, \
 ```
 
-(The other install tests — `test_install_writes_hotkeyd_plist_and_keymap`,
-`test_install_build_failure_is_nonfatal`, and the spaces test — only assert `rc`
+(The other install tests - `test_install_writes_hotkeyd_plist_and_keymap`,
+`test_install_build_failure_is_nonfatal`, and the spaces test - only assert `rc`
 and the plist, not launcher output, so they tolerate the warning branch. The
 copy-failure test returns before reaching the launcher, so it is unaffected.)
 
@@ -1633,31 +1633,31 @@ step shows complete, runnable code. Every `<…>` is a named runtime value
 
 ### Type / name consistency check
 
-- `paths.APP_DIR` — defined in Task 1; used identically in Task 3 (`_copy_app`,
+- `paths.APP_DIR` - defined in Task 1; used identically in Task 3 (`_copy_app`,
   plist `src_path=app_dir`), Task 3 (`install.json` `app_path`), Task 3 (doctor
   `app`), Task 4 (uninstall `paths.APP_DIR`), Task 6 (tests). ✓
-- `_copy_app(plugin_root: str) -> str` — defined Task 3; called Task 3 `install()`. ✓
-- `_read_plugin_version(plugin_root: str) -> str` — defined Task 2; called Task 3
+- `_copy_app(plugin_root: str) -> str` - defined Task 3; called Task 3 `install()`. ✓
+- `_read_plugin_version(plugin_root: str) -> str` - defined Task 2; called Task 3
   `install()`. ✓
 - `_write_install_record(python, python_version, plugin_root, app_path,
-  plugin_version)` — signature defined Task 3; caller updated Task 3; test updated
+  plugin_version)` - signature defined Task 3; caller updated Task 3; test updated
   Task 3 Step 6 (`src` key removed, `app_path`+`plugin_version` added). ✓ No
   caller still passes `src=`. 
-- install record key `app_path` (NOT `src`) — written Task 3, read by `doctor()`
+- install record key `app_path` (NOT `src`) - written Task 3, read by `doctor()`
   Task 3, asserted Task 3 tests + Task 6 daemon (`rec.get("plugin_version")`). ✓
 - `SpeechDaemon._read_install_record` / `_launcher_present` / `_setup_health` /
-  `_maybe_guide_setup` / `_guided_sessions` — all defined Task 6, names used
+  `_maybe_guide_setup` / `_guided_sessions` - all defined Task 6, names used
   identically in wiring + tests + the Task 6 fixes to `test_daemon_control.py` /
   `test_e2e_pipeline.py`. ✓
-- `SESSION_START` message field `plugin_version` — produced by `hooks_entry`
+- `SESSION_START` message field `plugin_version` - produced by `hooks_entry`
   (Task 5), read by `handle_message` via `msg.get("plugin_version", "")` (Task 6),
   passed to `_setup_health` (Task 6). Field name matches end-to-end. ✓
 - daemon imports `INSTALL_RECORD_PATH` (Task 6); does NOT import `HOTKEYD_BIN_PATH`
-  (hotkeyd excluded from the cue check) — consistent with §3.C.2 and the
+  (hotkeyd excluded from the cue check) - consistent with §3.C.2 and the
   speech-only-OK test. ✓
-- Shim ordering token `[ -x /usr/bin/python3 ]` — written in Task 8 to both
+- Shim ordering token `[ -x /usr/bin/python3 ]` - written in Task 8 to both
   `bin/sonari-daemon` and `bin/sonari`; asserted by the Task 8 grep tests. ✓
-- Version string `0.4.0` — three manifests (Task 10) + asserted in
+- Version string `0.4.0` - three manifests (Task 10) + asserted in
   `test_manifests.py` (Task 10). ✓
 - `PROTOCOL_VERSION` stays `1` (no task changes it; protocol tests unmodified). ✓
 

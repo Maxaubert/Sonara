@@ -4,18 +4,18 @@
 
 **Goal:** Replace the pin hotkey with a `next_session` hotkey that cycles the active reader through sessions in a fixed round-robin ring (resume unread, replay read), eliminating the `repin_reset` cursor-replay bug.
 
-**Architecture:** Add `Router.next_session()` (pure round-robin selection that sets `active` and arms the existing session-change announcement), wire a `NEXT_SESSION` protocol message + daemon handler + keymap binding to it, then remove the pin feature wholesale. The switch "sticks" via the router's existing current-reader-keeps-the-floor rule — no lock, no cursor reset except the deliberate replay case.
+**Architecture:** Add `Router.next_session()` (pure round-robin selection that sets `active` and arms the existing session-change announcement), wire a `NEXT_SESSION` protocol message + daemon handler + keymap binding to it, then remove the pin feature wholesale. The switch "sticks" via the router's existing current-reader-keeps-the-floor rule - no lock, no cursor reset except the deliberate replay case.
 
 **Tech Stack:** Python 3.9+ stdlib. pytest. Existing per-session channel/router daemon.
 
 ## Global Constraints
 
 - Python **>= 3.9**; string type annotations (e.g. `"str | None"`).
-- Default keybinding for `next_session` is **Ctrl+Alt+P** (the key pin freed) — reuse the existing `"p"` default-key slot.
+- Default keybinding for `next_session` is **Ctrl+Alt+P** (the key pin freed) - reuse the existing `"p"` default-key slot.
 - Announcement copy: normal switch = `"Session changed: {folder}."`; replay (landing on a read session) = `"Session changed: {folder}, reading again."`; no-channels cue = `"No session."`.
 - Read = `channel.caught_up()` (cursor at end). Unread = `channel.pending() > 0`. No new "read" flag.
 - The session-change announcement reuses the `session_change` SpeechItem kind (fires the chime) and is `mute_exempt=True`.
-- Known pre-existing Windows-environmental test failures (test_bin_shims, test_bin_sonari, test_daemon_main::test_ensure_running…, test_kokoro_provision, test_paths, test_transport, test_win_autostart, test_win_tts) are NOT in scope — leave them.
+- Known pre-existing Windows-environmental test failures (test_bin_shims, test_bin_sonari, test_daemon_main::test_ensure_running…, test_kokoro_provision, test_paths, test_transport, test_win_autostart, test_win_tts) are NOT in scope - leave them.
 - Spec: `docs/superpowers/specs/2026-06-20-session-change-hotkey-design.md`.
 
 ---
@@ -83,7 +83,7 @@ def test_next_session_none_when_no_channels():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_router.py -q -k next_session`
-Expected: FAIL — `AttributeError: 'Router' object has no attribute 'next_session'`
+Expected: FAIL - `AttributeError: 'Router' object has no attribute 'next_session'`
 
 - [ ] **Step 3: Implement `next_session` + replay announcement**
 
@@ -143,7 +143,7 @@ Update the AUTO-handoff announce (later in `next_item`) to pass `False`:
                 self._last_active = target
                 return self.next_item()
 ```
-(unchanged — it sets `_pending_announce`; `_pending_announce_replay` stays False by default, so the block above formats the non-replay text.)
+(unchanged - it sets `_pending_announce`; `_pending_announce_replay` stays False by default, so the block above formats the non-replay text.)
 
 Update the `_router()` helper at the top of `tests/test_router.py` so `announce_text` takes the replay flag:
 
@@ -163,7 +163,7 @@ Expected: PASS (existing router tests + 5 new ones)
 
 ```bash
 git add src/sonari/router.py tests/test_router.py
-git commit -m "feat(core): Router.next_session — round-robin select + replay announce (#59)"
+git commit -m "feat(core): Router.next_session - round-robin select + replay announce (#59)"
 ```
 
 ---
@@ -257,17 +257,17 @@ def test_next_session_default_binding_is_p():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_daemon_session_change.py tests/test_keymap.py::test_next_session_action_message -q`
-Expected: FAIL — no `NEXT_SESSION` / no `next_session` action.
+Expected: FAIL - no `NEXT_SESSION` / no `next_session` action.
 
 - [ ] **Step 3: Implement the wiring**
 
-`src/sonari/protocol.py` — add next to `PIN_TOGGLE` (keep PIN_TOGGLE for now; Task 3 removes it):
+`src/sonari/protocol.py` - add next to `PIN_TOGGLE` (keep PIN_TOGGLE for now; Task 3 removes it):
 
 ```python
     NEXT_SESSION = "next_session"   # hotkey: cycle the active reader to another session
 ```
 
-`src/sonari/keymap.py` — add to `ACTION_MESSAGES`:
+`src/sonari/keymap.py` - add to `ACTION_MESSAGES`:
 
 ```python
     "next_session": {"type": "next_session"},   # cycle the active reader (replaces pin)
@@ -279,7 +279,7 @@ and rebind the default key (change the existing `"pin_toggle": "p"` to `next_ses
     "pause": "s", "mute": "m", "next_session": "p",
 ```
 
-`src/sonari/daemon.py` — update `_DEBOUNCED_HOTKEYS` (swap PIN_TOGGLE for NEXT_SESSION):
+`src/sonari/daemon.py` - update `_DEBOUNCED_HOTKEYS` (swap PIN_TOGGLE for NEXT_SESSION):
 
 ```python
 _DEBOUNCED_HOTKEYS = (
@@ -287,7 +287,7 @@ _DEBOUNCED_HOTKEYS = (
 )
 ```
 
-`src/sonari/daemon.py` — update the `announce_text` lambda in `__init__` to accept the replay flag:
+`src/sonari/daemon.py` - update the `announce_text` lambda in `__init__` to accept the replay flag:
 
 ```python
             announce_text=lambda folder, replay=False: (
@@ -295,7 +295,7 @@ _DEBOUNCED_HOTKEYS = (
                 else "Session changed: {0}.".format(folder)),
 ```
 
-`src/sonari/daemon.py` — add the `NEXT_SESSION` handler (place right after the existing `PIN_TOGGLE` handler):
+`src/sonari/daemon.py` - add the `NEXT_SESSION` handler (place right after the existing `PIN_TOGGLE` handler):
 
 ```python
         if t == MsgType.NEXT_SESSION:

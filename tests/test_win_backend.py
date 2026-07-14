@@ -14,7 +14,7 @@ def test_make_windows_backend_full_bundle():
 def test_hotkey_backend_is_real_not_stub():
     from sonara.platform.windows.hotkeys import WinHotkeyBackend
     hk = WinHotkeyBackend()
-    # M3: real in-process backend — keytables + display labels, no "M3 deferred".
+    # M3: real in-process backend -- keytables + display labels, no "M3 deferred".
     assert hk.default_mods() == ["ctrl", "alt"]
     assert hk.display_combo(0x0002, 0x53) == "Ctrl+S"
 

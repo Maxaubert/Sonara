@@ -215,7 +215,7 @@ class ProseAssembler:
 
         _buf is kept RAW (uncleaned). Cleaning collapses whitespace, so storing the
         cleaned remainder used to erase the trailing newline of a blank line that
-        straddles two streamed deltas — the break was lost and the paragraphs
+        straddles two streamed deltas -- the break was lost and the paragraphs
         merged. Instead we split the RAW buffer on blank lines (preserving the
         straddling newline for the next delta) and track how much of the current
         paragraph's CLEANED text has already been emitted (_emitted), so re-cleaning

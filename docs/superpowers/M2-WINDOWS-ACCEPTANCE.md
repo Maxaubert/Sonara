@@ -1,8 +1,8 @@
-# Sonari M2 — Windows Acceptance Checklist
+# Sonari M2 - Windows Acceptance Checklist
 
-> **Purpose:** This file is the gate M2 cannot close on macOS. Every item marked ⚠ is mock-blind — it cannot be verified by the macOS test suite. A human on a real Windows 10/11 machine must work through each item and tick it off before M2 is declared production-ready on Windows.
+> **Purpose:** This file is the gate M2 cannot close on macOS. Every item marked ⚠ is mock-blind - it cannot be verified by the macOS test suite. A human on a real Windows 10/11 machine must work through each item and tick it off before M2 is declared production-ready on Windows.
 >
-> **Scope:** Windows 10 21H2+ and Windows 11. Python 3.9+. Tested architectures: win-amd64. win-arm64 has an open risk — see Risks section.
+> **Scope:** Windows 10 21H2+ and Windows 11. Python 3.9+. Tested architectures: win-amd64. win-arm64 has an open risk - see Risks section.
 >
 > **Related:** The consolidated on-hardware residual checklist (winrt-absent, interrupt-silence, %TEMP% non-accumulation, hook-staleness, double-fire, autostart-after-logon, NTFS checkout) lives in **GitHub issue #28**. This file covers the TTS / earcon / crash-survival specifics.
 
@@ -10,8 +10,8 @@
 
 ## Pre-requisites
 
-- A real Windows 10 or 11 machine (not a VM without audio, not Docker/Server Core — see Risk a).
-- Python 3.9+ installed from python.org or via the Microsoft Store **real** installer (not a Store stub — see Risk e).
+- A real Windows 10 or 11 machine (not a VM without audio, not Docker/Server Core - see Risk a).
+- Python 3.9+ installed from python.org or via the Microsoft Store **real** installer (not a Store stub - see Risk e).
 - `claude` CLI installed and at least one session run so the hooks directory exists.
 - `git` and the Sonari repo checked out, or the wheel installed via pip.
 
@@ -29,7 +29,7 @@ pip install winrt-runtime ^
 
 Expected: all packages install without error. Confirm no `win-arm64` availability warning is printed (see Risk h).
 
-> Only these three projections are required. Playback is stdlib `winsound` (COM-free) — the `winrt-Windows.Media.Playback` / `winrt-Windows.Media.Core` (MediaPlayer/MediaSource) packages are **no longer needed** and were dropped from this list; see Risk (a).
+> Only these three projections are required. Playback is stdlib `winsound` (COM-free) - the `winrt-Windows.Media.Playback` / `winrt-Windows.Media.Core` (MediaPlayer/MediaSource) packages are **no longer needed** and were dropped from this list; see Risk (a).
 
 ### 1b. Register the Task Scheduler task (non-admin)
 
@@ -75,7 +75,7 @@ claude "Say hello"
 
 Expected:
 - Claude's prose response is spoken aloud by a **OneCore** neural voice (not a legacy Desktop SAPI voice).
-- The voice is intelligible at the default rate (200 wpm — the value of `rate` in `config.DEFAULTS`).
+- The voice is intelligible at the default rate (200 wpm - the value of `rate` in `config.DEFAULTS`).
 - There is no noticeable trailing silence longer than ~750 ms after the utterance ends (the `SpeechAppendedSilence.MIN` + `SpeechPunctuationSilence.MIN` options were applied).
 
 If no audio is heard, proceed to Risk (a) diagnostics.
@@ -96,7 +96,7 @@ If only Desktop voices are listed (id contains `Speech\Voices\Tokens`), install 
 
 ### 2c. Crash-survival soak (the headline reason for the winsound switch)
 
-> **Mock-blind risk.** This is the single most important on-hardware check and it has **zero automated coverage.** The previous MediaPlayer-based playback crashed the daemon with a native access violation after ~80 utterances (the daemon-death bug); the `winsound` switch (COM-free, in-process) is what fixes it. A passing mock suite cannot prove the fix — only a real long run can.
+> **Mock-blind risk.** This is the single most important on-hardware check and it has **zero automated coverage.** The previous MediaPlayer-based playback crashed the daemon with a native access violation after ~80 utterances (the daemon-death bug); the `winsound` switch (COM-free, in-process) is what fixes it. A passing mock suite cannot prove the fix - only a real long run can.
 
 Speak **≥ 300 consecutive utterances** through the daemon and confirm the daemon process survives the whole run with no native access violation:
 
@@ -119,16 +119,16 @@ Expected:
 
 ## 3. ⚠ Interrupt
 
-> **Mock-blind risk.** `_TtsHandle.terminate()` stops playback with `winsound.PlaySound(None, 0)` — the documented stop call on modern Windows (`SND_PURGE` is documented as unsupported there, see #17). The mock records the call but cannot prove the audio actually goes silent. The `try/except Exception: pass` guard silences any error, so a no-op stop would pass silently in the suite — the audio must really stop on hardware.
+> **Mock-blind risk.** `_TtsHandle.terminate()` stops playback with `winsound.PlaySound(None, 0)` - the documented stop call on modern Windows (`SND_PURGE` is documented as unsupported there, see #17). The mock records the call but cannot prove the audio actually goes silent. The `try/except Exception: pass` guard silences any error, so a no-op stop would pass silently in the suite - the audio must really stop on hardware.
 
 ### 3a. Trigger skip mid-utterance
 
-While a long Claude response is being spoken, issue a skip/stop command (exact key or command depends on hotkey configuration — M3 implements real hotkeys; for now trigger via the daemon socket directly or a short `sonari stop` CLI call if wired).
+While a long Claude response is being spoken, issue a skip/stop command (exact key or command depends on hotkey configuration - M3 implements real hotkeys; for now trigger via the daemon socket directly or a short `sonari stop` CLI call if wired).
 
 Expected:
-- Audio cuts off within ~100 ms of the interrupt command — `terminate()` calls `winsound.PlaySound(None, 0)`, which purges the in-flight async clip.
+- Audio cuts off within ~100 ms of the interrupt command - `terminate()` calls `winsound.PlaySound(None, 0)`, which purges the in-flight async clip.
 - The next utterance (if any) starts without delay (a fresh `PlaySound` on a clean channel).
-- The daemon remains running (confirm via `tasklist | findstr python` — the daemon process is still present).
+- The daemon remains running (confirm via `tasklist | findstr python` - the daemon process is still present).
 
 ### 3b. Confirm returncode after terminate
 
@@ -147,7 +147,7 @@ Expected: assertion passes and audio stops.
 
 ## 4. ⚠ Earcons
 
-> **Mock-blind risk.** Each earcon plays in a **separate, windowless helper process** (`subprocess.Popen([sys.executable, "-c", "...winsound.PlaySound(...)"]`, spawned `CREATE_NO_WINDOW | DETACHED_PROCESS`). That helper has its own audio session, so the earcon **mixes** with the daemon's speech (shared-mode audio) instead of cutting it. The mock records the spawn but cannot verify that audio reaches the speakers, that the helper window never flashes, or that the mix is actually simultaneous. (The old single-channel `winsound` truncation model — earcon mid-utterance cuts speech — is obsolete; see Risk g.)
+> **Mock-blind risk.** Each earcon plays in a **separate, windowless helper process** (`subprocess.Popen([sys.executable, "-c", "...winsound.PlaySound(...)"]`, spawned `CREATE_NO_WINDOW | DETACHED_PROCESS`). That helper has its own audio session, so the earcon **mixes** with the daemon's speech (shared-mode audio) instead of cutting it. The mock records the spawn but cannot verify that audio reaches the speakers, that the helper window never flashes, or that the mix is actually simultaneous. (The old single-channel `winsound` truncation model - earcon mid-utterance cuts speech - is obsolete; see Risk g.)
 
 ### 4a. Confirm each earcon is distinct and audible
 
@@ -187,7 +187,7 @@ ear.play(next(iter(ear.default_earcons().values())))   # fire mid-utterance
 ```
 
 Expected:
-- **Speech CONTINUES** — the earcon does **not** truncate or silence it.
+- **Speech CONTINUES** - the earcon does **not** truncate or silence it.
 - **Both are audible** simultaneously (the earcon mixes over the speech in shared-mode).
 - The daemon process does not raise or die.
 
@@ -195,7 +195,7 @@ Expected:
 
 ## 5. ⚠ Single-instance
 
-> **Mock-blind risk.** The `msvcrt.locking` fake tracks inodes in-process. Real `msvcrt.locking` is a system-wide byte-range lock — two separate `python.exe` processes must not both hold it. This cross-process behavior cannot be verified from a mock.
+> **Mock-blind risk.** The `msvcrt.locking` fake tracks inodes in-process. Real `msvcrt.locking` is a system-wide byte-range lock - two separate `python.exe` processes must not both hold it. This cross-process behavior cannot be verified from a mock.
 
 ### 5a. Confirm two daemons cannot start simultaneously
 
@@ -225,7 +225,7 @@ Expected: Terminal 2's daemon starts successfully and acquires the lock.
 If the above test reveals that two daemons start simultaneously (e.g. on a network drive or unusual filesystem), switch to a named mutex:
 
 ```python
-# Alternative (named mutex — add to transport.py if needed)
+# Alternative (named mutex - add to transport.py if needed)
 import ctypes
 mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "Global\\SonariDaemon")
 if ctypes.windll.kernel32.GetLastError() == 0xB7:  # ERROR_ALREADY_EXISTS
@@ -312,7 +312,7 @@ At the end of a `claude` session, confirm the Stop hook fires and the daemon rec
 
 ---
 
-## 8. RISKS — Probe Explicitly (Mock-Blind)
+## 8. RISKS - Probe Explicitly (Mock-Blind)
 
 The following risks cannot be verified from macOS and must be probed on the Windows box. Each is a potential show-stopper.
 
@@ -320,7 +320,7 @@ The following risks cannot be verified from macOS and must be probed on the Wind
 
 **This is the #1 risk**, and it has two parts:
 
-**(a.1) Audio routing.** Playback is now stdlib `winsound.PlaySound` (COM-free, in-process) — there is no MediaPlayer, no STA, and no `CoInitializeEx` requirement. The residual concern is simpler: does `winsound.PlaySound` actually route audio to the speakers from a daemon launched by Task Scheduler with `DETACHED_PROCESS | CREATE_NO_WINDOW`? A detached process may not inherit an audio endpoint. The **same routing concern applies to the earcon helper**, which is itself spawned `CREATE_NO_WINDOW | DETACHED_PROCESS` (see section 4).
+**(a.1) Audio routing.** Playback is now stdlib `winsound.PlaySound` (COM-free, in-process) - there is no MediaPlayer, no STA, and no `CoInitializeEx` requirement. The residual concern is simpler: does `winsound.PlaySound` actually route audio to the speakers from a daemon launched by Task Scheduler with `DETACHED_PROCESS | CREATE_NO_WINDOW`? A detached process may not inherit an audio endpoint. The **same routing concern applies to the earcon helper**, which is itself spawned `CREATE_NO_WINDOW | DETACHED_PROCESS` (see section 4).
 
 **Diagnostic:** If no audio plays from the Task Scheduler–launched daemon but the direct script in 2c/4a *does* play, the problem is the launch context, not the code. Confirm the task runs with `<LogonType>InteractiveToken</LogonType>` (section 1d) so it shares the interactive desktop session's audio endpoint. If audio still does not route, run the daemon as a normal session process (Startup-folder launcher or `HKCU\...\Run`) instead of a Task Scheduler task.
 
@@ -338,7 +338,7 @@ rc = h.wait(timeout=5.0)
 print("returncode:", rc)  # must be 0
 ```
 
-If this hangs indefinitely, `.get()` requires a message pump — add a `comtypes`-based STA loop or switch to the `asyncio`-based PyWinRT pattern.
+If this hangs indefinitely, `.get()` requires a message pump - add a `comtypes`-based STA loop or switch to the `asyncio`-based PyWinRT pattern.
 
 ### Risk (c): Single-instance truly excludes across processes
 
@@ -348,7 +348,7 @@ Covered in section 5 above. If `msvcrt.locking` fails cross-process, the fallbac
 
 The `TASK_XML_TEMPLATE` is written with `encoding='utf-16'` (Python emits UTF-16 LE with BOM). On Windows builds before 22H2 this is required; UTF-8 causes "The task XML is malformed." Confirm schtasks accepts the file without error.
 
-Also confirm that a **standard (non-admin) user** can register the task. Expected: no UAC prompt. If UAC appears, the `RunLevel` or `LogonType` is wrong — verify `LeastPrivilege` and `InteractiveToken` are both set.
+Also confirm that a **standard (non-admin) user** can register the task. Expected: no UAC prompt. If UAC appears, the `RunLevel` or `LogonType` is wrong - verify `LeastPrivilege` and `InteractiveToken` are both set.
 
 ### Risk (e): Store-stub avoidance on a machine where only Store Python exists
 
@@ -358,20 +358,20 @@ On a fresh Windows 11 install, `python` on PATH may point to `%LOCALAPPDATA%\Mic
 
 ### Risk (f): `importlib.resources.as_file` temp-path lifetime for wheel installs
 
-**RESOLVED IN IMPLEMENTATION — no probe required.**
+**RESOLVED IN IMPLEMENTATION - no probe required.**
 
 `earcons/__init__.py` does not use `importlib.resources.as_file()` at all. It resolves earcon paths via `pathlib.Path(__file__).parent / fname`, which is a sibling-file lookup. This is reliable for all supported install modes (editable installs, unpacked wheels, sdist builds) and is explained in the `default_earcons()` docstring. The `as_file()` approach was explicitly evaluated and rejected precisely because it deletes the extracted temporary file when the `with` block exits.
 
-The sign-off table entry for this risk can be ticked as "N/A — resolved in code".
+The sign-off table entry for this risk can be ticked as "N/A - resolved in code".
 
 ### Risk (g): earcon ↔ speech / earcon ↔ earcon mixing (the obsolete truncation model)
 
-**Largely resolved by the separate-process design — verify the mix, don't fear the truncation.** The old single-channel concern (a new `PlaySound(..., SND_ASYNC)` silently cancels the previous async sound, so an earcon mid-utterance cuts speech and rapid earcons cut each other) **no longer applies**: each earcon plays in its own windowless helper process (section 4), so it has a separate audio session and mixes shared-mode rather than purging the daemon's speech channel.
+**Largely resolved by the separate-process design - verify the mix, don't fear the truncation.** The old single-channel concern (a new `PlaySound(..., SND_ASYNC)` silently cancels the previous async sound, so an earcon mid-utterance cuts speech and rapid earcons cut each other) **no longer applies**: each earcon plays in its own windowless helper process (section 4), so it has a separate audio session and mixes shared-mode rather than purging the daemon's speech channel.
 
 **What to verify on hardware:**
-1. An earcon fired mid-utterance leaves speech audible and continuous (section **4b**) — this is the headline behavior of the redesign.
-2. Several earcons fired in rapid succession all play (or overlap) without truncating speech; none crash the daemon (a failed helper spawn is caught and logged, never raised — see `WinEarconBackend.play`).
-3. The helper processes are windowless (no console flash) and short-lived — confirm they exit and do not accumulate (`tasklist | findstr python` does not grow unboundedly during a chatty session).
+1. An earcon fired mid-utterance leaves speech audible and continuous (section **4b**) - this is the headline behavior of the redesign.
+2. Several earcons fired in rapid succession all play (or overlap) without truncating speech; none crash the daemon (a failed helper spawn is caught and logged, never raised - see `WinEarconBackend.play`).
+3. The helper processes are windowless (no console flash) and short-lived - confirm they exit and do not accumulate (`tasklist | findstr python` does not grow unboundedly during a chatty session).
 
 ### Risk (h): PyWinRT projection availability for win-arm64
 
@@ -390,7 +390,7 @@ If no arm64 wheel is found, document this as a known gap. Fallback: use the Wind
 
 - **Nima is low-vision (magnifier user).** A fully-blind + NVDA screen reader pass is a separate pre-GA step. Confirm that: (a) the spoken audio does not conflict with NVDA speech; (b) NVDA can navigate the `sonari install` output; (c) earcon volume is not overpowering relative to NVDA speech.
 - **Uninstall path:** `sonari uninstall` on Windows must delete the Task Scheduler task and the hooks.json. Verify both are removed and no orphaned process remains.
-- **Upgrade path:** running `sonari install` over an existing installation (task already registered) must not fail — the `/f` flag on `schtasks /create` overwrites silently.
+- **Upgrade path:** running `sonari install` over an existing installation (task already registered) must not fail - the `/f` flag on `schtasks /create` overwrites silently.
 
 ---
 
@@ -423,7 +423,7 @@ If no arm64 wheel is found, document this as a known gap. Fallback: use the Wind
 | Risk (c): msvcrt cross-process | | | | |
 | Risk (d): UTF-16 + non-admin | | | | |
 | Risk (e): Store stub avoidance | | | | |
-| Risk (f): as_file temp lifetime | N/A | — | N/A | Resolved in implementation; pathlib sibling lookup used instead |
+| Risk (f): as_file temp lifetime | N/A | - | N/A | Resolved in implementation; pathlib sibling lookup used instead |
 | Risk (g): earcon/speech mixing (no truncation) | | | | |
 | Risk (h): arm64 PyWinRT | | | | |
 | Residual: NVDA pass | | | | |
@@ -432,7 +432,7 @@ If no arm64 wheel is found, document this as a known gap. Fallback: use the Wind
 
 ---
 
-## 10. Install seam (2026-06-16) — `sonari install` writes settings.json hooks + launcher
+## 10. Install seam (2026-06-16) - `sonari install` writes settings.json hooks + launcher
 
 > Added when `cli.install/uninstall/doctor` were wired through the platform seam
 > (`docs/superpowers/specs/2026-06-16-windows-install-seam-design.md`). These verify the
@@ -453,7 +453,7 @@ Confirm:
 
 ### 10b. Double-fire constraint (do NOT also enable the plugin's shell-form hooks)
 
-The plugin's committed `hooks/hooks.json` is **shell-form** (macOS-only); on Windows it cannot spawn the Python hook. Because Claude Code **merges** plugin-manifest hooks with settings.json hooks, enabling both would fire every event twice. On Windows, Sonari's hooks must come from `settings.json` **only** — do not also enable the plugin's manifest hooks.
+The plugin's committed `hooks/hooks.json` is **shell-form** (macOS-only); on Windows it cannot spawn the Python hook. Because Claude Code **merges** plugin-manifest hooks with settings.json hooks, enabling both would fire every event twice. On Windows, Sonari's hooks must come from `settings.json` **only** - do not also enable the plugin's manifest hooks.
 
 ### 10c. Uninstall reverses only Sonari's changes
 
@@ -469,4 +469,4 @@ Confirm:
 
 ### 10d. `sonari doctor` shows Windows rows
 
-`sonari doctor` reports the Windows supervisor rows (schtasks, Task Scheduler task, pythonw.exe, neural voice, daemon running) and a "hooks installed" row that reflects whether `settings.json` carries Sonari's hooks — no macOS rows (`say`/`afplay`/`swiftc`/`LaunchAgent`).
+`sonari doctor` reports the Windows supervisor rows (schtasks, Task Scheduler task, pythonw.exe, neural voice, daemon running) and a "hooks installed" row that reflects whether `settings.json` carries Sonari's hooks - no macOS rows (`say`/`afplay`/`swiftc`/`LaunchAgent`).

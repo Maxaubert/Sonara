@@ -1,14 +1,14 @@
-# Sonari Phase 3 — Self-Contained Packaging & Installer (Design Spec)
+# Sonari Phase 3 - Self-Contained Packaging & Installer (Design Spec)
 
-**Status:** Approved (user, 2026-06-05) — ready for implementation planning
+**Status:** Approved (user, 2026-06-05) - ready for implementation planning
 **Date:** 2026-06-05
-**Scope:** Phase 3 **sub-project #1 only** — packaging + installer that makes Sonari
+**Scope:** Phase 3 **sub-project #1 only** - packaging + installer that makes Sonari
 publicly installable as a self-contained, zero-dependency marketplace plugin.
-**Depends on:** Phase 1 (complete) and Phase 2 (complete) — `speechd`, the hooks, the Unix
+**Depends on:** Phase 1 (complete) and Phase 2 (complete) - `speechd`, the hooks, the Unix
 socket protocol, `hotkeyd`, native-numeric selection. 314 tests green.
 **Supersedes:** §7 (packaging/install/migration) of
 `2026-06-04-echo-eyes-free-claude-code-design.md` and §5 (packaging/install/doctor) of
-`2026-06-05-sonari-phase2-control-selection-design.md` — both are folded forward here.
+`2026-06-05-sonari-phase2-control-selection-design.md` - both are folded forward here.
 **Folds in (from `phase1-review-followups.md`):** the deferred item "install verifies the
 daemon shim is executable" and "LaunchAgent plist XML-escaping" (packaging-relevant; see
 §5 and §7).
@@ -20,14 +20,14 @@ daemon shim is executable" and "LaunchAgent plist XML-escaping" (packaging-relev
 Make Sonari installable by **any** blind/low-vision macOS developer **with no developer
 tooling beyond what Apple ships**, no Python packaging knowledge, and no manual file
 editing. The plugin is enabled in Claude Code, the user runs one command (`sonari install`),
-and everything works — speech, earcons, global hotkeys, selection — on the **macOS system
+and everything works - speech, earcons, global hotkeys, selection - on the **macOS system
 Python** with **no PyPI, no pip, no `--break-system-packages`, no Homebrew, and no Apple
 Developer account / notarization**.
 
 **Success =** on a clean Mac with the plugin enabled and Xcode Command Line Tools present,
 `sonari install` followed by `sonari doctor` reports every check green, a real Claude Code
 session narrates and earcons correctly, and all nine Phase 2 global hotkeys + native-numeric
-selection work — **using `/usr/bin/python3` (or the best available `python3 >= 3.9`),
+selection work - **using `/usr/bin/python3` (or the best available `python3 >= 3.9`),
 without any `sonari` package installed into site-packages.**
 
 Concrete, testable success criteria:
@@ -55,13 +55,13 @@ public user will not have:
 
 1. **The package is reachable only via an editable pip install.** Verified on this Mac:
    `/opt/homebrew/bin/python3 -c "import sonari"` resolves to
-   `…/claude-tts/src/sonari/__init__.py` — i.e. an `pip install --break-system-packages -e .`
+   `…/claude-tts/src/sonari/__init__.py` - i.e. an `pip install --break-system-packages -e .`
    into Homebrew Python. Remove that and nothing imports.
 2. **The bin shims assume an importable `sonari`.** `bin/sonari` is
    `exec python3 -m sonari.cli "$@"`, `bin/sonari-daemon` is `exec python3 -m sonari.daemon
    "$@"`. Both fail on a clean Mac because `sonari` is not on `sys.path` and `python3` may be
    the wrong interpreter. (`bin/sonari-hook` is the **only** shim that already falls back to
-   `../src` — see its `import sonari` / `sys.path.insert(0, src)` block, lines 33-41.)
+   `../src` - see its `import sonari` / `sys.path.insert(0, src)` block, lines 33-41.)
 3. **`daemon.ensure_running()` re-spawns the daemon through that broken shim.** It runs
    `subprocess.Popen([_daemon_shim_path()])` where the shim is `bin/sonari-daemon` →
    `python3 -m sonari.daemon`. Lazy daemon start therefore inherits the same pip dependency.
@@ -73,13 +73,13 @@ public user will not have:
 5. **`requires-python = ">=3.10"`** (`pyproject.toml` line 9) and the README "Python 3.10 or
    newer" exclude the macOS system interpreter, which is **3.9.6**. The package has been
    verified to import and run under 3.9.6 (PEP 585 `list[str]` works in 3.9; every `X | None`
-   hint is in a quoted/`Optional[...]`/unevaluated position — `cli.py` uses
+   hint is in a quoted/`Optional[...]`/unevaluated position - `cli.py` uses
    `Optional[...]` + already has `from __future__ import annotations`).
 6. **Only `cli.py` has `from __future__ import annotations`.** The other 13 modules in
    `src/sonari/` do not (verified). They run on 3.9 today, but future edits adding `X | Y`
    runtime-evaluated annotations would silently break 3.9; the future-import is cheap
    insurance for a public 3.9 target.
-7. **The README install instructions are pip-based** (`pip install -e .`) — wrong for the
+7. **The README install instructions are pip-based** (`pip install -e .`) - wrong for the
    public path.
 
 The fix is to make the plugin **self-contained**: ship the stdlib-only `src/sonari` inside
@@ -117,22 +117,22 @@ Resolution algorithm `_resolve_python()` (new, in `cli.py`):
    and keep the first that reports `>= (3, 9)`.
 3. **Preference rule:** if `/usr/bin/python3` qualifies, choose it (stability over newness);
    otherwise choose the first qualifying candidate in PATH order.
-4. Return its absolute realpath, or `None` if none qualify (fatal — see §6).
+4. Return its absolute realpath, or `None` if none qualify (fatal - see §6).
 
 ### 3.3 Hook / daemon / CLI wiring without pip
 
 Three entrypoints, all made source-relative and interpreter-correct:
 
-- **`bin/sonari-hook`** — already self-locating (its `../src` fallback works today). Make it
+- **`bin/sonari-hook`** - already self-locating (its `../src` fallback works today). Make it
   robust under the system interpreter and a spaces-in-path plugin root. No installed `sonari`
   required. (Behavior change: prepend `../src` to `sys.path` **unconditionally and first**,
   rather than only on `ImportError`, so a stale globally-installed `sonari` never shadows the
-  plugin's own source — see §5.1.)
-- **`bin/sonari-daemon`** — rewritten to set `PYTHONPATH=<plugin>/src` and exec the resolved
+  plugin's own source - see §5.1.)
+- **`bin/sonari-daemon`** - rewritten to set `PYTHONPATH=<plugin>/src` and exec the resolved
   interpreter on `-m sonari.daemon` (§5.1). This is what
   `daemon.ensure_running()`/`subprocess.Popen([shim])` spawns for lazy start, **and** what
   the speechd LaunchAgent will reference indirectly via its own `ProgramArguments`.
-- **`bin/sonari`** — rewritten to the same source-relative pattern for `-m sonari.cli`
+- **`bin/sonari`** - rewritten to the same source-relative pattern for `-m sonari.cli`
   (§5.1). The `~/.local/bin/sonari` launcher is a thin wrapper that execs this shim with the
   plugin root baked in (§5.6).
 
@@ -173,7 +173,7 @@ output already runs locally without notarization). If a future macOS hardens thi
 All three already print line-by-line, eyes-free output. The ordered behavior:
 
 **`install()` order:**
-1. Resolve the best `python3 >= 3.9` (`_resolve_python()`); **fatal** if none (§6) — print
+1. Resolve the best `python3 >= 3.9` (`_resolve_python()`); **fatal** if none (§6) - print
    the exact remediation and exit non-zero.
 2. `paths.ensure_sonari_dir()`.
 3. Check `swiftc` / Command Line Tools. If absent: print the `xcode-select --install`
@@ -182,7 +182,7 @@ All three already print line-by-line, eyes-free output. The ordered behavior:
 5. Write the default keymap if absent (`keymap.write_default_keymap_if_absent()`) and the
    resolved keymap (`keymap.write_resolved()`).
 6. Write `~/.sonari/install.json` (resolved interpreter, absolute plugin root, plugin `src`
-   path, timestamp) — the durable install record (§5.5).
+   path, timestamp) - the durable install record (§5.5).
 7. Write + load **both** LaunchAgents with absolute plugin paths and the resolved
    interpreter (speechd: `[<py>, -m, sonari.daemon]` + `PYTHONPATH`; hotkeyd: `[<binary>]`).
    Skip the hotkeyd agent if the build was skipped/failed.
@@ -191,30 +191,30 @@ All three already print line-by-line, eyes-free output. The ordered behavior:
    DEV-INSTALL migration (`_dev_install_migrate()`, §8).
 10. Voice check: report the best enhanced voice (or the Samantha fallback) so the user knows
     whether to install one.
-11. Print **eyes-free next steps** (enable the plugin, run `sonari doctor`, and — if
-    `~/.local/bin` is not on PATH — the exact line to add).
+11. Print **eyes-free next steps** (enable the plugin, run `sonari doctor`, and - if
+    `~/.local/bin` is not on PATH - the exact line to add).
 
 **`uninstall()` reverses install** (already mostly does):
 - `bootout`/unload + remove **both** LaunchAgents.
 - Remove the hotkeyd binary.
-- Remove the `~/.local/bin/sonari` launcher (**new** — install now places it, so uninstall
+- Remove the `~/.local/bin/sonari` launcher (**new** - install now places it, so uninstall
   must remove it).
 - Remove runtime artifacts (socket, logs, `config.json`, resolved keymap, hotkeyd log,
   `install.json`).
 - **Preserve** `~/.sonari/keymap.json` **and** `~/.sonari/config.json`. (Note: the current
-  code removes `config.json`; per the approved decision config.json is now **preserved** —
+  code removes `config.json`; per the approved decision config.json is now **preserved** -
   see §5.4.)
 - Run `_legacy_migrate()` for any prior `claude-tts`.
 
-**`doctor()` checks** — keep the existing ones (`say`, `afplay`, enhanced voice,
+**`doctor()` checks** - keep the existing ones (`say`, `afplay`, enhanced voice,
 `SONARI_DIR writable`, daemon socket, plugin hooks.json, `swiftc`, hotkeyd binary, hotkeyd
 resolved keymap, keymap resolves) and **add**:
-- `python3 >= 3.9 found` — report the resolved absolute path (or FAIL with remediation).
-- `Command Line Tools / swiftc` — already covered by the `swiftc` check; upgrade its detail
+- `python3 >= 3.9 found` - report the resolved absolute path (or FAIL with remediation).
+- `Command Line Tools / swiftc` - already covered by the `swiftc` check; upgrade its detail
   string to name `xcode-select --install` when missing.
-- `plugin path resolved` — `install.json` exists, its plugin `src` path exists and contains
+- `plugin path resolved` - `install.json` exists, its plugin `src` path exists and contains
   `sonari/__init__.py`.
-- `speechd LaunchAgent loaded` and `hotkeyd LaunchAgent loaded` — via
+- `speechd LaunchAgent loaded` and `hotkeyd LaunchAgent loaded` - via
   `launchctl print gui/<uid>/<label>` (or `launchctl list <label>`), reported separately.
 - `~/.local/bin/sonari launcher present` and `~/.local/bin on PATH`.
 The existing "daemon socket" and "hotkeyd resolved keymap" checks already cover socket
@@ -249,7 +249,7 @@ To:
 ```
 (The total try/except + always-exit-0 contract is unchanged.)
 
-**`bin/sonari-daemon`** — from `#!/usr/bin/env bash` + `exec python3 -m sonari.daemon "$@"`
+**`bin/sonari-daemon`** - from `#!/usr/bin/env bash` + `exec python3 -m sonari.daemon "$@"`
 to a self-locating launcher that puts the plugin `src` on `PYTHONPATH` and uses the resolved
 interpreter, falling back to `/usr/bin/python3`:
 ```bash
@@ -262,11 +262,11 @@ py="$(command -v python3 || true)"
 [ -x "$py" ] || py="/usr/bin/python3"
 exec "$py" -m sonari.daemon "$@"
 ```
-(The launchd-spawned speechd does **not** use this shim — it embeds the resolved interpreter
-directly per §5.3 — but `daemon.ensure_running()`'s lazy `Popen([shim])` does, so the shim
+(The launchd-spawned speechd does **not** use this shim - it embeds the resolved interpreter
+directly per §5.3 - but `daemon.ensure_running()`'s lazy `Popen([shim])` does, so the shim
 must be self-contained and executable.)
 
-**`bin/sonari`** — same pattern, targeting `-m sonari.cli`:
+**`bin/sonari`** - same pattern, targeting `-m sonari.cli`:
 ```bash
 #!/usr/bin/env bash
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -287,21 +287,21 @@ verifies the daemon shim is executable and `chmod +x`-es it if not (folds in the
 exactly the self-contained path. All seven events stay as-is. (Verified: MessageDisplay,
 PreToolUse ×3 matchers, Notification ×2, Stop, UserPromptSubmit, SessionStart, SessionEnd.)
 
-### 5.3 `cli.py` — `_launchagent_plist`, `_hotkeyd_plist`, `_plist`, `install`
+### 5.3 `cli.py` - `_launchagent_plist`, `_hotkeyd_plist`, `_plist`, `install`
 
-- **`_plist(label, program_args, log_path)`** — add an optional `env: dict | None`
+- **`_plist(label, program_args, log_path)`** - add an optional `env: dict | None`
   parameter; when given, emit an `EnvironmentVariables` `<dict>` of `<key>/<string>` pairs
   (used to inject `PYTHONPATH`). **XML-escape** all interpolated strings (label, each
   program arg, log path, env keys/values) via a small `_xml_escape()` (`&`,`<`,`>` →
-  entities) so a plugin path containing `&` or a quote cannot corrupt the plist — folds in
+  entities) so a plugin path containing `&` or a quote cannot corrupt the plist - folds in
   the deferred "LaunchAgent plist XML-escaping" follow-up.
-- **`_launchagent_plist(...)`** — change signature to take the resolved
+- **`_launchagent_plist(...)`** - change signature to take the resolved
   `python_executable` (required, no `sys.executable` default) and the plugin `src` path, and
   emit `ProgramArguments = [<python>, "-m", "sonari.daemon"]` with
   `env={"PYTHONPATH": <plugin>/src}`. Remove the `python_executable=None →
   sys.executable` default and the now-misleading docstring about `sys.executable`.
-- **`_hotkeyd_plist(binary_path, log_path)`** — unchanged (binary, no interpreter).
-- **`install()`** — replace `xml = _launchagent_plist(daemon, log,
+- **`_hotkeyd_plist(binary_path, log_path)`** - unchanged (binary, no interpreter).
+- **`install()`** - replace `xml = _launchagent_plist(daemon, log,
   python_executable=sys.executable)` with: resolve the interpreter via `_resolve_python()`
   (fatal if `None`), resolve `src = os.path.join(realpath(repo_root()), "src")`, and call
   `_launchagent_plist(python_executable=<resolved>, src_path=src, log_path=log)`. Add the
@@ -310,14 +310,14 @@ PreToolUse ×3 matchers, Notification ×2, Stop, UserPromptSubmit, SessionStart,
   `~/.local/bin` PATH advice in the printed next-steps. Drop the literal
   `python_executable=sys.executable` everywhere.
 
-### 5.4 `cli.py` — `uninstall`, `_register_local`, slash-command coverage
+### 5.4 `cli.py` - `uninstall`, `_register_local`, slash-command coverage
 
-- **`uninstall()`** — stop removing `paths.CONFIG_PATH` (now **preserved** alongside
+- **`uninstall()`** - stop removing `paths.CONFIG_PATH` (now **preserved** alongside
   `keymap.json`, per the approved decision); remove `~/.local/bin/sonari`; remove
   `~/.sonari/install.json`. Keep the `bootout`/unload + remove for both agents and the
   hotkeyd binary removal. Update the printed "Preserved …" line to mention both keymap.json
   and config.json.
-- **`_register_local`** — unchanged set of local subcommands (`doctor`, `install`,
+- **`_register_local`** - unchanged set of local subcommands (`doctor`, `install`,
   `uninstall`, `daemon`, `keymap`). (Note: `_resolve_python` is an internal helper, not a
   subcommand.)
 - **Slash-command gap (folded from the Phase-1.x deferred item):** the README documents
@@ -328,7 +328,7 @@ PreToolUse ×3 matchers, Notification ×2, Stop, UserPromptSubmit, SessionStart,
   existing thin command files (run `sonari voice <name>` / `sonari rate <wpm>` /
   `sonari skip`; voice/rate echo output, skip is silent like repeat/stop).
 
-### 5.5 `paths.py` — new install record
+### 5.5 `paths.py` - new install record
 
 Add `INSTALL_RECORD_PATH = SONARI_DIR / "install.json"`. `install()` writes a JSON object:
 `{"python": "<abs path>", "python_version": "3.9", "plugin_root": "<abs>", "src":
@@ -347,7 +347,7 @@ exec "<ABS_PLUGIN_ROOT>/bin/sonari" "$@"
 ```
 `install()` `os.makedirs("~/.local/bin", exist_ok=True)`, writes the file with `0o755`, and
 prints whether `~/.local/bin` is on `$PATH`; if not, it prints the exact line to add to the
-user's shell rc (it does **not** edit any rc file — the new design uses no shell-rc edits).
+user's shell rc (it does **not** edit any rc file - the new design uses no shell-rc edits).
 A pre-existing `~/.local/bin/sonari` is overwritten (it is Sonari-owned). `uninstall()`
 removes it.
 
@@ -357,7 +357,7 @@ removes it.
 - Keep `[project.scripts] sonari = "sonari.cli:main"` (still useful for the dev venv / test
   installs), but it is **not** the public install mechanism. No new runtime deps;
   `dev = ["pytest>=7"]` unchanged. Bump `version` to `0.3.0` to mark the Phase 3 packaging
-  release (Phase 1 = 0.1.0; Phase 2 work has been on 0.1.0/0.2.x — set 0.3.0 here and mirror
+  release (Phase 1 = 0.1.0; Phase 2 work has been on 0.1.0/0.2.x - set 0.3.0 here and mirror
   it in `.claude-plugin/plugin.json` `version` and `marketplace.json` if a version field is
   added).
 
@@ -374,14 +374,14 @@ behavior change.
 
 Rewrite the **Requirements** and **Install** sections for the public, pip-free path:
 - Requirements: "Python 3.9 or newer (macOS ships `/usr/bin/python3`)" instead of 3.10;
-  "Xcode Command Line Tools (for global hotkeys) — `xcode-select --install`".
+  "Xcode Command Line Tools (for global hotkeys) - `xcode-select --install`".
 - Install: enable the `sonari` plugin from the Claude Code marketplace / `--plugin-dir`, then
   run `sonari install` (which builds hotkeyd, writes the LaunchAgents, and places the
   `~/.local/bin/sonari` launcher). **Delete** the `git clone` + `pip install -e .` block from
   the user-facing flow (keep a short "Development" note that contributors can `pip install -e
   .[dev]` into a venv to run tests). Update the controls table only if the three new slash
   commands change it (they bring it into line). (Full onboarding docs are a **separate**
-  Phase-3 sub-project — keep this edit minimal and packaging-focused.)
+  Phase-3 sub-project - keep this edit minimal and packaging-focused.)
 
 ## 6. Error handling & edge cases
 
@@ -428,7 +428,7 @@ Rewrite the **Requirements** and **Install** sections for the public, pip-free p
   references the binary; `install.json` is written with the right keys; `~/.local/bin/sonari`
   is created `0o755` and execs the plugin `bin/sonari`; `uninstall()` removes the launcher,
   the agents, the binary, and `install.json`, and **preserves** `keymap.json` and
-  `config.json`. **No real `swiftc`** in these tests — patch `_build_hotkeyd` to a
+  `config.json`. **No real `swiftc`** in these tests - patch `_build_hotkeyd` to a
   success/skip stub.
 - **One dedicated real-compile test** (the only place `swiftc` actually runs): skip-if
   `swiftc` absent; compile `hotkeyd/sonari-hotkeyd.swift` to a temp path and assert exit 0 +
@@ -454,10 +454,10 @@ Rewrite the **Requirements** and **Install** sections for the public, pip-free p
 
 > **⚠️ DROPPED (2026-06-05, owner decision):** Both `_dev_install_migrate` and the
 > pre-existing `_legacy_migrate` (+ `_clean_zshrc`/`_clean_settings_json`) were **removed**
-> (YAGNI — the old `claude-tts` PTY tool and the editable-pip build were never published, so
+> (YAGNI - the old `claude-tts` PTY tool and the editable-pip build were never published, so
 > migration only ever helped one machine; that machine was migrated to the self-contained
 > path by hand: `pip uninstall sonari` + `bin/sonari install`). `install()`'s automatic
-> LaunchAgent rewrite — which is *not* migration — stays. The text below is retained for
+> LaunchAgent rewrite - which is *not* migration - stays. The text below is retained for
 > history only.
 
 A new `_dev_install_migrate(home=None) -> list` (alongside the existing `_legacy_migrate`),
@@ -478,7 +478,7 @@ dev footprint:
 3. **General users:** `_dev_install_migrate` is a no-op (no editable footprint); only
    `_legacy_migrate` (the existing `claude-tts` cleanup) may find anything.
 
-This makes the dev Mac validate the exact public install path — the explicit point of
+This makes the dev Mac validate the exact public install path - the explicit point of
 approved decision #5.
 
 ## 9. Verification list (confirm empirically during the build)
@@ -503,25 +503,25 @@ approved decision #5.
 9. `/usr/bin/python3 --version` is 3.9.6 on this Mac (already confirmed); confirm the
    chosen interpreter on a clean Mac is `/usr/bin/python3`.
 
-## 10. Out of scope (deferred — separate sub-projects / later)
+## 10. Out of scope (deferred - separate sub-projects / later)
 
-- **Code signing & notarization** (Developer-ID, `codesign`, `xcrun notarytool`) — **dropped
+- **Code signing & notarization** (Developer-ID, `codesign`, `xcrun notarytool`) - **dropped
   for v1.** Local `swiftc` build avoids quarantine; no Apple Developer account needed.
-- **PyPI / `pip` distribution** of the `sonari` package — not the public mechanism.
-- **Homebrew formula / `brew install`** — not used.
+- **PyPI / `pip` distribution** of the `sonari` package - not the public mechanism.
+- **Homebrew formula / `brew install`** - not used.
 - **Marketplace / GitHub publish** (registering the marketplace, publishing the repo,
-  release tags, GitHub Actions for the dual-interpreter CI gate beyond local runs) — Phase 3
+  release tags, GitHub Actions for the dual-interpreter CI gate beyond local runs) - Phase 3
   **sub-project #2**.
-- **Onboarding docs** (full user guide, accessibility-focused getting-started, screencasts) —
+- **Onboarding docs** (full user guide, accessibility-focused getting-started, screencasts) -
   Phase 3 **sub-project #3**. This spec only makes the minimal README install/requirements
   edits needed for packaging correctness.
 - **Cross-machine QA** (clean second Mac, multiple macOS versions, Terminal/iTerm/VS Code
-  matrix) — Phase 3 **sub-project #4**. This spec includes only the single-machine fresh
+  matrix) - Phase 3 **sub-project #4**. This spec includes only the single-machine fresh
   smoke checklist.
 - **Runtime/feature work** (earcon set authoring, picker desync recovery, background-session
-  policy, `background_policy` dead-config, STOP vs CATCH_UP, Stop-hook reconciliation) —
+  policy, `background_policy` dead-config, STOP vs CATCH_UP, Stop-hook reconciliation) -
   remaining `phase1-review-followups.md` items, unrelated to packaging.
-- **Non-macOS platforms** — `say`/`afplay`/Carbon are macOS-only (Phase 1 non-goal).
+- **Non-macOS platforms** - `say`/`afplay`/Carbon are macOS-only (Phase 1 non-goal).
 
 ---
 

@@ -22,7 +22,7 @@ def test_set_rate_updates_config_and_speaker_and_saves():
 
 
 def test_set_rate_absolute_rejects_non_numeric():
-    # Regression #6: an absolute rate that isn't an int must NOT be stored — it
+    # Regression #6: an absolute rate that isn't an int must NOT be stored -- it
     # would poison config (persisted to disk) and break synthesis on every
     # utterance, silently muting the daemon until the bad config is removed.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")

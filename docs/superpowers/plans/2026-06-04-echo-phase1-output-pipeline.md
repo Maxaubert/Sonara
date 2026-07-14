@@ -1,8 +1,8 @@
-# Echo — Phase 1: Output Pipeline — Implementation Plan
+# Echo - Phase 1: Output Pipeline - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Echo speech daemon plus thin Claude Code hooks so a blind/low-vision developer hears Claude prose, options, plans, permissions, and earcons reliably and in order — eliminating the legacy double-speak / self-interrupt / options-missing bugs.
+**Goal:** Build the Echo speech daemon plus thin Claude Code hooks so a blind/low-vision developer hears Claude prose, options, plans, permissions, and earcons reliably and in order - eliminating the legacy double-speak / self-interrupt / options-missing bugs.
 
 **Architecture:** One per-machine speech daemon owns a single FIFO queue and one killable macOS say child; thin hook clients (MessageDisplay, PreToolUse, Notification, Stop, UserPromptSubmit, SessionStart, SessionEnd) forward structured JSON over a Unix-domain socket; speech plays strictly in order with instant per-type earcons; per-session foreground gating. Shipped as a Claude Code plugin. Global hotkeys and 100%-eyes-free selection are Phase 2 (separate plan).
 
@@ -14,7 +14,7 @@
 
 ## Project scaffolding, plugin manifest & legacy removal
 
-This section creates the package skeleton, the plugin manifest and hooks, the executable shims, and the editable install — and removes the legacy PTY-era files (preserved at git tag `v0-legacy-pty`). Only `paths.py` is genuine code here, so it is the one task that follows the full TDD loop; the config/manifest/shim files are not unit-testable on their own and are committed with full contents verified by inspection plus the venv install + pytest run at the end.
+This section creates the package skeleton, the plugin manifest and hooks, the executable shims, and the editable install - and removes the legacy PTY-era files (preserved at git tag `v0-legacy-pty`). Only `paths.py` is genuine code here, so it is the one task that follows the full TDD loop; the config/manifest/shim files are not unit-testable on their own and are committed with full contents verified by inspection plus the venv install + pytest run at the end.
 
 All commands assume the repo root `/Users/Nima.Hakimi/projects/private/claude-tts`. Run them from there.
 
@@ -218,7 +218,7 @@ def test_ensure_echo_dir_is_idempotent(monkeypatch, tmp_path):
     assert paths.ECHO_DIR.is_dir()
 ```
 
-**(2) Run it — expect FAIL** (the `echo` package does not exist yet):
+**(2) Run it - expect FAIL** (the `echo` package does not exist yet):
 
 ```bash
 python -m pytest tests/test_paths.py -q
@@ -249,7 +249,7 @@ def ensure_echo_dir() -> None:
     ECHO_DIR.mkdir(parents=True, exist_ok=True)
 ```
 
-**(4) Run it — expect PASS:**
+**(4) Run it - expect PASS:**
 
 ```bash
 python -m pytest tests/test_paths.py -q
@@ -617,7 +617,7 @@ Expected output ends with:
 git status --short
 ```
 
-Expected: no output (clean tree — the venv is ignored, and all prior files are already committed). No commit is needed for this task since the venv is intentionally untracked; if `git status --short` shows anything unexpected, stop and investigate before proceeding.
+Expected: no output (clean tree - the venv is ignored, and all prior files are already committed). No commit is needed for this task since the venv is intentionally untracked; if `git status --short` shows anything unexpected, stop and investigate before proceeding.
 
 ---
 
@@ -662,7 +662,7 @@ def test_round_trip_preserves_nested_and_unicode():
         "v": PROTOCOL_VERSION,
         "type": MsgType.CHOICE,
         "session": "s1",
-        "questions": [{"q": "Pick one — café or tea?", "options": ["a", "b"]}],
+        "questions": [{"q": "Pick one - café or tea?", "options": ["a", "b"]}],
         "n": 7,
         "flag": True,
         "empty": None,
@@ -691,7 +691,7 @@ Run it and confirm it fails because the module does not exist yet:
 python3 -m pytest tests/test_protocol.py -q
 ```
 
-Expected output (collection error — `src/echo/protocol.py` is absent):
+Expected output (collection error - `src/echo/protocol.py` is absent):
 
 ```
 E   ModuleNotFoundError: No module named 'echo.protocol'
@@ -841,7 +841,7 @@ Run just the new tests:
 python3 -m pytest tests/test_protocol.py -q -k msgtype
 ```
 
-Expected output — these PASS already, because the constants were defined fully in the previous task:
+Expected output - these PASS already, because the constants were defined fully in the previous task:
 
 ```
 3 passed in 0.__s
@@ -1048,7 +1048,7 @@ git commit -m "$(printf 'feat: add config DEFAULTS and load/save\n\nDocumented d
 
 ### Task: load_config returns DEFAULTS copy when CONFIG_PATH missing
 
-Write the failing test first. It patches `config.CONFIG_PATH` and `config.ECHO_DIR` to a `tmp_path` location that does not exist, asserts `load_config()` equals `DEFAULTS`, and—critically—asserts the result is an independent copy (mutating it, including the nested `earcons` dict, must not touch `DEFAULTS`).
+Write the failing test first. It patches `config.CONFIG_PATH` and `config.ECHO_DIR` to a `tmp_path` location that does not exist, asserts `load_config()` equals `DEFAULTS`, and-critically-asserts the result is an independent copy (mutating it, including the nested `earcons` dict, must not touch `DEFAULTS`).
 
 Append to `tests/test_config.py`:
 
@@ -1087,7 +1087,7 @@ Run just the new tests:
 python3 -m pytest tests/test_config.py -q -k "missing or independent_copy"
 ```
 
-Expected output — these PASS, because `load_config` and `_deep_merge` were implemented correctly in the prior task:
+Expected output - these PASS, because `load_config` and `_deep_merge` were implemented correctly in the prior task:
 
 ```
 2 passed in 0.__s
@@ -1140,7 +1140,7 @@ git commit -m "$(printf 'test: load_config returns independent DEFAULTS copy whe
 
 ### Task: load_config deep-merges a partial persisted file
 
-Write the failing test first. It writes a partial config to the patched `CONFIG_PATH`—overriding one scalar and one nested earcon entry—and asserts the result keeps every untouched default while applying the overrides. A second test confirms a persisted file adding a brand-new earcon kind merges it in alongside the defaults.
+Write the failing test first. It writes a partial config to the patched `CONFIG_PATH`-overriding one scalar and one nested earcon entry-and asserts the result keeps every untouched default while applying the overrides. A second test confirms a persisted file adding a brand-new earcon kind merges it in alongside the defaults.
 
 Append to `tests/test_config.py`:
 
@@ -1206,7 +1206,7 @@ Run just the new tests:
 python3 -m pytest tests/test_config.py -q -k "deep_merges or extra_nested or does_not_mutate"
 ```
 
-Expected output — these PASS, validating `_deep_merge` against real partial input:
+Expected output - these PASS, validating `_deep_merge` against real partial input:
 
 ```
 3 passed in 0.__s
@@ -1351,7 +1351,7 @@ git commit -m "$(printf 'test: load_config degrades to DEFAULTS on corrupt or no
 
 Write the failing test first. It patches `config.CONFIG_PATH` and `config.ECHO_DIR` to a `tmp_path` subdirectory that does NOT yet exist (to prove `save_config` calls `ensure_echo_dir`), saves a config, and asserts: the file exists, `load_config()` round-trips the saved values, and no leftover `.tmp` file remains (proving the temp-file-plus-`os.replace` path completed). A second test proves atomicity: when `os.replace` is patched to raise, the pre-existing config file is left untouched.
 
-This task patches `ECHO_DIR` to a nested directory; the scaffolding's `paths.ensure_echo_dir()` does `ECHO_DIR.mkdir(parents=True, exist_ok=True)`, but `config.save_config` calls `ensure_echo_dir` imported into the `echo.paths` namespace — which reads the real `ECHO_DIR` from `paths`, not the patched one. To make the directory creation honor the patched path, the test patches `ensure_echo_dir` on the `config` module to create the patched `ECHO_DIR`. Append to `tests/test_config.py`:
+This task patches `ECHO_DIR` to a nested directory; the scaffolding's `paths.ensure_echo_dir()` does `ECHO_DIR.mkdir(parents=True, exist_ok=True)`, but `config.save_config` calls `ensure_echo_dir` imported into the `echo.paths` namespace - which reads the real `ECHO_DIR` from `paths`, not the patched one. To make the directory creation honor the patched path, the test patches `ensure_echo_dir` on the `config` module to create the patched `ECHO_DIR`. Append to `tests/test_config.py`:
 
 ```python
 def _patch_config_paths_nested(monkeypatch, tmp_path):
@@ -1431,7 +1431,7 @@ Run just the new tests:
 python3 -m pytest tests/test_config.py -q -k "save_config"
 ```
 
-Expected output — these PASS, exercising `ensure_echo_dir`, the atomic temp-file write, and `os.replace` round-trip:
+Expected output - these PASS, exercising `ensure_echo_dir`, the atomic temp-file write, and `os.replace` round-trip:
 
 ```
 3 passed in 0.__s
@@ -1459,7 +1459,7 @@ PY
 python3 -m pytest tests/test_config.py -q -k "save_config"
 ```
 
-Expected output (atomicity is lost — the replace-failure test now sees clobbered content):
+Expected output (atomicity is lost - the replace-failure test now sees clobbered content):
 
 ```
 ..F
@@ -1508,7 +1508,7 @@ These two modules are PURE (no I/O, no subprocess, stdlib `re` only). `clean_mar
 
 All tasks assume the `echo` package scaffolding already exists (`pyproject.toml`, `src/echo/__init__.py`, `tests/conftest.py` with the `sys.path.insert(0, <repo>/src)` fallback). Run every command from the repo root `/Users/Nima.Hakimi/projects/private/claude-tts`.
 
-### Task: clean_markdown — failing test
+### Task: clean_markdown - failing test
 
 Write the test first with real assertions covering every behavior in the brief: inline backticks, bold/italic, leading heading hashes, links, bare URLs, table separator rows, and whitespace collapse.
 
@@ -1568,7 +1568,7 @@ python -m pytest tests/test_cleaner.py -q
 
 Expected output (FAIL): an error during collection, `ModuleNotFoundError: No module named 'echo.cleaner'` (or `ImportError: cannot import name 'clean_markdown'`), 0 tests passed.
 
-### Task: clean_markdown — implementation
+### Task: clean_markdown - implementation
 
 Implement the minimal real cleaner. The link rule MUST run before the bare-URL rule so that `[label](url)` collapses to `label` before any leftover `url` could be turned into `"link"`. Order is derived from the legacy `clean()` at tag `v0-legacy-pty`, minus the triple-fence handling (the assembler owns fences).
 
@@ -1620,7 +1620,7 @@ python -m pytest tests/test_cleaner.py -q
 
 Expected output (PASS): `10 passed` (no failures, no errors).
 
-### Task: clean_markdown — commit
+### Task: clean_markdown - commit
 
 Stage and commit the cleaner and its test together.
 
@@ -1636,7 +1636,7 @@ EOF
 
 Expected output: one commit created reporting `2 files changed`.
 
-### Task: ProseAssembler — failing test for sentence assembly and buffering
+### Task: ProseAssembler - failing test for sentence assembly and buffering
 
 Write tests for the core streaming behavior: splitting on sentence terminators across multiple `feed()` calls, holding partials, dedup of repeated index, two sentences in a single delta, and `final=True` flush.
 
@@ -1696,7 +1696,7 @@ python -m pytest tests/test_assembler.py -q
 
 Expected output (FAIL): `ModuleNotFoundError: No module named 'echo.assembler'` (or `ImportError: cannot import name 'ProseAssembler'`) during collection, 0 tests passed.
 
-### Task: ProseAssembler — failing test for code fences
+### Task: ProseAssembler - failing test for code fences
 
 Add fence tests to the same file. A fence with an info string like `python` and 3 content lines emits exactly `"3-line python code block"` and suppresses the code; a fence with no info string emits `"<N>-line code block"`.
 
@@ -1722,7 +1722,7 @@ def test_fence_suppresses_code_and_keeps_surrounding_prose():
     assert out == ["Here it is.", "1-line python code block", "Done now."]
 ```
 
-Wait — the third test mixes prose before and after a fence inside one delta; the assembler emits the leading complete sentence, then the fence summary, then the trailing prose on the same `final=True` call. Run the tests, expect failures (the two earlier sentence tests collected too, but all assembler tests fail because the module is missing):
+Wait - the third test mixes prose before and after a fence inside one delta; the assembler emits the leading complete sentence, then the fence summary, then the trailing prose on the same `final=True` call. Run the tests, expect failures (the two earlier sentence tests collected too, but all assembler tests fail because the module is missing):
 
 ```
 python -m pytest tests/test_assembler.py -q
@@ -1730,7 +1730,7 @@ python -m pytest tests/test_assembler.py -q
 
 Expected output (FAIL): collection error `ModuleNotFoundError: No module named 'echo.assembler'`, 0 tests passed.
 
-### Task: ProseAssembler — implementation
+### Task: ProseAssembler - implementation
 
 Implement the assembler exactly per contract. State: a set of seen indices for dedup, a text buffer for prose, fence-tracking state, and a list of fence content lines. `feed` processes the new delta character-by-character through a tiny fence-aware scanner so that prose and fences interleaved in one delta produce chunks in order.
 
@@ -1920,7 +1920,7 @@ python -m pytest tests/test_assembler.py -q
 
 Expected output (PASS): `9 passed` (no failures, no errors).
 
-### Task: ProseAssembler — full module test pass and commit
+### Task: ProseAssembler - full module test pass and commit
 
 Confirm both modules pass together (the cleaner must keep working since the assembler depends on it), then commit.
 
@@ -1997,7 +1997,7 @@ Run it and expect failure because the module does not exist yet:
 python -m pytest tests/test_queue.py -q
 ```
 
-Expected output (abridged) — collection error, no module `echo.queue`:
+Expected output (abridged) - collection error, no module `echo.queue`:
 
 ```
 E   ModuleNotFoundError: No module named 'echo.queue'
@@ -2103,7 +2103,7 @@ def test_clear_empties_queue():
     assert q.pop_next() is None
 ```
 
-Run and expect failure — the methods do not exist yet:
+Run and expect failure - the methods do not exist yet:
 
 ```bash
 python -m pytest tests/test_queue.py -k "jump_to_decision or clear" -q
@@ -2116,7 +2116,7 @@ E   AttributeError: 'SpeechQueue' object has no attribute 'jump_to_decision'
 ...
 ```
 
-Add the implementation. Edit `src/echo/queue.py` — add these two methods to the `SpeechQueue` class (after `pop_next`, before `__len__`):
+Add the implementation. Edit `src/echo/queue.py` - add these two methods to the `SpeechQueue` class (after `pop_next`, before `__len__`):
 
 ```python
     def jump_to_decision(self) -> None:
@@ -2185,7 +2185,7 @@ E   AttributeError: 'SpeechQueue' object has no attribute 'flush_session'
 ...
 ```
 
-Add the implementation. Edit `src/echo/queue.py` — add this method to the `SpeechQueue` class (after `clear`, before `__len__`):
+Add the implementation. Edit `src/echo/queue.py` - add this method to the `SpeechQueue` class (after `clear`, before `__len__`):
 
 ```python
     def flush_session(self, session: str) -> None:
@@ -2284,7 +2284,7 @@ def test_speak_tracks_current_proc():
     assert runner.procs[1].wait_calls == 1
 ```
 
-Run and expect failure — module does not exist yet:
+Run and expect failure - module does not exist yet:
 
 ```bash
 python -m pytest tests/test_speaker.py -k speak -q
@@ -2431,7 +2431,7 @@ def test_cancel_with_no_current_proc_is_noop():
     sp.cancel()
 ```
 
-Run and expect failure — `cancel` does not exist:
+Run and expect failure - `cancel` does not exist:
 
 ```bash
 python -m pytest tests/test_speaker.py -k cancel -q
@@ -2444,7 +2444,7 @@ E   AttributeError: 'Speaker' object has no attribute 'cancel'
 ...
 ```
 
-Add the implementation. Edit `src/echo/speaker.py` — add the `cancel` method to the `Speaker` class (after `speak`):
+Add the implementation. Edit `src/echo/speaker.py` - add the `cancel` method to the `Speaker` class (after `speak`):
 
 ```python
     def cancel(self) -> None:
@@ -2513,7 +2513,7 @@ def test_earcon_kind_with_no_mapping_is_noop():
     assert player.paths == []
 ```
 
-Run and expect failure — `earcon` does not exist:
+Run and expect failure - `earcon` does not exist:
 
 ```bash
 python -m pytest tests/test_speaker.py -k earcon -q
@@ -2526,7 +2526,7 @@ E   AttributeError: 'Speaker' object has no attribute 'earcon'
 ...
 ```
 
-Add the implementation. Edit `src/echo/speaker.py` — add the `earcon` method to the `Speaker` class (after `cancel`):
+Add the implementation. Edit `src/echo/speaker.py` - add the `earcon` method to the `Speaker` class (after `cancel`):
 
 ```python
     def earcon(self, kind: str) -> None:
@@ -2589,7 +2589,7 @@ def test_play_earcon_invokes_afplay_with_path(monkeypatch):
     assert recorded["args"] == ["afplay", "/System/Library/Sounds/Tink.aiff"]
 ```
 
-Run and expect the first test to FAIL. The current `play_earcon` only catches `FileNotFoundError` raised by `Popen` when the *binary* is absent — but if `afplay` exists yet the *file* is missing, `Popen` succeeds and the playback fails silently in the child, so the contract requires the function to tolerate both. To make the failure concrete now, the first test passes only once the catch is in place; the second test passes already. Run:
+Run and expect the first test to FAIL. The current `play_earcon` only catches `FileNotFoundError` raised by `Popen` when the *binary* is absent - but if `afplay` exists yet the *file* is missing, `Popen` succeeds and the playback fails silently in the child, so the contract requires the function to tolerate both. To make the failure concrete now, the first test passes only once the catch is in place; the second test passes already. Run:
 
 ```bash
 python -m pytest tests/test_speaker.py -k play_earcon -q
@@ -2601,7 +2601,7 @@ Expected output: both pass IF the implementation already catches `FileNotFoundEr
 2 passed in ...s
 ```
 
-To make the missing-file tolerance explicit and robust (the contract says "ignore FileNotFound / missing file"), harden `play_earcon` so it also swallows the case where the path does not exist before spawning, and any spawn error. Edit `src/echo/speaker.py` — replace the `play_earcon` function:
+To make the missing-file tolerance explicit and robust (the contract says "ignore FileNotFound / missing file"), harden `play_earcon` so it also swallows the case where the path does not exist before spawning, and any spawn error. Edit `src/echo/speaker.py` - replace the `play_earcon` function:
 
 ```python
 def play_earcon(path: str) -> None:
@@ -2750,7 +2750,7 @@ def test_best_enhanced_voice_falls_back_when_say_errors(monkeypatch):
     assert best_enhanced_voice() == "Samantha"
 ```
 
-Run and expect failure — the stub `best_enhanced_voice` always returns `"Samantha"`, so the Premium-preference tests fail:
+Run and expect failure - the stub `best_enhanced_voice` always returns `"Samantha"`, so the Premium-preference tests fail:
 
 ```bash
 python -m pytest tests/test_speaker.py -k best_enhanced_voice -q
@@ -2765,7 +2765,7 @@ E       AssertionError: assert 'Samantha' == 'Ava'
 2 failed, 2 passed in ...s
 ```
 
-Now write the real implementation. Edit `src/echo/speaker.py` — replace the stub `best_enhanced_voice` function:
+Now write the real implementation. Edit `src/echo/speaker.py` - replace the stub `best_enhanced_voice` function:
 
 ```python
 def best_enhanced_voice() -> str:
@@ -2872,7 +2872,7 @@ These tasks build the session-tracking, the daemon dispatch + socket server, and
 
 ### Task: SessionManager foreground tracking
 
-**Step 1 — Write the failing test.** Create `tests/test_sessions.py`:
+**Step 1 - Write the failing test.** Create `tests/test_sessions.py`:
 
 ```python
 from echo.sessions import SessionManager
@@ -2942,7 +2942,7 @@ def test_unregister_unknown_session_is_noop():
     assert sm.foreground() == "s1"
 ```
 
-**Step 2 — Run it, expect failure (no module yet).**
+**Step 2 - Run it, expect failure (no module yet).**
 
 ```
 python -m pytest tests/test_sessions.py -q
@@ -2950,7 +2950,7 @@ python -m pytest tests/test_sessions.py -q
 
 Expected: collection/import error, `ModuleNotFoundError: No module named 'echo.sessions'`.
 
-**Step 3 — Implement `src/echo/sessions.py`:**
+**Step 3 - Implement `src/echo/sessions.py`:**
 
 ```python
 class SessionManager:
@@ -2981,7 +2981,7 @@ class SessionManager:
         return self.is_foreground(session)
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_sessions.py -q
@@ -2989,7 +2989,7 @@ python -m pytest tests/test_sessions.py -q
 
 Expected: `8 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/sessions.py tests/test_sessions.py
@@ -3002,7 +3002,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 This task adds NO production code; it adds reusable fakes/fixtures consumed by the daemon dispatch tests. We verify it by importing the helpers in a smoke test.
 
-**Step 1 — Write the helper module + smoke test.** Create `tests/daemon_helpers.py`:
+**Step 1 - Write the helper module + smoke test.** Create `tests/daemon_helpers.py`:
 
 ```python
 from echo.queue import SpeechQueue
@@ -3078,7 +3078,7 @@ def test_make_daemon_wires_components():
     assert isinstance(speaker, FakeSpeaker)
 ```
 
-**Step 2 — Run it, expect failure (daemon module missing).**
+**Step 2 - Run it, expect failure (daemon module missing).**
 
 ```
 python -m pytest tests/test_daemon_helpers.py -q
@@ -3086,7 +3086,7 @@ python -m pytest tests/test_daemon_helpers.py -q
 
 Expected: `ModuleNotFoundError: No module named 'echo.daemon'` raised from `tests/daemon_helpers.py` import.
 
-**Step 3 — Create a minimal stub so helpers import.** Create `src/echo/daemon.py`:
+**Step 3 - Create a minimal stub so helpers import.** Create `src/echo/daemon.py`:
 
 ```python
 class SpeechDaemon:
@@ -3102,7 +3102,7 @@ class SpeechDaemon:
         raise NotImplementedError
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_helpers.py -q
@@ -3110,7 +3110,7 @@ python -m pytest tests/test_daemon_helpers.py -q
 
 Expected: `2 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add tests/daemon_helpers.py tests/test_daemon_helpers.py src/echo/daemon.py
@@ -3121,7 +3121,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: Daemon prose dispatch (foreground gating + assembly)
 
-**Step 1 — Write the failing test.** Create `tests/test_daemon_prose.py`:
+**Step 1 - Write the failing test.** Create `tests/test_daemon_prose.py`:
 
 ```python
 from echo.protocol import MsgType, PROTOCOL_VERSION
@@ -3186,7 +3186,7 @@ def test_prose_uses_per_session_assembler():
     assert queue.pop_next().text == "Foreground sentence here."
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_daemon_prose.py -q
@@ -3194,7 +3194,7 @@ python -m pytest tests/test_daemon_prose.py -q
 
 Expected: failures with `NotImplementedError` from `handle_message`.
 
-**Step 3 — Implement prose handling in `src/echo/daemon.py`.** Replace the whole file with:
+**Step 3 - Implement prose handling in `src/echo/daemon.py`.** Replace the whole file with:
 
 ```python
 from echo.protocol import MsgType
@@ -3245,7 +3245,7 @@ class SpeechDaemon:
         return None
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_prose.py -q
@@ -3253,7 +3253,7 @@ python -m pytest tests/test_daemon_prose.py -q
 
 Expected: `4 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/daemon.py tests/test_daemon_prose.py
@@ -3264,7 +3264,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: Daemon decision dispatch (choice/plan/permission + tool_announce)
 
-**Step 1 — Write the failing test.** Create `tests/test_daemon_decisions.py`:
+**Step 1 - Write the failing test.** Create `tests/test_daemon_decisions.py`:
 
 ```python
 from echo.protocol import MsgType, PROTOCOL_VERSION
@@ -3353,7 +3353,7 @@ def test_bare_earcon_message_plays_kind():
     assert len(queue) == 0
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_daemon_decisions.py -q
@@ -3361,7 +3361,7 @@ python -m pytest tests/test_daemon_decisions.py -q
 
 Expected: failures because these branches return `None` without acting (e.g. `assert len(queue) == 1` fails: `0 != 1`).
 
-**Step 3 — Implement decision/tool/earcon handling.** Add the decision-text helpers and branches to `src/echo/daemon.py`. Insert these methods into the `SpeechDaemon` class (after `_enqueue`):
+**Step 3 - Implement decision/tool/earcon handling.** Add the decision-text helpers and branches to `src/echo/daemon.py`. Insert these methods into the `SpeechDaemon` class (after `_enqueue`):
 
 ```python
     @staticmethod
@@ -3453,7 +3453,7 @@ Now extend `handle_message`. Replace its body so the leading `return None` is pr
         return None
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_decisions.py tests/test_daemon_prose.py -q
@@ -3461,7 +3461,7 @@ python -m pytest tests/test_daemon_decisions.py tests/test_daemon_prose.py -q
 
 Expected: `12 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/daemon.py tests/test_daemon_decisions.py
@@ -3472,7 +3472,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: Daemon control dispatch (flush/stop/skip/jump/catch_up + session lifecycle)
 
-**Step 1 — Write the failing test.** Create `tests/test_daemon_control.py`:
+**Step 1 - Write the failing test.** Create `tests/test_daemon_control.py`:
 
 ```python
 from echo.protocol import MsgType, PROTOCOL_VERSION
@@ -3566,7 +3566,7 @@ def test_session_end_unregisters():
     assert sessions.foreground() is None
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_daemon_control.py -q
@@ -3574,7 +3574,7 @@ python -m pytest tests/test_daemon_control.py -q
 
 Expected: failures (e.g. `assert speaker.cancels == 1` -> `0 != 1`) because these message types fall through to `return None`.
 
-**Step 3 — Implement control branches.** In `src/echo/daemon.py`, add these branches to `handle_message` just before the final `return None`:
+**Step 3 - Implement control branches.** In `src/echo/daemon.py`, add these branches to `handle_message` just before the final `return None`:
 
 ```python
         if t == MsgType.FLUSH:
@@ -3612,7 +3612,7 @@ Expected: failures (e.g. `assert speaker.cancels == 1` -> `0 != 1`) because thes
             return None
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_control.py -q
@@ -3620,7 +3620,7 @@ python -m pytest tests/test_daemon_control.py -q
 
 Expected: `8 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/daemon.py tests/test_daemon_control.py
@@ -3631,7 +3631,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: Daemon settings dispatch + STATUS/PING
 
-**Step 1 — Write the failing test.** Create `tests/test_daemon_settings.py`:
+**Step 1 - Write the failing test.** Create `tests/test_daemon_settings.py`:
 
 ```python
 from unittest import mock
@@ -3705,15 +3705,15 @@ def test_unknown_type_returns_none():
     assert daemon.handle_message(_msg("totally_unknown")) is None
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_daemon_settings.py -q
 ```
 
-Expected: `ImportError`/`AttributeError` — `echo.daemon` does not yet import `save_config`, so `mock.patch("echo.daemon.save_config")` fails; STATUS/PING return `None`.
+Expected: `ImportError`/`AttributeError` - `echo.daemon` does not yet import `save_config`, so `mock.patch("echo.daemon.save_config")` fails; STATUS/PING return `None`.
 
-**Step 3 — Implement settings + STATUS/PING.** At the top of `src/echo/daemon.py`, extend the imports:
+**Step 3 - Implement settings + STATUS/PING.** At the top of `src/echo/daemon.py`, extend the imports:
 
 ```python
 from echo.protocol import MsgType
@@ -3757,7 +3757,7 @@ Then add these branches to `handle_message` just before the final `return None`:
             return {"ok": True}
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_settings.py -q
@@ -3765,7 +3765,7 @@ python -m pytest tests/test_daemon_settings.py -q
 
 Expected: `6 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/daemon.py tests/test_daemon_settings.py
@@ -3776,7 +3776,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: Daemon speak loop (run components) + integration
 
-**Step 1 — Write the failing test.** Create `tests/test_daemon_loop.py`:
+**Step 1 - Write the failing test.** Create `tests/test_daemon_loop.py`:
 
 ```python
 import threading
@@ -3814,7 +3814,7 @@ def test_speak_loop_idles_when_queue_empty_then_stops():
     assert not t.is_alive()
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_daemon_loop.py -q
@@ -3822,7 +3822,7 @@ python -m pytest tests/test_daemon_loop.py -q
 
 Expected: `AttributeError: 'SpeechDaemon' object has no attribute '_speak_loop'` (the stub raised on it earlier; now we need a real loop + `stop()`).
 
-**Step 3 — Implement the loop, socket server, `stop()`, `run()`.** At the top of `src/echo/daemon.py`, extend imports to include the runtime/socket pieces:
+**Step 3 - Implement the loop, socket server, `stop()`, `run()`.** At the top of `src/echo/daemon.py`, extend imports to include the runtime/socket pieces:
 
 ```python
 import os
@@ -3965,7 +3965,7 @@ Now add the runtime methods to the class (after `handle_message`):
                 pass
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_loop.py -q
@@ -3973,7 +3973,7 @@ python -m pytest tests/test_daemon_loop.py -q
 
 Expected: `2 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/daemon.py tests/test_daemon_loop.py
@@ -3984,7 +3984,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: ensure_running + main
 
-**Step 1 — Write the failing test.** Create `tests/test_daemon_main.py`:
+**Step 1 - Write the failing test.** Create `tests/test_daemon_main.py`:
 
 ```python
 from unittest import mock
@@ -4025,15 +4025,15 @@ def test_main_builds_components_and_runs():
     assert built.config is fake_cfg
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_daemon_main.py -q
 ```
 
-Expected: `AttributeError` — `ensure_running`, `main`, and `_socket_connectable` do not exist yet.
+Expected: `AttributeError` - `ensure_running`, `main`, and `_socket_connectable` do not exist yet.
 
-**Step 3 — Implement `ensure_running` and `main`.** Add a `subprocess` import to the top of `src/echo/daemon.py`:
+**Step 3 - Implement `ensure_running` and `main`.** Add a `subprocess` import to the top of `src/echo/daemon.py`:
 
 ```python
 import os
@@ -4100,7 +4100,7 @@ if __name__ == "__main__":
     main()
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_daemon_main.py -q
@@ -4108,7 +4108,7 @@ python -m pytest tests/test_daemon_main.py -q
 
 Expected: `3 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/daemon.py tests/test_daemon_main.py
@@ -4119,7 +4119,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: client.send round-trip
 
-**Step 1 — Write the failing test.** Create `tests/test_client_send.py`:
+**Step 1 - Write the failing test.** Create `tests/test_client_send.py`:
 
 ```python
 import json
@@ -4185,7 +4185,7 @@ def test_send_round_trip_reply(tmp_path, monkeypatch):
     t.join(timeout=2.0)
 ```
 
-**Step 2 — Run it, expect failure.**
+**Step 2 - Run it, expect failure.**
 
 ```
 python -m pytest tests/test_client_send.py -q
@@ -4193,7 +4193,7 @@ python -m pytest tests/test_client_send.py -q
 
 Expected: `ModuleNotFoundError: No module named 'echo.client'`.
 
-**Step 3 — Implement `src/echo/client.py`:**
+**Step 3 - Implement `src/echo/client.py`:**
 
 ```python
 import socket
@@ -4254,7 +4254,7 @@ def _connectable() -> bool:
             pass
 ```
 
-**Step 4 — Run it, expect pass.**
+**Step 4 - Run it, expect pass.**
 
 ```
 python -m pytest tests/test_client_send.py -q
@@ -4262,7 +4262,7 @@ python -m pytest tests/test_client_send.py -q
 
 Expected: `2 passed`.
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add src/echo/client.py tests/test_client_send.py
@@ -4273,7 +4273,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: client.ensure_daemon
 
-**Step 1 — Write the failing test.** Create `tests/test_client_ensure.py`:
+**Step 1 - Write the failing test.** Create `tests/test_client_ensure.py`:
 
 ```python
 from unittest import mock
@@ -4310,17 +4310,17 @@ def test_ensure_daemon_spawns_then_polls_until_connectable():
     assert slept.call_count == 1
 ```
 
-**Step 2 — Run it, expect failure or pass-readiness.** Run:
+**Step 2 - Run it, expect failure or pass-readiness.** Run:
 
 ```
 python -m pytest tests/test_client_ensure.py -q
 ```
 
-Expected: `2 passed` (the `ensure_daemon` body was written in the previous task and already satisfies these patched-dependency tests). If instead you implemented `ensure_daemon` as a stub in a fresh checkout, the failure would be `AssertionError: Expected 'ensure_running' to have been called once. Called 0 times.` — then apply the `ensure_daemon` implementation from the previous task and re-run to get `2 passed`.
+Expected: `2 passed` (the `ensure_daemon` body was written in the previous task and already satisfies these patched-dependency tests). If instead you implemented `ensure_daemon` as a stub in a fresh checkout, the failure would be `AssertionError: Expected 'ensure_running' to have been called once. Called 0 times.` - then apply the `ensure_daemon` implementation from the previous task and re-run to get `2 passed`.
 
-**Step 3 — Confirm implementation.** No new production code is required beyond the `ensure_daemon`/`_connectable` already in `src/echo/client.py`. Re-read it to confirm `ensure_daemon` calls `_connectable()` first, returns immediately when true, otherwise calls `ensure_running()` then polls `_connectable()` with `time.sleep(0.05)` until `timeout`.
+**Step 3 - Confirm implementation.** No new production code is required beyond the `ensure_daemon`/`_connectable` already in `src/echo/client.py`. Re-read it to confirm `ensure_daemon` calls `_connectable()` first, returns immediately when true, otherwise calls `ensure_running()` then polls `_connectable()` with `time.sleep(0.05)` until `timeout`.
 
-**Step 4 — Run the whole client + daemon suite, expect pass.**
+**Step 4 - Run the whole client + daemon suite, expect pass.**
 
 ```
 python -m pytest tests/test_client_ensure.py tests/test_client_send.py tests/test_daemon_main.py tests/test_daemon_loop.py tests/test_daemon_settings.py tests/test_daemon_control.py tests/test_daemon_decisions.py tests/test_daemon_prose.py tests/test_sessions.py -q
@@ -4328,7 +4328,7 @@ python -m pytest tests/test_client_ensure.py tests/test_client_send.py tests/tes
 
 Expected: all pass (`33 passed`).
 
-**Step 5 — Commit.**
+**Step 5 - Commit.**
 
 ```
 git add tests/test_client_ensure.py
@@ -4345,9 +4345,9 @@ This section delivers the hook ingress layer: a pure `handle_event(event, payloa
 
 Assumes the scaffolding section already created `src/echo/protocol.py` (with `PROTOCOL_VERSION` and `MsgType`), `src/echo/client.py` (with `send`/`ensure_daemon`), `tests/conftest.py` (with the `src` sys.path fallback), and `pyproject.toml`. All commands run from the repo root `/Users/Nima.Hakimi/projects/private/claude-tts`.
 
-### Task: RUNTIME/MANUAL — capture golden hook payloads from a real Claude session
+### Task: RUNTIME/MANUAL - capture golden hook payloads from a real Claude session
 
-This task is NOT a pytest task. It is a one-time manual capture performed against a REAL Claude Code session on macOS. Its product is the files in `tests/fixtures/` committed to git. The TDD tasks below do NOT depend on this task completing first — they use the representative payloads embedded inline. Once real payloads are captured, overwrite the fixtures and re-run the parser tests; they should still pass (the representative schemas are best-effort copies of the live shapes).
+This task is NOT a pytest task. It is a one-time manual capture performed against a REAL Claude Code session on macOS. Its product is the files in `tests/fixtures/` committed to git. The TDD tasks below do NOT depend on this task completing first - they use the representative payloads embedded inline. Once real payloads are captured, overwrite the fixtures and re-run the parser tests; they should still pass (the representative schemas are best-effort copies of the live shapes).
 
 Steps:
 
@@ -4513,7 +4513,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 Expected: `git log --oneline -1` shows the commit; `ls tests/fixtures` lists the six JSON files.
 
-### Task: handle_event — MessageDisplay maps to a PROSE message
+### Task: handle_event - MessageDisplay maps to a PROSE message
 
 Write the failing test. Create `tests/test_hooks_entry.py`:
 
@@ -4623,7 +4623,7 @@ git commit -m "feat: handle_event maps MessageDisplay to a prose message
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
-### Task: handle_event — AskUserQuestion emits choice earcon then CHOICE
+### Task: handle_event - AskUserQuestion emits choice earcon then CHOICE
 
 Append the failing test to `tests/test_hooks_entry.py`:
 
@@ -4669,7 +4669,7 @@ python -m pytest tests/test_hooks_entry.py -q
 
 Expected output (FAIL): `assert [] == [...]` for the AskUserQuestion tests (PreToolUse currently returns `[]`).
 
-Extend `handle_event` in `src/echo/hooks_entry.py` — add a `PreToolUse` branch before the final `return []`:
+Extend `handle_event` in `src/echo/hooks_entry.py` - add a `PreToolUse` branch before the final `return []`:
 
 ```python
     if event == "PreToolUse":
@@ -4704,7 +4704,7 @@ git commit -m "feat: handle_event maps AskUserQuestion to choice earcon + CHOICE
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
-### Task: handle_event — ExitPlanMode emits plan earcon then PLAN
+### Task: handle_event - ExitPlanMode emits plan earcon then PLAN
 
 Append the failing test to `tests/test_hooks_entry.py`:
 
@@ -4744,7 +4744,7 @@ python -m pytest tests/test_hooks_entry.py -q
 
 Expected output (FAIL): the two ExitPlanMode tests fail because the `ExitPlanMode` branch returns `[]`.
 
-Extend the `PreToolUse` branch in `src/echo/hooks_entry.py` — insert the `ExitPlanMode` case after the `AskUserQuestion` case and before `return []`:
+Extend the `PreToolUse` branch in `src/echo/hooks_entry.py` - insert the `ExitPlanMode` case after the `AskUserQuestion` case and before `return []`:
 
 ```python
         if tool == "ExitPlanMode":
@@ -4771,7 +4771,7 @@ git commit -m "feat: handle_event maps ExitPlanMode to plan earcon + PLAN
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
-### Task: handle_event — generic PreToolUse emits a TOOL announce with a tool-specific summary
+### Task: handle_event - generic PreToolUse emits a TOOL announce with a tool-specific summary
 
 Append the failing test to `tests/test_hooks_entry.py`:
 
@@ -4945,7 +4945,7 @@ git commit -m "feat: handle_event maps generic PreToolUse to a tool announce
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
-### Task: handle_event — Notification permission_prompt and idle_prompt
+### Task: handle_event - Notification permission_prompt and idle_prompt
 
 Append the failing test to `tests/test_hooks_entry.py`:
 
@@ -5050,7 +5050,7 @@ git commit -m "feat: handle_event maps Notification permission/idle prompts
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
-### Task: handle_event — Stop, UserPromptSubmit, SessionStart, SessionEnd, and unknown events
+### Task: handle_event - Stop, UserPromptSubmit, SessionStart, SessionEnd, and unknown events
 
 Append the failing test to `tests/test_hooks_entry.py`:
 
@@ -5138,9 +5138,9 @@ git commit -m "feat: handle_event maps Stop/UserPromptSubmit/Session* and unknow
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
-### Task: bin/echo-hook — full shim with capture, dispatch, send, and always exit 0
+### Task: bin/echo-hook - full shim with capture, dispatch, send, and always exit 0
 
-`bin/echo-hook` is a thin shim: it reads `argv[1]` as the event, parses stdin JSON (tolerating empty/invalid), optionally dumps the raw stdin bytes when `ECHO_CAPTURE` is set, calls `handle_event`, ensures the daemon is up, sends each resulting message, and ALWAYS exits 0 — wrapping everything in a total try/except so it can never break Claude. All real work lives in `echo.hooks_entry` (pure) and `echo.client`; the shim only orchestrates.
+`bin/echo-hook` is a thin shim: it reads `argv[1]` as the event, parses stdin JSON (tolerating empty/invalid), optionally dumps the raw stdin bytes when `ECHO_CAPTURE` is set, calls `handle_event`, ensures the daemon is up, sends each resulting message, and ALWAYS exits 0 - wrapping everything in a total try/except so it can never break Claude. All real work lives in `echo.hooks_entry` (pure) and `echo.client`; the shim only orchestrates.
 
 Write the failing test. Create `tests/test_echo_hook_bin.py`:
 
@@ -6577,7 +6577,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: bin/echo shim
 
-The `bin/echo` shim execs `python -m echo.cli`, passing through args and the exit code. Test it as a subprocess so we exercise the real shim end-to-end (with `status` stubbed to fail fast since no daemon runs in CI — we just assert the shim dispatches and forwards the exit code).
+The `bin/echo` shim execs `python -m echo.cli`, passing through args and the exit code. Test it as a subprocess so we exercise the real shim end-to-end (with `status` stubbed to fail fast since no daemon runs in CI - we just assert the shim dispatches and forwards the exit code).
 
 Create `tests/test_bin_echo.py`:
 
@@ -6643,7 +6643,7 @@ Implement. Create `bin/echo`:
 
 ```bash
 #!/usr/bin/env bash
-# bin/echo — shim that execs the Echo CLI.
+# bin/echo - shim that execs the Echo CLI.
 exec python3 -m echo.cli "$@"
 ```
 
@@ -6779,7 +6779,7 @@ level:
 echo verbosity $ARGUMENTS
 ```
 
-This is a silent control action. Print nothing to the user on success — just run
+This is a silent control action. Print nothing to the user on success - just run
 the command. If the command errors, briefly report the error.
 ```
 
@@ -6796,7 +6796,7 @@ Run the Echo stop command using the Bash tool:
 echo stop
 ```
 
-This is a silent control action. Print nothing to the user — just run the
+This is a silent control action. Print nothing to the user - just run the
 command.
 ```
 
@@ -6813,7 +6813,7 @@ Run the Echo repeat command using the Bash tool:
 echo repeat
 ```
 
-This is a silent control action. Print nothing to the user — just run the
+This is a silent control action. Print nothing to the user - just run the
 command.
 ```
 
@@ -7069,13 +7069,13 @@ def test_background_session_is_earcon_only():
     assert log == [("earcon", "choice")]
 ```
 
-Run it (expect FAIL — the FakeSpeaker text assertions pin the exact decision-text format the daemon must build, and the ordering must hold; if any earlier module drifts from the contract this is where it surfaces):
+Run it (expect FAIL - the FakeSpeaker text assertions pin the exact decision-text format the daemon must build, and the ordering must hold; if any earlier module drifts from the contract this is where it surfaces):
 
 ```bash
 python -m pytest tests/test_e2e_pipeline.py -q
 ```
 
-Expected output (RED) — one of:
+Expected output (RED) - one of:
 
 ```
 E       assert [...] == [...]
@@ -7092,9 +7092,9 @@ These formats are owned by the daemon section; this test is the authority on the
 
 ### Task: Make the e2e ordering test pass (GREEN)
 
-No new production module is created here — the daemon and hooks already exist. If the RED run above passed immediately, the pipeline already conforms and you skip straight to commit. If it failed, the fix lives in the already-built modules and is constrained to the contract:
+No new production module is created here - the daemon and hooks already exist. If the RED run above passed immediately, the pipeline already conforms and you skip straight to commit. If it failed, the fix lives in the already-built modules and is constrained to the contract:
 
-1. `SpeechDaemon.handle_message` CHOICE branch must build the spoken text from `msg["questions"]` as: for each question, `"<question> "` followed by `"Option <n>: <label>."` for each option, joined by a single space, and multiple questions joined by a single space. The CHOICE branch only enqueues content (gated by `should_speak`) — it must **not** call `speaker.earcon` itself.
+1. `SpeechDaemon.handle_message` CHOICE branch must build the spoken text from `msg["questions"]` as: for each question, `"<question> "` followed by `"Option <n>: <label>."` for each option, joined by a single space, and multiple questions joined by a single space. The CHOICE branch only enqueues content (gated by `should_speak`) - it must **not** call `speaker.earcon` itself.
 2. `SpeechDaemon.handle_message` PERMISSION branch must set the SpeechItem text to `msg["action"]` (bare action), and likewise must **not** call `speaker.earcon` itself.
 3. The decision ALERT earcon is fired by the `MsgType.EARCON` branch when it receives the separate EARCON message that `hooks_entry.handle_event` emits BEFORE each content message: `PreToolUse`/`AskUserQuestion` returns `[{EARCON choice}, {CHOICE questions=...}]`; `Notification`/`permission_prompt` returns `[{EARCON permission}, {PERMISSION action=...}]`. This is why the e2e log shows exactly one earcon per decision (fired by the EARCON message), then the content in FIFO order. Confirm `action` is sourced from `payload` (`payload.get("action")`).
 
@@ -7336,7 +7336,7 @@ Run it:
 python -m pytest tests/test_manifests.py -q
 ```
 
-Expected output (RED if a manifest is malformed or an event is unhooked) — e.g.:
+Expected output (RED if a manifest is malformed or an event is unhooked) - e.g.:
 
 ```
 E       AssertionError: hooks.json is missing event hooks: ['SessionEnd']
@@ -7374,8 +7374,8 @@ Overwrite the legacy `README.md` (the legacy copy is preserved at git tag `v0-le
 
 **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on macOS.**
 
-Echo speaks everything Claude Code does — prose, plans, multiple-choice questions, and
-permission prompts — so you can run a full session **with the screen off**. It is a
+Echo speaks everything Claude Code does - prose, plans, multiple-choice questions, and
+permission prompts - so you can run a full session **with the screen off**. It is a
 ground-up rebuild of the old `claude-tts` tool: one speech daemon, one ordered queue, one
 `say` voice at a time, and a distinct sound (an *earcon*) the instant any decision appears.
 
@@ -7405,7 +7405,7 @@ cd ~/projects/claude-tts
 pip install -e .
 ```
 
-Then add Echo as a Claude Code plugin (it registers its hooks declaratively — no
+Then add Echo as a Claude Code plugin (it registers its hooks declaratively - no
 hand-editing of `settings.json`):
 
 ```bash
@@ -7431,8 +7431,8 @@ one:
 
 1. Open **System Settings → Accessibility → Spoken Content**.
 2. Click **System Voice → Manage Voices…**.
-3. Pick an English voice marked **(Enhanced)** or **(Premium)** — e.g. *Ava (Premium)*,
-   *Zoe (Premium)*, or *Allison* — and download it.
+3. Pick an English voice marked **(Enhanced)** or **(Premium)** - e.g. *Ava (Premium)*,
+   *Zoe (Premium)*, or *Allison* - and download it.
 4. Run `echo doctor` to confirm Echo picks it up, or pin it explicitly:
 
 ```bash
@@ -7458,16 +7458,16 @@ In Phase 1, control is via the `echo` CLI and namespaced slash commands inside a
 
 Three live-switchable levels (earcons fire in **all** of them):
 
-- **everything** (default) — prose, questions, plans, permissions, *and* brief tool
+- **everything** (default) - prose, questions, plans, permissions, *and* brief tool
   announcements ("Running git status").
-- **medium** — same as everything but **drops** routine tool announcements.
-- **quiet** — prose plus decisions (questions / plans / permissions) only; no tool chatter.
+- **medium** - same as everything but **drops** routine tool announcements.
+- **quiet** - prose plus decisions (questions / plans / permissions) only; no tool chatter.
 
 ## How ordering works
 
 Echo's voice never jumps ahead of you. Spoken content is **strictly first-in, first-out**: a
-question, plan, or permission is voiced *in its natural place* — after the prose that
-explains it — so if the voice is mid-sentence when a permission appears, you still hear the
+question, plan, or permission is voiced *in its natural place* - after the prose that
+explains it - so if the voice is mid-sentence when a permission appears, you still hear the
 remaining sentences first, then the permission. What *is* instant is the **alert**: the
 moment any decision appears, a short distinct earcon plays immediately (a different sound for
 permission, choice, plan, error, turn-done, and ready), while the spoken detail waits its
@@ -7485,7 +7485,7 @@ prompt or stopping flushes the queue, so the voice always resumes at what is cur
 
 ## Doctor and troubleshooting
 
-Run `echo doctor` first — it reports each check as pass/fail. Common issues:
+Run `echo doctor` first - it reports each check as pass/fail. Common issues:
 
 - **No speech at all.** Confirm `echo status` shows your session as the foreground. The
   daemon starts lazily on the first hook; if the socket is unreachable, run `echo doctor` to
@@ -7521,7 +7521,7 @@ at git tag `v0-legacy-pty` if you ever need it.)
 ## What's next (Phase 2)
 
 Global keyboard hotkeys for live speech control (skip, jump-to-decision, catch-up) and 100%
-eyes-free **selection** — pick any question option and approve plans and permissions without
+eyes-free **selection** - pick any question option and approve plans and permissions without
 ever looking at the screen.
 ```
 
@@ -7575,7 +7575,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task: Manual eyes-free VERIFICATION CHECKLIST
 
-This is the human exit-criteria check for Phase 1 — it cannot be automated because it
+This is the human exit-criteria check for Phase 1 - it cannot be automated because it
 validates real audio against the spec's success criterion: *a full session with the screen
 off.* Perform it on the target Mac after install.
 
@@ -7587,7 +7587,7 @@ off.* Perform it on the target Mac after install.
 3. `echo verbosity everything` and set a comfortable `echo rate` (e.g. 200).
 4. **Turn the screen off / look away. Do the rest by ear only.**
 
-**Checklist** — start a Claude Code session and confirm each item by sound alone:
+**Checklist** - start a Claude Code session and confirm each item by sound alone:
 
 - [ ] **Session start.** Starting the session plays the **ready** earcon (Glass).
 - [ ] **Prose in order.** Ask Claude something that produces multi-sentence prose; it is
@@ -7603,13 +7603,13 @@ off.* Perform it on the target Mac after install.
 - [ ] **Permission.** Trigger a permission prompt (e.g. a `Bash` command). A **permission**
       earcon (Funk) fires immediately; the action ("Run: …") is spoken in its natural place.
 - [ ] **No barge-in on detail.** While prose is still speaking, make a decision appear and
-      confirm the *spoken detail* of the decision does **not** cut off the prose — only the
+      confirm the *spoken detail* of the decision does **not** cut off the prose - only the
       earcon barges in.
 - [ ] **Turn done.** When Claude finishes a turn, a **turn_done** earcon (Tink) plays.
 - [ ] **Flush on new prompt.** Submit a new prompt mid-speech; the backlog is flushed and the
       voice resumes on the new turn.
 - [ ] **Stop.** Run `/echo:stop`; speech stops immediately and the queue is cleared.
-- [ ] **Verbosity.** `/echo:verbosity quiet` then run a tool — you hear no tool
+- [ ] **Verbosity.** `/echo:verbosity quiet` then run a tool - you hear no tool
       announcement; switch back to `everything` and tool announcements return.
 - [ ] **Per-session.** Open a second Claude Code session. With the first in the foreground,
       drive the second toward a decision: you hear its decision **earcon** but **not** its

@@ -1,5 +1,5 @@
 """Win32 virtual-key codes + RegisterHotKey fsModifiers, and the Windows default
-chord. Pure data — no OS calls — so it imports on any host for the mock suite."""
+chord. Pure data -- no OS calls -- so it imports on any host for the mock suite."""
 
 # Virtual-Key codes. Letters == ASCII uppercase; OEM keys per WinUser.h.
 KEY_CODES = {

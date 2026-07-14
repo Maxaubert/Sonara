@@ -1,4 +1,4 @@
-# Sonari Phase 3.1 — Manual Clean-Room Verification Checklist
+# Sonari Phase 3.1 - Manual Clean-Room Verification Checklist
 
 Run on a Mac with a clean profile, against the public marketplace
 (`github.com/nimkimi/sonari`). Mirrors design spec §9.

@@ -8,7 +8,7 @@ is docs/superpowers/M2-WINDOWS-ACCEPTANCE.md.
 Inject a fake winreg module before importing the Windows backend, then monkeypatch
 instance methods for all external calls. XML structure is validated via
 ElementTree.fromstring() with the full namespace string, which is more robust than
-string-contains checks. The sys.modules.setdefault call is idempotent — running on
+string-contains checks. The sys.modules.setdefault call is idempotent -- running on
 real Windows leaves the genuine winreg intact.
 """
 import sys
@@ -198,14 +198,14 @@ def test_resolve_python_skips_store_stub(monkeypatch, tmp_path):
 
 
 def test_spawn_flags_value():
-    # Hex literal correctness — no subprocess import needed
+    # Hex literal correctness -- no subprocess import needed
     assert _SPAWN_FLAGS == 0x08000008
 
 
 def test_post_install_notes_are_accurate(capsys):
     # #19: hotkeys ship + start with the daemon, so don't say they "arrive in M3".
     # The plugin's command files were renamed to NTFS-safe names (status.md, ...),
-    # so the /sonara:* slash commands DO work on Windows now — the old #10 "not
+    # so the /sonara:* slash commands DO work on Windows now -- the old #10 "not
     # available on NTFS" note is obsolete after the cross-platform-commands fix, and
     # promising a command that doesn't exist would be the inaccuracy to avoid.
     WinSupervisorBackend().post_install_notes()
@@ -235,7 +235,7 @@ def test_hooks_doctor_row_windows_absent(monkeypatch, tmp_path):
 
 def test_hooks_doctor_row_ok_when_plugin_enabled(monkeypatch, tmp_path):
     # Hooks supplied by the enabled plugin (no hand-wired settings.json block) must
-    # pass — not report FAIL as if uninstalled.
+    # pass -- not report FAIL as if uninstalled.
     import json
     from sonara.platform.windows import supervisor as sup
     sp = tmp_path / "settings.json"

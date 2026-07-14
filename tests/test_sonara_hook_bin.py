@@ -116,7 +116,7 @@ def test_hook_partial_batch_send_failure_does_not_drop_subsequent_messages(tmp_p
     )
     assert res.returncode == 0, res.stderr.decode()
     # The second message (CHOICE) must have been sent despite the error on the first.
-    assert sent_log.exists(), "no messages logged — second send was not attempted"
+    assert sent_log.exists(), "no messages logged -- second send was not attempted"
     lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
     assert len(lines) >= 1, "expected at least the second message to be logged"
     assert lines[0]["type"] == "choice"

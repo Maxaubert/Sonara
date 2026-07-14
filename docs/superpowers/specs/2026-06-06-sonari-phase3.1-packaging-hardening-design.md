@@ -1,8 +1,8 @@
-# Sonari Phase 3.1 — Packaging Hardening (Design Spec)
+# Sonari Phase 3.1 - Packaging Hardening (Design Spec)
 
-**Status:** Approved (user, 2026-06-06) — ready for implementation planning
+**Status:** Approved (user, 2026-06-06) - ready for implementation planning
 **Date:** 2026-06-06
-**Scope:** Phase 3 **sub-project #1.1** — harden the published packaging so a fresh
+**Scope:** Phase 3 **sub-project #1.1** - harden the published packaging so a fresh
 marketplace user can set Sonari up eyes-free, and so the long-lived daemon/hotkeyd survive a
 plugin auto-update. No new user-facing features; this is durability + on-ramp + hardening only.
 **Depends on:** Phase 1 (output, complete), Phase 2 (control + native-numeric selection,
@@ -13,7 +13,7 @@ complete), Phase 3 #1 (self-contained packaging,
 **Builds on / amends:** `2026-06-05-sonari-phase3-packaging-design.md`. That spec made the
 plugin self-contained off `PYTHONPATH=<plugin>/src`. This spec moves the long-lived runtime
 **off** that versioned plugin-cache `src` into a stable copy, adds a slash-command on-ramp,
-and adds spoken setup guidance — keeping its § numbering and tone for continuity.
+and adds spoken setup guidance - keeping its § numbering and tone for continuity.
 
 ---
 
@@ -22,16 +22,16 @@ and adds spoken setup guidance — keeping its § numbering and tone for continu
 A blind/low-vision developer installs Sonari from the **public GitHub marketplace**, hears
 Claude immediately (hooks lazy-start the daemon), is **told by voice** to run one slash
 command to finish setup, runs `/sonari:install` entirely eyes-free, and from then on
-autostart + global hotkeys + the control CLI all work — and **keep** working across a plugin
+autostart + global hotkeys + the control CLI all work - and **keep** working across a plugin
 auto-update, because the long-lived daemon no longer points at the version-pinned cache.
 
 **Success =** on a Mac with the published plugin enabled:
 
 1. The user can complete one-time setup **without leaving Claude Code and without a working
-   `sonari` on PATH** — `/sonari:install` runs `sonari install` via the plugin's
+   `sonari` on PATH** - `/sonari:install` runs `sonari install` via the plugin's
    Bash-tool `bin/` and prints the result.
 2. After `/sonari:install`, both LaunchAgents reference a **stable** location
-   (`~/.sonari/app` for the daemon, `~/.sonari/sonari-hotkeyd` for hotkeyd) — **not** the
+   (`~/.sonari/app` for the daemon, `~/.sonari/sonari-hotkeyd` for hotkeyd) - **not** the
    versioned marketplace cache. A simulated plugin-version bump (cache dir change/prune) does
    **not** break speech, autostart, or hotkeys after the bump; they keep running on the copy.
 3. On `SessionStart`, when setup is **degraded** (not fully installed, or a version drift),
@@ -52,13 +52,13 @@ Out of scope is enumerated in §10.
 Confirmed empirically via a **real** marketplace install (`github.com/nimkimi/sonari`,
 v0.3.0) on a clean profile:
 
-1. **No bootstrap on-ramp.** A fresh marketplace user *can* hear Claude — `hooks/hooks.json`
+1. **No bootstrap on-ramp.** A fresh marketplace user *can* hear Claude - `hooks/hooks.json`
    runs `${CLAUDE_PLUGIN_ROOT}/bin/sonari-hook`, which calls `client.ensure_daemon()` →
    `daemon.ensure_running()` → `Popen([bin/sonari-daemon])`, so the daemon lazy-starts. But
    there is **no clean way to run the one-time `sonari install`**: the `sonari` command is not
    on PATH (the `~/.local/bin/sonari` launcher is only created *by* `install`), and there is
    **no install slash command** (`commands/` has `doctor`, `keymap`, `rate`, `repeat`, `skip`,
-   `status`, `stop`, `verbosity`, `voice` — no `install`/`uninstall`). So autostart, global
+   `status`, `stop`, `verbosity`, `voice` - no `install`/`uninstall`). So autostart, global
    hotkeys, and the control CLI never get set up unless the user already knows to find and run
    the plugin's `bin/sonari`.
 
@@ -68,7 +68,7 @@ v0.3.0) on a clean profile:
    (`_launchagent_plist`, cli.py:477-491). When run from the **marketplace cache**, that
    `src` is inside the **version-pinned** cache dir (e.g. `…/sonari/<version>/src`). A plugin
    auto-update changes or prunes that dir, so the LaunchAgent's `PYTHONPATH` dangles and the
-   daemon fails to import `sonari` on its next (re)launch — broken until the user re-runs
+   daemon fails to import `sonari` on its next (re)launch - broken until the user re-runs
    `install`. The hotkeyd binary is already stable (`paths.HOTKEYD_BIN_PATH = ~/.sonari/
    sonari-hotkeyd`, paths.py:13), so only the **Python daemon** is exposed.
 
@@ -81,7 +81,7 @@ Secondary issues observed in the same clean-room run:
 
 4. **Interpreter inconsistency in the lazy path.** `bin/sonari-daemon` (and `bin/sonari`)
    resolve the interpreter as `py="$(command -v python3 || true)"; [ -x "$py" ] || py="/usr/
-   bin/python3"` — i.e. the **first `python3` on PATH** (often Homebrew), only falling back
+   bin/python3"` - i.e. the **first `python3` on PATH** (often Homebrew), only falling back
    to `/usr/bin/python3` when none is found. The installed daemon instead uses
    `_resolve_python()` (cli.py:313-342), which **prefers** `/usr/bin/python3`. So the lazy
    daemon can run a different interpreter than the installed one.
@@ -98,7 +98,7 @@ long-lived daemon is decoupled from the versioned cache by copying the package i
 degraded (C); and three secondary hardening fixes (D). Each subsection gives the exact
 from→to per file.
 
-### 3.A — Slash-command on-ramp (`commands/sonari:install.md`, `commands/sonari:uninstall.md`)
+### 3.A - Slash-command on-ramp (`commands/sonari:install.md`, `commands/sonari:uninstall.md`)
 
 Add two thin command files mirroring `commands/sonari:doctor.md`. They instruct Claude to run
 `sonari install` / `sonari uninstall` **via the Bash tool** and print the output verbatim.
@@ -110,7 +110,7 @@ eyes-free setup from inside Claude Code that §2.1 is missing.
 
 ```markdown
 ---
-description: Install Sonari (autostart, global hotkeys, control CLI) — one-time setup
+description: Install Sonari (autostart, global hotkeys, control CLI) - one-time setup
 ---
 
 Run the Sonari installer using the Bash tool:
@@ -146,13 +146,13 @@ Both fence the command in a triple-backtick block exactly like `sonari:doctor.md
 Claude runs via Bash and whose output it prints verbatim). No code change is required for
 these to work; they piggyback on the existing `bin/sonari` shim.
 
-### 3.B — Decouple the long-lived daemon from the versioned cache (the durability fix)
+### 3.B - Decouple the long-lived daemon from the versioned cache (the durability fix)
 
 `sonari install` copies the runtime into a **stable** location and points the speechd
 LaunchAgent there, so plugin-cache churn cannot break it. The hotkeyd binary is already
 stable and is kept.
 
-#### 3.B.1 `paths.py` — new `APP_DIR` constant
+#### 3.B.1 `paths.py` - new `APP_DIR` constant
 
 Add a stable app directory next to the other `~/.sonari/*` constants.
 
@@ -184,7 +184,7 @@ Layout contract: `APP_DIR` (= `~/.sonari/app`) is the PYTHONPATH; the package li
 `<APP_DIR>/sonari/__init__.py`. The installer copies the plugin's `src/sonari` tree to
 `APP_DIR/sonari`.
 
-#### 3.B.2 `cli.py` — copy the package in `install()`
+#### 3.B.2 `cli.py` - copy the package in `install()`
 
 Add a helper that refreshes the stable copy on every install, and call it from `install()`.
 
@@ -282,12 +282,12 @@ To:
 ```
 
 `_launchagent_plist(python_executable, src_path, log_path)` (cli.py:477-491) is unchanged in
-body — it already injects `PYTHONPATH=src_path` and runs `[<py>, -m, sonari.daemon]`. The
+body - it already injects `PYTHONPATH=src_path` and runs `[<py>, -m, sonari.daemon]`. The
 only change is the **argument** (`app_dir`, not the cache `src`). The docstring's reference to
 "the plugin's `<root>/src` directory" should be updated to "the stable `APP_DIR` copy" for
 accuracy; that is a comment-only edit.
 
-#### 3.B.3 `cli.py` — `_read_plugin_version` + updated `_write_install_record`
+#### 3.B.3 `cli.py` - `_read_plugin_version` + updated `_write_install_record`
 
 **New helper `_read_plugin_version(plugin_root: str) -> str`** (place near
 `_read_install_record`, cli.py:362): read the plugin's declared version from
@@ -375,7 +375,7 @@ To:
 (Rename the local `src` → `app` and the FAIL detail string accordingly; the surrounding
 `try/except` and the rest of the check are unchanged.)
 
-#### 3.B.4 `cli.py` — `uninstall()` removes `APP_DIR`
+#### 3.B.4 `cli.py` - `uninstall()` removes `APP_DIR`
 
 `uninstall()` currently removes a fixed `artifacts` list (cli.py:656-662) plus the agents,
 the hotkeyd binary, and the launcher, and preserves `keymap.json` + `config.json`. Add
@@ -398,27 +398,27 @@ Insert after cli.py:668 (the end of the `for artifact in artifacts:` loop):
 cannot touch them; the existing "Preserved your settings" output (cli.py:673-681) is
 unchanged.
 
-### 3.C — Detect-and-guide spoken setup health, in the daemon, on session start
+### 3.C - Detect-and-guide spoken setup health, in the daemon, on session start
 
 Keep hooks thin. The hook's `SessionStart` message carries the current plugin version + root;
 the daemon evaluates setup health on `SESSION_START` and speaks **one** short cue **only when
-degraded** (at most once per session). Decision: **guide only — never auto-run install** (no
+degraded** (at most once per session). Decision: **guide only - never auto-run install** (no
 silent `launchctl`/`swiftc` from a hook).
 
-#### 3.C.1 `hooks_entry.py` — carry plugin version + root on `SessionStart`
+#### 3.C.1 `hooks_entry.py` - carry plugin version + root on `SessionStart`
 
 `handle_event` is PURE (no I/O) per its contract (hooks_entry.py:28-32). Reading
 `plugin.json` is I/O, so the **read happens in `bin/sonari-hook`** (already does file I/O and
 is wrapped in a total try/except, hooks_entry's caller) and is passed in. But to keep the
 change minimal and within the existing structure, read `${CLAUDE_PLUGIN_ROOT}` from the env in
-`hooks_entry` (env read only, not file I/O — preserves purity) and read the version from the
+`hooks_entry` (env read only, not file I/O - preserves purity) and read the version from the
 env too, with a cheap optional file fallback performed by a tiny local helper that is
 failure-tolerant. To respect the "PURE: no I/O" docstring, the version-from-file fallback is
 done in the **shim** (`bin/sonari-hook`) and injected; `hooks_entry` only reads env vars.
 
 Concretely:
 
-**`bin/sonari-hook`** — before calling `handle_event`, resolve the plugin version cheaply and
+**`bin/sonari-hook`** - before calling `handle_event`, resolve the plugin version cheaply and
 export it so `hooks_entry` can read it as an env var (failure-tolerant; never breaks the
 hook). Insert after the `from sonari.hooks_entry import handle_event` import (sonari-hook:45):
 ```python
@@ -438,7 +438,7 @@ hook). Insert after the `from sonari.hooks_entry import handle_event` import (so
 (`here` is already defined at sonari-hook:39; the whole shim is wrapped in try/except + always
 exits 0, so this cannot break a session.)
 
-**`hooks_entry.py` `SessionStart` branch** — add `plugin_version` + `plugin_root` to the
+**`hooks_entry.py` `SessionStart` branch** - add `plugin_version` + `plugin_root` to the
 `SESSION_START` message only (env reads only; purity preserved).
 
 From (hooks_entry.py:96-100):
@@ -462,14 +462,14 @@ To:
             ),
         ]
 ```
-(`os` is already imported, hooks_entry.py:4. Empty strings when the env is absent — the daemon
+(`os` is already imported, hooks_entry.py:4. Empty strings when the env is absent - the daemon
 treats `""` as "unknown" and does not raise a version-drift cue on an empty version; see
 §3.C.3.)
 
-#### 3.C.2 `daemon.py` — health helpers
+#### 3.C.2 `daemon.py` - health helpers
 
 Add cheap, failure-tolerant health helpers to `SpeechDaemon`. They do **only** a few file
-stats + a version compare — **no `launchctl`** on the hot path. Add to the imports
+stats + a version compare - **no `launchctl`** on the hot path. Add to the imports
 (daemon.py:12) the constants the check needs:
 
 From (daemon.py:12):
@@ -536,14 +536,14 @@ Add the health helpers as methods (place after `_choice_notes`, daemon.py:119):
 Notes on "installed": `rec is not None` covers the lazy-only / never-ran-install case;
 `_launcher_present()` covers the vanished-launcher case (§2.5); both are cheap stats.
 **The hotkeyd binary is deliberately NOT part of this check.** A speech-only user on a machine
-without `swiftc` runs `sonari install` once — which writes `install.json` + the launcher (the
-hotkeyd build is non-fatal) — and is then treated as installed, so they are **never nagged**
+without `swiftc` runs `sonari install` once - which writes `install.json` + the launcher (the
+hotkeyd build is non-fatal) - and is then treated as installed, so they are **never nagged**
 about hotkeys. A missing hotkeyd binary is surfaced by `sonari doctor` (with the
 `xcode-select --install` guidance), not by the spoken session cue. (This resolves the
 speech-only-nagging concern; if `HOTKEYD_BIN_PATH` is now otherwise unused in `daemon.py`,
 drop it from the import added in 3.C.2.)
 
-#### 3.C.3 `daemon.py` — emit the cue on `SESSION_START`
+#### 3.C.3 `daemon.py` - emit the cue on `SESSION_START`
 
 The `SESSION_START` branch currently just sets foreground + registers (daemon.py:191-195).
 Extend it to evaluate health and enqueue **one** cue, throttled per session, only when
@@ -613,10 +613,10 @@ To:
 
 Performance: `_setup_health` runs once per session at start, under `self._lock`
 (daemon.py:341-342 acquires the lock around `handle_message`). It does ≤3 `os.path.exists`
-calls + one `open`/`json.load` of a tiny file + a string compare — negligible, and it is not
+calls + one `open`/`json.load` of a tiny file + a string compare - negligible, and it is not
 on the per-utterance speech path.
 
-### 3.D — Secondary hardening
+### 3.D - Secondary hardening
 
 #### 3.D.1 Single-instance daemon guard (`daemon.py` `main()`)
 
@@ -670,14 +670,14 @@ def main() -> None:
 ```
 (`socket_connectable` is already imported, daemon.py:12.) This is a best-effort guard; a
 genuine simultaneous-start race (both pass the check before either binds) is acceptably rare
-and self-heals on the next start — see §6. `run()`'s `os.unlink(SOCKET_PATH)` is kept (it
+and self-heals on the next start - see §6. `run()`'s `os.unlink(SOCKET_PATH)` is kept (it
 still correctly clears a **stale** socket file from a crashed daemon, which the guard does not
 cover because a stale socket is not connectable).
 
 #### 3.D.2 Interpreter consistency (`bin/sonari-daemon`, `bin/sonari`)
 
 Make the shims **prefer `/usr/bin/python3`** first, falling back to the first `python3` on
-PATH — matching `_resolve_python`'s preference (cli.py:320-342) so the lazy daemon and the
+PATH - matching `_resolve_python`'s preference (cli.py:320-342) so the lazy daemon and the
 installed daemon use the same interpreter. This is the daemon's lazy-start path
 (`ensure_running` → `Popen([bin/sonari-daemon])`, daemon.py:403-413); apply the same to
 `bin/sonari` for consistency.
@@ -710,7 +710,7 @@ Phase 3 spec), the shim's preferred interpreter satisfies the package's `require
 #### 3.D.3 Launcher robustness (`cli.py` `install()`)
 
 `install()` already calls `_place_launcher(plugin_root)` (cli.py:595), which
-`os.makedirs(..., exist_ok=True)` + writes `0o755` (cli.py:380-396) — already reliable on
+`os.makedirs(..., exist_ok=True)` + writes `0o755` (cli.py:380-396) - already reliable on
 paper. The fix is **defensive verification**: after placing it, confirm it exists and is
 executable, and warn (non-fatal) if not. The session-start health check (§3.C.2) treats a
 missing launcher as degraded, so a later vanish is re-surfaced as a spoken cue. Root cause of
@@ -752,7 +752,7 @@ To:
 - **Version bump to `0.4.0`** in all three manifests:
   - `.claude-plugin/plugin.json` `version` (currently `"0.3.0"`).
   - `pyproject.toml` `version` (currently `version = "0.3.0"`, line 7).
-  - `.claude-plugin/marketplace.json` — **two** places: the top-level `plugins[0].version`
+  - `.claude-plugin/marketplace.json` - **two** places: the top-level `plugins[0].version`
     (currently `"0.3.0"`). (There is no separate root `marketplace.json`; only
     `.claude-plugin/marketplace.json` exists.)
 
@@ -784,18 +784,18 @@ only.
   `launchctl` (only file stats), per the §3.C decision and the performance constraint. The
   only `launchctl` calls remain in `install`/`uninstall`/`doctor`, never on the hot path.
 - **Version drift but user does not re-install.** The cue is spoken once per session; the
-  daemon keeps running on the **old** `APP_DIR` copy (which still works — that is the whole
+  daemon keeps running on the **old** `APP_DIR` copy (which still works - that is the whole
   point of decoupling). Nothing breaks; the user is simply nudged to re-run install to pick up
   the new version's code.
 - **Second daemon races the guard.** If two daemons both pass `socket_connectable()` before
-  either binds, the later `bind()` in `run()` raises `OSError` (address in use) — caught
+  either binds, the later `bind()` in `run()` raises `OSError` (address in use) - caught
   nowhere today, so it would crash that second process. That is acceptable (the first daemon
   is the live one); to be tidy, the build may let the exception fall through (process exits
   non-zero, no orphaned socket because the first daemon owns it). No additional handling is
   required by this spec beyond the guard in §3.D.1.
 - **`SET_FOREGROUND` without `SESSION_START`.** `_maybe_guide_setup` is only called on the
   `SESSION_START` arm (not the bare `SET_FOREGROUND` arm), so a `UserPromptSubmit`-driven
-  foreground change never re-triggers guidance — matching "at most once per session."
+  foreground change never re-triggers guidance - matching "at most once per session."
 - **Plugin root with spaces / `&`.** Unchanged from the Phase 3 spec: the plist is
   XML-escaped (`_xml_escape`, cli.py:418-420) and `PYTHONPATH=<APP_DIR>` is a plain
   `~/.sonari/app` path (no spaces under the default home unless the username has one). The
@@ -807,7 +807,7 @@ only.
 The guard in §3.D.1 is a check-then-act and is therefore not race-free, but it eliminates the
 **common** duplicate (lazy start finds the LaunchAgent already up, or vice versa) without a
 lock file. A lock file (`flock` on `~/.sonari/speechd.lock`) was considered and rejected for
-v0.4.0 as over-engineering for a single-user desktop tool — the residual race window is the
+v0.4.0 as over-engineering for a single-user desktop tool - the residual race window is the
 few milliseconds between the check and `bind()`, and the loser simply crashes with
 `OSError: address in use` while the winner keeps the live socket. Documented here so the
 implementer does not "fix" the residual race.
@@ -821,7 +821,7 @@ suite must stay green under **both** `.venv` (3.13) and `.venv39` (3.9).
 
 1. **APP_DIR copy + plist re-point (the durability fix).** `install()` copies the package so
    `<APP_DIR>/sonari/__init__.py` exists, and the speechd plist's
-   `EnvironmentVariables.PYTHONPATH` equals `str(paths.APP_DIR)` — **not** the plugin/cache
+   `EnvironmentVariables.PYTHONPATH` equals `str(paths.APP_DIR)` - **not** the plugin/cache
    `src`. Assert the plist `ProgramArguments` is still `[<py>, -m, sonari.daemon]`.
 2. **`install.json` new fields.** After `install()`, the record has `python`,
    `python_version`, `app_path` (= `str(paths.APP_DIR)`), `plugin_root`, `plugin_version`,
@@ -845,7 +845,7 @@ suite must stay green under **both** `.venv` (3.13) and `.venv39` (3.9).
    - launcher missing (install.json present, `~/.local/bin/sonari` absent) → the
      `not_installed` cue.
    - **speech-only OK** (install.json + launcher present, `HOTKEYD_BIN_PATH` **absent**,
-     versions match) → **no** enqueue (silent) — a deliberate no-hotkeys user is never nagged.
+     versions match) → **no** enqueue (silent) - a deliberate no-hotkeys user is never nagged.
    - healthy (install.json + launcher present, versions match) → **no** enqueue (silent).
 6. **Version-drift cue.** install.json `plugin_version="0.3.0"`, session message
    `plugin_version="0.4.0"`, hotkeyd + launcher present → one `prose` item containing "Sonari
@@ -859,7 +859,7 @@ suite must stay green under **both** `.venv` (3.13) and `.venv39` (3.9).
 9. **Interpreter preference in shims.** `bin/sonari-daemon` (and `bin/sonari`) select
    `/usr/bin/python3` when present. Test by running the shim under a `PATH` whose first
    `python3` is a stub that writes a marker, with a stub `/usr/bin/python3` shadow not
-   feasible — so instead assert via a shell-level test: invoke the shim with `set -x`/a
+   feasible - so instead assert via a shell-level test: invoke the shim with `set -x`/a
    `python3` shim earlier on PATH and confirm the shim picks `/usr/bin/python3` (a string/
    behavior assertion on the resolved `$py`). Minimum viable: a unit test that greps the shim
    source for the `[ -x /usr/bin/python3 ]`-first ordering, plus a subprocess smoke test that
@@ -873,7 +873,7 @@ suite must stay green under **both** `.venv` (3.13) and `.venv39` (3.9).
 11. **`hooks_entry` SessionStart fields.** With `CLAUDE_PLUGIN_VERSION` / `CLAUDE_PLUGIN_ROOT`
     set in the env, `handle_event("SessionStart", …)` returns a `session_start` message
     carrying `plugin_version` + `plugin_root`; with them unset, both are `""` (and purity is
-    preserved — no file I/O in `hooks_entry`).
+    preserved - no file I/O in `hooks_entry`).
 12. **`_read_plugin_version`.** Reads `version` from a temp `plugin.json`; returns `""` on a
     missing/corrupt file; falls back to `CLAUDE_PLUGIN_VERSION`.
 13. **APP_DIR copy failure path.** Patch `_copy_app` (or `shutil.copytree`) to raise `OSError`;
@@ -902,7 +902,7 @@ suite must stay green under **both** `.venv` (3.13) and `.venv39` (3.9).
   required by the publish convention.
 - **Ambiguity resolved:** (a) version source for drift = `.claude-plugin/plugin.json`
   `version` with `CLAUDE_PLUGIN_VERSION` fallback; (b) drift cue fires only when both versions
-  are known and differ; (c) the hotkeyd binary is **NOT** part of the cue's "installed" check —
+  are known and differ; (c) the hotkeyd binary is **NOT** part of the cue's "installed" check -
   once `install.json` + the launcher exist, a speech-only user is never nagged; a missing
   hotkeyd is surfaced by `doctor` only (§3.C.2 + §11); (d) APP_DIR copy failure is fatal-with-guidance
   (§5); (e) single-instance guard is best-effort, no lock file (§6).
@@ -941,27 +941,27 @@ suite must stay green under **both** `.venv` (3.13) and `.venv39` (3.9).
    `keymap.json`.
 10. Full suite green under **both** `.venv` (3.13) and `.venv39` (3.9).
 
-## 10. Out of scope (deferred — separate sub-projects / later)
+## 10. Out of scope (deferred - separate sub-projects / later)
 
-- **Full onboarding docs / accessibility getting-started / screencasts** — Phase 3
+- **Full onboarding docs / accessibility getting-started / screencasts** - Phase 3
   **sub-project #3** (the original packaging spec's deferred onboarding work). This spec makes
   only the minimal README edits in §4.
 - **Auto-heal on update** (a hook or LaunchAgent that silently re-runs `install` after a
-  plugin auto-update, or a `swiftc`/`launchctl` step driven from a hook) — explicitly rejected
+  plugin auto-update, or a `swiftc`/`launchctl` step driven from a hook) - explicitly rejected
   for v0.4.0: the approved decision is **guide only** (spoken cue + `/sonari:install`), never
   silent privileged actions from a hook. Revisit only if the spoken-cue on-ramp proves
   insufficient in practice.
-- **Windows / non-macOS support** (the standing platform issue #1) — `say`/`afplay`/Carbon are
+- **Windows / non-macOS support** (the standing platform issue #1) - `say`/`afplay`/Carbon are
   macOS-only; out of scope as in every prior phase.
-- **Lock-file-based single-instance** (`flock`) — rejected as over-engineering for a
+- **Lock-file-based single-instance** (`flock`) - rejected as over-engineering for a
   single-user desktop tool (§6); the best-effort `socket_connectable()` guard is sufficient.
 - **Cross-machine / multi-macOS QA matrix**, **CI on GitHub Actions for the dual-interpreter
-  gate**, **PyPI/Homebrew distribution**, **codesign/notarization** — all remain deferred per
+  gate**, **PyPI/Homebrew distribution**, **codesign/notarization** - all remain deferred per
   the Phase 3 packaging spec §10.
 
 ## 11. Considered alternatives (recorded, not adopted)
 
-- **Nagging when the hotkeyd binary is absent — REJECTED.** The alternative was to treat a
+- **Nagging when the hotkeyd binary is absent - REJECTED.** The alternative was to treat a
   missing `HOTKEYD_BIN_PATH` as "not installed" so the cue keeps firing until hotkeys are
   built. Rejected because it nags a deliberate speech-only user (no `swiftc`/Command Line
   Tools) once every session. **Adopted instead (§3.C.2):** once `install.json` + the launcher

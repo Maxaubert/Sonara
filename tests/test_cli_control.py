@@ -166,7 +166,7 @@ CONTROL_SUBCOMMANDS = [
 @pytest.mark.parametrize("argv", CONTROL_SUBCOMMANDS)
 def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, monkeypatch, tmp_path, capsys):
     """When the daemon is down all control subcommands must print a friendly
-    message to stderr and return non-zero — no raw traceback."""
+    message to stderr and return non-zero -- no raw traceback."""
     monkeypatch.setattr(paths, "LOCK_PATH", tmp_path / "no.lock")
     from sonara.client import DaemonNotRunning
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an opt-in `sonari voices install` command that provisions a uv-managed Python ≥3.10 venv with the Kokoro extra and repoints the daemon at it, so neural voices work with zero manual `pip` — on this machine and on any new one.
+**Goal:** Add an opt-in `sonari voices install` command that provisions a uv-managed Python ≥3.10 venv with the Kokoro extra and repoints the daemon at it, so neural voices work with zero manual `pip` - on this machine and on any new one.
 
 **Architecture:** Neural state is *derived from the existence of `~/.sonari/venv`* (no separate flag to drift). A new `kokoro_provision.py` module owns all provisioning (ensure uv → `uv venv` → install pinned deps → predownload model → health check), with injectable `run`/`which` seams so it is fully unit-testable without touching the network. The daemon's interpreter selector becomes "venv python if it exists and probes ≥3.10, else `resolve_python()` (system 3.9)"; `install()` uses that selector, so the daemon runs `~/.sonari/venv/bin/python -m sonari.daemon` with `PYTHONPATH=APP_DIR` (sonari from APP_DIR, kokoro from the venv).
 
@@ -10,11 +10,11 @@
 
 ## Global Constraints
 
-- **Daemon core stays stdlib-only on system Python 3.9** for base (non-neural) users — no new runtime deps; the venv is opt-in and absent by default.
+- **Daemon core stays stdlib-only on system Python 3.9** for base (non-neural) users - no new runtime deps; the venv is opt-in and absent by default.
 - **Kokoro pinned set (e2e-verified this session, Python ≥3.10):** `kokoro-onnx==0.5.0`, `onnxruntime==1.27.0`, `numpy==2.4.6` (transitively pulls `espeakng-loader`, `phonemizer-fork`; bundled espeak-ng, no system espeak-ng needed).
 - **Never leave a half-wired daemon:** any provisioning failure must abort with an actionable message and leave the previous working interpreter/state intact.
-- **Tests must not hit the network or run real uv/venv** — inject `run`/`which`; the real provisioning is verified once by dogfooding on the dev Mac (Task 10), never in CI.
-- **macOS is the target now; keep selection/provisioning logic platform-neutral** (venv python path differs on Windows) — Windows wiring is an explicit follow-up.
+- **Tests must not hit the network or run real uv/venv** - inject `run`/`which`; the real provisioning is verified once by dogfooding on the dev Mac (Task 10), never in CI.
+- **macOS is the target now; keep selection/provisioning logic platform-neutral** (venv python path differs on Windows) - Windows wiring is an explicit follow-up.
 - Run the suite with `--ignore=tests/test_kokoro.py` when the `[kokoro]` extra is absent (that module imports numpy at collection).
 
 ---
@@ -61,12 +61,12 @@ def test_neural_enabled_reflects_venv_python_existence(monkeypatch, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_kokoro_provision.py -v`
-Expected: FAIL — `AttributeError: module 'sonari.paths' has no attribute 'KOKORO_VENV'` (and no `kokoro_provision` module).
+Expected: FAIL - `AttributeError: module 'sonari.paths' has no attribute 'KOKORO_VENV'` (and no `kokoro_provision` module).
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/paths.py  — add near the other path constants
+# src/sonari/paths.py  - add near the other path constants
 KOKORO_VENV = SONARI_DIR / "venv"   # opt-in uv-managed venv for neural voices
 
 
@@ -85,7 +85,7 @@ def kokoro_venv_python() -> str:
 Kokoro needs Python >=3.10 (kokoro-onnx requires onnxruntime>=1.20.1 + numpy>=2),
 but the daemon defaults to system /usr/bin/python3 (3.9). This module provisions a
 uv-managed venv at paths.KOKORO_VENV and the daemon is repointed at it. "Neural
-enabled" is derived from the venv's existence — no separate flag to drift.
+enabled" is derived from the venv's existence - no separate flag to drift.
 
 All subprocess work goes through an injected ``run`` callable so the logic is
 unit-testable without touching uv, the network, or a real venv.
@@ -124,12 +124,12 @@ git commit -m "feat(kokoro): venv path helper + neural_enabled detection"
 
 **Interfaces:**
 - Consumes: `kokoro_provision.neural_enabled()`, `paths.kokoro_venv_python()`, `sup._probe_python_version()`, `sup.resolve_python()`.
-- Produces: `cli._daemon_python(sup) -> str | None` — the venv python when neural is enabled AND it probes ≥3.10, else `sup.resolve_python()`. `install()` uses it so re-running `sonari install` keeps the venv interpreter.
+- Produces: `cli._daemon_python(sup) -> str | None` - the venv python when neural is enabled AND it probes ≥3.10, else `sup.resolve_python()`. `install()` uses it so re-running `sonari install` keeps the venv interpreter.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_cli_install.py — add
+# tests/test_cli_install.py - add
 from sonari import cli, paths
 from sonari import kokoro_provision as kp
 
@@ -183,12 +183,12 @@ def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_cli_install.py -k daemon_python -v`
-Expected: FAIL — `AttributeError: module 'sonari.cli' has no attribute '_daemon_python'`.
+Expected: FAIL - `AttributeError: module 'sonari.cli' has no attribute '_daemon_python'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/cli.py — add near _resolve_python (cli.py:257)
+# src/sonari/cli.py - add near _resolve_python (cli.py:257)
 def _daemon_python(sup):
     """Interpreter the daemon should run on: the neural venv's Python when it is
     provisioned AND probes >=3.10, else the system Python from resolve_python().
@@ -212,7 +212,7 @@ Then in `install()` (cli.py:336) replace `python = sup.resolve_python()` with:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `python3 -m pytest tests/test_cli_install.py -v`
-Expected: PASS (new cases + existing install tests unaffected — base path still uses `resolve_python()` because `neural_enabled()` is False by default).
+Expected: PASS (new cases + existing install tests unaffected - base path still uses `resolve_python()` because `neural_enabled()` is False by default).
 
 - [ ] **Step 5: Commit**
 
@@ -230,12 +230,12 @@ git commit -m "feat(kokoro): neural-aware daemon interpreter selection"
 - Test: `tests/test_kokoro_provision.py`
 
 **Interfaces:**
-- Produces: `kokoro_provision.ensure_uv(which=shutil.which, run=subprocess.check_call, base_python=sys.executable) -> str` — returns the absolute path to a `uv` binary, bootstrapping via `pip install --user uv` when none is on PATH; raises `RuntimeError` (actionable) if it still can't be found.
+- Produces: `kokoro_provision.ensure_uv(which=shutil.which, run=subprocess.check_call, base_python=sys.executable) -> str` - returns the absolute path to a `uv` binary, bootstrapping via `pip install --user uv` when none is on PATH; raises `RuntimeError` (actionable) if it still can't be found.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_kokoro_provision.py — add
+# tests/test_kokoro_provision.py - add
 import pytest
 from sonari import kokoro_provision as kp
 
@@ -277,12 +277,12 @@ def test_ensure_uv_raises_actionable_when_unfindable(tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_kokoro_provision.py -k ensure_uv -v`
-Expected: FAIL — `AttributeError: ... has no attribute 'ensure_uv'`.
+Expected: FAIL - `AttributeError: ... has no attribute 'ensure_uv'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/kokoro_provision.py — add
+# src/sonari/kokoro_provision.py - add
 import shutil
 import subprocess
 import sys
@@ -298,7 +298,7 @@ def ensure_uv(which=shutil.which, run=subprocess.check_call,
               base_python=None, user_base=_default_user_base) -> str:
     """Return a path to `uv`, bootstrapping it via `pip install --user uv` when
     it is not already on PATH. Raises RuntimeError (actionable) if uv cannot be
-    obtained — never returns a non-existent path."""
+    obtained - never returns a non-existent path."""
     found = which("uv")
     if found:
         return found
@@ -337,12 +337,12 @@ git commit -m "feat(kokoro): ensure_uv bootstrap"
 - Test: `tests/test_kokoro_provision.py`
 
 **Interfaces:**
-- Produces: `kokoro_provision.requirements_path() -> str` (the bundled pin file beside this module); `kokoro_provision.provision(uv, run=subprocess.check_call) -> None` — runs `uv venv <KOKORO_VENV> --python 3.12` then `uv pip install --python <venv-python> -r <requirements>`.
+- Produces: `kokoro_provision.requirements_path() -> str` (the bundled pin file beside this module); `kokoro_provision.provision(uv, run=subprocess.check_call) -> None` - runs `uv venv <KOKORO_VENV> --python 3.12` then `uv pip install --python <venv-python> -r <requirements>`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_kokoro_provision.py — add
+# tests/test_kokoro_provision.py - add
 from sonari import paths
 from sonari import kokoro_provision as kp
 
@@ -368,7 +368,7 @@ def test_provision_runs_uv_venv_then_pip_install(monkeypatch, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_kokoro_provision.py -k "requirements or provision" -v`
-Expected: FAIL — missing `requirements_path`/`provision` (and the file).
+Expected: FAIL - missing `requirements_path`/`provision` (and the file).
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -382,7 +382,7 @@ numpy==2.4.6
 ```
 
 ```python
-# src/sonari/kokoro_provision.py — add
+# src/sonari/kokoro_provision.py - add
 def requirements_path() -> str:
     """Absolute path to the bundled pinned Kokoro requirements file."""
     return os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -421,13 +421,13 @@ git commit -m "feat(kokoro): pinned requirements + uv provision step"
 
 **Interfaces:**
 - Produces:
-  - `kokoro_provision.predownload_model(app_dir, run=subprocess.check_call) -> None` — runs the venv python with `PYTHONPATH=app_dir` to build `KokoroEngine(SONARI_DIR/"kokoro")` and trigger `_ensure_loaded()` once.
-  - `kokoro_provision.neural_healthy(app_dir, run=subprocess.check_output) -> bool` — runs the venv python to confirm `kokoro.is_installed()` is True there.
+  - `kokoro_provision.predownload_model(app_dir, run=subprocess.check_call) -> None` - runs the venv python with `PYTHONPATH=app_dir` to build `KokoroEngine(SONARI_DIR/"kokoro")` and trigger `_ensure_loaded()` once.
+  - `kokoro_provision.neural_healthy(app_dir, run=subprocess.check_output) -> bool` - runs the venv python to confirm `kokoro.is_installed()` is True there.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_kokoro_provision.py — add
+# tests/test_kokoro_provision.py - add
 from sonari import paths
 from sonari import kokoro_provision as kp
 
@@ -458,12 +458,12 @@ def test_neural_healthy_false_on_subprocess_error(monkeypatch):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_kokoro_provision.py -k "predownload or healthy" -v`
-Expected: FAIL — missing `predownload_model`/`neural_healthy`.
+Expected: FAIL - missing `predownload_model`/`neural_healthy`.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/kokoro_provision.py — add
+# src/sonari/kokoro_provision.py - add
 _PREDOWNLOAD = (
     "from sonari import kokoro, paths as p; "
     "kokoro.KokoroEngine(p.SONARI_DIR / 'kokoro')._ensure_loaded()")
@@ -510,13 +510,13 @@ git commit -m "feat(kokoro): model pre-download + venv health check"
 
 **Interfaces:**
 - Produces:
-  - `kokoro_provision.install_kokoro(app_dir, *, ensure_uv=ensure_uv, provision=provision, predownload_model=predownload_model) -> None` — orchestrates ensure_uv → provision → predownload, in order; lets exceptions propagate (the CLI turns them into an actionable message and does NOT rewire the daemon).
-  - `kokoro_provision.uninstall_kokoro(rmtree=shutil.rmtree) -> None` — removes `paths.KOKORO_VENV` (idempotent; ignores absence).
+  - `kokoro_provision.install_kokoro(app_dir, *, ensure_uv=ensure_uv, provision=provision, predownload_model=predownload_model) -> None` - orchestrates ensure_uv → provision → predownload, in order; lets exceptions propagate (the CLI turns them into an actionable message and does NOT rewire the daemon).
+  - `kokoro_provision.uninstall_kokoro(rmtree=shutil.rmtree) -> None` - removes `paths.KOKORO_VENV` (idempotent; ignores absence).
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_kokoro_provision.py — add
+# tests/test_kokoro_provision.py - add
 import pytest
 from sonari import paths
 from sonari import kokoro_provision as kp
@@ -555,12 +555,12 @@ def test_uninstall_kokoro_removes_venv_idempotently(monkeypatch, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_kokoro_provision.py -k "install_kokoro or uninstall_kokoro" -v`
-Expected: FAIL — missing orchestrators.
+Expected: FAIL - missing orchestrators.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/kokoro_provision.py — add (ensure `import shutil` present)
+# src/sonari/kokoro_provision.py - add (ensure `import shutil` present)
 def install_kokoro(app_dir, *, ensure_uv=ensure_uv, provision=provision,
                    predownload_model=predownload_model) -> None:
     """Provision the neural venv end-to-end. Any step raising aborts the whole
@@ -649,12 +649,12 @@ def test_voices_subcommand_registered():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_cli_voices.py -v`
-Expected: FAIL — missing `_cmd_voices_install` etc.
+Expected: FAIL - missing `_cmd_voices_install` etc.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/cli.py — add command handlers
+# src/sonari/cli.py - add command handlers
 def _cmd_voices_install(_args) -> int:
     """Provision the Kokoro neural-voice venv, then re-wire the daemon onto it."""
     from sonari import kokoro_provision as kp
@@ -682,7 +682,7 @@ def _cmd_voices_uninstall(_args) -> int:
 ```
 
 ```python
-# src/sonari/cli.py — in _register_local(sub), add:
+# src/sonari/cli.py - in _register_local(sub), add:
     vp = sub.add_parser("voices", help="install/remove neural (Kokoro) voices")
     vsub = vp.add_subparsers(dest="voices_command")
     vsub.add_parser("install", help="provision neural voices").set_defaults(
@@ -714,12 +714,12 @@ git commit -m "feat(kokoro): sonari voices install/uninstall commands"
 
 **Interfaces:**
 - Consumes: `kokoro_provision.neural_enabled()`, `paths.APP_DIR`, `kokoro_provision.neural_healthy()`.
-- Produces: an extra `("neural voices", ok, detail)` row — absent-venv → `(… , True, "not installed (optional)")` so a base install stays all-green; venv present + healthy → `(…, True, "ready (<venv python>)")`; venv present + unhealthy → `(…, False, "venv present but Kokoro import failed — re-run: sonari voices install")`.
+- Produces: an extra `("neural voices", ok, detail)` row - absent-venv → `(… , True, "not installed (optional)")` so a base install stays all-green; venv present + healthy → `(…, True, "ready (<venv python>)")`; venv present + unhealthy → `(…, False, "venv present but Kokoro import failed - re-run: sonari voices install")`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# tests/test_cli_doctor.py — add
+# tests/test_cli_doctor.py - add
 from sonari import cli, paths
 from sonari import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
@@ -750,12 +750,12 @@ def test_doctor_neural_row_fails_when_venv_unhealthy(monkeypatch):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python3 -m pytest tests/test_cli_doctor.py -k neural -v`
-Expected: FAIL — no "neural voices" row.
+Expected: FAIL - no "neural voices" row.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/sonari/cli.py — in doctor(), before `return results`:
+# src/sonari/cli.py - in doctor(), before `return results`:
     try:
         from sonari import kokoro_provision as kp
         if not kp.neural_enabled():
@@ -765,7 +765,7 @@ Expected: FAIL — no "neural voices" row.
                             f"ready ({paths.kokoro_venv_python()})"))
         else:
             results.append(("neural voices", False,
-                            "venv present but Kokoro import failed — "
+                            "venv present but Kokoro import failed - "
                             "re-run: sonari voices install"))
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("neural voices", False, f"error: {exc}"))
@@ -789,14 +789,14 @@ git commit -m "feat(kokoro): doctor neural-voices row"
 
 **Files:**
 - Create: `commands/voices.md`
-- Test: `tests/test_manifests.py` (only if it enumerates command files — otherwise none)
+- Test: `tests/test_manifests.py` (only if it enumerates command files - otherwise none)
 
 **Interfaces:** none (markdown command file mirroring `commands/voice.md`).
 
 - [ ] **Step 1: Write the failing test (or confirm coverage)**
 
 Run: `python3 -m pytest tests/test_manifests.py -v`
-If `test_manifests.py` validates every `commands/*.md` (frontmatter/format), this new file is covered — confirm it still passes after Step 3. If it does NOT enumerate commands, skip the test step (a static doc file needs no unit test) and note that here.
+If `test_manifests.py` validates every `commands/*.md` (frontmatter/format), this new file is covered - confirm it still passes after Step 3. If it does NOT enumerate commands, skip the test step (a static doc file needs no unit test) and note that here.
 
 - [ ] **Step 2: Create the command file**
 
@@ -834,7 +834,7 @@ git commit -m "feat(kokoro): /sonari:voices slash command"
 
 ---
 
-### Task 10: Dogfood — real provisioning + neural playback on the dev Mac (manual)
+### Task 10: Dogfood - real provisioning + neural playback on the dev Mac (manual)
 
 **Files:** none (verification only).
 
@@ -873,4 +873,4 @@ Expected: neural row back to "not installed (optional)"; daemon reverts to syste
 
 **Placeholder scan:** no TBD/TODO; every code step has real code; T9's test step is conditional with an explicit "skip if not enumerated" instruction (not a placeholder). ✔
 
-**Type consistency:** `neural_enabled()`, `kokoro_venv_python()`, `ensure_uv()`, `provision(uv, run=)`, `predownload_model(app_dir, run=)`, `neural_healthy(app_dir, run=)`, `install_kokoro(app_dir, *, …)`, `uninstall_kokoro(rmtree=)`, `_daemon_python(sup)`, `_cmd_voices_install/uninstall` — names/signatures used consistently across tasks. ✔
+**Type consistency:** `neural_enabled()`, `kokoro_venv_python()`, `ensure_uv()`, `provision(uv, run=)`, `predownload_model(app_dir, run=)`, `neural_healthy(app_dir, run=)`, `install_kokoro(app_dir, *, …)`, `uninstall_kokoro(rmtree=)`, `_daemon_python(sup)`, `_cmd_voices_install/uninstall` - names/signatures used consistently across tasks. ✔

@@ -1,4 +1,4 @@
-"""Task 8 — exec-form hooks.json builder tests.
+"""Task 8 -- exec-form hooks.json builder tests.
 
 Verifies that build_hooks_json() produces valid JSON with Windows paths
 correctly escaped, in exec-form (command + args) for all Sonara events.

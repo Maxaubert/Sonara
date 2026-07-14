@@ -23,7 +23,7 @@ import pathlib
 
 # Derive the canonical name list directly from the generator so that adding
 # or renaming an earcon in generate.py is automatically reflected here and
-# caught by tests — rather than silently diverging until runtime.
+# caught by tests -- rather than silently diverging until runtime.
 from sonara.platform.windows.earcons.generate import _EARCON_SPECS
 
 _EARCON_NAMES: tuple[str, ...] = tuple(_EARCON_SPECS.keys())

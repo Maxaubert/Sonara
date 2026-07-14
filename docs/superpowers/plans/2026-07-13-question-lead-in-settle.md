@@ -21,8 +21,8 @@
 ### Task 1: Defer the question's content through the settle window
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — new state `_pending_decision` in `__init__`; the CHOICE handler; `_settle_fire`; the FLUSH and SESSION_END handlers.
-- Test: `tests/test_daemon_summary_mode.py` — update the `_choice` helper and the one inline-CHOICE test to fire the settle; add three tests.
+- Modify: `src/sonara/daemon.py` - new state `_pending_decision` in `__init__`; the CHOICE handler; `_settle_fire`; the FLUSH and SESSION_END handlers.
+- Test: `tests/test_daemon_summary_mode.py` - update the `_choice` helper and the one inline-CHOICE test to fire the settle; add three tests.
 
 **Interfaces:**
 - Consumes: `_arm_settle`/`_settle_fire`/`_settle_gen`/`_settle_pending` (#14), `_maybe_summarize`, `_enqueue_or_hold_decision`, `_await_choice`, `_options`, `_choice_text`/`_choice_notes`/`_selection_cue`, `SpeechItem`.

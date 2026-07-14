@@ -96,5 +96,5 @@ tests/fixtures/Notification-idle_prompt.json
 
 The `seed representative golden payload fixtures` task in the plan creates best-effort
 representative payloads from the live schemas. The TDD tasks use those representative
-payloads. Once you replace them with real captures, re-run the parser tests — they should
+payloads. Once you replace them with real captures, re-run the parser tests - they should
 still pass since the representative schemas match the real field shapes.

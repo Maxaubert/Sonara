@@ -108,7 +108,7 @@ def test_duck_once_then_restore_only_at_global_idle():
     # The hold/no-flap behavior: many queued items => exactly ONE duck and ONE
     # restore (at global idle), not one per item. (Restore fires only when
     # next_item() returns None, which is also true across multiple sessions, since
-    # the idle condition is global — so one session proves the mechanism without
+    # the idle condition is global -- so one session proves the mechanism without
     # the session-change announcements that would make the count non-deterministic.)
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.config["audio_control"] = True

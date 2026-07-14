@@ -4,21 +4,21 @@
 
 **Goal:** Replace the daemon's global speech queue + single voice-owner with per-session channels driven by a router, so one session can never wipe, silence, or steal another's audio.
 
-**Architecture:** Each session owns a `SessionChannel` (its current message as an item list + a read cursor that never discards items). A `Router` chooses the single active reader — in auto mode it hands off cooperatively (foreground-first) with a spoken "Session changed" cue; in pin mode it locks to the pinned session and replays from the cursor's start on re-pin. The speak loop pulls one item at a time from the router.
+**Architecture:** Each session owns a `SessionChannel` (its current message as an item list + a read cursor that never discards items). A `Router` chooses the single active reader - in auto mode it hands off cooperatively (foreground-first) with a spoken "Session changed" cue; in pin mode it locks to the pinned session and replays from the cursor's start on re-pin. The speak loop pulls one item at a time from the router.
 
 **Tech Stack:** Python 3.9+ stdlib only. pytest. Existing daemon threading model (one `self._lock`, one speak thread).
 
 ## Global Constraints
 
 - Python **>= 3.9** (no 3.10+ syntax; use `"str | None"` string annotations as the codebase does).
-- Core daemon only — **no** changes to hooks, protocol message types, TTS engine, or hotkey bindings.
-- Single-session behavior must stay **identical in feel** — no announcements, no regressions; the existing test suite stays green except where it asserts on removed internals (those tests are migrated, never weakened).
+- Core daemon only - **no** changes to hooks, protocol message types, TTS engine, or hotkey bindings.
+- Single-session behavior must stay **identical in feel** - no announcements, no regressions; the existing test suite stays green except where it asserts on removed internals (those tests are migrated, never weakened).
 - Diagnostics: the temporary `_qaudit` / `queue_audit.log` instrumentation is removed as part of this work (Task 9).
 - Spec: `docs/superpowers/specs/2026-06-19-per-session-audio-channels-design.md`.
 
 ---
 
-### Task 1: `SessionChannel` — per-session message buffer with cursor
+### Task 1: `SessionChannel` - per-session message buffer with cursor
 
 **Files:**
 - Create: `src/sonari/channel.py`
@@ -101,7 +101,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'sonari.channel'`
 # src/sonari/channel.py
 """One session's current message: an item list + a read cursor.
 
-Items are NOT discarded as they are spoken — the cursor advances over them — so a
+Items are NOT discarded as they are spoken - the cursor advances over them - so a
 channel can resume from where it left off (auto hand-off) or replay from the start
 (pin re-pin). A new prompt wipes the channel.
 """
@@ -167,12 +167,12 @@ Expected: PASS (6 passed)
 
 ```bash
 git add src/sonari/channel.py tests/test_channel.py
-git commit -m "feat(core): SessionChannel — per-session message buffer with cursor (#59)"
+git commit -m "feat(core): SessionChannel - per-session message buffer with cursor (#59)"
 ```
 
 ---
 
-### Task 2: `Router` — active-reader selection + hand-off announcements
+### Task 2: `Router` - active-reader selection + hand-off announcements
 
 **Files:**
 - Create: `src/sonari/router.py`
@@ -383,12 +383,12 @@ Expected: PASS (6 passed)
 
 ```bash
 git add src/sonari/router.py tests/test_router.py
-git commit -m "feat(core): Router — per-session active-reader selection + hand-off (#59)"
+git commit -m "feat(core): Router - per-session active-reader selection + hand-off (#59)"
 ```
 
 ---
 
-### Task 3: Daemon — route inbound messages into channels
+### Task 3: Daemon - route inbound messages into channels
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (`__init__`, PROSE/TOOL/CHOICE/PLAN/PERMISSION/FLUSH/SESSION_END/turn_done handlers)
@@ -431,7 +431,7 @@ def test_new_prompt_wipes_only_its_own_channel():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `python -m pytest tests/test_daemon_channels.py -q`
-Expected: FAIL — `AttributeError: 'SpeechDaemon' object has no attribute 'router'`
+Expected: FAIL - `AttributeError: 'SpeechDaemon' object has no attribute 'router'`
 
 - [ ] **Step 3: Construct the router in `__init__` and route messages**
 
@@ -520,7 +520,7 @@ Route TOOL and CHOICE/PLAN/PERMISSION through the channel too. TOOL:
             return None
 ```
 
-CHOICE (PLAN/PERMISSION mirror it — append a decision item; the EARCON branch is
+CHOICE (PLAN/PERMISSION mirror it - append a decision item; the EARCON branch is
 unchanged and still fires the alert):
 
 ```python
@@ -555,7 +555,7 @@ git commit -m "feat(core): route inbound messages into per-session channels (#59
 
 ---
 
-### Task 4: Daemon — speak loop pulls from the router
+### Task 4: Daemon - speak loop pulls from the router
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (`_speak_loop_once`, `note_spoken`); delete `_voice_owner`, `_may_speak`, `_claim_for_decision`, `_owner_mid_reply`, `_captured_msg`, `_open_msg`, `_prose_buffer` and their references; remove `self.queue` usage.
@@ -741,7 +741,7 @@ Expected: FAIL (MUTE still references `_muted_sessions`/foreground)
 Add a small helper `_speak_cue` that appends a one-off exempt cue to the front of a
 channel so confirmations are always heard (implementation detail: insert a cue item
 at the cursor so it speaks next; mark `mute_exempt`/`pause_exempt` so the loop/router
-honor it). Pause cues must play during the global halt — keep the paused-branch
+honor it). Pause cues must play during the global halt - keep the paused-branch
 override from the existing pause-cue feature: when paused, still emit a pending
 `pause_exempt` cue before holding.
 
@@ -757,7 +757,7 @@ override from the existing pause-cue feature: when paused, still emit a pending
 ```
 
 (Adjust the paused branch of `_speak_loop_once` to drain a `pause_exempt` cue at the
-cursor before holding — mirrors the shipped "Paused." behavior.)
+cursor before holding - mirrors the shipped "Paused." behavior.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -910,7 +910,7 @@ whatever the new constructor needs).
 
 Run: `python -m pytest -q`
 Expected: failures only in tests that asserted on removed internals (voice-owner,
-queue length). Migrate each to the channel/router equivalent — never weaken an
+queue length). Migrate each to the channel/router equivalent - never weaken an
 assertion. Re-run until green (excluding the known environmental Windows failures:
 `test_bin_shims`, `test_bin_sonari`, `test_daemon_main::test_ensure_running...`,
 `test_paths`, `test_transport`, `test_win_autostart`, `test_win_tts`).

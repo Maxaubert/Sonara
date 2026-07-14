@@ -35,7 +35,7 @@ def test_bin_sonara_bash_falls_back_to_recorded_python():
 def test_sonara_hook_cmd_resolves_interpreter_and_logs_stderr():
     """M10: the Windows hook launcher must not silently mute. It resolves a
     windowless interpreter (pythonw, with a `pyw -3` fallback) and appends stderr
-    to ~/.sonara/hook.log instead of discarding it — while still exiting 0 so a
+    to ~/.sonara/hook.log instead of discarding it -- while still exiting 0 so a
     hook never interrupts Claude Code."""
     txt = _read("sonara-hook.cmd")
     low = txt.lower()

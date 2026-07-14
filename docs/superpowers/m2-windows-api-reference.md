@@ -1,9 +1,9 @@
-# M2 — Verified Windows API Reference (implementation source for the M2 plan)
+# M2 - Verified Windows API Reference (implementation source for the M2 plan)
 > Web-grounded, citable code from the `m2-windows-api-intel` workflow (2026-06-11). The M2 plan tasks point here for the backend bodies. **Adapt paths to our layout** (`src/sonari/platform/windows/...`); the plan gives the exact target files. Windows-only imports stay lazy/guarded.
 
 ---
 
-## Windows OneCore TTS backend via PyWinRT — production-grade Python module with subprocess-like handle
+## Windows OneCore TTS backend via PyWinRT - production-grade Python module with subprocess-like handle
 **pip/import packages:** winrt-runtime>=3.2.1, winrt-Windows.Media.SpeechSynthesis>=3.2.1, winrt-Windows.Media.Playback>=3.2.1, winrt-Windows.Media.Core>=3.2.1, winrt-Windows.Storage.Streams>=3.2.1, winrt.windows.media.speechsynthesis (import name), winrt.windows.media.playback (import name), winrt.system (import name)
 
 ### pip packages and Python import statements
@@ -38,7 +38,7 @@ def list_voices() -> list:
 def best_voice(lang_prefix: str = "en-US"):
     """
     Select a voice in priority order:
-      1. en-US OneCore (Neural/HQ) — VoiceInformation.Id contains 'Speech_OneCore'
+      1. en-US OneCore (Neural/HQ) - VoiceInformation.Id contains 'Speech_OneCore'
       2. Any en-US voice
       3. System DefaultVoice
     Raises RuntimeError if no voices installed at all.
@@ -61,7 +61,7 @@ def best_voice(lang_prefix: str = "en-US"):
     return SpeechSynthesizer.default_voice
 ```
 
-**Gotchas:** SpeechSynthesizer.all_voices is a static IVectorView<VoiceInformation>; wrap in list() for Python iteration. VoiceType enum (Natural vs Standard) is unavailable in older SDK projections — use the registry Id string 'Speech_OneCore' as a heuristic instead. default_voice may be None on Server SKUs with no audio subsystem.
+**Gotchas:** SpeechSynthesizer.all_voices is a static IVectorView<VoiceInformation>; wrap in list() for Python iteration. VoiceType enum (Natural vs Standard) is unavailable in older SDK projections - use the registry Id string 'Speech_OneCore' as a heuristic instead. default_voice may be None on Server SKUs with no audio subsystem.
 
 ### Full synth->stream->play->completion pattern with _TtsHandle
 _Source: https://github.com/pywinrt/pywinrt/blob/master/samples/text_to_speech/text_to_speech.py ; https://learn.microsoft.com/en-us/uwp/api/windows.media.playback.mediaplayer ; https://learn.microsoft.com/en-us/uwp/api/windows.media.speechsynthesis.speechsynthesizer.synthesizetexttostreamasync_
@@ -143,7 +143,7 @@ def run(text: str, voice=None, rate: float = 1.0) -> _TtsHandle:
     return handle
 ```
 
-**Gotchas:** Use IAsyncOperation.get() (synchronous blocking) rather than asyncio await — a console daemon thread has no running event loop. threading.Event is required because the media_ended callback fires on a WinRT thread-pool thread, not the Python main thread; asyncio.Event is not thread-safe across threads. Keep Python-side references to stream and synth alive; COM ref-counting alone does not prevent CPython GC from collecting them mid-playback.
+**Gotchas:** Use IAsyncOperation.get() (synchronous blocking) rather than asyncio await - a console daemon thread has no running event loop. threading.Event is required because the media_ended callback fires on a WinRT thread-pool thread, not the Python main thread; asyncio.Event is not thread-safe across threads. Keep Python-side references to stream and synth alive; COM ref-counting alone does not prevent CPython GC from collecting them mid-playback.
 
 ### Four hardening steps: silence options, speaking_rate with SSML fallback, GC-ref pattern
 _Source: https://learn.microsoft.com/en-us/uwp/api/windows.media.speechsynthesis.speechsynthesizeroptions.appendedsilence ; https://learn.microsoft.com/en-us/uwp/api/windows.media.speechsynthesis.speechsynthesizeroptions.speakingrate ; https://learn.microsoft.com/en-us/uwp/api/windows.media.speechsynthesis.speechsynthesizeroptions.punctuationsilence_
@@ -175,7 +175,7 @@ except AttributeError:
 #    (see _TtsHandle.__init__: self._cb = _on_media_ended)
 ```
 
-**Gotchas:** SpeechAppendedSilence and SpeechPunctuationSilence were introduced in SDK 17134 (Win10 1803); on older systems they raise AttributeError — add a guard if targeting Win10 1709. speaking_rate requires SDK 16299 (Win10 1709). SSML prosody rate is a percentage string: '150%' = 1.5x. The SSML xml:lang must match the voice language or synthesis may fail silently.
+**Gotchas:** SpeechAppendedSilence and SpeechPunctuationSilence were introduced in SDK 17134 (Win10 1803); on older systems they raise AttributeError - add a guard if targeting Win10 1709. speaking_rate requires SDK 16299 (Win10 1709). SSML prosody rate is a percentage string: '150%' = 1.5x. The SSML xml:lang must match the voice language or synthesis may fail silently.
 
 ### Rate mapping: Sonari wpm 100-400 to SpeakingRate multiplier 0.5-6.0
 _Source: https://learn.microsoft.com/en-us/uwp/api/windows.media.speechsynthesis.speechsynthesizeroptions.speakingrate_
@@ -199,14 +199,14 @@ def wpm_to_speaking_rate(wpm: float) -> float:
 # wpm=75   -> 0.5   (clamped to minimum)
 ```
 
-**Gotchas:** The 150 wpm baseline is an empirical approximation for OneCore en-US Neural voices; different voices (Desktop legacy, non-English) have different natural rates. SpeakingRate is a multiplier, not an absolute wpm. Values outside [0.5, 6.0] raise an exception — always clamp. For the SSML prosody fallback, convert the multiplier: pct = int(rate * 100), e.g. rate=2.0 -> '<prosody rate="200%">'.
+**Gotchas:** The 150 wpm baseline is an empirical approximation for OneCore en-US Neural voices; different voices (Desktop legacy, non-English) have different natural rates. SpeakingRate is a multiplier, not an absolute wpm. Values outside [0.5, 6.0] raise an exception - always clamp. For the SSML prosody fallback, convert the multiplier: pct = int(rate * 100), e.g. rate=2.0 -> '<prosody rate="200%">'.
 
 ### Complete onecore_tts.py production module
 _Source: https://github.com/pywinrt/pywinrt/blob/master/samples/text_to_speech/text_to_speech.py ; https://learn.microsoft.com/en-us/uwp/api/windows.media.speechsynthesis ; https://learn.microsoft.com/en-us/uwp/api/windows.media.playback.mediaplayer_
 
 ```python
 """
-onecore_tts.py — Windows OneCore TTS backend via PyWinRT.
+onecore_tts.py - Windows OneCore TTS backend via PyWinRT.
 
 Exposes run(text, voice, rate) -> _TtsHandle, where the handle is
 subprocess-like: .wait(timeout), .terminate(), .returncode.
@@ -239,7 +239,7 @@ def list_voices() -> list:
 def best_voice(lang_prefix: str = "en-US"):
     """
     Select a voice in priority order:
-      1. en-US OneCore (Neural/HQ) — Id path contains 'Speech_OneCore'
+      1. en-US OneCore (Neural/HQ) - Id path contains 'Speech_OneCore'
       2. Any en-US voice
       3. System DefaultVoice
     Raises RuntimeError if no voices are installed at all.
@@ -360,7 +360,7 @@ def run(text: str, voice=None, rate: float = 1.0) -> _TtsHandle:
     return handle
 ```
 
-**Gotchas:** This module imports at the top level, so on macOS/Linux it will ImportError immediately. Guard with a platform check or use the sys.modules injection shim in conftest.py before importing. player.close() is idempotent on real WinRT but may raise on the fake; wrap in try/except. synthesize_text_to_stream_async().get() blocks the calling thread — call run() from a background thread if the main thread must stay responsive.
+**Gotchas:** This module imports at the top level, so on macOS/Linux it will ImportError immediately. Guard with a platform check or use the sys.modules injection shim in conftest.py before importing. player.close() is idempotent on real WinRT but may raise on the fake; wrap in try/except. synthesize_text_to_stream_async().get() blocks the calling thread - call run() from a background thread if the main thread must stay responsive.
 
 **Mock strategy:**
 
@@ -502,25 +502,25 @@ def test_wpm_mapping():
 
 The key principle: sys.modules.setdefault() must run before Python processes `from winrt... import ...` at module load time. conftest.py is loaded by pytest before any test file is imported, satisfying this ordering automatically. For non-pytest usage (e.g., a standalone test script), call _install_winrt_fakes() at the top of the script before importing onecore_tts.
 
-**Open risks (mock-blind — for the acceptance checklist):**
-- wpm baseline (150 wpm) is empirical for OneCore en-US Neural voices — other voices (Desktop legacy, non-English, male vs female Neural) have different natural rates, so the mapped speaking_rate will produce inaccurate wpm for those voices.
+**Open risks (mock-blind - for the acceptance checklist):**
+- wpm baseline (150 wpm) is empirical for OneCore en-US Neural voices - other voices (Desktop legacy, non-English, male vs female Neural) have different natural rates, so the mapped speaking_rate will produce inaccurate wpm for those voices.
 - IAsyncOperation.get() blocks the calling thread for the entire synthesis duration (typically 0.1-2s for short utterances). If run() is called on the main thread, the UI/event loop will stall. Always call from a background thread.
 - GC risk: if the caller discards the _TtsHandle before playback ends, _stream and _synth are released by CPython GC even though COM still holds a reference to the underlying WinRT object. The handle must be kept alive (e.g., stored in Speaker state) until .wait() returns.
 - player.close() after terminate() may raise if the MediaPlayer was already in a terminal state or if the WinRT object was GC'd. The bare except in terminate() silences this, but underlying COM errors are swallowed silently.
 - WinRT thread-pool callback safety: _on_media_ended fires on an arbitrary WinRT thread. threading.Event.set() is thread-safe, but any other Python state touched inside the callback must be thread-safe too. Do not call asyncio APIs from the callback.
 - Windows Server / headless audio: MediaPlayer requires an audio device or a virtual audio session. On Windows Server Core, Azure VMs, or Docker containers without audio, set_stream_source or play() may raise COM exception AUDCLNT_E_NO_AUDIO_ENDPOINT (0x88890008). Use Windows Audio Session API virtual device workarounds or test on Desktop SKU.
 - OneCore voice Id heuristic: identifying a OneCore voice by 'Speech_OneCore' in the registry path Id string is undocumented and could break if Microsoft changes the registry layout in a future Windows release. VoiceType enum (VoiceType.Natural) is the official API but was not available in PyWinRT projections at research time.
-- SpeechAppendedSilence.MIN and SpeechPunctuationSilence.MIN require SDK 17134 (Win10 1803). On Win10 1709 these attributes exist but the enum values may differ. On Win10 < 1709 setting them raises AttributeError — add a guard if supporting older Windows.
+- SpeechAppendedSilence.MIN and SpeechPunctuationSilence.MIN require SDK 17134 (Win10 1803). On Win10 1709 these attributes exist but the enum values may differ. On Win10 < 1709 setting them raises AttributeError - add a guard if supporting older Windows.
 - The SSML prosody rate fallback uses percentage strings (e.g. '150%'), which is the SSML 1.0 syntax. Some OneCore voices clamp the rate more aggressively via SSML than via speaking_rate, so behavior may differ from the direct speaking_rate path.
-- add_media_ended returns a token (EventRegistrationToken) that should ideally be passed to remove_media_ended when the handle is torn down to prevent a callback holding a reference to a closed player. Current implementation omits remove_media_ended — low risk in practice since the player is closed via terminate() or naturally ends, but technically a resource leak on long-lived players.
+- add_media_ended returns a token (EventRegistrationToken) that should ideally be passed to remove_media_ended when the handle is torn down to prevent a callback holding a reference to a closed player. Current implementation omits remove_media_ended - low risk in practice since the player is closed via terminate() or naturally ends, but technically a resource leak on long-lived players.
 
 ---
 
 ## Sonari Windows earcon backend: winsound play(), stdlib WAV generator, default_earcons(), and pytest mock strategy
 **pip/import packages:** wave (stdlib), struct (stdlib), math (stdlib), winsound (Windows stdlib only), pathlib (stdlib), importlib.resources (stdlib, 3.7+), pytest (pip: pytest>=7.0)
 
-### winsound earcon play() — non-blocking, returns a poll()-able stub
-_Source: https://docs.python.org/3/library/winsound.html — winsound.PlaySound(sound, flags); flag values confirmed from CPython Modules/winmmmodule.c: SND_FILENAME=0x20000, SND_ASYNC=0x0004_
+### winsound earcon play() - non-blocking, returns a poll()-able stub
+_Source: https://docs.python.org/3/library/winsound.html - winsound.PlaySound(sound, flags); flag values confirmed from CPython Modules/winmmmodule.c: SND_FILENAME=0x20000, SND_ASYNC=0x0004_
 
 ```python
 # sonari/backends/windows.py
@@ -541,19 +541,19 @@ class _DoneHandle:
     """Returned on a successful play() call.
 
     winsound.PlaySound(..., SND_ASYNC) hands the audio buffer to the Win32
-    multimedia scheduler and returns immediately — there is no OS-level
+    multimedia scheduler and returns immediately - there is no OS-level
     process or thread handle exposed to Python.  poll() therefore returns 0
     (POSIX convention: exited normally) immediately, which satisfies the
     EarconBackend contract (caller may call .poll() to check completion).
 
-    CAVEAT — single-channel truncation:
+    CAVEAT - single-channel truncation:
     If you supply a stereo (2-channel) WAV, Windows mixes it down silently;
     you will NOT get a RuntimeError.  However, non-standard PCM variants
     (float32, 24-bit int, ADPCM) cause PlaySound to return False or raise
     RuntimeError on some Windows builds.  Always generate 16-bit integer
     PCM at 44100 Hz (what generate_earcon() produces).
 
-    CAVEAT — concurrent calls:
+    CAVEAT - concurrent calls:
     Each new SND_ASYNC call stops the previous one.  Do NOT delete the .wav
     file immediately after play(); the Win32 scheduler still holds a handle
     to it for the duration of playback.
@@ -584,9 +584,9 @@ def play(path: str) -> _DoneHandle | _MissingHandle:
     return _DoneHandle()
 ```
 
-**Gotchas:** SND_ASYNC returns as soon as the sound is posted to the Win32 mixer, so poll()=0 does NOT mean playback has finished — it means the dispatch succeeded. A new play() call will cut off any still-playing async sound (there is no SND_NOSTOP-safe concurrent path in Python). The .wav file MUST remain on disk for the full playback duration. winsound.PlaySound() accepts stereo WAV but mixes to mono internally; non-PCM formats (float, 24-bit, ADPCM) cause silent failure or RuntimeError. Do not call this from a non-main thread on Python < 3.11 — the Win32 multimedia APIs are apartment-threaded and winsound does not marshal the call.
+**Gotchas:** SND_ASYNC returns as soon as the sound is posted to the Win32 mixer, so poll()=0 does NOT mean playback has finished - it means the dispatch succeeded. A new play() call will cut off any still-playing async sound (there is no SND_NOSTOP-safe concurrent path in Python). The .wav file MUST remain on disk for the full playback duration. winsound.PlaySound() accepts stereo WAV but mixes to mono internally; non-PCM formats (float, 24-bit, ADPCM) cause silent failure or RuntimeError. Do not call this from a non-main thread on Python < 3.11 - the Win32 multimedia APIs are apartment-threaded and winsound does not marshal the call.
 
-### generate_earcon() — write a 16-bit PCM mono WAV using only wave + struct + math
+### generate_earcon() - write a 16-bit PCM mono WAV using only wave + struct + math
 _Source: https://docs.python.org/3/library/wave.html (wave.open, setnchannels, setsampwidth, setframerate, writeframes); https://docs.python.org/3/library/struct.html (<h = little-endian signed 16-bit); https://docs.python.org/3/library/math.html (math.sin, math.pi)_
 
 ```python
@@ -604,7 +604,7 @@ import struct
 import wave
 
 
-_SAMPLE_RATE = 44100  # Hz — universally accepted by winsound / Windows
+_SAMPLE_RATE = 44100  # Hz - universally accepted by winsound / Windows
 _AMPLITUDE   = 28000  # out of 32767 (16-bit max); leaves headroom
 _ATTACK_S    = 0.010  # 10 ms linear attack
 _RELEASE_S   = 0.010  # 10 ms linear release
@@ -627,9 +627,9 @@ def generate_earcon(
     freq:        fundamental frequency in Hz
     duration:    length in seconds
     sample_rate: default 44100 (required by winsound on Windows)
-    wave_type:   "sine"  — pure sine at *freq*
-                 "dual"  — 60% *freq* + 40% *freq2* (two-tone blend)
-                 "chirp" — linear freq sweep from *freq* to *freq2*
+    wave_type:   "sine"  - pure sine at *freq*
+                 "dual"  - 60% *freq* + 40% *freq2* (two-tone blend)
+                 "chirp" - linear freq sweep from *freq* to *freq2*
     freq2:       second frequency; required for "dual" and "chirp"
     """
     n           = int(sample_rate * duration)
@@ -640,7 +640,7 @@ def generate_earcon(
     for i in range(n):
         t = i / sample_rate
 
-        # Trapezoid amplitude envelope — removes click at start/end
+        # Trapezoid amplitude envelope - removes click at start/end
         if i < attack_n:
             env = i / attack_n
         elif i >= n - release_n:
@@ -682,11 +682,11 @@ def generate_earcon(
 # ---------------------------------------------------------------------------
 _EARCON_SPECS: dict[str, tuple] = {
     # name         freq   dur   wave_type  freq2
-    "permission": (440.0, 0.12, "sine",    None ),  # A4 — clean, neutral ask
-    "choice":     (660.0, 0.15, "dual",    880.0),  # E5+A5 — bright two-tone
+    "permission": (440.0, 0.12, "sine",    None ),  # A4 - clean, neutral ask
+    "choice":     (660.0, 0.15, "dual",    880.0),  # E5+A5 - bright two-tone
     "plan":       (528.0, 0.20, "chirp",   660.0),  # C5→E5 rising sweep
     "error":      (220.0, 0.25, "dual",    185.0),  # low dissonant pair
-    "turn_done":  (880.0, 0.10, "sine",    None ),  # A5 — short, high
+    "turn_done":  (880.0, 0.10, "sine",    None ),  # A5 - short, high
     "ready":      (523.0, 0.18, "chirp",   784.0),  # C5→G5 ascending
 }
 
@@ -694,7 +694,7 @@ _EARCON_SPECS: dict[str, tuple] = {
 def generate_all_earcons(output_dir: str | pathlib.Path) -> None:
     """Write all 6 earcon .wav files into *output_dir*.
 
-    Idempotent — safe to call multiple times; overwrites existing files.
+    Idempotent - safe to call multiple times; overwrites existing files.
     Typical use: run once from the repo root to regenerate assets::
 
         python -m sonari.earcons.generate
@@ -717,9 +717,9 @@ if __name__ == "__main__":
     print(f"Generated {len(_EARCON_SPECS)} earcons in {dest}")
 ```
 
-**Gotchas:** wave.open() second arg must be 'w' (string), not a mode flag — it does not accept 'wb'. setsampwidth(2) = 16-bit; setsampwidth(1) = 8-bit unsigned (different range, avoid). The wave module writes standard RIFF/WAVE with AudioFormat=1 (PCM) — verified by inspecting header bytes at offsets 20-22. 44100 Hz is the only sample rate guaranteed to work with winsound on all Windows versions; 22050 Hz works on most but some old hardware drivers reject it. The chirp formula uses instantaneous phase (f_inst * t) rather than accumulated phase, which introduces a small phase discontinuity — use accumulated phase for perfectly smooth chirps if audible artifacts appear: phase += 2*pi*f_inst/sample_rate per sample.
+**Gotchas:** wave.open() second arg must be 'w' (string), not a mode flag - it does not accept 'wb'. setsampwidth(2) = 16-bit; setsampwidth(1) = 8-bit unsigned (different range, avoid). The wave module writes standard RIFF/WAVE with AudioFormat=1 (PCM) - verified by inspecting header bytes at offsets 20-22. 44100 Hz is the only sample rate guaranteed to work with winsound on all Windows versions; 22050 Hz works on most but some old hardware drivers reject it. The chirp formula uses instantaneous phase (f_inst * t) rather than accumulated phase, which introduces a small phase discontinuity - use accumulated phase for perfectly smooth chirps if audible artifacts appear: phase += 2*pi*f_inst/sample_rate per sample.
 
-### default_earcons() — return bundled .wav paths via importlib.resources (zip-safe) or __file__ fallback
+### default_earcons() - return bundled .wav paths via importlib.resources (zip-safe) or __file__ fallback
 _Source: https://docs.python.org/3/library/importlib.resources.html#importlib.resources.files (Python 3.9+); https://docs.python.org/3/library/importlib.resources.html#importlib.resources.as_file_
 
 ```python
@@ -765,7 +765,7 @@ def default_earcons() -> dict[str, str]:
     """Return {earcon_name: absolute_wav_path} for all bundled earcons.
 
     Resolution strategy:
-    * Python 3.9+ : importlib.resources.files() — zip-safe Traversable API.
+    * Python 3.9+ : importlib.resources.files() - zip-safe Traversable API.
       Works when sonari is installed from a wheel (.whl) without unpacking.
     * Python 3.7-3.8 : pathlib relative to __file__ (dev installs,
       editable installs, and unpacked wheels).
@@ -780,12 +780,12 @@ def default_earcons() -> dict[str, str]:
         fname = f"{name}.wav"
 
         if sys.version_info >= (3, 9):
-            # Traversable path — works inside zip archives (wheels, zipapp)
+            # Traversable path - works inside zip archives (wheels, zipapp)
             ref = _ilr.files(__package__).joinpath(fname)
             with _ilr.as_file(ref) as p:
                 resolved = str(p.resolve())
         else:
-            # __file__-relative — reliable for editable / unpacked installs
+            # __file__-relative - reliable for editable / unpacked installs
             resolved = str(
                 (pathlib.Path(__file__).parent / fname).resolve()
             )
@@ -801,9 +801,9 @@ def default_earcons() -> dict[str, str]:
     return dict(_cache)
 ```
 
-**Gotchas:** importlib.resources.as_file() returns a context manager that may yield a TEMPORARY path for zip-based installs — the temp file is cleaned up when the context exits. Do NOT store the path from inside the with-block and use it after the block closes. The implementation above stores the resolved path while still inside as_file(), which is safe because as_file() for regular (non-zip) file-based packages returns the real on-disk path directly (no temp copy). For zip-based installs a temp file is extracted; callers must not delete the returned path. The __package__ passed to files() must match the installed package name exactly; if this module is run as __main__ (python earcons/__init__.py), __package__ is None — add a guard or use the generate.py script instead.
+**Gotchas:** importlib.resources.as_file() returns a context manager that may yield a TEMPORARY path for zip-based installs - the temp file is cleaned up when the context exits. Do NOT store the path from inside the with-block and use it after the block closes. The implementation above stores the resolved path while still inside as_file(), which is safe because as_file() for regular (non-zip) file-based packages returns the real on-disk path directly (no temp copy). For zip-based installs a temp file is extracted; callers must not delete the returned path. The __package__ passed to files() must match the installed package name exactly; if this module is run as __main__ (python earcons/__init__.py), __package__ is None - add a guard or use the generate.py script instead.
 
-### pytest mock strategy — inject fake winsound into sys.modules before importing the backend
+### pytest mock strategy - inject fake winsound into sys.modules before importing the backend
 _Source: pytest monkeypatch.setitem docs: https://docs.pytest.org/en/stable/reference/fixtures.html#monkeypatch; sys.modules injection: https://docs.python.org/3/reference/import.html#the-module-cache_
 
 ```python
@@ -900,7 +900,7 @@ def test_missing_handle_does_not_call_playsound(fake_winsound):
 
 
 # -----------------------------------------------------------------
-# tests/test_earcon_generator.py  — pure stdlib, no mock needed
+# tests/test_earcon_generator.py  - pure stdlib, no mock needed
 import pathlib
 import struct
 import wave
@@ -958,28 +958,28 @@ def test_all_earcon_specs_produce_valid_wav(tmp_path, name, spec):
     assert p.stat().st_size > 0
 ```
 
-**Gotchas:** sys.modules injection must happen BEFORE the module under test is imported, or the module will have already bound the real (absent) winsound at import time. The conftest fixture uses monkeypatch.setitem (not setattr) on sys.modules so pytest automatically restores the original state after each test — avoids leaking the fake between test files. If the backend module caches winsound at the top level (import winsound as _winsound), you must importlib.reload() it after injection, or restructure the backend to import lazily (inside the function). The test for the WAV generator (test_earcon_generator.py) is pure stdlib and runs unmodified on any OS — no mock needed.
+**Gotchas:** sys.modules injection must happen BEFORE the module under test is imported, or the module will have already bound the real (absent) winsound at import time. The conftest fixture uses monkeypatch.setitem (not setattr) on sys.modules so pytest automatically restores the original state after each test - avoids leaking the fake between test files. If the backend module caches winsound at the top level (import winsound as _winsound), you must importlib.reload() it after injection, or restructure the backend to import lazily (inside the function). The test for the WAV generator (test_earcon_generator.py) is pure stdlib and runs unmodified on any OS - no mock needed.
 
 **Mock strategy:**
 
-Inject a fake winsound module via monkeypatch.setitem(sys.modules, 'winsound', fake_mod) in a pytest conftest.py fixture BEFORE any import of the backend. The fake module (types.ModuleType) defines winsound.PlaySound(sound, flags) as a list-appending spy, plus the integer constants SND_FILENAME=0x20000, SND_ASYNC=0x0004, SND_NODEFAULT=0x0002, SND_SYNC=0x0000. Use autouse=True on the fixture so every test gets the fake automatically on non-Windows CI. If the backend module imports winsound at module-level (not lazily), also call importlib.reload(sys.modules['sonari.backends.windows']) after injection to force re-binding. The WAV generator tests (test_earcon_generator.py) need NO mock at all — generate_earcon() is pure stdlib wave+struct+math and runs identically on macOS, Linux, and Windows. Assert the WAV header directly by reading raw bytes: offset 20-22 must be b'\\x01\\x00' (AudioFormat=1, PCM), offset 22-24 channels=1, offset 24-28 sample_rate=44100, offset 34-36 bits=16. Assert frame count equals int(44100 * duration) exactly.
+Inject a fake winsound module via monkeypatch.setitem(sys.modules, 'winsound', fake_mod) in a pytest conftest.py fixture BEFORE any import of the backend. The fake module (types.ModuleType) defines winsound.PlaySound(sound, flags) as a list-appending spy, plus the integer constants SND_FILENAME=0x20000, SND_ASYNC=0x0004, SND_NODEFAULT=0x0002, SND_SYNC=0x0000. Use autouse=True on the fixture so every test gets the fake automatically on non-Windows CI. If the backend module imports winsound at module-level (not lazily), also call importlib.reload(sys.modules['sonari.backends.windows']) after injection to force re-binding. The WAV generator tests (test_earcon_generator.py) need NO mock at all - generate_earcon() is pure stdlib wave+struct+math and runs identically on macOS, Linux, and Windows. Assert the WAV header directly by reading raw bytes: offset 20-22 must be b'\\x01\\x00' (AudioFormat=1, PCM), offset 22-24 channels=1, offset 24-28 sample_rate=44100, offset 34-36 bits=16. Assert frame count equals int(44100 * duration) exactly.
 
-**Open risks (mock-blind — for the acceptance checklist):**
-- winsound.PlaySound() with SND_ASYNC posts the sound to the Win32 multimedia scheduler and returns immediately — there is NO OS-level completion signal exposed to Python. The _DoneHandle.poll()=0 contract means 'dispatched successfully', not 'finished playing'. Callers that need to know when playback ends must track duration manually (time.sleep(duration)) or use a higher-level Windows API (pywaveout / win32api) outside stdlib.
+**Open risks (mock-blind - for the acceptance checklist):**
+- winsound.PlaySound() with SND_ASYNC posts the sound to the Win32 multimedia scheduler and returns immediately - there is NO OS-level completion signal exposed to Python. The _DoneHandle.poll()=0 contract means 'dispatched successfully', not 'finished playing'. Callers that need to know when playback ends must track duration manually (time.sleep(duration)) or use a higher-level Windows API (pywaveout / win32api) outside stdlib.
 - Concurrent SND_ASYNC calls: each new PlaySound call silently cancels the previous async sound. If two earcons are triggered in rapid succession (e.g. 'turn_done' immediately followed by 'ready'), the first is cut off. Mitigation: add a minimum gap guard (e.g. 150ms) in the scheduler layer, or use SND_NOSTOP which causes PlaySound to return False (not play) if a sound is already active.
 - The .wav file must remain on disk for the full playback duration (~0.10–0.25s) after play() returns. If the file lives in a tempdir that is deleted immediately, behavior is undefined (Windows may play silence or crash the audio thread). Bundled-in-package files are safe since they persist for the process lifetime.
 - importlib.resources.as_file() extracts a temp copy for zip/wheel installs and removes it when the context exits. The default_earcons() implementation stores the path inside the with-block (safe for file-based installs where as_file returns the real path), but on zip-based installs the temp file is immediately deleted when the context exits, leaving a stale path in _cache. Fix: for zip installs, copy the extracted file to a stable per-process tempdir (e.g. via atexit-registered tempfile.mkdtemp()) rather than relying on the as_file temp path surviving outside the context.
-- Python's wave module writes a standard 44-byte RIFF/WAVE PCM header with no LIST chunk or metadata. This is fully compatible with winsound. However, some third-party audio editors add non-standard chunks (e.g. 'id3 ', 'smpl') when re-saving — if users replace the bundled .wav files with edited versions, winsound may reject them. Validate AudioFormat==1 at load time in default_earcons().
+- Python's wave module writes a standard 44-byte RIFF/WAVE PCM header with no LIST chunk or metadata. This is fully compatible with winsound. However, some third-party audio editors add non-standard chunks (e.g. 'id3 ', 'smpl') when re-saving - if users replace the bundled .wav files with edited versions, winsound may reject them. Validate AudioFormat==1 at load time in default_earcons().
 - The chirp wave_type uses instantaneous frequency (f_inst * t) rather than phase accumulation. This introduces a small phase discontinuity that may be audible as a click, especially at high frequencies. For clean chirps use accumulated phase: phase += 2*pi*f_inst/sample_rate per sample, then sin(phase).
-- Ship .wav files in the repository (not generate-at-build) — this is the correct recommendation. Rationale: the 6 files total ~90KB, are deterministic, and require zero build-time tooling. generate_earcons.py serves as a reproducibility audit script. pyproject.toml must declare [tool.setuptools.package-data] sonari = ['earcons/*.wav'] or the .wav files will be absent from the wheel.
+- Ship .wav files in the repository (not generate-at-build) - this is the correct recommendation. Rationale: the 6 files total ~90KB, are deterministic, and require zero build-time tooling. generate_earcons.py serves as a reproducibility audit script. pyproject.toml must declare [tool.setuptools.package-data] sonari = ['earcons/*.wav'] or the .wav files will be absent from the wheel.
 
 ---
 
-## Windows SupervisorBackend (no admin) — Task Scheduler + thin Python supervisor
-**pip/import packages:** winreg (stdlib, Windows-only — inject fake module in tests on macOS/Linux), subprocess (stdlib), shutil (stdlib), tempfile (stdlib), xml.etree.ElementTree (stdlib — use in tests to parse generated XML, not string-contains checks)
+## Windows SupervisorBackend (no admin) - Task Scheduler + thin Python supervisor
+**pip/import packages:** winreg (stdlib, Windows-only - inject fake module in tests on macOS/Linux), subprocess (stdlib), shutil (stdlib), tempfile (stdlib), xml.etree.ElementTree (stdlib - use in tests to parse generated XML, not string-contains checks)
 
-### Zero-admin Task Scheduler autostart via hand-authored XML — task_install(), task_uninstall(), task_is_installed()
-_Source: https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-schema — Task element, version 1.2, namespace http://schemas.microsoft.com/windows/2004/02/mit/task; schtasks /? on Windows 10+_
+### Zero-admin Task Scheduler autostart via hand-authored XML - task_install(), task_uninstall(), task_is_installed()
+_Source: https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-schema - Task element, version 1.2, namespace http://schemas.microsoft.com/windows/2004/02/mit/task; schtasks /? on Windows 10+_
 
 ```python
 import os
@@ -1052,7 +1052,7 @@ def task_install(pythonw: str, supervisor_py: str) -> int:
         supervisor_py=supervisor_py,
         work_dir=str(Path(supervisor_py).parent),
     )
-    # Write UTF-16 LE with BOM — required by schtasks /xml
+    # Write UTF-16 LE with BOM - required by schtasks /xml
     with tempfile.NamedTemporaryFile(
             mode='w', suffix='.xml', encoding='utf-16',
             delete=False) as fh:
@@ -1082,15 +1082,15 @@ def task_is_installed() -> bool:
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     ) == 0
 
-# KEY GOTCHA: RestartOnFailure is NOT expressible via schtasks CLI flags — XML only.
+# KEY GOTCHA: RestartOnFailure is NOT expressible via schtasks CLI flags - XML only.
 # The Task Scheduler's RestartOnFailure only restarts the *supervisor* process if
 # it crashes (unlikely). The supervisor_loop below is the real daemon restarter.
 ```
 
-**Gotchas:** 1) schtasks /xml requires UTF-16 LE with BOM — Python encoding='utf-16' produces exactly that; UTF-8 causes 'The task XML is malformed' on older builds. 2) Non-admin registration is permitted ONLY when LogonTrigger/UserId matches the registering user's own SamCompatible name AND RunLevel=LeastPrivilege. Elevated RunLevel requires admin. 3) RestartOnFailure has no schtasks CLI equivalent — XML is the only way. 4) /f flag on /create overwrites a pre-existing task silently; always use it. 5) LogonType=InteractiveToken is mandatory for SAPI TTS to reach the audio device in the GUI session; using S4U or Service breaks TTS. 6) schtasks exit codes on non-English Windows locales can be unreliable — always probe with /query separately.
+**Gotchas:** 1) schtasks /xml requires UTF-16 LE with BOM - Python encoding='utf-16' produces exactly that; UTF-8 causes 'The task XML is malformed' on older builds. 2) Non-admin registration is permitted ONLY when LogonTrigger/UserId matches the registering user's own SamCompatible name AND RunLevel=LeastPrivilege. Elevated RunLevel requires admin. 3) RestartOnFailure has no schtasks CLI equivalent - XML is the only way. 4) /f flag on /create overwrites a pre-existing task silently; always use it. 5) LogonType=InteractiveToken is mandatory for SAPI TTS to reach the audio device in the GUI session; using S4U or Service breaks TTS. 6) schtasks exit codes on non-English Windows locales can be unreliable - always probe with /query separately.
 
-### Thin Python supervisor loop — launch_spec() returning (argv, kwargs) with Windows process-creation flags; exponential backoff daemon restarter
-_Source: https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags — CREATE_NO_WINDOW (0x08000000), DETACHED_PROCESS (0x00000008); https://docs.python.org/3/library/subprocess.html#subprocess.Popen — creationflags, start_new_session conflict documented in CPython source Modules/_posixsubprocess.c and Lib/subprocess.py_
+### Thin Python supervisor loop - launch_spec() returning (argv, kwargs) with Windows process-creation flags; exponential backoff daemon restarter
+_Source: https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags - CREATE_NO_WINDOW (0x08000000), DETACHED_PROCESS (0x00000008); https://docs.python.org/3/library/subprocess.html#subprocess.Popen - creationflags, start_new_session conflict documented in CPython source Modules/_posixsubprocess.c and Lib/subprocess.py_
 
 ```python
 # src/sonari/platform/windows/supervisor_loop.py
@@ -1119,7 +1119,7 @@ def launch_spec(pythonw: str) -> tuple:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        # start_new_session intentionally absent — incompatible with DETACHED_PROCESS
+        # start_new_session intentionally absent - incompatible with DETACHED_PROCESS
     )
     return argv, kwargs
 
@@ -1155,10 +1155,10 @@ if __name__ == "__main__":
         run_supervisor_loop(pw)
 ```
 
-**Gotchas:** 1) subprocess.CREATE_NO_WINDOW and subprocess.DETACHED_PROCESS are not defined on non-win32 platforms — always use hex literals 0x08000000 / 0x00000008 in cross-platform code. 2) start_new_session=True + DETACHED_PROCESS raises ValueError on Python 3.9+ Windows — do NOT copy the macOS pattern. 3) pythonw.exe suppresses the console window; python.exe would flash a console on each daemon start. 4) proc.wait() in the supervisor is blocking — the supervisor itself is daemonised by Task Scheduler, so this is correct. 5) Back-off sequence: attempt=0→delay=min(2*2^(-1),120) which is invalid; start attempt at 1 after first crash or use max(attempt-1,0). Shown above correctly increments before computing delay.
+**Gotchas:** 1) subprocess.CREATE_NO_WINDOW and subprocess.DETACHED_PROCESS are not defined on non-win32 platforms - always use hex literals 0x08000000 / 0x00000008 in cross-platform code. 2) start_new_session=True + DETACHED_PROCESS raises ValueError on Python 3.9+ Windows - do NOT copy the macOS pattern. 3) pythonw.exe suppresses the console window; python.exe would flash a console on each daemon start. 4) proc.wait() in the supervisor is blocking - the supervisor itself is daemonised by Task Scheduler, so this is correct. 5) Back-off sequence: attempt=0→delay=min(2*2^(-1),120) which is invalid; start attempt at 1 after first crash or use max(attempt-1,0). Shown above correctly increments before computing delay.
 
-### Windows Python resolution — py -3 launcher, PATH probe, Microsoft Store stub detection, pythonw.exe sibling finder
-_Source: https://docs.python.org/3/using/windows.html#python-launcher-for-windows — py.exe launcher at C:\Windows\py.exe; HKCU/HKLM registry enumeration; exit code 9009 is the Windows store stub sentinel documented at https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/desktop-to-uwp-extensions#prevent-python-stub-launching_
+### Windows Python resolution - py -3 launcher, PATH probe, Microsoft Store stub detection, pythonw.exe sibling finder
+_Source: https://docs.python.org/3/using/windows.html#python-launcher-for-windows - py.exe launcher at C:\Windows\py.exe; HKCU/HKLM registry enumeration; exit code 9009 is the Windows store stub sentinel documented at https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/desktop-to-uwp-extensions#prevent-python-stub-launching_
 
 ```python
 import os
@@ -1270,15 +1270,15 @@ def resolve_python_windows() -> "str | None":
     return None
 ```
 
-**Gotchas:** 1) The Microsoft Store stub at %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe returns exit code 9009 in non-interactive invocations — never use it. 2) py.exe lives at C:\Windows\py.exe (system-wide) and is NOT on PATH by default on all setups — shutil.which('py') is the right probe. 3) A venv's python.exe is at Scripts\python.exe; its pythonw.exe sibling is at Scripts\pythonw.exe — both locations checked by _find_pythonw. 4) sys.executable from a py-launcher-resolved interpreter gives the full real path including version-specific directory; use that, not the py.exe path itself. 5) _probe_python_version runs the interpreter twice (once via launcher, once directly) — acceptable because this runs only at install time.
+**Gotchas:** 1) The Microsoft Store stub at %LOCALAPPDATA%\Microsoft\WindowsApps\python.exe returns exit code 9009 in non-interactive invocations - never use it. 2) py.exe lives at C:\Windows\py.exe (system-wide) and is NOT on PATH by default on all setups - shutil.which('py') is the right probe. 3) A venv's python.exe is at Scripts\python.exe; its pythonw.exe sibling is at Scripts\pythonw.exe - both locations checked by _find_pythonw. 4) sys.executable from a py-launcher-resolved interpreter gives the full real path including version-specific directory; use that, not the py.exe path itself. 5) _probe_python_version runs the interpreter twice (once via launcher, once directly) - acceptable because this runs only at install time.
 
 ### exec-form hooks.json for Windows (no bash shim) + .gitattributes LF enforcement for hook .py files
-_Source: Claude Code hooks documentation: https://docs.anthropic.com/en/docs/claude-code/hooks — exec-form with command + args array; JSON backslash escaping per RFC 8259 §7_
+_Source: Claude Code hooks documentation: https://docs.anthropic.com/en/docs/claude-code/hooks - exec-form with command + args array; JSON backslash escaping per RFC 8259 §7_
 
 ```python
-# hooks/hooks.json — Windows exec-form (no shell interpreter needed)
+# hooks/hooks.json - Windows exec-form (no shell interpreter needed)
 # The resolved pythonw.exe path is baked in at install time by WinSupervisorBackend.install().
-# Claude Code supports separate 'command' + 'args' (exec-form) — no bash shim required.
+# Claude Code supports separate 'command' + 'args' (exec-form) - no bash shim required.
 
 HOOKS_JSON_TEMPLATE = '''{{
   "hooks": {{
@@ -1324,7 +1324,7 @@ def build_hooks_json(pythonw: str, hook_py: str) -> str:
     )
 
 
-# .gitattributes entry — prevents CRLF injection on Windows checkout.
+# .gitattributes entry - prevents CRLF injection on Windows checkout.
 # Add this line to the repo root .gitattributes:
 GITATTRIBUTES_LINE = "hooks/*.py  text eol=lf\n"
 
@@ -1343,9 +1343,9 @@ GITATTRIBUTES_LINE = "hooks/*.py  text eol=lf\n"
 # }
 ```
 
-**Gotchas:** 1) JSON requires backslashes doubled: C:\\Users\\... not C:\Users\... — build_hooks_json() handles this. 2) The macOS hooks.json uses '${CLAUDE_PLUGIN_ROOT}/bin/sonari-hook MessageDisplay' (shell-form, single string); Windows must use exec-form (command + args) because there is no bash. 3) hooks/*.py text eol=lf in .gitattributes must be committed BEFORE the .py files are checked in on Windows; git will not retroactively fix line endings unless the files are re-staged. 4) At install time, write the rendered hooks.json to the user's Claude Code config directory, not the repo root — the resolved pythonw.exe path is user-specific.
+**Gotchas:** 1) JSON requires backslashes doubled: C:\\Users\\... not C:\Users\... - build_hooks_json() handles this. 2) The macOS hooks.json uses '${CLAUDE_PLUGIN_ROOT}/bin/sonari-hook MessageDisplay' (shell-form, single string); Windows must use exec-form (command + args) because there is no bash. 3) hooks/*.py text eol=lf in .gitattributes must be committed BEFORE the .py files are checked in on Windows; git will not retroactively fix line endings unless the files are re-staged. 4) At install time, write the rendered hooks.json to the user's Claude Code config directory, not the repo root - the resolved pythonw.exe path is user-specific.
 
-### WinSupervisorBackend class — is_installed(), is_running(), doctor_rows() with neural voice probe via winreg
+### WinSupervisorBackend class - is_installed(), is_running(), doctor_rows() with neural voice probe via winreg
 _Source: winreg stdlib: https://docs.python.org/3/library/winreg.html; HKLM\SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens documented at https://learn.microsoft.com/en-us/windows/win32/api/sapi/nn-sapi-ispvoice (OneCore voices); SupervisorBackend ABC: /Users/Nima.Hakimi/Projects/private/claude-tts/src/sonari/platform/base.py_
 
 ```python
@@ -1488,7 +1488,7 @@ class WinSupervisorBackend(SupervisorBackend):
         task_uninstall()
 ```
 
-**Gotchas:** 1) winreg is Windows-only stdlib — never import at module level; always inside a method so the module imports cleanly on macOS/Linux. 2) Neural voices are under Speech_OneCore\Voices\Tokens, NOT the legacy Speech\Voices\Tokens (which only has Narrator/SAPI 5 voices and is empty on fresh Windows 11). 3) _schtasks() wraps subprocess.call with DEVNULL — monkeypatch at the instance level in tests so no real schtasks is invoked. 4) launch_spec() must NOT include start_new_session=True — see pattern 2 gotchas. 5) doctor_rows() must never raise — wrap every external call in try/except exactly as MacSupervisorBackend does.
+**Gotchas:** 1) winreg is Windows-only stdlib - never import at module level; always inside a method so the module imports cleanly on macOS/Linux. 2) Neural voices are under Speech_OneCore\Voices\Tokens, NOT the legacy Speech\Voices\Tokens (which only has Narrator/SAPI 5 voices and is empty on fresh Windows 11). 3) _schtasks() wraps subprocess.call with DEVNULL - monkeypatch at the instance level in tests so no real schtasks is invoked. 4) launch_spec() must NOT include start_new_session=True - see pattern 2 gotchas. 5) doctor_rows() must never raise - wrap every external call in try/except exactly as MacSupervisorBackend does.
 
 **Mock strategy:**
 
@@ -1588,17 +1588,17 @@ def test_resolve_python_skips_store_stub(monkeypatch, tmp_path):
 
 
 def test_spawn_flags_value():
-    # Hex literal correctness — no subprocess import needed
+    # Hex literal correctness - no subprocess import needed
     assert _SPAWN_FLAGS == 0x08000008
 ```
 
-The sys.modules.setdefault call is idempotent — running on real Windows leaves the genuine winreg intact. All subprocess-touching methods (_schtasks, _probe_python_version, _list_neural_voices) are patched at the instance level so no OS calls escape the test. XML structure is validated via ElementTree.fromstring() with the full namespace string, which is more robust than string-contains checks.
+The sys.modules.setdefault call is idempotent - running on real Windows leaves the genuine winreg intact. All subprocess-touching methods (_schtasks, _probe_python_version, _list_neural_voices) are patched at the instance level so no OS calls escape the test. XML structure is validated via ElementTree.fromstring() with the full namespace string, which is more robust than string-contains checks.
 
-**Open risks (mock-blind — for the acceptance checklist):**
-- UTF-16 LE encoding: schtasks /xml silently rejects UTF-8 on Windows builds before 22H2 — always write the temp XML file with encoding='utf-16'; Python's codecs emit the correct BOM automatically.
+**Open risks (mock-blind - for the acceptance checklist):**
+- UTF-16 LE encoding: schtasks /xml silently rejects UTF-8 on Windows builds before 22H2 - always write the temp XML file with encoding='utf-16'; Python's codecs emit the correct BOM automatically.
 - RestartOnFailure Interval minimum: Task Scheduler enforces a minimum of PT1M (1 minute); values below that are silently clamped. PT5M is safe.
 - Non-admin registration scope: a standard user can only register a LogonTrigger task for their own UserId + LeastPrivilege. Attempting to set RunLevel=HighestAvailable without elevation raises E_ACCESSDENIED from the COM Task Scheduler API (schtasks surfaces this as exit code 1).
-- venv / sys.executable mismatch: if Sonari is installed inside a venv, resolve_python_windows() must return the venv's pythonw.exe (Scripts\pythonw.exe), not the base interpreter — _find_pythonw() checks both locations.
+- venv / sys.executable mismatch: if Sonari is installed inside a venv, resolve_python_windows() must return the venv's pythonw.exe (Scripts\pythonw.exe), not the base interpreter - _find_pythonw() checks both locations.
 - DEVNULL on stdin: subprocess.DEVNULL must be passed explicitly for stdin when using DETACHED_PROCESS; without it the child inherits the parent's stdin handle, which can cause hangs if the parent's stdin is a pipe.
-- schtasks exit codes on non-English Windows: schtasks /query returns 0 for 'found' and 1 for 'not found' in en-US; on some locale builds the exit code is reliable but the stderr message is localised — always use exit code, never parse stderr text.
-- SAPI TTS + DETACHED_PROCESS: the speech daemon must call CoInitializeEx(COINIT_APARTMENTTHREADED) before any SAPI calls; DETACHED_PROCESS does not affect COM apartment threading, but if the daemon is started without a message loop, some SAPI voices (especially neural) may hang on Speak() — ensure the daemon runs a STA message pump or uses SpVoice with SVSFlagsAsync=0.
+- schtasks exit codes on non-English Windows: schtasks /query returns 0 for 'found' and 1 for 'not found' in en-US; on some locale builds the exit code is reliable but the stderr message is localised - always use exit code, never parse stderr text.
+- SAPI TTS + DETACHED_PROCESS: the speech daemon must call CoInitializeEx(COINIT_APARTMENTTHREADED) before any SAPI calls; DETACHED_PROCESS does not affect COM apartment threading, but if the daemon is started without a message loop, some SAPI voices (especially neural) may hang on Speak() - ensure the daemon runs a STA message pump or uses SpVoice with SVSFlagsAsync=0.

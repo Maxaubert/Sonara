@@ -3,10 +3,10 @@
 A portable wrapper around the `kokoro-onnx` package: one ~310 MB ONNX model plus a
 ~6 MB voices file (`voices-v1.0.bin`) provide ALL 28 voices. This module only
 synthesizes to audio / WAV bytes; playback is the platform TTS backend's job (it
-plays the WAV through its existing path — winsound on Windows).
+plays the WAV through its existing path -- winsound on Windows).
 
 Voices are selected by bare name (`af_heart`) or the engine-prefixed form
-(`kokoro:af_heart`). A voice not in VOICES is not ours — the caller routes it to
+(`kokoro:af_heart`). A voice not in VOICES is not ours -- the caller routes it to
 the native engine. Everything heavy (kokoro_onnx / onnxruntime / numpy) imports
 lazily, so importing this module never pulls the ML stack in; it's only loaded the
 first time a Kokoro voice is actually spoken (declared as the `[kokoro]` extra).
@@ -102,7 +102,7 @@ _INSTALL_HINT = (
 
 def is_installed() -> bool:
     """True if the optional [kokoro] extra is importable. Gates voice listing and
-    the actionable require_installed() check — kept cheap via find_spec (no import)."""
+    the actionable require_installed() check -- kept cheap via find_spec (no import)."""
     try:
         return all(importlib.util.find_spec(m) is not None for m in _EXTRA_MODULES)
     except (ImportError, ValueError):
@@ -110,7 +110,7 @@ def is_installed() -> bool:
 
 
 def require_installed() -> None:
-    """Raise an actionable RuntimeError if the [kokoro] extra is absent — instead of
+    """Raise an actionable RuntimeError if the [kokoro] extra is absent -- instead of
     the raw ModuleNotFoundError that the daemon's speak loop would swallow into
     silent no-speech. Mirrors the WinRT backend's _require_winrt() (#7)."""
     if not is_installed():
@@ -165,7 +165,7 @@ def _default_factory(model_path: str, voices_path: str):
 class KokoroEngine:
     """Lazily downloads + loads the Kokoro model and synthesizes audio.
 
-    *factory* builds the underlying engine from (model_path, voices_path) — the
+    *factory* builds the underlying engine from (model_path, voices_path) -- the
     default uses kokoro_onnx; tests inject a fake. *ensure* makes the model files
     present (default: download); tests pass a no-op.
     """

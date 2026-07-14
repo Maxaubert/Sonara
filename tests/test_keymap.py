@@ -102,7 +102,7 @@ def test_resolve_skips_unbound_entries():
     # An entry with no key is UNBOUND -> skipped (not an error), so an action with
     # a default binding can be explicitly cleared in keymap.json.
     # 'ctrl' is valid on both macOS and Windows keytables (the modifier is
-    # incidental here — the point is that the keyless 'pause' entry is skipped).
+    # incidental here -- the point is that the keyless 'pause' entry is skipped).
     resolved = keymap.resolve_keymap({"pause": {"key": None, "mods": ["ctrl"]},
                                       "mute": {"key": "m", "mods": ["ctrl"]}})
     actions = {e["action"] for e in resolved}
@@ -201,7 +201,7 @@ def test_resolve_nav_action_message(win):
 
 
 def test_no_two_default_actions_share_a_key():
-    # Default bindings share one chord, so each must use a distinct key — else
+    # Default bindings share one chord, so each must use a distinct key -- else
     # resolve_keymap emits two entries for the same keyCode and one silently loses.
     from sonara.keymap import default_keymap
     keys = [b["key"] for b in default_keymap().values()]

@@ -5,30 +5,28 @@
 
   **Eyes-free text-to-speech for [Claude Code](https://claude.ai/code) on Windows, an accessibility tool for blind and low-vision developers.**
 
-  [![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square)](https://github.com/Maxaubert/Sonara)
-  [![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?style=flat-square)](https://github.com/Maxaubert/Sonara)
 </div>
 
 ---
 
 > The Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari) (the macOS line). Developed and released independently.
 
-Sonara reads Claude Code's output aloud — prose, plans, multiple-choice questions, and
-permission prompts — in order, plays a distinct sound the instant a decision needs you, and
+Sonara reads Claude Code's output aloud - prose, plans, multiple-choice questions, and
+permission prompts - in order, plays a distinct sound the instant a decision needs you, and
 lets you answer and control the speech without looking. Run a full session with the screen
 off.
 
-- **Ordered narration** — prose, plans, questions, and permissions are spoken in order, never out of sequence.
-- **Per-decision earcons** — a distinct sound the moment a question, plan, permission, or error appears.
-- **Selection by number** — answer prompts with the option's number; no key injection.
-- **Global hotkeys** — navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
-- **Lightweight** — the daemon runs on Python's standard library; the one-time `sonara install` fetches the Windows speech engine (PyWinRT) for you, and neural voices stay optional.
+- **Ordered narration** - prose, plans, questions, and permissions are spoken in order, never out of sequence.
+- **Per-decision earcons** - a distinct sound the moment a question, plan, permission, or error appears.
+- **Selection by number** - answer prompts with the option's number; no key injection.
+- **Global hotkeys** - navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
+- **Lightweight** - the daemon runs on Python's standard library; the one-time `sonara install` fetches the Windows speech engine (PyWinRT) for you, and neural voices stay optional.
 
 ## Requirements
 
 - Windows 10 or 11 (Sonara uses the built-in Windows speech engine and `winsound`
   for earcons).
-- Python 3.9 or newer on your PATH — install it from
+- Python 3.9 or newer on your PATH - install it from
   [python.org](https://www.python.org/downloads/windows/) (the Microsoft Store stub is
   not used). Sonara picks the best `python` >= 3.9 automatically.
 - Claude Code 2.1.162 or newer.
@@ -46,7 +44,7 @@ the speech engine, autostart, hooks, and hotkeys.
 2. Install the plugin: `/plugin install sonara@sonara` (or
    `claude plugin install sonara@sonara`). The marketplace is named `sonara`, so the
    install target is `sonara@sonara`.
-3. **Run `/sonara:install`** — the required one-time setup. It installs the Windows speech
+3. **Run `/sonara:install`** - the required one-time setup. It installs the Windows speech
    engine (PyWinRT) into your Python, copies the runtime to `~/.sonara/app`, and registers
    autostart, the Claude Code hooks, and global hotkeys. Each step is printed; it can take
    a minute (it downloads the speech-engine packages).
@@ -67,8 +65,8 @@ sonara install
 auto-updates), registers the Windows autostart entry, and places the `sonara` launcher on
 your PATH. If it can't install PyWinRT (for example, no network), it prints the exact
 `pip` command to run and exits non-zero, so it never silently leaves you without speech.
-After a plugin update, Sonara says once — *"Sonara was updated. Run /sonara:install
-to apply."* — so you can refresh the copy.
+After a plugin update, Sonara says once - *"Sonara was updated. Run /sonara:install
+to apply."* - so you can refresh the copy.
 
 ### Development
 
@@ -79,17 +77,17 @@ python -m venv .venv; .venv\Scripts\pip install -e '.[dev]'
 .venv\Scripts\python -m pytest -q
 ```
 
-The public install path above does **not** use `pip` — the venv is for tests only.
+The public install path above does **not** use `pip` - the venv is for tests only.
 
 ## Enhanced-voice setup (recommended)
 
 Sonara defaults to the best natural/neural English voice it can find. Windows natural voices
-sound dramatically better and are free and offline. To install one:
+sound much better and are free and offline. To install one:
 
 1. Open **Settings → Time & language → Speech**.
 2. Under **Manage voices**, click **Add voices**.
-3. Pick an English voice marked **(Natural)** — e.g. *Microsoft Ava (Natural)* or
-   *Microsoft Andrew (Natural)* — and download it.
+3. Pick an English voice marked **(Natural)** - e.g. *Microsoft Ava (Natural)* or
+   *Microsoft Andrew (Natural)* - and download it.
 4. Run `sonara doctor` to confirm Sonara picks it up, or set it explicitly:
 
 ```powershell
@@ -185,7 +183,7 @@ commands below.
 
 When a question, permission prompt, or plan (`AskUserQuestion` / permission /
 `ExitPlanMode`) appears, choose an option by pressing its **number (1-9)**, or `Esc` to
-cancel — using Claude Code's native numeric selection, no key injection. For a
+cancel - using Claude Code's native numeric selection, no key injection. For a
 **multi-select** question, press each option's number (or `Space` on the highlighted item),
 then `Enter` to confirm. If a question has **more than nine options**, numbers cover 1-9;
 use the **arrow keys** plus `Enter` for the tenth and beyond. Sonara speaks these cues when
@@ -207,11 +205,11 @@ CLI-only (run `sonara <cmd>` in a terminal).
 | `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
 | `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
 | `/sonara:summary [on\|off]` | `sonara summary [on\|off]` | Speak an AI recap of each finished turn instead of full narration (off = full narration; bare prints state) |
-| — | `sonara repeat` | Re-speak the last item |
-| — | `sonara skip` | Skip the current item |
-| — | `sonara stop` | Stop now and clear the queue |
-| — | `sonara shutdown` | Stop the daemon and supervisor; stays stopped until `sonara start` |
-| — | `sonara start` | Start the daemon (clears a previous shutdown) |
+| - | `sonara repeat` | Re-speak the last item |
+| - | `sonara skip` | Skip the current item |
+| - | `sonara stop` | Stop now and clear the queue |
+| - | `sonara shutdown` | Stop the daemon and supervisor; stays stopped until `sonara start` |
+| - | `sonara start` | Start the daemon (clears a previous shutdown) |
 | `/sonara:settings` | `sonara settings` | Open the browser settings page (voice, rate, summary, audio duck, hotkeys, daemon) |
 | `/sonara:doctor` | `sonara doctor` | Run all health checks |
 | `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
@@ -220,11 +218,11 @@ CLI-only (run `sonara <cmd>` in a terminal).
 
 Three live-switchable levels (earcons fire in **all** of them):
 
-- **everything** (default) — prose narration, questions, plans, permissions, *and* brief
+- **everything** (default) - prose narration, questions, plans, permissions, *and* brief
   tool announcements (a short summary of what's running, e.g. "Running git status").
-- **medium** — prose narration plus decisions (questions / plans / permissions); **drops**
+- **medium** - prose narration plus decisions (questions / plans / permissions); **drops**
   routine tool announcements.
-- **quiet** — decisions only (questions / plans / permissions); drops both tool
+- **quiet** - decisions only (questions / plans / permissions); drops both tool
   announcements **and** prose narration. Earcons still fire at every level.
 
 ## Summary mode
@@ -247,8 +245,8 @@ remains available via catch-up. Summary mode is off by default.
 ## How ordering works
 
 Sonara's voice never jumps ahead of you. Spoken content is **strictly first-in, first-out**: a
-question, plan, or permission is voiced *in its natural place* — after the prose that
-explains it — so if the voice is mid-sentence when a permission appears, you still hear the
+question, plan, or permission is voiced *in its natural place* - after the prose that
+explains it - so if the voice is mid-sentence when a permission appears, you still hear the
 remaining sentences first, then the permission. What *is* instant is the **alert**: the
 moment any decision appears, a short distinct earcon plays immediately (a different sound for
 permission, choice, plan, error, turn-done, and ready), while the spoken detail waits its
@@ -272,7 +270,7 @@ top.
 
 ## Doctor and troubleshooting
 
-Run `sonara doctor` first — it reports each check as pass/fail. Common issues:
+Run `sonara doctor` first - it reports each check as pass/fail. Common issues:
 
 - **No speech at all.** Confirm `sonara status` shows your session as the foreground. The
   daemon starts lazily on the first hook; if the socket is unreachable, run `sonara install`
@@ -310,9 +308,9 @@ stable app copy at `~/.sonara/app`, and **preserves** your `config.json` and
 
 Sonara runs entirely on your own computer. It collects nothing, sends nothing over the network
 (except, if you opt in, summary mode's local `claude -p` call described above),
-and has no servers, telemetry, or analytics — the text it speaks is processed locally and is
+and has no servers, telemetry, or analytics - the text it speaks is processed locally and is
 never stored or transmitted. See [PRIVACY.md](PRIVACY.md) for the full details.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).

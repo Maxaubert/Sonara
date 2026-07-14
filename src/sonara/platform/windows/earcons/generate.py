@@ -4,7 +4,7 @@ WAV format produced: RIFF/WAVE, PCM (AudioFormat=1), 16-bit signed
 Little-Endian, mono, 44100 Hz.  This is the exact format winsound
 requires; it is also accepted by macOS AudioToolbox and Linux ALSA.
 
-Typical use — run once from the repo root to regenerate assets::
+Typical use -- run once from the repo root to regenerate assets::
 
     python -m sonara.platform.windows.earcons.generate \\
         src/sonara/platform/windows/earcons
@@ -17,7 +17,7 @@ import struct
 import wave
 
 
-_SAMPLE_RATE = 44100  # Hz — universally accepted by winsound / Windows
+_SAMPLE_RATE = 44100  # Hz -- universally accepted by winsound / Windows
 _AMPLITUDE   = 28000  # out of 32767 (16-bit max); leaves headroom
 _ATTACK_S    = 0.010  # 10 ms linear attack
 _RELEASE_S   = 0.010  # 10 ms linear release
@@ -40,9 +40,9 @@ def generate_earcon(
     freq:        fundamental frequency in Hz
     duration:    length in seconds
     sample_rate: default 44100 (required by winsound on Windows)
-    wave_type:   "sine"  — pure sine at *freq*
-                 "dual"  — 60% *freq* + 40% *freq2* (two-tone blend)
-                 "chirp" — linear freq sweep from *freq* to *freq2*
+    wave_type:   "sine"  -- pure sine at *freq*
+                 "dual"  -- 60% *freq* + 40% *freq2* (two-tone blend)
+                 "chirp" -- linear freq sweep from *freq* to *freq2*
     freq2:       second frequency; required for "dual" and "chirp"
     """
     n           = int(sample_rate * duration)
@@ -50,7 +50,7 @@ def generate_earcon(
     release_n   = int(_RELEASE_S * sample_rate)
     frames: "list[bytes]" = []
 
-    # Chirp-only constants — hoisted out of the loop so they are computed
+    # Chirp-only constants -- hoisted out of the loop so they are computed
     # once per call rather than once per sample (O(1) vs O(n)).
     # _chirp_phi is the phase accumulator; it is only used when
     # wave_type == "chirp" and is meaningless for sine / dual.
@@ -61,7 +61,7 @@ def generate_earcon(
     for i in range(n):
         t = i / sample_rate
 
-        # Trapezoid amplitude envelope — removes click at start/end
+        # Trapezoid amplitude envelope -- removes click at start/end
         if i < attack_n:
             env = i / attack_n
         elif i >= n - release_n:
@@ -107,11 +107,11 @@ def generate_earcon(
 # ---------------------------------------------------------------------------
 _EARCON_SPECS: "dict[str, tuple]" = {
     # name         freq   dur   wave_type  freq2
-    "permission": (440.0, 0.12, "sine",    None ),  # A4 — clean, neutral ask
-    "choice":     (660.0, 0.15, "dual",    880.0),  # E5+A5 — bright two-tone
+    "permission": (440.0, 0.12, "sine",    None ),  # A4 -- clean, neutral ask
+    "choice":     (660.0, 0.15, "dual",    880.0),  # E5+A5 -- bright two-tone
     "plan":       (528.0, 0.20, "chirp",   660.0),  # C5→E5 rising sweep
     "error":      (220.0, 0.25, "dual",    185.0),  # low dissonant pair
-    "turn_done":  (880.0, 0.10, "sine",    None ),  # A5 — short, high
+    "turn_done":  (880.0, 0.10, "sine",    None ),  # A5 -- short, high
     "ready":      (523.0, 0.18, "chirp",   784.0),  # C5→G5 ascending
 }
 
@@ -119,7 +119,7 @@ _EARCON_SPECS: "dict[str, tuple]" = {
 def generate_all_earcons(output_dir: "str | pathlib.Path") -> None:
     """Write all 6 earcon .wav files into *output_dir*.
 
-    Idempotent — safe to call multiple times; overwrites existing files.
+    Idempotent -- safe to call multiple times; overwrites existing files.
     Typical use: run once from the repo root to regenerate assets::
 
         python -m sonara.platform.windows.earcons.generate \\

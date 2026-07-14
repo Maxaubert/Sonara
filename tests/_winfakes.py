@@ -1,5 +1,5 @@
 """Fake Windows modules so platform/windows/* imports + unit-tests on macOS/Linux.
-install() is idempotent and uses setdefault — a no-op on real Windows."""
+install() is idempotent and uses setdefault -- a no-op on real Windows."""
 import sys, types
 
 

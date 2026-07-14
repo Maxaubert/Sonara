@@ -101,7 +101,7 @@ def test_decision_preempts_current_reader():
     for i in range(5): a.append(_item("A", "a%d" % i))
     a.turn_done = True
     assert r.next_item().text == "a0"          # A reading
-    # B raises a decision — preempts A mid-batch
+    # B raises a decision -- preempts A mid-batch
     b = r.channel("B"); b.append(_item("B", "Pick?", is_decision=True))
     assert r.next_item().text == "Session changed: beta."   # preempts A
     assert r.next_item().text == "Pick?"

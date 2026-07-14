@@ -1,9 +1,9 @@
-"""Thin Python supervisor loop — Task Scheduler launches this; it restarts the
+"""Thin Python supervisor loop -- Task Scheduler launches this; it restarts the
 sonara.daemon process indefinitely with exponential back-off.
 
 WINDOWS-only behaviour, but the module imports cleanly on macOS/Linux (the
 process-creation flags are hex literals, not subprocess.CREATE_NO_WINDOW which
-is win32-only). "Imports + mock-green" does NOT mean Windows-verified — the
+is win32-only). "Imports + mock-green" does NOT mean Windows-verified -- the
 DETACHED_PROCESS/CREATE_NO_WINDOW spawn behaviour is a deferred acceptance item
 (docs/superpowers/M2-WINDOWS-ACCEPTANCE.md).
 
@@ -75,7 +75,7 @@ def launch_spec(pythonw: str) -> tuple:
         stdout=subprocess.DEVNULL,
         stderr=err,
         env=env,
-        # start_new_session intentionally absent — incompatible with DETACHED_PROCESS
+        # start_new_session intentionally absent -- incompatible with DETACHED_PROCESS
     )
     return argv, kwargs
 
@@ -120,7 +120,7 @@ def _main() -> None:
     _ensure_importable()  # MUST run before importing sonara (script-path launch)
     if sys.platform == "win32":
         # Run the daemon on the interpreter Task Scheduler launched us with (the venv
-        # pythonw when neural is enabled — baked in at install). Re-resolving here
+        # pythonw when neural is enabled -- baked in at install). Re-resolving here
         # discarded it and forced system python (no kokoro). macOS bakes the python
         # into the plist; this is the Windows parity.
         run_supervisor_loop(sys.executable)

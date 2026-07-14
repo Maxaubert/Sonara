@@ -1,4 +1,4 @@
-# Summary Mode: Short Turn Appends (Don't Overtake a Queued Question) — Design
+# Summary Mode: Short Turn Appends (Don't Overtake a Queued Question) - Design
 
 **Issue:** Maxaubert/Sonara#17
 **Status:** Approved (targeted follow-up to #16)

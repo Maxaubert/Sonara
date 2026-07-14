@@ -94,7 +94,7 @@ def test_session_end_unregisters():
 
 
 # ---------------------------------------------------------------------------
-# REPEAT tests (history-based — see Phase 2.1)
+# REPEAT tests (history-based -- see Phase 2.1)
 # ---------------------------------------------------------------------------
 
 def _prose(daemon, session, text, index=0, final=True):

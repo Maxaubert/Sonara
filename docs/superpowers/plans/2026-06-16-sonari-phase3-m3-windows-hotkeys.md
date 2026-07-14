@@ -1,10 +1,10 @@
-# Sonari Phase 3 — Milestone 3: Windows Global Hotkeys — Implementation Plan
+# Sonari Phase 3 - Milestone 3: Windows Global Hotkeys - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give Windows the same global-hotkey actions Sonari has on macOS (stop, repeat, skip, jump-to-decision, catch-up, faster, slower, cycle-verbosity, reread-options) via in-process `RegisterHotKey`, replacing the `WinHotkeyBackend` stub.
 
-**Architecture:** Pure-Python `ctypes` `RegisterHotKey` + a `GetMessage` pump on a **daemon-owned thread** (no second process, no compiler — the Windows analogue of the macOS Swift/Carbon hotkeyd). On `WM_HOTKEY` the thread dispatches the binding's protocol message straight into the running daemon (in-process). The keymap resolver becomes OS-agnostic: per-OS key/modifier tables and the default chord move behind the platform seam. Default chord is `Ctrl+Shift+Alt+<key>` (configurable); collisions are detected (`GetLastError()==1409`) and surfaced in `doctor`.
+**Architecture:** Pure-Python `ctypes` `RegisterHotKey` + a `GetMessage` pump on a **daemon-owned thread** (no second process, no compiler - the Windows analogue of the macOS Swift/Carbon hotkeyd). On `WM_HOTKEY` the thread dispatches the binding's protocol message straight into the running daemon (in-process). The keymap resolver becomes OS-agnostic: per-OS key/modifier tables and the default chord move behind the platform seam. Default chord is `Ctrl+Shift+Alt+<key>` (configurable); collisions are detected (`GetLastError()==1409`) and surfaced in `doctor`.
 
 **Tech Stack:** Python 3.9 core; stdlib `ctypes` (`user32`: `RegisterHotKey`/`UnregisterHotKey`/`GetMessage`/`PostThreadMessageW`), all lazily imported; pytest with thin monkeypatchable wrappers (no real Win32 needed for unit tests). Grounding: `docs/superpowers/specs/2026-06-10-sonari-phase3-windows-design.md` §3 (Hotkeys), §7 (locked decisions), §8 (landmines).
 
@@ -14,28 +14,28 @@
 
 ## Invariants (hold at EVERY commit)
 
-1. **macOS behavior unchanged.** `get_platform()` returns the macOS backend on darwin; the macOS hotkeyd (separate Swift process) is untouched. The macOS keymap still resolves to the same Carbon codes and the same `Ctrl+Cmd` default chord. Run the suite each task (on this Windows box, diff against the known ~24-failure environment baseline — see `[[sonari-windows-test-running]]`; the true macOS gate runs on a Mac/CI).
+1. **macOS behavior unchanged.** `get_platform()` returns the macOS backend on darwin; the macOS hotkeyd (separate Swift process) is untouched. The macOS keymap still resolves to the same Carbon codes and the same `Ctrl+Cmd` default chord. Run the suite each task (on this Windows box, diff against the known ~24-failure environment baseline - see `[[sonari-windows-test-running]]`; the true macOS gate runs on a Mac/CI).
 2. **In-process, no toolchain.** Windows hotkeys run on a thread inside the existing daemon process. No new process, no compiler, no admin.
 3. **Windows-only imports stay lazy.** Every `ctypes.windll`/`winuser` access is inside a method, never at module import, so `platform/windows/*` imports clean on macOS for the mock suite.
-4. **`⚠` items are deferred to on-hardware acceptance.** Whether a chord actually fires system-wide, and the UIPI-elevation gap, cannot be unit-verified — they go in `M3-WINDOWS-ACCEPTANCE.md`, never asserted from a mock.
+4. **`⚠` items are deferred to on-hardware acceptance.** Whether a chord actually fires system-wide, and the UIPI-elevation gap, cannot be unit-verified - they go in `M3-WINDOWS-ACCEPTANCE.md`, never asserted from a mock.
 
 ---
 
 ## File Structure
 
 ```
-src/sonari/platform/windows/keytables.py   # NEW — Win32 VK codes + RegisterHotKey MOD masks + default chord
+src/sonari/platform/windows/keytables.py   # NEW - Win32 VK codes + RegisterHotKey MOD masks + default chord
 src/sonari/platform/macos/keytables.py     # +DEFAULT_MODS = ["ctrl","cmd"] (data only)
 src/sonari/platform/base.py                # HotkeyBackend: + key_codes/mod_masks/default_mods/start/stop/doctor_rows (concrete defaults)
 src/sonari/platform/macos/hotkeys.py       # implement key_codes/mod_masks/default_mods (return the macOS tables); start/stop stay no-op
-src/sonari/platform/windows/hotkeys.py     # REPLACE stub — real RegisterHotKey thread, dispatch, collisions, display_combo
+src/sonari/platform/windows/hotkeys.py     # REPLACE stub - real RegisterHotKey thread, dispatch, collisions, display_combo
 src/sonari/keymap.py                        # resolver reads keytables via the platform; default_keymap() per-OS chord
 src/sonari/daemon.py                        # run() starts the hotkey thread w/ a dispatch cb; shutdown stops it
 tests/test_win_keytables.py                 # NEW
 tests/test_win_hotkeys.py                   # NEW (replaces stub coverage in test_win_backend.py)
 tests/test_keymap.py                        # platform-dispatched resolution (mac + win under monkeypatch)
-tests/test_daemon_hotkeys.py                # NEW — run() wires hotkey start/stop
-docs/superpowers/M3-WINDOWS-ACCEPTANCE.md   # NEW — the deferred on-hardware checklist
+tests/test_daemon_hotkeys.py                # NEW - run() wires hotkey start/stop
+docs/superpowers/M3-WINDOWS-ACCEPTANCE.md   # NEW - the deferred on-hardware checklist
 ```
 
 ---
@@ -68,7 +68,7 @@ def test_default_mods_is_ctrl_shift_alt():
 - [ ] **Step 3: Create `src/sonari/platform/windows/keytables.py`** (pure data, no imports):
 ```python
 """Win32 virtual-key codes + RegisterHotKey fsModifiers, and the Windows default
-chord. Pure data — no OS calls — so it imports on any host for the mock suite."""
+chord. Pure data - no OS calls - so it imports on any host for the mock suite."""
 
 # Virtual-Key codes. Letters == ASCII uppercase; OEM keys per WinUser.h.
 KEY_CODES = {
@@ -91,7 +91,7 @@ MOD_NOREPEAT = 0x4000
 DEFAULT_MODS = ["ctrl", "shift", "alt"]
 ```
 
-- [ ] **Step 4: Add the macOS default chord** — append to `src/sonari/platform/macos/keytables.py` (data only, preserves existing `KEY_CODES`/`MOD_MASKS`):
+- [ ] **Step 4: Add the macOS default chord** - append to `src/sonari/platform/macos/keytables.py` (data only, preserves existing `KEY_CODES`/`MOD_MASKS`):
 ```python
 # Default chord on macOS (Ctrl+Cmd, avoids VoiceOver's Ctrl+Opt).
 DEFAULT_MODS = ["ctrl", "cmd"]
@@ -105,7 +105,7 @@ git commit -m "feat(windows): Win32 VK + RegisterHotKey modifier tables + Ctrl+S
 
 ---
 
-## Task 2: `HotkeyBackend` ABC — keytables + lifecycle hooks
+## Task 2: `HotkeyBackend` ABC - keytables + lifecycle hooks
 
 **Files:** Modify `src/sonari/platform/base.py`; Modify `src/sonari/platform/macos/hotkeys.py`; Test `tests/test_platform_base.py`
 
@@ -160,7 +160,7 @@ def test_base_hotkey_lifecycle_defaults_are_noops():
         return []
 ```
 
-- [ ] **Step 4: Implement the macOS keytable getters** in `MacHotkeyBackend` (`platform/macos/hotkeys.py`) — return the existing tables (import at method scope to avoid cycles):
+- [ ] **Step 4: Implement the macOS keytable getters** in `MacHotkeyBackend` (`platform/macos/hotkeys.py`) - return the existing tables (import at method scope to avoid cycles):
 ```python
     def key_codes(self) -> dict:
         from sonari.platform.macos import keytables
@@ -187,7 +187,7 @@ git commit -m "feat(platform): HotkeyBackend keytable getters + start/stop/docto
 
 **Files:** Modify `src/sonari/keymap.py`; Modify `tests/test_keymap.py`
 
-> Removes the hardcoded macOS import (`keymap.py:26`). The resolver pulls key/mod tables and the default chord from `get_platform().hotkey` at call time (lazy — no import-time OS dispatch). macOS output is unchanged because the macOS getters return the same tables + `Ctrl+Cmd`.
+> Removes the hardcoded macOS import (`keymap.py:26`). The resolver pulls key/mod tables and the default chord from `get_platform().hotkey` at call time (lazy - no import-time OS dispatch). macOS output is unchanged because the macOS getters return the same tables + `Ctrl+Cmd`.
 
 - [ ] **Step 1: Write the failing tests** (both OSes via the factory monkeypatch)
 ```python
@@ -228,7 +228,7 @@ _DEFAULT_KEYS = {
 
 
 def _keytables():
-    """(key_codes, mod_masks) for the active platform (lazy — no import-time dispatch)."""
+    """(key_codes, mod_masks) for the active platform (lazy - no import-time dispatch)."""
     from sonari.platform import get_platform
     hk = get_platform().hotkey
     return hk.key_codes(), hk.mod_masks()
@@ -253,7 +253,7 @@ git commit -m "refactor(keymap): resolve key/mod tables + default chord via the 
 
 ---
 
-## Task 4: `WinHotkeyBackend` — real RegisterHotKey thread
+## Task 4: `WinHotkeyBackend` - real RegisterHotKey thread
 
 **Files:** Replace `src/sonari/platform/windows/hotkeys.py`; Test `tests/test_win_hotkeys.py`
 
@@ -326,7 +326,7 @@ def test_display_combo_labels():
 
 - [ ] **Step 3: Replace `src/sonari/platform/windows/hotkeys.py`** with the real backend. All `ctypes` use is lazy and isolated in the wrapper methods:
 ```python
-"""Windows hotkey backend — in-process RegisterHotKey + GetMessage pump.
+"""Windows hotkey backend - in-process RegisterHotKey + GetMessage pump.
 
 WINDOWS-only ctypes is reached ONLY through the _register/_unregister/_get_message/
 _post_quit/_last_error wrappers (monkeypatched in tests), so this module imports
@@ -477,10 +477,10 @@ class WinHotkeyBackend(HotkeyBackend):
 - [ ] **Step 4: Run → PASS**, full suite, commit:
 ```bash
 git add src/sonari/platform/windows/hotkeys.py tests/test_win_hotkeys.py
-git commit -m "feat(windows): WinHotkeyBackend — in-process RegisterHotKey thread, dispatch, collision detection"
+git commit -m "feat(windows): WinHotkeyBackend - in-process RegisterHotKey thread, dispatch, collision detection"
 ```
 
-> **Note for Task 7 / test_win_backend.py:** the old `test_hotkey_stub_reports_deferred` (asserts `install()` returns `(False, ...M3...)`) must be updated/removed — `install()` now returns `(True, ...)`. Fix it in this task's Step 3 commit or Task 7.
+> **Note for Task 7 / test_win_backend.py:** the old `test_hotkey_stub_reports_deferred` (asserts `install()` returns `(False, ...M3...)`) must be updated/removed - `install()` now returns `(True, ...)`. Fix it in this task's Step 3 commit or Task 7.
 
 ---
 
@@ -514,7 +514,7 @@ def test_run_starts_and_dispatch_routes_message(monkeypatch):
     daemon._stop_hotkeys()
     assert started.get("stopped") is True
 ```
-(Provide minimal `_FakeQueue/_FakeSpeaker/_FakeSessions` stubs at the top of the test matching `Daemon.__init__`'s attribute use, mirroring the existing `tests/daemon_helpers.py` fakes — import those if available.)
+(Provide minimal `_FakeQueue/_FakeSpeaker/_FakeSessions` stubs at the top of the test matching `Daemon.__init__`'s attribute use, mirroring the existing `tests/daemon_helpers.py` fakes - import those if available.)
 
 - [ ] **Step 2: Run → FAIL.**
 
@@ -541,7 +541,7 @@ def test_run_starts_and_dispatch_routes_message(monkeypatch):
 ```
 In `run()`, after the speak/accept threads start, add `self._start_hotkeys()`, and in the shutdown path (where `_running` clears / threads join) add `self._stop_hotkeys()`.
 
-- [ ] **Step 4: Run → PASS**, full suite (confirm `test_daemon_*` still green on the mock harness — `get_platform()` is patched), commit:
+- [ ] **Step 4: Run → PASS**, full suite (confirm `test_daemon_*` still green on the mock harness - `get_platform()` is patched), commit:
 ```bash
 git add src/sonari/daemon.py tests/test_daemon_hotkeys.py
 git commit -m "feat(daemon): start/stop the in-process hotkey thread; route fires through the shared message handler"
@@ -549,7 +549,7 @@ git commit -m "feat(daemon): start/stop the in-process hotkey thread; route fire
 
 ---
 
-## Task 6: Doctor — surface hotkey collisions + the UIPI elevation warning
+## Task 6: Doctor - surface hotkey collisions + the UIPI elevation warning
 
 **Files:** Modify `src/sonari/cli.py` (`doctor()`); Modify `src/sonari/platform/windows/hotkeys.py` (integrity check); Test `tests/test_cli_doctor.py`, `tests/test_win_hotkeys.py`
 
@@ -557,7 +557,7 @@ git commit -m "feat(daemon): start/stop the in-process hotkey thread; route fire
 
 - [ ] **Step 1: Write the failing tests**
 ```python
-# tests/test_cli_doctor.py (add) — fake hotkey contributes a row
+# tests/test_cli_doctor.py (add) - fake hotkey contributes a row
 def test_doctor_includes_hotkey_rows(monkeypatch):
     from tests._fakeplatform import fake_platform, FakeSupervisor
     import sonari.cli as cli
@@ -634,7 +634,7 @@ def test_hotkey_backend_is_real_not_stub():
 ```
 Run the win-backend tests → PASS.
 
-- [ ] **Step 2: Author `docs/superpowers/M3-WINDOWS-ACCEPTANCE.md`** — the ⚠ on-hardware checks a mock cannot prove, each with exact steps + what to observe:
+- [ ] **Step 2: Author `docs/superpowers/M3-WINDOWS-ACCEPTANCE.md`** - the ⚠ on-hardware checks a mock cannot prove, each with exact steps + what to observe:
   - ⚠ Each of the 9 actions fires while a **non-elevated** terminal/Claude window has focus, default `Ctrl+Shift+Alt+<key>` (stop/repeat/skip/jump/catch-up/faster/slower/cycle-verbosity/reread-options).
   - ⚠ Fires **mid-speech** (stop cuts the current utterance within ~100ms).
   - ⚠ Rebinding in `~/.sonari/keymap.json` takes effect after a daemon restart.

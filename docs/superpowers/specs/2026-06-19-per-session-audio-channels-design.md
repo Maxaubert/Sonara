@@ -10,13 +10,13 @@ tagged by session), one `_paused` `Event`, one `_voice_owner`. Diagnostic loggin
 (`queue_audit.log`) during a two-session repro showed the failure:
 
 - Session B paused. Pause is global, so the speak loop froze. The speak loop is
-  also the *only* thing that releases `_voice_owner` on drain — so ownership
+  also the *only* thing that releases `_voice_owner` on drain - so ownership
   stayed pinned to B. When session A then streamed a reply, `_may_speak(A)`
   returned False (owner == B) and A's prose was **captured** (recorded, never
   spoken). Result: A was silent with no way to recover except resuming B.
 - Pausing one session silences all sessions (global `_paused`).
 - Background sessions' speech is captured into history, not kept as a replayable
-  queue — "pin an old session to hear it" is impossible because its speech was
+  queue - "pin an old session to hear it" is impossible because its speech was
   never queued.
 - Pause/mute act on `sessions.foreground()`, which bounces between sessions on
   every prompt, so repeated toggles act on different targets ("says muted twice").
@@ -44,12 +44,12 @@ the desired model is per-session.**
 Two new units replace `SpeechQueue` + the `_voice_owner`/`_open_msg`/`_captured_msg`
 machinery.
 
-### `SessionChannel` (one per session) — pure data, unit-testable
+### `SessionChannel` (one per session) - pure data, unit-testable
 
 | Field | Meaning |
 |---|---|
 | `items: list[SpeechItem]` | the session's **current message**, appended as it streams |
-| `cursor: int` | index of the next item to speak; items `< cursor` are already spoken. Items are **not discarded** — that is what makes replay-from-start possible |
+| `cursor: int` | index of the next item to speak; items `< cursor` are already spoken. Items are **not discarded** - that is what makes replay-from-start possible |
 | `turn_done: bool` | the message is complete (final PROSE / turn_done earcon) |
 | `muted: bool` | per-session mute |
 
@@ -57,9 +57,9 @@ Methods (pure): `append(item)`, `pending()` = `len(items) - cursor`,
 `ready(minqueue)` = `pending() > 0 and (pending() >= minqueue or turn_done)` (there
 is a batch worth reading now), `caught_up()` = `pending() == 0`, `next()` (return
 `items[cursor]`, advance cursor), `reset()` (cursor→0, replay), `wipe()`
-(items=[], cursor=0, turn_done=False — a new prompt).
+(items=[], cursor=0, turn_done=False - a new prompt).
 
-### `Router` — decides the active reader, drives the one speaker
+### `Router` - decides the active reader, drives the one speaker
 
 Holds `active: session | None` and consults `SessionManager` for pin/foreground.
 
@@ -68,13 +68,13 @@ Holds `active: session | None` and consults `SessionManager` for pin/foreground.
   pinned session replays from the start.
 - **Auto** (`pinned is None`): the current `active` keeps reading while its channel
   is `ready()`. When the active channel is **not** `ready()` (caught up, or pending
-  below minqueue and not yet turn_done — i.e. idle), the router picks the next
+  below minqueue and not yet turn_done - i.e. idle), the router picks the next
   reader among channels that are `ready()` and not `muted`, **foreground first,
   then oldest-waiting**. On a change of `active`, the router emits a one-item
   **"Session changed: {folder}."** announcement before that channel's items.
 - **Decisions preempt**: a channel that has received a decision item (choice / plan
   / permission) becomes `active` at the next item boundary even if another session
-  is mid-message — decisions are user-blocking. (The alert earcon already fires
+  is mid-message - decisions are user-blocking. (The alert earcon already fires
   immediately and cross-session, unchanged.)
 - If no channel is `ready()`, the speaker idles.
 

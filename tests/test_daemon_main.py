@@ -15,7 +15,7 @@ def test_ensure_running_noop_when_socket_connectable():
 def test_ensure_running_spawns_via_platform_launch_spec_when_socket_absent():
     # ensure_running asks the platform supervisor for its (argv, kwargs) launch
     # spec and Popens it verbatim. On Windows that's [pythonw, -m, sonara.daemon]
-    # with detach creationflags — no POSIX start_new_session, no bin shim.
+    # with detach creationflags -- no POSIX start_new_session, no bin shim.
     fake_argv = ["pythonw.exe", "-m", "sonara.daemon"]
     fake_kwargs = {"creationflags": 0x208}
     sup = mock.Mock()
@@ -78,8 +78,8 @@ def test_harden_process_disables_throttling_and_raises_priority(monkeypatch):
 
 def test_harden_process_actually_raises_priority_on_real_win32():
     # Integration: run the REAL ctypes path (no fake) so a handle-marshaling
-    # regression — the GetCurrentProcess pseudo-handle (-1) truncated to 32 bits,
-    # which fails with ERROR_INVALID_HANDLE and silently no-ops — is caught. A
+    # regression -- the GetCurrentProcess pseudo-handle (-1) truncated to 32 bits,
+    # which fails with ERROR_INVALID_HANDLE and silently no-ops -- is caught. A
     # pure-mock test cannot see that. Saves/restores this process's priority.
     if sys.platform != "win32":
         import pytest

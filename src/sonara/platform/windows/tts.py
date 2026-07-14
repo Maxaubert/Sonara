@@ -1,9 +1,9 @@
-"""Windows OneCore TTS backend via PyWinRT — synthesize + winsound playback.
+"""Windows OneCore TTS backend via PyWinRT -- synthesize + winsound playback.
 
 OneCore (Windows.Media.SpeechSynthesis) synthesizes a WAV stream; we play it
 with stdlib ``winsound`` from a temp file. The earlier MediaPlayer-based
 playback crashed the process with a native access violation after ~80 utterances
-(a PyWinRT MediaPlayer fragility — synthesis is fine, playback is not), which is
+(a PyWinRT MediaPlayer fragility -- synthesis is fine, playback is not), which is
 the daemon-death bug. ``winsound`` is COM-free, in-process, and stress-survives.
 
 To fit Sonara's say_runner contract (the Speaker orchestrates a proc-like
@@ -12,7 +12,7 @@ object), run() returns a _TtsHandle whose .wait(timeout)/.terminate()/
 
 WINDOWS-only: every winrt.* / winsound import is LAZY (inside methods) so this
 module imports cleanly on macOS/Linux for the mock test suite. "Working" under
-the mocks is NOT a claim that real OneCore playback works — only Windows is.
+the mocks is NOT a claim that real OneCore playback works -- only Windows is.
 
 Requirements (Windows only):
     pip install winrt-runtime winrt-Windows.Media.SpeechSynthesis \
@@ -344,7 +344,7 @@ class WinTtsBackend(TtsBackend):
         _sweep_stale_wavs()        # clear temp WAVs leaked by a prior crash (#26)
 
     def _get_kokoro(self):
-        """Lazy KokoroEngine — downloads the ~316 MB model on first Kokoro voice."""
+        """Lazy KokoroEngine -- downloads the ~316 MB model on first Kokoro voice."""
         if self._kokoro is None:
             from sonara import kokoro, paths
             self._kokoro = kokoro.KokoroEngine(paths.SONARA_DIR / "kokoro")
@@ -368,7 +368,7 @@ class WinTtsBackend(TtsBackend):
         return list(SpeechSynthesizer.all_voices)
 
     def list_voices(self) -> list:
-        """ABC contract: list of selectable voice NAMES (str) — the installed
+        """ABC contract: list of selectable voice NAMES (str) -- the installed
         OneCore voices PLUS the 28 Kokoro neural voices, but only when the optional
         [kokoro] extra is installed (else advertising them would let a user pick a
         voice whose first speak silently fails). Internal callers that need the WinRT

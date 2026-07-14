@@ -1,4 +1,4 @@
-# Summary Mode: Turn-End Settle Window — Design
+# Summary Mode: Turn-End Settle Window - Design
 
 **Issue:** Maxaubert/Sonara#14
 **Status:** Draft for review

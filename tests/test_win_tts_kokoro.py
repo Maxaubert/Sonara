@@ -63,7 +63,7 @@ def test_list_voices_includes_native_and_kokoro(monkeypatch):
 
 def test_list_voices_excludes_kokoro_without_extra(monkeypatch):
     # Base install (no [kokoro] extra, no venv): don't advertise voices that can't
-    # synthesize — otherwise the user picks one and first speak silently fails.
+    # synthesize -- otherwise the user picks one and first speak silently fails.
     b = _bare_backend()
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
     monkeypatch.setattr(kp, "neural_enabled", lambda: False)  # isolate the is_installed gate

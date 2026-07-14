@@ -12,7 +12,7 @@ def test_prose_lands_in_the_sessions_channel():
     daemon.handle_message(_prose("A", "Hello there. ", 0, True))
     ch = daemon.router.channel("A")
     assert [i.text for i in ch.items] == ["Hello there."]
-    # PROSE final=True closes the text block but does NOT set turn_done —
+    # PROSE final=True closes the text block but does NOT set turn_done --
     # Claude Code marks each streamed text block final, and the minqueue design
     # batches across blocks until the turn_done earcon or FLUSH arrives.
     assert ch.turn_done is False

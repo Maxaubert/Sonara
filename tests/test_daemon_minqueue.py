@@ -44,7 +44,7 @@ def _turn_done(session):
 def test_turn_boundary_flushes_sub_threshold_remainder():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     daemon.config["minqueue"] = 3
-    # A message ending (final) is NOT the turn boundary — Claude Code marks each
+    # A message ending (final) is NOT the turn boundary -- Claude Code marks each
     # text block final, and there are many per reply. The remainder is read when
     # the TURN ends (turn_done), not at every block.
     daemon.handle_message(_prose("fg", "Only one. ", 0, True))
@@ -56,7 +56,7 @@ def test_turn_boundary_flushes_sub_threshold_remainder():
 def test_multiple_final_messages_batch_across_the_whole_turn():
     # The bug: a tool-heavy reply streams several text blocks, each marked final.
     # Below-threshold prose must accumulate ACROSS the blocks and only read once
-    # the turn ends — not once per block.
+    # the turn ends -- not once per block.
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     daemon.config["minqueue"] = 5
     daemon.handle_message(_prose("fg", "Alpha one. Alpha two. ", 0, True))
@@ -92,7 +92,7 @@ def test_tool_announcement_bypasses_the_buffer():
 
 
 def test_immediate_cue_flushes_buffered_prose_first_to_keep_order():
-    # A tool cue is immediate, but prose that came BEFORE it must be read first —
+    # A tool cue is immediate, but prose that came BEFORE it must be read first --
     # the cue must not jump ahead of buffered prose.
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     daemon.config["minqueue"] = 5
@@ -111,6 +111,6 @@ def test_new_prompt_flush_discards_buffered_prose():
     assert _channel_pending(daemon) == 2   # items are in the channel
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
                            "session": "fg"})
-    # After FLUSH the channel is wiped — no items remain
+    # After FLUSH the channel is wiped -- no items remain
     assert _channel_pending(daemon) == 0
     assert _drain(queue) == []             # nothing readable or held

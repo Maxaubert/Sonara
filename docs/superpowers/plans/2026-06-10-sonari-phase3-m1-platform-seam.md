@@ -1,10 +1,10 @@
-# Sonari Phase 3 — Milestone 1: Platform Seam + AF_UNIX→TCP — Implementation Plan
+# Sonari Phase 3 - Milestone 1: Platform Seam + AF_UNIX→TCP - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Introduce a `sonari/platform/` abstraction seam (four backends behind one `get_platform()` factory) and migrate IPC from AF_UNIX to localhost TCP — **on macOS, with zero observable behavior change** — so Phase 3 can add a Windows backend later without the core ever branching on the OS.
+**Goal:** Introduce a `sonari/platform/` abstraction seam (four backends behind one `get_platform()` factory) and migrate IPC from AF_UNIX to localhost TCP - **on macOS, with zero observable behavior change** - so Phase 3 can add a Windows backend later without the core ever branching on the OS.
 
-**Architecture:** A new `platform/` package holds four backend interfaces (`TtsBackend`, `EarconBackend`, `HotkeyBackend`, `SupervisorBackend`) and one `PlatformBackend` bundle returned by `get_platform()` — the only `sys.platform` branch in the codebase. Existing macOS code (`run_say`/`play_earcon`/`best_enhanced_voice`, the keymap code tables, the launchctl/plist/swiftc/python-resolution machinery) **moves** behind the macOS backend; the portable core (`Speaker`, the keymap resolver, `daemon`, `cli` argparse) becomes an OS-agnostic *consumer* of the injected backend. IPC moves to a shared `platform/transport.py` over `127.0.0.1` + ephemeral port + a 256-bit token in a `0o600` lockfile.
+**Architecture:** A new `platform/` package holds four backend interfaces (`TtsBackend`, `EarconBackend`, `HotkeyBackend`, `SupervisorBackend`) and one `PlatformBackend` bundle returned by `get_platform()` - the only `sys.platform` branch in the codebase. Existing macOS code (`run_say`/`play_earcon`/`best_enhanced_voice`, the keymap code tables, the launchctl/plist/swiftc/python-resolution machinery) **moves** behind the macOS backend; the portable core (`Speaker`, the keymap resolver, `daemon`, `cli` argparse) becomes an OS-agnostic *consumer* of the injected backend. IPC moves to a shared `platform/transport.py` over `127.0.0.1` + ephemeral port + a 256-bit token in a `0o600` lockfile.
 
 **Tech Stack:** Python 3.9 stdlib only (`socket`, `secrets`, `json`, `subprocess`, `threading`, `abc`, `dataclasses`); pytest; Swift/Carbon `sonari-hotkeyd` (one socket-call site changes). Tests must pass under **both** Python 3.9 and 3.13.
 
@@ -30,27 +30,27 @@
 ## File Structure (what this milestone creates / moves)
 
 **New files:**
-- `src/sonari/platform/__init__.py` — `get_platform()` factory (the only `sys.platform` branch).
-- `src/sonari/platform/base.py` — the four ABCs + `PlatformBackend` dataclass.
-- `src/sonari/platform/transport.py` — shared localhost-TCP IPC (lockfile + token helpers, used by both OSes).
-- `src/sonari/platform/macos/__init__.py` — assembles `MacPlatformBackend`.
-- `src/sonari/platform/macos/tts.py` — `MacTtsBackend` (was `run_say` + `best_enhanced_voice`).
-- `src/sonari/platform/macos/earcon.py` — `MacEarconBackend` (was `play_earcon`).
-- `src/sonari/platform/macos/keytables.py` — `KEY_CODES` + `MOD_MASKS` (Carbon values).
-- `src/sonari/platform/macos/hotkeys.py` — `MacHotkeyBackend` (was `_build_hotkeyd` / `_hotkeyd_plist` / display tables).
-- `src/sonari/platform/macos/supervisor.py` — `MacSupervisorBackend` (was launchctl/plist/`_resolve_python`/launcher/install/uninstall machinery + doctor rows).
+- `src/sonari/platform/__init__.py` - `get_platform()` factory (the only `sys.platform` branch).
+- `src/sonari/platform/base.py` - the four ABCs + `PlatformBackend` dataclass.
+- `src/sonari/platform/transport.py` - shared localhost-TCP IPC (lockfile + token helpers, used by both OSes).
+- `src/sonari/platform/macos/__init__.py` - assembles `MacPlatformBackend`.
+- `src/sonari/platform/macos/tts.py` - `MacTtsBackend` (was `run_say` + `best_enhanced_voice`).
+- `src/sonari/platform/macos/earcon.py` - `MacEarconBackend` (was `play_earcon`).
+- `src/sonari/platform/macos/keytables.py` - `KEY_CODES` + `MOD_MASKS` (Carbon values).
+- `src/sonari/platform/macos/hotkeys.py` - `MacHotkeyBackend` (was `_build_hotkeyd` / `_hotkeyd_plist` / display tables).
+- `src/sonari/platform/macos/supervisor.py` - `MacSupervisorBackend` (was launchctl/plist/`_resolve_python`/launcher/install/uninstall machinery + doctor rows).
 - `tests/test_platform_base.py`, `tests/test_platform_factory.py`, `tests/test_transport.py`, `tests/test_macos_tts.py`, `tests/test_macos_earcon.py`, `tests/test_macos_supervisor.py`.
 
 **Modified:** `src/sonari/speaker.py`, `src/sonari/config.py`, `src/sonari/keymap.py`, `src/sonari/paths.py`, `src/sonari/client.py`, `src/sonari/daemon.py`, `src/sonari/cli.py`, `hotkeyd/sonari-hotkeyd.swift`, and the test files enumerated per task.
 
 ---
 
-# GROUP A — Scaffold the seam
+# GROUP A - Scaffold the seam
 
 ### Task 1: The four backend interfaces + `PlatformBackend` bundle
 
 **Files:**
-- Create: `src/sonari/platform/__init__.py` (empty package marker for now — the factory lands in Task 10)
+- Create: `src/sonari/platform/__init__.py` (empty package marker for now - the factory lands in Task 10)
 - Create: `src/sonari/platform/base.py`
 - Test: `tests/test_platform_base.py`
 
@@ -100,13 +100,13 @@ def test_platform_backend_bundles_the_four():
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_platform_base.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'sonari.platform'`.
+Expected: FAIL - `ModuleNotFoundError: No module named 'sonari.platform'`.
 
 - [ ] **Step 3: Create the package marker and the ABCs**
 
 Create `src/sonari/platform/__init__.py` with a single line:
 ```python
-# sonari.platform — OS abstraction seam. get_platform() lands in Task 10.
+# sonari.platform - OS abstraction seam. get_platform() lands in Task 10.
 ```
 
 Create `src/sonari/platform/base.py`:
@@ -203,7 +203,7 @@ git commit -m "feat(platform): scaffold the four backend ABCs + PlatformBackend 
 
 ---
 
-# GROUP B — Move the macOS backends behind the seam (zero behavior change)
+# GROUP B - Move the macOS backends behind the seam (zero behavior change)
 
 ### Task 2: macOS TTS backend (`run_say` + `best_enhanced_voice`)
 
@@ -244,18 +244,18 @@ def test_best_voice_falls_back_when_say_errors(monkeypatch):
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_macos_tts.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'sonari.platform.macos'`.
+Expected: FAIL - `ModuleNotFoundError: No module named 'sonari.platform.macos'`.
 
 - [ ] **Step 3: Create the macOS package + TTS backend (move the verbatim code)**
 
 Create `src/sonari/platform/macos/__init__.py`:
 ```python
-# sonari.platform.macos — the macOS PlatformBackend. Assembled in Task 9.
+# sonari.platform.macos - the macOS PlatformBackend. Assembled in Task 9.
 ```
 
-Create `src/sonari/platform/macos/tts.py` — move `run_say` and `best_enhanced_voice` verbatim from `speaker.py` (lines 8–13 and 26–64) into a backend class:
+Create `src/sonari/platform/macos/tts.py` - move `run_say` and `best_enhanced_voice` verbatim from `speaker.py` (lines 8–13 and 26–64) into a backend class:
 ```python
-"""macOS TTS backend — wraps the `say` command."""
+"""macOS TTS backend - wraps the `say` command."""
 from __future__ import annotations
 
 import subprocess
@@ -319,9 +319,9 @@ class MacTtsBackend(TtsBackend):
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_macos_tts.py -q`
 Expected: PASS (3 passed).
 
-- [ ] **Step 5: Make `speaker.py`'s functions delegate to the backend (DELEGATION-UNTIL-FLIP — do NOT change `Speaker`'s signature or defaults here)**
+- [ ] **Step 5: Make `speaker.py`'s functions delegate to the backend (DELEGATION-UNTIL-FLIP - do NOT change `Speaker`'s signature or defaults here)**
 
-> **Why:** `Speaker`'s defaults (`say_runner=run_say`, `earcon_player=play_earcon`) and the live `cli.py` call sites (`speaker.best_enhanced_voice()` at cli.py:159 in `doctor()` and cli.py:676 in `install()`) must keep working at every commit, or the daemon goes **mute in production** for the rest of Group B (the suite won't catch it — `make_daemon` injects a `FakeSpeaker`). So in T2 we keep the names + defaults intact and only move the *logic* into the backend. The `Speaker`-signature change + daemon injection + shim deletion happen together, atomically, in Task 8.
+> **Why:** `Speaker`'s defaults (`say_runner=run_say`, `earcon_player=play_earcon`) and the live `cli.py` call sites (`speaker.best_enhanced_voice()` at cli.py:159 in `doctor()` and cli.py:676 in `install()`) must keep working at every commit, or the daemon goes **mute in production** for the rest of Group B (the suite won't catch it - `make_daemon` injects a `FakeSpeaker`). So in T2 we keep the names + defaults intact and only move the *logic* into the backend. The `Speaker`-signature change + daemon injection + shim deletion happen together, atomically, in Task 8.
 
 In `src/sonari/speaker.py`: keep `run_say` and `best_enhanced_voice` as **thin delegating shims** (replace their bodies; keep the names and the `Speaker.__init__` defaults exactly as they are). Add the backend import at the top and replace the two function bodies:
 ```python
@@ -336,12 +336,12 @@ def best_enhanced_voice() -> str:
 ```
 `Speaker.__init__` (still `say_runner=run_say`, `earcon_player=play_earcon`), `Speaker.speak`, and `Speaker.cancel` are **unchanged**. `cli.py:159`/`cli.py:676` and the three `mock.patch("sonari.speaker.best_enhanced_voice", ...)` sites (test_cli_doctor.py:10, test_cli_hotkeyd.py:191 and :223) keep resolving because the shim still exists.
 
-In `tests/test_speaker.py`: the four `best_enhanced_voice` tests (lines 279–313) patch `speaker_mod.subprocess.check_output`, which no longer affects the delegated logic — so **delete lines 279–313 AND the now-dangling top-level import `from sonari.speaker import best_enhanced_voice` at line 254** (their coverage is re-expressed in `tests/test_macos_tts.py`). Keep every `Speaker`-orchestration test (they inject `say_runner=`/`earcon_player=`, unaffected). Leave the three `play_earcon`-direct tests for Task 3 (where `play_earcon` becomes a shim).
+In `tests/test_speaker.py`: the four `best_enhanced_voice` tests (lines 279–313) patch `speaker_mod.subprocess.check_output`, which no longer affects the delegated logic - so **delete lines 279–313 AND the now-dangling top-level import `from sonari.speaker import best_enhanced_voice` at line 254** (their coverage is re-expressed in `tests/test_macos_tts.py`). Keep every `Speaker`-orchestration test (they inject `say_runner=`/`earcon_player=`, unaffected). Leave the three `play_earcon`-direct tests for Task 3 (where `play_earcon` becomes a shim).
 
 - [ ] **Step 6: Run the affected suites to verify green**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_speaker.py tests/test_macos_tts.py -q`
-Expected: PASS (test_speaker collects cleanly — the dangling import is gone; the moved tests live in test_macos_tts).
+Expected: PASS (test_speaker collects cleanly - the dangling import is gone; the moved tests live in test_macos_tts).
 
 - [ ] **Step 7: Commit**
 
@@ -358,7 +358,7 @@ git commit -m "refactor(platform): move say/best-voice logic into MacTtsBackend;
 **Files:**
 - Create: `src/sonari/platform/macos/earcon.py`
 - Test: `tests/test_macos_earcon.py`
-- Modify: `src/sonari/speaker.py` (`play_earcon` → delegating shim), `tests/test_speaker.py` (remove the `play_earcon`-direct tests). **`config.py` is NOT touched here** — the `DEFAULTS` earcon removal is deferred to Task 8's atomic flip.
+- Modify: `src/sonari/speaker.py` (`play_earcon` → delegating shim), `tests/test_speaker.py` (remove the `play_earcon`-direct tests). **`config.py` is NOT touched here** - the `DEFAULTS` earcon removal is deferred to Task 8's atomic flip.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -390,13 +390,13 @@ def test_default_earcons_are_macos_system_sounds():
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_macos_earcon.py -q`
-Expected: FAIL — `ModuleNotFoundError: ... earcon`.
+Expected: FAIL - `ModuleNotFoundError: ... earcon`.
 
 - [ ] **Step 3: Create the earcon backend (move `play_earcon` + own the defaults)**
 
 Create `src/sonari/platform/macos/earcon.py`:
 ```python
-"""macOS earcon backend — wraps `afplay` + the System Sounds defaults."""
+"""macOS earcon backend - wraps `afplay` + the System Sounds defaults."""
 from __future__ import annotations
 
 import os
@@ -432,9 +432,9 @@ class MacEarconBackend(EarconBackend):
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_macos_earcon.py -q`
 Expected: PASS (3 passed).
 
-- [ ] **Step 5: Make `play_earcon` delegate (DELEGATION-UNTIL-FLIP — keep `config.DEFAULTS` earcons for now)**
+- [ ] **Step 5: Make `play_earcon` delegate (DELEGATION-UNTIL-FLIP - keep `config.DEFAULTS` earcons for now)**
 
-> **Why:** removing the `.aiff` block from `config.DEFAULTS` now (before the daemon backfills from the backend, which lands in Task 8) leaves any user without a persisted `earcons` block with **no earcons in production** for the rest of Group B — another silent invariant-#1 violation the suite won't catch. So `MacEarconBackend.default_earcons()` is created here (additive, harmless) but the `config.DEFAULTS` deletion is deferred to the atomic Task 8 flip.
+> **Why:** removing the `.aiff` block from `config.DEFAULTS` now (before the daemon backfills from the backend, which lands in Task 8) leaves any user without a persisted `earcons` block with **no earcons in production** for the rest of Group B - another silent invariant-#1 violation the suite won't catch. So `MacEarconBackend.default_earcons()` is created here (additive, harmless) but the `config.DEFAULTS` deletion is deferred to the atomic Task 8 flip.
 
 In `src/sonari/speaker.py`: keep `play_earcon` as a **delegating shim** (replace its body; keep the name and the `earcon_player=play_earcon` default). Reuse the Task 2 backend import block by adding the earcon backend:
 ```python
@@ -444,9 +444,9 @@ _MAC_EARCON = MacEarconBackend()
 def play_earcon(path):
     return _MAC_EARCON.play(path)
 ```
-**Do NOT touch `config.py` in this task** — `DEFAULTS["earcons"]` stays as-is.
+**Do NOT touch `config.py` in this task** - `DEFAULTS["earcons"]` stays as-is.
 
-In `tests/test_speaker.py`: the three `play_earcon`-direct tests (lines 142–176) patch `speaker_mod.os.path`/`speaker_mod.subprocess`, which no longer affect the delegated logic — **delete those three tests** (re-expressed in `tests/test_macos_earcon.py`). Keep the earcon-*orchestration* tests that inject `earcon_player=` (lines 113, 124, 132, 208, 237) — they're unaffected.
+In `tests/test_speaker.py`: the three `play_earcon`-direct tests (lines 142–176) patch `speaker_mod.os.path`/`speaker_mod.subprocess`, which no longer affect the delegated logic - **delete those three tests** (re-expressed in `tests/test_macos_earcon.py`). Keep the earcon-*orchestration* tests that inject `earcon_player=` (lines 113, 124, 132, 208, 237) - they're unaffected.
 
 - [ ] **Step 6: Run affected suites**
 
@@ -473,7 +473,7 @@ git commit -m "refactor(platform): move afplay into MacEarconBackend; speaker.py
 
 ```python
 # add to tests/test_macos_tts.py is wrong location; create assertion in test_keymap.py
-# tests/test_keymap.py — add:
+# tests/test_keymap.py - add:
 def test_keytables_live_in_macos_backend():
     from sonari.platform.macos import keytables
     assert keytables.KEY_CODES["o"] == 31
@@ -487,7 +487,7 @@ def test_keytables_live_in_macos_backend():
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_keymap.py::test_keytables_live_in_macos_backend -q`
-Expected: FAIL — `ModuleNotFoundError: ... keytables`.
+Expected: FAIL - `ModuleNotFoundError: ... keytables`.
 
 - [ ] **Step 3: Create keytables.py; re-export from keymap.py**
 
@@ -513,9 +513,9 @@ In `src/sonari/keymap.py`, replace the inline `KEY_CODES`/`MOD_MASKS` definition
 ```python
 from sonari.platform.macos.keytables import KEY_CODES, MOD_MASKS
 ```
-(Place this import with the other imports near the top. `resolve_keymap()` already references the module-level `KEY_CODES`/`MOD_MASKS`, which now resolve to the re-exported names — no further change.)
+(Place this import with the other imports near the top. `resolve_keymap()` already references the module-level `KEY_CODES`/`MOD_MASKS`, which now resolve to the re-exported names - no further change.)
 
-> **The re-export is load-bearing — do NOT delete `keymap.KEY_CODES`/`keymap.MOD_MASKS`.** Pre-existing tests still read them via the `keymap` module: `test_keymap.py:21–34` (`test_key_codes_cover_default_keys`, `test_mod_masks_values`) and `test_cli_hotkeyd.py:256–269` (the display-table cross-check imports `sonari.keymap as _keymap` and compares `_keymap.KEY_CODES.values()`). Keeping the re-export means those tests pass unchanged.
+> **The re-export is load-bearing - do NOT delete `keymap.KEY_CODES`/`keymap.MOD_MASKS`.** Pre-existing tests still read them via the `keymap` module: `test_keymap.py:21–34` (`test_key_codes_cover_default_keys`, `test_mod_masks_values`) and `test_cli_hotkeyd.py:256–269` (the display-table cross-check imports `sonari.keymap as _keymap` and compares `_keymap.KEY_CODES.values()`). Keeping the re-export means those tests pass unchanged.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -564,13 +564,13 @@ def test_display_tables_cover_every_keycode_and_modifier():
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_macos_hotkeys.py -q`
-Expected: FAIL — module missing.
+Expected: FAIL - module missing.
 
 - [ ] **Step 3: Create the hotkey backend (move build + display logic)**
 
 Create `src/sonari/platform/macos/hotkeys.py`. Move `_build_hotkeyd` (cli.py 541–577) and `_hotkeyd_plist` logic here, and build the display tables from `keytables`:
 ```python
-"""macOS hotkey backend — compiles + supervises the Swift Carbon hotkeyd."""
+"""macOS hotkey backend - compiles + supervises the Swift Carbon hotkeyd."""
 from __future__ import annotations
 
 import hashlib
@@ -710,13 +710,13 @@ def test_doctor_rows_include_say_and_swiftc(monkeypatch):
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_macos_supervisor.py -q`
-Expected: FAIL — module missing.
+Expected: FAIL - module missing.
 
 - [ ] **Step 3: Create the supervisor backend**
 
 Create `src/sonari/platform/macos/supervisor.py`. Move `_PYTHON_CANDIDATE_NAMES` (cli.py 292–295), `_probe_python_version` (298–311), `_resolve_python` (314–343), `_launchctl` (580–585), `_plist` (462–513), `_launchagent_plist` (516–530), `_place_launcher` (401–417) verbatim into methods, and provide `launch_spec`, `is_installed`, `is_running`, and `doctor_rows` (the macOS rows). Use `paths` + `repo_root` for the daemon shim path:
 ```python
-"""macOS supervisor backend — launchd/launchctl install + python resolution."""
+"""macOS supervisor backend - launchd/launchctl install + python resolution."""
 from __future__ import annotations
 
 import os
@@ -818,16 +818,16 @@ def _probe_python_version(c): return _mac_sup._probe_python_version(c)
 def _launchctl(args): return _mac_sup.launchctl(args)
 def _plist(*a, **k): return _mac_sup.plist(*a, **k)
 ```
-In `cli.doctor()`, replace the macOS rows with `rows.extend(_mac_sup.doctor_rows())` while keeping the neutral rows (SONARI_DIR writable, daemon socket, plugin hooks.json, plugin path resolved, keymap resolves) inline. In `src/sonari/daemon.py`, change `_launcher_present()` (lines 203–208) to consult the supervisor backend. **Use the direct backend import here — `get_platform()` does not exist until Task 8.** Task 8 swaps this to the factory form.
+In `cli.doctor()`, replace the macOS rows with `rows.extend(_mac_sup.doctor_rows())` while keeping the neutral rows (SONARI_DIR writable, daemon socket, plugin hooks.json, plugin path resolved, keymap resolves) inline. In `src/sonari/daemon.py`, change `_launcher_present()` (lines 203–208) to consult the supervisor backend. **Use the direct backend import here - `get_platform()` does not exist until Task 8.** Task 8 swaps this to the factory form.
 ```python
 @staticmethod
 def _launcher_present() -> bool:
     from sonari.platform.macos.supervisor import MacSupervisorBackend
     return MacSupervisorBackend().is_installed()
 ```
-(The existing tests at `tests/test_daemon_setup_health.py:19–73` monkeypatch the `_launcher_present` static method wholesale, so they stay green regardless of its body — no test churn here.)
+(The existing tests at `tests/test_daemon_setup_health.py:19–73` monkeypatch the `_launcher_present` static method wholesale, so they stay green regardless of its body - no test churn here.)
 
-Update `tests/test_cli_resolve_python.py` to patch `sonari.platform.macos.supervisor` symbols (or keep patching `cli._probe_python_version` — the wrapper still exists, so these tests pass unchanged). Update `tests/test_cli_doctor.py` `_ok_patches()` to patch `sonari.platform.macos.supervisor.shutil.which` for say/afplay/swiftc and `..supervisor`'s launchctl; the asserted key list is unchanged because row names didn't change.
+Update `tests/test_cli_resolve_python.py` to patch `sonari.platform.macos.supervisor` symbols (or keep patching `cli._probe_python_version` - the wrapper still exists, so these tests pass unchanged). Update `tests/test_cli_doctor.py` `_ok_patches()` to patch `sonari.platform.macos.supervisor.shutil.which` for say/afplay/swiftc and `..supervisor`'s launchctl; the asserted key list is unchanged because row names didn't change.
 
 - [ ] **Step 5: Run to verify green**
 
@@ -867,7 +867,7 @@ def test_make_backend_returns_full_bundle():
     assert isinstance(pb.supervisor, base.SupervisorBackend)
 ```
 
-- [ ] **Step 2: Run it to verify it fails** — `ImportError: cannot import name 'make_backend'`.
+- [ ] **Step 2: Run it to verify it fails** - `ImportError: cannot import name 'make_backend'`.
 
 - [ ] **Step 3: Implement the assembler**
 
@@ -902,7 +902,7 @@ git commit -m "feat(platform): assemble MacPlatformBackend"
 
 ### Task 8: The `get_platform()` factory + THE ATOMIC FLIP
 
-> **This is the single commit where the delegation-until-flip lands.** Everything that would have broken production or tests if done piecemeal in T2/T3 happens here, together: the `Speaker` signature change, the daemon's backend injection, the earcon backfill + `config.DEFAULTS` deletion, the `cli` best-voice repoint, the shim deletion, and the matching test-patch repoints. Before this commit the suite is green AND production is byte-identical; after it, the seam is live. Run the **full dual-interpreter gate** at the end (not a narrow suite) — these changes touch the whole composition root.
+> **This is the single commit where the delegation-until-flip lands.** Everything that would have broken production or tests if done piecemeal in T2/T3 happens here, together: the `Speaker` signature change, the daemon's backend injection, the earcon backfill + `config.DEFAULTS` deletion, the `cli` best-voice repoint, the shim deletion, and the matching test-patch repoints. Before this commit the suite is green AND production is byte-identical; after it, the seam is live. Run the **full dual-interpreter gate** at the end (not a narrow suite) - these changes touch the whole composition root.
 
 **Files:**
 - Modify: `src/sonari/platform/__init__.py` (the factory), `src/sonari/speaker.py` (signature → injected, delete shims), `src/sonari/config.py` (drop `DEFAULTS["earcons"]`), `src/sonari/daemon.py` (inject + backfill + `_launcher_present` via factory), `src/sonari/cli.py` (best-voice via backend)
@@ -937,7 +937,7 @@ def test_get_platform_rejects_unknown_os(monkeypatch):
 
 `src/sonari/platform/__init__.py`:
 ```python
-"""get_platform() — the single OS dispatch point for Sonari."""
+"""get_platform() - the single OS dispatch point for Sonari."""
 from __future__ import annotations
 
 import sys
@@ -963,7 +963,7 @@ def get_platform() -> PlatformBackend:
 
 - [ ] **Step 4: The atomic flip (all of the following in ONE commit)**
 
-**(a) `src/sonari/speaker.py` — make `Speaker` truly portable; delete the shims.** Change the defaults to `None` and add the no-op guards, then **delete** the Task 2/3 delegating shims (`run_say`, `best_enhanced_voice`, `play_earcon`) and their `from sonari.platform.macos...` imports so `speaker.py` no longer imports any backend:
+**(a) `src/sonari/speaker.py` - make `Speaker` truly portable; delete the shims.** Change the defaults to `None` and add the no-op guards, then **delete** the Task 2/3 delegating shims (`run_say`, `best_enhanced_voice`, `play_earcon`) and their `from sonari.platform.macos...` imports so `speaker.py` no longer imports any backend:
 ```python
 class Speaker:
     def __init__(self, voice=None, rate=200, say_runner=None,
@@ -987,7 +987,7 @@ class Speaker:
 ```
 In the earcon-playing method, add `if self._earcon_player is None: return` at the top (before it calls `self._earcon_player(...)`).
 
-**(b) `src/sonari/config.py` — drop the `.aiff` defaults** (now backfilled from the backend). New `DEFAULTS`:
+**(b) `src/sonari/config.py` - drop the `.aiff` defaults** (now backfilled from the backend). New `DEFAULTS`:
 ```python
 DEFAULTS = {
     "voice": None, "rate": 200, "verbosity": "everything",
@@ -995,7 +995,7 @@ DEFAULTS = {
 }
 ```
 
-**(c) `src/sonari/daemon.py` — inject the backend + backfill earcons + factory-ify `_launcher_present`.** At the `Speaker(...)` site (line 612):
+**(c) `src/sonari/daemon.py` - inject the backend + backfill earcons + factory-ify `_launcher_present`.** At the `Speaker(...)` site (line 612):
 ```python
 from sonari.platform import get_platform
 _backend = get_platform()
@@ -1012,7 +1012,7 @@ speaker = Speaker(
 ```
 And change `_launcher_present` (set to the direct-import form in Task 6) to the factory form: `from sonari.platform import get_platform; return get_platform().supervisor.is_installed()`.
 
-**(d) `src/sonari/cli.py` — best-voice via the backend.** Repoint the two `speaker.best_enhanced_voice()` call sites — cli.py:159 (the `doctor()` "enhanced voice" row) and cli.py:676 (the `install()` voice check) — to `get_platform().tts.best_voice()` (add `from sonari.platform import get_platform`). Remove the now-unused `from . import speaker` there if nothing else needs it.
+**(d) `src/sonari/cli.py` - best-voice via the backend.** Repoint the two `speaker.best_enhanced_voice()` call sites - cli.py:159 (the `doctor()` "enhanced voice" row) and cli.py:676 (the `install()` voice check) - to `get_platform().tts.best_voice()` (add `from sonari.platform import get_platform`). Remove the now-unused `from . import speaker` there if nothing else needs it.
 
 **(e) Repoint the `best_enhanced_voice` test patches.** In `tests/test_cli_doctor.py:10` (`_ok_patches`) and `tests/test_cli_hotkeyd.py:191` + `:223`, change `mock.patch("sonari.speaker.best_enhanced_voice", return_value=...)` to patch the symbol cli now invokes: `mock.patch("sonari.platform.macos.tts.MacTtsBackend.best_voice", return_value="Ava")`. If `tests/test_config.py` asserts `DEFAULTS["earcons"]`, change it to assert `"earcons" not in DEFAULTS` (grep `tests/test_config.py` for `earcons` first; if absent, no change).
 
@@ -1031,12 +1031,12 @@ Expected: PASS on both. This is the gate that catches anything the narrow per-ta
 git add src/sonari/platform/__init__.py src/sonari/speaker.py src/sonari/config.py \
         src/sonari/daemon.py src/sonari/cli.py tests/test_platform_factory.py \
         tests/test_cli_doctor.py tests/test_cli_hotkeyd.py tests/test_config.py
-git commit -m "feat(platform): get_platform() factory + atomic flip — Speaker takes injected backend callables; daemon injects the macOS backend; remove shims + .aiff DEFAULTS; cli best-voice via backend (the only sys.platform branch)"
+git commit -m "feat(platform): get_platform() factory + atomic flip - Speaker takes injected backend callables; daemon injects the macOS backend; remove shims + .aiff DEFAULTS; cli best-voice via backend (the only sys.platform branch)"
 ```
 
 ---
 
-# GROUP C — Migrate IPC from AF_UNIX to localhost TCP
+# GROUP C - Migrate IPC from AF_UNIX to localhost TCP
 
 > After this group, `~/.sonari/speechd.sock` is gone; `~/.sonari/daemon.lock` (JSON: host/port/token/pid, mode 0o600) replaces it. The wire protocol (`protocol.encode`/`decode`) is unchanged. A mandatory token gate replaces the filesystem permission the AF_UNIX socket provided.
 
@@ -1076,7 +1076,7 @@ def test_connectable_true_against_a_live_listener(tmp_path):
     lock = tmp_path / "daemon.lock"
     transport.write_lockfile(lock, "127.0.0.1", port, "tok", 999999)
     # PID 999999 is unlikely-live; connectable must NOT depend on PID when the
-    # socket actually accepts — it returns True because connect() succeeds.
+    # socket actually accepts - it returns True because connect() succeeds.
     t = threading.Thread(target=lambda: srv.accept(), daemon=True)
     t.start()
     assert transport.connectable(lock) is True
@@ -1087,7 +1087,7 @@ def test_connectable_false_when_lockfile_absent(tmp_path):
     assert transport.connectable(tmp_path / "absent.lock") is False
 ```
 
-- [ ] **Step 2: Run it to verify it fails** — module missing.
+- [ ] **Step 2: Run it to verify it fails** - module missing.
 
 - [ ] **Step 3: Implement the transport**
 
@@ -1264,7 +1264,7 @@ def ensure_running() -> None:
     argv, kwargs = get_platform().supervisor.launch_spec()
     subprocess.Popen(argv, **kwargs)
 ```
-The `main()` single-instance guard already calls `socket_connectable()` — now TCP-aware, no change.
+The `main()` single-instance guard already calls `socket_connectable()` - now TCP-aware, no change.
 
 - [ ] **Step 4: Rewrite `client.send` to use the transport**
 
@@ -1297,7 +1297,7 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
 
 - [ ] **Step 5: Update conftest.py + test_client_send.py**
 
-In `tests/conftest.py`, replace the `SOCKET_PATH` monkeypatch (line 38) with **two** repoints (keep the `APP_DIR` repoint at line 36): `monkeypatch.setattr(paths, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)` **and** `import sonari.client as client_mod; monkeypatch.setattr(client_mod, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)`. The second is essential: `client.send` does `from sonari.paths import LOCK_PATH` (a by-value bind), so an isolated test that calls the real `send` would otherwise read the developer's **real** `~/.sonari/daemon.lock` — exactly why `test_client_send.py` already patches both `SOCKET_PATH` names today. (Also confirm no other module bound `LOCK_PATH` by value that an isolated test exercises.)
+In `tests/conftest.py`, replace the `SOCKET_PATH` monkeypatch (line 38) with **two** repoints (keep the `APP_DIR` repoint at line 36): `monkeypatch.setattr(paths, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)` **and** `import sonari.client as client_mod; monkeypatch.setattr(client_mod, "LOCK_PATH", sonari_dir / "daemon.lock", raising=False)`. The second is essential: `client.send` does `from sonari.paths import LOCK_PATH` (a by-value bind), so an isolated test that calls the real `send` would otherwise read the developer's **real** `~/.sonari/daemon.lock` - exactly why `test_client_send.py` already patches both `SOCKET_PATH` names today. (Also confirm no other module bound `LOCK_PATH` by value that an isolated test exercises.)
 
 In `tests/test_cli_control.py`, update `test_client_send_raises_daemon_not_running_on_connection_refused` (line ~159): change the `monkeypatch.setattr(client_mod, "SOCKET_PATH", ...)` at line 166 to `monkeypatch.setattr(client_mod, "LOCK_PATH", tmp_path / "daemon.lock", raising=False)` pointing at a **nonexistent** lockfile, so `transport.connect` raises `OSError` ("lockfile missing") and `send` deterministically raises `DaemonNotRunning`.
 
@@ -1406,7 +1406,7 @@ git commit -m "feat(transport): Swift hotkeyd reads the lockfile and sends token
 
 ---
 
-# GROUP D — Guard the invariant + live verification
+# GROUP D - Guard the invariant + live verification
 
 ### Task 12: Enforce "no OS branch in core" + final dual-interpreter gate + live ear-check
 
@@ -1441,9 +1441,9 @@ def test_only_factory_branches_on_platform():
     assert "sys.platform" in factory  # the one allowed branch
 ```
 
-> Note: `keymap.py` imports `KEY_CODES` from `platform.macos.keytables` (Task 4) — that's a concrete-backend import in a "core" module, which this test would flag. Resolve by having `keymap.py` import the tables via the factory (`get_platform()` does not expose keytables, so instead) — simpler: move the `keytables` import OUT of `keymap.py` and have `resolve_keymap()` accept the tables as parameters injected by the macOS hotkey backend's resolver, OR drop `keymap.py` from the CORE list and document it as a macOS-coupled module pending the Windows keytables in M3. **Decision: drop `keymap.py` from CORE for M1** (it legitimately needs platform keytables; M3 adds the Windows table + a resolver injection). Update the CORE list to exclude `keymap.py` and add a comment.
+> Note: `keymap.py` imports `KEY_CODES` from `platform.macos.keytables` (Task 4) - that's a concrete-backend import in a "core" module, which this test would flag. Resolve by having `keymap.py` import the tables via the factory (`get_platform()` does not expose keytables, so instead) - simpler: move the `keytables` import OUT of `keymap.py` and have `resolve_keymap()` accept the tables as parameters injected by the macOS hotkey backend's resolver, OR drop `keymap.py` from the CORE list and document it as a macOS-coupled module pending the Windows keytables in M3. **Decision: drop `keymap.py` from CORE for M1** (it legitimately needs platform keytables; M3 adds the Windows table + a resolver injection). Update the CORE list to exclude `keymap.py` and add a comment.
 
-- [ ] **Step 2: Run it** — adjust the CORE list per the note until green.
+- [ ] **Step 2: Run it** - adjust the CORE list per the note until green.
 
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_no_os_branch_in_core.py -q`
 Expected: PASS.
@@ -1470,15 +1470,15 @@ git commit -m "test(platform): enforce no sys.platform branch / no macos import 
 cd ~/projects/private/claude-tts && ./bin/sonari install   # rebuilds app dir + hotkeyd + reloads agents
 sonari doctor                                               # all green
 ```
-Then in a real `claude` session, confirm by ear (escalate to Nima — this is the ⚠ human listen-test): prose narrates, an earcon plays, `Ctrl+Cmd+O` re-reads options, `Ctrl+Cmd+S` stops. Behavior must be **indistinguishable** from v0.5.0. If anything regressed, do NOT proceed — fix forward.
+Then in a real `claude` session, confirm by ear (escalate to Nima - this is the ⚠ human listen-test): prose narrates, an earcon plays, `Ctrl+Cmd+O` re-reads options, `Ctrl+Cmd+S` stops. Behavior must be **indistinguishable** from v0.5.0. If anything regressed, do NOT proceed - fix forward.
 
 ---
 
 ## Self-Review checklist (run before handing off)
 
-- **Spec coverage (§2 of the design):** seam package ✅(T1,7,8), four ABCs ✅(T1), `TtsBackend` logic ✅(T2), `EarconBackend` ✅(T3), keytables ✅(T4), `HotkeyBackend` ✅(T5), `SupervisorBackend` + doctor rows + `is_installed` ✅(T6), `get_platform()` single branch + Speaker injection + earcon backfill ✅(T8 flip), `transport.py` TCP + mandatory token ✅(T9,T10,T11), Swift hotkeyd → TCP ✅(T11), `ensure_running` via `launch_spec` ✅(T10), `_launcher_present`→`is_installed` ✅(T6 direct, T8 factory). **Out of M1 scope (correctly deferred):** the Windows backends, `bin/*` shim Windows equivalents, `_resolve_python` Windows split — those are M2.
-- **Zero-behavior-change invariant — DELEGATION-UNTIL-FLIP (the key correctness mechanism, post-review):** T2–T7 only *add* backends + make `speaker.py`/`cli.py` *delegate* to them; `Speaker`'s signature/defaults, `config.DEFAULTS`, and every live call site stay byte-identical, so each intermediate commit is genuinely behavior-preserving (narrow per-task test commands are therefore safe). **All the breaking cleanups** — `Speaker` defaults→None, daemon injection, earcon backfill + `.aiff` removal, `cli` best-voice repoint, shim deletion, test-patch repoints — land **together in the single T8 flip**, gated by the **full dual-interpreter suite**. T11/T12 re-run the full gate; T12 adds the live ear-check. ✅
-- **No placeholders:** the only elided bodies are explicit "verbatim move of cli.<fn> lines N–M" with the source lines cited (T6 `_probe_python_version`, `plist`, remaining doctor rows) — the executor copies exact existing code. Acceptable per "repeat the code" only-where-it's-a-pure-move.
+- **Spec coverage (§2 of the design):** seam package ✅(T1,7,8), four ABCs ✅(T1), `TtsBackend` logic ✅(T2), `EarconBackend` ✅(T3), keytables ✅(T4), `HotkeyBackend` ✅(T5), `SupervisorBackend` + doctor rows + `is_installed` ✅(T6), `get_platform()` single branch + Speaker injection + earcon backfill ✅(T8 flip), `transport.py` TCP + mandatory token ✅(T9,T10,T11), Swift hotkeyd → TCP ✅(T11), `ensure_running` via `launch_spec` ✅(T10), `_launcher_present`→`is_installed` ✅(T6 direct, T8 factory). **Out of M1 scope (correctly deferred):** the Windows backends, `bin/*` shim Windows equivalents, `_resolve_python` Windows split - those are M2.
+- **Zero-behavior-change invariant - DELEGATION-UNTIL-FLIP (the key correctness mechanism, post-review):** T2–T7 only *add* backends + make `speaker.py`/`cli.py` *delegate* to them; `Speaker`'s signature/defaults, `config.DEFAULTS`, and every live call site stay byte-identical, so each intermediate commit is genuinely behavior-preserving (narrow per-task test commands are therefore safe). **All the breaking cleanups** - `Speaker` defaults→None, daemon injection, earcon backfill + `.aiff` removal, `cli` best-voice repoint, shim deletion, test-patch repoints - land **together in the single T8 flip**, gated by the **full dual-interpreter suite**. T11/T12 re-run the full gate; T12 adds the live ear-check. ✅
+- **No placeholders:** the only elided bodies are explicit "verbatim move of cli.<fn> lines N–M" with the source lines cited (T6 `_probe_python_version`, `plist`, remaining doctor rows) - the executor copies exact existing code. Acceptable per "repeat the code" only-where-it's-a-pure-move.
 - **Type/name consistency:** backend method names are consistent across T1 (ABCs) and T2–T8 (impls): `TtsBackend.run/best_voice/list_voices`, `EarconBackend.play/default_earcons`, `HotkeyBackend.install/uninstall/display_combo`, `SupervisorBackend.install/uninstall/is_running/is_installed/resolve_python/launch_spec/doctor_rows`. Transport API consistent across T9–T11: `make_token/write_lockfile/read_lockfile/connect/connectable`, `LOCK_PATH`, `daemon._token`.
 
 ---
@@ -1486,5 +1486,5 @@ Then in a real `claude` session, confirm by ear (escalate to Nima — this is th
 ## Execution Handoff
 
 Two execution options:
-1. **Subagent-Driven (recommended)** — fresh subagent per task, two-stage review (spec compliance then code quality) between tasks, fast iteration.
-2. **Inline Execution** — execute tasks in this session with checkpoints.
+1. **Subagent-Driven (recommended)** - fresh subagent per task, two-stage review (spec compliance then code quality) between tasks, fast iteration.
+2. **Inline Execution** - execute tasks in this session with checkpoints.

@@ -39,7 +39,7 @@ def _drain(daemon, n=20):
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — The original bug repro (#59)
+# Test 1 -- The original bug repro (#59)
 # Pausing B then switching to A must NOT silence A.
 # ---------------------------------------------------------------------------
 
@@ -71,7 +71,7 @@ def test_pausing_one_session_does_not_lose_anothers_speech():
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — Two sessions take turns, nothing is lost
+# Test 2 -- Two sessions take turns, nothing is lost
 # ---------------------------------------------------------------------------
 
 def test_two_sessions_take_turns_nothing_lost():
@@ -160,7 +160,7 @@ def test_session_change_fires_chime_earcon():
 
 def test_global_mute_silences_the_session_change_announcement_and_chime():
     """When globally muted, a hand-off must not voice 'Session changed: ...' nor
-    fire the session_change chime — mute means silence, including hand-offs."""
+    fire the session_change chime -- mute means silence, including hand-offs."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
                            "session": "A", "cwd": "/home/user/alpha", "plugin_version": ""})
@@ -183,7 +183,7 @@ def test_global_mute_silences_the_session_change_announcement_and_chime():
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — Cooperative hand-off: active reader keeps the floor until its
+# Test 3 -- Cooperative hand-off: active reader keeps the floor until its
 # batch drains, THEN the new foreground takes over.
 # ---------------------------------------------------------------------------
 
@@ -228,7 +228,7 @@ def test_cooperative_handoff_waits_for_current_session():
 
 
 # ---------------------------------------------------------------------------
-# Test 5a — Background session's tool announcement is suppressed, then heard
+# Test 5a -- Background session's tool announcement is suppressed, then heard
 # ---------------------------------------------------------------------------
 
 def test_background_tool_announcement_deferred_until_session_is_active():
@@ -273,7 +273,7 @@ def test_background_tool_announcement_deferred_until_session_is_active():
 
 
 # ---------------------------------------------------------------------------
-# Test 5b — Background decision preempts in non-earcon_only config (I1)
+# Test 5b -- Background decision preempts in non-earcon_only config (I1)
 # ---------------------------------------------------------------------------
 
 def test_background_decision_preempts_current_reader():
@@ -348,7 +348,7 @@ def test_background_decision_preempts_current_reader():
 
 
 # ---------------------------------------------------------------------------
-# Test 6 — Muted foreground: no audio from it; daemon does not get stuck
+# Test 6 -- Muted foreground: no audio from it; daemon does not get stuck
 # ---------------------------------------------------------------------------
 
 def test_global_mute_silences_every_session():
@@ -374,7 +374,7 @@ def test_global_mute_silences_every_session():
 
 
 # ---------------------------------------------------------------------------
-# Test 7 — C1: Idle-gap handoff announces
+# Test 7 -- C1: Idle-gap handoff announces
 # ---------------------------------------------------------------------------
 
 def test_idle_gap_handoff_announces():
@@ -426,7 +426,7 @@ def test_idle_gap_handoff_announces():
 
 
 # ---------------------------------------------------------------------------
-# Test 8 — I1: Background decision while idle is read
+# Test 8 -- I1: Background decision while idle is read
 # ---------------------------------------------------------------------------
 
 def test_background_decision_while_idle_is_read():
@@ -464,7 +464,7 @@ def test_background_decision_while_idle_is_read():
 
 
 # ---------------------------------------------------------------------------
-# Test 9 — I3: Muted foreground falls through to a ready background
+# Test 9 -- I3: Muted foreground falls through to a ready background
 # ---------------------------------------------------------------------------
 
 def test_muted_foreground_falls_through_to_ready_background():
@@ -513,7 +513,7 @@ def test_muted_foreground_falls_through_to_ready_background():
 
 
 # ---------------------------------------------------------------------------
-# Test 10 — NEXT_SESSION hotkey: cycles sessions, chime fires, both heard
+# Test 10 -- NEXT_SESSION hotkey: cycles sessions, chime fires, both heard
 # ---------------------------------------------------------------------------
 
 def test_session_change_cycles_and_revisits():

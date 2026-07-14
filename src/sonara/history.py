@@ -73,7 +73,7 @@ class SessionHistory:
                 continue
             seen.add(e.msg_id)
             # The first PRESENT entry of a group. If its seq != 0 the group's head
-            # was evicted by the rolling cap, so the group is truncated — exclude it
+            # was evicted by the rolling cap, so the group is truncated -- exclude it
             # from navigation rather than letting nav replay a fragment (#8).
             if e.seq == 0:
                 ids.append(e.msg_id)

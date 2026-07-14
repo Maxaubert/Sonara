@@ -1,4 +1,4 @@
-# Session Pin Focus — design (#31)
+# Session Pin Focus - design (#31)
 
 **Status:** approved design, pre-plan
 **Issue:** nimkimi/sonari#31
@@ -59,7 +59,7 @@ not OS-driven.
 The key insight: **a pin overrides what "foreground" means.** `_may_speak` and
 `_claim_for_decision` already gate on `sessions.is_foreground(session)`. Making the
 effective foreground be `pinned if pinned else _foreground` means the voice-
-ownership logic needs **no changes** — the pin flows through the existing gate.
+ownership logic needs **no changes** - the pin flows through the existing gate.
 
 ### `src/sonari/sessions.py` (SessionManager)
 - Replace `_sessions: set[str]` with an **insertion-ordered** `dict[str, str]`
@@ -88,12 +88,12 @@ ownership logic needs **no changes** — the pin flows through the existing gate
   - `"none"`     -> error earcon only (no spoken text)
 - The "pinned"/"unpinned" announcement is enqueued as owned by the **effective
   foreground after the toggle** (which is always a real session: `cur`), so the
-  existing `_may_speak` gate lets it through — it is a system confirmation the user
+  existing `_may_speak` gate lets it through - it is a system confirmation the user
   must hear. The "none" case has no session to speak through, so it is an earcon
   only (the press still gives audible feedback that nothing was pinnable).
 - `SET_FOREGROUND` / `SESSION_START` handlers: pass `cwd` from the message payload
   through to `sessions.set_foreground(... , cwd=...)` / `register`.
-- No change to `_may_speak` / `_claim_for_decision` bodies — they already key on
+- No change to `_may_speak` / `_claim_for_decision` bodies - they already key on
   `is_foreground`, which now honors the pin.
 
 ### `src/sonari/keymap.py` + hotkey backends
@@ -117,7 +117,7 @@ ownership logic needs **no changes** — the pin flows through the existing gate
   keys on the distinct session id, so the correct tab is pinned even though the
   spoken name is ambiguous. (A numeric disambiguator is a possible later polish,
   out of scope here.)
-- Rapid double-press: deterministic — second press sees the state the first left.
+- Rapid double-press: deterministic - second press sees the state the first left.
 
 ## Testing (TDD)
 
@@ -138,7 +138,7 @@ ownership logic needs **no changes** — the pin flows through the existing gate
 
 ## Out of scope (this PR)
 
-- Cycle / list-sessions hotkeys (dropped per product decision — single `P` only).
+- Cycle / list-sessions hotkeys (dropped per product decision - single `P` only).
 - OS window/tab auto-detection (infeasible for tabbed terminals; documented above).
 - A `sonari sessions` CLI listing command (optional, low priority; can follow).
 

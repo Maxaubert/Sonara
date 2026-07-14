@@ -1,4 +1,4 @@
-# Summary Mode: Question Lead-In Settle — Design
+# Summary Mode: Question Lead-In Settle - Design
 
 **Issue:** Maxaubert/Sonara#16
 **Status:** Approved (extends the #14 settle window; same mechanism)

@@ -1,4 +1,4 @@
-# Echo — Eyes-Free Claude Code (Design Spec)
+# Echo - Eyes-Free Claude Code (Design Spec)
 
 **Status:** Draft for review
 **Date:** 2026-06-04
@@ -11,15 +11,15 @@
 ## 1. Purpose & success criteria
 
 A blind / low-vision developer must be able to use Claude Code **without looking at the
-screen at all** — both to *hear* everything important and to *act* on it (answer
+screen at all** - both to *hear* everything important and to *act* on it (answer
 questions, approve actions, choose plans) entirely by keyboard and voice output.
 
 The current `claude-tts` tool falls short: speech interrupts itself, interactive
 options are never read, and the experience is generally unreliable. This is a **ground-up
 redesign**, not a patch.
 
-**Success = the user can run a full Claude Code session — including planning, answering
-multiple-choice questions, and approving tool actions — with the screen off.**
+**Success = the user can run a full Claude Code session - including planning, answering
+multiple-choice questions, and approving tool actions - with the screen off.**
 
 ### Primary user
 - Has some residual vision, uses a magnifier, is not a fluent screen-reader user.
@@ -111,17 +111,17 @@ concern.
 **Principle: the voice never jumps ahead of you.**
 
 - **Spoken content is strictly FIFO.** A permission, question, or plan is spoken *in its
-  natural place* — after the prose that explains it. If the voice is on message 3 and a
+  natural place* - after the prose that explains it. If the voice is on message 3 and a
   permission appears after message 5, you hear **3 → 4 → 5 → the permission.** Context
   always precedes the decision.
 - **Alerts are instant and separate from speech.** The moment a decision appears, a short
   **distinct earcon** plays immediately (different sound for permission / choice / plan /
   error / turn-done / ready). The *alert* barges in; the *spoken detail* does not.
 - **No time pressure.** When Claude hits a permission / question / plan it is **blocked**
-  until you respond — the prompt waits indefinitely — so hearing context first costs
+  until you respond - the prompt waits indefinitely - so hearing context first costs
   nothing but the seconds to listen.
 - **You hold the pace** (hotkeys, §6): *skip* (next item), *jump to the decision* (skip
-  queued prose, go straight to the pending question/permission — an explicit choice to
+  queued prose, go straight to the pending question/permission - an explicit choice to
   forgo context), *catch up to live* (flush backlog, resume at newest), *faster/slower*.
 - **Auto-flush only on your action.** Submitting a new prompt or pressing stop clears the
   queue. The system never silently skips context on its own.
@@ -153,11 +153,11 @@ Three parts: **two long-lived singletons + thin hook clients.**
 
 State/config/sockets live under `~/.echo/` (sock, `config.json`, per-session state, logs).
 
-### 5.1 `speechd` — the speech daemon (singleton, machine-wide)
+### 5.1 `speechd` - the speech daemon (singleton, machine-wide)
 - Owns the **only** audio output and a **single FIFO speech queue**. Everything else just
   sends it messages.
 - Runs **one** `say` subprocess at a time and tracks its PID; "stop" terminates **that
-  child only** — never `pkill -x say`. (Fixes root cause #2.)
+  child only** - never `pkill -x say`. (Fixes root cause #2.)
 - **Earcon channel** is independent of the speech queue: earcons play immediately via
   `afplay` (short sound files; default to `/System/Library/Sounds/*`), and can overlap or
   briefly duck speech. (Implements §4 instant alerts.)
@@ -176,17 +176,17 @@ State/config/sockets live under `~/.echo/` (sock, `config.json`, per-session sta
 `enqueue(item)`, `skip_current()`, `jump_to(predicate=decision)`, `catch_up()` (clear all),
 `flush(session)`, `repeat_last()`, `set_rate()`, `set_verbosity()`.
 
-### 5.2 Hooks — thin clients (declared in `hooks/hooks.json`)
+### 5.2 Hooks - thin clients (declared in `hooks/hooks.json`)
 Each hook reads stdin JSON, extracts the minimum, sends one socket message, and exits fast.
 If the daemon is down, it auto-starts it. (MessageDisplay has a ~10 s timeout but we target
 <100 ms so rendering is never stalled.)
 
 | Event (matcher) | What it sends to `speechd` |
 |---|---|
-| `MessageDisplay` | `{prose, session, delta, index, final}` — queued FIFO |
+| `MessageDisplay` | `{prose, session, delta, index, final}` - queued FIFO |
 | `PreToolUse` · `AskUserQuestion` | parsed `{choice, questions[], options[], multiSelect}` + opens **picker mode** |
 | `PreToolUse` · `ExitPlanMode` | `{plan, text}` (+ picker mode if its approval is multi-option) |
-| `PreToolUse` · other tools | brief `{tool_announce}` — only at higher verbosity |
+| `PreToolUse` · other tools | brief `{tool_announce}` - only at higher verbosity |
 | `Notification` · `permission_prompt` | `{permission, action, options[]}` + earcon (+ picker mode only if multi-option) |
 | `Notification` · `idle_prompt` | `{ready}` earcon |
 | `Stop` | `{turn_done}` earcon; reconcile any unspoken final text from `transcript_path` |
@@ -197,7 +197,7 @@ If the daemon is down, it auto-starts it. (MessageDisplay has a ~10 s timeout bu
 All decision events (`choice`/`plan`/`permission`/`error`) trigger their **distinct earcon
 immediately**, while the spoken detail enters the queue in order (§4).
 
-### 5.3 `hotkeyd` — the global-hotkey helper (singleton)
+### 5.3 `hotkeyd` - the global-hotkey helper (singleton)
 > **⚠️ SUPERSEDED (2026-06-05):** The Phase 2 spike found native numeric selection works,
 > so the injection/intercept design below is obsolete. See the approved Phase 2 spec:
 > `2026-06-05-sonari-phase2-control-selection-design.md` (and the spike report at
@@ -207,19 +207,19 @@ immediately**, while the spoken detail enters the queue in order (§4).
 Long-lived; connects to `speechd`; runs via LaunchAgent; requires macOS Accessibility /
 Input-Monitoring permission. Two jobs:
 
-**(a) Speech control — works anywhere, even mid-speech:**
+**(a) Speech control - works anywhere, even mid-speech:**
 stop · repeat-last · skip · jump-to-decision · catch-up-to-live · faster · slower ·
 cycle-verbosity · re-read-options · read-code-block-in-full.
 Default keymap shipped; user-overridable via `~/.echo/keymap.json`.
 
-**(b) Picker mode — 100% eyes-free selection.**
+**(b) Picker mode - 100% eyes-free selection.**
 When `speechd` signals a picker is open, it passes `hotkeyd` the option structure (count,
 labels, `multiSelect`, number of sub-questions). Because the option list came from the hook
 payload, `hotkeyd` knows the choices **without reading the screen**. Two selection paths,
 chosen by what the §3 verification list (item 4, native numeric selection) finds:
 
 - **If native numeric selection works** (preferred): we read options *with numbers*; the
-  user presses the number; `hotkeyd` simply confirms it aloud. Trivial and robust — no key
+  user presses the number; `hotkeyd` simply confirms it aloud. Trivial and robust - no key
   injection.
 - **If not:** `hotkeyd` intercepts the keys and drives the native picker itself:
   - **digit N** → inject the right count of Up/Down + Enter to select option N.
@@ -230,7 +230,7 @@ chosen by what the §3 verification list (item 4, native numeric selection) find
   `hotkeyd` is the *sole* source of navigation while a picker is open, so its tracked index
   stays in sync with the highlight (assume start index 0; verify; offer "reset to top").
 
-> Permission and plan-confirm dialogs that are simple yes/no need **no** injection — once
+> Permission and plan-confirm dialogs that are simple yes/no need **no** injection - once
 > the prompt is read aloud, single-key `y`/`n`/Enter is already eyes-free. Picker mode is
 > only needed for multi-option lists.
 
@@ -245,10 +245,10 @@ P2 therefore *starts* with a feasibility spike (§8) before the full picker logi
   prompts the user to download one (System Settings → Accessibility → Spoken Content →
   System Voice → manage voices) and `doctor` verifies it's present.
 - **Verbosity (live-switchable):**
-  - *Everything* — prose + options/plans/permissions + brief tool announcements + errors +
+  - *Everything* - prose + options/plans/permissions + brief tool announcements + errors +
     code summaries.
-  - *Medium* — prose + decisions + errors; skip routine tool announcements.
-  - *Quiet* — prose + decisions only.
+  - *Medium* - prose + decisions + errors; skip routine tool announcements.
+  - *Quiet* - prose + decisions only.
   - Earcons fire in all levels.
 - **Markdown → speech:** reuse/improve the existing cleaner (code fences, inline code,
   headings, bold, links → "link", tables stripped, whitespace collapsed).
@@ -277,7 +277,7 @@ P2 therefore *starts* with a feasibility spike (§8) before the full picker logi
 
 ## 8. Build plan (phased, each independently verifiable)
 
-**Phase 1 — Output (hear everything; fixes all three current bugs).**
+**Phase 1 - Output (hear everything; fixes all three current bugs).**
 `speechd` (queue, single `say` child, earcon channel, per-session/foreground) + hooks
 (`MessageDisplay`, `Notification`, `Stop`, `UserPromptSubmit`, `SessionStart`) + voice +
 verbosity + slash commands + plugin packaging + migration/uninstall.
@@ -285,7 +285,7 @@ verbosity + slash commands + plugin packaging + migration/uninstall.
 permission prompts and (read-only) options/plans, never double-speaks, never `pkill`s
 system-wide, and is correctly scoped to the foreground session.
 
-**Phase 2 — Control & selection (100% eyes-free + keyboard control).**
+**Phase 2 - Control & selection (100% eyes-free + keyboard control).**
 *Starts with a spike:* confirm native numeric selection (§3 verification list, item 4) and, if needed, validate
 CGEventTap intercept/suppress + key injection in Terminal/iTerm/VS Code. Then build
 `hotkeyd`: speech-control hotkeys + picker mode (numeric path and/or injection path,
@@ -293,7 +293,7 @@ multiSelect, multi-question, "Other").
 *Exit criteria:* the user picks any AskUserQuestion option, approves/denies permissions, and
 accepts/rejects plans with the screen off.
 
-**Phase 3 — Polish & ship.**
+**Phase 3 - Polish & ship.**
 Earcon set + author/select sounds; robust edge cases (rate-limit/StopFailure, sidechains,
 long backlogs, picker desync recovery); background-session policy refinements; docs &
 onboarding; marketplace packaging.
@@ -305,7 +305,7 @@ onboarding; marketplace packaging.
 - **Deterministic pipeline tests:** mock `say`/`afplay` to *record calls instead of playing
   audio*; feed recorded hook payloads through the real hooks → `speechd`; assert the exact
   spoken/earcon **sequence**. This covers ordering (§4), dedup, verbosity filtering,
-  foreground gating, skip/jump/catch-up/flush — all without sound.
+  foreground gating, skip/jump/catch-up/flush - all without sound.
 - **Golden payloads:** capture real `MessageDisplay` / `PreToolUse(AskUserQuestion,
   ExitPlanMode)` / `Notification` stdin from a live session; use as test fixtures and to pin
   exact schemas (§3 verification list).
@@ -318,7 +318,7 @@ onboarding; marketplace packaging.
 ## 10. Open questions / decisions deferred to planning
 - Implementation language per component (likely Python 3 for `speechd`/hooks for
   consistency + no build step; `hotkeyd` may be Python+Quartz or a small Swift CGEventTap
-  binary — decided by the P2 spike).
+  binary - decided by the P2 spike).
 - Final earcon sound set (system sounds vs. custom).
 - Exact default keymap for `hotkeyd`.
 - Final product name.

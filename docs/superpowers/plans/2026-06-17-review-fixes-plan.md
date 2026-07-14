@@ -21,7 +21,7 @@ and `bin/sonari-hook.cmd`.
   (carrying `session`). Gate both `_voice_owner` release sites on
   `owner not in _open_msg`.
 - Modify `src/sonari/hooks_entry.py`: Stop → `turn_done` earcon includes `session`.
-- Test `tests/test_daemon_prose.py`: two-session strand — owner keeps speaking
+- Test `tests/test_daemon_prose.py`: two-session strand - owner keeps speaking
   across an inter-chunk drain when another session flips foreground.
 
 ### Task 2 (M2): Capture cancel epoch at claim time

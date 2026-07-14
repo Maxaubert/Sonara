@@ -5,7 +5,7 @@ from tests.daemon_helpers import make_daemon
 
 
 def test_handle_message_guarded_contains_exceptions():
-    # #13: a message whose handling raises must NOT propagate — that would kill
+    # #13: a message whose handling raises must NOT propagate -- that would kill
     # the connection thread silently. The guard logs and returns None.
     daemon, *_ = make_daemon(foreground="fg")
 
@@ -34,7 +34,7 @@ def test_spawn_conn_handler_drops_connection_at_capacity():
 
 def test_spawn_conn_handler_releases_permit_when_thread_start_fails(monkeypatch):
     # M8: if Thread.start() raises (e.g. the OS refuses a new thread), the permit
-    # acquired for this connection must be released and the connection closed —
+    # acquired for this connection must be released and the connection closed --
     # otherwise capacity bleeds a slot and the daemon eventually refuses everyone.
     daemon, *_ = make_daemon()
 
