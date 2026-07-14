@@ -97,15 +97,23 @@ def test_list_voices_survives_no_winrt(monkeypatch):
     assert "af_heart" in voices
 
 
-def test_run_kokoro_voice_without_extra_raises_actionable(monkeypatch):
+def test_run_kokoro_voice_without_extra_falls_back_to_winrt(monkeypatch):
     # A Kokoro voice reaching run() without the extra (e.g. via config-sync or a
-    # hand-edited config) gets a clear RuntimeError, not a built engine / raw import.
+    # hand-edited config) must NOT raise into the speak loop (which for an
+    # eyes-free user meant silence/error noise): it falls back to the native
+    # WinRT voice and arms the once-per-run spoken notice (#29). The actionable
+    # RuntimeError from require_installed still lands in the notice/log.
     b = _bare_backend()
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
     monkeypatch.setattr(b, "_get_kokoro",
                         lambda: pytest.fail("must not build the engine without the extra"))
+    monkeypatch.setattr(wtts, "_require_winrt", lambda: None)
+    monkeypatch.setattr(b, "_synthesize_wav",
+                        lambda text, voice, rate: b"WINRT-WAV")
+    played = []
     monkeypatch.setattr(wtts, "_play_wav_bytes",
-                        lambda data: pytest.fail("must not reach playback"))
-    with pytest.raises(RuntimeError) as ei:
-        b.run("hi", "af_heart", 200)
-    assert "kokoro" in str(ei.value).lower()
+                        lambda data: played.append(data) or "handle")
+    assert b.run("hi", "af_heart", 200) == "handle"
+    assert played == [b"WINRT-WAV"]
+    notice = kokoro.pop_fallback_notice()
+    assert notice and "kokoro" in notice.lower()          # actionable reason kept
