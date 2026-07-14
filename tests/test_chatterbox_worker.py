@@ -143,6 +143,37 @@ def test_split_text_hard_splits_a_too_long_sentence():
     assert len(chunks) > 1 and all(len(c) <= 90 for c in chunks)
 
 
+def test_split_text_keeps_intra_token_dots():
+    # The old regex split at EVERY '.', inserting a space: "3. 14",
+    # "daemon. py:123" (#56).
+    text = "The value of pi is 3.14 exactly. See daemon.py:123 for it."
+    assert w._split_text(text) == [text]
+
+
+def test_split_text_terminates_unpunctuated_tail():
+    # Chatterbox trails into hallucinated audio on unterminated fragments (#56).
+    assert w._split_text("Done now") == ["Done now."]
+    assert w._split_text("Next steps:") == ["Next steps."]
+
+
+def test_split_text_drops_punctuation_only_text():
+    # model.generate('...') produces unpredictable noise, not silence (#56).
+    assert w._split_text("...") == []
+    assert w._split_text("?!") == []
+
+
+def test_synth_of_unspeakable_text_returns_silence_not_generate():
+    s = _state()
+    out = w.handle_request(s, {"type": "synth", "text": "...",
+                               "voice_path": None, "variant": "turbo",
+                               "exaggeration": None}, now=lambda: 1.0)
+    assert out["ok"] is True
+    assert s.model.calls == []                         # never handed to the model
+    import base64, io, wave
+    with wave.open(io.BytesIO(base64.b64decode(out["wav_b64"]))) as f:
+        assert f.getnframes() == 0                     # silence, zero samples
+
+
 def test_synth_chunks_long_text_and_concatenates_audio():
     # A long digest must be synthesized in pieces and stitched, so the audio is
     # the sum of the chunks (and the model is never handed the whole paragraph).

@@ -130,7 +130,11 @@ def split_text(text, max_chars=280):
     text = (text or "").strip()
     if not text:
         return []
-    sentences = re.findall(r"[^.!?]*[.!?]+|\S[^.!?]*$", text)
+    # Split at whitespace PRECEDED by a terminator (optionally + closing quote/
+    # bracket). The old findall split at EVERY '.', corrupting intra-token dots
+    # with an inserted space: "3.14" -> "3. 14", "daemon.py:123" ->
+    # "daemon. py:123" (#56). re.split never drops text.
+    sentences = re.split(r"(?:(?<=[.!?])|(?<=[.!?][\"')\]]))\s+", text)
     chunks = []
     cur = ""
     for s in sentences:
@@ -157,7 +161,17 @@ def split_text(text, max_chars=280):
             cur = (cur + " " + s).strip()
     if cur:
         chunks.append(cur)
-    return chunks
+    out = []
+    for c in chunks:
+        # Chatterbox renders punctuation-only chunks as unpredictable noise and
+        # trails into hallucinated audio on unterminated ones (#56): skip the
+        # former, terminate the latter (a turn-final fragment or bullet line).
+        if not re.search(r"[A-Za-z0-9]", c):
+            continue
+        if c[-1] not in ".!?…" and len(c) < max_chars:
+            c = c.rstrip(":;,-") + "."
+        out.append(c)
+    return out
 
 
 def chunk_chars(config) -> int:

@@ -134,6 +134,23 @@ def test_split_text_is_exposed_on_chatterbox_module():
     assert len(chunks) >= 2 and all(len(c) <= 8 for c in chunks)
 
 
+def test_split_text_stays_in_sync_with_worker_twin():
+    # daemon-side split_text and the worker's defensive _split_text are
+    # duplicated on purpose (the worker cannot import sonara); the #56 fixes
+    # (intra-token dots, tail termination, punctuation-only skip) must behave
+    # identically in both.
+    from sonara import chatterbox, chatterbox_worker
+    cases = [
+        "The value of pi is 3.14 exactly. See daemon.py:123 for it.",
+        "Done now",
+        "Next steps:",
+        "...",
+        " ".join("Sentence number {0} here.".format(i) for i in range(40)),
+    ]
+    for text in cases:
+        assert chatterbox.split_text(text) == chatterbox_worker._split_text(text), text
+
+
 def test_slow_playback_does_not_drop_done_sentinel():
     # Real hang bug: with slow playback the producer fills the maxsize-2 queue and
     # finishes; if the _DONE sentinel is dropped (old put(timeout=0.5)+pass) the
