@@ -885,6 +885,64 @@ def test_flush_cancels_pending_question_settle(monkeypatch):
     assert "fg" not in daemon._pending_decision
 
 
+def test_reread_after_bare_question_replays_the_question(monkeypatch):
+    # A turn that is ONLY an AskUserQuestion (no prose) left NOTHING re-readable:
+    # summary-mode Up gave the edge chime and the user could never hear the
+    # question again (live report, 2026-07-14). A HEARD question must append to
+    # the re-read record.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    _choice(daemon)                                      # bare question, no prose
+    for _ in range(4):
+        daemon._speak_loop_once()                        # question is spoken
+    assert any("Pick one?" in t for t in speaker.spoken)
+    speaker.spoken.clear()
+    assert daemon._reread_last("fg") is True             # was: False -> edge chime
+    for _ in range(4):
+        daemon._speak_loop_once()
+    assert any("Pick one?" in t for t in speaker.spoken)  # question heard again
+
+
+def test_reread_after_digest_and_question_replays_both(monkeypatch):
+    # With a lead-in digest + question both heard, Up must re-read the WHOLE
+    # unit (digest then question), not just the prose.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The digest."
+    daemon._summary_worker(*calls[0])                    # digest lands
+    _choice(daemon)
+    for _ in range(6):
+        daemon._speak_loop_once()                        # digest + question spoken
+    assert any("Pick one?" in t for t in speaker.spoken)
+    speaker.spoken.clear()
+    assert daemon._reread_last("fg") is True
+    for _ in range(6):
+        daemon._speak_loop_once()
+    joined = " ".join(speaker.spoken)
+    assert "The digest." in joined and "Pick one?" in joined
+
+
+def test_reread_does_not_double_append_on_repeat_rereads(monkeypatch):
+    # The re-read insert is is_decision=False, so hearing a re-read must NOT
+    # re-append the question to the record (unbounded growth).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    _choice(daemon)
+    for _ in range(4):
+        daemon._speak_loop_once()
+    baseline = daemon._last_digest_text.get("fg")
+    daemon._reread_last("fg")
+    for _ in range(4):
+        daemon._speak_loop_once()                        # re-read heard
+    assert daemon._last_digest_text.get("fg") == baseline
+
+
 def test_digest_text_is_normalized_for_speech(monkeypatch):
     # (#27) digests bypass the assembler's markdown cleaner, so underscores,
     # backticks, and arrows reached the TTS raw and were mispronounced.

@@ -210,6 +210,15 @@ class SpeechDaemon:
             entry = self._pending_heard.pop(item.id, None)
             if entry is not None and completed:
                 entry.heard = True
+            # A HEARD question joins the session's re-read record: digests SET
+            # the record (a new turn unit), decisions APPEND, so summary-mode Up
+            # replays "lead-in + question" -- or a bare question on its own --
+            # instead of the dead edge chime (live report 2026-07-14). The Up
+            # re-read insert is is_decision=False, so re-reads never re-append.
+            if completed and item.is_decision and item.text:
+                prev = self._last_digest_text.get(item.session)
+                self._last_digest_text[item.session] = (
+                    prev + " " + item.text) if prev else item.text
 
     def _requeue_or_note(self, item, completed) -> bool:
         """On a pause-interrupted utterance, re-queue it so resume re-speaks it and
