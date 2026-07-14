@@ -22,6 +22,17 @@ _PAGE_KEYS = (
     "chatterbox_max_chunk_chars",
 )
 
+_MSG_KEYS = {
+    "voice":         lambda v: {"type": "set_voice", "voice": str(v)},
+    "rate":          lambda v: {"type": "set_rate", "rate": int(v)},
+    "minqueue":      lambda v: {"type": "set_minqueue", "minqueue": int(v)},
+    "summary_mode":  lambda v: {"type": "set_summary_mode", "enabled": bool(v)},
+    "audio_control": lambda v: {"type": "set_audio_control", "enabled": bool(v)},
+    "duck_level":    lambda v: {"type": "set_duck_level", "level": int(v)},
+}
+_CONFIG_KEYS = ("summary_model", "summary_timeout", "summary_settle_ms",
+                "chatterbox_max_chunk_chars")
+
 
 def _installed_voices() -> dict:
     """Voices grouped by engine. Lazy imports; each group degrades to []."""
@@ -148,5 +159,30 @@ def _make_handler(server: SettingsServer):
         def do_POST(self):
             if not self._authed():
                 return self._json(403, {"error": "missing or wrong token; open via: sonara settings"})
+            path = urlparse(self.path).path
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(min(n, 65536)) or b"{}")
+            except (ValueError, OSError):
+                return self._json(400, {"error": "bad json"})
+            if path == "/api/set":
+                return self._handle_set(payload)
             return self._json(404, {"error": "unknown path"})
+
+        def _handle_set(self, payload):
+            key = payload.get("key")
+            value = payload.get("value")
+            if key in _MSG_KEYS:
+                try:
+                    msg = dict(_MSG_KEYS[key](value), v=1)
+                except (TypeError, ValueError):
+                    return self._json(400, {"error": f"bad value for {key}"})
+                server._daemon.handle_message(msg)
+                return self._json(200, server.state())
+            if key in _CONFIG_KEYS:
+                setter = getattr(server._daemon, "set_config_value", None)
+                if setter is not None and setter(key, value):
+                    return self._json(200, server.state())
+                return self._json(400, {"error": f"bad value for {key}"})
+            return self._json(400, {"error": f"unknown key {key!r}"})
     return Handler

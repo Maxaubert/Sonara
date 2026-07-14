@@ -83,3 +83,41 @@ def test_state_shape(server):
     assert state["keymap"][0]["action"] == "mute"
     assert state["daemon"]["foreground"] == "sess-1"
     assert isinstance(state["daemon"]["pid"], int)
+
+
+def _post(s, path, obj, token="tok123"):
+    body = json.dumps(obj).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{s.port}{path}", data=body,
+                                 headers={"X-Sonara-Token": token,
+                                          "Content-Type": "application/json"})
+    return urllib.request.urlopen(req, timeout=5)
+
+
+def test_set_message_backed_key_dispatches(server):
+    d, s = server
+    r = _post(s, "/api/set", {"key": "rate", "value": 220})
+    assert r.status == 200
+    assert d.messages[-1]["type"] == "set_rate"
+    assert d.messages[-1]["rate"] == 220
+
+
+def test_set_summary_mode_uses_enabled_field(server):
+    d, s = server
+    _post(s, "/api/set", {"key": "summary_mode", "value": False})
+    assert d.messages[-1] == {"v": 1, "type": "set_summary_mode", "enabled": False}
+
+
+def test_set_config_only_key_uses_daemon_setter(server, monkeypatch):
+    d, s = server
+    calls = []
+    d.set_config_value = lambda k, v: calls.append((k, v)) or True
+    _post(s, "/api/set", {"key": "summary_settle_ms", "value": 800})
+    assert calls == [("summary_settle_ms", 800)]
+    assert d.messages == []                       # no protocol message for these
+
+
+def test_set_unknown_key_is_400(server):
+    d, s = server
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/set", {"key": "verbosity", "value": "quiet"})
+    assert ei.value.code == 400

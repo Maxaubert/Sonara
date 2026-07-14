@@ -1672,6 +1672,30 @@ class SpeechDaemon:
         except (TypeError, ValueError):
             return 20
 
+    def set_config_value(self, key: str, value) -> bool:
+        """Set a config-only tuning key (settings page, #34). These have no
+        protocol message (the CLI edits config.json directly); clamp, set under
+        the lock, persist. Returns False for unknown keys/bad values."""
+        clamps = {
+            "summary_model":   lambda v: str(v).strip() or None,
+            "summary_timeout": lambda v: max(15, min(300, int(v))),
+            "summary_settle_ms": lambda v: max(0, min(5000, int(v))),
+            "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
+        }
+        fn = clamps.get(key)
+        if fn is None:
+            return False
+        try:
+            cleaned = fn(value)
+        except (TypeError, ValueError):
+            return False
+        if cleaned is None:
+            return False
+        with self._lock:
+            self.config[key] = cleaned
+            save_config(self.config)
+        return True
+
     def _duck_exclude_pids(self) -> "set[int]":
         pids = {os.getpid()}
         try:
