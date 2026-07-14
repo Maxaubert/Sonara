@@ -33,6 +33,21 @@ VOICES = [
 ]
 
 DEFAULT_VOICE = "af_heart"
+
+# --- once-per-run fallback notice (#29), mirrors chatterbox's ------------------
+# Armed by the tts backend when Kokoro synthesis fails and the utterance falls
+# back to the native WinRT voice; the daemon speaks it exactly once per run so
+# a dead engine is announced instead of producing unexplained error noise.
+_FALLBACK: list = []
+
+
+def _set_fallback_notice(reason) -> None:
+    _FALLBACK[:] = [reason]
+
+
+def pop_fallback_notice():
+    """The pending fallback reason, or None. Clears it (once-per-read)."""
+    return _FALLBACK.pop() if _FALLBACK else None
 _SAMPLE_RATE = 24000     # Kokoro outputs 24 kHz
 
 _MODEL_URL = (

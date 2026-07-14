@@ -545,9 +545,21 @@ class WinTtsBackend(TtsBackend):
                     pass
             return _play_wav_bytes(data)
         if kokoro.is_kokoro_voice(voice):
-            kokoro.require_installed()   # actionable error instead of a raw ImportError
-            data = self._get_kokoro().wav_bytes(
-                text, voice, kokoro.rate_to_speed(rate))
+            try:
+                kokoro.require_installed()   # actionable error, not a raw ImportError
+                data = self._get_kokoro().wav_bytes(
+                    text, voice, kokoro.rate_to_speed(rate))
+            except Exception as exc:  # noqa: BLE001 - a dead engine must never
+                # leave the user with unexplained error noise (#29: winrt's
+                # bundled MSVCP140 poisons onnxruntime when winrt loads first).
+                # Fall back to the native WinRT voice and arm the once-per-run
+                # spoken notice, mirroring the Chatterbox fallback pattern.
+                import sys
+                print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
+                      file=sys.stderr, flush=True)
+                kokoro._set_fallback_notice(str(exc))
+                _require_winrt()
+                data = self._synthesize_wav(text, None, rate)  # best WinRT voice
         else:
             _require_winrt()   # actionable error instead of a raw ImportError (#7)
             data = self._synthesize_wav(text, voice, rate)

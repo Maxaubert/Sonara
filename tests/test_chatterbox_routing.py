@@ -212,3 +212,65 @@ def test_daemon_speaks_fallback_notice_once(monkeypatch):
     cues = [item.text for item in ch.items if "Chatterbox unavailable" in item.text]
     assert len(cues) == 1
     assert chatterbox.pop_fallback_notice() is None
+
+
+# --- kokoro failure fallback (#29) ----------------------------------------------
+
+def test_kokoro_failure_falls_back_to_winrt_and_arms_notice(monkeypatch):
+    # (#29) a Kokoro synth failure (e.g. onnxruntime's DLL-order poisoning by
+    # winrt's bundled MSVCP140) used to escape run(): unexplained error noise on
+    # EVERY utterance, no fallback, no notice. It must fall back to the native
+    # WinRT voice and arm the once-per-run spoken notice.
+    from sonara import kokoro
+    b = _bare_backend()
+    monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda name: False)
+    monkeypatch.setattr(kokoro, "is_kokoro_voice", lambda name: True)
+    monkeypatch.setattr(kokoro, "require_installed", lambda: None)
+
+    class BrokenKokoro:
+        def wav_bytes(self, *a, **k):
+            raise ImportError("DLL initialization routine failed")
+    monkeypatch.setattr(b, "_get_kokoro", lambda: BrokenKokoro())
+    monkeypatch.setattr(wtts, "_require_winrt", lambda: None)
+    monkeypatch.setattr(b, "_synthesize_wav",
+                        lambda text, voice, rate: b"WINRT-WAV")
+    played = []
+    monkeypatch.setattr(wtts, "_play_wav_bytes",
+                        lambda data: played.append(data) or "handle")
+
+    out = b.run("hello", "af_heart", 200)
+    assert out == "handle"
+    assert played == [b"WINRT-WAV"]                    # WinRT spoke instead
+    assert kokoro.pop_fallback_notice()                # notice armed...
+    assert kokoro.pop_fallback_notice() is None        # ...once
+
+
+def test_kokoro_success_does_not_arm_notice(monkeypatch):
+    from sonara import kokoro
+    b = _bare_backend()
+    monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda name: False)
+    monkeypatch.setattr(kokoro, "is_kokoro_voice", lambda name: True)
+    monkeypatch.setattr(kokoro, "require_installed", lambda: None)
+
+    class OkKokoro:
+        def wav_bytes(self, *a, **k):
+            return b"KOKORO-WAV"
+    monkeypatch.setattr(b, "_get_kokoro", lambda: OkKokoro())
+    monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: "handle")
+
+    assert b.run("hello", "af_heart", 200) == "handle"
+    assert kokoro.pop_fallback_notice() is None
+
+
+def test_daemon_speaks_kokoro_fallback_notice_once(monkeypatch):
+    from sonara import kokoro
+    daemon, queue, speaker, sessions, config = make_daemon()
+    kokoro._set_fallback_notice("DLL initialization routine failed")
+
+    daemon._speak_loop_once()
+    daemon._speak_loop_once()
+
+    ch = daemon.router.channel(CONTROL)
+    cues = [item.text for item in ch.items if "Kokoro unavailable" in item.text]
+    assert len(cues) == 1
+    assert kokoro.pop_fallback_notice() is None

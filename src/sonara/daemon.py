@@ -1620,6 +1620,22 @@ class SpeechDaemon:
             self._speak_cue(None, "Chatterbox unavailable, using Heart.",
                             exempt_mute=True)
 
+    def _maybe_announce_kokoro_fallback(self) -> None:
+        """Speak the pending Kokoro fallback notice, if any, exactly once per
+        daemon run (#29). Mirrors the Chatterbox notice: a dead engine is
+        announced instead of producing unexplained error noise."""
+        if getattr(self, "_kokoro_fallback_announced", False):
+            return
+        try:
+            from sonara import kokoro
+            reason = kokoro.pop_fallback_notice()
+        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
+            return
+        if reason:
+            self._kokoro_fallback_announced = True
+            self._speak_cue(None, "Kokoro unavailable, using Windows voice.",
+                            exempt_mute=True)
+
     def _audio_control_on(self) -> bool:
         return bool(self.config.get("audio_control"))
 
@@ -1686,9 +1702,10 @@ class SpeechDaemon:
             if muted:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
-        # Chatterbox fallback notice: spoken once per daemon run so an eyes-free
+        # Engine fallback notices: spoken once per daemon run so an eyes-free
         # user knows WHY the voice changed (the reason is already in the log).
         self._maybe_announce_chatterbox_fallback()
+        self._maybe_announce_kokoro_fallback()
         if item is None:
             self._maybe_restore()
             self._wake.wait(self._poll_interval)
@@ -1896,6 +1913,27 @@ def _arm_faulthandler() -> None:
         pass
 
 
+def _preload_vc_runtime() -> None:
+    """win32: preload the SYSTEM VC++ runtime before any speech engine import
+    (#29). PyWinRT bundles an old MSVCP140.dll inside its package; whichever
+    engine imports first binds its copy process-wide, and onnxruntime (Kokoro)
+    crashes inside the old one ('DLL initialization routine failed') whenever a
+    WinRT/Chatterbox voice spoke first in this daemon's lifetime. The System32
+    runtime is newer and serves BOTH engines, so loading it first makes engine
+    import order irrelevant. Missing DLLs are tolerated: engines then fall back
+    to their bundled copies exactly as before."""
+    import sys
+    if sys.platform != "win32":
+        return
+    import ctypes
+    root = os.environ.get("SystemRoot", r"C:\Windows")
+    for dll in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        try:
+            ctypes.WinDLL(os.path.join(root, "System32", dll))
+        except OSError:
+            pass
+
+
 def _harden_process(k32=None) -> None:
     """Keep the daemon responsive to global hotkeys even after long idle.
 
@@ -1967,6 +2005,7 @@ def main() -> None:
 
     _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
                         # global hotkeys stay responsive after long idle
+    _preload_vc_runtime()   # win32: system VC runtime first, before any engine (#29)
 
     from sonara.speaker import Speaker
     from sonara.sessions import SessionManager
