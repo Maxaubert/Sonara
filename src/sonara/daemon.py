@@ -1746,6 +1746,29 @@ class SpeechDaemon:
             save_config(self.config)
         return True
 
+    def _start_preview_builder(self, delay_s: float = 15.0):
+        """Render missing voice-preview files in the background (#38). Delayed
+        so daemon startup (prewarm, first speech) is never contended; every
+        failure is contained -- previews are a convenience, not a duty.
+        Returns the thread (tests join it)."""
+        def _run():
+            try:
+                import time
+                time.sleep(delay_s)
+                from sonara import previews
+                from sonara.webui import _installed_voices
+                made = previews.ensure_all(
+                    _installed_voices(),
+                    log=lambda m: print("[previews] " + m, flush=True))
+                if made:
+                    print("[previews] rendered {0} preview file(s)".format(made),
+                          flush=True)
+            except Exception:  # noqa: BLE001 - preview building must never bite
+                pass
+        t = threading.Thread(target=_run, name="sonara-previews", daemon=True)
+        t.start()
+        return t
+
     def preview_voice(self, voice: str) -> bool:
         """Speak a short sample in *voice* WITHOUT changing config (settings
         page, #34). Runs on its own thread via the platform tts runner (same
@@ -1987,6 +2010,7 @@ class SpeechDaemon:
             http_port = self._webui.start()
         except Exception:  # noqa: BLE001 - the page must never block speech
             self._webui, http_port = None, None
+        self._start_preview_builder()   # render missing voice previews (#38)
         transport.write_lockfile(
             LOCK_PATH, transport.HOST, port, self._token, os.getpid(),
             http_port=http_port)
