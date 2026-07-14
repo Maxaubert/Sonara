@@ -58,3 +58,36 @@ def test_normalize_for_speech_keeps_plain_prose():
     from sonara.cleaner import normalize_for_speech
     text = "All tests pass. Ready to deploy."
     assert normalize_for_speech(text) == text
+
+
+# --- live-prose audit (#56) --------------------------------------------------
+
+def test_bullet_markers_stripped():
+    assert clean_markdown("- item one\n- item two") == "item one item two"
+    assert clean_markdown("* starred item here") == "starred item here"
+
+
+def test_bare_url_keeps_sentence_period():
+    # \S+ used to eat the terminator: "See link Then run it." (#56)
+    assert clean_markdown("See https://example.com/docs. Then run it.") == "See link. Then run it."
+
+
+def test_normalize_unsnakes_leading_underscore_identifiers():
+    from sonara.cleaner import normalize_for_speech
+    assert normalize_for_speech("added _voiced_upto here") == "added voiced upto here"
+
+
+def test_normalize_handles_unicode_arrow_and_pipes():
+    from sonara.cleaner import normalize_for_speech
+    assert normalize_for_speech("daemon → assembler | channel") == "daemon to assembler channel"
+
+
+def test_stabilize_ordinals_is_length_preserving():
+    # The assembler applies this to RAW text pre-split; raw-offset bookkeeping
+    # relies on it never changing the text's length (#56).
+    from sonara.cleaner import stabilize_ordinals
+    s = "1. Install\n22. Run the tests\n"
+    out = stabilize_ordinals(s)
+    assert len(out) == len(s)
+    assert out.startswith("1: Install")
+    assert "22: Run" in out
