@@ -316,7 +316,10 @@ function render(s) {
     sel.innerHTML = "";
     for (const n of names) {
       const o = document.createElement("option");
-      o.value = n; o.textContent = n; o.selected = (n === s.config.voice);
+      // display with an uppercase first letter; the value stays the real
+      // (lowercase) stem so it keeps matching the engine's voice clips
+      o.value = n; o.textContent = n.charAt(0).toUpperCase() + n.slice(1);
+      o.selected = (n === s.config.voice);
       sel.appendChild(o);
     }
   }
