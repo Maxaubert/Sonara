@@ -4,8 +4,8 @@ description: Open the Sonara settings page in the browser
 
 Run the Sonara settings command with the Bash tool:
 
-```bash
-"${CLAUDE_PLUGIN_ROOT}/bin/sonara" settings
+```
+bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" settings
 ```
 
 It opens the local settings page in the user's default browser and prints the

@@ -41,3 +41,13 @@ def test_status_prints_settings_url(monkeypatch, tmp_path, capsys):
     rc = cli.main(["status"])
     assert rc == 0
     assert "Settings page: http://127.0.0.1:27431" in capsys.readouterr().out
+
+
+def test_settings_survives_browser_open_failure(monkeypatch, tmp_path, capsys):
+    _lock(tmp_path, monkeypatch, http_port=27431)
+    def boom(url):
+        raise OSError("no browser")
+    monkeypatch.setattr(cli.webbrowser, "open", boom)
+    rc = cli.main(["settings"])
+    assert rc == 0                                    # URL printed; that's enough
+    assert "27431" in capsys.readouterr().out

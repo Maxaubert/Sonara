@@ -2,7 +2,7 @@ from unittest import mock
 
 import pytest
 
-from sonara import cli
+from sonara import cli, paths
 from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 
@@ -12,7 +12,8 @@ def _sent(send_mock):
     return args[0], args, kwargs
 
 
-def test_status_sends_status_and_prints(capsys):
+def test_status_sends_status_and_prints(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(paths, "LOCK_PATH", tmp_path / "no.lock")
     reply = {"verbosity": "everything", "rate": 200, "voice": None,
              "foreground": "abc", "queue_len": 3}
     with mock.patch("sonara.client.send", return_value=reply) as send:
@@ -26,7 +27,8 @@ def test_status_sends_status_and_prints(capsys):
     assert "queue_len" in out or "queue" in out
 
 
-def test_status_handles_no_reply(capsys):
+def test_status_handles_no_reply(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(paths, "LOCK_PATH", tmp_path / "no.lock")
     with mock.patch("sonara.client.send", return_value=None):
         rc = cli.main(["status"])
     assert rc == 1
@@ -162,9 +164,10 @@ CONTROL_SUBCOMMANDS = [
 
 
 @pytest.mark.parametrize("argv", CONTROL_SUBCOMMANDS)
-def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, capsys):
+def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, monkeypatch, tmp_path, capsys):
     """When the daemon is down all control subcommands must print a friendly
     message to stderr and return non-zero — no raw traceback."""
+    monkeypatch.setattr(paths, "LOCK_PATH", tmp_path / "no.lock")
     from sonara.client import DaemonNotRunning
 
     with mock.patch("sonara.client.send", side_effect=DaemonNotRunning(
@@ -185,8 +188,9 @@ def test_daemon_down_prints_friendly_message_and_exits_nonzero(argv, capsys):
     )
 
 
-def test_daemon_down_message_goes_to_stderr(capsys):
+def test_daemon_down_message_goes_to_stderr(monkeypatch, tmp_path, capsys):
     """The friendly daemon-down message must go to stderr, not stdout."""
+    monkeypatch.setattr(paths, "LOCK_PATH", tmp_path / "no.lock")
     from sonara.client import DaemonNotRunning
 
     with mock.patch("sonara.client.send", side_effect=DaemonNotRunning(

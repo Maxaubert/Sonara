@@ -72,7 +72,10 @@ def _cmd_settings(_args) -> int:
     url = "http://127.0.0.1:{0}/settings?token={1}".format(
         info["http_port"], info.get("token", ""))
     print("Settings page: " + url)
-    webbrowser.open(url)
+    try:
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - headless/no-browser box: URL is printed anyway
+        pass
     return 0
 
 
