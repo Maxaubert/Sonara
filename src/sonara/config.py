@@ -29,6 +29,8 @@ DEFAULTS = {
     "chatterbox_warm_timeout": 90,        # seconds for a pre-warm (covers the cold load)
     "chatterbox_max_chunk_chars": 280,    # synth chunk size (80-280): smaller can
                                           # pronounce better, larger flows better (#27)
+    "settings_port": 27431,               # settings page port (pinned so bookmarks
+                                          # and restart-reconnect work; 0 = ephemeral)
 }
 
 

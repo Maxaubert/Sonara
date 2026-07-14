@@ -13,8 +13,10 @@ import socket
 HOST = "127.0.0.1"
 
 
-def write_lockfile(path, host, port, token, pid) -> None:
+def write_lockfile(path, host, port, token, pid, http_port=None) -> None:
     data = {"host": host, "port": int(port), "token": token, "pid": int(pid)}
+    if http_port is not None:
+        data["http_port"] = int(http_port)   # settings page (#34)
     tmp = str(path) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh)

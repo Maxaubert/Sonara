@@ -56,3 +56,12 @@ def test_acquire_singleton_windows_branch(tmp_path):
     assert f1 is not None
     assert tr.acquire_singleton(lock) is None   # msvcrt fake: 2nd lock on same fd-id fails
     f1.close()
+
+
+def test_write_lockfile_optional_http_port(tmp_path):
+    from sonara.platform import transport
+    p = tmp_path / "lock"
+    transport.write_lockfile(p, "127.0.0.1", 5000, "tok", 42)
+    assert "http_port" not in transport.read_lockfile(p)
+    transport.write_lockfile(p, "127.0.0.1", 5000, "tok", 42, http_port=27431)
+    assert transport.read_lockfile(p)["http_port"] == 27431

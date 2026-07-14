@@ -22,6 +22,7 @@ def test_defaults_has_documented_top_level_keys():
         "chatterbox_timeout",
         "chatterbox_warm_timeout",
         "chatterbox_max_chunk_chars",
+        "settings_port",
     }
 
 
@@ -267,3 +268,10 @@ def test_chatterbox_chunk_chars_default_and_clamp():
     assert cb.chunk_chars({"chatterbox_max_chunk_chars": 999}) == 280
     assert cb.chunk_chars({"chatterbox_max_chunk_chars": 10}) == 80
     assert cb.chunk_chars({"chatterbox_max_chunk_chars": "junk"}) == 280
+
+
+def test_settings_port_default():
+    # (#34) the settings page binds a PINNED port so bookmarks and the page's
+    # reconnect-after-restart polling survive daemon restarts.
+    from sonara.config import DEFAULTS
+    assert DEFAULTS["settings_port"] == 27431
