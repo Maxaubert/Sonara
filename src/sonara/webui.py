@@ -34,6 +34,17 @@ _CONFIG_KEYS = ("summary_model", "summary_timeout", "summary_settle_ms",
                 "chatterbox_max_chunk_chars")
 
 
+def _dispatch(daemon, msg):
+    """handle_message under the daemon lock -- the same guard every other
+    entry point (socket, hotkey pump) uses; without it a page mutation racing
+    an in-flight hook message corrupts shared state."""
+    lock = getattr(daemon, "_lock", None)
+    if lock is not None:
+        with lock:
+            return daemon.handle_message(msg)
+    return daemon.handle_message(msg)
+
+
 def _installed_voices() -> dict:
     """Voices grouped by engine. Lazy imports; each group degrades to []."""
     from sonara import kokoro, chatterbox
@@ -165,6 +176,8 @@ def _make_handler(server: SettingsServer):
                 payload = json.loads(self.rfile.read(min(n, 65536)) or b"{}")
             except (ValueError, OSError):
                 return self._json(400, {"error": "bad json"})
+            if not isinstance(payload, dict):
+                return self._json(400, {"error": "bad json"})
             if path == "/api/set":
                 return self._handle_set(payload)
             return self._json(404, {"error": "unknown path"})
@@ -177,7 +190,7 @@ def _make_handler(server: SettingsServer):
                     msg = dict(_MSG_KEYS[key](value), v=1)
                 except (TypeError, ValueError):
                     return self._json(400, {"error": f"bad value for {key}"})
-                server._daemon.handle_message(msg)
+                _dispatch(server._daemon, msg)
                 return self._json(200, server.state())
             if key in _CONFIG_KEYS:
                 setter = getattr(server._daemon, "set_config_value", None)

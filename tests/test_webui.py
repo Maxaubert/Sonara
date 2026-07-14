@@ -121,3 +121,30 @@ def test_set_unknown_key_is_400(server):
     with pytest.raises(urllib.error.HTTPError) as ei:
         _post(s, "/api/set", {"key": "verbosity", "value": "quiet"})
     assert ei.value.code == 400
+
+
+def test_set_dispatches_under_daemon_lock(server):
+    # the daemon requires handle_message under its lock (same guard as the
+    # socket + hotkey entry points); HTTP threads must honor it too
+    import threading
+    d, s = server
+    d._lock = threading.Lock()
+    held = []
+    orig = d.handle_message
+    def guarded(msg):
+        held.append(d._lock.locked())
+        return orig(msg)
+    d.handle_message = guarded
+    _post(s, "/api/set", {"key": "rate", "value": 200})
+    assert held == [True]
+
+
+def test_non_object_json_body_is_400(server):
+    d, s = server
+    body = b"5"
+    req = urllib.request.Request(f"http://127.0.0.1:{s.port}/api/set", data=body,
+                                 headers={"X-Sonara-Token": "tok123",
+                                          "Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        urllib.request.urlopen(req, timeout=5)
+    assert ei.value.code == 400
