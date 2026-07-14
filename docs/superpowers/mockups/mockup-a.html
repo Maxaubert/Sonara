@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sonara Settings — Mockup A (sidebar)</title>
+<style>
+:root{
+  --bg:#f6f7fb; --panel:#ffffff; --sidebar:#fbfbfe; --text:#16181d; --text2:#6b7280;
+  --line:#e7e8ee; --accent:#4f46e5; --accent-soft:#eef0fe; --accent-soft2:#e3e6fd;
+  --ok:#16a34a; --danger:#dc2626; --chip:#f1f2f7; --shadow:0 1px 2px rgba(16,18,28,.05),0 8px 24px rgba(16,18,28,.06);
+}
+html[data-theme="dark"]{
+  --bg:#101216; --panel:#181b22; --sidebar:#14161c; --text:#eceef3; --text2:#9aa1ad;
+  --line:#262a33; --accent:#818cf8; --accent-soft:#23263b; --accent-soft2:#2b2f4d;
+  --chip:#21242d; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font:14px/1.45 "Segoe UI Variable","Segoe UI",-apple-system,"SF Pro Text",sans-serif;
+  background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden;
+  transition:background .25s,color .25s}
+/* ---------- sidebar ---------- */
+aside{width:248px;min-width:248px;background:var(--sidebar);border-right:1px solid var(--line);
+  padding:24px 14px;display:flex;flex-direction:column;gap:2px}
+aside h1{font-size:22px;font-weight:700;padding:0 12px 18px}
+.nav{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;cursor:pointer;
+  color:var(--text2);font-weight:500;border:none;background:none;font-size:14px;text-align:left;width:100%}
+.nav svg{width:17px;height:17px;flex:none}
+.nav:hover{background:var(--chip);color:var(--text)}
+.nav.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.spacer{flex:1}
+.daemon-pill{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:10px;
+  background:var(--chip);font-size:12.5px;color:var(--text2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(22,163,74,.18)}
+/* ---------- main ---------- */
+main{flex:1;overflow-y:auto;padding:32px 40px 60px}
+.head{display:flex;align-items:center;justify-content:space-between;max-width:760px;margin-bottom:8px}
+.head h2{font-size:20px;font-weight:700}
+.head p{color:var(--text2);margin-top:3px}
+.theme-btn{border:1px solid var(--line);background:var(--panel);border-radius:99px;padding:7px 14px;
+  cursor:pointer;color:var(--text2);font-size:13px;display:flex;gap:7px;align-items:center}
+section{max-width:760px;display:none}
+section.active{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);
+  margin-top:18px;overflow:hidden}
+.row{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 20px;
+  border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:none}
+.row .lbl{max-width:420px}
+.row .lbl b{font-size:14px;font-weight:600;display:block}
+.row .lbl span{color:var(--text2);font-size:12.5px}
+/* controls */
+.toggle{width:44px;height:26px;border-radius:99px;background:#c9ccd6;position:relative;cursor:pointer;
+  transition:background .18s;flex:none;border:none}
+html[data-theme="dark"] .toggle{background:#3a3f4b}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;
+  background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.toggle.on{background:var(--accent)}
+.toggle.on::after{left:21px}
+.slider-wrap{display:flex;align-items:center;gap:14px;min-width:280px;justify-content:flex-end}
+input[type=range]{-webkit-appearance:none;width:190px;height:4px;border-radius:4px;background:var(--line);outline:none}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;
+  background:var(--accent);cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.25);border:2.5px solid var(--panel)}
+.val{font-variant-numeric:tabular-nums;font-weight:600;min-width:70px;text-align:right}
+.seg{display:flex;background:var(--chip);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:none;background:none;padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--text2);
+  font-size:13px;font-weight:500}
+.seg button.sel{background:var(--panel);color:var(--text);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.stepper button{border:none;background:var(--panel);width:34px;height:32px;font-size:16px;cursor:pointer;color:var(--text)}
+.stepper button:hover{background:var(--chip)}
+.stepper output{width:40px;text-align:center;font-weight:600;border-left:1px solid var(--line);border-right:1px solid var(--line);line-height:32px}
+select{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:10px;
+  padding:8px 12px;font-size:13.5px;font-family:inherit}
+/* voices */
+.voice-groups{padding:6px 8px 12px}
+.vgroup{margin:10px 12px 2px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text2)}
+.voice{display:flex;align-items:center;gap:12px;padding:9px 12px;border-radius:10px;cursor:pointer}
+.voice:hover{background:var(--chip)}
+.voice.sel{background:var(--accent-soft)}
+.voice .radio{width:16px;height:16px;border-radius:50%;border:2px solid #c3c6d1;flex:none}
+.voice.sel .radio{border:5px solid var(--accent)}
+.voice .name{font-weight:500;flex:1}
+.voice.sel .name{color:var(--accent);font-weight:600}
+.voice .engine-tag{font-size:11px;color:var(--text2);background:var(--chip);border-radius:6px;padding:2px 8px}
+.play{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--panel);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--accent)}
+.play:hover{background:var(--accent-soft)}
+/* hotkeys */
+.kbd{display:inline-flex;gap:4px}
+.kbd i{font-style:normal;background:var(--chip);border:1px solid var(--line);border-bottom-width:2px;
+  border-radius:6px;padding:3px 9px;font-size:12px;font-weight:600;font-family:inherit}
+.combo{display:flex;align-items:center;gap:10px}
+.combo .kbd{cursor:pointer;border-radius:8px;padding:2px}
+.combo .kbd:hover i{border-color:var(--accent)}
+.combo.listen .kbd i{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.55}}
+.unbind{border:none;background:none;color:var(--text2);cursor:pointer;font-size:15px;padding:4px;border-radius:6px}
+.unbind:hover{color:var(--danger);background:var(--chip)}
+/* system */
+.status-line{display:flex;gap:18px;color:var(--text2);font-size:13px;margin-top:6px}
+.status-line b{color:var(--text)}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:10px;
+  padding:9px 18px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover{background:var(--chip)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:var(--danger)}
+.badge{font-size:12px;font-weight:600;color:var(--ok);background:rgba(22,163,74,.12);border-radius:99px;padding:4px 11px}
+code{background:var(--chip);border-radius:6px;padding:2px 7px;font-size:12px}
+/* saved toast */
+#toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(70px);background:var(--text);
+  color:var(--bg);border-radius:99px;padding:8px 18px;font-size:13px;font-weight:600;transition:transform .25s;display:flex;gap:8px;align-items:center}
+#toast.show{transform:translateX(-50%) translateY(0)}
+#toast svg{width:14px;height:14px}
+</style>
+</head>
+<body>
+<aside>
+  <h1>Sonara</h1>
+  <button class="nav active" data-s="speech"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>Speech</button>
+  <button class="nav" data-s="summary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Summary</button>
+  <button class="nav" data-s="audio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 5 6 9H2v6h4l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14"/></svg>Audio</button>
+  <button class="nav" data-s="hotkeys"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Hotkeys</button>
+  <button class="nav" data-s="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>System</button>
+  <div class="spacer"></div>
+  <div class="daemon-pill"><span class="dot"></span>Daemon running · af_heart</div>
+</aside>
+
+<main>
+  <div class="head">
+    <div><h2 id="title">Speech</h2><p id="subtitle">Voice, pace, and how much gets read.</p></div>
+    <button class="theme-btn" onclick="flipTheme()">◐ Theme</button>
+  </div>
+
+  <!-- SPEECH -->
+  <section id="speech" class="active">
+    <div class="card">
+      <div class="row" style="border-bottom:1px solid var(--line)">
+        <div class="lbl"><b>Voice</b><span>Grouped by engine. Press ▸ to hear a sample before switching.</span></div>
+      </div>
+      <div class="voice-groups">
+        <div class="vgroup">Kokoro — fast neural</div>
+        <div class="voice sel" onclick="pick(this)"><span class="radio"></span><span class="name">af_heart</span><span class="engine-tag">Kokoro</span><button class="play" onclick="prev(event)">▸</button></div>
+        <div class="voice" onclick="pick(this)"><span class="radio"></span><span class="name">af_bella</span><span class="engine-tag">Kokoro</span><button class="play" onclick="prev(event)">▸</button></div>
+        <div class="voice" onclick="pick(this)"><span class="radio"></span><span class="name">am_michael</span><span class="engine-tag">Kokoro</span><button class="play" onclick="prev(event)">▸</button></div>
+        <div class="vgroup">Chatterbox — high quality</div>
+        <div class="voice" onclick="pick(this)"><span class="radio"></span><span class="name">cb_default</span><span class="engine-tag">Chatterbox</span><button class="play" onclick="prev(event)">▸</button></div>
+        <div class="voice" onclick="pick(this)"><span class="radio"></span><span class="name">shadowheart</span><span class="engine-tag">Chatterbox</span><button class="play" onclick="prev(event)">▸</button></div>
+        <div class="vgroup">Windows — built in</div>
+        <div class="voice" onclick="pick(this)"><span class="radio"></span><span class="name">Microsoft Zira</span><span class="engine-tag">WinRT</span><button class="play" onclick="prev(event)">▸</button></div>
+        <div class="voice" onclick="pick(this)"><span class="radio"></span><span class="name">Microsoft David</span><span class="engine-tag">WinRT</span><button class="play" onclick="prev(event)">▸</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <div class="lbl"><b>Speech rate</b><span>Words per minute across every engine.</span></div>
+        <div class="slider-wrap"><input type="range" min="120" max="350" value="250" oninput="this.nextElementSibling.textContent=this.value+' wpm';saved()"><span class="val">250 wpm</span></div>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Verbosity</b><span>How much of the session gets narrated.</span></div>
+        <div class="seg" onclick="segpick(event)"><button>everything</button><button class="sel">medium</button><button>quiet</button></div>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Minimum queue</b><span>Items batched before reading starts. 1 reads immediately.</span></div>
+        <div class="stepper"><button onclick="step(this,-1)">−</button><output>5</output><button onclick="step(this,1)">+</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SUMMARY -->
+  <section id="summary">
+    <div class="card">
+      <div class="row">
+        <div class="lbl"><b>Summary mode</b><span>Speak an AI recap of each finished turn instead of full narration.</span></div>
+        <button class="toggle on" onclick="flip(this)"></button>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Digest model</b><span>The model that writes each spoken recap.</span></div>
+        <select onchange="saved()"><option selected>haiku — fastest</option><option>sonnet — richer</option></select>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Digest timeout</b><span>Give up and chime if a recap takes longer than this.</span></div>
+        <div class="slider-wrap"><input type="range" min="15" max="120" value="60" oninput="this.nextElementSibling.textContent=this.value+' s';saved()"><span class="val">60 s</span></div>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Settle window</b><span>Wait for late-arriving text before digesting a turn.</span></div>
+        <div class="slider-wrap"><input type="range" min="0" max="2000" step="100" value="600" oninput="this.nextElementSibling.textContent=this.value+' ms';saved()"><span class="val">600 ms</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AUDIO -->
+  <section id="audio">
+    <div class="card">
+      <div class="row">
+        <div class="lbl"><b>Audio control</b><span>Duck other apps' audio while Sonara speaks, restore after.</span></div>
+        <button class="toggle" onclick="flip(this)"></button>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Duck level</b><span>Volume other apps drop to while speech plays.</span></div>
+        <div class="slider-wrap"><input type="range" min="0" max="100" value="20" oninput="this.nextElementSibling.textContent=this.value+' %';saved()"><span class="val">20 %</span></div>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Synthesis chunk size</b><span>Smaller chunks can pronounce better; larger flow better. Chatterbox only.</span></div>
+        <div class="slider-wrap"><input type="range" min="80" max="280" value="280" oninput="this.nextElementSibling.textContent=this.value+' chars';saved()"><span class="val">280 chars</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOTKEYS -->
+  <section id="hotkeys">
+    <div class="card">
+      <div class="row"><div class="lbl"><b>Global hotkeys</b><span>Click a combo, then press the new keys. Esc cancels, ✕ unbinds.</span></div></div>
+      <div class="row"><div class="lbl"><b>Pause / resume</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>P</i></span><button class="unbind">✕</button></div></div>
+      <div class="row"><div class="lbl"><b>Mute cycle</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>M</i></span><button class="unbind">✕</button></div></div>
+      <div class="row"><div class="lbl"><b>Skip item</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>→</i></span><button class="unbind">✕</button></div></div>
+      <div class="row"><div class="lbl"><b>Re-read last</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>↑</i></span><button class="unbind">✕</button></div></div>
+      <div class="row"><div class="lbl"><b>Next session</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>N</i></span><button class="unbind">✕</button></div></div>
+      <div class="row"><div class="lbl"><b>Jump to question</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>J</i></span><button class="unbind">✕</button></div></div>
+      <div class="row"><div class="lbl"><b>Re-read options</b></div><div class="combo" onclick="listen(this)"><span class="kbd"><i>Ctrl</i><i>Alt</i><i>O</i></span><button class="unbind">✕</button></div></div>
+    </div>
+  </section>
+
+  <!-- SYSTEM -->
+  <section id="system">
+    <div class="card">
+      <div class="row">
+        <div class="lbl"><b>Daemon</b>
+          <div class="status-line"><span>Status <b>Running</b></span><span>PID <b>49420</b></span><span>Port <b>52484</b></span><span>Uptime <b>1h 12m</b></span></div>
+        </div>
+        <div style="display:flex;gap:10px"><button class="btn" onclick="saved()">Restart</button><button class="btn danger" onclick="saved()">Shut down</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <div class="lbl"><b>Kokoro engine</b><span>Fast neural voices (af_*, am_*, bf_*, bm_*).</span></div>
+        <span class="badge">Installed</span>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Chatterbox engine</b><span>High-quality GPU voices and clones. Manage with <code>sonara voices install chatterbox</code></span></div>
+        <span class="badge">Installed</span>
+      </div>
+      <div class="row">
+        <div class="lbl"><b>Version</b><span>Sonara 0.5.0 · installed at ~/.sonara/app</span></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div id="toast"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>Saved</div>
+
+<script>
+const meta={speech:["Speech","Voice, pace, and how much gets read."],
+summary:["Summary","How finished turns get recapped aloud."],
+audio:["Audio","Ducking and synthesis tuning."],
+hotkeys:["Hotkeys","Global keys that work in any app."],
+system:["System","Daemon health and engines."]};
+document.querySelectorAll(".nav").forEach(n=>n.onclick=()=>{
+  document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));n.classList.add("active");
+  document.querySelectorAll("section").forEach(s=>s.classList.remove("active"));
+  document.getElementById(n.dataset.s).classList.add("active");
+  document.getElementById("title").textContent=meta[n.dataset.s][0];
+  document.getElementById("subtitle").textContent=meta[n.dataset.s][1];});
+function flipTheme(){const h=document.documentElement;h.dataset.theme=h.dataset.theme==="dark"?"":"dark"}
+function flip(t){t.classList.toggle("on");saved()}
+function pick(v){v.closest(".voice-groups").querySelectorAll(".voice").forEach(x=>x.classList.remove("sel"));v.classList.add("sel");saved()}
+function prev(e){e.stopPropagation();const b=e.currentTarget;b.textContent="◼";setTimeout(()=>b.textContent="▸",1200)}
+function segpick(e){if(e.target.tagName!=="BUTTON")return;e.currentTarget.querySelectorAll("button").forEach(b=>b.classList.remove("sel"));e.target.classList.add("sel");saved()}
+function step(b,d){const o=b.parentElement.querySelector("output");o.textContent=Math.max(1,Math.min(10,+o.textContent+d));saved()}
+function listen(c){document.querySelectorAll(".combo").forEach(x=>x.classList.remove("listen"));c.classList.add("listen");
+  const h=e=>{e.preventDefault();if(e.key!=="Escape"){const p=[];if(e.ctrlKey)p.push("Ctrl");if(e.altKey)p.push("Alt");if(e.shiftKey)p.push("Shift");
+  if(!["Control","Alt","Shift"].includes(e.key)){p.push(e.key.length===1?e.key.toUpperCase():e.key);
+  c.querySelector(".kbd").innerHTML=p.map(k=>"<i>"+k+"</i>").join("");saved()}else return}
+  c.classList.remove("listen");removeEventListener("keydown",h,true)};addEventListener("keydown",h,true)}
+let tt;function saved(){const t=document.getElementById("toast");t.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>t.classList.remove("show"),1300)}
+</script>
+</body>
+</html>
