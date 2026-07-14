@@ -22,6 +22,7 @@ def test_defaults_has_documented_top_level_keys():
         "chatterbox_timeout",
         "chatterbox_warm_timeout",
         "chatterbox_max_chunk_chars",
+        "chatterbox_exaggeration",
         "settings_port",
     }
 
@@ -275,3 +276,9 @@ def test_settings_port_default():
     # reconnect-after-restart polling survive daemon restarts.
     from sonara.config import DEFAULTS
     assert DEFAULTS["settings_port"] == 27431
+
+
+def test_chatterbox_exaggeration_default():
+    # (#38) settings-page expressiveness slider; 0.0 matches the turbo engine
+    # default so existing voices sound identical until the user moves it
+    assert DEFAULTS["chatterbox_exaggeration"] == 0.0

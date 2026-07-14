@@ -180,3 +180,27 @@ def test_hotkey_capture_works_keyboard_only(live, monkeypatch):
         page.wait_for_timeout(400)
         browser.close()
     assert binds == [("mute", "m", ("ctrl", "alt"))]   # Enter itself not captured
+
+
+def test_exaggeration_slider_dispatches_config_set(live, monkeypatch):
+    # (#38) expressiveness slider -> set_config_value("chatterbox_exaggeration")
+    d, s = live
+    sets = []
+    def fake_set(k, v):
+        sets.append((k, v))
+        d.config[k] = v          # mirror the real daemon: persist then re-render
+        return True
+    d.set_config_value = fake_set
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='audio']")
+        page.locator("#exag").fill("0.7")
+        page.locator("#exag").dispatch_event("change")
+        page.wait_for_timeout(300)
+        shown = page.locator("#exag-out").text_content()
+        browser.close()
+    assert ("chatterbox_exaggeration", 0.7) in sets
+    assert shown == "0.70"

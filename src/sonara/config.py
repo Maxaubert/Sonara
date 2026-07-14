@@ -29,6 +29,9 @@ DEFAULTS = {
     "chatterbox_warm_timeout": 90,        # seconds for a pre-warm (covers the cold load)
     "chatterbox_max_chunk_chars": 280,    # synth chunk size (80-280): smaller can
                                           # pronounce better, larger flows better (#27)
+    "chatterbox_exaggeration": 0.0,       # expressiveness 0-1 (0 = monotone,
+                                          # matches the turbo engine default);
+                                          # a voice sidecar overrides it (#38)
     "settings_port": 27431,               # settings page port (pinned so bookmarks
                                           # and restart-reconnect work; 0 = ephemeral)
 }

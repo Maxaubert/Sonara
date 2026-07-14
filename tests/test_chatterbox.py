@@ -259,3 +259,21 @@ def test_warm_returns_false_on_error(tmp_path, monkeypatch):
         raise cb.ChatterboxError("dead")
     monkeypatch.setattr(c, "_request", boom)
     assert c.warm({"chatterbox_variant": "turbo"}) is False
+
+
+def test_voice_spec_exaggeration_falls_back_to_config():
+    # (#38) the settings-page slider sets a global chatterbox_exaggeration;
+    # a voice sidecar still overrides it
+    from sonara import chatterbox
+    spec = chatterbox.voice_spec("cb_default", {"chatterbox_variant": "turbo",
+                                                "chatterbox_exaggeration": 0.6})
+    assert spec["exaggeration"] == 0.6
+
+
+def test_voice_spec_sidecar_overrides_config_exaggeration(tmp_path, monkeypatch):
+    from sonara import chatterbox
+    monkeypatch.setattr(chatterbox, "CHATTERBOX_VOICES_DIR", str(tmp_path))
+    (tmp_path / "poki.wav").write_bytes(b"RIFF")
+    (tmp_path / "poki.json").write_text('{"exaggeration": 0.9}')
+    spec = chatterbox.voice_spec("poki", {"chatterbox_exaggeration": 0.2})
+    assert spec["exaggeration"] == 0.9                    # sidecar wins

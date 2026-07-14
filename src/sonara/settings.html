@@ -191,6 +191,7 @@
         <div class="group-label"><span>Streaming</span><span>SPEECH ENGINE</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Chunk size</strong><div class="hint">Characters sent to the voice engine at once.</div></div><div class="control"><div class="range-head"><span>Characters</span><output id="chunk-out">280</output></div><input class="range" id="chunk" type="range" min="80" max="280" value="280"><div class="ends"><span>80 responsive</span><span>280 smooth</span></div><div class="hint">Larger chunks favor natural phrasing over the quickest start.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Expressiveness</strong><div class="hint">Emotional intensity for Chatterbox voices.</div></div><div class="control"><div class="range-head"><span>Exaggeration</span><output id="exag-out">0.00</output></div><input class="range" id="exag" type="range" min="0" max="1" step="0.05" value="0"><div class="ends"><span>0 monotone</span><span>1 dramatic</span></div><div class="hint">Applies to every Chatterbox voice; a voice's own sidecar file overrides it. Previews keep their original tone.</div></div></div>
         </div>
       </section>
 
@@ -325,6 +326,9 @@ function render(s) {
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
   setVal("chunk", s.config.chatterbox_max_chunk_chars);
   document.getElementById("chunk-out").textContent = s.config.chatterbox_max_chunk_chars;
+  const exag = s.config.chatterbox_exaggeration ?? 0;
+  setVal("exag", exag);
+  document.getElementById("exag-out").textContent = Number(exag).toFixed(2);
   // hotkeys (skip rows mid-capture and identical content; escape names)
   const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
   for (const b of s.keymap) {
@@ -401,6 +405,9 @@ document.getElementById("timeout").addEventListener("change", e => set("summary_
 document.getElementById("settle").addEventListener("change", e => set("summary_settle_ms", +e.target.value));
 document.getElementById("duck").addEventListener("change", e => set("duck_level", +e.target.value));
 document.getElementById("chunk").addEventListener("change", e => set("chatterbox_max_chunk_chars", +e.target.value));
+document.getElementById("exag").addEventListener("change", e => set("chatterbox_exaggeration", +e.target.value));
+document.getElementById("exag").addEventListener("input",
+  e => document.getElementById("exag-out").textContent = Number(e.target.value).toFixed(2));
 document.getElementById("model-select").addEventListener("change", e => set("summary_model", e.target.value));
 document.getElementById("summary-switch").addEventListener("click", function () {
   set("summary_mode", this.getAttribute("aria-checked") !== "true");

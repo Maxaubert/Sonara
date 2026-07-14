@@ -95,9 +95,11 @@ def voice_spec(name, config) -> dict:
     sidecar (same stem, `.json`) for variant/exaggeration overrides.
     """
     default_variant = config.get("chatterbox_variant", "turbo")
+    default_exag = config.get("chatterbox_exaggeration")   # settings slider (#38)
     norm = normalize_voice(name)
     if norm is None or norm.lower() == DEFAULT_VOICE:
-        return {"voice_path": None, "variant": default_variant, "exaggeration": None}
+        return {"voice_path": None, "variant": default_variant,
+                "exaggeration": default_exag}
 
     voices_dir = Path(CHATTERBOX_VOICES_DIR)
     voice_path = voices_dir / (norm + ".wav")
@@ -113,6 +115,8 @@ def voice_spec(name, config) -> dict:
             data = {}
         variant = data.get("variant", default_variant)
         exaggeration = data.get("exaggeration")
+    if exaggeration is None:
+        exaggeration = default_exag        # settings slider fills the gap (#38)
     return {"voice_path": str(voice_path), "variant": variant, "exaggeration": exaggeration}
 
 
