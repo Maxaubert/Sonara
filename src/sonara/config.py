@@ -27,6 +27,8 @@ DEFAULTS = {
                                           # reload, or every post-idle chunk times out
                                           # and cascades to Kokoro -- audit #19)
     "chatterbox_warm_timeout": 90,        # seconds for a pre-warm (covers the cold load)
+    "chatterbox_max_chunk_chars": 280,    # synth chunk size (80-280): smaller can
+                                          # pronounce better, larger flows better (#27)
 }
 
 

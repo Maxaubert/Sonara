@@ -48,3 +48,26 @@ def clean_markdown(text: str) -> str:
     text = _LIST_ITEM_END.sub(r"\1.\n", text)
     text = _WHITESPACE.sub(" ", text)
     return text.strip()
+
+
+# --- speech normalization for digests (#27) ----------------------------------
+# Digests (summary mode) bypass the assembler's streaming cleaner, so markdown
+# residue and code identifiers reached the TTS raw and were mispronounced.
+# snake_case -> spaced words; arrows -> "to"; " & " -> " and "; stray markdown
+# characters stripped. Applied to digest text only (the streaming prose path
+# must stay prefix-stable and keeps plain clean_markdown).
+_SNAKE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+(?![A-Za-z0-9_])")
+_ARROW = re.compile(r"\s*(?:->|=>|-->)\s*")
+_STRAY_MD = re.compile(r"[*_`~#]+")
+
+
+def normalize_for_speech(text: str) -> str:
+    """TTS-normalize digest text so symbols never reach the voice (#27)."""
+    # unsnake FIRST: clean_markdown's emphasis rule eats intraword underscores
+    # ("get_user_id" -> "getuserid"), which would glue the words together.
+    text = _SNAKE.sub(lambda m: m.group(0).replace("_", " "), text or "")
+    text = clean_markdown(text)
+    text = _ARROW.sub(" to ", text)
+    text = text.replace(" & ", " and ")
+    text = _STRAY_MD.sub(" ", text)
+    return _WHITESPACE.sub(" ", text).strip()

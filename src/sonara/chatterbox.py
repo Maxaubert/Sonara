@@ -157,6 +157,18 @@ def split_text(text, max_chars=280):
     return chunks
 
 
+def chunk_chars(config) -> int:
+    """Clamped synth-chunk size (#27). Capped at 280: the worker's defensive
+    re-split is fixed at 280 and would silently re-split larger chunks; floor
+    80 so a typo cannot degrade playback into word-sized fragments."""
+    try:
+        n = int(config.get("chatterbox_max_chunk_chars",
+                           _CONFIG_DEFAULTS["chatterbox_max_chunk_chars"]))
+    except (TypeError, ValueError):
+        return _CONFIG_DEFAULTS["chatterbox_max_chunk_chars"]
+    return max(80, min(280, n))
+
+
 # --- VRAM gate -----------------------------------------------------------------
 
 def _default_smi_run(argv, **kwargs):
