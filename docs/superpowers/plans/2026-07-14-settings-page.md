@@ -117,7 +117,7 @@ Create `tests/test_webui.py`:
 
 ```python
 """Settings page HTTP server (#34): auth, state, dispatch. Uses a FakeDaemon --
-never a real daemon, никогда the live ~/.sonara."""
+never a real daemon, never the live ~/.sonara."""
 import json
 import urllib.request
 import urllib.error
