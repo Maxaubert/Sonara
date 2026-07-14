@@ -166,6 +166,15 @@ def bind_action(action: str, key: str, mods: list) -> None:
     key = (key or "").strip().lower()
     if not key:
         raise ValueError("empty key")
+    # Validate BEFORE persisting (#38): resolve_keymap raises on an unknown
+    # name and that failure takes down EVERY hotkey, so a bad binding must
+    # never reach keymap.json in the first place.
+    key_codes, mod_masks = _keytables()
+    if key not in key_codes:
+        raise ValueError(f"unsupported key {key!r}")
+    for m in (mods or []):
+        if str(m).lower() not in mod_masks:
+            raise ValueError(f"unsupported modifier {m!r}")
     user = _read_user_keymap()
     user[action] = {"key": key, "mods": [str(m).lower() for m in (mods or [])]}
     _write_user_keymap(user)

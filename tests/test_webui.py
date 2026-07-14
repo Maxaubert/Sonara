@@ -244,3 +244,50 @@ def test_preview_audio_requires_token(server, tmp_path, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as ei:
         _get(server[1], "/api/preview-audio?voice=v", token=None)
     assert ei.value.code == 403
+
+
+def test_state_exposes_valid_keys_and_mods(server, monkeypatch):
+    # (#38) the page validates captures client-side against the real keytables
+    monkeypatch.setattr(webui, "_key_names", lambda: {"keys": ["m", "z"], "mods": ["ctrl", "alt"]})
+    state = json.loads(_get(server[1], "/api/state").read())
+    assert state["keys"] == {"keys": ["m", "z"], "mods": ["ctrl", "alt"]}
+
+
+def test_keymap_junk_types_are_400_not_traceback(server, monkeypatch):
+    # (#38) non-string key / non-list mods used to raise TypeError -> dead reply
+    def typo(action, key, mods):
+        raise TypeError("key must be a string")
+    monkeypatch.setattr(webui, "_bind_action", typo)
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(server[1], "/api/keymap", {"action": "mute", "key": 5, "mods": "ctrl"})
+    assert ei.value.code == 400
+
+
+def test_deeply_nested_json_is_400(server):
+    body = ("[" * 3000 + "]" * 3000).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{server[1].port}/api/set", data=body,
+                                 headers={"X-Sonara-Token": "tok123",
+                                          "Content-Type": "application/json"})
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        urllib.request.urlopen(req, timeout=5)
+    assert ei.value.code == 400
+
+
+def test_windows_group_excludes_neural_duplicates(monkeypatch):
+    # (#38) the WinRT voice list includes the neural voices; the page showed
+    # every kokoro/chatterbox voice twice
+    class V:
+        def __init__(self, n): self.display_name = n
+    import types
+    fake_tts = types.SimpleNamespace(list_voices=lambda: [V("Microsoft Zira"), V("af_heart"), V("poki")])
+    fake_platform = types.SimpleNamespace(tts=fake_tts)
+    import sonara.platform as plat
+    monkeypatch.setattr(plat, "get_platform", lambda: fake_platform)
+    import sonara.kokoro as kokoro, sonara.chatterbox as chatterbox
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
+    monkeypatch.setattr(kokoro, "VOICES", ["af_heart"])
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
+    monkeypatch.setattr(chatterbox, "list_voices", lambda: ["poki"])
+    out = webui._installed_voices()
+    assert out["windows"] == ["Microsoft Zira"]
+    assert out["kokoro"] == ["af_heart"] and out["chatterbox"] == ["poki"]
