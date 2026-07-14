@@ -46,6 +46,29 @@ def _dispatch(daemon, msg):
     return daemon.handle_message(msg)
 
 
+def _spawn_respawner() -> None:
+    """Page Restart (#34 follow-up): when the daemon was started directly
+    (`sonara start`) no supervisor loop is alive, so a plain shutdown would
+    stay down until the next lazy hook start -- live-verified. A tiny detached
+    child waits out the dying process, then uses the standard lazy-start path
+    (which honors the stop sentinel and the singleton mutex, so it is a no-op
+    if something else already respawned or the user shut down meanwhile)."""
+    import subprocess
+    import sys
+    code = ("import time; time.sleep(2.0); "
+            "from sonara.daemon import ensure_running; ensure_running()")
+    kwargs = {}
+    if os.name == "nt":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent
+        kwargs["creationflags"] = 0x00000008 | 0x00000200
+    try:
+        subprocess.Popen([sys.executable, "-c", code],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True, **kwargs)
+    except Exception:  # noqa: BLE001 - a failed respawner must not break the reply
+        pass
+
+
 def _bind_action(action, key, mods):
     from sonara import keymap
     keymap.bind_action(action, key, mods)
@@ -251,6 +274,7 @@ def _make_handler(server: SettingsServer):
             op = payload.get("op")
             if op == "restart":
                 _dispatch(server._daemon, {"v": 1, "type": "shutdown"})
+                _spawn_respawner()   # no supervisor may be alive (#34 follow-up)
                 return self._json(202, {"ok": True})
             if op == "shutdown":
                 _dispatch(server._daemon,

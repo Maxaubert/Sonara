@@ -11,6 +11,10 @@ LOCK_PATH = SONARA_DIR / "daemon.lock"
 # `sonara shutdown`, cleared by `sonara start` / install(). Gates BOTH respawn
 # paths (the supervisor loop and the per-hook-event lazy start).
 STOPPED_SENTINEL_PATH = SONARA_DIR / "stopped"
+# Settings-page token, durable across daemon restarts (#34): the lockfile is
+# unlinked on clean exit, so token reuse (page reconnect, stable bookmarks)
+# needs its own small file.
+WEBUI_TOKEN_PATH = SONARA_DIR / "webui.token"
 SINGLETON_PATH = SONARA_DIR / "daemon.singleton"   # held-open flock: single-instance
 LOG_PATH = SONARA_DIR / "speechd.log"
 KEYMAP_PATH = SONARA_DIR / "keymap.json"
