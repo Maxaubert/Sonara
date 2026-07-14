@@ -185,6 +185,10 @@ def test_hotkey_capture_works_keyboard_only(live, monkeypatch):
 def test_exaggeration_slider_dispatches_config_set(live, monkeypatch):
     # (#38) expressiveness slider -> set_config_value("chatterbox_exaggeration")
     d, s = live
+    monkeypatch.setattr(webui, "_installed_voices", lambda: {
+        "windows": [], "kokoro": ["af_heart"], "chatterbox": ["cb_default"]})
+    d.config["chatterbox_variant"] = "original"      # slider live only in Original
+    d.config["voice"] = "cb_default"                 # chatterbox engine view
     sets = []
     def fake_set(k, v):
         sets.append((k, v))
@@ -196,7 +200,6 @@ def test_exaggeration_slider_dispatches_config_set(live, monkeypatch):
         page = browser.new_page()
         page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
         page.wait_for_selector("#voice-select option", state="attached")
-        page.click("button[data-page='audio']")
         page.locator("#exag").fill("0.7")
         page.locator("#exag").dispatch_event("change")
         page.wait_for_timeout(300)
@@ -204,3 +207,49 @@ def test_exaggeration_slider_dispatches_config_set(live, monkeypatch):
         browser.close()
     assert ("chatterbox_exaggeration", 0.7) in sets
     assert shown == "0.70"
+
+
+def test_engine_toggle_filters_voices_and_switches(live, monkeypatch):
+    # (#42) Kokoro view lists only kokoro voices; switching engines auto-picks
+    # a voice of that engine
+    d, s = live
+    sets = []
+    monkeypatch.setattr(webui, "_installed_voices", lambda: {
+        "windows": ["Microsoft Zira"], "kokoro": ["af_heart", "af_bella"],
+        "chatterbox": ["cb_default", "poki"]})
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        kokoro_opts = page.eval_on_selector_all("#voice-select option", "els => els.map(e => e.value)")
+        page.click("#engine-seg button[data-engine='chatterbox']")
+        page.wait_for_timeout(400)
+        cb_opts = page.eval_on_selector_all("#voice-select option", "els => els.map(e => e.value)")
+        mode_visible = page.is_visible("#cb-mode-row")
+        browser.close()
+    assert kokoro_opts == ["af_heart", "af_bella"]          # kokoro only
+    assert cb_opts == ["cb_default", "poki"]                 # chatterbox only
+    assert mode_visible                                      # cb-only rows shown
+    assert any(m.get("type") == "set_voice" and m.get("voice") in ("cb_default", "poki")
+               for m in d.messages)                          # engine switch picked a voice
+
+
+def test_turbo_mode_grays_out_expressiveness(live, monkeypatch):
+    # (#42) Turbo ignores exaggeration -- the slider must be visibly disabled
+    d, s = live
+    monkeypatch.setattr(webui, "_installed_voices", lambda: {
+        "windows": [], "kokoro": ["af_heart"], "chatterbox": ["cb_default"]})
+    d.config["voice"] = "cb_default"
+    d.config["chatterbox_variant"] = "turbo"
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        disabled = page.eval_on_selector("#exag", "el => el.disabled")
+        dimmed = page.eval_on_selector("#cb-exag-row", "el => el.classList.contains('dim')")
+        hint = page.text_content("#exag-hint")
+        browser.close()
+    assert disabled and dimmed
+    assert "Turbo" in hint                                   # user is told why

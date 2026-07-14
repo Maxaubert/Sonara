@@ -21,6 +21,7 @@ class FakeDaemon:
                        "summary_timeout": 60, "summary_settle_ms": 600,
                        "audio_control": False, "duck_level": 20,
                        "chatterbox_max_chunk_chars": 280, "chatterbox_exaggeration": 0.0,
+                       "chatterbox_variant": "turbo",
                        "settings_port": 0}
         self.sessions = FakeSessions()
         self.messages = []
@@ -292,3 +293,14 @@ def test_windows_group_excludes_neural_duplicates(monkeypatch):
     out = webui._installed_voices()
     assert out["windows"] == ["Microsoft Zira"]
     assert out["kokoro"] == ["af_heart"] and out["chatterbox"] == ["poki"]
+
+
+def test_variant_is_page_settable(server, monkeypatch):
+    # (#42) mode toggle routes through the config setter like the other keys
+    d, s = server
+    calls = []
+    d.set_config_value = lambda k, v: calls.append((k, v)) or True
+    _post(s, "/api/set", {"key": "chatterbox_variant", "value": "original"})
+    assert calls == [("chatterbox_variant", "original")]
+    state = json.loads(_get(s, "/api/state").read())
+    assert "chatterbox_variant" in state["config"]

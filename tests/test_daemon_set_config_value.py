@@ -24,3 +24,15 @@ def test_set_config_value_clamps_exaggeration_as_float(monkeypatch):
     assert daemon.config["chatterbox_exaggeration"] == 1.0   # clamped
     daemon.set_config_value("chatterbox_exaggeration", -1)
     assert daemon.config["chatterbox_exaggeration"] == 0.0
+
+
+def test_set_config_value_validates_variant(monkeypatch):
+    # (#42) the Speech section's Turbo/Original mode toggle
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    daemon, *_ = make_daemon()
+    assert daemon.set_config_value("chatterbox_variant", "original") is True
+    assert daemon.config["chatterbox_variant"] == "original"
+    assert daemon.set_config_value("chatterbox_variant", "turbo") is True
+    assert daemon.set_config_value("chatterbox_variant", "warp9") is False
+    assert daemon.config["chatterbox_variant"] == "turbo"     # junk rejected
