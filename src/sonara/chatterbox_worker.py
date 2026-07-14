@@ -96,15 +96,16 @@ def _to_float_mono(tensor):
     return np.asarray(tensor.squeeze().cpu().numpy(), dtype="float32").reshape(-1)
 
 
-def _dehum(audio, sr, f0=120.0, q=6.0, passes=2):
-    """Notch out the Chatterbox generation hum (#51).
+def _dehum(audio, sr, freqs=(60.0, 120.0), q=6.0, passes=2):
+    """Notch out mains electrical hum reproduced by Chatterbox (#51).
 
-    The model emits a persistent ~120 Hz tone in the quiet gaps of every voice
-    (measured ~8x Kokoro's floor); because it is present within a chunk but the
-    inter-chunk queue gaps are true silence, it audibly pulses on/off per chunk.
-    Every registered voice's fundamental is >=140 Hz, so a narrow zero-phase
-    notch around 120 Hz removes the hum to Kokoro's floor while leaving the
-    voice untouched (verified: 120 Hz -26/-13/-20 dB across voices, 100% body).
+    Reference clips recorded near a PC carry mains hum: a comb of tones at 60 Hz
+    and its harmonics (120, 180 ...), dominant at 60 and 120 Hz. Chatterbox
+    clones it faithfully, and because it sits inside a chunk while the inter-
+    chunk queue gaps are true silence, it audibly pulses on/off per chunk. Every
+    registered voice's fundamental is >=140 Hz, so narrow zero-phase notches at
+    60 and 120 Hz remove the hum while leaving the voice essentially untouched.
+    A universal safety net; the per-voice clip is also cleaned at registration.
     """
     import numpy as np
     try:
@@ -114,9 +115,10 @@ def _dehum(audio, sr, f0=120.0, q=6.0, passes=2):
     x = np.asarray(audio, dtype="float64")
     if x.size < 32:
         return audio
-    b, a = iirnotch(f0 / (sr / 2.0), q)
-    for _ in range(passes):
-        x = filtfilt(b, a, x)
+    for f0 in freqs:
+        b, a = iirnotch(f0 / (sr / 2.0), q)
+        for _ in range(passes):
+            x = filtfilt(b, a, x)
     return x.astype("float32")
 
 
