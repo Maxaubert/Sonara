@@ -926,6 +926,53 @@ def test_reread_after_digest_and_question_replays_both(monkeypatch):
     assert "The digest." in joined and "Pick one?" in joined
 
 
+def test_up_during_speaking_question_restarts_it(monkeypatch):
+    # Up pressed WHILE the question is being spoken used to ANNIHILATE it: the
+    # re-read cancelled the utterance, but a mid-speech question is not in the
+    # re-read record yet (it joins on completion) and nothing re-queued it --
+    # edge chime, question gone forever (live report, 2026-07-14). Up during a
+    # speaking question must RESTART it.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    import sonara.daemon as daemon_module
+    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
+    _set_mode(daemon, True)
+    _choice(daemon)                                      # bare question, no prose
+    with daemon._lock:                                   # loop takes the item...
+        item = daemon.router.next_item()
+        while item is not None and not item.is_decision:
+            item = daemon.router.next_item()             # skip the mode-change cue
+        daemon._current_item = item
+    assert item is not None and item.is_decision
+    # ...and MID-SPEECH the user presses Up:
+    assert daemon._reread_last("fg") is True             # was: False -> edge chime
+    daemon.note_spoken(item, False)                      # cancelled speak returns
+    for _ in range(4):
+        daemon._speak_loop_once()
+    assert any("Pick one?" in t for t in speaker.spoken)  # question re-asked
+    ch = daemon.router.channel("fg")
+    qs = [it for it in ch.items if it.is_decision and "Pick one?" in it.text]
+    assert len(qs) == 1                                  # restarted, not duplicated
+
+
+def test_up_during_speaking_digest_does_not_double_speak(monkeypatch):
+    # Regression guard: Up mid-DIGEST already restarts correctly by re-reading
+    # the record; the interrupted digest item must not ALSO be re-queued.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = lambda text, **kw: "The digest."
+    daemon._summary_worker(*calls[0])                    # digest queued + recorded
+    with daemon._lock:
+        item = daemon.router.next_item()                 # digest mid-speech
+        daemon._current_item = item
+    assert daemon._reread_last("fg") is True
+    daemon.note_spoken(item, False)
+    for _ in range(6):
+        daemon._speak_loop_once()
+    assert speaker.spoken.count("The digest.") == 1      # spoken once, not twice
+
+
 def test_reread_does_not_double_append_on_repeat_rereads(monkeypatch):
     # The re-read insert is is_decision=False, so hearing a re-read must NOT
     # re-append the question to the record (unbounded growth).

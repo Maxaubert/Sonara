@@ -1469,7 +1469,16 @@ class SpeechDaemon:
         and restarts from the top so the press takes effect AT ONCE. Returns True if
         there was a digest to re-read (caller chimes "nav"), else False (edge)."""
         text = self._last_digest_text.get(session)
-        if not text:
+        # A DECISION being spoken RIGHT NOW is not in the record yet (it joins
+        # on completion) -- cancelling it without re-queueing ANNIHILATED the
+        # question: edge chime, gone forever (live report 2026-07-14). Up during
+        # a speaking question restarts it instead. A non-decision current item
+        # (a digest) is already the record's text, so re-queueing it would
+        # double-speak; the record re-read IS its restart.
+        cur = self._current_item
+        if cur is not None and (cur.session != session or not cur.is_decision):
+            cur = None
+        if not text and cur is None:
             return False
         self._nav_cursor.pop(session, None)
         self.speaker.cancel()                    # restart now, don't wait out the read
@@ -1485,10 +1494,19 @@ class SpeechDaemon:
             else:
                 self._pending_heard.pop(it.id, None)
         del ch.items[ch.cursor:]
-        ch.items.insert(ch.cursor, SpeechItem(
-            id=self._alloc_id(), session=session, kind="summary",
-            text=text, is_decision=False))
-        ch.items.extend(preserved)               # question(s) follow the re-read
+        if cur is not None and ch.cursor > 0 and ch.items[ch.cursor - 1] is cur:
+            # un-consume the interrupted question so history keeps ONE copy
+            del ch.items[ch.cursor - 1]
+            ch.cursor -= 1
+        tail = []
+        if text:
+            tail.append(SpeechItem(
+                id=self._alloc_id(), session=session, kind="summary",
+                text=text, is_decision=False))
+        if cur is not None:
+            tail.append(cur)                     # the interrupted question, from the top
+        tail.extend(preserved)                   # then any still-queued question(s)
+        ch.items[ch.cursor:ch.cursor] = tail
         ch.has_decision = any(it.is_decision for it in ch.items[ch.cursor:])
         ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
         self._wake.set()
