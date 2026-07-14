@@ -1,4 +1,4 @@
-# Sonari Phase 3 — Fresh-Install Smoke Checklist (self-contained, screen-off)
+# Sonari Phase 3 - Fresh-Install Smoke Checklist (self-contained, screen-off)
 
 Run these on the real Mac to validate the **public, pip-free** install path. The
 deterministic pytest suite (3.9 + 3.13) covers all install/uninstall/doctor logic
@@ -12,9 +12,9 @@ speech/earcons/hotkeys. Reuses the structure of
 ## Pre-install (clean slate)
 
 - [ ] **No editable sonari shadows the plugin.** Run
-  `/usr/bin/python3 -c "import sonari"` — expect `ModuleNotFoundError` (or, if a
+  `/usr/bin/python3 -c "import sonari"` - expect `ModuleNotFoundError` (or, if a
   dev install lingers, note it; `sonari install` will print cleanup guidance).
-- [ ] **System python is 3.9+.** Run `/usr/bin/python3 --version` — expect 3.9.6
+- [ ] **System python is 3.9+.** Run `/usr/bin/python3 --version` - expect 3.9.6
   or newer.
 
 ## Install
@@ -31,12 +31,12 @@ speech/earcons/hotkeys. Reuses the structure of
 ## Self-contained verification
 
 - [ ] **CLI runs with no installed package.** In a scrubbed shell:
-  `PYTHONPATH=<plugin>/src /usr/bin/python3 -m sonari.cli doctor` — expect it
+  `PYTHONPATH=<plugin>/src /usr/bin/python3 -m sonari.cli doctor` - expect it
   runs and the daemon lazy-starts via `bin/sonari-daemon`.
 - [ ] **Launcher works in a fresh shell.** Open a new terminal and run
-  `sonari status` (resolved via `~/.local/bin/sonari`) — expect daemon status.
+  `sonari status` (resolved via `~/.local/bin/sonari`) - expect daemon status.
 - [ ] **speechd plist is correct.** `plutil -p
-  ~/Library/LaunchAgents/com.sonari.speechd.plist` — expect ProgramArguments
+  ~/Library/LaunchAgents/com.sonari.speechd.plist` - expect ProgramArguments
   `[<abs python3>, -m, sonari.daemon]` and EnvironmentVariables PYTHONPATH =
   `<plugin>/src`.
 
@@ -44,7 +44,7 @@ speech/earcons/hotkeys. Reuses the structure of
 
 - [ ] **Ready earcon + ordered narration.** Start a real `claude` session; hear
   the ready earcon, then prose in order, then decision earcons. (screen off)
-- [ ] **All nine hotkeys.** Exercise Ctrl+Cmd+S/R/./D/L/]/[/V/O — each fires,
+- [ ] **All nine hotkeys.** Exercise Ctrl+Cmd+S/R/./D/L/]/[/V/O - each fires,
   no character leak, no beep. (screen off)
 - [ ] **Native numeric selection.** Trigger AskUserQuestion, permission, and a
   plan; pick options by digit, Esc cancels. (screen off)

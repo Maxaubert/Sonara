@@ -1,8 +1,8 @@
-# Sonari Phase 3 — Self-Contained Packaging & Installer Implementation Plan
+# Sonari Phase 3 - Self-Contained Packaging & Installer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make Sonari install as a self-contained, zero-dependency Claude Code plugin on macOS system python3 (>=3.9) — no pip/PyPI/Homebrew/notarization.
+**Goal:** Make Sonari install as a self-contained, zero-dependency Claude Code plugin on macOS system python3 (>=3.9) - no pip/PyPI/Homebrew/notarization.
 
 **Architecture:** Ship the stdlib-only src/sonari inside the plugin; run it via PYTHONPATH=<plugin>/src on a resolved absolute python3>=3.9; write that interpreter + plugin paths into the LaunchAgents; build hotkeyd locally via swiftc; add a ~/.local/bin/sonari launcher. Runtime data flow is unchanged.
 
@@ -31,17 +31,17 @@ repo is on branch `rebuild-echo`; all commits land there.
 
 ## File structure (what each task creates / modifies)
 
-- `src/sonari/*.py` — add `from __future__ import annotations` to 13 modules (Task 1).
-- `pyproject.toml` — `requires-python = ">=3.9"` (Task 1); `version = "0.3.0"` (Task 12).
-- `src/sonari/cli.py` — `_resolve_python` (Task 2); `_xml_escape` + `_plist(env=)` +
+- `src/sonari/*.py` - add `from __future__ import annotations` to 13 modules (Task 1).
+- `pyproject.toml` - `requires-python = ">=3.9"` (Task 1); `version = "0.3.0"` (Task 12).
+- `src/sonari/cli.py` - `_resolve_python` (Task 2); `_xml_escape` + `_plist(env=)` +
   `_launchagent_plist` signature (Task 4); `install()` rewrite (Task 7); `uninstall()`
   change (Task 8); `doctor()` new checks (Task 9); `_dev_install_migrate` (Task 10).
-- `src/sonari/paths.py` — `INSTALL_RECORD_PATH` (Task 5).
-- `bin/sonari`, `bin/sonari-daemon`, `bin/sonari-hook` — self-locating rewrites (Task 3).
-- `commands/sonari:voice.md`, `commands/sonari:rate.md`, `commands/sonari:skip.md` — new (Task 11).
-- `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` — version bump (Task 12).
-- `README.md` — Requirements/Install rewrite (Task 12).
-- `docs/superpowers/phase3-manual-smoke-checklist.md` — new fresh-install checklist (Task 12).
+- `src/sonari/paths.py` - `INSTALL_RECORD_PATH` (Task 5).
+- `bin/sonari`, `bin/sonari-daemon`, `bin/sonari-hook` - self-locating rewrites (Task 3).
+- `commands/sonari:voice.md`, `commands/sonari:rate.md`, `commands/sonari:skip.md` - new (Task 11).
+- `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` - version bump (Task 12).
+- `README.md` - Requirements/Install rewrite (Task 12).
+- `docs/superpowers/phase3-manual-smoke-checklist.md` - new fresh-install checklist (Task 12).
 - New tests: `tests/test_py39_compat.py` (Task 1), `tests/test_cli_resolve_python.py` (Task 2),
   `tests/test_cli_launcher.py` (Task 6), `tests/test_cli_dev_migrate.py` (Task 10).
 - Updated tests: `tests/test_sonari_hook_bin.py` + `tests/test_bin_sonari.py` (Task 3),
@@ -73,12 +73,12 @@ repo is on branch `rebuild-echo`; all commits land there.
 - Modify: `pyproject.toml:9`
 
 Notes on placement: `from __future__ import annotations` must be the **first
-statement** — after a module docstring if one exists, before any other import.
+statement** - after a module docstring if one exists, before any other import.
 Modules WITH a docstring (insert future-import on the line after the closing `"""`):
 `__init__.py`, `assembler.py`, `cleaner.py`, `config.py`, `hooks_entry.py`,
 `keymap.py`, `protocol.py`. Modules WITHOUT a docstring (insert at line 1):
 `client.py`, `daemon.py`, `paths.py`, `queue.py`, `sessions.py`, `speaker.py`.
-`cli.py` already has the import — do not touch it.
+`cli.py` already has the import - do not touch it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -151,7 +151,7 @@ def test_pyproject_requires_python_39():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_py39_compat.py -v`
-Expected: FAIL — both tests fail (modules lack the future import; pyproject says `>=3.10`).
+Expected: FAIL - both tests fail (modules lack the future import; pyproject says `>=3.10`).
 
 - [ ] **Step 3: Add the future import to all 13 modules and lower requires-python**
 
@@ -560,7 +560,7 @@ import pytest
 
 def test_cli_runs_under_usr_bin_python3_with_scrubbed_env():
     """PYTHONPATH=<repo>/src /usr/bin/python3 -m sonari.cli --help exits 0 with
-    NO installed sonari anywhere — proves the self-contained source path works on
+    NO installed sonari anywhere - proves the self-contained source path works on
     the macOS system interpreter. Skipped if /usr/bin/python3 is absent.
     """
     sys_py = "/usr/bin/python3"
@@ -581,11 +581,11 @@ def test_cli_runs_under_usr_bin_python3_with_scrubbed_env():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_sonari_hook_bin.py::test_hook_src_is_first_on_syspath_and_shadows_stale_global tests/test_bin_sonari.py::test_cli_runs_under_usr_bin_python3_with_scrubbed_env -v`
-Expected: FAIL — the hook test fails because the current shim imports the stale
+Expected: FAIL - the hook test fails because the current shim imports the stale
 `sonari` first (it only falls back to `../src` on ImportError), raising
 `RuntimeError('stale wins')` inside the swallowing try/except (no message sent).
 (The scrubbed-env smoke test may already pass because the current `bin/sonari`
-relies on PYTHONPATH; if it passes that is fine — it will keep passing after the
+relies on PYTHONPATH; if it passes that is fine - it will keep passing after the
 rewrite.)
 
 - [ ] **Step 3: Rewrite the three shims**
@@ -663,7 +663,7 @@ git commit -m "feat: self-locating bin shims (src-first, resolved python3)"
 
 ---
 
-## Task 4: plist helper — `env` injection + XML-escaping
+## Task 4: plist helper - `env` injection + XML-escaping
 
 **Files:**
 - Modify: `src/sonari/cli.py` (`_plist`, `_launchagent_plist`, add `_xml_escape`)
@@ -728,7 +728,7 @@ so leave the imports as-is.
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_install.py -k plist -v`
-Expected: FAIL — `_launchagent_plist` does not accept `src_path=` and does not
+Expected: FAIL - `_launchagent_plist` does not accept `src_path=` and does not
 emit `EnvironmentVariables`; the escaping test fails because `_plist` interpolates
 raw strings.
 
@@ -889,7 +889,7 @@ def test_write_install_record_writes_expected_keys(tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_paths.py::test_install_record_path_lives_under_sonari_dir tests/test_cli_install.py::test_write_install_record_writes_expected_keys -v`
-Expected: FAIL — `paths.INSTALL_RECORD_PATH` and `cli._write_install_record` do not exist.
+Expected: FAIL - `paths.INSTALL_RECORD_PATH` and `cli._write_install_record` do not exist.
 
 - [ ] **Step 3: Add the constant and the writer**
 
@@ -1094,7 +1094,7 @@ git commit -m "feat: ~/.local/bin/sonari launcher place/remove + PATH detection 
 (non-fatal), builds hotkeyd, writes keymap+resolved, writes `install.json`,
 writes BOTH plists with the resolved interpreter + `PYTHONPATH` (skipping the
 hotkeyd agent if no binary), places the launcher, runs migrations
-(`_legacy_migrate` + `_dev_install_migrate` — the latter is added in Task 10 but
+(`_legacy_migrate` + `_dev_install_migrate` - the latter is added in Task 10 but
 referenced here; until Task 10 lands, the install tests patch
 `cli._dev_install_migrate`), reports the voice, and prints eyes-free next steps
 including PATH advice.
@@ -1268,7 +1268,7 @@ def test_install_build_failure_is_nonfatal(tmp_path, capsys):
 - [ ] **Step 3: Run the install tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_install.py::test_install_writes_plist_and_loads tests/test_cli_install.py::test_install_fatal_when_no_python_found tests/test_cli_hotkeyd.py::test_install_writes_hotkeyd_plist_and_keymap tests/test_cli_hotkeyd.py::test_install_build_failure_is_nonfatal -v`
-Expected: FAIL — `install()` still uses the old plist signature and writes the
+Expected: FAIL - `install()` still uses the old plist signature and writes the
 hotkeyd plist even on build failure; `_resolve_python` is not consulted.
 
 - [ ] **Step 4: Rewrite `install()`**
@@ -1393,7 +1393,7 @@ git commit -m "feat: install() self-contained (resolved interp, install.json, la
 
 ---
 
-## Task 8: `uninstall()` change — preserve config.json, remove launcher + install.json
+## Task 8: `uninstall()` change - preserve config.json, remove launcher + install.json
 
 **Files:**
 - Modify: `src/sonari/cli.py` (`uninstall`)
@@ -1473,7 +1473,7 @@ def test_uninstall_removes_launchagent_but_preserves_keymap_and_config(tmp_path,
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_uninstall.py::test_uninstall_removes_launchagent_but_preserves_keymap_and_config -v`
-Expected: FAIL — current `uninstall()` deletes `config.json` and never removes the
+Expected: FAIL - current `uninstall()` deletes `config.json` and never removes the
 launcher or `install.json`.
 
 - [ ] **Step 3: Update `uninstall()`**
@@ -1584,13 +1584,13 @@ def test_doctor_all_ok():
 
 Note: in `test_doctor_say_missing`, `test_doctor_socket_unreachable`,
 `test_doctor_hooks_json_missing` the patches are indexed positionally
-(`patches[0]`, `patches[4]`, `patches[5]`) — those indices are unchanged (the
+(`patches[0]`, `patches[4]`, `patches[5]`) - those indices are unchanged (the
 new patches were appended at the END), so those tests keep working.
 
 - [ ] **Step 2: Run the doctor test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_doctor.py::test_doctor_all_ok -v`
-Expected: FAIL — the new check keys (`python3`, `plugin path resolved`, etc.) and
+Expected: FAIL - the new check keys (`python3`, `plugin path resolved`, etc.) and
 `cli._read_install_record` do not exist yet.
 
 - [ ] **Step 3: Add `_read_install_record` + the new doctor checks**
@@ -1681,7 +1681,7 @@ git commit -m "feat: doctor checks python3>=3.9, plugin path, both LaunchAgents,
 
 ---
 
-## Task 10: `_dev_install_migrate()` — detect editable footprint, print guidance
+## Task 10: `_dev_install_migrate()` - detect editable footprint, print guidance
 
 **Files:**
 - Modify: `src/sonari/cli.py` (flesh out the `_dev_install_migrate` stub from Task 7)
@@ -1725,7 +1725,7 @@ def test_dev_migrate_prints_guidance_when_editable_detected():
 
 def test_dev_migrate_never_auto_uninstalls(monkeypatch):
     """Even when an editable footprint exists, _dev_install_migrate must not
-    shell out to pip — it only returns guidance strings."""
+    shell out to pip - it only returns guidance strings."""
     called = []
     monkeypatch.setattr(cli.subprocess, "call",
                         lambda *a, **k: called.append(a) or 0)
@@ -1740,7 +1740,7 @@ def test_dev_migrate_never_auto_uninstalls(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_dev_migrate.py -v`
-Expected: FAIL — `_detect_editable_sonari` does not exist and the stub
+Expected: FAIL - `_detect_editable_sonari` does not exist and the stub
 `_dev_install_migrate` ignores it (returns `[]` even when a footprint is detected).
 
 - [ ] **Step 3: Implement detection + flesh out the migrate function**
@@ -1896,7 +1896,7 @@ def test_skip_subcommand_sends_skip():
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_commands.py -v`
-Expected: FAIL — the three new `.md` files do not exist (the CLI subcommand tests
+Expected: FAIL - the three new `.md` files do not exist (the CLI subcommand tests
 in `test_cli_control.py` already pass since the subcommands exist; that is fine).
 
 - [ ] **Step 3: Create the three command files**
@@ -1951,7 +1951,7 @@ Run the Sonari skip command using the Bash tool:
 sonari skip
 ```
 
-This is a silent control action. Print nothing to the user — just run the
+This is a silent control action. Print nothing to the user - just run the
 command.
 ```
 
@@ -1998,7 +1998,7 @@ def test_pyproject_version_is_0_3_0():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_manifests.py -k version -v`
-Expected: FAIL — versions are still `0.1.0`.
+Expected: FAIL - versions are still `0.1.0`.
 
 - [ ] **Step 3: Bump versions**
 
@@ -2046,9 +2046,9 @@ In `README.md`, **replace** the `## Requirements` section (lines 21-26) with:
 ## Requirements
 
 - macOS (Sonari uses the built-in `say` and `afplay` commands).
-- Python 3.9 or newer — macOS ships `/usr/bin/python3`, which is enough. Sonari
+- Python 3.9 or newer - macOS ships `/usr/bin/python3`, which is enough. Sonari
   picks the best `python3 >= 3.9` it can find automatically.
-- Xcode Command Line Tools for global hotkeys — `xcode-select --install`. (Speech
+- Xcode Command Line Tools for global hotkeys - `xcode-select --install`. (Speech
   works without them; only the hotkeys need `swiftc`.)
 - Claude Code 2.1.162 or newer.
 - No third-party Python packages at runtime, and no `pip` install. `pytest` is
@@ -2063,7 +2063,7 @@ In `README.md`, **replace** the `## Requirements` section (lines 21-26) with:
 Sonari is a self-contained Claude Code plugin: it ships its own source and runs
 on the macOS system Python with no `pip` install.
 
-1. Enable the `sonari` plugin in Claude Code — either per session with
+1. Enable the `sonari` plugin in Claude Code - either per session with
    `claude --plugin-dir /path/to/sonari`, or register this repo as a local
    plugin marketplace and enable `sonari` from the `/plugin` menu.
 2. Run the one-time installer:
@@ -2098,11 +2098,11 @@ python3 -m venv .venv && .venv/bin/pip install -e .[dev]
 .venv/bin/python -m pytest -q
 ```
 
-The public install path above does **not** use `pip` — the venv is for tests only.
+The public install path above does **not** use `pip` - the venv is for tests only.
 ```
 
 In the controls table (lines 82-90), confirm the `voice`/`rate` rows are present
-(they already are). Leave the table as-is — the three new slash-command files
+(they already are). Leave the table as-is - the three new slash-command files
 (Task 11) bring the documented commands into line with shipped files.
 
 - [ ] **Step 6: Create the manual fresh-install smoke checklist**
@@ -2110,7 +2110,7 @@ In the controls table (lines 82-90), confirm the `voice`/`rate` rows are present
 Create `docs/superpowers/phase3-manual-smoke-checklist.md`:
 
 ```markdown
-# Sonari Phase 3 — Fresh-Install Smoke Checklist (self-contained, screen-off)
+# Sonari Phase 3 - Fresh-Install Smoke Checklist (self-contained, screen-off)
 
 Run these on the real Mac to validate the **public, pip-free** install path. The
 deterministic pytest suite (3.9 + 3.13) covers all install/uninstall/doctor logic
@@ -2124,9 +2124,9 @@ speech/earcons/hotkeys. Reuses the structure of
 ## Pre-install (clean slate)
 
 - [ ] **No editable sonari shadows the plugin.** Run
-  `/usr/bin/python3 -c "import sonari"` — expect `ModuleNotFoundError` (or, if a
+  `/usr/bin/python3 -c "import sonari"` - expect `ModuleNotFoundError` (or, if a
   dev install lingers, note it; `sonari install` will print cleanup guidance).
-- [ ] **System python is 3.9+.** Run `/usr/bin/python3 --version` — expect 3.9.6
+- [ ] **System python is 3.9+.** Run `/usr/bin/python3 --version` - expect 3.9.6
   or newer.
 
 ## Install
@@ -2143,12 +2143,12 @@ speech/earcons/hotkeys. Reuses the structure of
 ## Self-contained verification
 
 - [ ] **CLI runs with no installed package.** In a scrubbed shell:
-  `PYTHONPATH=<plugin>/src /usr/bin/python3 -m sonari.cli doctor` — expect it
+  `PYTHONPATH=<plugin>/src /usr/bin/python3 -m sonari.cli doctor` - expect it
   runs and the daemon lazy-starts via `bin/sonari-daemon`.
 - [ ] **Launcher works in a fresh shell.** Open a new terminal and run
-  `sonari status` (resolved via `~/.local/bin/sonari`) — expect daemon status.
+  `sonari status` (resolved via `~/.local/bin/sonari`) - expect daemon status.
 - [ ] **speechd plist is correct.** `plutil -p
-  ~/Library/LaunchAgents/com.sonari.speechd.plist` — expect ProgramArguments
+  ~/Library/LaunchAgents/com.sonari.speechd.plist` - expect ProgramArguments
   `[<abs python3>, -m, sonari.daemon]` and EnvironmentVariables PYTHONPATH =
   `<plugin>/src`.
 
@@ -2156,7 +2156,7 @@ speech/earcons/hotkeys. Reuses the structure of
 
 - [ ] **Ready earcon + ordered narration.** Start a real `claude` session; hear
   the ready earcon, then prose in order, then decision earcons. (screen off)
-- [ ] **All nine hotkeys.** Exercise Ctrl+Cmd+S/R/./D/L/]/[/V/O — each fires,
+- [ ] **All nine hotkeys.** Exercise Ctrl+Cmd+S/R/./D/L/]/[/V/O - each fires,
   no character leak, no beep. (screen off)
 - [ ] **Native numeric selection.** Trigger AskUserQuestion, permission, and a
   plan; pick options by digit, Esc cancels. (screen off)
@@ -2183,7 +2183,7 @@ speech/earcons/hotkeys. Reuses the structure of
   config.json + keymap.json.
 ```
 
-- [ ] **Step 7: FINAL GATE — run the full suite under BOTH interpreters**
+- [ ] **Step 7: FINAL GATE - run the full suite under BOTH interpreters**
 
 Run: `.venv/bin/python -m pytest -q`
 Expected: PASS, 0 failures, 0 warnings.
@@ -2224,12 +2224,12 @@ git commit -m "docs: pip-free README + 0.3.0 version bump + phase3 smoke checkli
 - **§4 doctor new checks:** Task 9 (python3, plugin path resolved, both
   LaunchAgents loaded, launcher + PATH; swiftc detail upgraded).
 - **§5.1 bin shims:** Task 3 (hook src-first; daemon + cli self-locating; chmod +x;
-  daemon-shim executable verification is implicit via repo chmod — see note).
-- **§5.2 hooks.json:** no change required (verified) — no task needed.
+  daemon-shim executable verification is implicit via repo chmod - see note).
+- **§5.2 hooks.json:** no change required (verified) - no task needed.
 - **§5.3 cli plist/install:** Task 4 (`_plist env=`, `_xml_escape`,
   `_launchagent_plist` signature) + Task 7 (install call site).
 - **§5.4 uninstall + slash-command gap:** Task 8 (uninstall) + Task 11 (voice/
-  rate/skip command files; CLI subcommands already exist — verified in cli.py).
+  rate/skip command files; CLI subcommands already exist - verified in cli.py).
 - **§5.5 paths INSTALL_RECORD_PATH + install.json:** Task 5.
 - **§5.6 launcher:** Task 6 (place/remove/PATH) wired by Task 7/8.
 - **§5.7 pyproject:** Task 1 (requires-python) + Task 12 (version 0.3.0).
@@ -2245,7 +2245,7 @@ git commit -m "docs: pip-free README + 0.3.0 version bump + phase3 smoke checkli
   shim tests incl. scrubbed-env subprocess (Task 3); install.json (Task 5);
   launcher (Task 6). The one real-compile swiftc test already exists
   (`tests/test_cli_hotkeyd.py::test_build_hotkeyd_compiles_when_swiftc_present`
-  is mocked; the real compile lives in `tests/test_hotkeyd_swift.py`) — unchanged.
+  is mocked; the real compile lives in `tests/test_hotkeyd_swift.py`) - unchanged.
 - **§8 migration:** Task 10 (`_dev_install_migrate` + `_detect_editable_sonari`),
   called from install() in Task 7; LaunchAgent rewrite is automatic via Task 7.
 - **§9 verification list:** covered by Task 12's manual smoke checklist + the
@@ -2266,39 +2266,39 @@ committed in Task 3, so the public clone ships them executable.
 No `TODO`/`TBD`/"similar to Task N"/"handle edge cases" placeholders remain.
 Every code step shows complete code. The only forward reference (Task 7 calling
 `_dev_install_migrate`) is resolved by adding a real no-op stub in Task 7 Step 1
-and fleshing it out in Task 10 — both bodies are shown in full.
+and fleshing it out in Task 10 - both bodies are shown in full.
 
 ### Type / name consistency check
 
-- `_resolve_python() -> str | None` (Task 2) — consumed by `install()` (Task 7,
+- `_resolve_python() -> str | None` (Task 2) - consumed by `install()` (Task 7,
   fatal on None) and `doctor()` (Task 9). Consistent.
-- `_probe_python_version(path) -> tuple | None` (Task 2) — used by
+- `_probe_python_version(path) -> tuple | None` (Task 2) - used by
   `_resolve_python` and `install()` for the version string. Consistent.
-- `_plist(label, program_args, log_path, env=None)` (Task 4) — `_launchagent_plist`
+- `_plist(label, program_args, log_path, env=None)` (Task 4) - `_launchagent_plist`
   passes `env={"PYTHONPATH": src_path}`; `_hotkeyd_plist` passes no env (so no
   EnvironmentVariables key). Consistent with the hotkeyd plist test.
-- `_launchagent_plist(python_executable, src_path, log_path)` (Task 4) — keyword
+- `_launchagent_plist(python_executable, src_path, log_path)` (Task 4) - keyword
   call site in `install()` (Task 7) and tests (Task 4) match exactly.
-- `_xml_escape(s) -> str` (Task 4) — used only inside `_plist`. Consistent.
-- `paths.INSTALL_RECORD_PATH` (Task 5) — written by `_write_install_record`
+- `_xml_escape(s) -> str` (Task 4) - used only inside `_plist`. Consistent.
+- `paths.INSTALL_RECORD_PATH` (Task 5) - written by `_write_install_record`
   (Task 5), read by `_read_install_record` (Task 9), removed by `uninstall`
   (Task 8). Consistent.
-- `_write_install_record(python, python_version, plugin_root, src)` (Task 5) —
+- `_write_install_record(python, python_version, plugin_root, src)` (Task 5) -
   call site in `install()` (Task 7) passes all four by keyword. Consistent.
-- `_read_install_record() -> dict | None` (Task 9) — patched in doctor tests.
+- `_read_install_record() -> dict | None` (Task 9) - patched in doctor tests.
   Consistent.
 - `_place_launcher(plugin_root) -> str`, `_remove_launcher() -> bool`,
-  `_launcher_path() -> str`, `_local_bin_on_path() -> bool` (Task 6) — install
+  `_launcher_path() -> str`, `_local_bin_on_path() -> bool` (Task 6) - install
   calls `_place_launcher(plugin_root)` + `_local_bin_on_path()` (Task 7);
   uninstall calls `_remove_launcher()` + `_launcher_path()` (Task 8); doctor
   calls `_launcher_path()` + `_local_bin_on_path()` (Task 9). Consistent.
 - `_detect_editable_sonari() -> str | None` + `_dev_install_migrate(home=None) ->
-  list` (Task 10) — install calls `_dev_install_migrate()` (Task 7). Consistent.
+  list` (Task 10) - install calls `_dev_install_migrate()` (Task 7). Consistent.
 - LaunchAgent constants `LAUNCH_AGENT_LABEL`, `HOTKEYD_LAUNCH_AGENT_LABEL`,
-  `LAUNCH_AGENT_PATH`, `HOTKEYD_LAUNCH_AGENT_PATH` — reused unchanged across
+  `LAUNCH_AGENT_PATH`, `HOTKEYD_LAUNCH_AGENT_PATH` - reused unchanged across
   Tasks 4/7/8/9. Consistent.
 - MsgType values for new command files (Task 11) match existing handlers:
-  `SET_VOICE`, `SET_RATE` (absolute), `SKIP` — verified against cli.py + protocol.py.
+  `SET_VOICE`, `SET_RATE` (absolute), `SKIP` - verified against cli.py + protocol.py.
 - `PROTOCOL_VERSION` stays `1` (no task changes it). Consistent with spec §7.
 
 ## Execution Handoff
@@ -2308,8 +2308,8 @@ Plan complete and saved to
 
 Two execution options:
 
-1. **Subagent-Driven (recommended)** — dispatch a fresh subagent per task with
+1. **Subagent-Driven (recommended)** - dispatch a fresh subagent per task with
    two-stage review between tasks (superpowers:subagent-driven-development).
-2. **Inline Execution** — execute tasks in this session with checkpoints
+2. **Inline Execution** - execute tasks in this session with checkpoints
    (superpowers:executing-plans).
 ```

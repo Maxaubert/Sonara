@@ -1,4 +1,4 @@
-"""get_platform() — the single OS dispatch point for Sonara."""
+"""get_platform() -- the single OS dispatch point for Sonara."""
 from __future__ import annotations
 
 import sys

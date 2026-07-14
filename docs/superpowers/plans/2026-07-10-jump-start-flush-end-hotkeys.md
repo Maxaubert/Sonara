@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add two paired global hotkeys — Ctrl+Alt+Up (jump to start of the turn and replay) and Ctrl+Alt+Down (flush the engaged session's queue to the end, non-destructively) — and flip the Windows default hotkey modifier from Ctrl+Shift+Alt to Ctrl+Alt.
+**Goal:** Add two paired global hotkeys - Ctrl+Alt+Up (jump to start of the turn and replay) and Ctrl+Alt+Down (flush the engaged session's queue to the end, non-destructively) - and flip the Windows default hotkey modifier from Ctrl+Shift+Alt to Ctrl+Alt.
 
 **Architecture:** Up reuses the daemon's existing `_nav(to="first")` seek-and-play path, so it needs only action→message→key wiring (no daemon logic). Down is a new `FLUSH_SESSION` protocol message with a new `handle_message` branch modeled on the existing `JUMP_DECISION`, advancing the engaged session's channel cursor to `len(items)` while popping skipped items' `_pending_heard` markers so they stay recoverable via catch-up. The modifier flip is a one-line change to the Windows backend's `DEFAULT_MODS`.
 
-**Tech Stack:** Python 3.9+, stdlib only. pytest for tests. Windows `RegisterHotKey` backend (mockable — tests force `sys.platform`).
+**Tech Stack:** Python 3.9+, stdlib only. pytest for tests. Windows `RegisterHotKey` backend (mockable - tests force `sys.platform`).
 
 ## Global Constraints
 
@@ -28,7 +28,7 @@
 - Test: `tests/test_protocol.py:52-127` (two snapshot dicts)
 
 **Interfaces:**
-- Produces: `MsgType.FLUSH_SESSION == "flush_session"` — consumed by Task 2 (daemon handler) and Task 3 (keymap action message).
+- Produces: `MsgType.FLUSH_SESSION == "flush_session"` - consumed by Task 2 (daemon handler) and Task 3 (keymap action message).
 
 - [ ] **Step 1: Update the two snapshot tests to expect `FLUSH_SESSION`**
 
@@ -47,7 +47,7 @@ And in `test_msgtype_defines_no_extra_string_constants` (after the `"NAV": "nav"
 - [ ] **Step 2: Run the snapshot tests to verify they fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_protocol.py -q`
-Expected: FAIL — `test_msgtype_has_every_constant_with_exact_values` (`MsgType missing FLUSH_SESSION`) and `test_msgtype_defines_no_extra_string_constants` (dict inequality).
+Expected: FAIL - `test_msgtype_has_every_constant_with_exact_values` (`MsgType missing FLUSH_SESSION`) and `test_msgtype_defines_no_extra_string_constants` (dict inequality).
 
 - [ ] **Step 3: Add the constant to `MsgType`**
 
@@ -74,12 +74,12 @@ git commit -m "feat(protocol): add FLUSH_SESSION message type"
 ### Task 2: Add the `FLUSH_SESSION` daemon handler (flush to end)
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — add a branch in `handle_message()` immediately after the `JUMP_DECISION` branch (which ends at line 597, before the `CATCH_UP` branch at line 599).
+- Modify: `src/sonara/daemon.py` - add a branch in `handle_message()` immediately after the `JUMP_DECISION` branch (which ends at line 597, before the `CATCH_UP` branch at line 599).
 - Test: `tests/test_daemon_flush_session.py` (new file)
 
 **Interfaces:**
 - Consumes: `MsgType.FLUSH_SESSION` (Task 1); existing `self._engaged_session()`, `self.router.channel(session)`, `self._pending_heard` (dict id→history entry), `self._current_item`, `self.speaker.cancel()`, `self._earcon(kind)`, `self._wake.set()`, `SessionChannel.cursor` / `.items` / `.has_decision`.
-- Produces: handling of `{"type": "flush_session"}` — after handling, the engaged channel's `cursor == len(items)`, the current utterance is cancelled iff it belongs to the engaged session, skipped items' `_pending_heard` markers are popped (stay unheard in history), and a `nav` earcon fires when anything was flushed (`nav_edge` when nothing was).
+- Produces: handling of `{"type": "flush_session"}` - after handling, the engaged channel's `cursor == len(items)`, the current utterance is cancelled iff it belongs to the engaged session, skipped items' `_pending_heard` markers are popped (stay unheard in history), and a `nav` earcon fires when anything was flushed (`nav_edge` when nothing was).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -166,7 +166,7 @@ def test_flushed_items_stay_recoverable_via_catch_up():
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_daemon_flush_session.py -q`
-Expected: FAIL — the `flush_session` message is unhandled, so cursors don't advance / earcons aren't emitted (assertions fail; no branch exists yet).
+Expected: FAIL - the `flush_session` message is unhandled, so cursors don't advance / earcons aren't emitted (assertions fail; no branch exists yet).
 
 - [ ] **Step 3: Add the handler branch**
 
@@ -226,7 +226,7 @@ git commit -m "feat(daemon): FLUSH_SESSION flushes the engaged session's queue t
 - Test: `tests/test_keymap.py` (add new tests; update `test_default_keymap_binds_only_nav_pause_mute` at line 64)
 
 **Interfaces:**
-- Consumes: `MsgType.FLUSH_SESSION == "flush_session"` (Task 1) — the `flush` action's message type must be a known `MsgType`, enforced by `tests/test_hotkeyd_contract.py::test_all_action_messages_are_known_msgtypes`.
+- Consumes: `MsgType.FLUSH_SESSION == "flush_session"` (Task 1) - the `flush` action's message type must be a known `MsgType`, enforced by `tests/test_hotkeyd_contract.py::test_all_action_messages_are_known_msgtypes`.
 - Produces: `ACTION_MESSAGES["nav_start"] == {"type": "nav", "to": "first"}`, `ACTION_MESSAGES["flush"] == {"type": "flush_session"}`, default keys `nav_start → "up"`, `flush → "down"`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -264,7 +264,7 @@ Then UPDATE the existing `test_default_keymap_binds_only_nav_pause_mute` (line 6
 - [ ] **Step 2: Run the keymap tests to verify the new/updated ones fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_keymap.py -q`
-Expected: FAIL — `KeyError`/missing-key on `nav_start`/`flush`, and the updated `test_default_keymap_binds_only_nav_pause_mute` mismatch.
+Expected: FAIL - `KeyError`/missing-key on `nav_start`/`flush`, and the updated `test_default_keymap_binds_only_nav_pause_mute` mismatch.
 
 - [ ] **Step 3: Add the two actions and their default keys**
 
@@ -335,12 +335,12 @@ def test_default_keymap_windows_uses_ctrl_alt(win):
     assert d["mute"]["key"] == "m"
 ```
 
-(Leave `tests/test_win_hotkeys.py:117`'s `display_combo(... ) == "Ctrl+Shift+Alt+O"` unchanged — it passes explicit modifier bits, not the default chord.)
+(Leave `tests/test_win_hotkeys.py:117`'s `display_combo(... ) == "Ctrl+Shift+Alt+O"` unchanged - it passes explicit modifier bits, not the default chord.)
 
 - [ ] **Step 2: Run the affected tests to verify they fail**
 
 Run: `.venv\Scripts\python -m pytest tests/test_win_keytables.py tests/test_win_backend.py tests/test_win_hotkeys.py tests/test_keymap.py -q`
-Expected: FAIL — the updated assertions expect `["ctrl", "alt"]` but the source still returns `["ctrl", "shift", "alt"]`.
+Expected: FAIL - the updated assertions expect `["ctrl", "alt"]` but the source still returns `["ctrl", "shift", "alt"]`.
 
 - [ ] **Step 3: Change the default chord**
 
@@ -375,7 +375,7 @@ git commit -m "feat(hotkeys): default modifier Ctrl+Alt (drop Shift) for all bin
 **Files:**
 - Modify: `README.md` (global hotkeys section ~lines 104-121, per-session section ~lines 183-188)
 
-**Interfaces:** none (docs only). No CLI/keymap.md change — `commands/keymap.md` does not hardcode the modifier or the action list.
+**Interfaces:** none (docs only). No CLI/keymap.md change - `commands/keymap.md` does not hardcode the modifier or the action list.
 
 - [ ] **Step 1: Update the modifier sentence and the hotkey table**
 
@@ -396,10 +396,10 @@ Then replace the hotkey table (lines 115-121) with the six-row version (note the
 ```
 | Hotkey | Effect |
 |---|---|
-| Ctrl+Alt+Left | Previous item — step back through the current turn |
-| Ctrl+Alt+Right | Next item — step forward through the current turn |
+| Ctrl+Alt+Left | Previous item - step back through the current turn |
+| Ctrl+Alt+Right | Next item - step forward through the current turn |
 | Ctrl+Alt+Up | Jump to the start of the current turn and replay from the top |
-| Ctrl+Alt+Down | Flush — skip the rest of this session's queue and go quiet (recoverable via catch-up) |
+| Ctrl+Alt+Down | Flush - skip the rest of this session's queue and go quiet (recoverable via catch-up) |
 | Ctrl+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
 | Ctrl+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 ```
@@ -418,7 +418,7 @@ to:
 **Ctrl+Alt+P**. Sonara advances to the next session in a
 ```
 
-Also update the "Only four actions are bound by default" note (lines 109-113) to reflect that Up/Down are now bound too — change "Only four actions are bound by default" to "Only these actions are bound by default" and keep the pause/faster/slower unbound note as-is.
+Also update the "Only four actions are bound by default" note (lines 109-113) to reflect that Up/Down are now bound too - change "Only four actions are bound by default" to "Only these actions are bound by default" and keep the pause/faster/slower unbound note as-is.
 
 - [ ] **Step 3: Verify no stale `Ctrl+Shift+Alt` remains in the README**
 
@@ -441,7 +441,7 @@ users who ran an earlier `sonara install` have a `keymap.json` on disk pinning
 `nav_prev/nav_next/mute/next_session` to the old `["ctrl","shift","alt"]` chord
 (`write_default_keymap_if_absent` materializes the full default). After Task 4 they
 would keep the old chord for those actions while the new `nav_start`/`flush` default
-to `Ctrl+Alt` — a split cluster, and the README (Task 5) would misdescribe their
+to `Ctrl+Alt` - a split cluster, and the README (Task 5) would misdescribe their
 bindings. This task adds a safe, idempotent migration that rewrites ONLY entries
 still exactly matching a legacy default binding.
 
@@ -453,7 +453,7 @@ still exactly matching a legacy default binding.
 
 **Interfaces:**
 - Consumes: `_DEFAULT_KEYS` (now includes `nav_start`/`flush` from Task 3), `_read_user_keymap()`, `_write_user_keymap()`, `get_platform().hotkey.default_mods()` (returns `["ctrl","alt"]` after Task 4).
-- Produces: `keymap.migrate_default_chord() -> bool` — rewrites legacy-default entries in place, returns True iff it wrote a change.
+- Produces: `keymap.migrate_default_chord() -> bool` - rewrites legacy-default entries in place, returns True iff it wrote a change.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -511,7 +511,7 @@ def test_migrate_then_resolve_uses_ctrl_alt(win, monkeypatch, tmp_path):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/test_keymap.py -q`
-Expected: FAIL — `migrate_default_chord` does not exist (AttributeError).
+Expected: FAIL - `migrate_default_chord` does not exist (AttributeError).
 
 - [ ] **Step 3: Add the migration function**
 

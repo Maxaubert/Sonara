@@ -1,6 +1,6 @@
 # Sonara Windows Fork Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline) — the rename is one tightly-coupled mechanical change (package move + import rewrite must be atomic), not parallelizable. Steps use checkbox (`- [ ]`) syntax.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (inline) - the rename is one tightly-coupled mechanical change (package move + import rewrite must be atomic), not parallelizable. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Fork Sonari into an independent public Windows repo `Maxaubert/sonara` with a full internal rename sonari → sonara, then migrate the live install.
 
@@ -13,7 +13,7 @@
 - Repo: **`Maxaubert/sonara`**, **public**, independent (not a gh fork-relationship).
 - Rename, three cases: `sonari`→`sonara`, `Sonari`→`Sonara`, `SONARI`→`SONARA`.
 - **Repo-ref gotcha:** retarget `nimkimi/sonari` → `Maxaubert/sonara` in user-facing install/marketplace BEFORE the general rename; after, `git grep -i "nimkimi/sonara"` MUST return nothing.
-- **Leave un-renamed:** everything under `docs/superpowers/` (historical) — exclude it from all rename passes.
+- **Leave un-renamed:** everything under `docs/superpowers/` (historical) - exclude it from all rename passes.
 - **Verification gate:** full suite green except the known pre-existing Windows-environmental failures (test_bin_shims, test_bin_sonari, test_daemon_main::test_ensure_running_spawns_detached_when_socket_absent, test_kokoro_provision, test_paths, test_transport, test_win_autostart, test_win_tts). ANY new failure = incomplete rename.
 - **Post-rename grep gate:** `git grep -il "sonari"` returns only `docs/superpowers/` files + this plan/spec.
 - macOS code is renamed, not deleted. No feature changes.
@@ -29,7 +29,7 @@
 
 ```bash
 gh repo create Maxaubert/sonara --public \
-  --description "Sonara — eyes-free speech daemon for Claude Code (Windows line; forked from nimkimi/sonari)"
+  --description "Sonara - eyes-free speech daemon for Claude Code (Windows line; forked from nimkimi/sonari)"
 ```
 Expected: prints the new repo URL `https://github.com/Maxaubert/sonara`.
 
@@ -47,9 +47,9 @@ Expected: `* [new branch] worktree-feat+per-session-channels -> main`. (Full his
 ```bash
 gh repo view Maxaubert/sonara --json name,visibility,defaultBranchRef -q '{name:.name, vis:.visibility, default:.defaultBranchRef.name}'
 ```
-Expected: `{name: sonara, vis: PUBLIC, default: main}` (default branch may need setting to `main` — if not, `gh repo edit Maxaubert/sonara --default-branch main`).
+Expected: `{name: sonara, vis: PUBLIC, default: main}` (default branch may need setting to `main` - if not, `gh repo edit Maxaubert/sonara --default-branch main`).
 
-- [ ] **Step 4: Checkpoint** — report the repo URL; do not proceed to the rename until confirmed.
+- [ ] **Step 4: Checkpoint** - report the repo URL; do not proceed to the rename until confirmed.
 
 ---
 
@@ -115,7 +115,7 @@ done
 cd C:/Users/Admin/Documents/Claude/Github/sonari
 PYTHONPATH=src "C:/Program Files/Python314/python.exe" -c "import sonara.daemon, sonara.router, sonara.channel; print('sonara imports OK')"
 ```
-Expected: `sonara imports OK`. If a `ModuleNotFoundError: sonari` appears, a reference was missed — grep `git grep -n "sonari" -- src tests bin` and fix.
+Expected: `sonara imports OK`. If a `ModuleNotFoundError: sonari` appears, a reference was missed - grep `git grep -n "sonari" -- src tests bin` and fix.
 
 - [ ] **Step 4: Run the suite**
 
@@ -166,7 +166,7 @@ This covers `SONARI_DIR`, `SONARI_DISABLE_HOTKEYS`, `Sonari.Speechd`, plugin dis
 - [ ] **Step 3: Fix any repo-ref collateral**
 
 ```bash
-# the general pass above may have turned a kept "nimkimi/sonari" credit into "nimkimi/sonara" — restore it
+# the general pass above may have turned a kept "nimkimi/sonari" credit into "nimkimi/sonara" - restore it
 git grep -n "nimkimi/sonara" -- ':!docs/superpowers'
 ```
 If found, edit those back to `nimkimi/sonari` (upstream credit) by hand.
@@ -219,7 +219,7 @@ git add -A && git commit -m "chore: coherent sonara plugin + commands + hooks ma
 git push sonara HEAD:main
 ```
 
-- [ ] **Step 5: Checkpoint** — report grep-gate results; pause before the live migration.
+- [ ] **Step 5: Checkpoint** - report grep-gate results; pause before the live migration.
 
 ---
 
@@ -272,15 +272,15 @@ OLD=$(python -c "import json;print(json.load(open(r'C:/Users/Admin/.sonara/daemo
 PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m sonara.cli status
 PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m sonara.cli doctor 2>&1 | grep -i hook
 ```
-Expected: status shows voice=af_heart; doctor hooks row OK; the daemon speaks on the next assistant message. The Claude Code plugin must be re-pointed at the sonara marketplace/dir (the `sonara@sonara` plugin) for hooks to fire — note this for the user.
+Expected: status shows voice=af_heart; doctor hooks row OK; the daemon speaks on the next assistant message. The Claude Code plugin must be re-pointed at the sonara marketplace/dir (the `sonara@sonara` plugin) for hooks to fire - note this for the user.
 
-- [ ] **Step 5: Checkpoint** — confirm sonara speaks + a hotkey works. Leave `~/.sonari` + its (now-deleted) task as rollback; only remove `~/.sonari` after sonara is confirmed.
+- [ ] **Step 5: Checkpoint** - confirm sonara speaks + a hotkey works. Leave `~/.sonari` + its (now-deleted) task as rollback; only remove `~/.sonari` after sonara is confirmed.
 
 ---
 
 ## Self-review notes
 
 - Spec §1 (lineage) → Task 1. §2 rename + repo-ref gotcha → Tasks 2-4 (repo-ref first, then 3-case rename). §3 verification → the import/suite/grep gates in Tasks 3-5. §4 migration → Task 6. §5 phasing → task order. §6 out-of-scope (mac kept, docs left) → enforced by the `':!docs/superpowers'` exclusion and no-delete.
-- The rename is deliberately split: Task 3 (lowercase package/imports — the part that breaks compilation if incomplete, gated by an import check) then Task 4 (Sonari/SONARI strings + bin filenames). This keeps each commit's blast radius reviewable and the import-check catches the dangerous case early.
-- No new test code — the existing suite is the regression gate; new failures localize missed renames.
+- The rename is deliberately split: Task 3 (lowercase package/imports - the part that breaks compilation if incomplete, gated by an import check) then Task 4 (Sonari/SONARI strings + bin filenames). This keeps each commit's blast radius reviewable and the import-check catches the dangerous case early.
+- No new test code - the existing suite is the regression gate; new failures localize missed renames.
 - The plugin re-point in Claude Code (enabling `sonara@sonara`) is a user action; flagged in Task 6 Step 4.

@@ -311,7 +311,7 @@ def test_speak_returns_false_when_say_terminated():
 
 def test_cancel_during_synthesis_aborts_before_play():
     """Regression (#2/#9): a cancel() that lands while say_runner is still
-    synthesizing — when there is no proc to terminate yet — must still abort the
+    synthesizing -- when there is no proc to terminate yet -- must still abort the
     utterance: speak() returns False and the just-created proc is terminated, not
     waited on / played."""
     made = []

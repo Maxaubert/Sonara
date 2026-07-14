@@ -256,7 +256,7 @@ def test_new_prompt_clears_pause():
 def test_paused_cue_spoken_after_mid_utterance_pause():
     """Repro: PAUSE arrives while speak() is running (item already consumed from
     channel); speak() returns False+paused, cursor rewinds, 'Paused.' is now at
-    cursor+1 — the paused branch must scan beyond the cursor to find and speak it.
+    cursor+1 -- the paused branch must scan beyond the cursor to find and speak it.
     """
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "Item one. Item two. ", 0, True))

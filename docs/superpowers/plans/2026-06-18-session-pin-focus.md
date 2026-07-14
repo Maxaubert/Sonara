@@ -4,27 +4,27 @@
 
 **Goal:** Add a single global hotkey that pins Sonari's voice to the session the user is currently working in (press again to unpin → auto).
 
-**Architecture:** A "pin" overrides what "foreground" means. `SessionManager` gains `_pinned` and a `pin_toggle()`; `foreground()`/`is_foreground()` return the pin when set. Because the daemon's voice-ownership gate (`_may_speak`) already keys on `is_foreground`, no voice-ownership logic changes — the pin flows through the existing gate. A new `PIN_TOGGLE` protocol message (hotkey → daemon) triggers the toggle and a spoken confirmation; the hook starts sending `cwd` so the confirmation can name the folder.
+**Architecture:** A "pin" overrides what "foreground" means. `SessionManager` gains `_pinned` and a `pin_toggle()`; `foreground()`/`is_foreground()` return the pin when set. Because the daemon's voice-ownership gate (`_may_speak`) already keys on `is_foreground`, no voice-ownership logic changes - the pin flows through the existing gate. A new `PIN_TOGGLE` protocol message (hotkey → daemon) triggers the toggle and a spoken confirmation; the hook starts sending `cwd` so the confirmation can name the folder.
 
 **Tech Stack:** Python ≥3.9, stdlib only. Pytest. Existing seams: `sonari.sessions`, `sonari.daemon`, `sonari.protocol`, `sonari.keymap`, `sonari.hooks_entry`.
 
 ## Global Constraints
 
-- Python ≥3.9; stdlib only (no new deps). `from __future__ import annotations` is in use — annotations are lazy strings.
+- Python ≥3.9; stdlib only (no new deps). `from __future__ import annotations` is in use - annotations are lazy strings.
 - Spec: `docs/superpowers/specs/2026-06-18-session-pin-focus-design.md`. Issue: nimkimi/sonari#31.
 - Default state is **auto** (nothing pinned → foreground = last prompt). Pinned session keeps the voice when others submit; pinned session ends → auto.
 - Folder name = portable basename of `cwd` (handle both `/` and `\` separators regardless of host OS).
-- Earcon kinds are fixed at 6 (a test asserts exactly 6) — do **not** add a new earcon kind; reuse `"error"`.
-- Default keybind for the new action is `f` (NOT `p` — `p` is taken by `pause`). The shared default needs Nima's sign-off per CONTRIBUTING; the user's personal binding is separate.
+- Earcon kinds are fixed at 6 (a test asserts exactly 6) - do **not** add a new earcon kind; reuse `"error"`.
+- Default keybind for the new action is `f` (NOT `p` - `p` is taken by `pause`). The shared default needs Nima's sign-off per CONTRIBUTING; the user's personal binding is separate.
 - Run on Windows before opening; "green" = zero new failures vs `main`'s baseline (the known macOS-codebase-on-Windows env failures). `skipif`-guard Win32-only tests; `opt` not `alt` on macOS.
 - Squash-merge, one concern, branch `core/session-pin`. Closes #31.
 
 ---
 
-### Task 1: SessionManager — cwd capture + pin state + pin-aware foreground
+### Task 1: SessionManager - cwd capture + pin state + pin-aware foreground
 
 **Files:**
-- Modify: `src/sonari/sessions.py` (whole file — it is ~30 lines)
+- Modify: `src/sonari/sessions.py` (whole file - it is ~30 lines)
 - Test: `tests/test_sessions.py` (append)
 
 **Interfaces:**
@@ -125,7 +125,7 @@ def test_unregister_pinned_session_falls_back_to_auto():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_sessions.py -q`
-Expected: FAIL — `AttributeError: 'SessionManager' object has no attribute 'folder'` / `pin_toggle` / `pinned`, and `register()`/`set_foreground()` reject the `cwd=` kwarg.
+Expected: FAIL - `AttributeError: 'SessionManager' object has no attribute 'folder'` / `pin_toggle` / `pinned`, and `register()`/`set_foreground()` reject the `cwd=` kwarg.
 
 - [ ] **Step 3: Rewrite `src/sonari/sessions.py`**
 
@@ -300,7 +300,7 @@ def test_pin_toggle_with_no_session_beeps_error_only():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_daemon_pin.py -q`
-Expected: FAIL — the `pin_toggle` message is unhandled (no announcement enqueued; `speaker.spoken` empty), and `set_foreground` with `cwd` does not reach the manager.
+Expected: FAIL - the `pin_toggle` message is unhandled (no announcement enqueued; `speaker.spoken` empty), and `set_foreground` with `cwd` does not reach the manager.
 
 - [ ] **Step 3: Add `MsgType.PIN_TOGGLE`**
 
@@ -361,7 +361,7 @@ git commit -m "feat(core): PIN_TOGGLE daemon handler + cwd passthrough (#31)"
 
 ---
 
-### Task 3: hooks_entry — send cwd from the hook payload
+### Task 3: hooks_entry - send cwd from the hook payload
 
 **Files:**
 - Modify: `src/sonari/hooks_entry.py` (add `cwd` to the `SET_FOREGROUND` + `SESSION_START` messages)
@@ -399,7 +399,7 @@ def test_missing_cwd_defaults_to_empty_string():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_hooks_entry.py -q`
-Expected: FAIL — `KeyError: 'cwd'` (the messages have no `cwd` field yet).
+Expected: FAIL - `KeyError: 'cwd'` (the messages have no `cwd` field yet).
 
 - [ ] **Step 3: Add `cwd` to the messages**
 
@@ -445,15 +445,15 @@ git commit -m "feat(core): hook sends cwd so the daemon can name the pinned fold
 
 ---
 
-### Task 4: keymap — pin_toggle action + default binding
+### Task 4: keymap - pin_toggle action + default binding
 
 **Files:**
 - Modify: `src/sonari/keymap.py` (add to `ACTION_MESSAGES` and `_DEFAULT_KEYS`)
 - Test: `tests/test_keymap.py` (append)
 
 **Interfaces:**
-- Consumes: nothing new (the Windows + macOS hotkey backends already forward `resolve_keymap`'s per-action `message` JSON generically — verified in `windows/hotkeys.py::_register_all`).
-- **Correction (found in execution):** the platform key tables are *sparse* (only keys used by defaults: `s r d l v o p m`). A new key letter therefore MUST also be added to both `KEY_CODES` tables (`windows/keytables.py` `f=0x46`, `macos/keytables.py` `f=3`) and the display-label maps (`windows/hotkeys.py` `0x46:"F"`, `macos/hotkeys.py` `f:"F"`), or `resolve_keymap` raises `ValueError: unknown key`. This is required, not optional — and it means the task also touches `macos/**` (Nima's domain). Four one-line additive entries.
+- Consumes: nothing new (the Windows + macOS hotkey backends already forward `resolve_keymap`'s per-action `message` JSON generically - verified in `windows/hotkeys.py::_register_all`).
+- **Correction (found in execution):** the platform key tables are *sparse* (only keys used by defaults: `s r d l v o p m`). A new key letter therefore MUST also be added to both `KEY_CODES` tables (`windows/keytables.py` `f=0x46`, `macos/keytables.py` `f=3`) and the display-label maps (`windows/hotkeys.py` `0x46:"F"`, `macos/hotkeys.py` `f:"F"`), or `resolve_keymap` raises `ValueError: unknown key`. This is required, not optional - and it means the task also touches `macos/**` (Nima's domain). Four one-line additive entries.
 - Produces: `ACTION_MESSAGES["pin_toggle"] == {"type": "pin_toggle"}`; default binding key `"f"`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -491,7 +491,7 @@ def test_pin_toggle_is_clearable():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `python -m pytest tests/test_keymap.py -q`
-Expected: FAIL — `KeyError: 'pin_toggle'` in `ACTION_MESSAGES` / `default_keymap`.
+Expected: FAIL - `KeyError: 'pin_toggle'` in `ACTION_MESSAGES` / `default_keymap`.
 
 - [ ] **Step 3: Add the action + default key**
 
@@ -502,7 +502,7 @@ In `src/sonari/keymap.py`, in `ACTION_MESSAGES`, after the `"mute"` entry:
     "pin_toggle": {"type": "pin_toggle"},   # pin/unpin the voice to the current session (#31)
 ```
 
-In `_DEFAULT_KEYS`, add `pin_toggle` bound to `f` (NOT `p` — `pause` owns `p`):
+In `_DEFAULT_KEYS`, add `pin_toggle` bound to `f` (NOT `p` - `pause` owns `p`):
 
 ```python
     _DEFAULT_KEYS = {
@@ -536,14 +536,14 @@ git commit -m "feat(core): pin_toggle hotkey action, default chord+F (#31)"
 - [ ] **Step 1: Confirm nothing iterates `_sessions` as a set elsewhere**
 
 Run: `git grep -n "_sessions" src/sonari` (outside `sessions.py`)
-Expected: no external use — `_sessions` is private to `SessionManager`; all callers use public methods. If any consumer iterates it expecting a set, it still works (dict iterates keys, supports `in`/`len`). Note any finding; do not change behavior.
+Expected: no external use - `_sessions` is private to `SessionManager`; all callers use public methods. If any consumer iterates it expecting a set, it still works (dict iterates keys, supports `in`/`len`). Note any finding; do not change behavior.
 
 - [ ] **Step 2: Record the key decision in the spec**
 
 In the spec, under "Behavior", change the parenthetical `default chord+P` to:
 
 ```
-(`pin_toggle` action; default chord+`F` — `P` is taken by `pause`; see Keybind)
+(`pin_toggle` action; default chord+`F` - `P` is taken by `pause`; see Keybind)
 ```
 
 - [ ] **Step 3: Run the full suite and diff against a fresh main baseline**
@@ -555,7 +555,7 @@ git worktree add /tmp/sonari-base origin/main --detach -q
 # 2. this branch's failures:
 python -m pytest -q 2>&1 | grep -E "^FAILED" | sed 's/ -.*//' | sort > /tmp/pin_fails.txt
 python -m pytest -q 2>&1 | grep -E "passed|failed" | tail -1
-# 3. new failures introduced by this branch — MUST be empty:
+# 3. new failures introduced by this branch - MUST be empty:
 comm -23 /tmp/pin_fails.txt /tmp/base_fresh.txt
 git worktree remove /tmp/sonari-base --force
 ```

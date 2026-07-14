@@ -69,7 +69,7 @@ MINQUEUE_MAX = 10
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
 # accidental/rapid double-tap doesn't flip pause/mute/session several times (and pile
-# up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced —
+# up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced --
 # repeated presses there are intentional.
 _HOTKEY_DEBOUNCE_S = 0.30
 _DEBOUNCED_HOTKEYS = (
@@ -132,7 +132,7 @@ class SpeechDaemon:
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
         self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
         # Hotkey fires are handed to this queue by the Windows pump thread and
-        # applied by a dedicated worker under self._lock — so the pump NEVER blocks
+        # applied by a dedicated worker under self._lock -- so the pump NEVER blocks
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
@@ -368,7 +368,7 @@ class SpeechDaemon:
 
     @staticmethod
     def _launcher_present() -> bool:
-        """Delegating shim — logic lives in the platform supervisor backend."""
+        """Delegating shim -- logic lives in the platform supervisor backend."""
         from sonara.platform import get_platform
         return get_platform().supervisor.is_installed()
 
@@ -420,7 +420,7 @@ class SpeechDaemon:
                     self._pending_heard[item.id] = entry
                     ch.append(item)
             if final:
-                # NOTE: turn_done is NOT set here — a per-block "final" flag means
+                # NOTE: turn_done is NOT set here -- a per-block "final" flag means
                 # this text block finished, but the TURN ends only when the
                 # turn_done earcon (or FLUSH) arrives. This keeps minqueue batching
                 # correct: items accumulate until the threshold OR the turn ends.
@@ -429,7 +429,7 @@ class SpeechDaemon:
             # Wake the speak loop ONLY when a batch is actually ready to read
             # (>= minqueue, the turn is done, or a decision is waiting). Waking on
             # every buffered delta made the loop spin on self._lock and starve the
-            # hotkey worker — the root cause of the "thinking" mute-hang. A finished
+            # hotkey worker -- the root cause of the "thinking" mute-hang. A finished
             # turn wakes via the turn_done earcon / TOOL / FLUSH paths below; the
             # speak loop's poll_interval is the safety net if a wake is ever missed.
             # Late prose after turn_done: reset the settle window so the turn-end
@@ -857,7 +857,7 @@ class SpeechDaemon:
                 return None
             # Replay cleanly: cut the target's current utterance (it stays
             # unheard, so it replays FROM ITS START) and drop its queued
-            # duplicates — every unheard entry is re-replayed in order below.
+            # duplicates -- every unheard entry is re-replayed in order below.
             cur = self._current_item
             if cur is not None and cur.session == target:
                 self.speaker.cancel()
@@ -881,7 +881,7 @@ class SpeechDaemon:
                 except (ValueError, TypeError):
                     return None
             else:
-                # Validate/clamp the absolute rate just like the delta branch — an
+                # Validate/clamp the absolute rate just like the delta branch -- an
                 # unvalidated value here is persisted to disk and breaks synthesis.
                 try:
                     rate = max(RATE_MIN, min(RATE_MAX, int(msg.get("rate"))))
@@ -910,7 +910,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.SET_MINQUEUE:
-            # Validate/clamp before persisting — a bad value reaches disk and would
+            # Validate/clamp before persisting -- a bad value reaches disk and would
             # wedge prose buffering on every turn (mirrors the SET_RATE guard).
             try:
                 n = max(MINQUEUE_MIN, min(MINQUEUE_MAX, int(msg.get("minqueue"))))
@@ -1450,7 +1450,7 @@ class SpeechDaemon:
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
         Returns "moved" if the cursor actually moved, else "edge" (already at the
-        boundary, or nothing to navigate) — the NAV handler uses this to pick the
+        boundary, or nothing to navigate) -- the NAV handler uses this to pick the
         nav vs nav-edge chime.
 
         The cursor indexes the current turn's messages (history resets each
@@ -1473,7 +1473,7 @@ class SpeechDaemon:
         if cur_id is None:
             # No parked nav cursor (the user hasn't navigated yet this turn):
             # anchor on the message currently being READ, so next/prev move
-            # relative to what the user hears — not the latest message (which made
+            # relative to what the user hears -- not the latest message (which made
             # 'next' during a live read jump to the end with an edge chime).
             cur_id = self._reading_msg_id(session)
         cur = ids.index(cur_id) if cur_id in ids else n - 1
@@ -1504,7 +1504,7 @@ class SpeechDaemon:
         del ch.items[ch.cursor:]
         # Seek-and-play: insert the target AND every later item at the channel
         # cursor so they read from here forward. Newly streamed prose appends
-        # after these and continues seamlessly — no jump from replay into live.
+        # after these and continues seamlessly -- no jump from replay into live.
         entries = []
         for mid in ids[new:]:
             entries.extend(self.history.entries_for_message(session, mid))
@@ -1574,7 +1574,7 @@ class SpeechDaemon:
         debounce (cheap, pump-thread-only state) then hand the message to the worker
         queue and return to GetMessage immediately. Running handle_message here
         (under self._lock) used to stall the pump whenever the daemon held the lock
-        streaming prose, so presses queued at the OS level and burst later — the
+        streaming prose, so presses queued at the OS level and burst later -- the
         mute-hang. The worker (_hotkey_worker) applies the message under the lock."""
         import time as _t
         if self._debounce_suppress(message.get("type"), _t.monotonic()):
@@ -1582,7 +1582,7 @@ class SpeechDaemon:
         self._hotkey_q.put(message)
 
     def _hotkey_worker(self) -> None:
-        """Drain queued hotkey fires and apply each under self._lock — OFF the pump
+        """Drain queued hotkey fires and apply each under self._lock -- OFF the pump
         thread, so a busy daemon can never stall hotkey CAPTURE. Serialized (single
         worker) like the old synchronous dispatch, and serialized against the socket
         path via self._lock."""
@@ -1614,7 +1614,7 @@ class SpeechDaemon:
 
     def _debounce_suppress(self, mtype, now) -> bool:
         """True if *mtype* is a repeat of the same TOGGLE hotkey within the debounce
-        window — collapses an accidental/rapid double-tap into one action. Only the
+        window -- collapses an accidental/rapid double-tap into one action. Only the
         toggles in _DEBOUNCED_HOTKEYS are debounced; nav/repeat/skip pass through so
         repeated directional presses still register. Runs on the single hotkey pump
         thread, so the unlocked _hotkey_last access is race-free."""
@@ -1644,9 +1644,9 @@ class SpeechDaemon:
     def _signal_speak_failure(self) -> None:
         """An utterance raised (missing TTS extra, synth/playback failure, ...).
         The inner speak-loop handlers swallow it so one bad item can't wedge the
-        loop — but for an eyes-free user a swallowed exception is a SILENT no-op,
+        loop -- but for an eyes-free user a swallowed exception is a SILENT no-op,
         the worst outcome (#41). Signal it audibly (error earcon) and log the
-        traceback. Never raises — error signaling must not itself re-break the
+        traceback. Never raises -- error signaling must not itself re-break the
         loop. Call only from within an active `except` block (print_exc reads the
         handled exception)."""
         try:
@@ -1664,7 +1664,7 @@ class SpeechDaemon:
                    pause_exempt: bool = False) -> None:
         """Speak a one-off confirmation/feedback cue (pause/mute/repeat/reread/...).
         These ALWAYS go to the reserved CONTROL channel, which the router serves
-        ahead of every session on `pending() > 0` — bypassing the minqueue gate. A
+        ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
         session channel is gated by `ready()` (minqueue items / turn_done), so a cue
         placed there during a live stream would sit unplayed and then burst out when
         the turn flushed; CONTROL makes the cue immediate regardless of stream state.
@@ -1823,7 +1823,7 @@ class SpeechDaemon:
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
-            # Idempotently restore other apps' audio while paused — closes the window
+            # Idempotently restore other apps' audio while paused -- closes the window
             # where a re-duck slipped in during the pause transition. Safe to call
             # repeatedly: _maybe_restore() is a no-op when not ducked.
             self._maybe_restore()
@@ -2065,7 +2065,7 @@ _FAULT_FILE = None
 
 def _arm_faulthandler() -> None:
     """Dump every thread's Python stack to SONARA_DIR/faulthandler.log on a NATIVE
-    crash (access violation / segfault in WinRT, ctypes, or winsound) — the only
+    crash (access violation / segfault in WinRT, ctypes, or winsound) -- the only
     way to see otherwise-silent C-level daemon deaths. Never raises."""
     global _FAULT_FILE
     try:

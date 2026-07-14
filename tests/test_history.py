@@ -52,7 +52,7 @@ def test_rolling_cap_bounds_memory():
 
 def test_eviction_excludes_truncated_head_group_from_navigation():
     # #8: when the rolling cap evicts the HEAD of an older message group, nav must
-    # not replay the surviving fragment — message_ids excludes the truncated group.
+    # not replay the surviving fragment -- message_ids excludes the truncated group.
     h = SessionHistory(cap=3)
     h.record("s", "prose", "a1")
     h.record("s", "prose", "a2")        # group 0: a1, a2

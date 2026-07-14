@@ -17,7 +17,7 @@ from sonara.paths import (
 )
 
 # Key/modifier tables and the default chord are platform-specific; the resolver
-# pulls them from the active backend via get_platform() at call time (lazy — no
+# pulls them from the active backend via get_platform() at call time (lazy -- no
 # import-time OS dispatch). The ONLY sys.platform branch stays in platform/__init__.
 
 # action -> the speechd protocol message it sends. The hotkey-bindable action set
@@ -29,7 +29,7 @@ ACTION_MESSAGES = {
     "nav_prev": {"type": "nav", "to": "prev"},
     "nav_start": {"type": "nav", "to": "first"},   # jump to start of turn + replay
     "flush": {"type": "flush_session"},            # flush the engaged session to the end
-    "pause": {"type": "pause"},     # play/pause toggle (valid action; UNBOUND by default — mute covers it)
+    "pause": {"type": "pause"},     # play/pause toggle (valid action; UNBOUND by default -- mute covers it)
     "mute": {"type": "mute"},       # global mute cycle (unmuted/muted/super muted)
     "next_session": {"type": "next_session"},   # cycle the active reader
     "faster": {"type": "set_rate", "delta": 25},
@@ -50,7 +50,7 @@ _DEFAULT_KEYS = {
 
 
 def _keytables():
-    """(key_codes, mod_masks) for the active platform (lazy — no import-time dispatch)."""
+    """(key_codes, mod_masks) for the active platform (lazy -- no import-time dispatch)."""
     from sonara.platform import get_platform
     hk = get_platform().hotkey
     return hk.key_codes(), hk.mod_masks()
@@ -79,7 +79,7 @@ def resolve_keymap(keymap=None) -> list:
     """Resolve an action->binding map into the Swift-facing array.
 
     Each output entry: {action, keyCode, modifiers, message}. An entry whose key
-    is empty/None is treated as UNBOUND and skipped (no hotkey registered) — this
+    is empty/None is treated as UNBOUND and skipped (no hotkey registered) -- this
     lets keymap.json explicitly clear an action that has a default binding. Raises
     ValueError on an unknown key name, unknown modifier name, or unknown action.
     """

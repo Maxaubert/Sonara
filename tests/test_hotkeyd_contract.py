@@ -1,4 +1,4 @@
-"""The daemon must correctly handle every protocol command the system emits —
+"""The daemon must correctly handle every protocol command the system emits --
 whether from a hotkey (keymap.ACTION_MESSAGES) or the CLI. Feeding each command
 straight into handle_message must produce the intended effect, proving the bytes
 the hotkeyd / CLI send are real protocol commands.

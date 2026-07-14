@@ -1,4 +1,4 @@
-# Windows TTS No-Voices Actionable Error — Implementation Plan
+# Windows TTS No-Voices Actionable Error - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -29,9 +29,9 @@ python -c "import tests._winfakes as w; w._install_winrt(); import pytest, sys; 
 
 ## File Structure
 
-- `tests/_winfakes.py` — fake winrt harness. Modify the fake `SpeechSynthesizer.__init__` to raise when `all_voices` is empty (mirrors real OneCore activation). One responsibility: faithful platform fakes.
-- `tests/test_win_tts.py` — add one regression test for the no-voices path.
-- `src/sonari/platform/windows/tts.py` — reorder `run()`; no new functions, no signature changes.
+- `tests/_winfakes.py` - fake winrt harness. Modify the fake `SpeechSynthesizer.__init__` to raise when `all_voices` is empty (mirrors real OneCore activation). One responsibility: faithful platform fakes.
+- `tests/test_win_tts.py` - add one regression test for the no-voices path.
+- `src/sonari/platform/windows/tts.py` - reorder `run()`; no new functions, no signature changes.
 
 ---
 
@@ -80,7 +80,7 @@ $env:PYTHONPATH = "$PWD;$PWD\src"
 python -c "import tests._winfakes as w; w._install_winrt(); import pytest, sys; sys.exit(pytest.main(['tests/test_winfakes.py','tests/test_win_tts.py','-v']))"
 ```
 
-Expected: PASS — `test_winfakes.py` (constructs `SpeechSynthesizer()` with the default non-empty `all_voices`, so the guard does not fire) and all 6 existing `test_win_tts.py` tests stay green (7 passed total).
+Expected: PASS - `test_winfakes.py` (constructs `SpeechSynthesizer()` with the default non-empty `all_voices`, so the guard does not fire) and all 6 existing `test_win_tts.py` tests stay green (7 passed total).
 
 - [ ] **Step 3: Commit**
 
@@ -112,7 +112,7 @@ Append to `tests/test_win_tts.py`:
 ```python
 def test_run_raises_actionable_error_when_no_voices(monkeypatch):
     # On a box with no OneCore voices, run() must surface the actionable
-    # "install a voice" RuntimeError — NOT the raw FileNotFoundError that real
+    # "install a voice" RuntimeError - NOT the raw FileNotFoundError that real
     # SpeechSynthesizer activation throws. Regression: nimkimi/sonari#2.
     import winrt.windows.media.speechsynthesis as ss
     monkeypatch.setattr(ss.SpeechSynthesizer, "all_voices", [])
@@ -129,7 +129,7 @@ $env:PYTHONPATH = "$PWD;$PWD\src"
 python -c "import tests._winfakes as w; w._install_winrt(); import pytest, sys; sys.exit(pytest.main(['tests/test_win_tts.py::test_run_raises_actionable_error_when_no_voices','-v']))"
 ```
 
-Expected: FAIL. With the current ordering, `run()` constructs `SpeechSynthesizer()` first; the now-faithful fake (Task 1) raises `FileNotFoundError` because `all_voices` is empty. `pytest.raises(RuntimeError)` does not catch `FileNotFoundError`, so the test errors with the uncaught `FileNotFoundError [WinError -2147024894]` — exactly the bug.
+Expected: FAIL. With the current ordering, `run()` constructs `SpeechSynthesizer()` first; the now-faithful fake (Task 1) raises `FileNotFoundError` because `all_voices` is empty. `pytest.raises(RuntimeError)` does not catch `FileNotFoundError`, so the test errors with the uncaught `FileNotFoundError [WinError -2147024894]` - exactly the bug.
 
 - [ ] **Step 3: Reorder `run()` to resolve the voice before constructing the synth**
 
@@ -179,7 +179,7 @@ $env:PYTHONPATH = "$PWD;$PWD\src"
 python -c "import tests._winfakes as w; w._install_winrt(); import pytest, sys; sys.exit(pytest.main(['tests/test_win_tts.py','tests/test_winfakes.py','-v']))"
 ```
 
-Expected: PASS — 7 in `test_win_tts.py` (6 original + 1 new) and `test_winfakes.py`. The voices-present path is unchanged.
+Expected: PASS - 7 in `test_win_tts.py` (6 original + 1 new) and `test_winfakes.py`. The voices-present path is unchanged.
 
 - [ ] **Step 6: Commit**
 
@@ -190,7 +190,7 @@ fix(windows): actionable error when no OneCore voices installed (#2)
 
 run() constructed SpeechSynthesizer() before resolving the voice, so a
 box with no voices got a cryptic FileNotFoundError (WinError -2147024894)
-instead of best_voice()'s "No TTS voices installed — add a Speech
+instead of best_voice()'s "No TTS voices installed - add a Speech
 language pack" message. Resolve the voice first; the friendly RuntimeError
 is now reachable. Adds a regression test for the no-voices path.
 
@@ -203,7 +203,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 ## Done criteria
 
 - New test `test_run_raises_actionable_error_when_no_voices` passes; the 6 original `test_win_tts.py` tests and `test_winfakes.py` still pass.
-- `git -c core.protectNTFS=false show --stat HEAD` and `HEAD~1` show only the three intended files changed (`tests/_winfakes.py`, then `src/.../tts.py` + `tests/test_win_tts.py`) — no `commands/` or other phantom changes.
+- `git -c core.protectNTFS=false show --stat HEAD` and `HEAD~1` show only the three intended files changed (`tests/_winfakes.py`, then `src/.../tts.py` + `tests/test_win_tts.py`) - no `commands/` or other phantom changes.
 - Out of scope (do NOT touch): Bug 1 colon filenames, macOS backend, real end-to-end audio verification.
 
 ## Delivery (after both tasks)
@@ -211,4 +211,4 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
 Handled by `superpowers:finishing-a-development-branch`:
 - Fork `nimkimi/sonari` to the contributor account (Maxaubert); add as remote.
 - Push `fix/windows-tts-no-voices-error`.
-- Open PR with **base `phase-3-windows`** (not `main` — the Windows backend exists only on `phase-3-windows`), referencing issue #2, noting the fix is mock-verified and describing the real-box symptom it resolves.
+- Open PR with **base `phase-3-windows`** (not `main` - the Windows backend exists only on `phase-3-windows`), referencing issue #2, noting the fix is mock-verified and describing the real-box symptom it resolves.

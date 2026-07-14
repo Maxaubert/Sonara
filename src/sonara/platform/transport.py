@@ -59,7 +59,7 @@ def connectable(path) -> bool:
 def acquire_singleton(path):
     """Acquire an exclusive single-instance lock; return the held file object
     (keep a process-lifetime reference) or None if another process holds it.
-    Windows: msvcrt.locking on a FIXED byte of a NON-truncated file — byte-range
+    Windows: msvcrt.locking on a FIXED byte of a NON-truncated file -- byte-range
     locks are system-wide, giving real cross-process exclusion; truncating under
     another holder's lock is undefined, and a moving file position would lock the
     wrong byte. The OS releases the lock on process death, so a crash never sticks.

@@ -1,4 +1,4 @@
-# Sonari M3 — Windows Hotkeys Acceptance Checklist
+# Sonari M3 - Windows Hotkeys Acceptance Checklist
 
 > **Purpose:** The mock suite proves the *register/dispatch/collision* logic and the keymap
 > resolution, but it cannot prove that a chord actually fires system-wide, that `GetMessage`
@@ -29,7 +29,7 @@ the effect:
 
 ## 2. ⚠ Mid-speech interrupt
 
-While a long response is being spoken, press **Ctrl+Shift+Alt+S** — audio must cut within ~100ms
+While a long response is being spoken, press **Ctrl+Shift+Alt+S** - audio must cut within ~100ms
 and the daemon stays alive (`tasklist | findstr python` still shows it).
 
 ## 3. ⚠ Rebinding
@@ -59,7 +59,7 @@ Run Claude Code **non-elevated** → chords work. Document "don't run elevated f
 ## 6. ⚠ Secure desktop (transient)
 
 During a UAC prompt / Ctrl+Alt+Del / Windows Hello, hotkeys + TTS are silent; they resume after.
-Transient and unavoidable from user space — document, not a blocker.
+Transient and unavoidable from user space - document, not a blocker.
 
 ---
 

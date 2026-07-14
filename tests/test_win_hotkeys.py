@@ -8,7 +8,7 @@ from sonara.platform.windows.hotkeys import WinHotkeyBackend
 from sonara.platform.base import HotkeyBackend
 
 # These two tests start the REAL Win32 message-pump thread, whose _run() calls
-# ctypes.windll.kernel32.GetCurrentThreadId() — absent off Windows. The fakes
+# ctypes.windll.kernel32.GetCurrentThreadId() -- absent off Windows. The fakes
 # cover registration but not the pump's thread-id syscall, so they can only run
 # on win32 (mirrors the sys.platform guard in test_win_supervisor.py).
 windows_only = pytest.mark.skipif(
@@ -73,7 +73,7 @@ def test_dispatch_on_hotkey_id_calls_back():
 
 def test_doctor_rows_unknown_when_daemon_not_running():
     # cli.doctor() builds a FRESH backend that never start()ed; it must NOT assert
-    # a green "no collisions" it cannot see — the chords are registered in the
+    # a green "no collisions" it cannot see -- the chords are registered in the
     # daemon process. With no daemon-side state file, report unknown. (#9)
     rows = WinHotkeyBackend().doctor_rows()
     chord = [r for r in rows if r[0] == "hotkey chords"][0]
@@ -145,7 +145,7 @@ def _start_with_fakes(monkeypatch, registered, unregistered, quit_evt):
 @windows_only
 def test_stop_joins_thread_and_unregisters_before_returning(monkeypatch):
     """H2: stop() must JOIN the pump thread so its finally clause unregisters every
-    chord BEFORE stop() returns — otherwise a reload's immediate start() collides
+    chord BEFORE stop() returns -- otherwise a reload's immediate start() collides
     with the still-registered chords (1409) and all hotkeys go dark."""
     registered, unregistered = [], []
     quit_evt = threading.Event()

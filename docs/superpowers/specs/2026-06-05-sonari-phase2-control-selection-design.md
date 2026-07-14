@@ -1,9 +1,9 @@
-# Sonari Phase 2 — Control & Selection (Design Spec)
+# Sonari Phase 2 - Control & Selection (Design Spec)
 
-**Status:** Approved (user, 2026-06-05) — ready for implementation planning
+**Status:** Approved (user, 2026-06-05) - ready for implementation planning
 **Date:** 2026-06-05
 **Supersedes:** §5.3 (`hotkeyd`) of `2026-06-04-echo-eyes-free-claude-code-design.md`
-**Depends on:** Phase 1 (complete) — `speechd`, hooks, the Unix socket protocol.
+**Depends on:** Phase 1 (complete) - `speechd`, hooks, the Unix socket protocol.
 **Spike:** `../spikes/2026-06-05-phase2-keyinjection-spike.md` (read first).
 
 ---
@@ -16,7 +16,7 @@ accepts/rejects plans, and controls speech** entirely by keyboard, screen off.
 **Exit criteria:** with the screen off, the user can (a) hear a picker's numbered options
 and select any one, (b) approve/deny a permission, (c) accept/reject a plan, and (d) drive
 speech (stop / repeat / skip / jump-to-decision / catch-up / faster / slower / verbosity /
-re-read-options) via global hotkeys — all without the speech pipeline regressing.
+re-read-options) via global hotkeys - all without the speech pipeline regressing.
 
 ## 2. Key spike outcomes that shape this design
 
@@ -25,7 +25,7 @@ re-read-options) via global hotkeys — all without the speech pipeline regressi
    `1`–`9` selects instantly; `Esc` denies/cancels. **⇒ No synthetic key injection.**
 2. **Global hotkeys** via Carbon **`RegisterEventHotKey`** fire while a terminal is focused,
    consume only the registered combo, and need **no macOS permission**.
-3. Therefore Phase 2 needs **zero special permissions** and **no event interception** — a
+3. Therefore Phase 2 needs **zero special permissions** and **no event interception** - a
    massive de-risking versus the original §5.3.
 
 ## 3. Architecture
@@ -47,12 +47,12 @@ Two additions to the Phase 1 system; **the Phase 1 pipeline is untouched.**
   PreToolUse/Notification hook payloads; the user presses the digit natively.
 ```
 
-### 3.1 `hotkeyd` — global hotkey helper (new, Swift)
+### 3.1 `hotkeyd` - global hotkey helper (new, Swift)
 
 - **Mechanism:** `RegisterEventHotKey` + `InstallEventHandler(kEventClassKeyboard /
   kEventHotKeyPressed)`; `NSApplication.run` with `setActivationPolicy(.accessory)` (no Dock
   icon). Basis: `spikes/sonari-hotkeyd-poc.swift` (compiled & ran on this Mac).
-- **No permission required** (narrowly scoped) — do not request Accessibility/Input
+- **No permission required** (narrowly scoped) - do not request Accessibility/Input
   Monitoring.
 - **Keymap:** loads `~/.sonari/keymap.json`; if absent, writes the shipped default. Each
   entry maps an **action** to `{ "key": "<name>", "mods": ["ctrl","cmd"] }`. hotkeyd resolves
@@ -80,7 +80,7 @@ Two additions to the Phase 1 system; **the Phase 1 pipeline is untouched.**
   | `Ctrl+Cmd+V` | `cycle_verbosity` | `{"type":"cycle_verbosity"}` |
   | `Ctrl+Cmd+O` | `reread_options` | `{"type":"reread_options"}` |
 
-### 3.2 `speechd` additions (small, additive — `src/sonari/`)
+### 3.2 `speechd` additions (small, additive - `src/sonari/`)
 
 All existing control ops (`stop`, `skip`, `repeat`, `jump_decision`, `catch_up`,
 `set_verbosity`, `set_voice`, `status`, `ping`) already exist. Add:
@@ -94,17 +94,17 @@ All existing control ops (`stop`, `skip`, `repeat`, `jump_decision`, `catch_up`,
    absolute `rate` still supported. speechd speaks a terse confirmation ("rate 225").
 3. **`cycle_verbosity`** (new `MsgType.CYCLE_VERBOSITY`): advance
    `everything → medium → quiet → everything`, persist, and speak the new level name.
-4. **Selection cue + warning — `everything` mode ONLY** in the `CHOICE` / `PERMISSION` /
+4. **Selection cue + warning - `everything` mode ONLY** in the `CHOICE` / `PERMISSION` /
    `PLAN` narration. At verbosity `everything` only: after the numbered options, append the
    terse cue *"Press the option's number to choose, or Escape to cancel."*, and **once per
    session** also append *"Selecting is immediate."*. At `medium` **and** `quiet`: append
-   **nothing** — the options themselves are still read, but no cue and no warning (the user
+   **nothing** - the options themselves are still read, but no cue and no warning (the user
    knows the drill). Implemented in the narration builder, not the hooks.
-   *(Note: the situation-specific notes in §6 — multiSelect keys and the `>9`-options
-   arrow note — are NOT gated; they appear whenever that case occurs in any mode, because
+   *(Note: the situation-specific notes in §6 - multiSelect keys and the `>9`-options
+   arrow note - are NOT gated; they appear whenever that case occurs in any mode, because
    the user cannot operate those cases from the learned single-select behavior.)*
 
-### 3.3 Data flow (selection, end to end — no new code on the hot path)
+### 3.3 Data flow (selection, end to end - no new code on the hot path)
 
 `PreToolUse(AskUserQuestion)` → hook sends `CHOICE{questions,options}` → speechd speaks
 "Question … Option 1: … Option 2: … Press the number, or Escape." + caches it → **user
@@ -124,7 +124,7 @@ Add to `MsgType`: `REREAD_OPTIONS = "reread_options"`, `CYCLE_VERBOSITY =
   if absent, and `launchctl bootstrap` it. (Public-release Developer-ID signing/notarization
   is deferred to Phase 3.)
 - `sonari uninstall`: bootout + remove the LaunchAgent and binary; leave `keymap.json`.
-- `sonari doctor`: add checks — `swiftc` present? `hotkeyd` binary built? LaunchAgent
+- `sonari doctor`: add checks - `swiftc` present? `hotkeyd` binary built? LaunchAgent
   loaded/running? keymap parses? socket reachable from a test send? Report each.
 - New slash command `/sonari:keymap` prints the active keymap (calls `hotkeyd --list`).
 
@@ -133,9 +133,9 @@ Add to `MsgType`: `REREAD_OPTIONS = "reread_options"`, `CYCLE_VERBOSITY =
 - **>9 options:** digits `1`–`9` select; options `10+` need arrows. speechd appends *"More
   than nine options; use arrow keys for ten and up."* when count > 9.
 - **multiSelect:** narration says *"Select multiple: press each number (or Space on the
-  highlighted item), then Enter to confirm."* — **exact keys verified live during the build**
+  highlighted item), then Enter to confirm."* - **exact keys verified live during the build**
   (open question O-1).
-- **multi-question AskUserQuestion:** narration notes *"Tab moves to the next question."* —
+- **multi-question AskUserQuestion:** narration notes *"Tab moves to the next question."* -
   verified live (O-2).
 - **"Other"/free-text option:** narrated as *"Option N, Other: type your answer."*; note that
   digits also type into it (CC bug) so a custom answer starting with a digit isn't possible
@@ -145,7 +145,7 @@ Add to `MsgType`: `REREAD_OPTIONS = "reread_options"`, `CYCLE_VERBOSITY =
   deny."* and rely on `1`=proceed / `Esc`=deny.
 - **hotkey registration conflict:** announce which combo failed; the rest still work; user
   rebinds in `keymap.json`.
-- **Secure Event Input / injection:** N/A — Phase 2 injects nothing.
+- **Secure Event Input / injection:** N/A - Phase 2 injects nothing.
 
 ## 7. Testing strategy
 
@@ -179,5 +179,5 @@ Add to `MsgType`: `REREAD_OPTIONS = "reread_options"`, `CYCLE_VERBOSITY =
 
 - Synthetic key **injection** and arrow-index tracking (obviated by native numeric; PoC kept
   at `spikes/sonari_inject_poc.swift` for a future feature).
-- **"Read/act on text selection"** (the only feature needing Accessibility) — later.
-- Developer-ID signing + notarization + PyPI/marketplace publish — **Phase 3**.
+- **"Read/act on text selection"** (the only feature needing Accessibility) - later.
+- Developer-ID signing + notarization + PyPI/marketplace publish - **Phase 3**.

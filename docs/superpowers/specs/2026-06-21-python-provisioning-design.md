@@ -1,4 +1,4 @@
-# Zero-Prerequisite Python Provisioning — Design
+# Zero-Prerequisite Python Provisioning - Design
 
 **Status:** approved (design), pending spec review
 **Date:** 2026-06-21
@@ -52,51 +52,51 @@ pip step and the daemon it registers both use that Python.
 The shims are cmd/bash and cannot parse JSON cleanly. So the record is **two plain-text
 files**, each one line, written by the bootstrap:
 
-- `~/.sonara/python.path`  — the console interpreter (`python.exe`)
-- `~/.sonara/pythonw.path` — the windowless interpreter (`pythonw.exe`)
+- `~/.sonara/python.path`  - the console interpreter (`python.exe`)
+- `~/.sonara/pythonw.path` - the windowless interpreter (`pythonw.exe`)
 
 Plain text means trivial consumption: cmd `set /p P=<"%SONARA_DIR%\python.path"`, bash
 `py="$(cat ~/.sonara/python.path)"`. The bootstrap writes the record after it resolves an
 interpreter (system or provisioned). It is the authoritative fallback for consumers when
 no system Python is on PATH; for a user who already has a system Python and runs `sonara
 install` directly (bypassing the bootstrap), no record is written and consumers simply use
-PATH — that path is unchanged. The richer install metadata (version, plugin version)
+PATH - that path is unchanged. The richer install metadata (version, plugin version)
 already lives in `install.json`; no new JSON record is needed.
 
 ## Interpreter resolution order (single, shared model)
 
 Every consumer resolves the interpreter in the same order:
 
-1. **System Python** — a real `python.exe`/`pythonw.exe` >= 3.9 on PATH, rejecting the
+1. **System Python** - a real `python.exe`/`pythonw.exe` >= 3.9 on PATH, rejecting the
    Microsoft Store stub (the existing `resolve_python_windows` logic, unchanged).
-2. **Recorded interpreter** — the path in `~/.sonara/{python,pythonw}.path`, if the file
+2. **Recorded interpreter** - the path in `~/.sonara/{python,pythonw}.path`, if the file
    exists and the path is executable.
-3. **None** — caller reports "no Python; run /sonara:install" (which provisions one).
+3. **None** - caller reports "no Python; run /sonara:install" (which provisions one).
 
 Because the bootstrap writes the record *before* handing off to `sonara install`, by the
 time install runs the record exists, so resolution succeeds end to end.
 
 ## Components (each isolated and testable)
 
-- **`bin/sonara-bootstrap.ps1`** (new) — PowerShell. Find-or-provision Python, write the
+- **`bin/sonara-bootstrap.ps1`** (new) - PowerShell. Find-or-provision Python, write the
   record, hand off to `sonara install`. The only non-Python piece. ~80 lines.
-- **`recorded_python()` / `recorded_pythonw()`** (new, in `paths.py` — they are
-  `SONARA_DIR` file accessors) — read the `.path` files, return the path iff it exists and
+- **`recorded_python()` / `recorded_pythonw()`** (new, in `paths.py` - they are
+  `SONARA_DIR` file accessors) - read the `.path` files, return the path iff it exists and
   is executable, else `None`. `resolve_python_windows()` (supervisor.py) calls them.
-- **`resolve_python_windows()` / `_daemon_python()`** (modified) — append step 2 (the
+- **`resolve_python_windows()` / `_daemon_python()`** (modified) - append step 2 (the
   recorded interpreter) as a fallback after the system-Python search.
-- **Shim fallbacks** (modified) — `bin/sonara.cmd`, `bin/sonara-hook.cmd`, `bin/sonara`,
+- **Shim fallbacks** (modified) - `bin/sonara.cmd`, `bin/sonara-hook.cmd`, `bin/sonara`,
   `bin/sonara-hook`: prefer system `python`/`pythonw`; else read the recorded `.path`.
   ~3 lines each.
-- **`commands/install.md`** (modified) — invoke the PowerShell bootstrap instead of
+- **`commands/install.md`** (modified) - invoke the PowerShell bootstrap instead of
   `bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" install`. The direct CLI `sonara install`
   remains for users who already have Python.
 
-## Data flow — fresh, Python-less install
+## Data flow - fresh, Python-less install
 
 1. User: `/plugin marketplace add ...`, `/plugin install sonara@sonara`.
 2. The plugin's hooks fire on the next session. With no Python they no-op (silent, exit 0)
-   — unchanged, and acceptable because step 3 is the required setup.
+   - unchanged, and acceptable because step 3 is the required setup.
 3. User: `/sonara:install` -> `bin/sonara-bootstrap.ps1`.
 4. No system Python found -> download `uv.exe` (pinned) -> `uv python install 3.12` ->
    write `~/.sonara/python.path` + `pythonw.path`.

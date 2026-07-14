@@ -182,7 +182,7 @@ def _cmd_keymap(args) -> int:
             pass
         print(f"Unbound {action}.")
         return 0
-    # No args: list EVERY action — bound ones with their combo, the rest "(unbound)".
+    # No args: list EVERY action -- bound ones with their combo, the rest "(unbound)".
     try:
         resolved = keymap.resolve_keymap(keymap.load_keymap())
     except ValueError as exc:
@@ -311,7 +311,7 @@ def doctor() -> list:
                             f"ready ({paths.kokoro_venv_python()})"))
         else:
             results.append(("neural voices", False,
-                            "venv present but Kokoro import failed — "
+                            "venv present but Kokoro import failed - "
                             "re-run: sonara voices install"))
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("neural voices", False, f"error: {exc}"))

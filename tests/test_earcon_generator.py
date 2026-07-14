@@ -67,7 +67,7 @@ def test_all_specs_valid(tmp_path):
 
 def test_chirp_end_frequency(tmp_path):
     """The dominant frequency in the last quarter of a chirp must be within
-    5% of freq2 — this test would have caught the phase-accumulation bug
+    5% of freq2 -- this test would have caught the phase-accumulation bug
     where the naive sin(2π·f_inst·t) formula doubled the sweep rate.
     """
     for name, (freq, dur, wtype, freq2) in _EARCON_SPECS.items():
@@ -79,13 +79,13 @@ def test_chirp_end_frequency(tmp_path):
         dom = _dominant_freq(p, quarter="last")
         assert abs(dom - freq2) / freq2 < 0.05, (
             f"Chirp '{name}' end freq {dom:.1f} Hz is not within 5% of "
-            f"target {freq2:.1f} Hz — check phase accumulation in generate.py"
+            f"target {freq2:.1f} Hz -- check phase accumulation in generate.py"
         )
 
 
 def test_earcon_wav_assets_exist_for_every_spec():
     """Every key in _EARCON_SPECS must have a matching .wav asset file in the
-    package directory.  This catches a mis-named or missing asset file —
+    package directory.  This catches a mis-named or missing asset file --
     something the old tautological name-equality check could not catch
     because _EARCON_NAMES is now derived directly from _EARCON_SPECS.keys().
     """

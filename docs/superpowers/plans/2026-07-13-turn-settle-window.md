@@ -26,8 +26,8 @@
 ### Task 1: Per-session settle window before the turn-end digest
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — new state in `__init__` (~line 103 area), new methods `_arm_settle`/`_settle_schedule`/`_settle_fire`/`_cancel_settle`, the `turn_done` earcon handler (~464-470), the PROSE handler tail (~353-368), the `FLUSH` handler (~473-492), and `SESSION_END` cleanup (~511-520).
-- Test: `tests/test_daemon_summary_mode.py` — update the `_turn_done` helper to fire the settle deterministically; add settle-specific tests.
+- Modify: `src/sonara/daemon.py` - new state in `__init__` (~line 103 area), new methods `_arm_settle`/`_settle_schedule`/`_settle_fire`/`_cancel_settle`, the `turn_done` earcon handler (~464-470), the PROSE handler tail (~353-368), the `FLUSH` handler (~473-492), and `SESSION_END` cleanup (~511-520).
+- Test: `tests/test_daemon_summary_mode.py` - update the `_turn_done` helper to fire the settle deterministically; add settle-specific tests.
 
 **Interfaces:**
 - Consumes: `_maybe_summarize(session)`, `self._lock`, `self.config`, `self.router.channel(session).turn_done`, `MsgType.EARCON`/`PROSE`/`FLUSH`/`SESSION_END` handlers, `_summary_gen` (from #13, unaffected).
@@ -268,7 +268,7 @@ Expected: all PASS. Existing turn-end tests pass because the updated `_turn_done
 - [ ] **Step 10: Run the whole suite for regressions**
 
 Run: `python -m pytest -q`
-Expected: only the 10 known pre-existing environmental failures (Win32 shim, winrt/winsound mocks, filesystem paths, lockfile perms) — no new failures.
+Expected: only the 10 known pre-existing environmental failures (Win32 shim, winrt/winsound mocks, filesystem paths, lockfile perms) - no new failures.
 
 - [ ] **Step 11: Commit**
 

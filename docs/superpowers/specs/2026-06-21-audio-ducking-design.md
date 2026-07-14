@@ -6,7 +6,7 @@
 
 ## Goal
 
-A user-toggleable feature — working name **"audio control"** — that lowers the
+A user-toggleable feature - working name **"audio control"** - that lowers the
 volume of all *other* applications' audio on the PC while Sonara's TTS is
 speaking, then restores it when Sonara goes quiet. Use case: watching a movie,
 the screen reader speaks → the movie ducks → Sonara reads → the movie returns to
@@ -15,8 +15,8 @@ its original volume. Default **off** (opt-in), persisted across restarts.
 ## Behavioral requirements (decided)
 
 1. **Hold, don't flap.** Duck once when speech begins and keep other audio
-   lowered through the *entire* run of speech — across every sentence, every cue,
-   AND every queued session — restoring only when Sonara is **completely idle**.
+   lowered through the *entire* run of speech - across every sentence, every cue,
+   AND every queued session - restoring only when Sonara is **completely idle**.
    No bouncing the movie's volume between sentences.
 2. **Configurable duck level.** A `duck_level` (0-100, target % volume for other
    apps while ducked), default **20**. Set via a command, like `rate`/`verbosity`.
@@ -34,8 +34,8 @@ the Windows Core Audio session API (`IAudioSessionManager2` /
 `ISimpleAudioVolume`); it is pure-Python on top of `comtypes`, which is already
 installed on the daemon's interpreter. It is the only approach that lowers
 *everyone else* without touching Sonara's own playback (rejected alternatives:
-raw `comtypes` COM boilerplate — fragile, no benefit; lowering the master
-endpoint volume — also lowers Sonara's own speech).
+raw `comtypes` COM boilerplate - fragile, no benefit; lowering the master
+endpoint volume - also lowers Sonara's own speech).
 
 ## Architecture
 
@@ -77,7 +77,7 @@ existing tts/earcon/hotkey/supervisor backend seams.
 The Windows `PlatformBackend` exposes the ducker (e.g. `backend.ducker`) so the
 daemon obtains it the same way it obtains `tts`, `earcon`, `hotkey`.
 
-### Hook points — the speak loop (`_speak_loop_once`)
+### Hook points - the speak loop (`_speak_loop_once`)
 
 Duck/restore live in the speak loop, the single place that knows global speaking
 state. Per-utterance hooks are explicitly rejected (they would flap).
@@ -85,8 +85,8 @@ state. Per-utterance hooks are explicitly rejected (they would flap).
 - **Duck:** immediately before speaking a real item (item is not `None` and not
   dropped by mute), if `config["audio_control"]` is on and `not ducker.is_ducked()`:
   `self.ducker.duck(self._duck_exclude_pids(), self._duck_level())`.
-- **Restore:** in the idle path — when `next_item()` returns `None` (every
-  channel drained, nothing playing) — if `ducker.is_ducked()`: `ducker.restore()`.
+- **Restore:** in the idle path - when `next_item()` returns `None` (every
+  channel drained, nothing playing) - if `ducker.is_ducked()`: `ducker.restore()`.
 
 Because `next_item()` returns `None` only when all sessions are drained, the duck
 holds across all sentences and all queued sessions and lifts exactly when Sonara
@@ -118,14 +118,14 @@ Three layers ensure other apps' audio is never left ducked:
 
 Added to `DEFAULTS` in `src/sonara/config.py`, persisted in `~/.sonara/config.json`:
 
-- `"audio_control": false` — feature on/off (default off).
-- `"duck_level": 20` — target % volume for other apps while ducked (clamped 0-100).
+- `"audio_control": false` - feature on/off (default off).
+- `"duck_level": 20` - target % volume for other apps while ducked (clamped 0-100).
 
 ## Command + protocol wiring
 
 Mirrors the existing `verbosity`/`rate` toggle pattern.
 
-- **Protocol** (`src/sonara/protocol.py`): two new `MsgType`s —
+- **Protocol** (`src/sonara/protocol.py`): two new `MsgType`s -
   `SET_AUDIO_CONTROL` (payload on/off) and `SET_DUCK_LEVEL` (payload int 0-100).
 - **Handlers** (`daemon.handle_message`): update `self.config`, call
   `save_config`, and speak a confirmation cue ("Audio control on." /
@@ -161,7 +161,7 @@ Mirrors the existing `verbosity`/`rate` toggle pattern.
 
 Daemon tests use an injected `FakeDucker` (records calls); the real `AudioDucker`
 is unit-tested with `pycaw` mocked at the COM seam, since live audio sessions are
-not deterministic — the same strategy `tts.py` uses for WinRT.
+not deterministic - the same strategy `tts.py` uses for WinRT.
 
 1. **Duck on speak, only when enabled:** with `audio_control` on, the loop calls
    `duck()` before the first item; with it off, never.

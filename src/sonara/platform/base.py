@@ -80,7 +80,7 @@ class HotkeyBackend(abc.ABC):
     def reload(self, dispatch) -> None:
         """Re-apply the current keymap to the live listener after keymap.json
         changed. Default: a full stop()+start() cycle, which is the Windows
-        in-process reload path — stop() releases the live chords before start()
+        in-process reload path -- stop() releases the live chords before start()
         re-registers the updated keymap on a fresh pump thread."""
         self.stop()
         self.start(dispatch)

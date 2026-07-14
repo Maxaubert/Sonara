@@ -1,4 +1,4 @@
-# Daemon Lifecycle: Shutdown/Start, Stop-Then-Swap Install — Design
+# Daemon Lifecycle: Shutdown/Start, Stop-Then-Swap Install - Design
 
 **Issue:** Maxaubert/Sonara#23
 **Status:** Approved (user-approved scope: "add a real sonara stop, make install
@@ -36,13 +36,13 @@ Existence = "Sonara must not run." One mechanism covers every respawn path:
 - `supervisor_loop.run_supervisor_loop` checks it at the top of each iteration
   and EXITS instead of (re)spawning while it exists.
 - `daemon.ensure_running` (the per-hook-event lazy start) refuses to spawn while
-  it exists — a shutdown actually stays shut down.
+  it exists - a shutdown actually stays shut down.
 - `sonara start` and `install()` remove it (an explicit start action).
 
 ### `MsgType.SHUTDOWN` (daemon)
 
 New protocol message. Handler replies `{"ok": true}` and arms a short
-`threading.Timer` (0.2 s) that calls `self.stop()` — the reply must reach the
+`threading.Timer` (0.2 s) that calls `self.stop()` - the reply must reach the
 socket before the daemon tears down. Existing `run()`/`stop()` cleanup already
 restores ducked audio, closes the server, and unlinks the lockfile; the
 singleton mutex is released by the OS at process death.
@@ -51,7 +51,7 @@ singleton mutex is released by the OS at process death.
 
 1. Write the stop sentinel.
 2. `schtasks /end` the scheduled task (new `WinSupervisorBackend.end_task()`;
-   best-effort — ends the task-launched supervisor).
+   best-effort - ends the task-launched supervisor).
 3. Send SHUTDOWN to the daemon (tolerate "not running").
 4. Wait up to ~5 s for the daemon to be gone (lockfile removed or socket no
    longer connectable), plus a short grace for process exit (mutex release).

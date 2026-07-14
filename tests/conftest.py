@@ -40,7 +40,7 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(paths, "SONARA_DIR", sonara_dir, raising=False)
     # APP_DIR is SONARA_DIR/"app" bound at import; it is NOT derived live, so
     # patching SONARA_DIR alone leaves it pointing at the real ~/.sonara/app.
-    # The uninstall path shutil.rmtree(APP_DIR)s it — without this repoint, a
+    # The uninstall path shutil.rmtree(APP_DIR)s it -- without this repoint, a
     # plain `pytest` run DELETES the developer's live daemon copy (it did).
     monkeypatch.setattr(paths, "APP_DIR", sonara_dir / "app", raising=False)
     monkeypatch.setattr(paths, "CONFIG_PATH", sonara_dir / "config.json", raising=False)

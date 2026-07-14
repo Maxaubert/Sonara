@@ -3,7 +3,7 @@
 Kokoro needs Python >=3.10 (kokoro-onnx requires onnxruntime>=1.20.1 + numpy>=2),
 which the system Python may not satisfy. This module provisions a uv-managed venv
 at paths.KOKORO_VENV and the daemon is repointed at it. "Neural enabled" is derived
-from the venv's existence — no separate flag to drift.
+from the venv's existence -- no separate flag to drift.
 
 All subprocess work goes through an injected ``run`` callable so the logic is
 unit-testable without touching uv, the network, or a real venv.
@@ -37,7 +37,7 @@ def ensure_uv(which=shutil.which, run=subprocess.check_call,
               base_python=None, user_scripts=_default_user_scripts) -> str:
     """Return a path to `uv`, bootstrapping it via `pip install --user uv` when
     it is not already on PATH. Raises RuntimeError (actionable) if uv cannot be
-    obtained — never returns a non-existent path."""
+    obtained -- never returns a non-existent path."""
     found = which("uv")
     if found:
         return found

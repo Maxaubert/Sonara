@@ -5,7 +5,7 @@ so a stale global `sonara` can never shadow it. That means a cooperative
 `pkgutil.extend_path` namespace can no longer be relied on to override a single
 submodule (the plugin's `src/sonara/__init__.py` is a plain package, not a
 namespace). To let the hook tests substitute a socket-free `client`, we register
-the fake under `sys.modules["sonara.client"]` here — `sitecustomize` runs at
+the fake under `sys.modules["sonara.client"]` here -- `sitecustomize` runs at
 interpreter startup, before `bin/sonara-hook` executes, so the later
 `from sonara import client` returns this fake while `sonara` itself and every
 other submodule (e.g. `hooks_entry`, `protocol`) still resolve from `src/`.

@@ -23,7 +23,7 @@ def test_connectable_true_against_a_live_listener(tmp_path):
     lock = tmp_path / "daemon.lock"
     transport.write_lockfile(lock, "127.0.0.1", port, "tok", 999999)
     # PID 999999 is unlikely-live; connectable must NOT depend on PID when the
-    # socket actually accepts — it returns True because connect() succeeds.
+    # socket actually accepts -- it returns True because connect() succeeds.
     t = threading.Thread(target=lambda: srv.accept(), daemon=True)
     t.start()
     assert transport.connectable(lock) is True

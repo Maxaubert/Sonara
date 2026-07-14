@@ -4,7 +4,7 @@
 
 **Goal:** A token-protected, daemon-served local settings page (macOS-System-Settings look) that live-edits Sonara config, hotkeys, and daemon lifecycle through the existing message handlers.
 
-**Architecture:** The daemon grows a `SettingsServer` (stdlib `ThreadingHTTPServer`, localhost, pinned port 27431) exposing `GET /settings` (one self-contained HTML file), `GET /api/state`, `POST /api/set`, `POST /api/keymap`, `POST /api/preview`. All mutations flow through `daemon.handle_message` or the existing keymap module — no parallel mutation logic. Spec: `docs/superpowers/specs/2026-07-14-settings-page-design.md`. Visual base: `docs/superpowers/mockups/codex-b.html`.
+**Architecture:** The daemon grows a `SettingsServer` (stdlib `ThreadingHTTPServer`, localhost, pinned port 27431) exposing `GET /settings` (one self-contained HTML file), `GET /api/state`, `POST /api/set`, `POST /api/keymap`, `POST /api/preview`. All mutations flow through `daemon.handle_message` or the existing keymap module - no parallel mutation logic. Spec: `docs/superpowers/specs/2026-07-14-settings-page-design.md`. Visual base: `docs/superpowers/mockups/codex-b.html`.
 
 **Tech Stack:** Python 3.14 stdlib only for the daemon (`http.server`, `json`, `threading`). Vanilla HTML/CSS/JS single file for the page (no CDN, no frameworks). Playwright (dev-only, optional skip) for e2e.
 
@@ -29,7 +29,7 @@
 - Test: `tests/test_config.py`, `tests/test_transport.py`
 
 **Interfaces:**
-- Produces: `DEFAULTS["settings_port"] == 27431`; `transport.write_lockfile(path, host, port, token, pid, http_port=None)` — writes `"http_port"` key only when not None. `read_lockfile` already returns the whole dict, unchanged.
+- Produces: `DEFAULTS["settings_port"] == 27431`; `transport.write_lockfile(path, host, port, token, pid, http_port=None)` - writes `"http_port"` key only when not None. `read_lockfile` already returns the whole dict, unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -101,7 +101,7 @@ git commit -m "feat(webui): settings_port default + optional http_port lockfile 
 
 ---
 
-### Task 2: SettingsServer core — auth + /api/state
+### Task 2: SettingsServer core - auth + /api/state
 
 **Files:**
 - Create: `src/sonara/webui.py`
@@ -379,7 +379,7 @@ git commit -m "feat(webui): SettingsServer with token auth + /api/state (#34)"
 
 ---
 
-### Task 3: POST /api/set — dispatch through the daemon
+### Task 3: POST /api/set - dispatch through the daemon
 
 **Files:**
 - Modify: `src/sonara/webui.py`
@@ -550,7 +550,7 @@ git commit -m "feat(webui): POST /api/set dispatching through handle_message + c
 
 ---
 
-### Task 4: POST /api/keymap — full hotkey editing
+### Task 4: POST /api/keymap - full hotkey editing
 
 **Files:**
 - Modify: `src/sonara/keymap.py` (new `bind_action`)
@@ -693,7 +693,7 @@ git commit -m "feat(webui): hotkey bind/unbind endpoint through the keymap modul
 
 ---
 
-### Task 5: POST /api/preview — voice sample without config change
+### Task 5: POST /api/preview - voice sample without config change
 
 **Files:**
 - Modify: `src/sonara/daemon.py` (new `preview_voice`)
@@ -701,7 +701,7 @@ git commit -m "feat(webui): hotkey bind/unbind endpoint through the keymap modul
 - Test: `tests/test_webui.py`, `tests/test_daemon_preview.py` (new)
 
 **Interfaces:**
-- Produces: `daemon.preview_voice(voice: str) -> bool` — spawns a daemon thread
+- Produces: `daemon.preview_voice(voice: str) -> bool` - spawns a daemon thread
   calling the platform tts `run(sample_text, voice, rate).wait(30)`; coalesced by
   a `_preview_busy` flag (returns False while one is playing). Sample text:
   `"This is {voice} speaking for Sonara."` `POST /api/preview {"voice": name}` →
@@ -825,7 +825,7 @@ git commit -m "feat(webui): voice preview endpoint, no config change (#34)"
 
 ---
 
-### Task 6: The page — settings.html served at GET /settings
+### Task 6: The page - settings.html served at GET /settings
 
 **Files:**
 - Create: `src/sonara/settings.html` (start from `docs/superpowers/mockups/codex-b.html`, committed in-repo)
@@ -993,14 +993,14 @@ setInterval(refresh, 3000);
 
 ```html
 <div id="offline-banner" style="display:none" class="banner">
-  Sonara isn't running — start it with <code>sonara start</code>. Reconnecting…
+  Sonara isn't running - start it with <code>sonara start</code>. Reconnecting…
 </div>
 ```
 
 with CSS `.banner{position:fixed;top:0;left:0;right:0;z-index:99;background:#c43d4c;color:#fff;padding:10px 16px;display:flex;gap:8px;font-size:13px;justify-content:center}` and `.state.flash i{box-shadow:0 0 0 5px rgba(49,173,119,.25)}` and `.kbd .unbound{opacity:.5;font-style:italic}`.
 
 6. Keep the decorative window chrome and search field; the search filters nav
-   buttons by `textContent.toLowerCase().includes(q)` (mockup already has it —
+   buttons by `textContent.toLowerCase().includes(q)` (mockup already has it -
    verify it still works after edits).
 7. Theme toggle persists: on flip, `localStorage.setItem("sonara-theme", t)`;
    on load, apply `localStorage.getItem("sonara-theme")` before first paint.
@@ -1141,7 +1141,7 @@ Expected: FAIL
 
 - [ ] **Step 3: Implement**
 
-daemon.py — in the SHUTDOWN handler, before arming the stop timer:
+daemon.py - in the SHUTDOWN handler, before arming the stop timer:
 
 ```python
             if msg.get("stay_down"):
@@ -1158,7 +1158,7 @@ daemon.py — in the SHUTDOWN handler, before arming the stop timer:
 (Use `paths.STOPPED_SENTINEL_PATH` via the module attribute so tests can
 monkeypatch it: `from sonara import paths` then `paths.STOPPED_SENTINEL_PATH.write_text(...)`.)
 
-daemon.py — in `run()` after the TCP server binds and before `write_lockfile`:
+daemon.py - in `run()` after the TCP server binds and before `write_lockfile`:
 
 ```python
         from sonara.webui import SettingsServer
@@ -1178,14 +1178,14 @@ and extend the existing call at daemon.py:1873:
             http_port=http_port)
 ```
 
-daemon.py — in `stop()` add:
+daemon.py - in `stop()` add:
 
 ```python
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
 ```
 
-webui.py — `do_POST` routing add:
+webui.py - `do_POST` routing add:
 
 ```python
             if path == "/api/daemon":
@@ -1200,7 +1200,7 @@ webui.py — `do_POST` routing add:
                 return self._json(400, {"error": "unknown op"})
 ```
 
-settings.html — replace the two placeholder button handlers from Task 6:
+settings.html - replace the two placeholder button handlers from Task 6:
 
 ```javascript
 document.getElementById("btn-restart").addEventListener("click",
@@ -1287,7 +1287,7 @@ Expected: FAIL
 
 - [ ] **Step 3: Implement**
 
-cli.py — add `import webbrowser` to the imports; add handler:
+cli.py - add `import webbrowser` to the imports; add handler:
 
 ```python
 def _cmd_settings(_args) -> int:
@@ -1331,7 +1331,7 @@ URL. If it reports the daemon is not running, tell the user to run
 beyond what the command already printed.
 ```
 
-cli.py — in `_cmd_status`, after printing the reply JSON, print the page URL
+cli.py - in `_cmd_status`, after printing the reply JSON, print the page URL
 when the lockfile has an `http_port`:
 
 ```python
@@ -1356,7 +1356,7 @@ def test_status_prints_settings_url(monkeypatch, tmp_path, capsys):
 ```
 )
 
-README.md — add to the command table after the `sonara start` row:
+README.md - add to the command table after the `sonara start` row:
 
 ```markdown
 | `/sonara:settings` | `sonara settings` | Open the browser settings page (voice, rate, summary, audio duck, hotkeys, daemon) |
@@ -1448,7 +1448,7 @@ def test_offline_banner_appears_when_server_dies(live):
 - [ ] **Step 2: Run**
 
 Run: `python -m pytest tests/e2e/ -q`
-Expected: 2 passed if Playwright installed, otherwise `2 skipped` — both acceptable. If not installed, run once locally with `pip install playwright && playwright install chromium` to see them green before the PR.
+Expected: 2 passed if Playwright installed, otherwise `2 skipped` - both acceptable. If not installed, run once locally with `pip install playwright && playwright install chromium` to see them green before the PR.
 
 - [ ] **Step 3: Commit**
 
@@ -1461,7 +1461,7 @@ git commit -m "test(webui): Playwright e2e for the settings page (skip without p
 
 ### Task 10: Full verification + finish
 
-- [ ] Run the whole suite: `python -m pytest -q` — expected: everything passes except the 9 known environmental failures (bin shim WinError 193 ×3, paths layout ×2, transport 600 perms, duck_level 30-vs-20, win_tts mocks ×2).
+- [ ] Run the whole suite: `python -m pytest -q` - expected: everything passes except the 9 known environmental failures (bin shim WinError 193 ×3, paths layout ×2, transport 600 perms, duck_level 30-vs-20, win_tts mocks ×2).
 - [ ] Grep check: `grep -rn "verbosity" src/sonara/settings.html` → no hits.
-- [ ] Manual smoke: `sonara shutdown`, deploy via robocopy, `sonara start`, then `sonara settings` — page opens, change rate, hear the spoken confirmation path still works, rebind mute, restart from the page and watch it reconnect.
+- [ ] Manual smoke: `sonara shutdown`, deploy via robocopy, `sonara start`, then `sonara settings` - page opens, change rate, hear the spoken confirmation path still works, rebind mute, restart from the page and watch it reconnect.
 - [ ] Use superpowers:finishing-a-development-branch → PR referencing issue #34, merge, deploy.

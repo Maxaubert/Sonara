@@ -22,11 +22,11 @@
 
 ## File Structure
 
-- **Create** `bin/sonara-bootstrap.ps1` — find-or-provision Python, write the record, run `sonara install`. The only non-Python piece.
-- **Modify** `src/sonara/paths.py` — record path constants + `recorded_python()`/`recorded_pythonw()` readers.
-- **Modify** `src/sonara/platform/windows/supervisor.py` — `resolve_python_windows()` falls back to the recorded `pythonw` (line 250 `return None`).
-- **Modify** `bin/sonara.cmd`, `bin/sonara-hook.cmd`, `bin/sonara` — read the recorded interpreter when none is on PATH. (NOTE: `bin/sonara-hook` is a **Python** entrypoint, not a launcher — do **not** touch it.)
-- **Modify** `commands/install.md` — route `/sonara:install` through the bootstrap.
+- **Create** `bin/sonara-bootstrap.ps1` - find-or-provision Python, write the record, run `sonara install`. The only non-Python piece.
+- **Modify** `src/sonara/paths.py` - record path constants + `recorded_python()`/`recorded_pythonw()` readers.
+- **Modify** `src/sonara/platform/windows/supervisor.py` - `resolve_python_windows()` falls back to the recorded `pythonw` (line 250 `return None`).
+- **Modify** `bin/sonara.cmd`, `bin/sonara-hook.cmd`, `bin/sonara` - read the recorded interpreter when none is on PATH. (NOTE: `bin/sonara-hook` is a **Python** entrypoint, not a launcher - do **not** touch it.)
+- **Modify** `commands/install.md` - route `/sonara:install` through the bootstrap.
 - **Tests** in `tests/test_paths.py` (readers), `tests/test_win_supervisor.py` (resolver fallback), `tests/test_bin_shims.py` (shim + `.ps1` content).
 
 ---
@@ -542,6 +542,6 @@ git commit -m "feat(install): /sonara:install runs the bootstrap (provisions Pyt
 
 **Spec coverage:** mechanism (uv, Task 3) ✓; trigger fallback-only (Find-SystemPython first, Task 3) ✓; bootstrap chain (Task 3) ✓; record as two plain files (Task 1 + Task 3) ✓; resolution order system→recorded→none (Task 2 + Task 4 shims) ✓; commands/install.md routing (Task 5) ✓; error handling loud-not-silent (Task 3 main block) ✓; testing (Tasks 1-5) ✓. YAGNI exclusions respected (Kokoro untouched, no version management).
 
-**Placeholder scan:** the only deferred value is `$UvVersion`, which Task 3 Step 1 sets to a concrete current version before the script is written — not a plan placeholder.
+**Placeholder scan:** the only deferred value is `$UvVersion`, which Task 3 Step 1 sets to a concrete current version before the script is written - not a plan placeholder.
 
-**Type consistency:** `recorded_python`/`recorded_pythonw` names + `PYTHON_RECORD_PATH`/`PYTHONW_RECORD_PATH` constants are used identically in Tasks 1, 2, and the shim `.path` filenames in Tasks 3-4. `resolve_python_windows()` returns a `pythonw` path; the recorded fallback is `recorded_pythonw()` — consistent.
+**Type consistency:** `recorded_python`/`recorded_pythonw` names + `PYTHON_RECORD_PATH`/`PYTHONW_RECORD_PATH` constants are used identically in Tasks 1, 2, and the shim `.path` filenames in Tasks 3-4. `resolve_python_windows()` returns a `pythonw` path; the recorded fallback is `recorded_pythonw()` - consistent.

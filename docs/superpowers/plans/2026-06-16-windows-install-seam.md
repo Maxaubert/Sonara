@@ -1,4 +1,4 @@
-# Windows Install via the Platform Seam — Implementation Plan
+# Windows Install via the Platform Seam - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -35,7 +35,7 @@ src/sonari/platform/macos/hotkeys.py     # uninstall() also tears down the hotke
 src/sonari/platform/windows/supervisor.py# settings.json hook-merge helpers; extend install()/uninstall(); +notes/hooks_doctor_row
 src/sonari/cli.py                        # OS-agnostic install/uninstall/doctor/_combo_label; drop macOS imports/shims
 tests/test_win_tts.py                    # split best_voice/_best_voice_info
-tests/test_win_settings_hooks.py         # NEW — settings.json merge/remove
+tests/test_win_settings_hooks.py         # NEW - settings.json merge/remove
 tests/test_win_supervisor.py             # extend: install merges hooks + writes launcher; uninstall reverses
 tests/test_cli_install.py / *_uninstall  # repoint to backend dispatch (keep macOS output assertions)
 tests/test_cli_doctor.py                 # rows come from the platform supervisor; OS-aware hooks row
@@ -44,7 +44,7 @@ docs/superpowers/M2-WINDOWS-ACCEPTANCE.md# extend §1/§7 with the settings.json
 
 ---
 
-## Task 1: Voice contract fix — `WinTtsBackend.best_voice() -> str`
+## Task 1: Voice contract fix - `WinTtsBackend.best_voice() -> str`
 
 **Files:**
 - Modify: `src/sonari/platform/windows/tts.py:96-136`
@@ -111,7 +111,7 @@ git commit -m "fix(windows): WinTtsBackend.best_voice() returns a display-name s
 
 ---
 
-## Task 2: ABC additions — `post_install_notes()` + `hooks_doctor_row()`
+## Task 2: ABC additions - `post_install_notes()` + `hooks_doctor_row()`
 
 **Files:**
 - Modify: `src/sonari/platform/base.py` (SupervisorBackend)
@@ -161,7 +161,7 @@ def test_macos_hooks_doctor_row_checks_repo_manifest():
         return ("hooks installed", False, "unknown")
 ```
 
-Implement in `MacSupervisorBackend` (preserve today's macOS doctor string — the repo `hooks/hooks.json` check that lives in `cli.doctor()` today):
+Implement in `MacSupervisorBackend` (preserve today's macOS doctor string - the repo `hooks/hooks.json` check that lives in `cli.doctor()` today):
 
 ```python
     def post_install_notes(self) -> None:
@@ -181,7 +181,7 @@ Implement in `MacSupervisorBackend` (preserve today's macOS doctor string — th
                 hooks_json if present else "missing: {0}".format(hooks_json))
 ```
 
-Implement in `WinSupervisorBackend` (uses the settings.json helper added in Task 3 — define `claude_settings_path` + `settings_has_sonari_hooks` now as module functions so this task is self-contained; Task 3 builds the merge on top):
+Implement in `WinSupervisorBackend` (uses the settings.json helper added in Task 3 - define `claude_settings_path` + `settings_has_sonari_hooks` now as module functions so this task is self-contained; Task 3 builds the merge on top):
 
 ```python
 def claude_settings_path() -> str:
@@ -238,7 +238,7 @@ git commit -m "feat(platform): SupervisorBackend.post_install_notes() + hooks_do
 - Modify: `src/sonari/platform/windows/supervisor.py`
 - Test: `tests/test_win_settings_hooks.py` (NEW)
 
-- [ ] **Step 1: Write the failing tests** (pure stdlib + tmp files — no winrt fakes needed):
+- [ ] **Step 1: Write the failing tests** (pure stdlib + tmp files - no winrt fakes needed):
 
 ```python
 # tests/test_win_settings_hooks.py
@@ -391,7 +391,7 @@ git commit -m "feat(windows): idempotent ~/.claude/settings.json hook merge/remo
 
 ---
 
-## Task 4: macOS backend — fill `install()`/`uninstall()` (behavior-preserving move)
+## Task 4: macOS backend - fill `install()`/`uninstall()` (behavior-preserving move)
 
 **Files:**
 - Modify: `src/sonari/platform/macos/supervisor.py` (`install`/`uninstall`)
@@ -413,11 +413,11 @@ def test_install_writes_and_loads_launchagent(tmp_path, monkeypatch):
     # ... (use monkeypatch on module LAUNCH_AGENT_PATH); assert plist written + load called
 ```
 
-(Use the existing macOS install test as the template; it already patches these — repoint its target from `cli` to `MacSupervisorBackend`.)
+(Use the existing macOS install test as the template; it already patches these - repoint its target from `cli` to `MacSupervisorBackend`.)
 
 - [ ] **Step 2: Run → FAIL** (`install` is still `pass`).
 
-- [ ] **Step 3: Implement `MacSupervisorBackend.install`** — the macOS-specific portion of today's `cli.install()` (everything EXCEPT the shared resolve-python / copy-app / install-record / keymap / voice steps, which stay in cli):
+- [ ] **Step 3: Implement `MacSupervisorBackend.install`** - the macOS-specific portion of today's `cli.install()` (everything EXCEPT the shared resolve-python / copy-app / install-record / keymap / voice steps, which stay in cli):
 
 ```python
     def install(self, python, app_dir):
@@ -445,7 +445,7 @@ def test_install_writes_and_loads_launchagent(tmp_path, monkeypatch):
         print(f"Placed launcher: {launcher}")
 ```
 
-Implement `MacSupervisorBackend.uninstall` — the speechd-LaunchAgent + artifact-cleanup portion of today's `cli.uninstall()` (the hotkeyd teardown moves to `MacHotkeyBackend.uninstall`; the app-copy removal + config preservation stay in cli):
+Implement `MacSupervisorBackend.uninstall` - the speechd-LaunchAgent + artifact-cleanup portion of today's `cli.uninstall()` (the hotkeyd teardown moves to `MacHotkeyBackend.uninstall`; the app-copy removal + config preservation stay in cli):
 
 ```python
     def uninstall(self):
@@ -498,7 +498,7 @@ git commit -m "refactor(macos): move install/uninstall orchestration into the ba
 
 ---
 
-## Task 5: Windows backend — extend `install()`/`uninstall()` (hooks + launcher)
+## Task 5: Windows backend - extend `install()`/`uninstall()` (hooks + launcher)
 
 **Files:**
 - Modify: `src/sonari/platform/windows/supervisor.py` (`install`/`uninstall` + a `_place_launcher` helper)
@@ -610,7 +610,7 @@ git commit -m "feat(windows): install/uninstall register the Task, merge setting
 
 ---
 
-## Task 6: `cli.py` — OS-agnostic dispatch (the switch)
+## Task 6: `cli.py` - OS-agnostic dispatch (the switch)
 
 **Files:**
 - Modify: `src/sonari/cli.py`

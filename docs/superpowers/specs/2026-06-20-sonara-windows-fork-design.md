@@ -1,4 +1,4 @@
-# Sonara — Windows fork of Sonari
+# Sonara - Windows fork of Sonari
 
 Status: approved design. Forks Sonari into an independent Windows line ("sonara")
 on the user's GitHub, with a full internal rename. nimkimi/sonari stays upstream
@@ -9,8 +9,8 @@ as the macOS line.
 Split Sonari into two independently-developed/-released lines so a Windows change
 can't break Mac and vice versa:
 
-- **`nimkimi/sonari`** — stays upstream, the **macOS** line (unchanged by this work).
-- **`Maxaubert/sonara`** — new **public** repo, the **Windows** line. Seeded from
+- **`nimkimi/sonari`** - stays upstream, the **macOS** line (unchanged by this work).
+- **`Maxaubert/sonara`** - new **public** repo, the **Windows** line. Seeded from
   our consolidated per-session-channels work (the 35-commit branch, full history),
   then fully renamed sonari → sonara.
 
@@ -19,7 +19,7 @@ nimkimi can merge it upstream separately. The two lines diverge from that shared
 fork point. sonara is an **independent repo** (not a GitHub fork-relationship), so
 it has its own issues/releases.
 
-**macOS code is kept** (renamed, not deleted) — sonara stays cross-platform in
+**macOS code is kept** (renamed, not deleted) - sonara stays cross-platform in
 structure but is the Windows-focused product.
 
 ## 2. Rename scope
@@ -49,7 +49,7 @@ genuine upstream-credit reference to `nimkimi/sonari` kept verbatim. Do the repo
 pass before the general rename, and verify no `nimkimi/sonara` string exists after.
 
 **Left un-renamed (out of scope):** the dated historical docs under
-`docs/superpowers/` (plans/specs/checklists) — records of past work; renaming them is
+`docs/superpowers/` (plans/specs/checklists) - records of past work; renaming them is
 churn. They keep "sonari" in text and filenames. (This spec is the one exception
 that names the rename.)
 
@@ -62,7 +62,7 @@ that names the rename.)
   known pre-existing Windows-environmental failures (test_bin_shims, test_bin_sonari,
   test_daemon_main::test_ensure_running…, test_kokoro_provision, test_paths,
   test_transport, test_win_autostart, test_win_tts). After the rename those same
-  tests should still be the only failures — any NEW failure means an incomplete
+  tests should still be the only failures - any NEW failure means an incomplete
   rename. Then a real `sonara install` must copy the runtime, register the hooks via
   the plugin, start the daemon, and speak.
 - Grep gates after the rename: `git grep -il "sonari"` returns only the historical
@@ -104,4 +104,4 @@ working.
 - Deleting the macOS backend (kept; a later "Windows-only slim-down" could remove it).
 - Renaming the historical docs.
 - A GitHub fork-relationship / upstream-PR automation (independent repo instead).
-- Any feature change — this is a fork + rename only.
+- Any feature change - this is a fork + rename only.

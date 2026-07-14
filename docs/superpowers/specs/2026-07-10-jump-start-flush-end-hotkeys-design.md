@@ -8,8 +8,8 @@ Branch context: `deploy/per-session-channels`
 Add two paired global hotkeys that extend Sonara's directional nav cluster, both
 operating on the **engaged session** (the one the user is currently hearing):
 
-- **Ctrl+Alt+Up** — jump to the start of the current turn and replay from the top.
-- **Ctrl+Alt+Down** — flush: skip all pending items for that session and go
+- **Ctrl+Alt+Up** - jump to the start of the current turn and replay from the top.
+- **Ctrl+Alt+Down** - flush: skip all pending items for that session and go
   silent/idle, keeping the skipped items recoverable via catch-up / repeat.
 
 At the same time, change the Windows default hotkey modifier from `Ctrl+Shift+Alt`
@@ -27,10 +27,10 @@ gap and round out the arrow cluster (Up/Down alongside Left/Right).
 ## Behavior
 
 Both actions target `_engaged_session()` (`router.active or router._last_active or
-sessions.foreground()`) — the session the user HEARS — consistent with how
+sessions.foreground()`) - the session the user HEARS - consistent with how
 nav/repeat/reread/jump-decision already resolve their target.
 
-### Ctrl+Alt+Up — jump to start (`nav_start`)
+### Ctrl+Alt+Up - jump to start (`nav_start`)
 
 Jump to the beginning of the current turn's message history and replay from the
 top. **Reuses the existing `_nav(session, "first")`** in `daemon.py`, which already
@@ -43,7 +43,7 @@ The daemon message is the existing `NAV`: `{"type": "nav", "to": "first"}`.
 On success the existing NAV handler plays the `nav` earcon; at an edge / nothing to
 navigate it plays `nav_edge` (unchanged behavior).
 
-### Ctrl+Alt+Down — flush to end (`flush`)
+### Ctrl+Alt+Down - flush to end (`flush`)
 
 Skip all pending items for the engaged session and go silent/idle. Modeled on the
 existing `JUMP_DECISION` handler, but instead of advancing the cursor to the next
@@ -73,10 +73,10 @@ Steps (in the new `FLUSH_SESSION` handler):
 
 Skipped items stay **unheard** in `history` (their `_pending_heard` entry is popped
 before `note_spoken` could flip it), so `sonara catch_up` / repeat can bring them
-back — matching the "non-destructive, recoverable" requirement. Nothing is wiped;
+back - matching the "non-destructive, recoverable" requirement. Nothing is wiped;
 this is a cursor move, not a `wipe()`.
 
-Not debounced — matches the directional nav keys (`_DEBOUNCED_HOTKEYS` covers only
+Not debounced - matches the directional nav keys (`_DEBOUNCED_HOTKEYS` covers only
 PAUSE/MUTE/NEXT_SESSION/CYCLE_VERBOSITY). A repeated flush press is harmless (the
 second press finds nothing pending → edge earcon).
 
@@ -87,12 +87,12 @@ The default chord modifier is produced by the Windows backend's `default_mods()`
 This moves **all** default bindings off Shift: Left, Right, Up, Down, M
 (mute), P (next_session).
 
-User `keymap.json` overrides are untouched — `load_keymap()` merges user entries
+User `keymap.json` overrides are untouched - `load_keymap()` merges user entries
 over the defaults, so anyone who set an explicit modifier keeps it.
 
 ## Components / files touched
 
-1. **`src/sonara/protocol.py`** — add `FLUSH_SESSION = "flush_session"` to
+1. **`src/sonara/protocol.py`** - add `FLUSH_SESSION = "flush_session"` to
    `MsgType`. (Up reuses the existing `NAV`.)
 
 2. **`src/sonara/keymap.py`**
@@ -101,15 +101,15 @@ over the defaults, so anyone who set an explicit modifier keeps it.
      `"flush": {"type": "flush_session"}`.
    - `_DEFAULT_KEYS`: add `"nav_start": "up"`, `"flush": "down"`.
 
-3. **`src/sonara/platform/windows/`** — change `default_mods()` to return
+3. **`src/sonara/platform/windows/`** - change `default_mods()` to return
    `Ctrl+Alt` (drop Shift). Confirm `up` / `down` exist in the key-code table
    (`keytables.py`); add them if missing.
 
-4. **`src/sonara/daemon.py`** — add the `FLUSH_SESSION` branch to
+4. **`src/sonara/daemon.py`** - add the `FLUSH_SESSION` branch to
    `handle_message()` (per "Ctrl+Alt+Down" above). Up needs no daemon change (NAV
    already handles `to == "first"`).
 
-5. **Docs** — `README.md` hotkey table + the per-session section, and
+5. **Docs** - `README.md` hotkey table + the per-session section, and
    `commands/keymap.md`. Every `Ctrl+Shift+Alt` reference in `README.md` becomes
    `Ctrl+Alt`; add the two new rows (Up = start of turn, Down = flush to end).
 
@@ -117,10 +117,10 @@ over the defaults, so anyone who set an explicit modifier keeps it.
 
 - Action names surfaced by `sonara keymap`: **`nav_start`** (Up) and **`flush`**
   (Down).
-- **Hotkey-only**, no CLI commands — mirrors `nav_prev` / `nav_next`, which have no
+- **Hotkey-only**, no CLI commands - mirrors `nav_prev` / `nav_next`, which have no
   CLI surface either.
 
-## Testing (TDD — write tests first)
+## Testing (TDD - write tests first)
 
 - **protocol**: extend the `MsgType` snapshot test to include `FLUSH_SESSION`
   (mirrors the existing SET_AUDIO_CONTROL / SET_DUCK_LEVEL snapshot coverage).
@@ -143,7 +143,7 @@ over the defaults, so anyone who set an explicit modifier keeps it.
 ## Out of scope (YAGNI)
 
 - No CLI commands for either action.
-- No cross-turn history jump — "start of history" means the start of the current
+- No cross-turn history jump - "start of history" means the start of the current
   turn (history resets each prompt, per `_nav`'s existing contract).
 - No changes to `stop` / `skip` / `pause` / `mute` semantics.
-- No new earcon wav assets — reuse the existing `nav` / `nav_edge` earcons.
+- No new earcon wav assets - reuse the existing `nav` / `nav_edge` earcons.

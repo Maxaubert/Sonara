@@ -1,14 +1,14 @@
-# Sonari Phase 3 — Milestone 2: Windows OneCore Speech Pipeline — Implementation Plan
+# Sonari Phase 3 - Milestone 2: Windows OneCore Speech Pipeline - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
-**Goal:** Make the Sonari daemon run on Windows and **speak Claude's output** — a `platform/windows/` backend (OneCore TTS via PyWinRT, `winsound` earcons, Task-Scheduler autostart), the Windows single-instance guard, and exec-form hooks — all built + mock-tested on macOS, with the real on-Windows verification captured as a deferred acceptance checklist. **No hotkeys** (M3); the Windows hotkey backend is a stub.
+**Goal:** Make the Sonari daemon run on Windows and **speak Claude's output** - a `platform/windows/` backend (OneCore TTS via PyWinRT, `winsound` earcons, Task-Scheduler autostart), the Windows single-instance guard, and exec-form hooks - all built + mock-tested on macOS, with the real on-Windows verification captured as a deferred acceptance checklist. **No hotkeys** (M3); the Windows hotkey backend is a stub.
 
 **Architecture:** Mirror the macOS backend behind the existing four ABCs. Because the code is Windows-only (imports `winrt`/`winsound`/`winreg`/`msvcrt`), it is made **importable and unit-testable on macOS** by injecting fake modules into `sys.modules` (a conftest harness). `get_platform()` gains the `win32` branch. The Mac suite stays green because `get_platform()` never loads `platform/windows` on darwin; the new Windows tests exercise the logic against fakes.
 
-**Tech Stack:** Python 3.9 core; Windows-only deps reached via lazy import — PyWinRT projections (`winrt-runtime` + `winrt-Windows.Media.SpeechSynthesis`/`.Media.Playback`/`.Media.Core`/`.Storage.Streams`), stdlib `winsound`/`winreg`/`msvcrt`/`wave`. pytest with `sys.modules` fakes.
+**Tech Stack:** Python 3.9 core; Windows-only deps reached via lazy import - PyWinRT projections (`winrt-runtime` + `winrt-Windows.Media.SpeechSynthesis`/`.Media.Playback`/`.Media.Core`/`.Storage.Streams`), stdlib `winsound`/`winreg`/`msvcrt`/`wave`. pytest with `sys.modules` fakes.
 
-> **VERIFIED CODE SOURCE — read this first.** The backend bodies (TTS `_TtsHandle`/`run`, `winsound` earcon, `.wav` generator, Task XML + supervisor + `resolve_python`, hooks builder) are web-grounded and provided **verbatim** in `docs/superpowers/m2-windows-api-reference.md`. Where a task says *"implement from the verified reference (§Topic)"*, copy that code, adapting ONLY: (a) the file path/import location to our layout (`src/sonari/platform/windows/...`), (b) subclassing the real ABC, (c) keeping Windows-only imports lazy/guarded. Do not re-derive Windows APIs you cannot test.
+> **VERIFIED CODE SOURCE - read this first.** The backend bodies (TTS `_TtsHandle`/`run`, `winsound` earcon, `.wav` generator, Task XML + supervisor + `resolve_python`, hooks builder) are web-grounded and provided **verbatim** in `docs/superpowers/m2-windows-api-reference.md`. Where a task says *"implement from the verified reference (§Topic)"*, copy that code, adapting ONLY: (a) the file path/import location to our layout (`src/sonari/platform/windows/...`), (b) subclassing the real ABC, (c) keeping Windows-only imports lazy/guarded. Do not re-derive Windows APIs you cannot test.
 
 **Branch:** `phase-3-windows` (M1 already merged to `main`; continue here).
 
@@ -23,7 +23,7 @@
    TMPDIR=/tmp python3.13 -m pytest -q            # 3.13
    ```
    Baseline at M2 start: **436 passing**. Every task keeps all green (count rises with new Windows tests; never red).
-2. **"Green" here means the MOCKED contract holds — NOT that it works on Windows.** The real gate (does it speak, autostart, stay single-instance on real Win10/11) is the **deferred acceptance checklist** (Task 10). Every ⚠ item there is escalated to a human-on-Windows, never asserted green from a mock.
+2. **"Green" here means the MOCKED contract holds - NOT that it works on Windows.** The real gate (does it speak, autostart, stay single-instance on real Win10/11) is the **deferred acceptance checklist** (Task 10). Every ⚠ item there is escalated to a human-on-Windows, never asserted green from a mock.
 3. **No new pip dependency is imported on the macOS path.** PyWinRT is imported lazily, only inside the Windows backend, only reached on win32 (or via the test fakes). The macOS/core import graph gains nothing.
 4. **Windows-only stdlib (`winsound`/`winreg`/`msvcrt`) and `winrt` are imported lazily** (inside functions/methods or guarded `try: import ... except ModuleNotFoundError`), never at module top-level on a path the Mac suite imports for real.
 5. Work in `~/projects/private/claude-tts` on `phase-3-windows`. Python 3.9 stdlib idioms. `from __future__ import annotations` at the top of every new module so 3.9 accepts `str | None` hints.
@@ -35,9 +35,9 @@
 ```
 src/sonari/platform/windows/
   __init__.py          # make_backend() -> WinPlatformBackend
-  tts.py               # WinTtsBackend — OneCore via PyWinRT + _TtsHandle proc-adapter
-  earcon.py            # WinEarconBackend — winsound + _DoneHandle/_MissingHandle
-  hotkeys.py           # WinHotkeyBackend — STUB (M3 implements)
+  tts.py               # WinTtsBackend - OneCore via PyWinRT + _TtsHandle proc-adapter
+  earcon.py            # WinEarconBackend - winsound + _DoneHandle/_MissingHandle
+  hotkeys.py           # WinHotkeyBackend - STUB (M3 implements)
   supervisor.py        # WinSupervisorBackend + Task XML + resolve_python_windows + hooks
   supervisor_loop.py   # thin pythonw supervisor (Popen-restart w/ backoff)
   earcons/
@@ -52,7 +52,7 @@ tests/test_win_*.py    # mock-based backend tests
 
 ---
 
-# GROUP A — Windows test harness + the daemon's Windows single-instance
+# GROUP A - Windows test harness + the daemon's Windows single-instance
 
 ### Task 1: The `sys.modules` fake harness (lets Windows modules import on macOS)
 
@@ -76,10 +76,10 @@ def test_winfakes_make_winrt_and_winsound_importable():
 - [ ] **Step 2: Run → FAIL** (`ModuleNotFoundError: tests._winfakes`).
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_winfakes.py -q`
 
-- [ ] **Step 3: Create `tests/_winfakes.py`** — inject fakes for `winsound`, `winreg`, `msvcrt`, and the `winrt.*` tree. (Verbatim-derived from the verified intel; the `MediaPlayer` fires `media_ended` on a `threading.Timer` so the TTS handle completes.)
+- [ ] **Step 3: Create `tests/_winfakes.py`** - inject fakes for `winsound`, `winreg`, `msvcrt`, and the `winrt.*` tree. (Verbatim-derived from the verified intel; the `MediaPlayer` fires `media_ended` on a `threading.Timer` so the TTS handle completes.)
 ```python
 """Fake Windows modules so platform/windows/* imports + unit-tests on macOS/Linux.
-install() is idempotent and uses setdefault — a no-op on real Windows."""
+install() is idempotent and uses setdefault - a no-op on real Windows."""
 import sys, types, threading
 
 
@@ -214,7 +214,7 @@ def acquire_singleton(path):
     """Acquire an exclusive single-instance lock; return the held file object
     (keep a process-lifetime reference) or None if another process holds it.
     POSIX: fcntl.flock (content-independent). Windows: msvcrt.locking on a FIXED
-    byte of a NON-truncated file — byte-range locks are system-wide, giving real
+    byte of a NON-truncated file - byte-range locks are system-wide, giving real
     cross-process exclusion; truncating under another holder's lock is undefined,
     and a moving file position would lock the wrong byte. The OS releases the
     lock on process death, so a crash never sticks.
@@ -245,7 +245,7 @@ def acquire_singleton(path):
         pass
     return fh
 ```
-(The POSIX path is behaviourally identical to M1's `open("w")` flock — the full gate confirms macOS stays green; `os.open(O_RDWR|O_CREAT)` just makes the open cross-platform-safe.)
+(The POSIX path is behaviourally identical to M1's `open("w")` flock - the full gate confirms macOS stays green; `os.open(O_RDWR|O_CREAT)` just makes the open cross-platform-safe.)
 
 - [ ] **Step 4: Run the singleton tests (POSIX + win branch) → PASS**, then full suite both interpreters.
 Run: `TMPDIR=/tmp /usr/bin/python3 -m pytest tests/test_transport.py -q` then the full gate.
@@ -258,13 +258,13 @@ git commit -m "feat(transport): Windows single-instance branch (msvcrt.locking) 
 
 ---
 
-# GROUP B — The three Windows backends (mock-tested)
+# GROUP B - The three Windows backends (mock-tested)
 
-### Task 3: Windows earcons — stdlib `.wav` generator + assets
+### Task 3: Windows earcons - stdlib `.wav` generator + assets
 
 **Files:** Create `src/sonari/platform/windows/__init__.py` (package marker), `.../earcons/__init__.py`, `.../earcons/generate.py`, the 6 `.wav`; Modify `pyproject.toml`; Test `tests/test_earcon_generator.py`
 
-- [ ] **Step 1: Write the failing test** (pure stdlib — runs on any OS, no mock)
+- [ ] **Step 1: Write the failing test** (pure stdlib - runs on any OS, no mock)
 ```python
 # tests/test_earcon_generator.py
 import struct, wave, pathlib
@@ -291,7 +291,7 @@ def test_all_specs_valid(tmp_path):
 
 - [ ] **Step 2: Run → FAIL** (module missing).
 
-- [ ] **Step 3: Create the package + generator.** `src/sonari/platform/windows/__init__.py`: `# sonari.platform.windows — assembled in Task 7.` Create `.../earcons/__init__.py` and `.../earcons/generate.py` with the **verified stdlib generator** (16-bit PCM mono 44100, trapezoid envelope, `_EARCON_SPECS` for the 6 earcons, `generate_all_earcons`, `python -m ...generate` entry). Implement from the verified reference (§earcon — the stdlib WAV generator).
+- [ ] **Step 3: Create the package + generator.** `src/sonari/platform/windows/__init__.py`: `# sonari.platform.windows - assembled in Task 7.` Create `.../earcons/__init__.py` and `.../earcons/generate.py` with the **verified stdlib generator** (16-bit PCM mono 44100, trapezoid envelope, `_EARCON_SPECS` for the 6 earcons, `generate_all_earcons`, `python -m ...generate` entry). Implement from the verified reference (§earcon - the stdlib WAV generator).
 
 - [ ] **Step 4: Generate the assets + run tests → PASS**
 ```bash
@@ -352,7 +352,7 @@ def test_default_earcons_six():
 
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement** `src/sonari/platform/windows/earcon.py` with the verified `_DoneHandle`/`_MissingHandle` + lazy `winsound` import (guarded `try: import winsound except ModuleNotFoundError`), `play()`, and `default_earcons()` delegating to `.earcons.default_earcons()`. Subclass `EarconBackend`. Implement from the verified reference (§earcon — winsound play()).
+- [ ] **Step 3: Implement** `src/sonari/platform/windows/earcon.py` with the verified `_DoneHandle`/`_MissingHandle` + lazy `winsound` import (guarded `try: import winsound except ModuleNotFoundError`), `play()`, and `default_earcons()` delegating to `.earcons.default_earcons()`. Subclass `EarconBackend`. Implement from the verified reference (§earcon - winsound play()).
 
 - [ ] **Step 4: Run → PASS, full gate, commit**
 ```bash
@@ -362,11 +362,11 @@ git commit -m "feat(windows): WinEarconBackend via winsound (poll()-able handles
 
 ---
 
-### Task 5: `WinTtsBackend` (OneCore via PyWinRT) — the `_TtsHandle` proc-adapter
+### Task 5: `WinTtsBackend` (OneCore via PyWinRT) - the `_TtsHandle` proc-adapter
 
 **Files:** Create `src/sonari/platform/windows/tts.py`; Test `tests/test_win_tts.py`
 
-> **The crux.** OneCore has no subprocess, so `run()` returns `_TtsHandle` — a proc-like object whose `.wait(timeout)` blocks on a `threading.Event` (raising `subprocess.TimeoutExpired` on timeout), `.terminate()` pauses playback + sets `returncode=1`, `.returncode` is `0` on `MediaEnded`. Uses `IAsyncOperation.get()` (NOT asyncio — no loop in the daemon thread). Holds GC-refs to stream/synth/callback.
+> **The crux.** OneCore has no subprocess, so `run()` returns `_TtsHandle` - a proc-like object whose `.wait(timeout)` blocks on a `threading.Event` (raising `subprocess.TimeoutExpired` on timeout), `.terminate()` pauses playback + sets `returncode=1`, `.returncode` is `0` on `MediaEnded`. Uses `IAsyncOperation.get()` (NOT asyncio - no loop in the daemon thread). Holds GC-refs to stream/synth/callback.
 
 - [ ] **Step 1: Write the failing test** (the fake MediaPlayer fires media_ended on a timer)
 ```python
@@ -402,22 +402,22 @@ def test_wpm_maps_to_multiplier():
 
 def test_run_falls_back_when_voice_name_unknown():
     # a stale/foreign voice name (e.g. macOS "Samantha") must not be assigned
-    # as-is to synth.voice — run() resolves it or falls back to best_voice().
+    # as-is to synth.voice - run() resolves it or falls back to best_voice().
     h = WinTtsBackend().run("hi", "Samantha", 200)  # fake has no such voice
     assert h.wait(timeout=2.0) == 0   # did not crash on an unresolved name
 ```
 
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement** `src/sonari/platform/windows/tts.py` with the **verified** code: lazy `winrt.*` imports inside `run()`/`best_voice()`/`list_voices()` (so the module imports even without the fakes, though tests use fakes); `wpm_to_speaking_rate(wpm)` = `max(0.5, min(6.0, wpm/200.0))`; `best_voice()` (en-US OneCore by id → any en-US → `default_voice` → `RuntimeError`); `run()` (options `appended_silence`/`punctuation_silence` MIN, `speaking_rate` try/AttributeError→SSML fallback, `synthesize_text_to_stream_async(text).get()`, `MediaPlayer` SPEECH category, `set_stream_source`, `_TtsHandle`, `play()`); `_TtsHandle` (`wait` raises `subprocess.TimeoutExpired`, `terminate` pause/close + `returncode=1`, GC-refs). Subclass `TtsBackend`. Implement from the verified reference (§Windows OneCore TTS — the full synth→stream→play pattern + `_TtsHandle`).
-> The ABC's `run(self, text, voice, rate)` takes the Sonari wpm `rate` (int) — map it internally via `wpm_to_speaking_rate`.
+- [ ] **Step 3: Implement** `src/sonari/platform/windows/tts.py` with the **verified** code: lazy `winrt.*` imports inside `run()`/`best_voice()`/`list_voices()` (so the module imports even without the fakes, though tests use fakes); `wpm_to_speaking_rate(wpm)` = `max(0.5, min(6.0, wpm/200.0))`; `best_voice()` (en-US OneCore by id → any en-US → `default_voice` → `RuntimeError`); `run()` (options `appended_silence`/`punctuation_silence` MIN, `speaking_rate` try/AttributeError→SSML fallback, `synthesize_text_to_stream_async(text).get()`, `MediaPlayer` SPEECH category, `set_stream_source`, `_TtsHandle`, `play()`); `_TtsHandle` (`wait` raises `subprocess.TimeoutExpired`, `terminate` pause/close + `returncode=1`, GC-refs). Subclass `TtsBackend`. Implement from the verified reference (§Windows OneCore TTS - the full synth→stream→play pattern + `_TtsHandle`).
+> The ABC's `run(self, text, voice, rate)` takes the Sonari wpm `rate` (int) - map it internally via `wpm_to_speaking_rate`.
 >
-> **CRITICAL deviation from the reference — voice resolution.** `Speaker` passes `voice` as a voice-NAME **string** (from config) or `None` — but `synthesizer.voice` requires a `VoiceInformation` **object**. The reference's `synth.voice = voice` is wrong for our contract. `run()` must resolve: if `voice` is a non-empty string, find the matching `VoiceInformation` in `all_voices` by `display_name` (case-insensitive); if not found (e.g. a stale macOS voice name like `"Samantha"`), fall back to `best_voice()`; if `voice is None`, use `best_voice()`. Add a helper `_resolve_voice(name)`.
+> **CRITICAL deviation from the reference - voice resolution.** `Speaker` passes `voice` as a voice-NAME **string** (from config) or `None` - but `synthesizer.voice` requires a `VoiceInformation` **object**. The reference's `synth.voice = voice` is wrong for our contract. `run()` must resolve: if `voice` is a non-empty string, find the matching `VoiceInformation` in `all_voices` by `display_name` (case-insensitive); if not found (e.g. a stale macOS voice name like `"Samantha"`), fall back to `best_voice()`; if `voice is None`, use `best_voice()`. Add a helper `_resolve_voice(name)`.
 
 - [ ] **Step 4: Run → PASS, full gate, commit**
 ```bash
 git add src/sonari/platform/windows/tts.py tests/test_win_tts.py
-git commit -m "feat(windows): WinTtsBackend — OneCore via PyWinRT with a subprocess-like playback handle"
+git commit -m "feat(windows): WinTtsBackend - OneCore via PyWinRT with a subprocess-like playback handle"
 ```
 
 ---
@@ -426,16 +426,16 @@ git commit -m "feat(windows): WinTtsBackend — OneCore via PyWinRT with a subpr
 
 **Files:** Create `src/sonari/platform/windows/supervisor.py`, `.../supervisor_loop.py`; Test `tests/test_win_supervisor.py`
 
-- [ ] **Step 1: Write the failing tests** — the verified suite: Task XML asserted via `ElementTree` (LogonTrigger/UserId, RestartOnFailure PT5M, RunLevel LeastPrivilege), `launch_spec` creationflags (`& 0x08000000`, `& 0x00000008`, no `start_new_session`), `is_installed` calls `schtasks /query /tn`, `doctor_rows` include "Task Scheduler task" + "neural voice", `_is_store_stub` WindowsApps fast-path, `_SPAWN_FLAGS == 0x08000008`. Use the verified test file from the reference (§supervisor — mock strategy), importing from `sonari.platform.windows.supervisor`.
+- [ ] **Step 1: Write the failing tests** - the verified suite: Task XML asserted via `ElementTree` (LogonTrigger/UserId, RestartOnFailure PT5M, RunLevel LeastPrivilege), `launch_spec` creationflags (`& 0x08000000`, `& 0x00000008`, no `start_new_session`), `is_installed` calls `schtasks /query /tn`, `doctor_rows` include "Task Scheduler task" + "neural voice", `_is_store_stub` WindowsApps fast-path, `_SPAWN_FLAGS == 0x08000008`. Use the verified test file from the reference (§supervisor - mock strategy), importing from `sonari.platform.windows.supervisor`.
 
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement** `supervisor.py` with the verified code: `TASK_NAME`, `TASK_XML_TEMPLATE` (UTF-16/`InteractiveToken`/`LeastPrivilege`/`RestartOnFailure`/`Hidden`), `_current_user_id` (lazy `ctypes`), `task_install`/`task_uninstall`/`task_is_installed`, `resolve_python_windows` (+`_is_store_stub`/`_find_pythonw`/`_probe_python_version`/`_probe_version_via_launcher`), `build_hooks_json` + `_GITATTRIBUTES_LINE`, and `WinSupervisorBackend` (thin `_schtasks`/`_probe_python_version`/`_list_neural_voices` wrappers [lazy `winreg`]; `is_installed`/`is_running`/`resolve_python`/`launch_spec`/`doctor_rows`/`install`/`uninstall`). Create `supervisor_loop.py` (verified `launch_spec`/`run_supervisor_loop` with backoff; `__main__` entry). All Windows-only imports lazy. Implement from the verified reference (§supervisor — Task XML, resolve_python, supervisor loop, WinSupervisorBackend).
+- [ ] **Step 3: Implement** `supervisor.py` with the verified code: `TASK_NAME`, `TASK_XML_TEMPLATE` (UTF-16/`InteractiveToken`/`LeastPrivilege`/`RestartOnFailure`/`Hidden`), `_current_user_id` (lazy `ctypes`), `task_install`/`task_uninstall`/`task_is_installed`, `resolve_python_windows` (+`_is_store_stub`/`_find_pythonw`/`_probe_python_version`/`_probe_version_via_launcher`), `build_hooks_json` + `_GITATTRIBUTES_LINE`, and `WinSupervisorBackend` (thin `_schtasks`/`_probe_python_version`/`_list_neural_voices` wrappers [lazy `winreg`]; `is_installed`/`is_running`/`resolve_python`/`launch_spec`/`doctor_rows`/`install`/`uninstall`). Create `supervisor_loop.py` (verified `launch_spec`/`run_supervisor_loop` with backoff; `__main__` entry). All Windows-only imports lazy. Implement from the verified reference (§supervisor - Task XML, resolve_python, supervisor loop, WinSupervisorBackend).
 
 - [ ] **Step 4: Run → PASS, full gate, commit**
 ```bash
 git add src/sonari/platform/windows/supervisor.py src/sonari/platform/windows/supervisor_loop.py tests/test_win_supervisor.py
-git commit -m "feat(windows): WinSupervisorBackend — Task Scheduler XML (no admin) + py-launcher resolution + supervisor loop"
+git commit -m "feat(windows): WinSupervisorBackend - Task Scheduler XML (no admin) + py-launcher resolution + supervisor loop"
 ```
 
 ---
@@ -473,7 +473,7 @@ def test_get_platform_win32(monkeypatch):
 
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Implement.** `hotkeys.py`: `WinHotkeyBackend(HotkeyBackend)` — `install(log_path, agent_path, launchctl_fn)` returns `(False, "Windows hotkeys land in Milestone 3.")`; `uninstall()` no-op; `display_combo(modifiers, key_code)` returns a simple `"Ctrl+Shift+Alt+<key>"`-style label (a minimal Windows VK display map, or `"keyN"` fallback — full M3). `windows/__init__.py`:
+- [ ] **Step 3: Implement.** `hotkeys.py`: `WinHotkeyBackend(HotkeyBackend)` - `install(log_path, agent_path, launchctl_fn)` returns `(False, "Windows hotkeys land in Milestone 3.")`; `uninstall()` no-op; `display_combo(modifiers, key_code)` returns a simple `"Ctrl+Shift+Alt+<key>"`-style label (a minimal Windows VK display map, or `"keyN"` fallback - full M3). `windows/__init__.py`:
 ```python
 from sonari.platform.base import PlatformBackend
 from sonari.platform.windows.tts import WinTtsBackend
@@ -500,13 +500,13 @@ git commit -m "feat(windows): WinHotkeyBackend stub (M3) + WinPlatformBackend + 
 
 ---
 
-# GROUP C — Windows install glue (mock-tested) + the deferred acceptance gate
+# GROUP C - Windows install glue (mock-tested) + the deferred acceptance gate
 
 ### Task 8: Exec-form hooks + `.gitattributes`
 
 **Files:** Modify `src/sonari/platform/windows/supervisor.py` (hooks writer, if not done in T6); Create `.gitattributes`; Test `tests/test_win_hooks.py`
 
-> The macOS `hooks.json` (shell-form `bin/sonari-hook`) is untouched — `sonari install` on Windows writes the **exec-form** hook config (`command` = resolved `pythonw`, `args` = `[hook.py, EventName]`) with backslashes JSON-escaped. The exact Claude-Code-hooks location on Windows is a deferred acceptance item (Task 10) — this task delivers + tests the *content builder*.
+> The macOS `hooks.json` (shell-form `bin/sonari-hook`) is untouched - `sonari install` on Windows writes the **exec-form** hook config (`command` = resolved `pythonw`, `args` = `[hook.py, EventName]`) with backslashes JSON-escaped. The exact Claude-Code-hooks location on Windows is a deferred acceptance item (Task 10) - this task delivers + tests the *content builder*.
 
 - [ ] **Step 1: Write the failing test**
 ```python
@@ -525,7 +525,7 @@ def test_hooks_json_is_exec_form_with_escaped_paths():
 
 - [ ] **Step 2: Run → FAIL** (if `build_hooks_json` from T6 doesn't yet cover MessageDisplay/Stop shape).
 
-- [ ] **Step 3: Implement / confirm** `build_hooks_json(pythonw, hook_py)` produces the verified exec-form JSON (MessageDisplay + Stop + the other Sonari events Sonari actually consumes — match the macOS `hooks/hooks.json` event set). Create `.gitattributes` at repo root:
+- [ ] **Step 3: Implement / confirm** `build_hooks_json(pythonw, hook_py)` produces the verified exec-form JSON (MessageDisplay + Stop + the other Sonari events Sonari actually consumes - match the macOS `hooks/hooks.json` event set). Create `.gitattributes` at repo root:
 ```
 hooks/*.py text eol=lf
 src/sonari/**/*.py text eol=lf
@@ -539,7 +539,7 @@ git commit -m "feat(windows): exec-form hooks.json builder + .gitattributes LF e
 
 ---
 
-### Task 9: Doctor wiring — Windows rows reachable via the seam (sanity)
+### Task 9: Doctor wiring - Windows rows reachable via the seam (sanity)
 
 **Files:** Verify `src/sonari/cli.py doctor()` composes `get_platform().supervisor.doctor_rows()`; Test `tests/test_win_doctor_rows.py`
 
@@ -574,20 +574,20 @@ git commit -m "test(windows): doctor rows compose from WinSupervisorBackend thro
 > Per the iterate-and-verify doctrine: what a mock can't verify must be **handed to a human-on-Windows**, never asserted green. This file is the gate M2 cannot close on the Mac.
 
 - [ ] **Step 1: Author the checklist** covering, with exact commands + what to listen for:
-  - **Install:** `pip install` the PyWinRT projection set; `sonari install` registers the Task (no UAC prompt — confirm non-admin); `schtasks /query /tn Sonari.Speechd` shows it.
+  - **Install:** `pip install` the PyWinRT projection set; `sonari install` registers the Task (no UAC prompt - confirm non-admin); `schtasks /query /tn Sonari.Speechd` shows it.
   - ⚠ **Speech:** in a real `claude` session, Claude's prose is spoken by a **OneCore** voice; rate is usable (the 750ms-silence hardening applied).
   - ⚠ **Interrupt:** `stop`/`skip` cut speech mid-utterance (`_TtsHandle.terminate` → `MediaPlayer.pause`).
   - ⚠ **Earcons:** each message type plays its distinct generated `.wav`.
-  - ⚠ **Single-instance:** rapid hook activity yields **one** daemon (the `msvcrt.locking` guard) — `tasklist | findstr python`.
+  - ⚠ **Single-instance:** rapid hook activity yields **one** daemon (the `msvcrt.locking` guard) - `tasklist | findstr python`.
   - ⚠ **Autostart + restart:** log off/on → daemon returns; kill it → the supervisor restarts it (backoff).
   - ⚠ **Hooks fire:** confirm the exec-form hook actually reaches the daemon (resolve the exact Claude-Code Windows hooks path).
-  - **RISKS to probe explicitly (mock-blind):** (a) **SAPI/MediaPlayer audio from a `DETACHED_PROCESS|CREATE_NO_WINDOW` Task-Scheduler process** — the #1 risk: neural `Speak()`/`MediaPlayer` may emit no audio or hang without an STA + `CoInitializeEx(COINIT_APARTMENTTHREADED)`; if so, add a defensive `CoInitializeEx` (via `ctypes.windll.ole32`) in the daemon/TTS thread startup. (b) **`IAsyncOperation.get()` actually blocks** and returns the stream from a plain daemon thread (vs requiring `await`). (c) **Single-instance truly excludes across processes** — spawn two daemons, confirm one survives; if `msvcrt.locking` doesn't exclude, switch to a named mutex (`kernel32.CreateMutexW` + `ERROR_ALREADY_EXISTS`). (d) `schtasks /xml` UTF-16 acceptance + non-admin LogonTrigger registration (no UAC). (e) Store-stub avoidance on a machine where only Store Python exists. (f) `importlib.resources.as_file` temp-path lifetime for wheel installs. (g) `winsound` rapid-earcon truncation (two earcons in quick succession). (h) PyWinRT projection availability for the target arch (win-amd64 confirmed; **win-arm64** may be unavailable → document).
-  - **Residual:** Nima is low-vision (magnifier) — a fully-blind + NVDA pass is a separate pre-GA step.
+  - **RISKS to probe explicitly (mock-blind):** (a) **SAPI/MediaPlayer audio from a `DETACHED_PROCESS|CREATE_NO_WINDOW` Task-Scheduler process** - the #1 risk: neural `Speak()`/`MediaPlayer` may emit no audio or hang without an STA + `CoInitializeEx(COINIT_APARTMENTTHREADED)`; if so, add a defensive `CoInitializeEx` (via `ctypes.windll.ole32`) in the daemon/TTS thread startup. (b) **`IAsyncOperation.get()` actually blocks** and returns the stream from a plain daemon thread (vs requiring `await`). (c) **Single-instance truly excludes across processes** - spawn two daemons, confirm one survives; if `msvcrt.locking` doesn't exclude, switch to a named mutex (`kernel32.CreateMutexW` + `ERROR_ALREADY_EXISTS`). (d) `schtasks /xml` UTF-16 acceptance + non-admin LogonTrigger registration (no UAC). (e) Store-stub avoidance on a machine where only Store Python exists. (f) `importlib.resources.as_file` temp-path lifetime for wheel installs. (g) `winsound` rapid-earcon truncation (two earcons in quick succession). (h) PyWinRT projection availability for the target arch (win-amd64 confirmed; **win-arm64** may be unavailable → document).
+  - **Residual:** Nima is low-vision (magnifier) - a fully-blind + NVDA pass is a separate pre-GA step.
 
 - [ ] **Step 2: Commit**
 ```bash
 git add docs/superpowers/M2-WINDOWS-ACCEPTANCE.md
-git commit -m "docs(windows): M2 acceptance checklist — the deferred human-on-Windows verification gate"
+git commit -m "docs(windows): M2 acceptance checklist - the deferred human-on-Windows verification gate"
 ```
 
 ---
@@ -597,11 +597,11 @@ git commit -m "docs(windows): M2 acceptance checklist — the deferred human-on-
 - **Spec §3 coverage:** OneCore default ✅(T5), winsound earcons + bundled `.wav` ✅(T3,T4), Task-Scheduler-XML no-admin autostart ✅(T6), `py`-launcher + Store-stub resolution ✅(T6), exec-form hooks + `.gitattributes` ✅(T8), Windows single-instance ✅(T2), hotkeys stubbed ✅(T7), factory win32 branch ✅(T7), doctor rows ✅(T9). Out of M2 (M3): real Windows hotkeys.
 - **The Mac suite never imports `platform/windows` for real:** `get_platform()` darwin → macos; the win modules only load under the `_winfakes` harness or win32. Guard via the existing `tests/test_no_os_branch_in_core.py` (core unaffected) + the win tests' reliance on fakes.
 - **Every ⚠ behavior is in the Task-10 checklist, not asserted from a mock.** The single biggest mock-blind risk (SAPI/COM audio under DETACHED_PROCESS) is called out explicitly.
-- **No placeholders:** load-bearing code (the `_winfakes` harness, the singleton branch, the factory wiring, the test bodies) is inlined; the larger verified backend bodies are provided **verbatim** in `docs/superpowers/m2-windows-api-reference.md` (committed alongside this plan) and each task points at the exact section — the executor copies them, adapting only file paths + ABC subclassing.
+- **No placeholders:** load-bearing code (the `_winfakes` harness, the singleton branch, the factory wiring, the test bodies) is inlined; the larger verified backend bodies are provided **verbatim** in `docs/superpowers/m2-windows-api-reference.md` (committed alongside this plan) and each task points at the exact section - the executor copies them, adapting only file paths + ABC subclassing.
 - **Type/name consistency:** backends subclass the as-built ABCs (`TtsBackend.run/best_voice/list_voices`; `EarconBackend.play/default_earcons`; `HotkeyBackend.install(log_path, agent_path, launchctl_fn)/uninstall/display_combo`; `SupervisorBackend.install(python, app_dir)/uninstall/is_running/is_installed/resolve_python/launch_spec/doctor_rows`). `_TtsHandle` honors the proc contract (`wait`→`TimeoutExpired`, `terminate`, `returncode`).
 
 ---
 
 ## Execution Handoff
 
-Subagent-driven, same as M1 — but the green-gate is **mock-based** (it proves the contracts, not Windows behavior). The real gate is `M2-WINDOWS-ACCEPTANCE.md`, run when the M0 Windows box exists.
+Subagent-driven, same as M1 - but the green-gate is **mock-based** (it proves the contracts, not Windows behavior). The real gate is `M2-WINDOWS-ACCEPTANCE.md`, run when the M0 Windows box exists.

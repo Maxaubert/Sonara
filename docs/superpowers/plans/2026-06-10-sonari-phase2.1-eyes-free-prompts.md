@@ -1,16 +1,16 @@
-# Sonari Phase 2.1 — Eyes-free Prompt Interaction — Implementation Plan
+# Sonari Phase 2.1 - Eyes-free Prompt Interaction - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the three queue-tail re-speak hotkeys (`reread_options`, `repeat`, `catch_up`) on a new per-session narration-history substrate, add arrow-key caret tracking with a virtual Submit for multi-selects, and encode the voice-continuity rule — per the approved spec `docs/phase-2.1-eyes-free-prompts-spec.md`.
+**Goal:** Fix the three queue-tail re-speak hotkeys (`reread_options`, `repeat`, `catch_up`) on a new per-session narration-history substrate, add arrow-key caret tracking with a virtual Submit for multi-selects, and encode the voice-continuity rule - per the approved spec `docs/phase-2.1-eyes-free-prompts-spec.md`.
 
-**Architecture:** One new pure module (`src/sonari/history.py`: per-session rolling history + sentence-granular heard-marker) wired into `SpeechDaemon`. "Heard" is confirmed by the speak loop using `say`'s exit code (0 = sentence completed; terminated = stays unheard, so replays restart at the sentence start). Voice continuity = a `_voice_owner` the speak loop releases on drain; a free voice is acquired only by the foreground session at a message boundary; everything else is captured silently into history. Caret tracking = a **listen-only** `CGEventTap` in the Swift hotkeyd (never consumes — the TUI still gets every arrow) that forwards arrow presses to the daemon **only while** a `~/.sonari/prompt-open` flag file (written by the daemon) exists; the daemon mirrors the cursor over the option list it already holds.
+**Architecture:** One new pure module (`src/sonari/history.py`: per-session rolling history + sentence-granular heard-marker) wired into `SpeechDaemon`. "Heard" is confirmed by the speak loop using `say`'s exit code (0 = sentence completed; terminated = stays unheard, so replays restart at the sentence start). Voice continuity = a `_voice_owner` the speak loop releases on drain; a free voice is acquired only by the foreground session at a message boundary; everything else is captured silently into history. Caret tracking = a **listen-only** `CGEventTap` in the Swift hotkeyd (never consumes - the TUI still gets every arrow) that forwards arrow presses to the daemon **only while** a `~/.sonari/prompt-open` flag file (written by the daemon) exists; the daemon mirrors the cursor over the option list it already holds.
 
-**Tech Stack:** Python 3.9 stdlib only (`src/sonari/`), pytest (tests must pass on system `/usr/bin/python3` 3.9), Swift/Carbon/CoreGraphics for hotkeyd. Daemon runs from `~/.sonari/app` — code changes reach the live daemon only after `sonari install`.
+**Tech Stack:** Python 3.9 stdlib only (`src/sonari/`), pytest (tests must pass on system `/usr/bin/python3` 3.9), Swift/Carbon/CoreGraphics for hotkeyd. Daemon runs from `~/.sonari/app` - code changes reach the live daemon only after `sonari install`.
 
-**STATUS (2026-06-10):** Built + deployed, EXCEPT **Tasks 8–10 (caret tracking), which were built then REMOVED/de-scoped.** A macOS event tap needs Secure Keyboard Entry OFF *and* an Input-Monitoring grant that resets on every unsigned rebuild (the grant is cdhash-bound; only code-signing makes it persist) — not shippable. The tap also must run on its own `CFRunLoopRun()` thread, not the main loop under `NSApplication.run()`, or it installs but delivers no events. Kept: the history substrate, `repeat`, `catch_up`, `reread_options` (+ a fix to read the permission `message`), and voice continuity. The eyes-free multi-select **Submit** gap remains open.
+**STATUS (2026-06-10):** Built + deployed, EXCEPT **Tasks 8–10 (caret tracking), which were built then REMOVED/de-scoped.** A macOS event tap needs Secure Keyboard Entry OFF *and* an Input-Monitoring grant that resets on every unsigned rebuild (the grant is cdhash-bound; only code-signing makes it persist) - not shippable. The tap also must run on its own `CFRunLoopRun()` thread, not the main loop under `NSApplication.run()`, or it installs but delivers no events. Kept: the history substrate, `repeat`, `catch_up`, `reread_options` (+ a fix to read the permission `message`), and voice continuity. The eyes-free multi-select **Submit** gap remains open.
 
-**Resolved spec assumptions (verified against the code — do not re-investigate):**
+**Resolved spec assumptions (verified against the code - do not re-investigate):**
 - Session identity: every hook payload carries `session_id`; the daemon already keys assemblers and foreground on it (`hooks_entry.py:33`).
 - "Focused session" = `sessions.foreground()`, set by `SessionStart` + `UserPromptSubmit` (there is no OS-window-focus hook). The "come back to A and hear what I missed" scenario is covered by catch_up's cross-session fallback (Task 7), not window tracking.
 - Sentence-granular heard-marker: `Speaker.speak` runs one `say` per sentence and `cancel()` terminates it → `proc.returncode == 0` iff the sentence completed (Task 1).
@@ -19,9 +19,9 @@
 **Deviations from spec (deliberate, justified):**
 - The optional *"N new here"* refocus cue is **dropped** (YAGNI): without an OS-focus signal there is no "refocus" event to hook it to, and a new prompt resets the backlog anyway.
 - `skip` marks the skipped sentence **heard** (the user deliberately discarded it; catch_up must not nag with it). `stop` leaves everything unheard (recoverable) per spec.
-- Caret tracking arms only for **single-question** CHOICE prompts (multi-question Tab navigation would desync the mirror; the TUI shows one question's options at a time). Permission/plan prompts hold no structured option list (the hook payload has only `action`/plan text), so no caret there — consistent with the spec's "prompts Sonari already knows" framing.
+- Caret tracking arms only for **single-question** CHOICE prompts (multi-question Tab navigation would desync the mirror; the TUI shows one question's options at a time). Permission/plan prompts hold no structured option list (the hook payload has only `action`/plan text), so no caret there - consistent with the spec's "prompts Sonari already knows" framing.
 - `tool_announce` lines are **not** recorded in history (catch_up replaying "Running Bash" noise would be hostile to the listener).
-- **Voice-owner release on mid-response pauses** (declared post-review): the owner releases the voice whenever its queue drains — including a long tool-call pause *inside* a response. If you have since prompted another session, the rest of the paused response is captured silently rather than resuming aloud. This reads the locked rule "the voice was busy when its response landed → captured" at message granularity: in single-session use behavior is unchanged (the still-foreground owner re-acquires instantly). **Verify by ear in T12 step 5**; if it feels wrong live, a message-in-flight ownership hold is the follow-up.
+- **Voice-owner release on mid-response pauses** (declared post-review): the owner releases the voice whenever its queue drains - including a long tool-call pause *inside* a response. If you have since prompted another session, the rest of the paused response is captured silently rather than resuming aloud. This reads the locked rule "the voice was busy when its response landed → captured" at message granularity: in single-session use behavior is unchanged (the still-foreground owner re-acquires instantly). **Verify by ear in T12 step 5**; if it feels wrong live, a message-in-flight ownership hold is the follow-up.
 
 ---
 
@@ -36,14 +36,14 @@ cd ~/projects/private/claude-tts
 git checkout -b phase-2.1-eyes-free-prompts
 ```
 
-- [ ] **Step 2: Commit the spec (only the spec — leave `docs/getting-started.md` untracked, it's a separate in-review draft)**
+- [ ] **Step 2: Commit the spec (only the spec - leave `docs/getting-started.md` untracked, it's a separate in-review draft)**
 
 ```bash
 git add docs/phase-2.1-eyes-free-prompts-spec.md
-git commit -m "docs: Phase 2.1 spec — eyes-free prompt interaction (history substrate, repeat/catch_up/reread fixes, caret tracking, voice continuity)"
+git commit -m "docs: Phase 2.1 spec - eyes-free prompt interaction (history substrate, repeat/catch_up/reread fixes, caret tracking, voice continuity)"
 ```
 
-- [ ] **Step 3: Baseline — full suite green before touching code**
+- [ ] **Step 3: Baseline - full suite green before touching code**
 
 Run: `python3 -m pytest -q`
 Expected: 362 passed (or current count), 0 failures.
@@ -59,7 +59,7 @@ Expected: 362 passed (or current count), 0 failures.
 
 `say` exits 0 when it finishes the utterance; `cancel()`/timeout terminate it (non-zero / -15). This return value is the sentence-granular "heard" signal.
 
-- [ ] **Step 1: Write the failing tests** (append to `tests/test_speaker.py`; match its existing fake-runner style — read the file's first fake to reuse its pattern):
+- [ ] **Step 1: Write the failing tests** (append to `tests/test_speaker.py`; match its existing fake-runner style - read the file's first fake to reuse its pattern):
 
 ```python
 class _DoneProc:
@@ -94,9 +94,9 @@ def test_speak_returns_false_when_say_terminated():
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `python3 -m pytest tests/test_speaker.py -q -k "returns"`
-Expected: FAIL — `speak` currently returns `None`.
+Expected: FAIL - `speak` currently returns `None`.
 
-- [ ] **Step 3: Implement** — change `Speaker.speak` (keep everything else identical):
+- [ ] **Step 3: Implement** - change `Speaker.speak` (keep everything else identical):
 
 ```python
     def speak(self, text: str) -> bool:
@@ -137,11 +137,11 @@ Expected: FAIL — `speak` currently returns `None`.
 
 - [ ] **Step 5: Run the full suite, then commit**
 
-Run: `python3 -m pytest -q` — Expected: all green (the return value is new, nothing asserts on it yet).
+Run: `python3 -m pytest -q` - Expected: all green (the return value is new, nothing asserts on it yet).
 
 ```bash
 git add src/sonari/speaker.py tests/test_speaker.py tests/daemon_helpers.py
-git commit -m "feat(speaker): speak() reports completion — the sentence-granular heard signal"
+git commit -m "feat(speaker): speak() reports completion - the sentence-granular heard signal"
 ```
 
 ---
@@ -152,7 +152,7 @@ git commit -m "feat(speaker): speak() reports completion — the sentence-granul
 - Create: `src/sonari/history.py`
 - Create: `tests/test_history.py`
 
-- [ ] **Step 1: Write the failing tests** — create `tests/test_history.py`:
+- [ ] **Step 1: Write the failing tests** - create `tests/test_history.py`:
 
 ```python
 from sonari.history import SessionHistory
@@ -229,9 +229,9 @@ def test_other_session_excludes_the_given_session():
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `python3 -m pytest tests/test_history.py -q`
-Expected: FAIL — `ModuleNotFoundError: sonari.history`.
+Expected: FAIL - `ModuleNotFoundError: sonari.history`.
 
-- [ ] **Step 3: Implement** — create `src/sonari/history.py`:
+- [ ] **Step 3: Implement** - create `src/sonari/history.py`:
 
 ```python
 """Per-session narration history + sentence-granular heard-marker.
@@ -314,7 +314,7 @@ class SessionHistory:
 
 - [ ] **Step 4: Run to verify they pass**
 
-Run: `python3 -m pytest tests/test_history.py -q` — Expected: 8 passed.
+Run: `python3 -m pytest tests/test_history.py -q` - Expected: 8 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -333,7 +333,7 @@ git commit -m "feat(history): per-session rolling narration history + heard-mark
 - Modify: `src/sonari/config.py` (DEFAULTS + `"history_cap": 200`)
 - Test: `tests/test_daemon_phase21.py` (new), `tests/test_queue.py` (append)
 
-- [ ] **Step 1: Failing tests** — create `tests/test_daemon_phase21.py`:
+- [ ] **Step 1: Failing tests** - create `tests/test_daemon_phase21.py`:
 
 ```python
 from sonari.protocol import MsgType, PROTOCOL_VERSION
@@ -441,9 +441,9 @@ def test_flush_session_returns_dropped_items():
 - [ ] **Step 2: Run to verify failures**
 
 Run: `python3 -m pytest tests/test_daemon_phase21.py tests/test_queue.py -q`
-Expected: FAIL — no `daemon.history`, no `note_spoken`, `clear()` returns None.
+Expected: FAIL - no `daemon.history`, no `note_spoken`, `clear()` returns None.
 
-- [ ] **Step 3: Implement `queue.py`** — replace `clear` and `flush_session`:
+- [ ] **Step 3: Implement `queue.py`** - replace `clear` and `flush_session`:
 
 ```python
     def clear(self) -> "list[SpeechItem]":
@@ -459,7 +459,7 @@ Expected: FAIL — no `daemon.history`, no `note_spoken`, `clear()` returns None
         return dropped
 ```
 
-- [ ] **Step 4: Implement `config.py`** — add to `DEFAULTS` (after `"background_policy"`):
+- [ ] **Step 4: Implement `config.py`** - add to `DEFAULTS` (after `"background_policy"`):
 
 ```python
     "history_cap": 200,
@@ -479,9 +479,9 @@ In `SpeechDaemon.__init__`, replace `self._last_spoken: str | None = None` and `
         self._current_item = None                 # item being spoken right now
 ```
 
-(Keep the `_last_options` *uses* compiling for now by replacing them per-branch in this and later tasks — this task touches PROSE/STOP/FLUSH/SESSION_END; Task 5/6/7 rewrite REPEAT/CATCH_UP/REREAD and CHOICE/PLAN/PERMISSION. To keep every intermediate commit green, in THIS task replace the simple `self._last_options = None` statements in FLUSH/SESSION_END with `self._options.pop(session, None)` and leave the CHOICE/PLAN/PERMISSION branches setting `self._options[session] = text` instead of `self._last_options = text`; update REREAD to read `self._options.get(self.sessions.foreground())` — behaviorally identical for a single session.)
+(Keep the `_last_options` *uses* compiling for now by replacing them per-branch in this and later tasks - this task touches PROSE/STOP/FLUSH/SESSION_END; Task 5/6/7 rewrite REPEAT/CATCH_UP/REREAD and CHOICE/PLAN/PERMISSION. To keep every intermediate commit green, in THIS task replace the simple `self._last_options = None` statements in FLUSH/SESSION_END with `self._options.pop(session, None)` and leave the CHOICE/PLAN/PERMISSION branches setting `self._options[session] = text` instead of `self._last_options = text`; update REREAD to read `self._options.get(self.sessions.foreground())` - behaviorally identical for a single session.)
 
-New `_enqueue` (entry correlation) — replace the existing method:
+New `_enqueue` (entry correlation) - replace the existing method:
 
 ```python
     def _enqueue(self, session: str, kind: str, text: str, is_decision: bool,
@@ -518,7 +518,7 @@ New helper + speak-loop bookkeeping (used by tests and `_speak_loop`):
                 self._voice_owner = None
 ```
 
-New `_speak_loop` — replace the existing one:
+New `_speak_loop` - replace the existing one:
 
 ```python
     def _speak_loop(self) -> None:
@@ -539,7 +539,7 @@ New `_speak_loop` — replace the existing one:
             self._wake.clear()
 ```
 
-New PROSE branch — replace the existing one (voice gating becomes real in Task 4; this task introduces `_may_speak` already):
+New PROSE branch - replace the existing one (voice gating becomes real in Task 4; this task introduces `_may_speak` already):
 
 ```python
         if t == MsgType.PROSE:
@@ -576,7 +576,7 @@ New PROSE branch — replace the existing one (voice gating becomes real in Task
         return False
 ```
 
-STOP branch — replace:
+STOP branch - replace:
 
 ```python
         if t == MsgType.STOP:
@@ -588,7 +588,7 @@ STOP branch — replace:
 
 (The cancelled utterance's pending entry is popped by `note_spoken` with `completed=False` → stays unheard. Dropped queue items were recorded at handle time and never marked → stay unheard. Both recoverable by catch_up, per spec.)
 
-FLUSH branch — replace (cancel **only our own** current utterance — voice continuity):
+FLUSH branch - replace (cancel **only our own** current utterance - voice continuity):
 
 ```python
         if t == MsgType.FLUSH:
@@ -605,7 +605,7 @@ FLUSH branch — replace (cancel **only our own** current utterance — voice co
             return None
 ```
 
-SESSION_END branch — replace the cleanup lines:
+SESSION_END branch - replace the cleanup lines:
 
 ```python
         if t == MsgType.SESSION_END:
@@ -639,10 +639,10 @@ CHOICE/PLAN/PERMISSION branches: change only `self._last_options = text` → `se
 - [ ] **Step 6: Fix legacy tests that encoded the old semantics** (the spec deliberately changes them):
 
 In `tests/test_daemon_control.py`:
-- `test_flush_drops_session_items_and_cancels` — flush now cancels only when the **current utterance belongs to the flushed session**; there is no current utterance in the unit test, so assert `speaker.cancels == 0` and rename to `test_flush_drops_session_items_without_cancelling_other_speech`.
-- `test_repeat_noop_when_nothing_spoken_yet` / `test_repeat_reenqueues_last_spoken_text` / `test_repeat_drives_speak_path` — repeat is now history-based; update to enqueue prose via `handle_message` + drain with `_drain_one`-style bookkeeping, then assert the **whole message** re-enqueues (Task 5 finalizes; minimally update here to keep green).
+- `test_flush_drops_session_items_and_cancels` - flush now cancels only when the **current utterance belongs to the flushed session**; there is no current utterance in the unit test, so assert `speaker.cancels == 0` and rename to `test_flush_drops_session_items_without_cancelling_other_speech`.
+- `test_repeat_noop_when_nothing_spoken_yet` / `test_repeat_reenqueues_last_spoken_text` / `test_repeat_drives_speak_path` - repeat is now history-based; update to enqueue prose via `handle_message` + drain with `_drain_one`-style bookkeeping, then assert the **whole message** re-enqueues (Task 5 finalizes; minimally update here to keep green).
 
-In `tests/test_daemon_phase2.py`: `test_flush_clears_option_cache` — options are per-session now; the assertion stands but goes through `daemon._options` absence → keep the message-level behavior assert (reread after flush speaks "No options to repeat." until Task 7 changes the wording).
+In `tests/test_daemon_phase2.py`: `test_flush_clears_option_cache` - options are per-session now; the assertion stands but goes through `daemon._options` absence → keep the message-level behavior assert (reread after flush speaks "No options to repeat." until Task 7 changes the wording).
 
 - [ ] **Step 7: Run the FULL suite; fix fallout until green**
 
@@ -735,7 +735,7 @@ def test_choice_for_nonowner_is_captured_and_options_stored():
 Run: `python3 -m pytest tests/test_daemon_phase21.py -q`
 Expected: the new tests FAIL (CHOICE still gates on `should_speak`, etc.).
 
-- [ ] **Step 3: Implement** — in `daemon.py`, rewrite the CHOICE/PLAN/PERMISSION/TOOL branches to record + capture (this also completes the Task-3 transitional edits):
+- [ ] **Step 3: Implement** - in `daemon.py`, rewrite the CHOICE/PLAN/PERMISSION/TOOL branches to record + capture (this also completes the Task-3 transitional edits):
 
 ```python
         if t == MsgType.CHOICE:
@@ -786,9 +786,9 @@ Expected: the new tests FAIL (CHOICE still gates on `should_speak`, etc.).
             return None
 ```
 
-(Note: decision prompts are recorded/stored **even for non-speaking sessions** — that's what makes reread-on-return and catch_up work. `tool_announce` is deliberately NOT recorded.)
+(Note: decision prompts are recorded/stored **even for non-speaking sessions** - that's what makes reread-on-return and catch_up work. `tool_announce` is deliberately NOT recorded.)
 
-SKIP branch — replace (deliberate skip = heard):
+SKIP branch - replace (deliberate skip = heard):
 
 ```python
         if t == MsgType.SKIP:
@@ -801,15 +801,15 @@ SKIP branch — replace (deliberate skip = heard):
             return None
 ```
 
-- [ ] **Step 4: Run the full suite; update any `should_speak`-era daemon tests** (`tests/test_daemon_prose.py`, `tests/test_daemon_decisions.py` gate non-foreground sessions — their *observable* behavior is unchanged: non-foreground content doesn't enqueue; only internals moved to capture. Expect at most assertion-message tweaks.)
+- [ ] **Step 4: Run the full suite; update any `should_speak`-era daemon tests** (`tests/test_daemon_prose.py`, `tests/test_daemon_decisions.py` gate non-foreground sessions - their *observable* behavior is unchanged: non-foreground content doesn't enqueue; only internals moved to capture. Expect at most assertion-message tweaks.)
 
-Run: `python3 -m pytest -q` — Expected: all green.
+Run: `python3 -m pytest -q` - Expected: all green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/sonari/daemon.py tests/
-git commit -m "feat(daemon): voice continuity — owner keeps the voice; non-owner content captured silently per session"
+git commit -m "feat(daemon): voice continuity - owner keeps the voice; non-owner content captured silently per session"
 ```
 
 ---
@@ -871,7 +871,7 @@ def test_repeat_acts_on_foreground_session_history():
 
 Run: `python3 -m pytest tests/test_daemon_phase21.py -q -k repeat`
 
-- [ ] **Step 3: Implement** — final REPEAT branch:
+- [ ] **Step 3: Implement** - final REPEAT branch:
 
 ```python
         if t == MsgType.REPEAT:
@@ -970,7 +970,7 @@ def test_catch_up_does_not_double_speak_queued_items():
 
 Run: `python3 -m pytest tests/test_daemon_phase21.py -q -k catch_up`
 
-- [ ] **Step 3: Implement** — final CATCH_UP branch (replaces the clear-and-cancel body):
+- [ ] **Step 3: Implement** - final CATCH_UP branch (replaces the clear-and-cancel body):
 
 ```python
         if t == MsgType.CATCH_UP:
@@ -991,7 +991,7 @@ Run: `python3 -m pytest tests/test_daemon_phase21.py -q -k catch_up`
                 return None
             # Replay cleanly: cut the target's current utterance (it stays
             # unheard, so it replays FROM ITS START) and drop its queued
-            # duplicates — every unheard entry is re-enqueued in order below.
+            # duplicates - every unheard entry is re-enqueued in order below.
             cur = self._current_item
             if cur is not None and cur.session == target:
                 self.speaker.cancel()
@@ -1005,7 +1005,7 @@ Run: `python3 -m pytest tests/test_daemon_phase21.py -q -k catch_up`
             return None
 ```
 
-- [ ] **Step 4: Rewrite `tests/test_daemon_control.py::test_catch_up_clears_and_cancels`** — the old "clears everything" contract is gone by design; replace it with a pointer test:
+- [ ] **Step 4: Rewrite `tests/test_daemon_control.py::test_catch_up_clears_and_cancels`** - the old "clears everything" contract is gone by design; replace it with a pointer test:
 
 ```python
 def test_catch_up_no_longer_discards_the_backlog():
@@ -1027,7 +1027,7 @@ git commit -m "feat(daemon): catch_up replays the unheard backlog from the marke
 
 ---
 
-### Task 7: `reread_options` — dedicated per-session slot, descriptions, multi-select announce
+### Task 7: `reread_options` - dedicated per-session slot, descriptions, multi-select announce
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (`_choice_text`, REREAD_OPTIONS branch)
@@ -1161,7 +1161,7 @@ Replace the REREAD_OPTIONS branch:
             return None
 ```
 
-Close the options slot when the prompt is answered (prose resumes for that session) — add at the END of the PROSE branch's `if msg.get("final", False):` block:
+Close the options slot when the prompt is answered (prose resumes for that session) - add at the END of the PROSE branch's `if msg.get("final", False):` block:
 
 ```python
                 self._options.pop(session, None)
@@ -1181,7 +1181,7 @@ git commit -m "feat(daemon): reread_options reads a per-session live-options slo
 
 ---
 
-### Task 8: Caret tracking — daemon side (mirror cursor + virtual Submit + prompt-open flag)
+### Task 8: Caret tracking - daemon side (mirror cursor + virtual Submit + prompt-open flag)
 
 **Files:**
 - Modify: `src/sonari/protocol.py` (new MsgType)
@@ -1292,19 +1292,19 @@ Run: `python3 -m pytest tests/test_daemon_phase21.py -q -k caret`
 
 - [ ] **Step 3: Implement.**
 
-`protocol.py` — add to `MsgType`:
+`protocol.py` - add to `MsgType`:
 
 ```python
     CARET_MOVE = "caret_move"
 ```
 
-`paths.py` — add after `INSTALL_RECORD_PATH`:
+`paths.py` - add after `INSTALL_RECORD_PATH`:
 
 ```python
 PROMPT_OPEN_PATH = SONARI_DIR / "prompt-open"   # exists IFF a caret-trackable prompt is open
 ```
 
-`daemon.py` — import `PROMPT_OPEN_PATH` in the existing `from sonari.paths import (...)`; add to `__init__`:
+`daemon.py` - import `PROMPT_OPEN_PATH` in the existing `from sonari.paths import (...)`; add to `__init__`:
 
 ```python
         self._caret = None   # {"session","labels","submit","pos"} while a prompt is open
@@ -1378,7 +1378,7 @@ CARET_MOVE branch (add near REREAD_OPTIONS):
             return None
 ```
 
-(Caret announcements are NOT recorded in history — they're navigation echo, not content. `_enqueue` without `entry=` does exactly that.)
+(Caret announcements are NOT recorded in history - they're navigation echo, not content. `_enqueue` without `entry=` does exactly that.)
 
 Also ensure tests never touch the real `~/.sonari`: in `tests/test_daemon_phase21.py` add a module-level autouse fixture:
 
@@ -1398,17 +1398,17 @@ def _tmp_prompt_flag(tmp_path, monkeypatch):
 ```bash
 python3 -m pytest -q
 git add src/sonari/protocol.py src/sonari/paths.py src/sonari/daemon.py tests/
-git commit -m "feat(daemon): caret tracking — mirror cursor over the open prompt with a virtual Submit; prompt-open flag for hotkeyd"
+git commit -m "feat(daemon): caret tracking - mirror cursor over the open prompt with a virtual Submit; prompt-open flag for hotkeyd"
 ```
 
 ---
 
-### Task 9: Caret tracking — hotkeyd side (listen-only arrow tap, permission flow)
+### Task 9: Caret tracking - hotkeyd side (listen-only arrow tap, permission flow)
 
 **Files:**
 - Modify: `hotkeyd/sonari-hotkeyd.swift`
 
-No Python unit tests cover the Swift binary (repo convention — it's exercised by `sonari install` + the manual smoke). Keep the diff small and dumb, matching the file's existing comment style.
+No Python unit tests cover the Swift binary (repo convention - it's exercised by `sonari install` + the manual smoke). Keep the diff small and dumb, matching the file's existing comment style.
 
 - [ ] **Step 1: Add the `--check-input-monitoring` mode** (for doctor; insert right after the imports/constants, before any setup):
 
@@ -1425,7 +1425,7 @@ if CommandLine.arguments.contains("--check-input-monitoring") {
 ```swift
 // Phase 2.1: caret tracking. A LISTEN-ONLY CGEventTap observes arrow-key
 // keyDown events (codes 125 down / 126 up) and forwards a caret_move message
-// to speechd — but ONLY while ~/.sonari/prompt-open exists (the daemon
+// to speechd - but ONLY while ~/.sonari/prompt-open exists (the daemon
 // creates/removes that flag around caret-trackable prompts). Listen-only
 // means the event is NEVER consumed: the Claude Code TUI still receives
 // every arrow press, so the mirror and the real highlight move together.
@@ -1479,10 +1479,10 @@ if CGPreflightListenEventAccess() {
 }
 ```
 
-- [ ] **Step 3: Compile-check the Swift** (no install yet — just prove it builds):
+- [ ] **Step 3: Compile-check the Swift** (no install yet - just prove it builds):
 
 Run: `swiftc hotkeyd/sonari-hotkeyd.swift -o /tmp/sonari-hotkeyd-build-check && /tmp/sonari-hotkeyd-build-check --check-input-monitoring; echo "exit=$?"`
-Expected: compiles; exits 0 or 1 (either is fine — it proves the flag path works).
+Expected: compiles; exits 0 or 1 (either is fine - it proves the flag path works).
 
 - [ ] **Step 4: Commit**
 
@@ -1529,10 +1529,10 @@ def test_doctor_input_monitoring_not_granted(monkeypatch, tmp_path):
 
 - [ ] **Step 2: Run to verify failure.** `python3 -m pytest tests/test_cli_doctor.py -q -k input_monitoring`
 
-- [ ] **Step 3: Implement** — in `doctor()`, insert after the "hotkeyd binary" block:
+- [ ] **Step 3: Implement** - in `doctor()`, insert after the "hotkeyd binary" block:
 
 ```python
-    # Input Monitoring (Phase 2.1 caret tracking) — probe via the binary.
+    # Input Monitoring (Phase 2.1 caret tracking) - probe via the binary.
     if hk_exists:
         try:
             granted = subprocess.run(
@@ -1543,7 +1543,7 @@ def test_doctor_input_monitoring_not_granted(monkeypatch, tmp_path):
             results.append((
                 "input monitoring (caret tracking)", granted,
                 "granted" if granted else
-                "not granted — arrow-key narration off; grant in System "
+                "not granted - arrow-key narration off; grant in System "
                 "Settings > Privacy & Security > Input Monitoring"))
         except Exception as exc:  # noqa: BLE001 - doctor must never raise
             results.append(("input monitoring (caret tracking)", False,
@@ -1568,9 +1568,9 @@ git commit -m "feat(doctor): report Input Monitoring state for caret tracking"
 - Modify: `README.md` (hotkey table + a Phase 2.1 behavior note)
 - Test: full suite under both interpreters
 
-- [ ] **Step 1: Update README** — in the hotkeys/commands section: `repeat` = "re-speaks the entire last message"; `catch_up` = "replays everything you haven't heard (after stop, or from a session you left), then marks it heard"; `reread_options` = "re-reads the current prompt's options (numbers, descriptions, multi-select announce)"; add one new bullet: "Arrow keys inside a multi-select speak the highlighted option, including the Submit row (needs the one-time Input Monitoring permission — `sonari doctor` shows its state)." Match the README's existing terse table tone; no marketing prose.
+- [ ] **Step 1: Update README** - in the hotkeys/commands section: `repeat` = "re-speaks the entire last message"; `catch_up` = "replays everything you haven't heard (after stop, or from a session you left), then marks it heard"; `reread_options` = "re-reads the current prompt's options (numbers, descriptions, multi-select announce)"; add one new bullet: "Arrow keys inside a multi-select speak the highlighted option, including the Submit row (needs the one-time Input Monitoring permission - `sonari doctor` shows its state)." Match the README's existing terse table tone; no marketing prose.
 
-- [ ] **Step 2: Run the dual-interpreter gate** (repo convention — system 3.9 AND a newer python if present):
+- [ ] **Step 2: Run the dual-interpreter gate** (repo convention - system 3.9 AND a newer python if present):
 
 ```bash
 /usr/bin/python3 -m pytest -q
@@ -1583,14 +1583,14 @@ Expected: all green on both.
 
 ```bash
 git add README.md
-git commit -m "docs(readme): Phase 2.1 — repeat/catch_up/reread semantics + caret tracking row"
+git commit -m "docs(readme): Phase 2.1 - repeat/catch_up/reread semantics + caret tracking row"
 ```
 
 ---
 
-### Task 12: Deploy + HUMAN LISTEN-TEST (STOP — needs Nima)
+### Task 12: Deploy + HUMAN LISTEN-TEST (STOP - needs Nima)
 
-The spec's DoD items marked ⚠ are audible/behavioral — **not headlessly verifiable**. Do not claim them done from unit tests (escalate-the-unverifiable).
+The spec's DoD items marked ⚠ are audible/behavioral - **not headlessly verifiable**. Do not claim them done from unit tests (escalate-the-unverifiable).
 
 - [ ] **Step 1: Deploy to the live daemon** (the daemon runs from `~/.sonari/app`, not the repo):
 
@@ -1604,7 +1604,7 @@ Expected: doctor green except possibly `input monitoring` → if not granted, gr
   1. Ask Claude something; mid-speech press **Ctrl+Cmd+R** → the **whole** last message restarts, not the last sentence.
   2. Press **Ctrl+Cmd+S** mid-sentence, then **Ctrl+Cmd+L** → playback resumes **from the start of the interrupted sentence**, oldest→newest; a second **L** says "You're all caught up."
   3. Trigger an AskUserQuestion (single + multi-select): the multi-select announces itself; options read with descriptions; after other speech, **Ctrl+Cmd+O** re-reads the options (not the queue tail); with no prompt open, **O** says "No options right now."
-  4. In a multi-select, arrow ↓ through the options → each focused option is spoken; past the last option → "Submit."; Enter submits — fully eyes-free.
+  4. In a multi-select, arrow ↓ through the options → each focused option is spoken; past the last option → "Submit."; Enter submits - fully eyes-free.
   5. Two sessions: prompt in A; while A speaks, switch and prompt in B → A keeps talking to the end (only Ctrl+Cmd+S stops it); B's answer is silent; in B, **Ctrl+Cmd+L** replays B's response ("Catching up on another session." if pressed from A).
 - [ ] **Step 3: Record the outcome** in `docs/superpowers/phase21-listen-test.md` (pass/fail per item + anything that felt wrong by ear), commit, and use **superpowers:finishing-a-development-branch** to merge `phase-2.1-eyes-free-prompts` → `main` and push (Nima's call on push timing).
 
@@ -1613,6 +1613,6 @@ Expected: doctor green except possibly `input monitoring` → if not granted, gr
 ## Self-review notes
 
 - **Spec coverage:** substrate → T2/T3; reread_options (slot, descriptions, multi-select announce, empty state) → T7; caret + virtual Submit → T8/T9; repeat whole-message → T5; catch_up (verbatim, marker, sentence-start resume, new-prompt reset, cross-session) → T6 + FLUSH in T3; voice continuity + silent capture + no-autostart → T4; bounded history → T2/T3 (`history_cap`); no-LLM-on-hotkey-path → trivially true (pure replay); human listen-test → T12. Spec's "refocus cue" deliberately dropped (justified in Deviations).
-- **Type consistency checked:** `note_spoken(item, completed)`, `history.record/end_message/last_message/unheard/reset/other_session_with_unheard`, `_options: dict[str,str]`, `_caret{"session","labels","submit","pos"}`, `queue.clear()/flush_session()` returning lists — names match across all tasks.
-- **Threading:** `handle_message` runs under `self._lock` (existing `_handle_conn`); `note_spoken` takes the lock itself — no nested locking (speak loop never calls `handle_message`).
+- **Type consistency checked:** `note_spoken(item, completed)`, `history.record/end_message/last_message/unheard/reset/other_session_with_unheard`, `_options: dict[str,str]`, `_caret{"session","labels","submit","pos"}`, `queue.clear()/flush_session()` returning lists - names match across all tasks.
+- **Threading:** `handle_message` runs under `self._lock` (existing `_handle_conn`); `note_spoken` takes the lock itself - no nested locking (speak loop never calls `handle_message`).
 - **Risk to verify live (T12):** the listen-only tap's one-time permission prompt from a LaunchAgent context, and TUI/mirror desync under page-scroll (mitigated by per-prompt snap-to-top; spec accepts as known risk).

@@ -185,7 +185,7 @@ def test_choice_for_nonfg_session_is_captured_and_options_stored():
     daemon.handle_message(_msg(MsgType.CHOICE, "b", questions=[
         {"question": "Pick one?", "options": [{"label": "X"}, {"label": "Y"}]}
     ]))
-    # a has 1 prose item, b has 1 choice item — each in their own channel
+    # a has 1 prose item, b has 1 choice item -- each in their own channel
     assert daemon.router.channel("a").pending() == 1
     assert daemon.router.channel("b").pending() == 1
     assert "Pick one?" in daemon._options["b"]              # reread works on return
@@ -336,7 +336,7 @@ def test_multiselect_announced_up_front():
 def test_reread_speaks_current_options_not_queue_tail():
     # REREAD reads from the dedicated _options slot, not from whatever text is
     # currently at the channel tail. Drain the original choice item (cursor
-    # moves on), then reread — the slot still holds the choice text.
+    # moves on), then reread -- the slot still holds the choice text.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _choice(daemon, "fg", [{"question": "Q?", "options": [{"label": "X"}]}])
     while daemon.router.channel("fg").pending():

@@ -1,4 +1,4 @@
-"""The speak thread must survive ANY exception in its loop body — a crash in
+"""The speak thread must survive ANY exception in its loop body -- a crash in
 pop_next/note_spoken/etc. previously killed the thread permanently (daemon alive,
 earcons firing, but mute forever until a restart). Regression guard."""
 from tests.daemon_helpers import make_daemon
@@ -58,7 +58,7 @@ def test_speak_thread_keeps_speaking_after_a_bad_note_spoken(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # A swallowed speak() exception used to be a SILENT no-op (the worst outcome for
-# an eyes-free user — e.g. a Kokoro voice synced from a box with the [kokoro]
+# an eyes-free user -- e.g. a Kokoro voice synced from a box with the [kokoro]
 # extra to one without it). The loop must still survive, but now it also signals
 # the failure audibly (error earcon) and logs it. (#41)
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def test_speak_failure_on_pause_exempt_cue_fires_error_earcon(monkeypatch):
 
 
 def test_cancelled_utterance_does_not_fire_error_earcon(monkeypatch):
-    # speak() returning False is an INTERRUPT (terminate), not an error — it must
+    # speak() returning False is an INTERRUPT (terminate), not an error -- it must
     # NOT fire the error earcon. Only a raised exception is an error.
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     speaker.complete = False                     # next speak() reports not-completed

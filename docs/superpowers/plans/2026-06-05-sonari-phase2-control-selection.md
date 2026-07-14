@@ -1,4 +1,4 @@
-# Sonari Phase 2 — Control & Selection Implementation Plan
+# Sonari Phase 2 - Control & Selection Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -15,8 +15,8 @@
 - **Repo root:** `/Users/Nima.Hakimi/projects/private/claude-tts`. All paths below are relative to it.
 - **Tests run with:** `.venv/bin/python -m pytest` (the repo has a venv at `./.venv`; there is no system pytest). Run from the repo root.
 - **Test imports:** new daemon tests import `from tests.daemon_helpers import make_daemon` and use `FakeSpeaker` (records `.spoken/.earcons/.cancels/.rates/.voices`). `make_daemon(verbosity="everything", foreground="fg")` returns `(daemon, queue, speaker, sessions, config)`. The config is a deep copy of `DEFAULTS` with `verbosity` overridden.
-- **Path monkeypatching pattern:** mirror `tests/test_config.py::_patch_config_paths` — patch the *module-level constant on the module under test* (e.g. `monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")`), not `sonari.paths`.
-- **Protocol version stays `PROTOCOL_VERSION = 1`** — every change in this plan is additive.
+- **Path monkeypatching pattern:** mirror `tests/test_config.py::_patch_config_paths` - patch the *module-level constant on the module under test* (e.g. `monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")`), not `sonari.paths`.
+- **Protocol version stays `PROTOCOL_VERSION = 1`** - every change in this plan is additive.
 - **Each task ends with an explicit `git add <exact files>` + `git commit`.** This repo is a git repo; work on the current branch.
 - **swiftc:** present at `/usr/bin/swiftc` on this Mac; Swift tests/builds skip gracefully when absent.
 
@@ -44,7 +44,7 @@
 
 ---
 
-## Task 1: Protocol — new message types
+## Task 1: Protocol - new message types
 
 **Files:**
 - Modify: `src/sonari/protocol.py`
@@ -79,7 +79,7 @@ right after the `"PING": "ping",` line:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_protocol.py -v`
-Expected: FAIL — `test_reread_options_and_cycle_verbosity_constants` fails with
+Expected: FAIL - `test_reread_options_and_cycle_verbosity_constants` fails with
 `AttributeError: type object 'MsgType' has no attribute 'REREAD_OPTIONS'`, and
 `test_msgtype_has_every_constant_with_exact_values` fails (asserts the new names exist).
 
@@ -108,7 +108,7 @@ git commit -m "feat(protocol): add reread_options and cycle_verbosity message ty
 
 ---
 
-## Task 2: daemon — relative rate (SET_RATE delta) with clamp + spoken confirmation
+## Task 2: daemon - relative rate (SET_RATE delta) with clamp + spoken confirmation
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (add module constants `RATE_MIN`/`RATE_MAX`; extend the `MsgType.SET_RATE` branch)
@@ -121,7 +121,7 @@ Absolute `set_rate` (carrying `rate`) keeps working unchanged.
 
 Note on assertions: `_enqueue` adds to the queue, not `speaker.spoken`. We assert on
 `speaker.rates[-1]` and `config["rate"]` for the numeric effect, and pop the queue
-(`queue.pop_next().text`) for the "Rate N." announcement — mirroring how
+(`queue.pop_next().text`) for the "Rate N." announcement - mirroring how
 `test_daemon_control.py` reads enqueued items.
 
 - [ ] **Step 1: Write the failing test**
@@ -205,7 +205,7 @@ def test_set_rate_delta_no_foreground_still_updates_rate():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_daemon_phase2.py -v`
-Expected: FAIL — `test_set_rate_delta_increments_and_announces` fails because the
+Expected: FAIL - `test_set_rate_delta_increments_and_announces` fails because the
 delta branch does not exist yet: `config["rate"]` stays 200 / `speaker.rates[-1]`
 is the absolute `None` path, and `queue.pop_next()` returns `None`.
 
@@ -269,7 +269,7 @@ git commit -m "feat(daemon): relative set_rate delta with clamp and spoken confi
 
 ---
 
-## Task 3: daemon — cycle_verbosity
+## Task 3: daemon - cycle_verbosity
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (add `MsgType.CYCLE_VERBOSITY` branch)
@@ -331,7 +331,7 @@ def test_cycle_verbosity_no_foreground_still_persists():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_daemon_phase2.py -k cycle_verbosity -v`
-Expected: FAIL — the `cycle_verbosity` branch does not exist, so `config["verbosity"]`
+Expected: FAIL - the `cycle_verbosity` branch does not exist, so `config["verbosity"]`
 is unchanged and `queue.pop_next()` returns `None`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -369,7 +369,7 @@ git commit -m "feat(daemon): cycle_verbosity advances everything->medium->quiet 
 
 ---
 
-## Task 4: daemon — option caching + reread_options + clearing
+## Task 4: daemon - option caching + reread_options + clearing
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (add `self._last_options` in `__init__`; cache it in the CHOICE/PLAN/PERMISSION branches; add `REREAD_OPTIONS` branch; clear it in FLUSH and SESSION_END)
@@ -383,7 +383,7 @@ nothing cached. The cache is cleared on `flush` and `session_end`.
 This task caches *whatever `text` currently is*. Task 5 later enriches `text` (notes
 + cue) BEFORE the caching line, so re-read will include them once Task 5 lands. To make
 that ordering work, caching must happen on the SAME computed `text` variable that gets
-enqueued — so in this task we refactor each decision branch to compute `text` into a
+enqueued - so in this task we refactor each decision branch to compute `text` into a
 local first, cache it, then enqueue.
 
 - [ ] **Step 1: Write the failing test**
@@ -466,7 +466,7 @@ def test_session_end_clears_option_cache():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_daemon_phase2.py -k "reread or cache" -v`
-Expected: FAIL — `AttributeError: 'SpeechDaemon' object has no attribute '_last_options'`
+Expected: FAIL - `AttributeError: 'SpeechDaemon' object has no attribute '_last_options'`
 (in `__init__`) and the `REREAD_OPTIONS` branch does not exist.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -573,7 +573,7 @@ git commit -m "feat(daemon): cache last picker text and add reread_options with 
 
 ---
 
-## Task 5: daemon — selection cue + immediate warning (everything-only) + multiSelect/>9 notes (all modes)
+## Task 5: daemon - selection cue + immediate warning (everything-only) + multiSelect/>9 notes (all modes)
 
 **Files:**
 - Modify: `src/sonari/daemon.py` (add `self._warned_immediate` in `__init__`; add `_selection_cue` method and `_choice_notes` staticmethod; wire both into the decision branches BEFORE caching/enqueue)
@@ -711,7 +711,7 @@ def test_reread_includes_cue_and_notes():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_daemon_phase2.py -k "cue or warning or note or reread_includes" -v`
-Expected: FAIL — `CUE`/`MULTI`/`OVER9` strings are not in the spoken text because the
+Expected: FAIL - `CUE`/`MULTI`/`OVER9` strings are not in the spoken text because the
 enrichment helpers and wiring do not exist yet; `_warned_immediate` is missing.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -801,9 +801,9 @@ Expected: PASS (all Task 2-5 tests).
 
 **This behavior intentionally changes two existing tests** (they assert the OLD,
 un-cued decision text, and both run at `everything` where the cue is now appended). Update
-both — do NOT relax the new behavior to match them.
+both - do NOT relax the new behavior to match them.
 
-(1) `tests/test_daemon_decisions.py` — the permission test uses *exact equality* on the
+(1) `tests/test_daemon_decisions.py` - the permission test uses *exact equality* on the
 bare action. Change:
 ```python
     assert item.text == "run rm -rf"
@@ -848,7 +848,7 @@ git commit -m "feat(daemon): selection cue + once-per-session warning + multiSel
 
 ---
 
-## Task 6: paths — new path constants
+## Task 6: paths - new path constants
 
 **Files:**
 - Modify: `src/sonari/paths.py` (add `KEYMAP_PATH`, `HOTKEYD_RESOLVED_PATH`, `HOTKEYD_BIN_PATH`)
@@ -876,7 +876,7 @@ def test_phase2_paths_nested_under_sonari_dir(monkeypatch, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_paths.py -k phase2 -v`
-Expected: FAIL — `AttributeError: module 'sonari.paths' has no attribute 'KEYMAP_PATH'`.
+Expected: FAIL - `AttributeError: module 'sonari.paths' has no attribute 'KEYMAP_PATH'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -903,7 +903,7 @@ git commit -m "feat(paths): add keymap, hotkeyd-resolved, and hotkeyd-binary pat
 
 ---
 
-## Task 7: keymap module — all logic + unit tests
+## Task 7: keymap module - all logic + unit tests
 
 **Files:**
 - Create: `src/sonari/keymap.py`
@@ -1082,7 +1082,7 @@ def test_write_resolved_no_tmp_leftover(monkeypatch, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_keymap.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'sonari.keymap'`.
+Expected: FAIL - `ModuleNotFoundError: No module named 'sonari.keymap'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -1333,7 +1333,7 @@ def test_resolved_json_shape_matches_swift_contract(monkeypatch, tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_hotkeyd_swift.py -v`
-Expected: FAIL — `test_swift_source_exists` fails (the `.swift` file does not exist).
+Expected: FAIL - `test_swift_source_exists` fails (the `.swift` file does not exist).
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -1343,7 +1343,7 @@ Create `hotkeyd/sonari-hotkeyd.swift`:
 // sonari-hotkeyd.swift
 // Sonari Phase 2 global-hotkey daemon.
 //
-// Reads ~/.sonari/hotkeyd.resolved.json — an array of
+// Reads ~/.sonari/hotkeyd.resolved.json - an array of
 //   { "action": String, "keyCode": Int, "modifiers": Int, "message": String }
 // produced by sonari.keymap.write_resolved(). For each entry it registers a
 // Carbon global hotkey (RegisterEventHotKey: fires system-wide, consumes only
@@ -1514,7 +1514,7 @@ app.run()
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/python -m pytest tests/test_hotkeyd_swift.py -v`
-Expected: PASS — `test_swift_source_exists` and `test_resolved_json_shape_...` pass;
+Expected: PASS - `test_swift_source_exists` and `test_resolved_json_shape_...` pass;
 `test_swift_source_compiles` passes on this Mac (swiftc present) with returncode 0.
 (If swiftc were absent it would `SKIP`, not fail.)
 
@@ -1527,7 +1527,7 @@ git commit -m "feat(hotkeyd): Swift Carbon hotkey daemon reading resolved keymap
 
 ---
 
-## Task 9: cli — install/uninstall/doctor for hotkeyd + protocol-contract test
+## Task 9: cli - install/uninstall/doctor for hotkeyd + protocol-contract test
 
 **Files:**
 - Modify: `src/sonari/cli.py` (constants, `_hotkeyd_plist`, `_build_hotkeyd`, extend `install`/`uninstall`/`doctor`; import `keymap`)
@@ -1535,7 +1535,7 @@ git commit -m "feat(hotkeyd): Swift Carbon hotkey daemon reading resolved keymap
 - Test: `tests/test_hotkeyd_contract.py` (new)
 
 The contract test is the safety net for the whole Swift→speechd link: it proves that
-every `ACTION_MESSAGES` dict, fed straight into the daemon, does the intended thing —
+every `ACTION_MESSAGES` dict, fed straight into the daemon, does the intended thing -
 so the bytes the Swift sends are valid speechd commands.
 
 - [ ] **Step 1: Write the failing test**
@@ -1827,7 +1827,7 @@ def test_catch_up_message_clears_and_cancels():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_hotkeyd.py tests/test_hotkeyd_contract.py -v`
-Expected: FAIL — `tests/test_cli_hotkeyd.py` fails with
+Expected: FAIL - `tests/test_cli_hotkeyd.py` fails with
 `AttributeError: module 'sonari.cli' has no attribute '_hotkeyd_plist'` (and
 `HOTKEYD_LAUNCH_AGENT_LABEL`, `_build_hotkeyd`, `cli.keymap`). The contract test passes
 already (it only depends on Tasks 1-5 + 7), confirming the actions are wired.
@@ -1902,7 +1902,7 @@ def _build_hotkeyd():
     return (False, f"swiftc exited {rc}")
 ```
 
-Extend `install()` — add this block just before the final
+Extend `install()` - add this block just before the final
 `print("Enable the Sonari plugin in Claude Code:")` block (after the speechd
 LaunchAgent is loaded):
 
@@ -1929,7 +1929,7 @@ LaunchAgent is loaded):
               f"global hotkeys disabled, but speech still works.")
 ```
 
-Extend `uninstall()` — add this block right after the speechd LaunchAgent removal
+Extend `uninstall()` - add this block right after the speechd LaunchAgent removal
 (after the `else: print("No LaunchAgent installed.")` block, before the SONARI_DIR
 removal):
 
@@ -1953,7 +1953,7 @@ Note: `uninstall()` removes the whole SONARI_DIR afterward anyway; removing the 
 explicitly is harmless and keeps uninstall correct if SONARI_DIR removal is later made
 conditional. keymap.json is intentionally left when SONARI_DIR is preserved (spec §5).
 
-Extend `doctor()` — add these checks just before `return results`:
+Extend `doctor()` - add these checks just before `return results`:
 
 ```python
     swiftc = shutil.which("swiftc")
@@ -2019,7 +2019,7 @@ add to its `with` block so uninstall targets only temp paths:
 NOTE on the spec's "uninstall leaves keymap.json": if the current `uninstall()` removes the
 whole `SONARI_DIR`, that also removes `keymap.json`. Do NOT add new SONARI_DIR-removal; if
 the existing behavior already nukes the dir, leave a one-line code comment noting the spec
-prefers preserving `keymap.json` and let the code-quality reviewer decide — do not expand
+prefers preserving `keymap.json` and let the code-quality reviewer decide - do not expand
 scope here.
 
 The existing doctor "all ok" test only checks that its known keys are True, so the extra
@@ -2089,7 +2089,7 @@ def test_keymap_subcommand_prints_all_nine_actions(capsys):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_commands.py -k keymap tests/test_cli_hotkeyd.py::test_keymap_subcommand_prints_all_nine_actions -v`
-Expected: FAIL — the command file does not exist, and `cli.main(["keymap"])` returns 2
+Expected: FAIL - the command file does not exist, and `cli.main(["keymap"])` returns 2
 (unknown subcommand → `print_help`) so its assertions fail.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -2173,7 +2173,7 @@ git commit -m "feat(cli): /sonari:keymap slash command and 'sonari keymap' subco
 - Modify: `docs/superpowers/phase1-execution-log.md` (append a Phase 2 section)
 - Create: `docs/superpowers/phase2-manual-smoke-checklist.md`
 
-No production code changes here — this is documentation + the final full-suite gate.
+No production code changes here - this is documentation + the final full-suite gate.
 
 - [ ] **Step 1: Append the Phase 2 section to the execution log**
 
@@ -2183,7 +2183,7 @@ Append to the END of `docs/superpowers/phase1-execution-log.md`:
 
 ---
 
-## Phase 2 — Control & Selection (built)
+## Phase 2 - Control & Selection (built)
 
 **Spec:** `docs/superpowers/specs/2026-06-05-sonari-phase2-control-selection-design.md`
 **Plan:** `docs/superpowers/plans/2026-06-05-sonari-phase2-control-selection.md`
@@ -2237,7 +2237,7 @@ Append to the END of `docs/superpowers/phase1-execution-log.md`:
 Create `docs/superpowers/phase2-manual-smoke-checklist.md`:
 
 ```markdown
-# Sonari Phase 2 — Manual Smoke Checklist (screen-off, live)
+# Sonari Phase 2 - Manual Smoke Checklist (screen-off, live)
 
 Run these on the real machine after `sonari install`. The deterministic Python suite
 covers daemon/keymap/cli logic and Swift compilation; this covers the Carbon runtime
@@ -2250,8 +2250,8 @@ open questions O-1..O-4.
 - [ ] `sonari keymap` prints all 9 actions with Ctrl+Cmd combos.
 - [ ] Confirm the hotkey daemon is running: `launchctl list | grep com.sonari.hotkeyd`.
 
-## O-4 — hotkeys fire, no character leak / no beep
-For each terminal — **Terminal.app**, **iTerm2**, **VS Code integrated terminal**:
+## O-4 - hotkeys fire, no character leak / no beep
+For each terminal - **Terminal.app**, **iTerm2**, **VS Code integrated terminal**:
 - [ ] Focus the terminal at a shell prompt. Press each combo; confirm NO character is
   inserted at the prompt and NO system beep:
   Ctrl+Cmd+S, +R, +. , +D, +L, +] , +[ , +V, +O.
@@ -2261,7 +2261,7 @@ For each terminal — **Terminal.app**, **iTerm2**, **VS Code integrated termina
   shell-launched `~/.sonari/sonari-hotkeyd` (kill the agent's process, run the binary in
   a shell, repeat one combo; behavior matches).
 
-## Numeric selection — AskUserQuestion / permission / plan
+## Numeric selection - AskUserQuestion / permission / plan
 - [ ] Trigger a real **AskUserQuestion** picker. Sonari reads "Question … Option 1 … "
   then the cue. Press a digit (1–9) → it selects immediately. Press Esc on another →
   it cancels.
@@ -2270,12 +2270,12 @@ For each terminal — **Terminal.app**, **iTerm2**, **VS Code integrated termina
 - [ ] Trigger an **ExitPlanMode** plan. Confirm the plan text + cue are read; 1 accepts,
   Esc keeps planning.
 
-## O-1 — multiSelect keys
+## O-1 - multiSelect keys
 - [ ] On a multiSelect AskUserQuestion: Sonari reads the "Select multiple…" note.
   Verify the EXACT working keys: digit-toggle vs Space-on-highlighted + Enter to confirm.
   Record the verified behavior; if the narration wording is wrong, fix `_choice_notes`.
 
-## O-2 — multi-question AskUserQuestion
+## O-2 - multi-question AskUserQuestion
 - [ ] On a multi-question picker: confirm a digit selects within the CURRENT sub-question
   and Tab advances to the next (vs submits). Record the result; consider a "Tab moves to
   the next question." note if useful.
@@ -2289,7 +2289,7 @@ For each terminal — **Terminal.app**, **iTerm2**, **VS Code integrated termina
   re-spoken. After Esc/submit + a new prompt (flush), Ctrl+Cmd+O says "No options to
   repeat."
 
-## O-3 — permission_prompt payload
+## O-3 - permission_prompt payload
 - [ ] Capture a golden `Notification permission_prompt` hook payload. Does it carry the
   option list? Record yes/no. If yes, consider enriching `_permission_text` to read the
   numbered options in a follow-up.
@@ -2298,7 +2298,7 @@ For each terminal — **Terminal.app**, **iTerm2**, **VS Code integrated termina
 - [ ] **Step 3: Run the FULL suite (final green gate)**
 
 Run: `.venv/bin/python -m pytest -q`
-Expected: PASS — entire suite green (Phase 1 + all Phase 2 tasks). Investigate and fix
+Expected: PASS - entire suite green (Phase 1 + all Phase 2 tasks). Investigate and fix
 any failure before committing (do NOT relax assertions to force green).
 
 - [ ] **Step 4: Confirm the tree is clean of stray artifacts**
@@ -2316,7 +2316,7 @@ git commit -m "docs: Phase 2 execution log section + manual smoke checklist"
 
 ---
 
-## Self-Review — Spec coverage
+## Self-Review - Spec coverage
 
 Mapping each spec section to the task(s) that implement it (spec:
 `2026-06-05-sonari-phase2-control-selection-design.md`):
@@ -2342,14 +2342,14 @@ Mapping each spec section to the task(s) that implement it (spec:
 | §7 doctor as smoke test | swiftc / binary / resolved / keymap-resolves | 9 |
 | §8 O-1..O-4 | resolved empirically during the build | 11 (checklist) |
 
-**Placeholder scan:** no "TODO"/"similar to Task N"/"handle edge cases" — every code/test
+**Placeholder scan:** no "TODO"/"similar to Task N"/"handle edge cases" - every code/test
 step pastes complete code.
 
 **Type/name consistency (verified across tasks):**
 - `RATE_MIN`/`RATE_MAX` defined in Task 2, reused implicitly by Task 9's contract test
   (faster/slower assert 225/175 within bounds).
 - `self._last_options` (Task 4) cached in the SAME `text` local that Task 5 enriches, so
-  re-read replays cue+notes — verified by Task 5's `test_reread_includes_cue_and_notes`.
+  re-read replays cue+notes - verified by Task 5's `test_reread_includes_cue_and_notes`.
 - `self._warned_immediate` (Task 5) keyed by session; matches the per-session warning test.
 - `keymap.ACTION_MESSAGES` (Task 7) message dicts == the protocol the daemon handles
   (Tasks 1-5), proven by Task 9's `test_hotkeyd_contract.py`.

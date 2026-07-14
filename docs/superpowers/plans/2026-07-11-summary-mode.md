@@ -6,7 +6,7 @@
 
 **Architecture:** A new pure-ish `summarizer.py` module wraps the headless subprocess call (injectable runner for tests). The daemon gains a `SET_SUMMARY_MODE` toggle, suppresses prose speech when the mode is on (record-to-history only, exactly like `quiet`), and on the `turn_done` earcon dispatches a worker thread that calls the summarizer OFF-lock and enqueues the result (or fires a `summary_failed` earcon). CLI + slash command toggle it; doctor checks the summarizer command resolves.
 
-**Tech Stack:** Python 3.9+ stdlib only (`subprocess`, `shutil`, `threading`). pytest. The summarizer subprocess is `claude -p <instruction> --model <model> --tools ""` with the turn text on stdin — verified working end-to-end on this machine (returns a clean 1-sentence summary; `--tools ""` disables all tools; `haiku` model alias accepted).
+**Tech Stack:** Python 3.9+ stdlib only (`subprocess`, `shutil`, `threading`). pytest. The summarizer subprocess is `claude -p <instruction> --model <model> --tools ""` with the turn text on stdin - verified working end-to-end on this machine (returns a clean 1-sentence summary; `--tools ""` disables all tools; `haiku` model alias accepted).
 
 ## Global Constraints
 
@@ -57,7 +57,7 @@ def test_summary_mode_defaults():
 - [ ] **Step 3: Run both test files to verify the new tests fail**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/test_protocol.py tests/test_config.py -q`
-Expected: FAIL — missing `SET_SUMMARY_MODE` (two snapshot tests) and `KeyError: 'summary_mode'`.
+Expected: FAIL - missing `SET_SUMMARY_MODE` (two snapshot tests) and `KeyError: 'summary_mode'`.
 
 - [ ] **Step 4: Add the constant and the defaults**
 
@@ -170,7 +170,7 @@ def test_command_and_timeout_are_forwarded():
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/test_summarizer.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'sonara.summarizer'`.
+Expected: FAIL - `ModuleNotFoundError: No module named 'sonara.summarizer'`.
 
 - [ ] **Step 3: Implement the module**
 
@@ -257,7 +257,7 @@ git commit -m "feat(summarizer): throwaway tool-disabled claude -p recap call"
 ### Task 3: daemon toggle + prose gate + status field
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — three spots: the PROSE handler's speech gate (`verbosity != "quiet"`, ~line 314), a new `SET_SUMMARY_MODE` branch after the `SET_DUCK_LEVEL` branch (~line 732), and the STATUS reply dict (~line 750).
+- Modify: `src/sonara/daemon.py` - three spots: the PROSE handler's speech gate (`verbosity != "quiet"`, ~line 314), a new `SET_SUMMARY_MODE` branch after the `SET_DUCK_LEVEL` branch (~line 732), and the STATUS reply dict (~line 750).
 - Test: `tests/test_daemon_summary_mode.py` (new)
 
 **Interfaces:**
@@ -346,11 +346,11 @@ def test_status_reports_summary_mode(monkeypatch):
 - [ ] **Step 2: Run to verify the new tests fail**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/test_daemon_summary_mode.py -q`
-Expected: FAIL — `set_summary_mode` unhandled (toggle asserts fail), prose still enqueued, STATUS lacks the key.
+Expected: FAIL - `set_summary_mode` unhandled (toggle asserts fail), prose still enqueued, STATUS lacks the key.
 
 - [ ] **Step 3: Implement the three daemon changes**
 
-(a) PROSE gate — in the PROSE handler, change:
+(a) PROSE gate - in the PROSE handler, change:
 
 ```python
                 if verbosity != "quiet":
@@ -382,7 +382,7 @@ to:
             return None
 ```
 
-(c) STATUS reply — add to the reply dict (next to `"verbosity"`):
+(c) STATUS reply - add to the reply dict (next to `"verbosity"`):
 
 ```python
                 "summary_mode": bool(self.config.get("summary_mode")),
@@ -410,7 +410,7 @@ git commit -m "feat(daemon): SET_SUMMARY_MODE toggle + prose gate + status field
 ### Task 4: turn-end summary dispatch (worker thread)
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — `__init__` (new fields), the EARCON `turn_done` branch (~line 407), and two new methods (`_maybe_summarize`, `_summary_worker`) placed after `_engaged_session`.
+- Modify: `src/sonara/daemon.py` - `__init__` (new fields), the EARCON `turn_done` branch (~line 407), and two new methods (`_maybe_summarize`, `_summary_worker`) placed after `_engaged_session`.
 - Test: `tests/test_daemon_summary_mode.py` (extend)
 
 **Interfaces:**
@@ -538,7 +538,7 @@ def test_worker_forwards_config_to_summarizer(monkeypatch):
 - [ ] **Step 2: Run to verify the new tests fail**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/test_daemon_summary_mode.py -q`
-Expected: FAIL — `_start_summary_thread` does not exist (monkeypatch AttributeError).
+Expected: FAIL - `_start_summary_thread` does not exist (monkeypatch AttributeError).
 
 - [ ] **Step 3: Implement the dispatch**
 
@@ -632,7 +632,7 @@ git commit -m "feat(daemon): turn-end summary dispatch via off-lock worker"
 ### Task 5: CLI command, slash command, doctor check
 
 **Files:**
-- Modify: `src/sonara/cli.py` — new `_cmd_summary` (after `_cmd_duck_level`), parser registration in `_build_parser` (after the `duck-level` block), doctor row in `doctor()` (after the `keymap resolves` block).
+- Modify: `src/sonara/cli.py` - new `_cmd_summary` (after `_cmd_duck_level`), parser registration in `_build_parser` (after the `duck-level` block), doctor row in `doctor()` (after the `keymap resolves` block).
 - Create: `commands/summary.md`
 - Test: `tests/test_cli_control.py` (extend), `tests/test_cli_doctor.py` (extend)
 
@@ -700,7 +700,7 @@ def test_doctor_summary_row_fails_when_command_missing(monkeypatch, tmp_path):
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `./.venv/Scripts/python.exe -m pytest tests/test_cli_control.py tests/test_cli_doctor.py -q`
-Expected: FAIL — argparse rejects the unknown `summary` subcommand; doctor has no `summary command` row.
+Expected: FAIL - argparse rejects the unknown `summary` subcommand; doctor has no `summary command` row.
 
 - [ ] **Step 3: Implement CLI + doctor**
 
@@ -857,8 +857,8 @@ git commit -m "docs: summary mode section + privacy carve-out"
 
 **Spec coverage:** toggle + persistence (T1/T3), summarizer module with isolation (`--tools ""`, neutral cwd, `shutil.which` for the Windows .cmd shim) (T2), prose suppressed-but-recorded (T3), decisions unchanged (T3 test), turn-end foreground-only dispatch with empty-turn guard (T4), off-lock subprocess + lock-only enqueue (T4), failure earcon `summary_failed` with silent-no-op wav convention (T4; no asset shipped, matching existing user-supplied earcon convention), supersede/no-pile-up via generation counter (T4), CLI + slash + doctor (T5), README + PRIVACY (T6). Feasibility of the exact subprocess invocation was verified live on this machine before planning. ✓
 
-**Placeholder scan:** none — every step has exact code/text. ✓
+**Placeholder scan:** none - every step has exact code/text. ✓
 
 **Type consistency:** `summarize(text, *, model, command, timeout, runner)` matches the worker's call (`model`/`command`/`timeout` kwargs, asserted in `test_worker_forwards_config_to_summarizer`); `_start_summary_thread(session, gen, text)` matches the monkeypatch seam; `_summarize_fn` name is consistent across T4 code and tests; `SET_SUMMARY_MODE`/`"set_summary_mode"`/`summary_mode` consistent across T1/T3/T5. ✓
 
-**Note for the implementer of T4:** `handle_message` already holds `self._lock` when `_maybe_summarize` runs — that is why the method must not call the summarizer inline and why tests invoke `_summary_worker` directly (outside the lock) rather than through a real thread.
+**Note for the implementer of T4:** `handle_message` already holds `self._lock` when `_maybe_summarize` runs - that is why the method must not call the summarizer inline and why tests invoke `_summary_worker` directly (outside the lock) rather than through a real thread.

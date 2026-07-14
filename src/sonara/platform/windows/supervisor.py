@@ -1,10 +1,10 @@
-"""Windows supervisor backend — zero-admin Task Scheduler autostart, Python
+"""Windows supervisor backend -- zero-admin Task Scheduler autostart, Python
 resolution (py-launcher + Store-stub avoidance), exec-form hooks, and the
 WinSupervisorBackend ABC implementation.
 
 WINDOWS-only. Every Windows-only stdlib import (winreg, ctypes) is lazy (inside
 a method/function) so this module imports cleanly on macOS/Linux for the mock
-test suite. "Importable + mock-green" here does NOT mean Windows-verified — the
+test suite. "Importable + mock-green" here does NOT mean Windows-verified -- the
 real gate is docs/superpowers/M2-WINDOWS-ACCEPTANCE.md.
 
 Bodies copied verbatim from docs/superpowers/m2-windows-api-reference.md
@@ -102,7 +102,7 @@ def task_install(pythonw: str, supervisor_py: str) -> int:
         supervisor_py=supervisor_py,
         work_dir=str(Path(supervisor_py).parent),
     )
-    # Write UTF-16 LE with BOM — required by schtasks /xml
+    # Write UTF-16 LE with BOM -- required by schtasks /xml
     with tempfile.NamedTemporaryFile(
             mode='w', suffix='.xml', encoding='utf-16',
             delete=False) as fh:
@@ -125,13 +125,13 @@ def task_uninstall() -> int:
     )
 
 
-# KEY GOTCHA: RestartOnFailure is NOT expressible via schtasks CLI flags — XML only.
+# KEY GOTCHA: RestartOnFailure is NOT expressible via schtasks CLI flags -- XML only.
 # The Task Scheduler's RestartOnFailure only restarts the *supervisor* process if
 # it crashes (unlikely). The supervisor_loop is the real daemon restarter.
 
 
 # ---------------------------------------------------------------------------
-# Windows Python resolution — py -3 launcher, PATH probe, Store-stub detection
+# Windows Python resolution -- py -3 launcher, PATH probe, Store-stub detection
 # ---------------------------------------------------------------------------
 
 def _is_store_stub(path: str) -> bool:
@@ -259,7 +259,7 @@ def resolve_python_windows() -> "str | None":
 
 # The resolved pythonw.exe path is baked in at install time by
 # WinSupervisorBackend.install(). Claude Code supports separate 'command' +
-# 'args' (exec-form) — no bash shim required.
+# 'args' (exec-form) -- no bash shim required.
 # Event set mirrors hooks/hooks.json (the macOS hooks file), translated to
 # exec-form (command + args array) because there is no bash on Windows.
 HOOKS_JSON_TEMPLATE = '''{{
@@ -436,7 +436,7 @@ def settings_has_sonara_hooks(settings_path: str) -> bool:
 
     Defensive at every level: a hand-edited settings.json can have any shape
     (hooks a list, an entry a string, args not a list). 'sonara doctor' must never
-    crash on it — any unexpected shape simply yields False (M9)."""
+    crash on it -- any unexpected shape simply yields False (M9)."""
     import json
     try:
         with open(settings_path, "r", encoding="utf-8") as fh:
@@ -467,7 +467,7 @@ def settings_has_sonara_plugin(settings_path: str) -> bool:
     """True if the Sonara plugin is enabled in settings.json. When it is, the
     plugin's hooks/hooks.json supplies the hooks, so a hand-wired settings.json
     block is not required (and would double-fire). Tolerant of any malformed shape
-    (doctor must never crash) — M9."""
+    (doctor must never crash) -- M9."""
     import json
     try:
         with open(settings_path, "r", encoding="utf-8") as fh:
@@ -669,7 +669,7 @@ def _hook_py() -> str:
 
 
 # ---------------------------------------------------------------------------
-# WinSupervisorBackend — the SupervisorBackend ABC implementation
+# WinSupervisorBackend -- the SupervisorBackend ABC implementation
 # ---------------------------------------------------------------------------
 
 class WinSupervisorBackend(SupervisorBackend):
@@ -701,7 +701,7 @@ class WinSupervisorBackend(SupervisorBackend):
 
         Registry path: HKLM\\SOFTWARE\\Microsoft\\Speech_OneCore\\Voices\\Tokens
         NOT the legacy Speech\\Voices\\Tokens key (Narrator/OneCore voices only).
-        winreg is Windows-only stdlib — imported lazily inside the method.
+        winreg is Windows-only stdlib -- imported lazily inside the method.
         """
         import winreg
         key_path = r"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens"
@@ -764,7 +764,7 @@ class WinSupervisorBackend(SupervisorBackend):
     def doctor_rows(self) -> list:
         """Return Windows-specific [(name, ok, detail), ...] rows.
 
-        Never raises — wrap every external call in try/except so 'sonara doctor'
+        Never raises -- wrap every external call in try/except so 'sonara doctor'
         always renders (mirrors MacSupervisorBackend).
         """
         rows = []
@@ -825,7 +825,7 @@ class WinSupervisorBackend(SupervisorBackend):
         #
         #    But ONLY when the sonara plugin is NOT enabled: an enabled plugin
         #    already supplies these exact hooks via its hooks/hooks.json, so also
-        #    writing them to settings.json fires every event TWICE — each assistant
+        #    writing them to settings.json fires every event TWICE -- each assistant
         #    message is then spoken twice (#44). When the plugin is on, heal any
         #    hooks a prior install left behind and write nothing new.
         settings = claude_settings_path()
@@ -907,14 +907,14 @@ class WinSupervisorBackend(SupervisorBackend):
         """Windows: Sonara hooks come from EITHER a hand-wired settings.json block
         (written by 'sonara install') OR the enabled 'sonara' plugin (its
         hooks/hooks.json). For the settings.json path, go RED if a hook is present
-        but its baked script path no longer exists — the stale-after-plugin-update
+        but its baked script path no longer exists -- the stale-after-plugin-update
         case that otherwise stops speech silently while doctor stayed green (#8).
         Also go RED when BOTH sources are present: each event then fires twice and
         every message is spoken twice (#44); 're-run sonara install' heals it."""
         path = claude_settings_path()
         if settings_has_sonara_hooks(path) and settings_has_sonara_plugin(path):
             return ("hooks installed", False,
-                    "hooks registered TWICE (settings.json + the sonara plugin) — "
+                    "hooks registered TWICE (settings.json + the sonara plugin) -- "
                     "every message is spoken twice; re-run 'sonara install' to heal "
                     "(it drops the settings.json copy when the plugin is enabled)")
         if settings_has_sonara_hooks(path):

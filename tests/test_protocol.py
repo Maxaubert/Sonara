@@ -26,7 +26,7 @@ def test_round_trip_preserves_nested_and_unicode():
         "v": PROTOCOL_VERSION,
         "type": MsgType.CHOICE,
         "session": "s1",
-        "questions": [{"q": "Pick one — café or tea?", "options": ["a", "b"]}],
+        "questions": [{"q": "Pick one -- café or tea?", "options": ["a", "b"]}],
         "n": 7,
         "flag": True,
         "empty": None,

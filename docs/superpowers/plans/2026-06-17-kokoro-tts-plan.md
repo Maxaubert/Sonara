@@ -1,11 +1,11 @@
-# Kokoro TTS Engine — Implementation Plan
+# Kokoro TTS Engine - Implementation Plan
 
 **Goal:** Add Kokoro-82M neural voices to Sonari as a first-class TTS engine, all 28
 voices available, selectable live by voice name (`sonari voice af_heart`).
 
 **Architecture:** Portable Kokoro engine (`src/sonari/kokoro.py`) synthesizes to a
 WAV; each platform TTS backend plays Kokoro voices through its existing WAV path
-(Windows: winsound `_TtsHandle`). Routing is by voice name — a voice in the Kokoro
+(Windows: winsound `_TtsHandle`). Routing is by voice name - a voice in the Kokoro
 set goes to Kokoro, anything else to the native engine. Lazy imports + optional
 `[kokoro]` extra so base Sonari runs without the ML deps.
 
@@ -32,7 +32,7 @@ covers all 28 voices.
 
 ### Task 3: Wiring + CLI
 - `sonari voice` lists native + Kokoro voices; `sonari voice af_heart` sets it.
-- Confirm `SET_VOICE` + Speaker.set_voice route live (no engine re-init needed —
+- Confirm `SET_VOICE` + Speaker.set_voice route live (no engine re-init needed -
   routing is per-utterance in run()).
 
 ### Task 4: Packaging

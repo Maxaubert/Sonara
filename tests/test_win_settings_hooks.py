@@ -1,6 +1,6 @@
 """~/.claude/settings.json hook merge/remove (Windows install glue).
 
-Pure stdlib + tmp files — no winrt fakes needed. Runs identically on macOS and
+Pure stdlib + tmp files -- no winrt fakes needed. Runs identically on macOS and
 Windows: the merge logic is OS-independent JSON manipulation.
 """
 import json

@@ -90,7 +90,7 @@ def test_is_installed_reflects_find_spec(monkeypatch):
 
 
 def test_require_installed_raises_actionable_when_absent(monkeypatch):
-    # When the extra is missing, raise a RuntimeError that names the fix — not the
+    # When the extra is missing, raise a RuntimeError that names the fix -- not the
     # raw ModuleNotFoundError the daemon would swallow into silent no-speech.
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
     with pytest.raises(RuntimeError) as ei:

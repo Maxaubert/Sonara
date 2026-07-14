@@ -1,4 +1,4 @@
-# Sonara Settings Page — Design Spec
+# Sonara Settings Page - Design Spec
 
 Date: 2026-07-14. Status: approved direction, pending user review of this document.
 Visual reference: `docs/superpowers/mockups/codex-b.html` (chosen base), with
@@ -19,17 +19,17 @@ over the same daemon messages.
   port keeps bookmarks valid and lets the page reconnect across daemon
   restarts.
 - **Three endpoints:**
-  - `GET /settings` — the page itself (one self-contained HTML file shipped in
+  - `GET /settings` - the page itself (one self-contained HTML file shipped in
     the package, no external resources).
-  - `GET /api/state` — JSON: current config values, installed voices grouped by
+  - `GET /api/state` - JSON: current config values, installed voices grouped by
     engine, engine install status, keymap bindings, daemon status (pid, port,
     uptime, foreground session).
-  - `POST /api/set` — `{key, value}`; dispatches through the SAME
+  - `POST /api/set` - `{key, value}`; dispatches through the SAME
     `handle_message` paths the CLI uses (SET_VOICE, SET_RATE, SET_MINQUEUE,
     SET_SUMMARY_MODE, SET_AUDIO_CONTROL, SET_DUCK_LEVEL, keymap writes +
     RELOAD_KEYMAP, SHUTDOWN). No new mutation logic; the page can never drift
     from CLI behavior. Response = fresh state.
-  - `POST /api/preview` — speaks a short sample sentence in a named voice
+  - `POST /api/preview` - speaks a short sample sentence in a named voice
     without changing config (routes to the speaker as a control cue).
 - **Security:** every request must carry the token already stored in
   `daemon.lock` (`?token=` query or `X-Sonara-Token` header). Requests without
@@ -71,13 +71,13 @@ NOT on the page (stays CLI-only). No playback controls, no live status strip.
   a new SHUTDOWN variant that also writes the stop sentinel (mirrors `sonara
   shutdown`); the page then shows the disconnect banner until `sonara start`.
   Engine status rows (Kokoro / Chatterbox: Installed or Not installed, with the
-  `sonara voices install <engine>` command shown for copy-paste — status only,
+  `sonara voices install <engine>` command shown for copy-paste - status only,
   no install buttons). Version footer.
 
 ## Visual design (from codex-b.html)
 
 - macOS-System-Settings-style framed window on a soft tinted backdrop: narrow
-  left nav pane (search field, colored icon tiles per section — indigo Speech,
+  left nav pane (search field, colored icon tiles per section - indigo Speech,
   orange Summary, green Audio, gray Hotkeys/System), content pane right with
   inset grouped lists.
 - Font stack `"Segoe UI Variable","Segoe UI",-apple-system,sans-serif`; accent
@@ -91,7 +91,7 @@ NOT on the page (stays CLI-only). No playback controls, no live status strip.
 ## Failure behavior
 
 - Daemon stops while the page is open: api calls fail → banner "Sonara isn't
-  running — run `sonara start`", controls disabled until reconnect (page polls
+  running - run `sonara start`", controls disabled until reconnect (page polls
   /api/state every 3s and recovers automatically).
 - Invalid values clamped by the existing handlers (page mirrors the clamps).
 - Wrong/missing token: 403 page explaining to relaunch via `sonara settings`.

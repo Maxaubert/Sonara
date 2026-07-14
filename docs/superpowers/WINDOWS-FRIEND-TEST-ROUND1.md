@@ -1,14 +1,14 @@
-# Sonari on Windows — Quick test (Round 1)
+# Sonari on Windows - Quick test (Round 1)
 
-Hi! Thanks for helping test Sonari on Windows. This first round takes **~10–15 minutes** and does **not** need Claude Code or any account — we're just checking whether Windows can speak and play sounds through our code.
+Hi! Thanks for helping test Sonari on Windows. This first round takes **~10–15 minutes** and does **not** need Claude Code or any account - we're just checking whether Windows can speak and play sounds through our code.
 
-**How this works:** copy each grey block, paste it into **PowerShell**, press Enter. After each step there's a line saying what you should **see or hear** — just tell Nima what actually happened (and if anything turns **red**, copy that red text and send it to him). Don't worry about breaking anything; nothing here changes system settings.
+**How this works:** copy each grey block, paste it into **PowerShell**, press Enter. After each step there's a line saying what you should **see or hear** - just tell Nima what actually happened (and if anything turns **red**, copy that red text and send it to him). Don't worry about breaking anything; nothing here changes system settings.
 
 > Open PowerShell: press the **Windows key**, type `powershell`, press **Enter**.
 
 ---
 
-## Step 1 — Install Python (skip if you already have Python 3.10+)
+## Step 1 - Install Python (skip if you already have Python 3.10+)
 
 Paste this:
 ```powershell
@@ -19,11 +19,11 @@ Then **close PowerShell and open a new one** (so Python is on the PATH), and che
 python --version
 ```
 ✅ **You should see:** something like `Python 3.12.x`.
-*(If `winget` isn't found, instead download Python from https://www.python.org/downloads/ — get the 64-bit installer, and on the first screen TICK "Add python.exe to PATH".)*
+*(If `winget` isn't found, instead download Python from https://www.python.org/downloads/ - get the 64-bit installer, and on the first screen TICK "Add python.exe to PATH".)*
 
 ---
 
-## Step 2 — Get the Sonari code
+## Step 2 - Get the Sonari code
 
 ```powershell
 cd $HOME
@@ -35,18 +35,18 @@ cd sonari
 
 ---
 
-## Step 3 — Install the Windows speech packages
+## Step 3 - Install the Windows speech packages
 
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install winrt-runtime winrt-Windows.Media.SpeechSynthesis winrt-Windows.Media.Playback winrt-Windows.Media.Core winrt-Windows.Storage.Streams
 ```
 ✅ **You should see:** a list of "Successfully installed winrt-…" lines.
-❗ **If you see red errors here, STOP and send them to Nima** — this tells us whether the speech packages are even available on your Windows.
+❗ **If you see red errors here, STOP and send them to Nima** - this tells us whether the speech packages are even available on your Windows.
 
 ---
 
-## Step 4 — THE BIG ONE: does Windows actually speak? 🔊
+## Step 4 - THE BIG ONE: does Windows actually speak? 🔊
 
 Turn your **volume up**, then paste this (it's one block):
 ```powershell
@@ -58,7 +58,7 @@ python -c "from sonari.platform.windows.tts import WinTtsBackend; h = WinTtsBack
 
 ---
 
-## Step 5 — Which voices does your Windows have?
+## Step 5 - Which voices does your Windows have?
 
 ```powershell
 python -c "from sonari.platform.windows.tts import WinTtsBackend; print([v.display_name for v in WinTtsBackend().list_voices()])"
@@ -68,7 +68,7 @@ python -c "from sonari.platform.windows.tts import WinTtsBackend; print([v.displ
 
 ---
 
-## Step 6 — Do the notification sounds play? 🔊
+## Step 6 - Do the notification sounds play? 🔊
 
 ```powershell
 python -c "import time; from sonari.platform.windows.earcon import WinEarconBackend; b=WinEarconBackend(); d=b.default_earcons(); [(_:=b.play(p), time.sleep(0.5)) for p in d.values()]; print('played', list(d))"
@@ -78,7 +78,7 @@ python -c "import time; from sonari.platform.windows.earcon import WinEarconBack
 
 ---
 
-## Step 7 — Single-instance check (quick, silent)
+## Step 7 - Single-instance check (quick, silent)
 
 ```powershell
 python -c "import tempfile,os; from sonari.platform import transport; p=os.path.join(tempfile.mkdtemp(),'s'); a=transport.acquire_singleton(p); b=transport.acquire_singleton(p); print('first:', a is not None, ' second_blocked:', b is None)"
@@ -96,4 +96,4 @@ Send Nima:
 3. The voice list (Step 5) and the single-instance line (Step 7).
 4. **Any red error text** from any step (copy-paste it).
 
-If this round works, there's a short Round 2 (installing it as a background service + a real Claude Code test) — but Step 4 is the big question, so thank you! 🙏
+If this round works, there's a short Round 2 (installing it as a background service + a real Claude Code test) - but Step 4 is the big question, so thank you! 🙏

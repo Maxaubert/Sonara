@@ -87,7 +87,7 @@ def test_fence_spanning_multiple_feed_calls_emits_n_line_summary():
     out3 = a.feed("z = 3\n", 3, False)
     assert out3 == []
 
-    # Delta 4: closing fence — summary must fire here
+    # Delta 4: closing fence -- summary must fire here
     out4 = a.feed("```", 4, True)
     assert out4 == ["3-line python code block"]
 

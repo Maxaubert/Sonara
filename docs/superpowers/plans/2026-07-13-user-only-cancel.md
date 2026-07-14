@@ -17,7 +17,7 @@
   answer-response is read in full. Both follow from "only the user cancels."
 - Resolved: when one session finishes several messages with no user action
   between them, **read all of them, queued** (none dropped).
-- Keep FLUSH (new prompt) as a cancel — that is the one legitimate supersede.
+- Keep FLUSH (new prompt) as a cancel - that is the one legitimate supersede.
 - Stdlib only; no new dependencies. No em-dashes in code or docs.
 
 ---
@@ -25,8 +25,8 @@
 ### Task 1: Cancel epoch advances only on user action (not on turn-end)
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — `_maybe_summarize` (~1042-1044), `_summary_worker` supersede check (~1095-1097), and the two explanatory comments (~101-102, ~481-483).
-- Test: `tests/test_daemon_summary_mode.py` — invert one test, add one test, keep the FLUSH regression test.
+- Modify: `src/sonara/daemon.py` - `_maybe_summarize` (~1042-1044), `_summary_worker` supersede check (~1095-1097), and the two explanatory comments (~101-102, ~481-483).
+- Test: `tests/test_daemon_summary_mode.py` - invert one test, add one test, keep the FLUSH regression test.
 
 **Interfaces:**
 - Consumes: `_summary_gen: dict` (per-session int epoch), `_start_summary_thread(session, gen, text)`, `_summary_worker(session, gen, text)`, `MsgType.FLUSH` handler.
@@ -161,7 +161,7 @@ with:
 - [ ] **Step 6: Run the full summary-mode suite**
 
 Run: `python -m pytest tests/test_daemon_summary_mode.py -v`
-Expected: all PASS — the two new tests, the untouched `test_flush_supersedes_inflight_summary` (FLUSH still cancels), `test_empty_turn_stays_silent` (sets epoch 1, worker gen 1, proceeds), and every `_summary_worker(*calls[0])` test (epoch defaults 0, gen 0, proceeds).
+Expected: all PASS - the two new tests, the untouched `test_flush_supersedes_inflight_summary` (FLUSH still cancels), `test_empty_turn_stays_silent` (sets epoch 1, worker gen 1, proceeds), and every `_summary_worker(*calls[0])` test (epoch defaults 0, gen 0, proceeds).
 
 - [ ] **Step 7: Run the whole test suite for regressions**
 
@@ -190,7 +190,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 cut off that session's still-playing question/context audio immediately so the
 reply-to-the-answer feels like it arrives sooner. The user flagged this as
 "not a hard requirement," and it needs its own small design pass (how to detect
-"the user answered" — a TOOL message, or first new prose after `_await_choice`,
+"the user answered" - a TOOL message, or first new prose after `_await_choice`,
 without cutting the question off before the user has heard it). Both hard rules
 are satisfied by Task 1 without it. Raise it as a separate task after Task 1
 lands and is verified live.

@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Windows-only; all `pycaw`/`comtypes` imports are lazy (inside functions) so modules import on any host and in tests.
-- Ducking is **best-effort**: every `AudioDucker` method swallows all exceptions and never raises — it must never break or delay speech.
+- Ducking is **best-effort**: every `AudioDucker` method swallows all exceptions and never raises - it must never break or delay speech.
 - Default state: `audio_control` = `false` (opt-in); `duck_level` = `20` (target % volume for other apps while ducked), clamped 0-100.
 - Never duck Sonara's own audio: exclude the daemon PID and its live earcon-helper PIDs.
 - Hold the duck across all sentences AND all queued sessions; restore only at global idle (`router.next_item()` returns `None`), on `daemon.stop()`, on toggle-off, and via the startup crash sweep.
@@ -31,8 +31,8 @@
 - Produces:
   - `class AudioDucker` with `duck(self, exclude_pids: set[int], level: int) -> None`, `restore(self) -> None`, `is_ducked(self) -> bool`.
   - `class NullDucker` with the same three methods (all no-ops; `is_ducked` returns `False`).
-  - `restore_from_state_file() -> None` — startup crash sweep.
-  - `_all_sessions()` — the pycaw seam tests monkeypatch.
+  - `restore_from_state_file() -> None` - startup crash sweep.
+  - `_all_sessions()` - the pycaw seam tests monkeypatch.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -154,7 +154,7 @@ def test_null_ducker_is_noop():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m pytest tests/test_ducking.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'sonara.platform.windows.ducking'`
+Expected: FAIL - `ModuleNotFoundError: No module named 'sonara.platform.windows.ducking'`
 
 - [ ] **Step 3: Implement the module**
 
@@ -179,7 +179,7 @@ _DUCK_STATE = SONARA_DIR / "duck_state.json"
 
 def _all_sessions():
     """All active audio sessions via pycaw. Lazy import; the test seam patches
-    this. Raises if pycaw/COM is unavailable — callers swallow it."""
+    this. Raises if pycaw/COM is unavailable - callers swallow it."""
     from pycaw.pycaw import AudioUtilities
     return AudioUtilities.GetAllSessions()
 
@@ -323,7 +323,7 @@ git commit -m "feat(audio): AudioDucker + NullDucker + crash-recovery sweep"
 - Consumes: `AudioDucker`, `NullDucker`, `restore_from_state_file` from Task 1.
 - Produces:
   - `PlatformBackend.ducker` field (an `AudioDucker`/`NullDucker`).
-  - `SpeechDaemon.__init__(self, speaker, sessions, config, ducker=None)` — stores `self.ducker` (defaults to `NullDucker()` when `ducker is None`).
+  - `SpeechDaemon.__init__(self, speaker, sessions, config, ducker=None)` - stores `self.ducker` (defaults to `NullDucker()` when `ducker is None`).
   - `tests/daemon_helpers.py` `FakeDucker` recording `.duck_calls` / `.restore_calls`, attached as `daemon.ducker` and returned/accessible.
 
 - [ ] **Step 1: Write the failing test**
@@ -352,7 +352,7 @@ def test_make_daemon_injects_a_fake_ducker():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m pytest tests/test_daemon_ducking.py -v`
-Expected: FAIL — `AttributeError: 'SpeechDaemon' object has no attribute 'ducker'`
+Expected: FAIL - `AttributeError: 'SpeechDaemon' object has no attribute 'ducker'`
 
 - [ ] **Step 3: Implement the wiring**
 
@@ -450,7 +450,7 @@ git commit -m "feat(audio): wire ducker into backend + daemon + startup sweep"
 **Files:**
 - Modify: `src/sonara/config.py` (`DEFAULTS`)
 - Modify: `src/sonara/protocol.py` (`MsgType`)
-- Modify: `src/sonara/daemon.py` (`handle_message` — two new branches; `_speak_cue` helper already exists)
+- Modify: `src/sonara/daemon.py` (`handle_message` - two new branches; `_speak_cue` helper already exists)
 - Test: `tests/test_daemon_ducking.py` (extend)
 
 **Interfaces:**
@@ -519,7 +519,7 @@ def test_set_duck_level_reapplies_when_ducked(monkeypatch):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m pytest tests/test_daemon_ducking.py -v`
-Expected: FAIL — `KeyError: 'audio_control'` / `AttributeError: ... SET_AUDIO_CONTROL`
+Expected: FAIL - `KeyError: 'audio_control'` / `AttributeError: ... SET_AUDIO_CONTROL`
 
 - [ ] **Step 3: Implement**
 
@@ -637,7 +637,7 @@ def test_duck_once_then_restore_only_at_global_idle():
     # The hold/no-flap behavior: many queued items => exactly ONE duck and ONE
     # restore (at global idle), not one per item. (Restore fires only when
     # next_item() returns None, which is also true across multiple sessions, since
-    # the idle condition is global — so one session proves the mechanism without
+    # the idle condition is global - so one session proves the mechanism without
     # the session-change announcements that would make the count non-deterministic.)
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.config["audio_control"] = True
@@ -691,7 +691,7 @@ def test_earcon_pids_returns_live_helper_pids():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m pytest tests/test_daemon_ducking.py tests/test_speaker.py -v`
-Expected: FAIL — `AttributeError: 'Speaker' object has no attribute 'earcon_pids'` and duck not called.
+Expected: FAIL - `AttributeError: 'Speaker' object has no attribute 'earcon_pids'` and duck not called.
 
 - [ ] **Step 3: Implement**
 
@@ -844,7 +844,7 @@ ARG_COMMANDS = ("verbosity", "voice", "rate", "keymap", "duck-level")
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `PYTHONPATH=src "C:/Program Files/Python314/python.exe" -m pytest tests/test_cli_ducking.py tests/test_commands.py -v`
-Expected: FAIL — unknown CLI subcommand / missing command files.
+Expected: FAIL - unknown CLI subcommand / missing command files.
 
 - [ ] **Step 3: Implement**
 
@@ -959,5 +959,5 @@ git commit -m "feat(audio): audio-control + duck-level CLI/slash commands + pyca
 
 - The `~/.sonara/duck_state.json` recovery file is keyed by process identity (pid + name) because in-memory pycaw session objects do not survive a restart.
 - `pycaw` pulls `comtypes` (already installed) and `psutil`. Both are pure-Python wheels.
-- Do not re-duck per utterance — duck once at batch start, restore at global idle. The single `is_ducked()` flag enforces this.
-- Deploy/restart the live daemon via the documented runbook (stop task + kill + clear singleton + copy to `~/.sonara/app/sonara` + restart) — editing repo src alone does nothing.
+- Do not re-duck per utterance - duck once at batch start, restore at global idle. The single `is_ducked()` flag enforces this.
+- Deploy/restart the live daemon via the documented runbook (stop task + kill + clear singleton + copy to `~/.sonara/app/sonara` + restart) - editing repo src alone does nothing.

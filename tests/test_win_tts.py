@@ -1,4 +1,4 @@
-"""WinTtsBackend (OneCore via PyWinRT) — mock-tested on macOS via _winfakes.
+"""WinTtsBackend (OneCore via PyWinRT) -- mock-tested on macOS via _winfakes.
 
 WINDOWS-only code. "Green" here means the MOCKED contract holds (the fake
 winrt tree injected by tests/_winfakes.py); it is NOT a claim that OneCore TTS
@@ -62,14 +62,14 @@ def test_wpm_maps_to_multiplier():
 
 def test_run_falls_back_when_voice_name_unknown():
     # a stale/foreign voice name (e.g. macOS "Samantha") must not be assigned
-    # as-is to synth.voice — run() resolves it or falls back to best_voice().
+    # as-is to synth.voice -- run() resolves it or falls back to best_voice().
     h = WinTtsBackend().run("hi", "Samantha", 200)  # fake has no such voice
     assert h.wait(timeout=2.0) == 0   # did not crash on an unresolved name
 
 
 def test_run_raises_actionable_error_when_no_voices(monkeypatch):
     # On a box with no OneCore voices, run() must surface the actionable
-    # "install a voice" RuntimeError — NOT the raw FileNotFoundError that real
+    # "install a voice" RuntimeError -- NOT the raw FileNotFoundError that real
     # SpeechSynthesizer activation throws. Regression for the no-voices error.
     import winrt.windows.media.speechsynthesis as ss
     monkeypatch.setattr(ss.SpeechSynthesizer, "all_voices", [])
@@ -120,7 +120,7 @@ def test_init_sweeps_stale_temp_wavs(tmp_path, monkeypatch):
 
 def test_run_raises_actionable_error_when_winrt_missing(monkeypatch):
     # A Windows box without PyWinRT installed must get an actionable error at the
-    # synth path, not silent no-speech (doctor also goes red — see supervisor). (#7)
+    # synth path, not silent no-speech (doctor also goes red -- see supervisor). (#7)
     import sonara.platform.windows.tts as tts
     monkeypatch.setattr(tts, "_winrt_available", lambda: False)
     with pytest.raises(RuntimeError, match="(?i)pywinrt|winrt"):

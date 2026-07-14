@@ -1,4 +1,4 @@
-# Sonari Phase 2 — Manual Smoke Checklist (screen-off, live)
+# Sonari Phase 2 - Manual Smoke Checklist (screen-off, live)
 
 Run these on the real Mac after `sonari install`. The deterministic pytest suite covers
 daemon/keymap/cli logic and Swift compilation; this covers the **Carbon hotkey runtime**
@@ -7,7 +7,7 @@ open questions **O-1..O-4**
 (`docs/superpowers/specs/2026-06-05-sonari-phase2-control-selection-design.md` §8).
 
 Each item is a checkbox with the exact action to perform and the expected result. Do these
-with the **screen off** wherever a `(screen off)` tag appears — that is the real test.
+with the **screen off** wherever a `(screen off)` tag appears - that is the real test.
 
 ---
 
@@ -28,7 +28,7 @@ with the **screen off** wherever a `(screen off)` tag appears — that is the re
 
 ---
 
-## O-4 — each of the 9 hotkeys fires, leaks no character, makes no beep
+## O-4 - each of the 9 hotkeys fires, leaks no character, makes no beep
 
 Do this in **each** terminal: **Terminal.app**, **iTerm2**, **VS Code integrated
 terminal**. Sit at an interactive shell prompt with an empty command line (just a cursor).
@@ -39,37 +39,37 @@ the system makes **no beep**, and Sonari reacts as noted. (No active speech is f
 some actions when nothing is queued; the key point is no leak/beep.)
 
 ### Terminal.app
-- [ ] **Ctrl+Cmd+S (stop)** — empty line, no beep. While Sonari is mid-utterance, this
+- [ ] **Ctrl+Cmd+S (stop)** - empty line, no beep. While Sonari is mid-utterance, this
   silences it immediately.
-- [ ] **Ctrl+Cmd+R (repeat)** — empty line, no beep. Re-speaks the last utterance.
-- [ ] **Ctrl+Cmd+. (skip)** — empty line, no beep. Drops the current utterance, moves on.
-- [ ] **Ctrl+Cmd+D (jump_decision)** — empty line, no beep. Jumps to the pending decision.
-- [ ] **Ctrl+Cmd+L (catch_up)** — empty line, no beep. Drains/catches up the queue.
-- [ ] **Ctrl+Cmd+] (faster)** — empty line, no beep. Speaks "Rate N." with N higher.
-- [ ] **Ctrl+Cmd+[ (slower)** — empty line, no beep. Speaks "Rate N." with N lower.
-- [ ] **Ctrl+Cmd+V (cycle_verbosity)** — empty line, no beep. Speaks "Verbosity <level>."
-- [ ] **Ctrl+Cmd+O (reread_options)** — empty line, no beep. Re-speaks the last picker, or
+- [ ] **Ctrl+Cmd+R (repeat)** - empty line, no beep. Re-speaks the last utterance.
+- [ ] **Ctrl+Cmd+. (skip)** - empty line, no beep. Drops the current utterance, moves on.
+- [ ] **Ctrl+Cmd+D (jump_decision)** - empty line, no beep. Jumps to the pending decision.
+- [ ] **Ctrl+Cmd+L (catch_up)** - empty line, no beep. Drains/catches up the queue.
+- [ ] **Ctrl+Cmd+] (faster)** - empty line, no beep. Speaks "Rate N." with N higher.
+- [ ] **Ctrl+Cmd+[ (slower)** - empty line, no beep. Speaks "Rate N." with N lower.
+- [ ] **Ctrl+Cmd+V (cycle_verbosity)** - empty line, no beep. Speaks "Verbosity <level>."
+- [ ] **Ctrl+Cmd+O (reread_options)** - empty line, no beep. Re-speaks the last picker, or
   "No options to repeat." if none.
 
 ### iTerm2
-- [ ] Repeat all 9 combos in iTerm2 — same expectation (empty line, no beep, right
+- [ ] Repeat all 9 combos in iTerm2 - same expectation (empty line, no beep, right
   reaction). Note any combo iTerm2 swallows or beeps on.
 
 ### VS Code integrated terminal
-- [ ] Repeat all 9 combos in the VS Code integrated terminal — same expectation. VS Code
+- [ ] Repeat all 9 combos in the VS Code integrated terminal - same expectation. VS Code
   has many built-in Ctrl/Cmd bindings; note any combo VS Code intercepts before hotkeyd.
 
 ### Rate / verbosity behavior spot-check
-- [ ] Press **Ctrl+Cmd+]** repeatedly past the top — the spoken rate stops climbing at
+- [ ] Press **Ctrl+Cmd+]** repeatedly past the top - the spoken rate stops climbing at
   **400** (clamp), no error.
-- [ ] Press **Ctrl+Cmd+[** repeatedly past the bottom — the spoken rate stops at **100**.
-- [ ] Press **Ctrl+Cmd+V** three times — hear "Verbosity medium." → "Verbosity quiet." →
+- [ ] Press **Ctrl+Cmd+[** repeatedly past the bottom - the spoken rate stops at **100**.
+- [ ] Press **Ctrl+Cmd+V** three times - hear "Verbosity medium." → "Verbosity quiet." →
   "Verbosity everything." (wraps). The "quiet" announcement is audible even though the new
   level is quiet.
 
 ---
 
-## Native numeric selection — live pickers (screen off)
+## Native numeric selection - live pickers (screen off)
 
 Trigger each picker from a real `claude` session, screen off.
 
@@ -77,7 +77,7 @@ Trigger each picker from a real `claude` session, screen off.
   AskUserQuestion. Expect Sonari to read the question, then "Option 1: …", "Option 2: …",
   then the cue ("Press the option's number to choose, or Escape to cancel."). Press a digit
   (e.g. **2**) → that option is selected **immediately** (no Enter needed). (screen off)
-- [ ] **AskUserQuestion — Esc denies.** Trigger another AskUserQuestion and press **Esc** →
+- [ ] **AskUserQuestion - Esc denies.** Trigger another AskUserQuestion and press **Esc** →
   it cancels/dismisses without selecting. (screen off)
 - [ ] **Permission prompt.** Trigger a tool-permission prompt (e.g. a command that needs
   approval). Expect Sonari reads the action + the cue (at `everything`). Confirm
@@ -90,7 +90,7 @@ Trigger each picker from a real `claude` session, screen off.
 
 ---
 
-## O-1 — multiSelect keys (digit vs Space + Enter)
+## O-1 - multiSelect keys (digit vs Space + Enter)
 
 - [ ] Trigger a **multiSelect** AskUserQuestion. Expect Sonari reads the note: "Select
   multiple: press each number, or Space on the highlighted item, then Enter to confirm."
@@ -105,7 +105,7 @@ Trigger each picker from a real `claude` session, screen off.
 
 ---
 
-## O-2 — multi-question AskUserQuestion (Tab)
+## O-2 - multi-question AskUserQuestion (Tab)
 
 - [ ] Trigger a **multi-question** AskUserQuestion (more than one sub-question in one
   picker). Expect Sonari reads them in order.
@@ -120,7 +120,7 @@ Trigger each picker from a real `claude` session, screen off.
 
 ---
 
-## >9 options — arrow fallback
+## >9 options - arrow fallback
 
 - [ ] Trigger a picker with **10 or more** options. Expect Sonari reads "More than nine
   options; use arrow keys for ten and up." in **any** verbosity.
@@ -137,7 +137,7 @@ Trigger each picker from a real `claude` session, screen off.
   you can type a custom answer, then Enter submits. (screen off)
 - [ ] **Known Claude Code quirk:** a digit typed *while in* the free-text field still acts
   as option-select (so a custom answer that *starts with a digit* isn't possible via the
-  picker). Note whether this still reproduces on this version — if so, decide whether Sonari
+  picker). Note whether this still reproduces on this version - if so, decide whether Sonari
   should warn; if Anthropic has fixed it, drop the caveat from the docs.
 
 ---
@@ -153,7 +153,7 @@ Trigger each picker from a real `claude` session, screen off.
 
 ---
 
-## O-3 — does the permission_prompt payload carry the options?
+## O-3 - does the permission_prompt payload carry the options?
 
 - [ ] **Capture a golden payload.** While a permission prompt is live, capture the raw
   `Notification` (permission_prompt) hook payload Claude Code sends (use the capture

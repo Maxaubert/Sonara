@@ -1,4 +1,4 @@
-"""Windows hotkey backend — in-process RegisterHotKey + GetMessage pump.
+"""Windows hotkey backend -- in-process RegisterHotKey + GetMessage pump.
 
 WINDOWS-only ctypes is reached ONLY through the _register/_unregister/
 _get_message/_post_quit/_last_error wrappers (monkeypatched in tests), so this
@@ -141,7 +141,7 @@ class WinHotkeyBackend(HotkeyBackend):
         # unregisters every chord; without the join, a reload's immediate start()
         # re-registers the SAME chords while the old thread still owns them
         # (RegisterHotKey -> 1409), they get dropped, then the old thread's finally
-        # unregisters them — leaving ALL hotkeys dark until a daemon restart (H2).
+        # unregisters them -- leaving ALL hotkeys dark until a daemon restart (H2).
         self._stop.set()
         self._post_quit()
         t = self._thread

@@ -19,12 +19,12 @@
 ### Task 1: `_replay` append mode; short-turn digest appends
 
 **Files:**
-- Modify: `src/sonara/daemon.py` — `_replay` signature/body; the short-turn branch of `_maybe_summarize`.
-- Test: `tests/test_daemon_summary_mode.py` — add the overtaking test; existing short-turn/lead-in tests must still pass.
+- Modify: `src/sonara/daemon.py` - `_replay` signature/body; the short-turn branch of `_maybe_summarize`.
+- Test: `tests/test_daemon_summary_mode.py` - add the overtaking test; existing short-turn/lead-in tests must still pass.
 
 **Interfaces:**
 - Consumes: `_replay(session, entries)`, `_maybe_summarize` short branch, channel `items`/`cursor`.
-- Produces: `_replay(session, entries, append=False)` — `append=True` inserts at end of `ch.items` instead of at `ch.cursor`.
+- Produces: `_replay(session, entries, append=False)` - `append=True` inserts at end of `ch.items` instead of at `ch.cursor`.
 
 - [ ] **Step 1: Add the overtaking test (failing)**
 

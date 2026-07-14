@@ -53,7 +53,7 @@ class Speaker:
         if self._say_runner is None:
             return False
         # Establish the baseline epoch BEFORE synthesis. say_runner (TTS synthesis)
-        # can take tens-hundreds of ms, during which there is no proc to cancel —
+        # can take tens-hundreds of ms, during which there is no proc to cancel --
         # a cancel() arriving in that window used to be a silent no-op and the
         # utterance played anyway. If the epoch advanced past the baseline while we
         # synthesized, a cancel landed: honor it by terminating immediately and

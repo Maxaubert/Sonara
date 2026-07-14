@@ -1,9 +1,9 @@
-"""Task 9: Doctor wiring — Windows rows reachable via PlatformBackend.supervisor.
+"""Task 9: Doctor wiring -- Windows rows reachable via PlatformBackend.supervisor.
 
 Tests that the Windows seam (sonara.platform.windows.make_backend() →
 PlatformBackend.supervisor) returns a WinSupervisorBackend whose doctor_rows()
 yields the expected row names. This exercises the make_backend() factory and the
-PlatformBackend.supervisor attribute — the actual dispatch seam — rather than
+PlatformBackend.supervisor attribute -- the actual dispatch seam -- rather than
 constructing WinSupervisorBackend directly.
 """
 from __future__ import annotations

@@ -8,7 +8,7 @@ that cycles the active reader between sessions on demand.
 The pin feature is being removed. Diagnostic logging proved why it is unfixable in
 its current shape: each pin calls `router.repin_reset()` which resets the channel
 cursor to 0, and because confirmation cues ("Pinned."/"Auto.") are stored in the
-channel at the cursor, every reset **replays stale cues** — one press echoed 2-3
+channel at the cursor, every reset **replays stale cues** - one press echoed 2-3
 times and old cues resurfaced seconds later (`pin_audit.log` showed one TOGGLE
 producing three SPOKE lines, plus phantom cues with no toggle). The cursor-reset
 replay is intrinsic to how pin pins/replays, so we remove pin entirely and rely on
@@ -19,7 +19,7 @@ cleanly.
 
 A single new hotkey action, **`next_session`** (default **Ctrl+Alt+P**, the key pin
 freed). It is a **pure round-robin** over all registered sessions in a **fixed
-order** (channel insertion order) — the ring never reorders based on queue state,
+order** (channel insertion order) - the ring never reorders based on queue state,
 so "press N times to reach session X" stays predictable. On each press:
 
 - **Advance one slot.** Move the active reader to the **next session after the
@@ -30,10 +30,10 @@ so "press N times to reach session X" stays predictable. On each press:
   again."** + the session-change chime.
 - **Landing on an unread session** (`channel.pending() > 0`): resume it **from its
   cursor** (continue where it left off; the manual switch bypasses the minqueue
-  gate — any pending counts). Announce **"Session changed: {folder}."** + chime.
+  gate - any pending counts). Announce **"Session changed: {folder}."** + chime.
 - **No session registered at all** (no channels yet): a soft cue **"No session."**
 
-**Read vs unread** is the channel's existing state — no new flag:
+**Read vs unread** is the channel's existing state - no new flag:
 - unread = `channel.pending() > 0` (cursor before the end)
 - read   = `channel.caught_up()` (cursor at the end; the session was fully heard)
 
@@ -49,19 +49,19 @@ The order does not shuffle by read/unread state.
 ## 3. How the switch sticks
 
 The handler sets `router.active = target` directly and calls `speaker.cancel()` for
-an immediate switch. The router's existing rule — *"the current reader keeps the
-floor until its channel drains"* (`_pick`) — then holds the voice on the target
+an immediate switch. The router's existing rule - *"the current reader keeps the
+floor until its channel drains"* (`_pick`) - then holds the voice on the target
 until it is done, after which normal auto handoff resumes (foreground-first, then
 oldest-waiting). No persistent lock, no `repin_reset`.
 
-Rejected alternatives: a sticky "forced session" flag (a lighter pin — reintroduces
+Rejected alternatives: a sticky "forced session" flag (a lighter pin - reintroduces
 the lock/state complexity we are removing); reordering the per-session queues
 (heavier, discards the clean cursor model).
 
 ## 4. Components
 
 - **`Router`** gains `next_session() -> (target|None, replay: bool)`: pure
-  round-robin selection — the next session after `self.active` in `self.channels`
+  round-robin selection - the next session after `self.active` in `self.channels`
   insertion order (excluding the CONTROL channel), wrapping; with one session it
   returns that session. `replay` is true when the target was caught-up (it then
   resets the target's cursor). Sets `self.active = target` and arms the
@@ -74,7 +74,7 @@ the lock/state complexity we are removing); reordering the per-session queues
 - **`daemon.py`**: replace the `PIN_TOGGLE` handler with a `NEXT_SESSION` handler
   (compute via `router.next_session()`, `speaker.cancel()`, emit the "No other
   session." cue on `None`); drop `_DEBOUNCED_HOTKEYS`' `PIN_TOGGLE` entry and add
-  `NEXT_SESSION` (debounced — it is a control toggle, a rapid double-tap should be
+  `NEXT_SESSION` (debounced - it is a control toggle, a rapid double-tap should be
   one switch).
 - **`protocol.py`**: remove `PIN_TOGGLE`, add `NEXT_SESSION = "next_session"`.
 - **keymap**: rebind the default `Ctrl+Alt+P` action from `pin_toggle` to
@@ -84,16 +84,16 @@ the lock/state complexity we are removing); reordering the per-session queues
 
 ## 5. Edge cases
 
-- **Single session:** the ring lands on itself — if read, replay ("reading
+- **Single session:** the ring lands on itself - if read, replay ("reading
   again"); if mid-read (unread), it resumes from the cursor (no audible jump, since
   it is already the active reader). `repeat` remains the way to force a replay of a
   mid-read message.
 - **No channels yet** (hotkey pressed before any output): "No session." cue.
 - **Switch target drains, auto resumes:** after the manually-selected session is
-  fully heard, `_pick` falls back to foreground-first auto — expected.
+  fully heard, `_pick` falls back to foreground-first auto - expected.
 - **Muted (global):** `next_session` still switches and announces (the chime +
   announcement are mute_exempt like other control cues); prose stays muted.
-- **Paused:** unchanged — the loop is held; the switch takes effect on resume.
+- **Paused:** unchanged - the loop is held; the switch takes effect on resume.
 - **Target session ends (SESSION_END) before being served:** `router.drop` already
   clears it; `next_session` re-scans live channels each press.
 
