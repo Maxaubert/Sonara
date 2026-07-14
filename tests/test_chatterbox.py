@@ -69,27 +69,6 @@ def test_voice_spec_tolerates_non_dict_sidecar(monkeypatch, tmp_path):
     assert spec["variant"] == "turbo" and spec["exaggeration"] is None
 
 
-# --- VRAM gate ---------------------------------------------------------------
-
-def test_gate_reads_nvidia_smi():
-    run = lambda argv, **kw: "11342\n"
-    assert cb.free_vram_gb(run=run) > 11
-    assert cb.gate_ok({"chatterbox_min_free_vram_gb": 5}, run=run) is True
-    assert cb.gate_ok({"chatterbox_min_free_vram_gb": 12}, run=run) is False
-
-
-def test_gate_passes_when_smi_missing():
-    def boom(argv, **kw):
-        raise FileNotFoundError("nvidia-smi")
-    assert cb.free_vram_gb(run=boom) is None
-    assert cb.gate_ok({"chatterbox_min_free_vram_gb": 5}, run=boom) is True
-
-
-def test_gate_threshold_zero_always_true():
-    assert cb.gate_ok({"chatterbox_min_free_vram_gb": 0},
-                      run=lambda a, **k: "1\n") is True
-
-
 # --- client against a scripted fake worker -----------------------------------
 
 FAKE_WORKER = r'''
@@ -155,19 +134,6 @@ def test_synth_timeout_fallback_single_sourced(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "_request", fake_request)
     c.synth_wav("timeout probe", "cb_default", {})   # config missing the key
     assert seen["timeout"] == DEFAULTS["chatterbox_timeout"]
-
-
-def test_default_smi_run_passes_timeout(monkeypatch):
-    # nvidia-smi can hang on driver resets/resume-from-sleep; without a timeout
-    # the single speak-loop thread wedges forever = total silence (audit #19).
-    seen = {}
-
-    def fake_check_output(argv, **kwargs):
-        seen.update(kwargs)
-        return "1024"
-    monkeypatch.setattr(cb.subprocess, "check_output", fake_check_output)
-    cb.free_vram_gb()
-    assert seen.get("timeout", 0) > 0
 
 
 def test_spawn_failure_raises_chatterbox_error(monkeypatch):

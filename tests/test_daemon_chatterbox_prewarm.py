@@ -1,15 +1,14 @@
 """Daemon pre-warms the chatterbox worker at startup / on voice switch so the
 first digest does not pay the ~40s cold model load. Only when the selected voice
-is a chatterbox voice, chatterbox is provisioned, and the VRAM gate passes."""
+is a chatterbox voice and chatterbox is provisioned."""
 from tests.daemon_helpers import make_daemon
 
 
-def _stub_chatterbox(monkeypatch, *, provisioned=True, is_cb=True, gate=True):
+def _stub_chatterbox(monkeypatch, *, provisioned=True, is_cb=True):
     import sonara.chatterbox as cb
     warmed = []
     monkeypatch.setattr(cb, "is_provisioned", lambda: provisioned)
     monkeypatch.setattr(cb, "is_chatterbox_voice", lambda v: is_cb)
-    monkeypatch.setattr(cb, "gate_ok", lambda cfg: gate)
     monkeypatch.setattr(cb.CLIENT, "warm", lambda cfg: warmed.append(cfg) or True)
     return warmed
 
@@ -57,9 +56,3 @@ def test_no_prewarm_when_not_provisioned(monkeypatch):
     assert warmed == []
 
 
-def test_no_prewarm_when_gate_closed(monkeypatch):
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    config["voice"] = "shadowheart"
-    warmed = _stub_chatterbox(monkeypatch, gate=False)
-    daemon._maybe_prewarm_chatterbox()
-    assert warmed == []
