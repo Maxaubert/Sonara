@@ -98,6 +98,8 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
+        self._preview_busy = False                  # preview_voice coalescing flag
+        self._preview_runner = None                 # injected by tests; runtime uses platform tts.run
         # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
         # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
         # since it was dispatched. A turn merely ending does NOT advance it, so the
@@ -1694,6 +1696,31 @@ class SpeechDaemon:
         with self._lock:
             self.config[key] = cleaned
             save_config(self.config)
+        return True
+
+    def preview_voice(self, voice: str) -> bool:
+        """Speak a short sample in *voice* WITHOUT changing config (settings
+        page, #34). Runs on its own thread via the platform tts runner (same
+        say_runner contract the Speaker uses); coalesced to one at a time."""
+        if getattr(self, "_preview_busy", False):
+            return False
+        runner = getattr(self, "_preview_runner", None)
+        if runner is None:
+            from sonara.platform import get_platform
+            runner = get_platform().tts.run
+        self._preview_busy = True
+        text = "This is {0} speaking for Sonara.".format(voice)
+        rate = self.config.get("rate", 200)
+
+        def _run():
+            try:
+                handle = runner(text, voice, rate)
+                handle.wait(30)
+            except Exception:  # noqa: BLE001 - preview must never crash anything
+                pass
+            finally:
+                self._preview_busy = False
+        threading.Thread(target=_run, name="sonara-preview", daemon=True).start()
         return True
 
     def _duck_exclude_pids(self) -> "set[int]":

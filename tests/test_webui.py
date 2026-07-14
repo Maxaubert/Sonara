@@ -177,3 +177,13 @@ def test_keymap_bad_action_is_400(server, monkeypatch):
     with pytest.raises(urllib.error.HTTPError) as ei:
         _post(s, "/api/keymap", {"action": "warp", "key": "w", "mods": []})
     assert ei.value.code == 400
+
+
+def test_preview_endpoint(server):
+    d, s = server
+    d.preview_voice = lambda v: v == "af_heart"
+    r = _post(s, "/api/preview", {"voice": "af_heart"})
+    assert r.status == 202
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/preview", {"voice": "busy_voice"})
+    assert ei.value.code == 409

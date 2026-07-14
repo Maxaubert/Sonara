@@ -192,6 +192,11 @@ def _make_handler(server: SettingsServer):
                 return self._handle_set(payload)
             if path == "/api/keymap":
                 return self._handle_keymap(payload)
+            if path == "/api/preview":
+                fn = getattr(server._daemon, "preview_voice", None)
+                if fn is not None and fn(str(payload.get("voice") or "")):
+                    return self._json(202, {"ok": True})
+                return self._json(409, {"error": "preview busy or unavailable"})
             return self._json(404, {"error": "unknown path"})
 
         def _handle_set(self, payload):
