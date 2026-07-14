@@ -96,32 +96,6 @@ def _to_float_mono(tensor):
     return np.asarray(tensor.squeeze().cpu().numpy(), dtype="float32").reshape(-1)
 
 
-def _dehum(audio, sr, freqs=(60.0, 120.0), q=6.0, passes=2):
-    """Notch out mains electrical hum reproduced by Chatterbox (#51).
-
-    Reference clips recorded near a PC carry mains hum: a comb of tones at 60 Hz
-    and its harmonics (120, 180 ...), dominant at 60 and 120 Hz. Chatterbox
-    clones it faithfully, and because it sits inside a chunk while the inter-
-    chunk queue gaps are true silence, it audibly pulses on/off per chunk. Every
-    registered voice's fundamental is >=140 Hz, so narrow zero-phase notches at
-    60 and 120 Hz remove the hum while leaving the voice essentially untouched.
-    A universal safety net; the per-voice clip is also cleaned at registration.
-    """
-    import numpy as np
-    try:
-        from scipy.signal import iirnotch, filtfilt
-    except Exception:  # noqa: BLE001 - no scipy: skip, never break synthesis
-        return audio
-    x = np.asarray(audio, dtype="float64")
-    if x.size < 32:
-        return audio
-    for f0 in freqs:
-        b, a = iirnotch(f0 / (sr / 2.0), q)
-        for _ in range(passes):
-            x = filtfilt(b, a, x)
-    return x.astype("float32")
-
-
 def _pcm_to_wav_b64(pcm_float, sr):
     import numpy as np
     pcm = (np.asarray(pcm_float, dtype="float32").clip(-1.0, 1.0) * 32767.0).astype("<i2")
@@ -197,7 +171,6 @@ def handle_request(state, req, now=time.time):
             parts = [_to_float_mono(state.model.generate(c, **kwargs)) for c in chunks]
             audio = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
             sr = state.model.sr
-            audio = _dehum(audio, sr)   # remove the ~120 Hz generation hum (#51)
             state.last_used = now()
         return {"ok": True, "wav_b64": _pcm_to_wav_b64(audio, sr)}
     except Exception as exc:  # noqa: BLE001 - report, never crash the loop
