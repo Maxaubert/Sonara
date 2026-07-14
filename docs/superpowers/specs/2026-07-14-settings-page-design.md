@@ -45,8 +45,8 @@ over the same daemon messages.
   at the tokenized URL. Errors with the standard "not running, run: sonara
   start" hint when the daemon is down.
 - `/sonara:settings` slash command wrapping the same.
-- `sonara status` prints the URL (convenience; the port changes across daemon
-  restarts, so the command is the canonical entry).
+- `sonara status` prints the URL; with the pinned port it is stable and
+  bookmarkable (the token rotates only when the daemon regenerates its lock).
 
 ## Feature surface (all approved)
 
@@ -70,9 +70,9 @@ NOT on the page (stays CLI-only). No playback controls, no live status strip.
   the page reconnects via its state polling on the pinned port. **Shut down** =
   a new SHUTDOWN variant that also writes the stop sentinel (mirrors `sonara
   shutdown`); the page then shows the disconnect banner until `sonara start`.
-  engine status rows (Kokoro / Chatterbox: Installed or Not installed with the
+  Engine status rows (Kokoro / Chatterbox: Installed or Not installed, with the
   `sonara voices install <engine>` command shown for copy-paste — status only,
-  no install buttons); version footer.
+  no install buttons). Version footer.
 
 ## Visual design (from codex-b.html)
 
