@@ -532,7 +532,10 @@ class WinTtsBackend(TtsBackend):
             else:
                 return _ChatterboxHandle(
                     text, self._chatterbox_synth_one(voice, cfg, rate),
-                    on_play=on_play)
+                    on_play=on_play,
+                    # configurable synth chunk size for pronunciation A/B (#27)
+                    split=lambda t: chatterbox.split_text(
+                        t, max_chars=chatterbox.chunk_chars(cfg)))
             # fell through: whole-utterance Kokoro (not-provisioned or gate-miss)
             data = self._kokoro_wav(text, rate)
             if on_play is not None:

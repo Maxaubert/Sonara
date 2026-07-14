@@ -41,3 +41,20 @@ def test_multiple_spaces_and_newlines_collapse_to_single_space():
 
 def test_empty_input_returns_empty():
     assert clean_markdown("") == ""
+
+
+# --- normalize_for_speech (#27) -------------------------------------------
+
+def test_normalize_for_speech_unsnakes_and_replaces_symbols():
+    from sonara.cleaner import normalize_for_speech
+    out = normalize_for_speech("Renamed `get_user_id` -> `fetch_user_profile` & re-ran.")
+    assert "_" not in out and "`" not in out and "->" not in out and "&" not in out
+    assert "get user id" in out
+    assert "fetch user profile" in out
+    assert " to " in out and " and " in out
+
+
+def test_normalize_for_speech_keeps_plain_prose():
+    from sonara.cleaner import normalize_for_speech
+    text = "All tests pass. Ready to deploy."
+    assert normalize_for_speech(text) == text

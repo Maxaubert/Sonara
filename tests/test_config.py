@@ -21,6 +21,7 @@ def test_defaults_has_documented_top_level_keys():
         "chatterbox_idle_unload_s",
         "chatterbox_timeout",
         "chatterbox_warm_timeout",
+        "chatterbox_max_chunk_chars",
     }
 
 
@@ -253,3 +254,16 @@ def test_chatterbox_defaults():
 def test_chatterbox_warm_timeout_default():
     from sonara.config import DEFAULTS
     assert DEFAULTS["chatterbox_warm_timeout"] == 90
+
+
+def test_chatterbox_chunk_chars_default_and_clamp():
+    # (#27) synth chunk size is configurable for pronunciation A/B testing,
+    # clamped to the worker's fixed 280 defensive re-split ceiling.
+    from sonara.config import DEFAULTS
+    from sonara import chatterbox as cb
+    assert DEFAULTS["chatterbox_max_chunk_chars"] == 280
+    assert cb.chunk_chars({}) == 280
+    assert cb.chunk_chars({"chatterbox_max_chunk_chars": 160}) == 160
+    assert cb.chunk_chars({"chatterbox_max_chunk_chars": 999}) == 280
+    assert cb.chunk_chars({"chatterbox_max_chunk_chars": 10}) == 80
+    assert cb.chunk_chars({"chatterbox_max_chunk_chars": "junk"}) == 280

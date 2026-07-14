@@ -885,6 +885,36 @@ def test_flush_cancels_pending_question_settle(monkeypatch):
     assert "fg" not in daemon._pending_decision
 
 
+def test_digest_text_is_normalized_for_speech(monkeypatch):
+    # (#27) digests bypass the assembler's markdown cleaner, so underscores,
+    # backticks, and arrows reached the TTS raw and were mispronounced.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)
+    daemon._summarize_fn = (
+        lambda text, **kw: "Renamed `get_user_id` -> `fetch_id` & re-ran.")
+    daemon._summary_worker(*calls[0])
+    ch = daemon.router.channel("fg")
+    summ = next(it for it in ch.items[ch.cursor:] if it.kind == "summary")
+    assert "_" not in summ.text and "`" not in summ.text
+    assert "->" not in summ.text and "&" not in summ.text
+    assert "get user id" in summ.text
+
+
+def test_digest_dispatch_prewarms_chatterbox(monkeypatch):
+    # (#27) the GPU model loads WHILE haiku digests, hiding the ~40s post-idle
+    # cold reload inside the digest latency instead of stalling speech after it.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    warms = []
+    monkeypatch.setattr(daemon, "_warm_chatterbox_async",
+                        lambda: warms.append(True))
+    _enable_and_feed(daemon, monkeypatch)
+    _turn_done(daemon)                                   # async digest dispatched
+    assert warms                                         # warm kicked at dispatch
+
+
 def test_short_foreground_turn_sets_reread_text(monkeypatch):
     # Deep audit (#25): short FOREGROUND turns never set _last_digest_text, so
     # summary-mode Up (the only hotkey re-read) gave a dead edge chime after a

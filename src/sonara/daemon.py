@@ -965,6 +965,21 @@ class SpeechDaemon:
             except OSError:
                 pass
 
+    def _warm_chatterbox_async(self) -> None:
+        """Run the whole prewarm check+warm OFF-thread (#27): gate_ok spawns
+        nvidia-smi, which must never run under the daemon lock (dispatch calls
+        this from handle_message). Coalesced to one warm at a time."""
+        if getattr(self, "_warm_inflight", False):
+            return
+        self._warm_inflight = True
+
+        def _run():
+            try:
+                self._maybe_prewarm_chatterbox()
+            finally:
+                self._warm_inflight = False
+        threading.Thread(target=_run, name="sonara-cb-warm", daemon=True).start()
+
     def _maybe_prewarm_chatterbox(self) -> None:
         """If the selected voice is a Chatterbox voice, the engine is provisioned,
         and the GPU has room, load the model in the worker in the BACKGROUND so the
@@ -1168,6 +1183,10 @@ class SpeechDaemon:
         # turn-ends with no user action between them each keep their digest (they
         # queue and play) -- the system never drops a finished message (#13).
         gen = self._summary_gen.get(session, 0)
+        # Overlap the GPU warm-up with the digest (#27): the ~40s post-idle cold
+        # model reload then hides inside the 10-30s haiku call instead of
+        # stalling speech AFTER it (the reported ~1 minute to first audio).
+        self._warm_chatterbox_async()
         self._summary_token += 1
         token = self._summary_token
         self._last_dispatch_token[session] = token
@@ -1260,7 +1279,9 @@ class SpeechDaemon:
             # silent recap failure is diagnosable instead of a mystery.
             print("[summary] {0}".format(reason), file=sys.stderr, flush=True)
 
+        import time as _time
         fn = self._summarize_fn or summarizer.summarize
+        t0 = _time.monotonic()
         try:
             summary = fn(text,
                          model=self.config.get("summary_model", "haiku"),
@@ -1271,9 +1292,10 @@ class SpeechDaemon:
             summary = None
         if summary:
             # Success trail: when a digest sounds wrong (truncated, odd), the
-            # log shows exactly what the model returned vs what was spoken.
-            _log("digest ok: {0} chars in, {1} chars out: {2!r}".format(
-                len(text), len(summary), summary[:120]))
+            # log shows exactly what the model returned vs what was spoken; the
+            # duration makes latency complaints diagnosable from the log (#27).
+            _log("digest ok in {0:.1f}s: {1} chars in, {2} chars out: {3!r}".format(
+                _time.monotonic() - t0, len(text), len(summary), summary[:120]))
         with self._lock:
             # A question whose lead-in this digest recaps was HELD for context-first
             # ordering; append it AFTER the digest below. Only the OWNING worker
@@ -1319,6 +1341,12 @@ class SpeechDaemon:
                 # "Session changed: X" announcement (on a reader switch) is the
                 # sole session identifier, so a digest that plays without a switch
                 # just reads (the user is already in that session) (#15).
+                # TTS-normalize (#27): digests bypass the assembler cleaner, so
+                # markdown residue / snake_case reached the voice raw and was
+                # mispronounced. Normalize BEFORE recording so Up's cache-hit
+                # re-read speaks the identical string.
+                from sonara.cleaner import normalize_for_speech
+                summary = normalize_for_speech(summary)
                 spoken = summary
                 entry = self.history.record(session, "summary", summary)
                 self._enqueue(session, "summary", spoken, False, entry=entry)

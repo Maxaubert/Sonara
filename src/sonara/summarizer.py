@@ -28,7 +28,9 @@ THE DIGEST:
 - Cut the noise: process narration and self-notes (like "let me run this tool" or "now I will check the file"), low-level technical minutiae, file paths and line numbers, repetition, and filler
 - Match length to substance: a sentence or two for a simple message, a few short paragraphs for a dense one; never pad, and never truncate away real content
 - If the heart of the message is a quoted artifact (a prompt, plan, list, or explanation the user asked for), convey its actual key points, not just the fact it was shown
-- Speakable plain text only: no markdown, no code, no headings; keep key technical terms and names
+- Written for the EAR, conversational: phrase everything the way you would naturally SAY it to the user, not the way documentation writes it
+- Speakable plain text only: no markdown, no code, no headings, and no symbols a voice would stumble on -- never underscores, backticks, asterisks, arrows, or slash-separated paths; say identifiers and filenames as natural words (user_id becomes user ID, config.py becomes the config file)
+- Keep key technical terms and names, spoken naturally
 
 EXAMPLES:
 Input: <message>What model do you use for summaries? Let me know.</message>
