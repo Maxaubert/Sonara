@@ -206,6 +206,22 @@ def _make_handler(server: SettingsServer):
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self._json(200, server.state())
+            if path == "/api/preview-audio":
+                # Pre-rendered preview file (#38): instant playback in the page.
+                from sonara import previews
+                q = parse_qs(urlparse(self.path).query)
+                voice = (q.get("voice") or [""])[0]
+                try:
+                    body = previews.preview_path(voice).read_bytes()
+                except OSError:
+                    return self._json(404, {"error": "no preview for this voice yet"})
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "max-age=3600")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path in ("/", "/settings"):
                 body = _page_bytes()
                 self.send_response(200)

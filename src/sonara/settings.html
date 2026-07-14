@@ -260,41 +260,56 @@ async function set(key, value) {
   const r = await POST("/api/set", {key, value});
   if (r.ok) { state = await r.json(); render(state); pulseSaved(); }
 }
+let voicesSig = "";
+function setVal(id, v) {
+  // poll-safe: never touch a control the user is interacting with (#38)
+  const el = document.getElementById(id);
+  if (el && document.activeElement !== el && String(el.value) !== String(v)) el.value = v;
+}
 function render(s) {
-  // voices: rebuild the select grouped by engine
+  // voices: rebuild the select ONLY when its contents actually changed, and
+  // never while it is focused/open -- the 3s poll used to close the dropdown
+  // on every cycle (#38)
   const sel = document.getElementById("voice-select");
-  sel.innerHTML = "";
-  for (const [engine, names] of Object.entries(s.voices)) {
-    if (!names.length) continue;
-    const og = document.createElement("optgroup");
-    og.label = engine[0].toUpperCase() + engine.slice(1);
-    for (const n of names) {
-      const o = document.createElement("option");
-      o.value = n; o.textContent = n; o.selected = (n === s.config.voice);
-      og.appendChild(o);
+  const sig = JSON.stringify([s.voices, s.config.voice]);
+  if (sig !== voicesSig && document.activeElement !== sel) {
+    voicesSig = sig;
+    sel.innerHTML = "";
+    for (const [engine, names] of Object.entries(s.voices)) {
+      if (!names.length) continue;
+      const og = document.createElement("optgroup");
+      og.label = engine[0].toUpperCase() + engine.slice(1);
+      for (const n of names) {
+        const o = document.createElement("option");
+        o.value = n; o.textContent = n; o.selected = (n === s.config.voice);
+        og.appendChild(o);
+      }
+      sel.appendChild(og);
     }
-    sel.appendChild(og);
   }
-  document.getElementById("rate").value = s.config.rate;
+  setVal("rate", s.config.rate);
   document.getElementById("rate-out").textContent = s.config.rate + " wpm";
   document.getElementById("minqueue-out").textContent = s.config.minqueue;
   setSwitch("summary-switch", s.config.summary_mode);
-  document.getElementById("model-select").value = s.config.summary_model;
-  document.getElementById("timeout").value = s.config.summary_timeout;
+  setVal("model-select", s.config.summary_model);
+  setVal("timeout", s.config.summary_timeout);
   document.getElementById("timeout-out").textContent = s.config.summary_timeout + " s";
-  document.getElementById("settle").value = s.config.summary_settle_ms;
+  setVal("settle", s.config.summary_settle_ms);
   document.getElementById("settle-out").textContent = s.config.summary_settle_ms + " ms";
   setSwitch("duck-switch", s.config.audio_control);
-  document.getElementById("duck").value = s.config.duck_level;
+  setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
-  document.getElementById("chunk").value = s.config.chatterbox_max_chunk_chars;
+  setVal("chunk", s.config.chatterbox_max_chunk_chars);
   document.getElementById("chunk-out").textContent = s.config.chatterbox_max_chunk_chars;
-  // hotkeys
+  // hotkeys (skip rows mid-capture and identical content)
   for (const b of s.keymap) {
-    const row = document.querySelector(`[data-action="${b.action}"] .kbd`);
-    if (row) row.innerHTML = b.key
+    const rowEl = document.querySelector(`[data-action="${b.action}"]`);
+    if (!rowEl || rowEl.classList.contains("listen")) continue;
+    const kbd = rowEl.querySelector(".kbd");
+    const html = b.key
       ? [...b.mods, b.key].map(k => `<i>${k}</i>`).join("")
       : `<i class="unbound">unbound</i>`;
+    if (kbd && kbd.innerHTML !== html) kbd.innerHTML = html;
   }
   // system
   document.getElementById("sys-pid").textContent = s.daemon.pid;
@@ -324,8 +339,19 @@ function pulseSaved() {
 // control wiring
 document.getElementById("voice-select").addEventListener("change",
   e => set("voice", e.target.value));
-document.getElementById("voice-preview").addEventListener("click",
-  () => POST("/api/preview", {voice: document.getElementById("voice-select").value}));
+let previewAudio = null;
+document.getElementById("voice-preview").addEventListener("click", () => {
+  // pre-rendered file plays INSTANTLY (#38); live synthesis only as fallback
+  // while the daemon is still rendering that voice's preview in the background
+  const v = document.getElementById("voice-select").value;
+  if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+  const url = "/api/preview-audio?voice=" + encodeURIComponent(v) +
+              "&token=" + encodeURIComponent(TOKEN);
+  const a = new Audio(url);
+  previewAudio = a;
+  a.onerror = () => { POST("/api/preview", {voice: v}); };
+  a.play().catch(() => { POST("/api/preview", {voice: v}); });
+});
 document.getElementById("rate").addEventListener("change", e => set("rate", +e.target.value));
 document.getElementById("timeout").addEventListener("change", e => set("summary_timeout", +e.target.value));
 document.getElementById("settle").addEventListener("change", e => set("summary_settle_ms", +e.target.value));

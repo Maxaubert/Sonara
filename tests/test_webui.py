@@ -216,3 +216,31 @@ def test_settings_page_requires_token(server):
     with pytest.raises(urllib.error.HTTPError) as ei:
         _get(s, "/settings", token=None)
     assert ei.value.code == 403
+
+
+def test_preview_audio_served_from_file(server, tmp_path, monkeypatch):
+    # (#38) previews play INSTANTLY from pre-rendered files
+    from sonara import previews
+    monkeypatch.setattr(previews, "preview_dir", lambda: tmp_path)
+    (tmp_path / "af_heart.wav").write_bytes(b"RIFFfakewav")
+    r = _get(s := server[1], "/api/preview-audio?voice=af_heart")
+    assert r.status == 200
+    assert r.headers["Content-Type"] == "audio/wav"
+    assert r.read() == b"RIFFfakewav"
+
+
+def test_preview_audio_missing_is_404(server, tmp_path, monkeypatch):
+    from sonara import previews
+    monkeypatch.setattr(previews, "preview_dir", lambda: tmp_path)
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _get(server[1], "/api/preview-audio?voice=nope")
+    assert ei.value.code == 404
+
+
+def test_preview_audio_requires_token(server, tmp_path, monkeypatch):
+    from sonara import previews
+    monkeypatch.setattr(previews, "preview_dir", lambda: tmp_path)
+    (tmp_path / "v.wav").write_bytes(b"RIFF")
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _get(server[1], "/api/preview-audio?voice=v", token=None)
+    assert ei.value.code == 403
