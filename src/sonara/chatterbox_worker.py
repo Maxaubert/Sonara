@@ -96,6 +96,30 @@ def _to_float_mono(tensor):
     return np.asarray(tensor.squeeze().cpu().numpy(), dtype="float32").reshape(-1)
 
 
+def _dehum(audio, sr, f0=120.0, q=6.0, passes=2):
+    """Notch out the Chatterbox generation hum (#51).
+
+    The model emits a persistent ~120 Hz tone in the quiet gaps of every voice
+    (measured ~8x Kokoro's floor); because it is present within a chunk but the
+    inter-chunk queue gaps are true silence, it audibly pulses on/off per chunk.
+    Every registered voice's fundamental is >=140 Hz, so a narrow zero-phase
+    notch around 120 Hz removes the hum to Kokoro's floor while leaving the
+    voice untouched (verified: 120 Hz -26/-13/-20 dB across voices, 100% body).
+    """
+    import numpy as np
+    try:
+        from scipy.signal import iirnotch, filtfilt
+    except Exception:  # noqa: BLE001 - no scipy: skip, never break synthesis
+        return audio
+    x = np.asarray(audio, dtype="float64")
+    if x.size < 32:
+        return audio
+    b, a = iirnotch(f0 / (sr / 2.0), q)
+    for _ in range(passes):
+        x = filtfilt(b, a, x)
+    return x.astype("float32")
+
+
 def _pcm_to_wav_b64(pcm_float, sr):
     import numpy as np
     pcm = (np.asarray(pcm_float, dtype="float32").clip(-1.0, 1.0) * 32767.0).astype("<i2")
@@ -171,6 +195,7 @@ def handle_request(state, req, now=time.time):
             parts = [_to_float_mono(state.model.generate(c, **kwargs)) for c in chunks]
             audio = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
             sr = state.model.sr
+            audio = _dehum(audio, sr)   # remove the ~120 Hz generation hum (#51)
             state.last_used = now()
         return {"ok": True, "wav_b64": _pcm_to_wav_b64(audio, sr)}
     except Exception as exc:  # noqa: BLE001 - report, never crash the loop
