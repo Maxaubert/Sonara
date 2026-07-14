@@ -36,4 +36,4 @@ kokoro = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-sonara = ["platform/windows/earcons/*.wav"]
+sonara = ["platform/windows/earcons/*.wav", "settings.html"]

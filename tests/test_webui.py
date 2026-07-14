@@ -83,6 +83,7 @@ def test_state_shape(server):
     assert state["keymap"][0]["action"] == "mute"
     assert state["daemon"]["foreground"] == "sess-1"
     assert isinstance(state["daemon"]["pid"], int)
+    assert isinstance(state["daemon"]["port"], int)
 
 
 def _post(s, path, obj, token="tok123"):
@@ -208,3 +209,10 @@ def test_settings_page_served_and_self_contained(server):
     assert "https://" not in html
     # / redirects or serves too
     assert _get(s, "/").status == 200
+
+
+def test_settings_page_requires_token(server):
+    d, s = server
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _get(s, "/settings", token=None)
+    assert ei.value.code == 403

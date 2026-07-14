@@ -22,6 +22,15 @@ _SINGLETON = None
 _MUTEX = None       # process-lifetime handle to the named single-instance mutex
 
 
+def _select_token(prior_lock: dict) -> str:
+    """Reuse a well-formed prior lockfile token (settings-page restart
+    reconnect + durable bookmarks, #34); otherwise mint a fresh one."""
+    tok = (prior_lock or {}).get("token")
+    if isinstance(tok, str) and len(tok) == 64 and all(c in "0123456789abcdef" for c in tok):
+        return tok
+    return secrets.token_hex(32)
+
+
 RATE_MIN = 100
 RATE_MAX = 400
 
@@ -1938,7 +1947,11 @@ class SpeechDaemon:
         srv.bind((transport.HOST, 0))
         srv.listen(16)
         port = srv.getsockname()[1]
-        self._token = secrets.token_hex(32)
+        # Reuse the previous token across restarts (#34): the settings page's
+        # Restart button and bookmarked page URLs keep working because the
+        # respawned daemon accepts the same token. Same-user security boundary
+        # is unchanged -- the token still lives 0600 in the user's own home.
+        self._token = _select_token(transport.read_lockfile(LOCK_PATH) or {})
         from sonara.webui import SettingsServer
         self._webui = SettingsServer(self, self._token,
                                      int(self.config.get("settings_port", 27431)))

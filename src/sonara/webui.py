@@ -8,6 +8,7 @@ exact paths the CLI uses, so the page cannot drift from CLI behavior.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import threading
@@ -152,6 +153,7 @@ class SettingsServer:
                 "pid": os.getpid(),
                 "uptime_s": int(time.monotonic() - self._started),
                 "foreground": self._daemon.sessions.foreground(),
+                "port": self.port,
             },
         }
 
@@ -165,7 +167,7 @@ def _make_handler(server: SettingsServer):
             q = parse_qs(urlparse(self.path).query)
             tok = (self.headers.get("X-Sonara-Token")
                    or (q.get("token") or [None])[0])
-            return tok == server._token
+            return tok is not None and hmac.compare_digest(str(tok), server._token)
 
         def _json(self, code: int, obj) -> None:
             body = json.dumps(obj).encode("utf-8")
