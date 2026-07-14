@@ -20,7 +20,7 @@ from urllib.parse import urlparse, parse_qs
 _PAGE_KEYS = (
     "voice", "rate", "minqueue", "summary_mode", "summary_model",
     "summary_timeout", "summary_settle_ms", "audio_control", "duck_level",
-    "chatterbox_max_chunk_chars",
+    "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
 )
 
 _MSG_KEYS = {
@@ -32,7 +32,7 @@ _MSG_KEYS = {
     "duck_level":    lambda v: {"type": "set_duck_level", "level": int(v)},
 }
 _CONFIG_KEYS = ("summary_model", "summary_timeout", "summary_settle_ms",
-                "chatterbox_max_chunk_chars")
+                "chatterbox_max_chunk_chars", "chatterbox_exaggeration")
 
 
 def _dispatch(daemon, msg):

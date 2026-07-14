@@ -1731,6 +1731,7 @@ class SpeechDaemon:
             "summary_timeout": lambda v: max(15, min(300, int(v))),
             "summary_settle_ms": lambda v: max(0, min(5000, int(v))),
             "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
+            "chatterbox_exaggeration": lambda v: max(0.0, min(1.0, float(v))),
         }
         fn = clamps.get(key)
         if fn is None:

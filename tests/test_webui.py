@@ -20,7 +20,8 @@ class FakeDaemon:
                        "summary_mode": True, "summary_model": "haiku",
                        "summary_timeout": 60, "summary_settle_ms": 600,
                        "audio_control": False, "duck_level": 20,
-                       "chatterbox_max_chunk_chars": 280, "settings_port": 0}
+                       "chatterbox_max_chunk_chars": 280, "chatterbox_exaggeration": 0.0,
+                       "settings_port": 0}
         self.sessions = FakeSessions()
         self.messages = []
 
