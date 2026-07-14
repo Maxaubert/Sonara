@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import time
+import webbrowser
 from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
@@ -53,6 +54,25 @@ def _cmd_status(_args) -> int:
         print("sonara: no response from daemon (is it running?)")
         return 1
     print(json.dumps(reply, indent=2))
+    from sonara.platform import transport
+    info = transport.read_lockfile(paths.LOCK_PATH)
+    if info and info.get("http_port"):
+        print("Settings page: http://127.0.0.1:{0}/settings?token={1}".format(
+            info["http_port"], info.get("token", "")))
+    return 0
+
+
+def _cmd_settings(_args) -> int:
+    """Open the browser settings page at its tokenized URL (#34)."""
+    from sonara.platform import transport
+    info = transport.read_lockfile(paths.LOCK_PATH)
+    if not info or not info.get("http_port"):
+        print(_daemon_not_running_message())
+        return 1
+    url = "http://127.0.0.1:{0}/settings?token={1}".format(
+        info["http_port"], info.get("token", ""))
+    print("Settings page: " + url)
+    webbrowser.open(url)
     return 0
 
 
@@ -786,6 +806,9 @@ def _cmd_daemon(_args) -> int:
 
 def _register_local(sub) -> None:
     """Register local (non-control) subcommands."""
+    sub.add_parser(
+        "settings", help="open the browser settings page").set_defaults(
+        func=_cmd_settings)
     sub.add_parser(
         "shutdown",
         help="stop the daemon and supervisor (stays stopped until 'sonara start')",
