@@ -158,6 +158,19 @@ def _write_user_keymap(user: dict) -> None:
     os.replace(tmp, str(KEYMAP_PATH))
 
 
+def bind_action(action: str, key: str, mods: list) -> None:
+    """Bind *action* to key+mods in the user's keymap.json (settings page, #34).
+    The override fully replaces the default binding, exactly like a hand-edit."""
+    if action not in ACTION_MESSAGES:
+        raise ValueError(f"unknown action {action!r}")
+    key = (key or "").strip().lower()
+    if not key:
+        raise ValueError("empty key")
+    user = _read_user_keymap()
+    user[action] = {"key": key, "mods": [str(m).lower() for m in (mods or [])]}
+    _write_user_keymap(user)
+
+
 def unbind_action(action: str) -> None:
     """Persist 'no hotkey' for *action* in the user's keymap.json. If the action
     has a default binding, write an explicit unbound override ({"key": null}) so it

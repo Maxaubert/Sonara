@@ -148,3 +148,32 @@ def test_non_object_json_body_is_400(server):
     with pytest.raises(urllib.error.HTTPError) as ei:
         urllib.request.urlopen(req, timeout=5)
     assert ei.value.code == 400
+
+
+def test_keymap_bind_writes_and_reloads(server, monkeypatch):
+    d, s = server
+    bound = []
+    monkeypatch.setattr(webui, "_bind_action", lambda a, k, m: bound.append((a, k, m)))
+    r = _post(s, "/api/keymap", {"action": "mute", "key": "k", "mods": ["ctrl", "alt"]})
+    assert r.status == 200
+    assert bound == [("mute", "k", ["ctrl", "alt"])]
+    assert d.messages[-1]["type"] == "reload_keymap"
+
+
+def test_keymap_unbind(server, monkeypatch):
+    d, s = server
+    unbound = []
+    monkeypatch.setattr(webui, "_unbind_action", lambda a: unbound.append(a))
+    _post(s, "/api/keymap", {"action": "mute", "unbind": True})
+    assert unbound == ["mute"]
+    assert d.messages[-1]["type"] == "reload_keymap"
+
+
+def test_keymap_bad_action_is_400(server, monkeypatch):
+    d, s = server
+    def boom(a, k, m):
+        raise ValueError("unknown action")
+    monkeypatch.setattr(webui, "_bind_action", boom)
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/keymap", {"action": "warp", "key": "w", "mods": []})
+    assert ei.value.code == 400

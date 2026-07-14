@@ -287,3 +287,20 @@ def test_migrate_then_resolve_uses_ctrl_alt(win, monkeypatch, tmp_path):
     resolved = keymap.resolve_keymap(keymap.load_keymap())
     row = next(e for e in resolved if e["action"] == "nav_next")
     assert row["modifiers"] == (0x0002 | 0x0001)       # ctrl|alt, no shift (0x0004)
+
+
+def test_bind_action_persists_override(tmp_path, monkeypatch):
+    from sonara import keymap
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    monkeypatch.setattr(keymap, "ensure_sonara_dir", lambda: None)
+    keymap.bind_action("mute", "k", ["ctrl", "shift"])
+    km = keymap.load_keymap()
+    assert km["mute"] == {"key": "k", "mods": ["ctrl", "shift"]}
+
+
+def test_bind_action_rejects_unknown_action(tmp_path, monkeypatch):
+    from sonara import keymap
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    import pytest
+    with pytest.raises(ValueError):
+        keymap.bind_action("warp_drive", "w", ["ctrl"])

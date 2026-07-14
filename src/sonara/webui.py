@@ -45,6 +45,16 @@ def _dispatch(daemon, msg):
     return daemon.handle_message(msg)
 
 
+def _bind_action(action, key, mods):
+    from sonara import keymap
+    keymap.bind_action(action, key, mods)
+
+
+def _unbind_action(action):
+    from sonara import keymap
+    keymap.unbind_action(action)
+
+
 def _installed_voices() -> dict:
     """Voices grouped by engine. Lazy imports; each group degrades to []."""
     from sonara import kokoro, chatterbox
@@ -180,6 +190,8 @@ def _make_handler(server: SettingsServer):
                 return self._json(400, {"error": "bad json"})
             if path == "/api/set":
                 return self._handle_set(payload)
+            if path == "/api/keymap":
+                return self._handle_keymap(payload)
             return self._json(404, {"error": "unknown path"})
 
         def _handle_set(self, payload):
@@ -198,4 +210,17 @@ def _make_handler(server: SettingsServer):
                     return self._json(200, server.state())
                 return self._json(400, {"error": f"bad value for {key}"})
             return self._json(400, {"error": f"unknown key {key!r}"})
+
+        def _handle_keymap(self, payload):
+            action = payload.get("action")
+            try:
+                if payload.get("unbind"):
+                    _unbind_action(action)
+                else:
+                    _bind_action(action, payload.get("key"),
+                                 payload.get("mods") or [])
+            except ValueError as exc:
+                return self._json(400, {"error": str(exc)})
+            _dispatch(server._daemon, {"v": 1, "type": "reload_keymap"})
+            return self._json(200, server.state())
     return Handler
