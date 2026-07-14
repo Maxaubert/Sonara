@@ -98,6 +98,8 @@
     .title-row p { margin:7px 0 0; color:var(--secondary); font-size:12px; }
     .state { display:flex; align-items:center; gap:6px; color:var(--secondary); font-size:10px; }.state i{width:7px;height:7px;border-radius:50%;background:#31ad77;box-shadow:0 0 0 3px rgba(49,173,119,.12)}
     .state.flash i{box-shadow:0 0 0 5px rgba(49,173,119,.25)}
+    .state.error{color:var(--red);font-weight:650}.state.error i{background:var(--red);box-shadow:0 0 0 3px rgba(196,61,76,.18)}
+    body.offline .kbd{pointer-events:none;opacity:.5}
     .group-label { display:flex; justify-content:space-between; align-items:baseline; margin:24px 3px 8px; color:var(--secondary); font-size:11px; font-weight:650; }
     .group-label span:last-child { color:var(--tertiary); font-size:9.5px; font-weight:500; }
     .inset { background:var(--group); border:1px solid var(--line); border-radius:15px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.025); }
@@ -243,28 +245,50 @@ const POST = (p, obj) => fetch(p, {method: "POST",
   body: JSON.stringify(obj)});
 
 let state = null;
+let mutationSeq = 0;   // bumps on every accepted mutation response (#38):
+                       // an in-flight 3s poll must never overwrite fresher state
 async function refresh() {
+  const seqAtStart = mutationSeq;
   try {
     const r = await API("/api/state");
     if (!r.ok) throw new Error(r.status);
-    state = await r.json();
-    render(state);
+    const fresh = await r.json();
+    if (seqAtStart === mutationSeq) { state = fresh; render(state); }
     setBanner(false);
   } catch (e) { setBanner(true); }
 }
 function setBanner(down) {
   document.getElementById("offline-banner").style.display = down ? "flex" : "none";
-  document.querySelectorAll("input,select,button.switch").forEach(el => el.disabled = down);
+  document.querySelectorAll("input,select,button").forEach(el => el.disabled = down);
+  document.body.classList.toggle("offline", down);
+}
+async function acceptState(r) {
+  mutationSeq++;
+  state = await r.json();
+  render(state);
+  pulseSaved();
+}
+async function showApiError(r) {
+  let msg = "Change failed";
+  try { msg = (await r.json()).error || msg; } catch (e) {}
+  flashError(msg);
+  refresh();                     // snap controls back to authoritative state
 }
 async function set(key, value) {
   const r = await POST("/api/set", {key, value});
-  if (r.ok) { state = await r.json(); render(state); pulseSaved(); }
+  if (r.ok) { await acceptState(r); } else { await showApiError(r); }
 }
 let voicesSig = "";
+function updateFill(el) {
+  if (el.type !== "range") return;
+  const pct = (el.value - el.min) / (el.max - el.min) * 100;
+  el.style.setProperty("--fill", pct + "%");
+}
 function setVal(id, v) {
   // poll-safe: never touch a control the user is interacting with (#38)
   const el = document.getElementById(id);
   if (el && document.activeElement !== el && String(el.value) !== String(v)) el.value = v;
+  if (el) updateFill(el);
 }
 function render(s) {
   // voices: rebuild the select ONLY when its contents actually changed, and
@@ -301,13 +325,14 @@ function render(s) {
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
   setVal("chunk", s.config.chatterbox_max_chunk_chars);
   document.getElementById("chunk-out").textContent = s.config.chatterbox_max_chunk_chars;
-  // hotkeys (skip rows mid-capture and identical content)
+  // hotkeys (skip rows mid-capture and identical content; escape names)
+  const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
   for (const b of s.keymap) {
     const rowEl = document.querySelector(`[data-action="${b.action}"]`);
     if (!rowEl || rowEl.classList.contains("listen")) continue;
     const kbd = rowEl.querySelector(".kbd");
     const html = b.key
-      ? [...b.mods, b.key].map(k => `<i>${k}</i>`).join("")
+      ? [...b.mods, b.key].map(k => `<i>${esc(k)}</i>`).join("")
       : `<i class="unbound">unbound</i>`;
     if (kbd && kbd.innerHTML !== html) kbd.innerHTML = html;
   }
@@ -329,6 +354,19 @@ function fmtUptime(sec) {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
   return h ? `${h}h ${m}m` : `${m}m`;
 }
+let errT;
+function flashError(msg) {
+  document.querySelectorAll(".state").forEach(el => {
+    el.classList.add("error");
+    el.dataset.prev = el.lastChild.textContent;
+    el.lastChild.textContent = msg;
+  });
+  clearTimeout(errT);
+  errT = setTimeout(() => document.querySelectorAll(".state").forEach(el => {
+    el.classList.remove("error");
+    el.lastChild.textContent = el.dataset.prev || "Saved";
+  }), 3000);
+}
 let savedT;
 function pulseSaved() {
   document.querySelectorAll(".state").forEach(el => el.classList.add("flash"));
@@ -349,8 +387,14 @@ document.getElementById("voice-preview").addEventListener("click", () => {
               "&token=" + encodeURIComponent(TOKEN);
   const a = new Audio(url);
   previewAudio = a;
-  a.onerror = () => { POST("/api/preview", {voice: v}); };
-  a.play().catch(() => { POST("/api/preview", {voice: v}); });
+  let fell = false;
+  const fallback = () => {          // onerror AND play().catch can both fire (#38)
+    if (fell) return;
+    fell = true;
+    POST("/api/preview", {voice: v});
+  };
+  a.onerror = fallback;
+  a.play().catch(fallback);
 });
 document.getElementById("rate").addEventListener("change", e => set("rate", +e.target.value));
 document.getElementById("timeout").addEventListener("change", e => set("summary_timeout", +e.target.value));
@@ -373,35 +417,67 @@ document.getElementById("mq-plus").addEventListener("click", () => {
   set("minqueue", Math.min(10, state.config.minqueue + 1));
 });
 // hotkey capture
+// browser key names -> Sonara keytable names
+const KEY_ALIASES = {arrowup: "up", arrowdown: "down", arrowleft: "left",
+                     arrowright: "right", ".": "period", "[": "leftbracket",
+                     "]": "rightbracket"};
+let activeCapture = null;   // exactly ONE capture at a time (#38): two armed
+                            // rows used to bind a single keypress to BOTH
+function cancelCapture() {
+  if (!activeCapture) return;
+  removeEventListener("keydown", activeCapture.handler, true);
+  activeCapture.row.classList.remove("listen");
+  activeCapture = null;
+}
+function armCapture(row, action) {
+  cancelCapture();
+  row.classList.add("listen");
+  const h = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
+    cancelCapture();
+    if (e.key === "Escape") return;
+    const mods = [];
+    if (e.ctrlKey) mods.push("ctrl");
+    if (e.altKey) mods.push("alt");
+    if (e.shiftKey) mods.push("shift");
+    let key = e.key.toLowerCase();
+    key = KEY_ALIASES[key] || key;
+    const valid = state && state.keys && state.keys.keys;
+    if (valid && valid.length && !valid.includes(key)) {
+      flashError(`Key "${e.key}" is not supported`);   // never persist junk (#38)
+      return;
+    }
+    const sortedMods = JSON.stringify([...mods].sort());
+    const conflict = state && state.keymap.find(b =>
+      b.action !== action && b.key === key &&
+      JSON.stringify([...(b.mods || [])].sort()) === sortedMods);
+    if (conflict && !confirm(`Also bound to ${conflict.action} - rebind anyway?`)) return;
+    const r = await POST("/api/keymap", {action, key, mods});
+    if (r.ok) { await acceptState(r); } else { await showApiError(r); }
+  };
+  activeCapture = {row, handler: h};
+  addEventListener("keydown", h, true);
+}
 document.querySelectorAll("[data-action]").forEach(row => {
   const action = row.dataset.action;
-  row.querySelector(".kbd").addEventListener("click", () => {
-    row.classList.add("listen");
-    const h = async (e) => {
-      e.preventDefault();
-      if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return;
-      removeEventListener("keydown", h, true);
-      row.classList.remove("listen");
-      if (e.key === "Escape") return;
-      const mods = [];
-      if (e.ctrlKey) mods.push("ctrl");
-      if (e.altKey) mods.push("alt");
-      if (e.shiftKey) mods.push("shift");
-      const key = e.key.toLowerCase();
-      const sortedMods = JSON.stringify([...mods].sort());
-      const conflict = state && state.keymap.find(b =>
-        b.action !== action && b.key === key &&
-        JSON.stringify([...(b.mods || [])].sort()) === sortedMods);
-      if (conflict && !confirm(`Also bound to ${conflict.action} - rebind anyway?`)) return;
-      const r = await POST("/api/keymap", {action, key, mods});
-      if (r.ok) { state = await r.json(); render(state); pulseSaved(); }
-    };
-    addEventListener("keydown", h, true);
+  const kbd = row.querySelector(".kbd");
+  kbd.tabIndex = 0;                       // keyboard-first product: capture
+  kbd.setAttribute("role", "button");     // must work without a pointer (#38)
+  kbd.setAttribute("aria-label", "Change hotkey for " + action.replace(/_/g, " "));
+  kbd.addEventListener("click", () => {
+    if (activeCapture && activeCapture.row === row) { cancelCapture(); return; }
+    armCapture(row, action);
+  });
+  kbd.addEventListener("keyup", (e) => {  // keyup: the activating press must
+    if (activeCapture) return;            // not become the captured binding
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); armCapture(row, action); }
   });
   const un = row.querySelector(".unbind");
   if (un) un.addEventListener("click", async () => {
     const r = await POST("/api/keymap", {action, unbind: true});
-    if (r.ok) { state = await r.json(); render(state); pulseSaved(); }
+    if (r.ok) { await acceptState(r); } else { await showApiError(r); }
   });
 });
 // daemon buttons
@@ -411,6 +487,8 @@ document.getElementById("btn-shutdown").addEventListener("click", () => {
   if (confirm("Shut Sonara down? It stays down until 'sonara start'."))
     POST("/api/daemon", {op: "shutdown"});
 });
+document.querySelectorAll("input[type=range]").forEach(el =>
+  el.addEventListener("input", () => updateFill(el)));
 refresh();
 setInterval(refresh, 3000);
   </script>

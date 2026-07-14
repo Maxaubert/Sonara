@@ -14,6 +14,14 @@ KEY_CODES = {
     "right": 0x27, "rightarrow": 0x27,
     "down": 0x28, "downarrow": 0x28,
 }
+# Every letter and digit (#38): the table used to cover only 9 letters, so a
+# hotkey captured on the settings page with any other letter persisted a name
+# resolve_keymap rejects -- and one bad entry disables ALL hotkeys. VK codes
+# for A-Z/0-9 equal their ASCII uppercase/digit values.
+for _c in "abcdefghijklmnopqrstuvwxyz":
+    KEY_CODES.setdefault(_c, ord(_c.upper()))
+for _d in "0123456789":
+    KEY_CODES.setdefault(_d, ord(_d))
 
 # RegisterHotKey fsModifiers (WinUser.h).
 MOD_MASKS = {

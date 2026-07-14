@@ -84,13 +84,6 @@ def _installed_voices() -> dict:
     from sonara import kokoro, chatterbox
     out = {"windows": [], "kokoro": [], "chatterbox": []}
     try:
-        from sonara.platform import get_platform
-        for v in get_platform().tts.list_voices():
-            name = getattr(v, "display_name", None) or str(v)
-            out["windows"].append(name)
-    except Exception:  # noqa: BLE001 - listing must never break the page
-        pass
-    try:
         if kokoro.is_installed():
             out["kokoro"] = list(kokoro.VOICES)
     except Exception:  # noqa: BLE001
@@ -99,6 +92,15 @@ def _installed_voices() -> dict:
         if chatterbox.is_provisioned():
             out["chatterbox"] = list(chatterbox.list_voices())
     except Exception:  # noqa: BLE001
+        pass
+    neural = set(out["kokoro"]) | set(out["chatterbox"])
+    try:
+        from sonara.platform import get_platform
+        for v in get_platform().tts.list_voices():
+            name = getattr(v, "display_name", None) or str(v)
+            if name not in neural:      # the WinRT list echoes neural voices (#38)
+                out["windows"].append(name)
+    except Exception:  # noqa: BLE001 - listing must never break the page
         pass
     return out
 
@@ -118,6 +120,18 @@ def _page_bytes() -> bytes:
     path = os.path.join(os.path.dirname(__file__), "settings.html")
     with open(path, "rb") as fh:
         return fh.read()
+
+
+def _key_names() -> dict:
+    """Bindable key/modifier names from the platform keytables (#38): the page
+    validates a capture BEFORE posting, so an unsupported key gets instant
+    feedback instead of a rejected bind (or, historically, bricked hotkeys)."""
+    try:
+        from sonara.keymap import _keytables
+        key_codes, mod_masks = _keytables()
+        return {"keys": sorted(key_codes), "mods": sorted(mod_masks)}
+    except Exception:  # noqa: BLE001 - page must render even with no platform
+        return {"keys": [], "mods": []}
 
 
 def _keymap_state() -> list:
@@ -172,6 +186,7 @@ class SettingsServer:
             "voices": _installed_voices(),
             "engines": _engine_status(),
             "keymap": _keymap_state(),
+            "keys": _key_names(),
             "daemon": {
                 "pid": os.getpid(),
                 "uptime_s": int(time.monotonic() - self._started),
@@ -218,7 +233,7 @@ def _make_handler(server: SettingsServer):
                 self.send_response(200)
                 self.send_header("Content-Type", "audio/wav")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "max-age=3600")
+                self.send_header("Cache-Control", "private, max-age=3600")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -237,9 +252,9 @@ def _make_handler(server: SettingsServer):
                 return self._json(403, {"error": "missing or wrong token; open via: sonara settings"})
             path = urlparse(self.path).path
             try:
-                n = int(self.headers.get("Content-Length") or 0)
+                n = max(0, int(self.headers.get("Content-Length") or 0))
                 payload = json.loads(self.rfile.read(min(n, 65536)) or b"{}")
-            except (ValueError, OSError):
+            except Exception:  # noqa: BLE001 - malformed body is a 400, never a traceback
                 return self._json(400, {"error": "bad json"})
             if not isinstance(payload, dict):
                 return self._json(400, {"error": "bad json"})
@@ -281,7 +296,7 @@ def _make_handler(server: SettingsServer):
                 else:
                     _bind_action(action, payload.get("key"),
                                  payload.get("mods") or [])
-            except ValueError as exc:
+            except Exception as exc:  # noqa: BLE001 - junk input is a 400, not a dead reply
                 return self._json(400, {"error": str(exc)})
             _dispatch(server._daemon, {"v": 1, "type": "reload_keymap"})
             return self._json(200, server.state())
