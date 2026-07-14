@@ -22,6 +22,15 @@ _SINGLETON = None
 _MUTEX = None       # process-lifetime handle to the named single-instance mutex
 
 
+def _select_token(prior_lock: dict) -> str:
+    """Reuse a well-formed prior lockfile token (settings-page restart
+    reconnect + durable bookmarks, #34); otherwise mint a fresh one."""
+    tok = (prior_lock or {}).get("token")
+    if isinstance(tok, str) and len(tok) == 64 and all(c in "0123456789abcdef" for c in tok):
+        return tok
+    return secrets.token_hex(32)
+
+
 RATE_MIN = 100
 RATE_MAX = 400
 
@@ -74,6 +83,7 @@ class SpeechDaemon:
         self._lock = threading.Lock()
         self._server = None
         self._token = None
+        self._webui = None
         self._poll_interval = 0.1
         from sonara.history import SessionHistory
         self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
@@ -98,6 +108,8 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
+        self._preview_busy = False                  # preview_voice coalescing flag
+        self._preview_runner = None                 # injected by tests; runtime uses platform tts.run
         # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
         # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
         # since it was dispatched. A turn merely ending does NOT advance it, so the
@@ -948,6 +960,14 @@ class SpeechDaemon:
             }
 
         if t == MsgType.SHUTDOWN:
+            if msg.get("stay_down"):
+                # Page 'Shut down' (#34): gate both respawn paths, exactly like
+                # `sonara shutdown` (the CLI writes the sentinel client-side).
+                try:
+                    from sonara import paths
+                    paths.STOPPED_SENTINEL_PATH.write_text("via settings page")
+                except OSError:
+                    pass
             # Reply FIRST (the socket write happens after this handler returns),
             # then tear down via a short timer: run() unlinks the lockfile and
             # the OS releases the singleton mutex at process death (#23).
@@ -967,6 +987,8 @@ class SpeechDaemon:
         self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
         self._maybe_restore()       # never leave other apps' audio ducked
         self._stop_hotkeys()
+        if getattr(self, "_webui", None) is not None:
+            self._webui.stop()
         srv = self._server
         if srv is not None:
             try:
@@ -1672,6 +1694,62 @@ class SpeechDaemon:
         except (TypeError, ValueError):
             return 20
 
+    def set_config_value(self, key: str, value) -> bool:
+        """Set a config-only tuning key (settings page, #34). These have no
+        protocol message (the CLI edits config.json directly); clamp, set under
+        the lock, persist. Returns False for unknown keys/bad values."""
+        clamps = {
+            "summary_model":   lambda v: str(v).strip() or None,
+            "summary_timeout": lambda v: max(15, min(300, int(v))),
+            "summary_settle_ms": lambda v: max(0, min(5000, int(v))),
+            "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
+        }
+        fn = clamps.get(key)
+        if fn is None:
+            return False
+        try:
+            cleaned = fn(value)
+        except (TypeError, ValueError):
+            return False
+        if cleaned is None:
+            return False
+        with self._lock:
+            self.config[key] = cleaned
+            save_config(self.config)
+        return True
+
+    def preview_voice(self, voice: str) -> bool:
+        """Speak a short sample in *voice* WITHOUT changing config (settings
+        page, #34). Runs on its own thread via the platform tts runner (same
+        say_runner contract the Speaker uses); coalesced to one at a time.
+        The busy check-and-set is under self._lock: HTTP requests run on
+        their own threads, and a bare check-then-act let two previews race."""
+        with self._lock:
+            if getattr(self, "_preview_busy", False):
+                return False
+            self._preview_busy = True
+        try:
+            runner = getattr(self, "_preview_runner", None)
+            if runner is None:
+                from sonara.platform import get_platform
+                runner = get_platform().tts.run
+            text = "This is {0} speaking for Sonara.".format(voice)
+            rate = self.config.get("rate", 200)
+
+            def _run():
+                try:
+                    handle = runner(text, voice, rate)
+                    handle.wait(30)
+                except Exception:  # noqa: BLE001 - preview must never crash anything
+                    pass
+                finally:
+                    self._preview_busy = False
+            threading.Thread(target=_run, name="sonara-preview", daemon=True).start()
+            return True
+        except Exception:  # noqa: BLE001 - a failed spawn must not wedge the flag
+            self._preview_busy = False
+            return False
+
     def _duck_exclude_pids(self) -> "set[int]":
         pids = {os.getpid()}
         try:
@@ -1869,9 +1947,21 @@ class SpeechDaemon:
         srv.bind((transport.HOST, 0))
         srv.listen(16)
         port = srv.getsockname()[1]
-        self._token = secrets.token_hex(32)
+        # Reuse the previous token across restarts (#34): the settings page's
+        # Restart button and bookmarked page URLs keep working because the
+        # respawned daemon accepts the same token. Same-user security boundary
+        # is unchanged -- the token still lives 0600 in the user's own home.
+        self._token = _select_token(transport.read_lockfile(LOCK_PATH) or {})
+        from sonara.webui import SettingsServer
+        self._webui = SettingsServer(self, self._token,
+                                     int(self.config.get("settings_port", 27431)))
+        try:
+            http_port = self._webui.start()
+        except Exception:  # noqa: BLE001 - the page must never block speech
+            self._webui, http_port = None, None
         transport.write_lockfile(
-            LOCK_PATH, transport.HOST, port, self._token, os.getpid())
+            LOCK_PATH, transport.HOST, port, self._token, os.getpid(),
+            http_port=http_port)
         self._server = srv
         self._running.set()
 

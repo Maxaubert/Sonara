@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sonara Settings – Sidebar</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f5f9;
+      --sidebar: rgba(250, 250, 253, .94);
+      --panel: #ffffff;
+      --panel-2: #f8f8fb;
+      --text: #171821;
+      --muted: #6d7080;
+      --faint: #9295a5;
+      --border: rgba(31, 35, 52, .10);
+      --border-strong: rgba(31, 35, 52, .16);
+      --accent: #4F46E5;
+      --accent-soft: #eeedff;
+      --accent-ink: #3730a3;
+      --green: #23865d;
+      --green-soft: #e7f7ef;
+      --red: #bd3d4b;
+      --shadow: 0 16px 50px rgba(30, 32, 51, .07), 0 2px 8px rgba(30, 32, 51, .035);
+      --control: #f1f2f6;
+      --track: #dfe1e8;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #101116;
+      --sidebar: rgba(18, 19, 25, .95);
+      --panel: #181a21;
+      --panel-2: #20222b;
+      --text: #f4f4f7;
+      --muted: #aaadba;
+      --faint: #7f8392;
+      --border: rgba(255, 255, 255, .09);
+      --border-strong: rgba(255, 255, 255, .15);
+      --accent-soft: #292654;
+      --accent-ink: #c8c4ff;
+      --green: #67d5a6;
+      --green-soft: #193b30;
+      --red: #ff8994;
+      --shadow: 0 18px 55px rgba(0, 0, 0, .28);
+      --control: #252832;
+      --track: #343742;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 1020px;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 84% -10%, rgba(79, 70, 229, .09), transparent 32%),
+        var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI Variable', 'Segoe UI', -apple-system, sans-serif;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    .app { display: grid; grid-template-columns: 258px 1fr; min-height: 100vh; }
+    .sidebar {
+      position: sticky; top: 0; height: 100vh;
+      display: flex; flex-direction: column;
+      padding: 28px 18px 20px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 0 10px 28px; }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+      background: linear-gradient(145deg, #6d64f2, #4338ca); color: white;
+      box-shadow: 0 8px 18px rgba(79, 70, 229, .27);
+    }
+    .brand-mark svg { width: 23px; height: 23px; }
+    .brand strong { display: block; font-size: 17px; letter-spacing: -.3px; }
+    .brand span { color: var(--muted); font-size: 11.5px; }
+    .nav-label { padding: 0 12px 8px; color: var(--faint); font-size: 10.5px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+    .nav { display: grid; gap: 4px; }
+    .nav button {
+      width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+      border: 0; border-radius: 11px; background: transparent; color: var(--muted);
+      cursor: pointer; text-align: left; transition: .18s ease;
+    }
+    .nav button:hover { background: var(--control); color: var(--text); }
+    .nav button.active { background: var(--accent-soft); color: var(--accent-ink); font-weight: 650; }
+    .nav-icon { width: 20px; height: 20px; display: grid; place-items: center; }
+    .nav-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .sidebar-bottom { margin-top: auto; }
+    .status-mini {
+      display: flex; gap: 10px; align-items: center; margin: 0 4px 14px; padding: 12px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: #31ad77; box-shadow: 0 0 0 4px rgba(49,173,119,.13); }
+    .status-mini strong { display: block; font-size: 12px; }
+    .status-mini span { color: var(--muted); font-size: 10.5px; }
+    .theme-button {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px; background: transparent; border: 0; color: var(--muted); cursor: pointer;
+    }
+    .theme-button > span:first-child { display: flex; align-items: center; gap: 11px; }
+    .mini-switch { width: 37px; height: 21px; padding: 2px; border-radius: 999px; background: var(--track); transition: .2s; }
+    .mini-switch::after { content: ''; display: block; width: 17px; height: 17px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.22); transition: .2s; }
+    html[data-theme="dark"] .mini-switch { background: var(--accent); }
+    html[data-theme="dark"] .mini-switch::after { transform: translateX(16px); }
+    main { padding: 48px 64px 80px; max-width: 1210px; width: 100%; }
+    .page { display: none; animation: enter .28s ease; }
+    .page.active { display: block; }
+    @keyframes enter { from { opacity: 0; transform: translateY(5px); } }
+    .page-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; }
+    .eyebrow { color: var(--accent); font-weight: 700; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 7px; }
+    h1 { font-size: 30px; letter-spacing: -.85px; line-height: 1.1; margin: 0 0 8px; font-weight: 720; }
+    .page-head p { margin: 0; color: var(--muted); font-size: 14px; }
+    .save-state { display: flex; align-items: center; gap: 7px; padding-top: 7px; color: var(--faint); font-size: 11px; }
+    .save-state::before { content: '✓'; color: var(--green); font-weight: 800; }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+      box-shadow: var(--shadow); overflow: hidden; margin-bottom: 18px;
+    }
+    .card-title { padding: 22px 24px 12px; }
+    .card-title h2 { margin: 0 0 5px; font-size: 16px; letter-spacing: -.25px; }
+    .card-title p { margin: 0; color: var(--muted); font-size: 12px; }
+    .setting { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(350px, 1.35fr); gap: 36px; align-items: center; margin: 0 24px; padding: 20px 0; border-top: 1px solid var(--border); }
+    .setting-label { align-self: start; padding-top: 2px; }
+    .setting-label strong { display: block; margin-bottom: 5px; font-size: 13.5px; }
+    .helper { color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 7px; }
+    .control-stack { min-width: 0; }
+    select, .number-field {
+      width: 100%; height: 42px; border: 1px solid var(--border-strong); border-radius: 11px;
+      background: var(--panel-2); color: var(--text); padding: 0 13px; outline: none;
+    }
+    select:focus, button:focus-visible, input:focus-visible { outline: 3px solid rgba(79,70,229,.20); outline-offset: 2px; }
+    .voice-control { display: grid; grid-template-columns: 1fr 42px; gap: 9px; }
+    .icon-button {
+      width: 42px; height: 42px; border: 1px solid var(--border-strong); border-radius: 11px;
+      background: var(--panel-2); display: grid; place-items: center; cursor: pointer; transition: .18s;
+    }
+    .icon-button:hover { color: var(--accent); border-color: rgba(79,70,229,.35); transform: translateY(-1px); }
+    .icon-button.previewing { background: var(--accent); color: white; border-color: var(--accent); }
+    .icon-button svg { width: 17px; height: 17px; fill: currentColor; }
+    .slider-top { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+    .slider-top span { color: var(--muted); font-size: 11px; }
+    .slider-value { color: var(--text) !important; font-size: 13px !important; font-weight: 700; }
+    input[type="range"] { width: 100%; height: 5px; appearance: none; border-radius: 99px; background: linear-gradient(90deg, var(--accent) 0 var(--fill,50%), var(--track) var(--fill,50%) 100%); cursor: pointer; }
+    input[type="range"]::-webkit-slider-thumb { appearance: none; width: 18px; height: 18px; border-radius: 50%; background: white; border: 2px solid var(--accent); box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+    .range-labels { display: flex; justify-content: space-between; margin-top: 7px; color: var(--faint); font-size: 10.5px; }
+    .segmented { display: grid; grid-template-columns: repeat(3, 1fr); padding: 3px; background: var(--control); border: 1px solid var(--border); border-radius: 12px; }
+    .segmented button { padding: 8px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; text-transform: capitalize; }
+    .segmented button.active { background: var(--panel); color: var(--text); font-weight: 650; box-shadow: 0 1px 4px rgba(0,0,0,.10); }
+    .stepper { display: inline-grid; grid-template-columns: 40px 64px 40px; border: 1px solid var(--border-strong); border-radius: 11px; overflow: hidden; background: var(--panel-2); }
+    .stepper button { border: 0; background: transparent; cursor: pointer; font-size: 18px; color: var(--muted); }
+    .stepper button:hover { background: var(--control); color: var(--accent); }
+    .stepper output { height: 40px; display: grid; place-items: center; font-weight: 700; border-inline: 1px solid var(--border); }
+    .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .switch-copy strong { display: block; font-size: 13px; margin-bottom: 2px; }
+    .switch-copy span { color: var(--muted); font-size: 11px; }
+    .switch { width: 48px; height: 28px; border: 0; border-radius: 99px; padding: 3px; background: var(--track); cursor: pointer; transition: .22s; flex: 0 0 auto; }
+    .switch::after { content: ''; display: block; width: 22px; height: 22px; border-radius: 50%; background: white; box-shadow: 0 2px 5px rgba(0,0,0,.23); transition: .22s; }
+    .switch[aria-checked="true"] { background: var(--accent); }
+    .switch[aria-checked="true"]::after { transform: translateX(20px); }
+    .unit-input { position: relative; }
+    .unit-input input { padding-right: 50px; }
+    .unit-input span { position: absolute; right: 13px; top: 12px; color: var(--muted); font-size: 12px; pointer-events: none; }
+    .hotkey-list { padding: 5px 24px 12px; }
+    .hotkey-row { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; padding: 17px 0; border-top: 1px solid var(--border); }
+    .hotkey-row:first-child { border-top: 0; }
+    .hotkey-name strong { display: block; font-size: 13px; margin-bottom: 4px; }
+    .hotkey-name span { color: var(--muted); font-size: 11px; }
+    .combo { display: flex; align-items: center; gap: 6px; }
+    .key { min-width: 33px; padding: 6px 9px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 7px; background: var(--panel-2); text-align: center; font-size: 11px; font-weight: 650; box-shadow: inset 0 1px rgba(255,255,255,.25); }
+    .unbind { width: 25px; height: 25px; margin-left: 3px; border: 0; border-radius: 7px; background: transparent; color: var(--faint); cursor: pointer; font-size: 16px; }
+    .unbind:hover { color: var(--red); background: rgba(189,61,75,.08); }
+    .unbound { color: var(--faint); font-size: 11px; font-style: italic; padding: 6px; }
+    .daemon {
+      position: relative; display: grid; grid-template-columns: 1fr auto; gap: 32px; align-items: center;
+      padding: 26px; background: linear-gradient(135deg, var(--panel), var(--panel-2));
+    }
+    .daemon::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--green); }
+    .daemon-title { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .daemon-title h2 { margin: 0; font-size: 17px; }
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 99px; background: var(--green-soft); color: var(--green); font-size: 10.5px; font-weight: 750; }
+    .badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .daemon-meta { display: flex; gap: 22px; color: var(--muted); font-size: 11px; }
+    .daemon-meta b { color: var(--text); font-weight: 650; }
+    .actions { display: flex; gap: 8px; }
+    .btn { height: 38px; padding: 0 15px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--panel); cursor: pointer; font-weight: 650; font-size: 12px; }
+    .btn:hover { border-color: rgba(79,70,229,.38); color: var(--accent); }
+    .btn.danger { color: var(--red); }
+    .engine-list { padding: 0 24px 8px; }
+    .engine-row { display: flex; justify-content: space-between; align-items: center; padding: 18px 0; border-top: 1px solid var(--border); }
+    .engine-row strong { display: block; font-size: 13px; margin-bottom: 4px; }
+    .engine-row span { color: var(--muted); font-size: 11px; }
+    .installed { color: var(--green) !important; font-weight: 700; padding: 6px 10px; background: var(--green-soft); border-radius: 99px; }
+    .footer { display: flex; justify-content: space-between; color: var(--faint); font-size: 10.5px; padding: 17px 4px 0; }
+    .toast { position: fixed; right: 26px; bottom: 26px; z-index: 10; padding: 11px 15px; border-radius: 11px; background: #20212a; color: white; box-shadow: 0 14px 40px rgba(0,0,0,.28); font-size: 12px; opacity: 0; transform: translateY(10px); pointer-events: none; transition: .22s; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1080px) { main { padding-inline: 38px; } .setting { gap: 24px; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 14.5v-5M9 18V6m4 14V4m4 13V7m4 7v-4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></div>
+        <div><strong>Sonara</strong><span>Voice companion for Claude</span></div>
+      </div>
+      <div class="nav-label">Settings</div>
+      <nav class="nav" aria-label="Settings sections">
+        <button class="active" data-page="speech"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3M8 22h8"/></svg></span>Speech</button>
+        <button data-page="summary"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>Summary</button>
+        <button data-page="audio"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6M19 6a9 9 0 0 1 0 12"/></svg></span>Audio</button>
+        <button data-page="hotkeys"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h2M11 14h6"/></svg></span>Hotkeys</button>
+        <button data-page="system"><span class="nav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 9 19.37a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.63 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.63 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.63 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15 4.63a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.37 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg></span>System</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="status-mini"><span class="pulse"></span><div><strong>Daemon running</strong><span>Listening on port 52484</span></div></div>
+        <button class="theme-button" id="themeToggle" aria-label="Toggle dark theme"><span><span class="nav-icon">◐</span>Dark appearance</span><span class="mini-switch"></span></button>
+      </div>
+    </aside>
+
+    <main>
+      <section class="page active" id="speech">
+        <header class="page-head"><div><div class="eyebrow">Voice & delivery</div><h1>Speech</h1><p>Choose how Sonara reads Claude Code responses aloud.</p></div><div class="save-state">Changes save automatically</div></header>
+        <div class="card">
+          <div class="card-title"><h2>Voice</h2><p>Your active speech engine and speaker.</p></div>
+          <div class="setting"><div class="setting-label"><strong>Preferred voice</strong><div class="helper">Voices are grouped by their installed speech engine.</div></div><div class="control-stack"><div class="voice-control"><select id="voiceA" aria-label="Preferred voice"><optgroup label="Windows"><option>Microsoft David</option><option>Microsoft Zira</option><option>Microsoft Mark</option></optgroup><optgroup label="Kokoro"><option selected>af_heart</option><option>af_bella</option><option>am_michael</option><option>bf_emma</option></optgroup><optgroup label="Chatterbox"><option>cb_default</option><option>shadowheart</option></optgroup></select><button class="icon-button preview" aria-label="Preview selected voice"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="helper preview-copy">Play a short preview using the current rate.</div></div></div>
+          <div class="setting"><div class="setting-label"><strong>Speaking rate</strong><div class="helper">Controls reading speed without changing pitch.</div></div><div class="control-stack"><div class="slider-top"><span>Natural pace</span><span class="slider-value"><output id="rateOutA">250</output> wpm</span></div><input class="range" id="rateA" type="range" min="120" max="350" value="250"><div class="range-labels"><span>120</span><span>350 words per minute</span></div><div class="helper">250 wpm is a brisk, conversational reading speed.</div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><h2>Delivery rules</h2><p>Decide what enters the spoken queue.</p></div>
+          <div class="setting"><div class="setting-label"><strong>Verbosity</strong><div class="helper">Choose how much of Claude's output is spoken.</div></div><div class="control-stack"><div class="segmented" data-segment><button>everything</button><button class="active">medium</button><button>quiet</button></div><div class="helper">Medium skips routine tool chatter but reads explanations and results.</div></div></div>
+          <div class="setting"><div class="setting-label"><strong>Minimum queue</strong><div class="helper">Wait for this many words before speech begins.</div></div><div class="control-stack"><div class="stepper" data-min="1" data-max="10"><button aria-label="Decrease minimum queue">−</button><output>5</output><button aria-label="Increase minimum queue">+</button></div><div class="helper">A five-word buffer keeps short fragments from sounding choppy.</div></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="summary">
+        <header class="page-head"><div><div class="eyebrow">Condense long output</div><h1>Summary</h1><p>Let Sonara shorten dense responses before speaking them.</p></div><div class="save-state">Changes save automatically</div></header>
+        <div class="card">
+          <div class="card-title"><h2>Spoken summaries</h2><p>A fast Claude model turns long output into speech-friendly prose.</p></div>
+          <div class="setting"><div class="setting-label"><strong>Summarize long responses</strong><div class="helper">Applies only when a response exceeds the configured speech threshold.</div></div><div class="control-stack"><div class="switch-row"><div class="switch-copy"><strong>Summary is on</strong><span>Long answers are condensed before playback.</span></div><button class="switch" role="switch" aria-checked="true" aria-label="Toggle summaries"></button></div><div class="helper">The full original response always remains visible in Claude Code.</div></div></div>
+          <div class="setting"><div class="setting-label"><strong>Model</strong><div class="helper">Select the Claude model used to create spoken summaries.</div></div><div class="control-stack"><select aria-label="Summary model"><option selected>haiku</option><option>sonnet</option></select><div class="helper">Haiku is fastest; Sonnet may preserve more nuance in complex output.</div></div></div>
+          <div class="setting"><div class="setting-label"><strong>Timeout</strong><div class="helper">Stop waiting if the summary model does not answer in time.</div></div><div class="control-stack"><div class="unit-input"><input class="number-field" type="number" value="60" min="5" max="180"><span>seconds</span></div><div class="helper">After 60 seconds, Sonara reads the original response instead.</div></div></div>
+          <div class="setting"><div class="setting-label"><strong>Settle time</strong><div class="helper">Pause briefly so streaming text can finish before summarizing.</div></div><div class="control-stack"><div class="unit-input"><input class="number-field" type="number" value="600" min="0" max="3000" step="100"><span>ms</span></div><div class="helper">600 ms avoids summarizing an incomplete final sentence.</div></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="audio">
+        <header class="page-head"><div><div class="eyebrow">Playback behavior</div><h1>Audio</h1><p>Balance Sonara with other sound and tune streaming cadence.</p></div><div class="save-state">Changes save automatically</div></header>
+        <div class="card">
+          <div class="card-title"><h2>Other applications</h2><p>Control how Windows audio behaves while Sonara speaks.</p></div>
+          <div class="setting"><div class="setting-label"><strong>Duck other audio</strong><div class="helper">Temporarily lowers media and app volume during speech.</div></div><div class="control-stack"><div class="switch-row"><div class="switch-copy"><strong>Audio ducking is on</strong><span>Other apps fade smoothly during playback.</span></div><button class="switch" role="switch" aria-checked="true" aria-label="Toggle audio ducking"></button></div><div class="helper">Original volume is restored as soon as Sonara finishes speaking.</div></div></div>
+          <div class="setting"><div class="setting-label"><strong>Duck level</strong><div class="helper">Set the volume retained by other applications.</div></div><div class="control-stack"><div class="slider-top"><span>Background volume</span><span class="slider-value"><output id="duckOutA">20</output>%</span></div><input class="range" id="duckA" type="range" min="0" max="100" value="20"><div class="range-labels"><span>Silent</span><span>Full volume</span></div><div class="helper">20% keeps context audible without competing with speech.</div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><h2>Streaming</h2><p>How text is divided before it reaches the voice engine.</p></div>
+          <div class="setting"><div class="setting-label"><strong>Chunk size</strong><div class="helper">Maximum number of characters sent for each speech chunk.</div></div><div class="control-stack"><div class="slider-top"><span>Longer phrases</span><span class="slider-value"><output id="chunkOutA">280</output> chars</span></div><input class="range" id="chunkA" type="range" min="80" max="280" value="280"><div class="range-labels"><span>80 responsive</span><span>280 smooth</span></div><div class="helper">Larger chunks sound more natural but begin slightly later.</div></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="hotkeys">
+        <header class="page-head"><div><div class="eyebrow">Global controls</div><h1>Hotkeys</h1><p>Control speech from anywhere in Windows.</p></div><div class="save-state">Changes save automatically</div></header>
+        <div class="card">
+          <div class="card-title"><h2>Keyboard shortcuts</h2><p>Global shortcuts work even when Claude Code is not focused.</p></div>
+          <div class="hotkey-list">
+            <div class="hotkey-row"><div class="hotkey-name"><strong>Pause</strong><span>Pause or resume the current spoken response.</span></div><div class="combo" data-keys="Ctrl|Alt|P"><span class="key">Ctrl</span><span class="key">Alt</span><span class="key">P</span><button class="unbind" aria-label="Unbind Pause">×</button></div></div>
+            <div class="hotkey-row"><div class="hotkey-name"><strong>Mute</strong><span>Toggle all Sonara speech without stopping the daemon.</span></div><div class="combo" data-keys="Ctrl|Alt|M"><span class="key">Ctrl</span><span class="key">Alt</span><span class="key">M</span><button class="unbind" aria-label="Unbind Mute">×</button></div></div>
+            <div class="hotkey-row"><div class="hotkey-name"><strong>Skip</strong><span>Discard the current item and continue with the queue.</span></div><div class="combo" data-keys="Ctrl|Alt|S"><span class="key">Ctrl</span><span class="key">Alt</span><span class="key">S</span><button class="unbind" aria-label="Unbind Skip">×</button></div></div>
+            <div class="hotkey-row"><div class="hotkey-name"><strong>Re-read last</strong><span>Speak the most recently completed response again.</span></div><div class="combo" data-keys="Ctrl|Alt|R"><span class="key">Ctrl</span><span class="key">Alt</span><span class="key">R</span><button class="unbind" aria-label="Unbind Re-read last">×</button></div></div>
+            <div class="hotkey-row"><div class="hotkey-name"><strong>Next session</strong><span>Move speech focus to the next active Claude Code session.</span></div><div class="combo" data-keys="Ctrl|Alt|N"><span class="key">Ctrl</span><span class="key">Alt</span><span class="key">N</span><button class="unbind" aria-label="Unbind Next session">×</button></div></div>
+            <div class="hotkey-row"><div class="hotkey-name"><strong>Jump to question</strong><span>Focus the session waiting for your next answer.</span></div><div class="combo" data-keys="Ctrl|Alt|Q"><span class="key">Ctrl</span><span class="key">Alt</span><span class="key">Q</span><button class="unbind" aria-label="Unbind Jump to question">×</button></div></div>
+          </div>
+        </div>
+        <div class="helper" style="padding:0 5px">Select the × beside a shortcut to unbind it. Restart Sonara if another application has already claimed a combination.</div>
+      </section>
+
+      <section class="page" id="system">
+        <header class="page-head"><div><div class="eyebrow">Service health</div><h1>System</h1><p>Inspect the daemon and installed local speech engines.</p></div><div class="save-state">Live status</div></header>
+        <div class="card daemon">
+          <div><div class="daemon-title"><h2>Sonara daemon</h2><span class="badge">Running</span></div><div class="daemon-meta"><span>Process ID <b>49420</b></span><span>Port <b>52484</b></span></div><div class="helper">The local daemon watches Claude Code sessions and manages the speech queue.</div></div>
+          <div><div class="actions"><button class="btn action" data-action="Restarting daemon…">Restart</button><button class="btn danger action" data-action="Shut down is disabled in this mockup">Shut down</button></div><div class="helper" style="text-align:right">Restart safely reconnects active sessions.</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title"><h2>Speech engines</h2><p>Local engines available to the voice picker.</p></div>
+          <div class="engine-list">
+            <div class="engine-row"><div><strong>Kokoro</strong><span>Fast, natural neural speech running locally.</span><div class="helper">Provides af_heart, af_bella, am_michael, and bf_emma.</div></div><span class="installed">Installed</span></div>
+            <div class="engine-row"><div><strong>Chatterbox</strong><span>Expressive local voices with richer character.</span><div class="helper">Provides cb_default and shadowheart.</div></div><span class="installed">Installed</span></div>
+          </div>
+        </div>
+        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.5.0</span></footer>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const root = document.documentElement;
+    const toast = document.getElementById('toast');
+    let toastTimer;
+    function notify(message) { toast.textContent = message; toast.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 1900); }
+    document.querySelectorAll('.nav button[data-page]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('.nav button').forEach(item => item.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+      button.classList.add('active'); document.getElementById(button.dataset.page).classList.add('active');
+    }));
+    const savedTheme = localStorage.getItem('sonara-theme-a');
+    if (savedTheme) root.dataset.theme = savedTheme;
+    document.getElementById('themeToggle').addEventListener('click', () => { root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('sonara-theme-a', root.dataset.theme); });
+    document.querySelectorAll('.switch').forEach(control => control.addEventListener('click', () => { const on = control.getAttribute('aria-checked') !== 'true'; control.setAttribute('aria-checked', on); notify(on ? 'Setting enabled' : 'Setting disabled'); }));
+    document.querySelectorAll('[data-segment] button').forEach(button => button.addEventListener('click', () => { button.parentElement.querySelectorAll('button').forEach(item => item.classList.remove('active')); button.classList.add('active'); notify('Verbosity set to ' + button.textContent); }));
+    document.querySelectorAll('.stepper').forEach(stepper => { const output = stepper.querySelector('output'); const [minus, plus] = stepper.querySelectorAll('button'); minus.addEventListener('click', () => output.value = Math.max(+stepper.dataset.min, +output.value - 1)); plus.addEventListener('click', () => output.value = Math.min(+stepper.dataset.max, +output.value + 1)); });
+    function bindRange(id, out) { const input = document.getElementById(id), output = document.getElementById(out); const draw = () => { output.value = input.value; input.style.setProperty('--fill', ((input.value-input.min)/(input.max-input.min)*100) + '%'); }; input.addEventListener('input', draw); draw(); }
+    bindRange('rateA','rateOutA'); bindRange('duckA','duckOutA'); bindRange('chunkA','chunkOutA');
+    document.querySelector('.preview').addEventListener('click', function () { const playing = this.classList.toggle('previewing'); this.innerHTML = playing ? '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>' : '<svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></svg>'; document.querySelector('.preview-copy').textContent = playing ? 'Playing “Hello, I’m Sonara” with ' + document.getElementById('voiceA').value + '…' : 'Play a short preview using the current rate.'; if (playing) setTimeout(() => { if (this.classList.contains('previewing')) this.click(); }, 2200); });
+    document.querySelectorAll('.unbind').forEach(button => button.addEventListener('click', () => { const combo = button.parentElement; combo.innerHTML = '<span class="unbound">Not assigned</span>'; notify('Shortcut unbound'); }));
+    document.querySelectorAll('.action').forEach(button => button.addEventListener('click', () => notify(button.dataset.action)));
+  </script>
+</body>
+</html>

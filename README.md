@@ -212,6 +212,7 @@ CLI-only (run `sonara <cmd>` in a terminal).
 | — | `sonara stop` | Stop now and clear the queue |
 | — | `sonara shutdown` | Stop the daemon and supervisor; stays stopped until `sonara start` |
 | — | `sonara start` | Start the daemon (clears a previous shutdown) |
+| `/sonara:settings` | `sonara settings` | Open the browser settings page (voice, rate, summary, audio duck, hotkeys, daemon) |
 | `/sonara:doctor` | `sonara doctor` | Run all health checks |
 | `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
 
