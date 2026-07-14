@@ -90,6 +90,12 @@ def _engine_status() -> dict:
             "chatterbox": safe(chatterbox.is_provisioned)}
 
 
+def _page_bytes() -> bytes:
+    path = os.path.join(os.path.dirname(__file__), "settings.html")
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
 def _keymap_state() -> list:
     from sonara import keymap
     km = keymap.load_keymap()
@@ -175,6 +181,14 @@ def _make_handler(server: SettingsServer):
             path = urlparse(self.path).path
             if path == "/api/state":
                 return self._json(200, server.state())
+            if path in ("/", "/settings"):
+                body = _page_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             return self._json(404, {"error": "unknown path"})
 
         def do_POST(self):

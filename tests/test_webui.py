@@ -187,3 +187,13 @@ def test_preview_endpoint(server):
     with pytest.raises(urllib.error.HTTPError) as ei:
         _post(s, "/api/preview", {"voice": "busy_voice"})
     assert ei.value.code == 409
+
+
+def test_settings_page_served_and_self_contained(server):
+    d, s = server
+    html = _get(s, "/settings").read().decode("utf-8")
+    assert "Sonara" in html and "offline-banner" in html
+    assert "http://" not in html.replace(f"http://127.0.0.1", "")  # no external refs
+    assert "https://" not in html
+    # / redirects or serves too
+    assert _get(s, "/").status == 200
