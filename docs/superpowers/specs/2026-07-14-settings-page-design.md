@@ -13,9 +13,11 @@ over the same daemon messages.
 ## Architecture
 
 - **Daemon-served.** The daemon grows a second listener: a small HTTP server
-  (Python stdlib `http.server.ThreadingHTTPServer`) bound to `127.0.0.1` on its
-  own ephemeral port, recorded in `daemon.lock` as `http_port` alongside the
-  existing fields.
+  (Python stdlib `http.server.ThreadingHTTPServer`) bound to `127.0.0.1` on a
+  **pinned port** (new config key `settings_port`, default `27431`; falls back
+  to ephemeral if taken), recorded in `daemon.lock` as `http_port`. A pinned
+  port keeps bookmarks valid and lets the page reconnect across daemon
+  restarts.
 - **Three endpoints:**
   - `GET /settings` — the page itself (one self-contained HTML file shipped in
     the package, no external resources).
@@ -63,8 +65,11 @@ NOT on the page (stays CLI-only). No playback controls, no live status strip.
   click → "press keys" capture state → writes `keymap.json` via the existing
   keymap module → sends RELOAD_KEYMAP. Per-row unbind (✕). Conflict = replace
   with warning toast. Esc cancels capture.
-- **System:** daemon card (status, PID, port, uptime; Restart and Shut down
-  buttons → SHUTDOWN + start semantics, with a "page will disconnect" notice);
+- **System:** daemon card (status, PID, port, uptime). **Restart** = bare
+  SHUTDOWN message (no stop sentinel): the supervisor respawns the daemon and
+  the page reconnects via its state polling on the pinned port. **Shut down** =
+  a new SHUTDOWN variant that also writes the stop sentinel (mirrors `sonara
+  shutdown`); the page then shows the disconnect banner until `sonara start`.
   engine status rows (Kokoro / Chatterbox: Installed or Not installed with the
   `sonara voices install <engine>` command shown for copy-paste — status only,
   no install buttons); version footer.
