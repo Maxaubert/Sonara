@@ -371,9 +371,11 @@ document.querySelectorAll("[data-action]").forEach(row => {
 });
 // daemon buttons
 document.getElementById("btn-restart").addEventListener("click",
-  () => POST("/api/set", {key: "daemon", value: "restart"}));   // replaced in Task 7
-document.getElementById("btn-shutdown").addEventListener("click",
-  () => POST("/api/set", {key: "daemon", value: "shutdown"}));  // replaced in Task 7
+  () => POST("/api/daemon", {op: "restart"}));
+document.getElementById("btn-shutdown").addEventListener("click", () => {
+  if (confirm("Shut Sonara down? It stays down until 'sonara start'."))
+    POST("/api/daemon", {op: "shutdown"});
+});
 refresh();
 setInterval(refresh, 3000);
   </script>

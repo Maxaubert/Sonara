@@ -189,6 +189,17 @@ def test_preview_endpoint(server):
     assert ei.value.code == 409
 
 
+def test_daemon_endpoint_restart_and_shutdown(server):
+    d, s = server
+    _post(s, "/api/daemon", {"op": "restart"})
+    assert d.messages[-1] == {"v": 1, "type": "shutdown"}
+    _post(s, "/api/daemon", {"op": "shutdown"})
+    assert d.messages[-1] == {"v": 1, "type": "shutdown", "stay_down": True}
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/daemon", {"op": "reboot-the-moon"})
+    assert ei.value.code == 400
+
+
 def test_settings_page_served_and_self_contained(server):
     d, s = server
     html = _get(s, "/settings").read().decode("utf-8")

@@ -74,6 +74,7 @@ class SpeechDaemon:
         self._lock = threading.Lock()
         self._server = None
         self._token = None
+        self._webui = None
         self._poll_interval = 0.1
         from sonara.history import SessionHistory
         self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
@@ -950,6 +951,14 @@ class SpeechDaemon:
             }
 
         if t == MsgType.SHUTDOWN:
+            if msg.get("stay_down"):
+                # Page 'Shut down' (#34): gate both respawn paths, exactly like
+                # `sonara shutdown` (the CLI writes the sentinel client-side).
+                try:
+                    from sonara import paths
+                    paths.STOPPED_SENTINEL_PATH.write_text("via settings page")
+                except OSError:
+                    pass
             # Reply FIRST (the socket write happens after this handler returns),
             # then tear down via a short timer: run() unlinks the lockfile and
             # the OS releases the singleton mutex at process death (#23).
@@ -969,6 +978,8 @@ class SpeechDaemon:
         self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
         self._maybe_restore()       # never leave other apps' audio ducked
         self._stop_hotkeys()
+        if getattr(self, "_webui", None) is not None:
+            self._webui.stop()
         srv = self._server
         if srv is not None:
             try:
@@ -1928,8 +1939,16 @@ class SpeechDaemon:
         srv.listen(16)
         port = srv.getsockname()[1]
         self._token = secrets.token_hex(32)
+        from sonara.webui import SettingsServer
+        self._webui = SettingsServer(self, self._token,
+                                     int(self.config.get("settings_port", 27431)))
+        try:
+            http_port = self._webui.start()
+        except Exception:  # noqa: BLE001 - the page must never block speech
+            self._webui, http_port = None, None
         transport.write_lockfile(
-            LOCK_PATH, transport.HOST, port, self._token, os.getpid())
+            LOCK_PATH, transport.HOST, port, self._token, os.getpid(),
+            http_port=http_port)
         self._server = srv
         self._running.set()
 

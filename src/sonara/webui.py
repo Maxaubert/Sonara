@@ -211,6 +211,8 @@ def _make_handler(server: SettingsServer):
                 if fn is not None and fn(str(payload.get("voice") or "")):
                     return self._json(202, {"ok": True})
                 return self._json(409, {"error": "preview busy or unavailable"})
+            if path == "/api/daemon":
+                return self._handle_daemon(payload)
             return self._json(404, {"error": "unknown path"})
 
         def _handle_set(self, payload):
@@ -242,4 +244,15 @@ def _make_handler(server: SettingsServer):
                 return self._json(400, {"error": str(exc)})
             _dispatch(server._daemon, {"v": 1, "type": "reload_keymap"})
             return self._json(200, server.state())
+
+        def _handle_daemon(self, payload):
+            op = payload.get("op")
+            if op == "restart":
+                _dispatch(server._daemon, {"v": 1, "type": "shutdown"})
+                return self._json(202, {"ok": True})
+            if op == "shutdown":
+                _dispatch(server._daemon,
+                          {"v": 1, "type": "shutdown", "stay_down": True})
+                return self._json(202, {"ok": True})
+            return self._json(400, {"error": "unknown op"})
     return Handler
