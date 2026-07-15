@@ -2161,9 +2161,17 @@ class SpeechDaemon:
         # take seconds on a long digest) would otherwise hold other apps' audio
         # down through the silence. The backend fires on_play right before the
         # first sample plays.
+        #
+        # A session-change announcement never ducks (#90): it is a short fast-cue
+        # handoff notice that precedes the neural digest. Ducking it engaged the
+        # duck ~7s before the digest's own playback -- so other apps sat ducked
+        # over the digest's whole cold synthesis. Only the content ducks, at its
+        # own playback; from idle the announcement rides through un-ducked, and
+        # mid-listening the existing duck simply stays on across the handoff.
+        on_play = None if item.kind == "session_change" else self._maybe_duck
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                           on_play=self._maybe_duck,
+                                           on_play=on_play,
                                            **self._cue_voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
