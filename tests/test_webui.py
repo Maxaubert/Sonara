@@ -385,6 +385,21 @@ def test_settings_page_gates_ignored_controls_and_remembers_tab():
     assert "localStorage.getItem('sonara-page')" in page
 
 
+def test_settings_page_advanced_tab_and_summary_ordering():
+    # (#73) rarely-touched tuning (timeout, settle, chunk size) lives on its
+    # own Advanced tab; the Summary page orders most-relevant-first with the
+    # Prompt card directly under Model.
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    assert 'data-page="advanced"' in page
+    adv_at = page.index('<section class="page" id="advanced">')
+    hot_at = page.index('<section class="page" id="hotkeys">')
+    for rid in ('id="timeout-row"', 'id="settle-row"', 'id="chunk-row"'):
+        assert adv_at < page.index(rid) < hot_at, rid
+    assert (page.index('id="model-row"') < page.index('id="prompt-card"')
+            < page.index('id="minqueue-row"'))
+
+
 def test_settings_page_minqueue_lives_on_summary_page_and_rate_row_is_hideable():
     # (#60 follow-up) minqueue gates LIVE reading, so it moved to the Summary
     # page (dimmed while a summary style is active) and supports 0 = instant;

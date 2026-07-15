@@ -84,7 +84,7 @@
     .side-nav button.hidden { display:none; }
     .side-icon { width:24px; height:24px; display:grid; place-items:center; border-radius:7px; color:#fff; background:#6c65dd; }
     .side-icon svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    [data-page="summary"] .side-icon { background:#f09a48; }[data-page="audio"] .side-icon{background:#3da880}[data-page="hotkeys"] .side-icon{background:#707783}[data-page="system"] .side-icon{background:#7a7f8b}
+    [data-page="summary"] .side-icon { background:#f09a48; }[data-page="audio"] .side-icon{background:#3da880}[data-page="hotkeys"] .side-icon{background:#707783}[data-page="advanced"] .side-icon{background:#9a6bd0}[data-page="system"] .side-icon{background:#7a7f8b}
     .side-nav button.active .side-icon { background:rgba(255,255,255,.19); }
     .nav-footer { margin-top:auto; padding:10px 9px 0; display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--line); color:var(--secondary); font-size:10.5px; }
     .theme { width:34px; height:21px; border:0; border-radius:99px; padding:2px; background:var(--track); }
@@ -157,6 +157,7 @@
         <button data-page="summary"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>Summary</button>
         <button data-page="audio"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6"/></svg></span>Audio</button>
         <button data-page="hotkeys"><span class="side-icon"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h10"/></svg></span>Hotkeys</button>
+        <button data-page="advanced"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></span>Advanced</button>
         <button data-page="system"><span class="side-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 3.1h5l.4-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg></span>System</button>
       </nav>
       <div class="empty-search">No settings found</div>
@@ -188,18 +189,13 @@
           <div class="pref"><div class="pref-copy"><strong>Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="tablist"><button data-style="off">Off</button><button data-style="tidy">Tidy</button><button data-style="natural">Natural</button><button data-style="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
           <div class="pref" id="model-row"><div class="pref-copy"><strong>Model</strong><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint">Fastest options first. Every model runs headless and never touches your session.</div></div></div>
         </div>
-        <div class="group-label"><span>Timing</span></div>
-        <div class="inset">
-          <div class="pref" id="timeout-row"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
-          <div class="pref" id="settle-row"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
+        <div class="group-label"><span>Prompt</span></div>
+        <div class="inset" id="prompt-card">
+          <div class="pref prompt-pref"><div class="pref-copy"><strong>Instruction</strong><div class="hint">What the summarizer is told to do with each response. Applies to the selected mode only.</div><div class="hint" id="prompt-state"></div></div><div class="control prompt-control"><textarea id="prompt-text" spellcheck="false" aria-label="Summary instruction"></textarea><div class="prompt-actions"><button class="btn" id="prompt-reset">Reset to default</button></div></div></div>
         </div>
         <div class="group-label"><span>Live reading</span></div>
         <div class="inset">
           <div class="pref" id="minqueue-row"><div class="pref-copy"><strong>Minimum queue</strong><div class="hint">Sentences Sonara waits for before it starts reading.</div></div><div class="control"><div class="stepper"><button id="mq-minus" aria-label="Decrease minimum queue">&minus;</button><output id="minqueue-out">5</output><button id="mq-plus" aria-label="Increase minimum queue">+</button></div><div class="hint">Zero starts speaking immediately. Only applies while the mode above is Off.</div></div></div>
-        </div>
-        <div class="group-label"><span>Prompt</span></div>
-        <div class="inset" id="prompt-card">
-          <div class="pref prompt-pref"><div class="pref-copy"><strong>Instruction</strong><div class="hint">What the summarizer is told to do with each response. Applies to the selected mode only.</div><div class="hint" id="prompt-state"></div></div><div class="control prompt-control"><textarea id="prompt-text" spellcheck="false" aria-label="Summary instruction"></textarea><div class="prompt-actions"><button class="btn" id="prompt-reset">Reset to default</button></div></div></div>
         </div>
       </section>
 
@@ -209,6 +205,15 @@
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Audio duck</strong><div class="hint">Reduce app and media volume during speech.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Audio ducking</span><button class="switch" id="duck-switch" role="switch" aria-checked="false" aria-label="Toggle audio ducking"></button></div><div class="hint">Volume returns to normal when Sonara finishes speaking.</div></div></div>
           <div class="pref" id="duck-row"><div class="pref-copy"><strong>Duck level</strong><div class="hint">Volume retained by other applications.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out">20%</output></div><input class="range" id="duck" type="range" min="0" max="100" value="20"><div class="ends"><span>Silent</span><span>Full</span></div><div class="hint">Lower values preserve context without competing with speech.</div></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="advanced">
+        <div class="title-row"><div><h1>Advanced</h1><p>Tuning you rarely need to touch.</p></div><span class="state"><i></i>Saved</span></div>
+        <div class="group-label"><span>Summaries</span></div>
+        <div class="inset">
+          <div class="pref" id="timeout-row"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
+          <div class="pref" id="settle-row"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
         </div>
         <div class="group-label"><span>Streaming</span></div>
         <div class="inset">
