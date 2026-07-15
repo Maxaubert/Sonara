@@ -5,6 +5,7 @@ import queue
 import secrets
 import socket
 import subprocess
+import sys
 import threading
 
 from sonara.protocol import MsgType, encode, decode
@@ -123,8 +124,14 @@ class SpeechDaemon:
         self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
         self._held_decision: dict = {}            # session -> decision item held until its lead-in digest lands (context-first ordering)
         self._paused = threading.Event()          # play/pause: set == speech halted
-        self._mute_level = 0                       # mute cycle: 0=unmuted,
-        # 1=muted (prose off, beeps on), 2=super muted (prose AND beeps off)
+        # Mute cycle: 0=unmuted, 1=muted (prose off, beeps on), 2=super muted
+        # (prose AND beeps off). RESTORED from config (#65): hooks silently
+        # respawn a dead daemon between two messages, and a memory-only mute
+        # was reset to audible by the swap - the "mute is not persistent" bug.
+        try:
+            self._mute_level = max(0, min(2, int(config.get("mute_level", 0))))
+        except (TypeError, ValueError):
+            self._mute_level = 0
         self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
@@ -726,6 +733,15 @@ class SpeechDaemon:
             # The spoken state confirmation is mute_exempt (always heard via TTS, not
             # an earcon) so the user can tell the state and toggle out.
             self._mute_level = (self._mute_level + 1) % 3
+            # Persist (#65): a respawned daemon restores the level, so mute
+            # survives the silent hook-lazy-start replacement.
+            self.config["mute_level"] = self._mute_level
+            save_config(self.config)
+            # Observability (#63): mute transitions and drops are logged so a
+            # "mute did not stick" report is diagnosable from speechd.log
+            # (state resets from a daemon respawn become visible too).
+            print("[mute] level -> {0}".format(self._mute_level),
+                  file=sys.stderr, flush=True)
             if self._mute_level >= 1:
                 self.speaker.cancel()           # stop the current utterance now
             cue = {1: "Muted.", 2: "Super muted.", 0: "Unmuted."}[self._mute_level]
@@ -1077,9 +1093,28 @@ class SpeechDaemon:
         try:
             from sonara import keymap
             keymap.migrate_default_chord()   # one-time upgrade of the legacy chord
-            get_platform().hotkey.start(self._dispatch_hotkey)
+            backend = get_platform().hotkey
+            backend.start(self._dispatch_hotkey)
+            self._announce_hotkey_collisions(getattr(backend, "collisions", None))
         except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
             pass
+
+    def _announce_hotkey_collisions(self, collisions) -> None:
+        """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
+        chord to ONE process: in a split-brain (a stray older daemon surviving a
+        restart) the new daemon owns the socket but not the keys, so hotkey
+        presses act on a daemon the user cannot hear about - mute appears
+        broken. Collisions were only recorded for `sonara doctor`; an eyes-free
+        user needs to HEAR that the keys went elsewhere."""
+        if not collisions:
+            return
+        names = ", ".join(sorted(str(c.get("action", "?")) for c in collisions))
+        print("[hotkeys] failed to register: {0}".format(names),
+              file=sys.stderr, flush=True)
+        self._speak_cue(None,
+                        "Some Sonara hotkeys are held by another program. "
+                        "Restarting Sonara may fix it.",
+                        exempt_mute=True, pause_exempt=True)
 
     def _stop_hotkeys(self) -> None:
         from sonara.platform import get_platform
@@ -1947,6 +1982,8 @@ class SpeechDaemon:
             if muted:
                 self._current_item = None
                 self._pending_heard.pop(item.id, None)
+                print("[mute] dropped: {0!r}".format((item.text or "")[:60]),
+                      file=sys.stderr, flush=True)
         # Engine fallback notices: spoken once per daemon run so an eyes-free
         # user knows WHY the voice changed (the reason is already in the log).
         self._maybe_announce_chatterbox_fallback()
@@ -2073,12 +2110,29 @@ class SpeechDaemon:
         return True
 
     def _accept_loop(self) -> None:
+        import time
         srv = self._server
+        failures = 0
         while self._running.is_set():
             try:
                 conn, _ = srv.accept()
             except OSError:
-                return
+                if not self._running.is_set():
+                    return                    # shutdown closed the socket
+                # A transient accept failure (WSAECONNRESET burst etc.) used to
+                # kill the WHOLE daemon, which the hooks then silently respawned
+                # with fresh state - one of the mute-reset triggers (#65). Retry;
+                # a genuinely dead socket exhausts the cap and exits as before.
+                failures += 1
+                if failures > 20:
+                    print("[daemon] accept failing persistently; exiting",
+                          file=sys.stderr, flush=True)
+                    return
+                print("[daemon] transient accept error; retrying",
+                      file=sys.stderr, flush=True)
+                time.sleep(0.2)
+                continue
+            failures = 0
             self._spawn_conn_handler(conn)
 
     def run(self) -> None:
@@ -2111,6 +2165,11 @@ class SpeechDaemon:
         accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
         hotkey_worker = threading.Thread(target=self._hotkey_worker,
                                          name="sonara-hotkey-worker", daemon=True)
+        # Startup marker (#63): volatile state (mute level, pause) dies with the
+        # process, so an unexplained "setting reset itself" is diagnosable only
+        # if restarts are visible in the log.
+        print("[daemon] started pid={0}".format(os.getpid()),
+              file=sys.stderr, flush=True)
         speak_thread.start()
         accept_thread.start()
         hotkey_worker.start()
@@ -2164,6 +2223,20 @@ def _arm_faulthandler() -> None:
         from sonara.paths import SONARA_DIR
         path = str(SONARA_DIR / "faulthandler.log")
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        # Preserve a REAL crash dump before truncating (#65): every spawn
+        # attempt (including instantly-exiting singleton losers) re-arms and
+        # rewrote the file, so the silent-respawn flow destroyed the evidence
+        # of the very crash it was healing seconds earlier. A file with more
+        # than the one-line armed header is a dump: rotate it aside. A
+        # header-only file is safe to truncate, so raced losers cannot rotate
+        # the preserved dump away either.
+        try:
+            with open(path, encoding="utf-8") as fh:
+                prior = fh.read(65536)
+            if prior.count("\n") > 1:
+                os.replace(path, str(SONARA_DIR / "faulthandler.prev.log"))
+        except OSError:
+            pass
         # mode 'w': only the latest run's crash matters; never grow unbounded.
         _FAULT_FILE = open(path, "w", encoding="utf-8")
         _FAULT_FILE.write("=== faulthandler armed: pid {0} ===\n".format(os.getpid()))

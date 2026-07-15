@@ -28,6 +28,10 @@ DEFAULTS = {
                                        # Kokoro voice (engine kept warm, ~0.3s)
                                        # or a native Windows voice; Chatterbox
                                        # names are refused at use time (#60)
+    "mute_level": 0,                   # persisted mute cycle (0/1/2): hooks
+                                       # silently respawn a dead daemon, so a
+                                       # memory-only mute reset itself between
+                                       # two messages (#65)
     "chatterbox_variant": "turbo",        # default variant for voices without a sidecar
     "chatterbox_idle_unload_s": 600,      # worker frees the model after this idle time
     "chatterbox_timeout": 120,            # seconds per-chunk synthesis worker timeout

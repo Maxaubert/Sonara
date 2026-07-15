@@ -20,6 +20,7 @@ def test_defaults_has_documented_top_level_keys():
         "summary_prompts",
         "fast_cues",
         "cue_voice",
+        "mute_level",
         "chatterbox_variant",
         "chatterbox_idle_unload_s",
         "chatterbox_timeout",
