@@ -1340,11 +1340,15 @@ class SpeechDaemon:
         import time as _time
         fn = self._summarize_fn or summarizer.summarize
         t0 = _time.monotonic()
+        style = self.config.get("summary_style", "natural")
+        prompts = self.config.get("summary_prompts") or {}
         try:
             summary = fn(text,
                          model=self.config.get("summary_model", "haiku"),
                          command=self.config.get("summary_command", "claude"),
                          timeout=self.config.get("summary_timeout", 60),
+                         style=style,
+                         instruction=prompts.get(style),
                          debug_log=_log)
         except Exception:  # noqa: BLE001 - a summary failure must never crash the daemon
             summary = None
@@ -1729,6 +1733,10 @@ class SpeechDaemon:
             "summary_model":   lambda v: str(v).strip() or None,
             "summary_timeout": lambda v: max(15, min(300, int(v))),
             "summary_settle_ms": lambda v: max(0, min(5000, int(v))),
+            "summary_style": lambda v: (str(v)
+                if str(v) in ("tidy", "natural", "brief") else None),
+            "summary_command": lambda v: (str(v)
+                if str(v) in ("claude", "codex") else None),
             "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
             "chatterbox_exaggeration": lambda v: max(0.0, min(1.0, float(v))),
             "chatterbox_variant": lambda v: (str(v)
@@ -1745,6 +1753,30 @@ class SpeechDaemon:
             return False
         with self._lock:
             self.config[key] = cleaned
+            save_config(self.config)
+        return True
+
+    def set_summary_prompt(self, style, text) -> bool:
+        """Store or reset a per-style custom summarizer instruction (#58).
+        text=None (or text equal to the built-in default) resets to default;
+        empty/whitespace text is rejected (an empty instruction would strip
+        the never-addressed-to-you firewall from the call)."""
+        if style not in ("tidy", "natural", "brief"):
+            return False
+        from sonara.summarizer import default_instruction
+        if text is not None:
+            text = str(text)
+            if not text.strip():
+                return False
+            if text == default_instruction(style):
+                text = None                     # storing the default = reset
+        with self._lock:
+            prompts = dict(self.config.get("summary_prompts") or {})
+            if text is None:
+                prompts.pop(style, None)
+            else:
+                prompts[style] = text
+            self.config["summary_prompts"] = prompts
             save_config(self.config)
         return True
 
