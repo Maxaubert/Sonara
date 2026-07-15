@@ -346,3 +346,17 @@ def test_api_prompt_rejects_bad_input(server):
     with pytest.raises(urllib.error.HTTPError) as ei:
         _post(s, "/api/prompt", {"style": "brief", "text": "   "})
     assert ei.value.code == 400
+
+
+def test_settings_page_has_summary_styles_ui():
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    assert 'id="summary-seg"' in page          # 4-chip mode segment
+    assert 'data-style="off"' in page
+    assert 'data-style="tidy"' in page
+    assert 'data-style="natural"' in page
+    assert 'data-style="brief"' in page
+    assert 'id="engine-select"' in page        # summarizer engine picker
+    assert 'id="prompt-text"' in page          # editable prompt textarea
+    assert 'id="prompt-reset"' in page         # reset to default
+    assert 'id="summary-switch"' not in page   # old on/off switch replaced
