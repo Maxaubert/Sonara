@@ -198,3 +198,31 @@ def test_warm_request_loads_model_without_synth():
     assert out == {"ok": True, "loaded": True}
     assert s.model is not None and s.variant == "turbo"
     assert not getattr(s.model, "calls", [])          # generate() never called
+
+
+def test_normalize_rms_scales_quiet_and_loud_to_target():
+    # (#81) chatterbox clones the clip loudness; voices varied 6.7x live
+    import numpy as np
+    t = np.linspace(0, 1.0, 24000, dtype="float32")
+    quiet = (0.02 * np.sin(2 * np.pi * 220 * t)).astype("float32")
+    loud = (0.9 * np.sin(2 * np.pi * 220 * t)).astype("float32")
+    for x in (quiet, loud):
+        y = w._normalize_rms(x)
+        rms = float(np.sqrt((y ** 2).mean()))
+        assert 0.045 < rms < 0.09, rms        # sine RMS = amp/sqrt(2) ~ target
+        assert float(np.abs(y).max()) <= 0.97
+
+
+def test_normalize_rms_leaves_silence_alone():
+    import numpy as np
+    silent = np.zeros(24000, dtype="float32")
+    assert np.array_equal(w._normalize_rms(silent), silent)
+
+
+def test_normalize_rms_matches_kokoro_twin():
+    # duplicated on purpose (the worker cannot import sonara); keep in sync
+    import numpy as np
+    from sonara.kokoro import normalize_rms
+    rng = np.linspace(-0.3, 0.3, 48000, dtype="float32")
+    x = (rng * np.sin(np.linspace(0, 700, 48000))).astype("float32")
+    assert np.allclose(w._normalize_rms(x), normalize_rms(x))

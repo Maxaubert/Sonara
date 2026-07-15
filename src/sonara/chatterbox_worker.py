@@ -111,6 +111,33 @@ def _to_float_mono(tensor):
     return np.asarray(tensor.squeeze().cpu().numpy(), dtype="float32").reshape(-1)
 
 
+def _normalize_rms(audio, target=0.08, peak=0.97, frame=480, floor=1e-4):
+    """Scale float mono audio so its VOICED RMS lands on *target* (~-22 dBFS),
+    hard-capped so no sample exceeds *peak*. Chatterbox clones the reference
+    clip's loudness, so voices varied wildly (one clip hot, another quiet, #81);
+    normalizing the synthesized output makes every voice comparable. Frames
+    below a tenth of the loudest frame are pauses/silence and do not count
+    (they would understate loudness). Silent/empty audio is returned as-is.
+    Kept in sync with sonara.kokoro.normalize_rms (the worker cannot import
+    sonara)."""
+    import numpy as np
+    x = np.asarray(audio, dtype="float32")
+    if x.size < frame:
+        return x
+    frames = x[: (len(x) // frame) * frame].reshape(-1, frame)
+    rms = np.sqrt((frames ** 2).mean(axis=1))
+    gate = max(floor, float(rms.max()) * 0.1)
+    voiced = rms[rms > gate]
+    cur = float(voiced.mean()) if voiced.size else 0.0
+    if cur <= floor:
+        return x
+    gain = target / cur
+    peak_now = float(np.abs(x).max())
+    if peak_now * gain > peak:
+        gain = peak / peak_now
+    return (x * gain).astype("float32")
+
+
 def _pcm_to_wav_b64(pcm_float, sr):
     import numpy as np
     pcm = (np.asarray(pcm_float, dtype="float32").clip(-1.0, 1.0) * 32767.0).astype("<i2")
@@ -187,6 +214,7 @@ def handle_request(state, req, now=time.time):
             chunks = _split_text(req.get("text") or "")
             parts = [_to_float_mono(state.model.generate(c, **kwargs)) for c in chunks]
             audio = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
+            audio = _normalize_rms(audio)     # uniform loudness across voices (#81)
             sr = state.model.sr
             state.last_used = now()
         return {"ok": True, "wav_b64": _pcm_to_wav_b64(audio, sr)}
