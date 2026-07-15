@@ -78,7 +78,10 @@ def test_set_minqueue_clamps_out_of_range():
     assert config["minqueue"] == 10          # clamped to MINQUEUE_MAX
     with mock.patch("sonara.daemon.save_config"):
         daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=0))
-    assert config["minqueue"] == 1           # clamped to MINQUEUE_MIN
+    assert config["minqueue"] == 0           # 0 = start immediately (valid floor)
+    with mock.patch("sonara.daemon.save_config"):
+        daemon.handle_message(_msg(MsgType.SET_MINQUEUE, minqueue=-3))
+    assert config["minqueue"] == 0           # clamped to MINQUEUE_MIN
 
 
 def test_set_minqueue_rejects_non_numeric():

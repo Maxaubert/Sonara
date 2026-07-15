@@ -172,11 +172,10 @@
           <div class="pref"><div class="pref-copy"><strong>Voice</strong></div><div class="control"><div class="voice"><select id="voice-select" aria-label="Preferred voice"></select><button class="play" id="voice-preview" aria-label="Preview selected voice"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint preview-hint">Play a short sample before choosing.</div></div></div>
           <div class="pref" id="cb-mode-row"><div class="pref-copy"><strong>Mode</strong><div class="hint">Original speaks with emotion; Turbo answers faster.</div></div><div class="control"><div class="segments" id="mode-seg"><button data-variant="turbo">Turbo</button><button data-variant="original">Original</button></div><div class="hint">Switching reloads the voice model once, about twenty seconds.</div></div></div>
           <div class="pref" id="cb-exag-row"><div class="pref-copy"><strong>Expressiveness</strong></div><div class="control"><div class="range-head"><span>Exaggeration</span><output id="exag-out">0.00</output></div><input class="range" id="exag" type="range" min="0" max="1" step="0.05" value="0"><div class="ends"><span>0 monotone</span><span>1 dramatic</span></div><div class="hint" id="exag-hint">Applies to every Chatterbox voice.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Speaking rate</strong></div><div class="control"><div class="range-head"><span>Words per minute</span><output id="rate-out">250 wpm</output></div><input class="range" id="rate" type="range" min="120" max="350" value="250"><div class="ends"><span>120</span><span>350</span></div><div class="hint">Higher values keep technical prose moving faster.</div></div></div>
+          <div class="pref" id="rate-row"><div class="pref-copy"><strong>Speaking rate</strong></div><div class="control"><div class="range-head"><span>Words per minute</span><output id="rate-out">250 wpm</output></div><input class="range" id="rate" type="range" min="120" max="350" value="250"><div class="ends"><span>120</span><span>350</span></div><div class="hint">Higher values keep technical prose moving faster.</div></div></div>
         </div>
         <div class="group-label"><span>Delivery</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Minimum queue</strong><div class="hint">Words Sonara waits for before beginning.</div></div><div class="control"><div class="stepper"><button id="mq-minus" aria-label="Decrease minimum queue">&minus;</button><output id="minqueue-out">5</output><button id="mq-plus" aria-label="Increase minimum queue">+</button></div><div class="hint">Higher values prevent tiny fragments from sounding abrupt.</div></div></div>
           <div class="pref"><div class="pref-copy"><strong>Instant cues</strong><div class="hint">Speak control feedback in a fast, always-loaded voice.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Fast cues</span><button class="switch" id="cues-switch" role="switch" aria-checked="true" aria-label="Toggle instant cues"></button></div><div class="hint">Muted, Paused and session changes play right away instead of waiting for the neural voice to load.</div></div></div>
           <div class="pref" id="cue-voice-row"><div class="pref-copy"><strong>Cue voice</strong><div class="hint">Which voice speaks the feedback.</div></div><div class="control"><select id="cue-voice-select" aria-label="Cue voice"></select><div class="hint">Kokoro voices stay loaded for cues, so they keep their speed.</div></div></div>
         </div>
@@ -194,6 +193,10 @@
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
           <div class="pref"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
+        </div>
+        <div class="group-label"><span>Live reading</span></div>
+        <div class="inset">
+          <div class="pref" id="minqueue-row"><div class="pref-copy"><strong>Minimum queue</strong><div class="hint">Sentences Sonara waits for before it starts reading.</div></div><div class="control"><div class="stepper"><button id="mq-minus" aria-label="Decrease minimum queue">&minus;</button><output id="minqueue-out">5</output><button id="mq-plus" aria-label="Increase minimum queue">+</button></div><div class="hint">Zero starts speaking immediately. Only applies while the mode above is Off.</div></div></div>
         </div>
         <div class="group-label"><span>Prompt</span></div>
         <div class="inset" id="prompt-card">
@@ -279,8 +282,13 @@ async function refresh() {
 }
 function setBanner(down) {
   document.getElementById("offline-banner").style.display = down ? "flex" : "none";
-  document.querySelectorAll("input,select,button,textarea").forEach(el =>
-    el.disabled = down || el.dataset.lock === "1");
+  // Assign disabled ONLY on change: this runs every 3s poll, and re-setting
+  // properties on an OPEN <select> makes Chrome snap its dropdown shut --
+  // the "list refreshes every three seconds" report on the cue-voice picker.
+  document.querySelectorAll("input,select,button,textarea").forEach(el => {
+    const want = down || el.dataset.lock === "1";
+    if (el.disabled !== want) el.disabled = want;
+  });
   document.body.classList.toggle("offline", down);
 }
 async function acceptState(r) {
@@ -343,6 +351,9 @@ function render(s) {
   const isCb = engineView === "chatterbox";
   document.getElementById("cb-mode-row").style.display = isCb ? "" : "none";
   document.getElementById("cb-exag-row").style.display = isCb ? "" : "none";
+  // Chatterbox clones the reference clip's pacing and has no speed knob, so the
+  // wpm slider does nothing there: hide it, like expressiveness on Kokoro.
+  document.getElementById("rate-row").style.display = isCb ? "none" : "";
   const variant = s.config.chatterbox_variant || "turbo";
   document.querySelectorAll("#mode-seg button").forEach(b =>
     b.classList.toggle("active", b.dataset.variant === variant));
@@ -438,8 +449,20 @@ function render(s) {
   }
   const cuesOff = !s.config.fast_cues;
   document.getElementById("cue-voice-row").classList.toggle("dim", cuesOff);
-  cueSel.disabled = cuesOff;
-  cueSel.dataset.lock = cuesOff ? "1" : "";   // setBanner(false) must not re-enable
+  // change-guarded: unconditional per-poll writes close an open dropdown (#38)
+  if (cueSel.disabled !== cuesOff) cueSel.disabled = cuesOff;
+  const cueLock = cuesOff ? "1" : "";         // setBanner(false) must not re-enable
+  if (cueSel.dataset.lock !== cueLock) cueSel.dataset.lock = cueLock;
+  // minqueue lives on the Summary page: it gates LIVE reading only, so it dims
+  // whenever a summary style is active (one digest per turn, nothing to batch)
+  const mqOff = active !== "off";
+  document.getElementById("minqueue-row").classList.toggle("dim", mqOff);
+  for (const id of ["mq-minus", "mq-plus"]) {
+    const el = document.getElementById(id);
+    const lock = mqOff ? "1" : "";
+    if (el.dataset.lock !== lock) el.dataset.lock = lock;
+    if (el.disabled !== mqOff) el.disabled = mqOff;
+  }
   setSwitch("duck-switch", s.config.audio_control);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
@@ -577,7 +600,7 @@ document.getElementById("cues-switch").addEventListener("click", function () {
 document.getElementById("cue-voice-select").addEventListener("change", e => set("cue_voice", e.target.value));
 document.getElementById("mq-minus").addEventListener("click", () => {
   if (!state) return;
-  set("minqueue", Math.max(1, state.config.minqueue - 1));
+  set("minqueue", Math.max(0, state.config.minqueue - 1));   // 0 = start immediately
 });
 document.getElementById("mq-plus").addEventListener("click", () => {
   if (!state) return;
