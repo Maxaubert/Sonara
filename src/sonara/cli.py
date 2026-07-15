@@ -534,9 +534,39 @@ def stop_sonara(sup=None) -> bool:
     while time.time() < deadline:
         if not paths.socket_connectable():
             time.sleep(0.3)     # grace: process exit releases the mutex
+            _kill_stray_daemons()
             return True
         time.sleep(0.1)
     return False
+
+
+def _kill_stray_daemons(runner=None) -> int:
+    """Terminate any `-m sonara.daemon` processes still alive after the socket
+    owner died (#65). SHUTDOWN only reaches the lockfile/socket owner; a
+    split-brain survivor (an older daemon that lost the socket race but still
+    holds the global hotkeys) outlives every `sonara shutdown` and keeps
+    swallowing hotkey presses - mute appears broken. Best-effort: returns the
+    number of processes killed, 0 on any failure or on non-Windows."""
+    if os.name != "nt":
+        return 0
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+        "Where-Object { $_.CommandLine -match 'sonara[.]daemon' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
+        "$_.ProcessId }")
+    run = runner or (lambda argv: subprocess.run(
+        argv, capture_output=True, timeout=15,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+    try:
+        proc = run(["powershell", "-NoProfile", "-Command", script])
+        killed = [ln for ln in (proc.stdout or b"").decode("utf-8", "replace").split()
+                  if ln.strip().isdigit()]
+        if killed:
+            print("stopped {0} stray daemon process(es): {1}".format(
+                len(killed), ", ".join(killed)))
+        return len(killed)
+    except Exception:  # noqa: BLE001 - a failed sweep must never fail a stop
+        return 0
 
 
 def start_sonara() -> int:
