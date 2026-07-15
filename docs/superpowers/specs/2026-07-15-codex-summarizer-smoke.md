@@ -28,15 +28,25 @@ codex exec --sandbox read-only --skip-git-repo-check --color never
 
 ## Models accepted by this account
 
+Verified against the Codex TUI model picker (2026-07-15 follow-up): the picker
+offers sol/terra/luna in the 5.6 line plus 5.5, 5.4 and 5.4-mini, and every
+one of them probes OK through the pinned argv.
+
 | Model | Result |
 |---|---|
 | `gpt-5.6-sol` | OK (account default; 5-12 s) |
+| `gpt-5.6-terra` | OK (5 s) |
+| `gpt-5.6-luna` | OK (4 s, the fast 5.6) |
 | `gpt-5.5` | OK (4 s) |
+| `gpt-5.4` | OK (4 s) |
+| `gpt-5.4-mini` | OK (4 s, small + fast) |
 | `gpt-5.6`, `gpt-5.6-codex`, `gpt-5.6-mini`, `gpt-5.6-sol-mini`, `gpt-5.6-sol-max` | 400 unsupported |
 | `gpt-5.5-mini`, `gpt-5.5-sol`, `gpt-5.5-codex`, `gpt-5.5-codex-mini` | 400 unsupported |
 | whole `gpt-5.1`/`gpt-5.2` families | 400 "not supported when using Codex with a ChatGPT account" |
 
-UI model list for the Codex engine: `gpt-5.6-sol`, `gpt-5.5`.
+UI model list for the Codex engine (fast-first): `gpt-5.6-luna`, `gpt-5.4-mini`,
+`gpt-5.6-terra`, `gpt-5.6-sol`, `gpt-5.5`, `gpt-5.4`; engine-switch default
+`gpt-5.6-luna` (a summarizer wants the fast tier).
 
 ## Digest sanity run
 

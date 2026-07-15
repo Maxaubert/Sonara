@@ -367,9 +367,10 @@ function render(s) {
   document.getElementById("summary-mode-hint").textContent = MODE_HINTS[active];
   // engine + model (#58): the model list follows the engine
   const ENGINE_MODELS = {claude: ["haiku", "sonnet", "opus"],
-                         codex: ["gpt-5.6-sol", "gpt-5.5"]};
+                         codex: ["gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.6-terra",
+                                 "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]};
   const MODEL_HINTS = {claude: "Haiku is faster. Sonnet retains more nuance in dense explanations.",
-                       codex: "Verified for your account: gpt-5.6-sol and gpt-5.5."};
+                       codex: "Luna and 5.4-mini are the fast ones; sol retains the most nuance."};
   const eng = s.config.summary_command || "claude";
   setVal("engine-select", eng);
   const mSel = document.getElementById("model-select");
@@ -523,7 +524,7 @@ document.querySelectorAll("#summary-seg button").forEach(b =>
 document.getElementById("engine-select").addEventListener("change", e => {
   const eng = e.target.value;
   set("summary_command", eng);
-  const first = {claude: "haiku", codex: "gpt-5.6-sol"}[eng];
+  const first = {claude: "haiku", codex: "gpt-5.6-luna"}[eng];
   if (first) set("summary_model", first);      // provider switch picks its default
 });
 document.getElementById("model-select").addEventListener("change", e => set("summary_model", e.target.value));
