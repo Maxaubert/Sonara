@@ -315,17 +315,13 @@ let cueVoiceSig = null;
 // Merged summarizer model list, FASTEST FIRST. Codex latencies probed live
 // (see docs/superpowers/specs/2026-07-15-codex-summarizer-smoke.md); the
 // claude CLI carries a heavier cold start, so its bigger models sit lower.
-// every descriptor is unique so the ordering reads at a glance
+// The fast trio only - a spoken digest wants latency, not frontier depth.
+// Every descriptor is unique so the ordering reads at a glance; a manually
+// configured off-list model still shows as an extra selected option.
 const SUMMARY_MODELS = [
   {cmd: "codex",  model: "gpt-5.6-luna",  label: "GPT-5.6 Luna (fastest)"},
   {cmd: "codex",  model: "gpt-5.4-mini",  label: "GPT-5.4 Mini (faster)"},
   {cmd: "claude", model: "haiku",         label: "Haiku (fast)"},
-  {cmd: "codex",  model: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)"},
-  {cmd: "codex",  model: "gpt-5.4",       label: "GPT-5.4 (capable)"},
-  {cmd: "codex",  model: "gpt-5.5",       label: "GPT-5.5 (more capable)"},
-  {cmd: "codex",  model: "gpt-5.6-sol",   label: "GPT-5.6 Sol (most capable)"},
-  {cmd: "claude", model: "sonnet",        label: "Sonnet (thorough)"},
-  {cmd: "claude", model: "opus",          label: "Opus (most thorough)"},
 ];
 let engineView = null;          // "kokoro" | "chatterbox" (#42)
 function engineOf(s, voice) {
