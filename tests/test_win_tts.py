@@ -32,6 +32,36 @@ def test_best_voice_info_returns_object_with_onecore_id():
     assert "speech_onecore" in (info.id or "").lower()
 
 
+def test_synthesize_wav_runs_blocking_body_off_calling_thread(monkeypatch):
+    # (#60) the daemon speak loop is an STA COM thread, where WinRT's blocking
+    # .get() raises "Cannot call blocking method from single-threaded
+    # apartment" (live regression: every fast cue played the error earcon).
+    # The blocking body must therefore run on a fresh (MTA-capable) thread.
+    import threading
+    b = WinTtsBackend()
+    seen = {}
+
+    def fake_blocking(text, voice, rate):
+        seen["thread"] = threading.current_thread()
+        return b"WAVBYTES"
+
+    monkeypatch.setattr(b, "_synthesize_wav_blocking", fake_blocking)
+    out = b._synthesize_wav("hi", None, 200)
+    assert out == b"WAVBYTES"
+    assert seen["thread"] is not threading.current_thread()
+
+
+def test_synthesize_wav_propagates_worker_exceptions(monkeypatch):
+    b = WinTtsBackend()
+
+    def boom(text, voice, rate):
+        raise RuntimeError("no voices installed")
+
+    monkeypatch.setattr(b, "_synthesize_wav_blocking", boom)
+    with pytest.raises(RuntimeError, match="no voices installed"):
+        b._synthesize_wav("hi", None, 200)
+
+
 def test_run_completes_returns_zero():
     h = WinTtsBackend().run("hello", None, 200)
     assert h.wait(timeout=2.0) == 0
