@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/sonara-logo.png" alt="Sonara" width="128">
+  <img src="assets/sonara-logo-minimal-02.png" alt="Sonara" width="128">
 
   # Sonara
 
