@@ -412,6 +412,11 @@ def test_settings_page_has_summary_styles_ui():
     assert "GPT-5.6 Luna (fastest)" in page
     assert "Haiku (fast)" in page
     assert 'model: "gpt-5.6-luna"' in page     # value stays the real model id
+    # every speed descriptor is unique ("fastest" twice reads as nonsense)
+    import re
+    descriptors = re.findall(r'label: "[^"(]+\(([^)]+)\)"', page)
+    assert len(descriptors) == 9
+    assert len(set(descriptors)) == len(descriptors), descriptors
     assert 'id="prompt-text"' in page          # editable prompt textarea
     assert 'id="prompt-reset"' in page         # reset to default
     assert 'id="summary-switch"' not in page   # old on/off switch replaced
