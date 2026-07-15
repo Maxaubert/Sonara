@@ -21,11 +21,11 @@ Today the summarizer is a single hardcoded `INSTRUCTION` in `src/sonara/summariz
 | `summary_command` | `"claude"` | `claude` \| `codex` | Existing key, now clamped to the two providers. |
 | `summary_model` | `"haiku"` | non-empty str | Existing. UI constrains per provider; daemon accepts any non-empty string (power users may have other model IDs). |
 
-Provider model lists (UI only, not enforced by the daemon):
+Provider model lists (UI only, not enforced by the daemon; Codex list verified live, see `2026-07-15-codex-summarizer-smoke.md` - the gpt-5.1/5.2 families are rejected on a ChatGPT account):
 - Claude Code: `haiku`, `sonnet`, `opus`
-- Codex: `gpt-5.1-codex-mini`, `gpt-5.1-codex`, `gpt-5.1-codex-max`, `gpt-5.1`
+- Codex: `gpt-5.6-sol`, `gpt-5.5`
 
-Switching provider in the UI resets the model to that provider's first entry (`haiku` / `gpt-5.1-codex-mini`).
+Switching provider in the UI resets the model to that provider's first entry (`haiku` / `gpt-5.6-sol`).
 
 ## Styles and default instructions (`src/sonara/summarizer.py`)
 
@@ -43,9 +43,7 @@ The exact tidy/brief instruction texts are written at implementation time follow
 
 `build_argv(command, model)` branches on command:
 - `claude`: unchanged `[command, "-p", "--model", model, "--tools", "", "--setting-sources", ""]`.
-- `codex`: non-interactive `codex exec` reading the prompt from stdin, sandboxed read-only, never touching the repo, final message only. Candidate argv: `["codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "-c", "model=\"<model>\"", "--color", "never", "-"]` with stdout parsing, or `--output-last-message <tmpfile>` if stdout carries activity noise.
-
-REQUIRED before wiring: a live smoke test (documented in `docs/superpowers/specs/2026-07-15-codex-summarizer-smoke.md`) proving: (a) exit 0 with the digest retrievable, (b) no file writes / tool use possible, (c) no console window (CREATE_NO_WINDOW as today), (d) non-zero exit or timeout maps to None, (e) `SONARA_SUMMARIZER=1` still set (harmless for codex, keeps the guard uniform). The smoke test fixes the exact argv; the spec's candidate is a starting point, not a commitment.
+- `codex`: non-interactive `codex exec` reading the prompt from stdin, sandboxed read-only, never touching the repo, digest on stdout. PINNED by the live smoke test (`2026-07-15-codex-summarizer-smoke.md`): `["codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never", "-c", "mcp_servers={}", "--disable", "memories", "-c", "model_reasoning_effort=\"low\"", "-m", model, "-"]`. The mcp/memories/reasoning overrides keep the user's configured MCP servers, plugins and memory writes out of the throwaway call. stdout carries exactly the digest (activity goes to stderr); 4-12 s round-trip; non-zero exit for unsupported models maps to the existing None path.
 
 `cwd` stays the user home; timeout, None-on-any-failure, and SKIP handling are provider-independent.
 
