@@ -186,12 +186,12 @@
         <div class="group-label"><span>Spoken summaries</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="tablist"><button data-style="off">Off</button><button data-style="tidy">Tidy</button><button data-style="natural">Natural</button><button data-style="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Model</strong><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint">Fastest options first. Every model runs headless and never touches your session.</div></div></div>
+          <div class="pref" id="model-row"><div class="pref-copy"><strong>Model</strong><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint">Fastest options first. Every model runs headless and never touches your session.</div></div></div>
         </div>
         <div class="group-label"><span>Timing</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
+          <div class="pref" id="timeout-row"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
+          <div class="pref" id="settle-row"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
         </div>
         <div class="group-label"><span>Live reading</span></div>
         <div class="inset">
@@ -208,11 +208,11 @@
         <div class="group-label"><span>Background sound</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Audio duck</strong><div class="hint">Reduce app and media volume during speech.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Audio ducking</span><button class="switch" id="duck-switch" role="switch" aria-checked="false" aria-label="Toggle audio ducking"></button></div><div class="hint">Volume returns to normal when Sonara finishes speaking.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Duck level</strong><div class="hint">Volume retained by other applications.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out">20%</output></div><input class="range" id="duck" type="range" min="0" max="100" value="20"><div class="ends"><span>Silent</span><span>Full</span></div><div class="hint">Lower values preserve context without competing with speech.</div></div></div>
+          <div class="pref" id="duck-row"><div class="pref-copy"><strong>Duck level</strong><div class="hint">Volume retained by other applications.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out">20%</output></div><input class="range" id="duck" type="range" min="0" max="100" value="20"><div class="ends"><span>Silent</span><span>Full</span></div><div class="hint">Lower values preserve context without competing with speech.</div></div></div>
         </div>
         <div class="group-label"><span>Streaming</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Chunk size</strong><div class="hint">Characters sent to the voice engine at once.</div></div><div class="control"><div class="range-head"><span>Characters</span><output id="chunk-out">280</output></div><input class="range" id="chunk" type="range" min="80" max="280" value="280"><div class="ends"><span>80 responsive</span><span>280 smooth</span></div><div class="hint">Larger chunks favor natural phrasing over the quickest start.</div></div></div>
+          <div class="pref" id="chunk-row"><div class="pref-copy"><strong>Chunk size</strong><div class="hint">Characters sent to the Chatterbox engine at once.</div></div><div class="control"><div class="range-head"><span>Characters</span><output id="chunk-out">280</output></div><input class="range" id="chunk" type="range" min="80" max="280" value="280"><div class="ends"><span>80 responsive</span><span>280 smooth</span></div><div class="hint">Larger chunks favor natural phrasing over the quickest start.</div></div></div>
         </div>
       </section>
 
@@ -254,7 +254,10 @@
   <script>
     // decorative chrome: kept from the mockup as-is (navigation, search, theme)
     const navButtons=[...document.querySelectorAll('.side-nav button')];
-    navButtons.forEach(button=>button.addEventListener('click',()=>{navButtons.forEach(b=>b.classList.remove('active'));document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));button.classList.add('active');document.getElementById(button.dataset.page).classList.add('active');document.querySelector('.content-pane').scrollTop=0}));
+    navButtons.forEach(button=>button.addEventListener('click',()=>{navButtons.forEach(b=>b.classList.remove('active'));document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));button.classList.add('active');document.getElementById(button.dataset.page).classList.add('active');document.querySelector('.content-pane').scrollTop=0;try{localStorage.setItem('sonara-page',button.dataset.page)}catch(e){}}));
+    // restore the last-viewed page across refreshes (a refresh used to always
+    // land back on Speech)
+    try{const savedPage=localStorage.getItem('sonara-page');const savedBtn=savedPage&&document.querySelector('.side-nav button[data-page="'+savedPage+'"]');if(savedBtn&&!savedBtn.classList.contains('active'))savedBtn.click()}catch(e){}
     document.getElementById('themeToggle').addEventListener('click',()=>{const root=document.documentElement;const t=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=t;try{localStorage.setItem('sonara-theme',t)}catch(e){}});
     document.getElementById('settingsSearch').addEventListener('input',event=>{const query=event.target.value.trim().toLowerCase();let matches=0;navButtons.forEach(button=>{const page=document.getElementById(button.dataset.page);const match=!query||page.textContent.toLowerCase().includes(query)||button.textContent.toLowerCase().includes(query);button.classList.toggle('hidden',!match);if(match)matches++});document.querySelector('.empty-search').classList.toggle('show',matches===0)});
   </script>
@@ -455,22 +458,18 @@ function render(s) {
       cueSel.appendChild(o);
     }
   }
-  const cuesOff = !s.config.fast_cues;
-  document.getElementById("cue-voice-row").classList.toggle("dim", cuesOff);
-  // change-guarded: unconditional per-poll writes close an open dropdown (#38)
-  if (cueSel.disabled !== cuesOff) cueSel.disabled = cuesOff;
-  const cueLock = cuesOff ? "1" : "";         // setBanner(false) must not re-enable
-  if (cueSel.dataset.lock !== cueLock) cueSel.dataset.lock = cueLock;
-  // minqueue lives on the Summary page: it gates LIVE reading only, so it dims
-  // whenever a summary style is active (one digest per turn, nothing to batch)
-  const mqOff = active !== "off";
-  document.getElementById("minqueue-row").classList.toggle("dim", mqOff);
-  for (const id of ["mq-minus", "mq-plus"]) {
-    const el = document.getElementById(id);
-    const lock = mqOff ? "1" : "";
-    if (el.dataset.lock !== lock) el.dataset.lock = lock;
-    if (el.disabled !== mqOff) el.disabled = mqOff;
-  }
+  // Gate every control whose setting is currently ignored (#67): summary
+  // machinery while the mode is Off, minqueue while a style is on (one digest
+  // per turn, nothing to batch), cue voice while fast cues are off, duck
+  // level while ducking is off, chunk size while the voice is not Chatterbox.
+  const summaryOff = active === "off";
+  gateRow("model-row", summaryOff, ["model-select"]);
+  gateRow("timeout-row", summaryOff, ["timeout"]);
+  gateRow("settle-row", summaryOff, ["settle"]);
+  gateRow("minqueue-row", !summaryOff, ["mq-minus", "mq-plus"]);
+  gateRow("cue-voice-row", !s.config.fast_cues, ["cue-voice-select"]);
+  gateRow("duck-row", !s.config.audio_control, ["duck"]);
+  gateRow("chunk-row", engineOf(s, s.config.voice) !== "chatterbox", ["chunk"]);
   setSwitch("duck-switch", s.config.audio_control);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
@@ -503,6 +502,21 @@ function render(s) {
 }
 function setSwitch(id, on) {
   document.getElementById(id).setAttribute("aria-checked", on ? "true" : "false");
+}
+function gateRow(rowId, off, ids) {
+  // A control whose setting is IGNORED under the current state dims and
+  // locks, instead of pretending to apply. Change-guarded writes only: this
+  // runs every 3s poll, and re-setting properties on an open <select> makes
+  // Chrome snap its dropdown shut (#38). dataset.lock keeps setBanner(false)
+  // from re-enabling a gated control.
+  document.getElementById(rowId).classList.toggle("dim", off);
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const lock = off ? "1" : "";
+    if (el.dataset.lock !== lock) el.dataset.lock = lock;
+    if (el.disabled !== off) el.disabled = off;
+  }
 }
 function fmtUptime(sec) {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);

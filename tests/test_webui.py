@@ -370,6 +370,21 @@ def test_settings_page_has_fast_cues_switch():
     assert '"cue_voice"' in page
 
 
+def test_settings_page_gates_ignored_controls_and_remembers_tab():
+    # (#67) controls whose setting is ignored under the current state dim and
+    # lock instead of pretending to apply; the sidebar restores the last-viewed
+    # page across refreshes via localStorage.
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    assert "function gateRow(" in page
+    for row in ("model-row", "timeout-row", "settle-row", "minqueue-row",
+                "cue-voice-row", "duck-row", "chunk-row"):
+        assert 'id="{0}"'.format(row) in page, row
+        assert 'gateRow("{0}"'.format(row) in page, row
+    assert "localStorage.setItem('sonara-page'" in page
+    assert "localStorage.getItem('sonara-page')" in page
+
+
 def test_settings_page_minqueue_lives_on_summary_page_and_rate_row_is_hideable():
     # (#60 follow-up) minqueue gates LIVE reading, so it moved to the Summary
     # page (dimmed while a summary style is active) and supports 0 = instant;
