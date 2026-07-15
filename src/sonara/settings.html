@@ -186,8 +186,7 @@
         <div class="group-label"><span>Spoken summaries</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="tablist"><button data-style="off">Off</button><button data-style="tidy">Tidy</button><button data-style="natural">Natural</button><button data-style="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Engine</strong><div class="hint">Which assistant writes the spoken summary.</div></div><div class="control"><select id="engine-select" aria-label="Summary engine"><option value="claude">Claude Code</option><option value="codex">Codex</option></select><div class="hint">Both run headless and never touch your session.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Model</strong></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint" id="model-hint">Haiku is faster. Sonnet retains more nuance in dense explanations.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Model</strong><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint">Fastest options first. Every model runs headless and never touches your session.</div></div></div>
         </div>
         <div class="group-label"><span>Timing</span></div>
         <div class="inset">
@@ -310,6 +309,20 @@ async function set(key, value) {
 let voicesSig = "";
 let modelSig = null;
 let cueVoiceSig = null;
+// Merged summarizer model list, FASTEST FIRST. Codex latencies probed live
+// (see docs/superpowers/specs/2026-07-15-codex-summarizer-smoke.md); the
+// claude CLI carries a heavier cold start, so its bigger models sit lower.
+const SUMMARY_MODELS = [
+  {cmd: "codex",  model: "gpt-5.6-luna",  label: "GPT-5.6 Luna (fastest)"},
+  {cmd: "codex",  model: "gpt-5.4-mini",  label: "GPT-5.4 Mini (fastest)"},
+  {cmd: "claude", model: "haiku",         label: "Haiku (fast)"},
+  {cmd: "codex",  model: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)"},
+  {cmd: "codex",  model: "gpt-5.4",       label: "GPT-5.4 (balanced)"},
+  {cmd: "codex",  model: "gpt-5.5",       label: "GPT-5.5 (capable)"},
+  {cmd: "codex",  model: "gpt-5.6-sol",   label: "GPT-5.6 Sol (capable)"},
+  {cmd: "claude", model: "sonnet",        label: "Sonnet (thorough)"},
+  {cmd: "claude", model: "opus",          label: "Opus (most thorough)"},
+];
 let engineView = null;          // "kokoro" | "chatterbox" (#42)
 function engineOf(s, voice) {
   if ((s.voices.chatterbox || []).includes(voice)) return "chatterbox";
@@ -379,34 +392,29 @@ function render(s) {
   document.querySelectorAll("#summary-seg button").forEach(b =>
     b.classList.toggle("active", b.dataset.style === active));
   document.getElementById("summary-mode-hint").textContent = MODE_HINTS[active];
-  // engine + model (#58): the model list follows the engine
-  const ENGINE_MODELS = {claude: ["haiku", "sonnet", "opus"],
-                         codex: ["gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.6-terra",
-                                 "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]};
-  const MODEL_HINTS = {claude: "Haiku is faster. Sonnet retains more nuance in dense explanations.",
-                       codex: "Luna and 5.4-mini are the fast ones; sol retains the most nuance."};
-  const eng = s.config.summary_command || "claude";
-  setVal("engine-select", eng);
+  // one merged model list across both engines, fastest first (#58 follow-up):
+  // picking a model also picks its engine (option value = "command|model")
   const mSel = document.getElementById("model-select");
-  const mNames = ENGINE_MODELS[eng] || ENGINE_MODELS.claude;
+  const eng = s.config.summary_command || "claude";
   const mSig = JSON.stringify([eng, s.config.summary_model]);
   if (mSig !== modelSig && document.activeElement !== mSel) {
     modelSig = mSig;
     mSel.innerHTML = "";
-    for (const n of mNames) {
+    let found = false;
+    for (const m of SUMMARY_MODELS) {
       const o = document.createElement("option");
-      o.value = n; o.textContent = n;
-      o.selected = (n === s.config.summary_model);
+      o.value = m.cmd + "|" + m.model; o.textContent = m.label;
+      if (m.cmd === eng && m.model === s.config.summary_model) { o.selected = true; found = true; }
       mSel.appendChild(o);
     }
-    if (!mNames.includes(s.config.summary_model)) {
-      const o = document.createElement("option");   // off-list model stays visible
-      o.value = s.config.summary_model; o.textContent = s.config.summary_model;
+    if (!found) {
+      const o = document.createElement("option");   // off-list combo stays visible
+      o.value = eng + "|" + s.config.summary_model;
+      o.textContent = s.config.summary_model + " (" + eng + ")";
       o.selected = true;
       mSel.appendChild(o);
     }
   }
-  document.getElementById("model-hint").textContent = MODEL_HINTS[eng] || MODEL_HINTS.claude;
   // prompt card (#58): show the ACTIVE style's effective instruction; dim when off
   const pCard = document.getElementById("prompt-card");
   const pText = document.getElementById("prompt-text");
@@ -572,13 +580,12 @@ document.querySelectorAll("#summary-seg button").forEach(b =>
     if (state && !state.config.summary_mode) set("summary_mode", true);
     set("summary_style", v);
   }));
-document.getElementById("engine-select").addEventListener("change", e => {
-  const eng = e.target.value;
-  set("summary_command", eng);
-  const first = {claude: "haiku", codex: "gpt-5.6-luna"}[eng];
-  if (first) set("summary_model", first);      // provider switch picks its default
+document.getElementById("model-select").addEventListener("change", e => {
+  // "command|model": picking a model also picks the engine that runs it
+  const [cmd, model] = e.target.value.split("|");
+  if (state && state.config.summary_command !== cmd) set("summary_command", cmd);
+  set("summary_model", model);
 });
-document.getElementById("model-select").addEventListener("change", e => set("summary_model", e.target.value));
 document.getElementById("prompt-text").addEventListener("change", function () {
   const st = (state && state.config.summary_style) || "natural";
   POST("/api/prompt", {style: st, text: this.value}).then(async r => {
