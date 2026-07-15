@@ -562,13 +562,17 @@ document.querySelectorAll("#engine-seg button").forEach(b =>
 document.querySelectorAll("#mode-seg button").forEach(b =>
   b.addEventListener("click", () => set("chatterbox_variant", b.dataset.variant)));
 let previewAudio = null;
+const PREVIEW_V = Date.now();   // one cache generation per page load
 document.getElementById("voice-preview").addEventListener("click", () => {
   // pre-rendered file plays INSTANTLY (#38); live synthesis only as fallback
   // while the daemon is still rendering that voice's preview in the background
   const v = document.getElementById("voice-select").value;
   if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+  // PREVIEW_V busts the hour-long browser cache once per page load: a
+  // regenerated preview file was inaudible behind the cached old URL
+  // (reported live); replays within a session still hit the cache.
   const url = "/api/preview-audio?voice=" + encodeURIComponent(v) +
-              "&token=" + encodeURIComponent(TOKEN);
+              "&v=" + PREVIEW_V + "&token=" + encodeURIComponent(TOKEN);
   const a = new Audio(url);
   previewAudio = a;
   let fell = false;
