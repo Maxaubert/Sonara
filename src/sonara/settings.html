@@ -277,7 +277,7 @@ async function refresh() {
 }
 function setBanner(down) {
   document.getElementById("offline-banner").style.display = down ? "flex" : "none";
-  document.querySelectorAll("input,select,button").forEach(el =>
+  document.querySelectorAll("input,select,button,textarea").forEach(el =>
     el.disabled = down || el.dataset.lock === "1");
   document.body.classList.toggle("offline", down);
 }
@@ -528,9 +528,7 @@ document.getElementById("engine-select").addEventListener("change", e => {
 });
 document.getElementById("model-select").addEventListener("change", e => set("summary_model", e.target.value));
 document.getElementById("prompt-text").addEventListener("change", function () {
-  const st = state && state.config.summary_mode
-    ? (state.config.summary_style || "natural")
-    : ((state && state.config.summary_style) || "natural");
+  const st = (state && state.config.summary_style) || "natural";
   POST("/api/prompt", {style: st, text: this.value}).then(async r => {
     if (r.ok) { await acceptState(r); } else { await showApiError(r); }
   });

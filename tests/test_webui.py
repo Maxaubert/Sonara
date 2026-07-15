@@ -128,6 +128,18 @@ def test_set_config_only_key_uses_daemon_setter(server, monkeypatch):
     assert d.messages == []                       # no protocol message for these
 
 
+def test_set_summary_style_and_command_route_via_config_setter(server, monkeypatch):
+    # (#58) chips + engine select go through /api/set -> set_config_value;
+    # a _CONFIG_KEYS membership regression must fail here, not in the browser
+    d, s = server
+    calls = []
+    d.set_config_value = lambda k, v: calls.append((k, v)) or True
+    for key, value in (("summary_style", "brief"), ("summary_command", "codex")):
+        _post(s, "/api/set", {"key": key, "value": value})
+        assert (key, value) in calls
+    assert d.messages == []                       # no protocol message for these
+
+
 def test_set_unknown_key_is_400(server):
     d, s = server
     with pytest.raises(urllib.error.HTTPError) as ei:
