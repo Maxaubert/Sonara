@@ -392,7 +392,11 @@ def test_settings_page_has_summary_styles_ui():
     assert 'data-style="tidy"' in page
     assert 'data-style="natural"' in page
     assert 'data-style="brief"' in page
-    assert 'id="engine-select"' in page        # summarizer engine picker
+    # merged model picker: one list across engines, no separate engine select
+    assert 'id="engine-select"' not in page
+    assert "GPT-5.6 Luna (fastest)" in page
+    assert "Haiku (fast)" in page
+    assert 'model: "gpt-5.6-luna"' in page     # value stays the real model id
     assert 'id="prompt-text"' in page          # editable prompt textarea
     assert 'id="prompt-reset"' in page         # reset to default
     assert 'id="summary-switch"' not in page   # old on/off switch replaced
