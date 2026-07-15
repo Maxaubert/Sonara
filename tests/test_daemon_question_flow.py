@@ -14,11 +14,13 @@ def _summary_daemon(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.config["summary_mode"] = True
     spawned = []
-    monkeypatch.setattr(
-        daemon, "_start_summary_thread",
-        lambda session, gen, text, token=0, leadin=False:
-            spawned.append({"session": session, "gen": gen, "text": text,
-                            "token": token, "leadin": leadin}))
+
+    def fake(session, gen, text, token=0, leadin=False, seq=None):
+        spawned.append({"session": session, "gen": gen, "text": text,
+                        "token": token, "leadin": leadin})
+        daemon._land_digest(seq, None)   # free the ordering slot (#88)
+
+    monkeypatch.setattr(daemon, "_start_summary_thread", fake)
     return daemon, speaker, spawned
 
 

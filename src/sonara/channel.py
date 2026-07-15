@@ -17,6 +17,10 @@ class SessionChannel:
         self.turn_done = False
         self.muted = False
         self.has_decision = False   # a user-blocking item is pending -> preempt
+        self.release_order = None   # digest release stamp (#88): among READY
+        #                             waiting sessions the router serves the
+        #                             lowest stamp first, so digests are heard
+        #                             in turn-finish order, not channel order
 
     def append(self, item: SpeechItem) -> None:
         self.items.append(item)

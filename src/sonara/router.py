@@ -144,19 +144,28 @@ class Router:
         fg = self.sessions.foreground()
         if self._ready(fg) and not self._is_suppressed(fg):
             return fg
-        for s in self.channels:
-            if self._ready(s):
-                # Replay-authorized sessions bypass the policy gate AND suppression
-                # (cross-session catch_up / nav replay must be voiced even in
-                # earcon_only mode). Drained authorizations were already evicted
-                # by the sweep at the top, so authorized here implies pending > 0.
-                if s in self._replay_authorized:
-                    return s
-                elif self._is_suppressed(s):
+        # Waiting sessions are served by digest RELEASE order first (#88), then
+        # insertion order. Without the stamp, three digests landing together
+        # were heard in channel-creation order - effectively random vs the
+        # turn-finish order the reorder buffer just established.
+        best = None
+        for i, s in enumerate(self.channels):
+            if not self._ready(s):
+                continue
+            # Replay-authorized sessions bypass the policy gate AND suppression
+            # (cross-session catch_up / nav replay must be voiced even in
+            # earcon_only mode). Drained authorizations were already evicted
+            # by the sweep at the top, so authorized here implies pending > 0.
+            if s not in self._replay_authorized:
+                if self._is_suppressed(s):
                     continue
-                elif should_speak is None or should_speak(s):
-                    return s
-        return None
+                if should_speak is not None and not should_speak(s):
+                    continue
+            stamp = self.channels[s].release_order
+            key = (stamp if stamp is not None else float("inf"), i)
+            if best is None or key < best[0]:
+                best = (key, s)
+        return best[1] if best is not None else None
 
     def next_item(self) -> "SpeechItem | None":
         # emit a queued hand-off announcement before the new reader's first item

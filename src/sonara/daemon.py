@@ -141,6 +141,12 @@ class SpeechDaemon:
         except (TypeError, ValueError):
             self._mute_level = 0
         self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
+        # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
+        # dispatch (turn-finish) order, not summarizer-completion order.
+        self._digest_seq_next = 0                 # next sequence number to hand out
+        self._digest_seq_serve = 0                # next sequence number to release
+        self._digest_parked: dict = {}            # seq -> apply closure (None = dropped)
+        self._digest_release_counter = 0          # channel stamp source (#88)
         self._current_item = None                 # item being spoken right now
         self._warned_immediate: set = set()
         self._guided_sessions: set = set()
@@ -1327,8 +1333,11 @@ class SpeechDaemon:
                 self._last_digest_text[session] = text
             else:
                 # Background sessions are not voiced from their own channel;
-                # speak the short turn immediately, named, via CONTROL.
-                self._enqueue_background_digest(session, text)
+                # speak the short turn via the session channel. It joins the
+                # digest SEQUENCE (#88): a short turn finishing after a long
+                # one must not jump ahead of the long turn's cooking digest.
+                self._land_digest(self._alloc_digest_seq(),
+                                  lambda: self._enqueue_background_digest(session, text))
             return False                 # spoken synchronously; no need to hold
         # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
         # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
@@ -1344,7 +1353,11 @@ class SpeechDaemon:
         token = self._summary_token
         self._last_dispatch_token[session] = token
         self._inflight_digests[session] = self._inflight_digests.get(session, 0) + 1
-        self._start_summary_thread(session, gen, text, token, leadin=leadin)
+        # Turn-end digests get an ordering slot (#88); lead-in digests bypass
+        # (latency-critical, #83) and stay seq=None.
+        seq = None if leadin else self._alloc_digest_seq()
+        self._start_summary_thread(session, gen, text, token, leadin=leadin,
+                                   seq=seq)
         return True                      # async digest in flight -> caller holds
 
     def _arm_settle(self, session: str) -> None:
@@ -1441,17 +1454,50 @@ class SpeechDaemon:
             self.router.channel(session).append(item)
             self._wake.set()
 
+    def _alloc_digest_seq(self) -> int:
+        """Hand out the next digest sequence number (#88). Caller holds the
+        lock. Sequence order == dispatch order == turn-finish order."""
+        seq = self._digest_seq_next
+        self._digest_seq_next += 1
+        return seq
+
+    def _land_digest(self, seq, apply) -> None:
+        """Reorder buffer release (#88): park *apply* under *seq* and flush every
+        consecutive ready slot from the serve pointer. Digests thus become
+        audible strictly in dispatch order regardless of summarizer latency;
+        a dropped/cancelled digest lands with apply=None and just frees its
+        slot. seq=None bypasses (lead-in digests, #83: latency-critical and
+        session-ordered by the question hold). Caller holds the lock. Every
+        dispatched seq MUST eventually land exactly once - the workers land in
+        their finally - or later digests would park forever."""
+        if seq is None:
+            if apply is not None:
+                apply()
+            return
+        if seq < self._digest_seq_serve:
+            return                       # already served (exceptional re-land)
+        self._digest_parked[seq] = apply
+        while self._digest_seq_serve in self._digest_parked:
+            fn = self._digest_parked.pop(self._digest_seq_serve)
+            self._digest_seq_serve += 1
+            if fn is not None:
+                fn()
+
     def _start_summary_thread(self, session: str, gen: int, text: str,
-                              token: int = 0, leadin: bool = False) -> None:
+                              token: int = 0, leadin: bool = False,
+                              seq=None) -> None:
         threading.Thread(target=self._summary_worker,
-                         args=(session, gen, text, token, leadin),
+                         args=(session, gen, text, token, leadin, seq),
                          name="sonara-summary", daemon=True).start()
 
     def _summary_worker(self, session: str, gen: int, text: str,
-                        token: int = 0, leadin: bool = False) -> None:
+                        token: int = 0, leadin: bool = False,
+                        seq=None) -> None:
         """Run the summarizer subprocess OFF-lock, then apply the result under the
         lock: enqueue the spoken summary, or fire the failure cue. A result whose
-        generation was superseded by a newer turn end is dropped silently."""
+        generation was superseded by a newer turn end is dropped silently.
+        Turn-end results release through the reorder buffer (#88, *seq*), so
+        digests are heard in turn-finish order regardless of model latency."""
         import sys
         from sonara import summarizer
 
@@ -1494,11 +1540,16 @@ class SpeechDaemon:
             if held_entry is not None and held_entry[0] == token:
                 self._held_decision.pop(session, None)
                 held = held_entry[1]
-            try:
+
+            def apply():
+                # Runs at RELEASE time (#88): possibly later than completion,
+                # after earlier-dispatched digests landed. State checks (gen,
+                # foreground) therefore happen HERE, not at completion.
                 if self._summary_gen.get(session, 0) != gen:
                     _log("digest dropped: user prompted this session since dispatch")
                     return               # the user moved on -> this reading is cancelled
-                if not summary:
+                out = summary
+                if not out:
                     if leadin:
                         # A lead-in digest that came back SKIP/empty/failed is
                         # pure process narration (#83): drop it silently. The
@@ -1515,42 +1566,47 @@ class SpeechDaemon:
                     if not (text or "").strip():
                         self._earcon("summary_failed")
                         return
-                    summary = text
+                    out = text
                 # A held question's context goes via the SESSION channel even when
                 # the session is not foreground: it is a real handoff, so the router
                 # must announce "Session changed" BEFORE the context (not at the
-                # question). A plain background digest (no held question) stays on
-                # CONTROL -- it is a silent interjection that must not announce.
-                # Route EVERY digest via its own session channel so a reader switch
-                # announces the handoff ("Session changed: folder" + chime) BEFORE
-                # the digest -- even when the user has moved to another session
-                # while this one cooked (previously such digests went out silently
-                # on the CONTROL lane and played out of order, chime-less). A
-                # foreground digest does NOT switch the reader (no announcement), so
-                # it names itself with the "Session X:" prefix; a switched-to digest
-                # WILL be announced, so it stays unprefixed to avoid double-naming.
+                # question). Route EVERY digest via its own session channel so a
+                # reader switch announces the handoff ("Session changed: folder" +
+                # chime) BEFORE the digest. A foreground digest does NOT switch the
+                # reader (no announcement) and never carries a "Session X:" prefix:
+                # the router announcement is the sole session identifier (#15).
                 fg = self.sessions.is_foreground(session)
-                # Never prefix the digest with "Session X:": the router's
-                # "Session changed: X" announcement (on a reader switch) is the
-                # sole session identifier, so a digest that plays without a switch
-                # just reads (the user is already in that session) (#15).
                 # TTS-normalize (#27): digests bypass the assembler cleaner, so
                 # markdown residue / snake_case reached the voice raw and was
                 # mispronounced. Normalize BEFORE recording so Up's cache-hit
                 # re-read speaks the identical string.
                 from sonara.cleaner import normalize_for_speech
-                summary = normalize_for_speech(summary)
-                spoken = summary
-                entry = self.history.record(session, "summary", summary)
-                self._enqueue(session, "summary", spoken, False, entry=entry)
-                self._last_digest_text[session] = spoken   # Up re-reads this verbatim
-                self.router.channel(session).turn_done = True
+                out = normalize_for_speech(out)
+                entry = self.history.record(session, "summary", out)
+                self._enqueue(session, "summary", out, False, entry=entry)
+                self._last_digest_text[session] = out   # Up re-reads this verbatim
+                ch = self.router.channel(session)
+                ch.turn_done = True
+                # Stamp the channel with the release index (#88): the router
+                # serves waiting digest channels lowest-stamp-first, so the
+                # heard order matches the turn-finish order just released.
+                ch.release_order = self._digest_release_counter
+                self._digest_release_counter += 1
                 if not fg:
                     # Let it be voiced + announced regardless of background policy
                     # (earcon_only would otherwise mute a non-foreground session).
                     self.router._replay_authorized.add(session)
                 self._wake.set()
+
+            landed = False
+            try:
+                self._land_digest(seq, apply)
+                landed = True
             finally:
+                if not landed:
+                    # apply raised: the ordering slot must still release or every
+                    # later digest parks forever (#88).
+                    self._land_digest(seq, None)
                 # This worker is done: it no longer counts as in flight (a later
                 # decision must not hold behind a digest that already landed).
                 # ONLY when this worker's gen is still current: FLUSH/SESSION_END
@@ -1577,7 +1633,10 @@ class SpeechDaemon:
         entry = self.history.record(session, "summary", text)
         self._enqueue(session, "summary", text, False, entry=entry)
         self._last_digest_text[session] = text   # Up re-reads this verbatim
-        self.router.channel(session).turn_done = True
+        ch = self.router.channel(session)
+        ch.turn_done = True
+        ch.release_order = self._digest_release_counter   # heard in release order (#88)
+        self._digest_release_counter += 1
         self.router._replay_authorized.add(session)
         self._wake.set()
 
