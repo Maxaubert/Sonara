@@ -370,6 +370,20 @@ def test_settings_page_has_fast_cues_switch():
     assert '"cue_voice"' in page
 
 
+def test_settings_page_minqueue_lives_on_summary_page_and_rate_row_is_hideable():
+    # (#60 follow-up) minqueue gates LIVE reading, so it moved to the Summary
+    # page (dimmed while a summary style is active) and supports 0 = instant;
+    # the wpm slider hides for Chatterbox voices, which have no speed knob.
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    summary_at = page.index('<section class="page" id="summary">')
+    audio_at = page.index('<section class="page" id="audio">')
+    mq_at = page.index('id="minqueue-row"')
+    assert summary_at < mq_at < audio_at        # inside the Summary section
+    assert 'id="rate-row"' in page
+    assert "Math.max(0, state.config.minqueue - 1)" in page
+
+
 def test_settings_page_has_summary_styles_ui():
     from sonara.webui import _page_bytes
     page = _page_bytes().decode("utf-8")

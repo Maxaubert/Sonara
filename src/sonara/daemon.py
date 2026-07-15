@@ -64,7 +64,7 @@ RATE_MAX = 400
 
 # Min-queue batching: how many prose items must accumulate before they are read.
 # 1 == read each item as it arrives (the default, unchanged behaviour).
-MINQUEUE_MIN = 1
+MINQUEUE_MIN = 0     # 0 = start reading immediately, no batching (#60 follow-up)
 MINQUEUE_MAX = 10
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
