@@ -40,6 +40,16 @@ def test_speak_calls_say_runner_with_voice_rate_and_blocks_on_wait():
     assert runner.procs[0].wait_calls == 1
 
 
+def test_speak_voice_override_reaches_runner():
+    # (#60) fast cues: a per-call voice override (None = best Windows voice)
+    # wins over the configured voice for that one utterance only.
+    runner = RecordingRunner()
+    sp = Speaker(voice="linus", rate=200, say_runner=runner)
+    sp.speak("Muted.", voice=None)
+    sp.speak("normal prose")
+    assert runner.calls == [("Muted.", None, 200), ("normal prose", "linus", 200)]
+
+
 def test_speak_tracks_current_proc():
     runner = RecordingRunner()
     sp = Speaker(say_runner=runner)

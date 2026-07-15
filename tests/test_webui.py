@@ -360,6 +360,14 @@ def test_api_prompt_rejects_bad_input(server):
     assert ei.value.code == 400
 
 
+def test_settings_page_has_fast_cues_switch():
+    # (#60) instant Windows-voice control cues get an on/off switch
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    assert 'id="cues-switch"' in page
+    assert '"fast_cues"' in page                    # wired to the config key
+
+
 def test_settings_page_has_summary_styles_ui():
     from sonara.webui import _page_bytes
     page = _page_bytes().decode("utf-8")

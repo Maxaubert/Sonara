@@ -177,6 +177,7 @@
         <div class="group-label"><span>Delivery</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Minimum queue</strong><div class="hint">Words Sonara waits for before beginning.</div></div><div class="control"><div class="stepper"><button id="mq-minus" aria-label="Decrease minimum queue">&minus;</button><output id="minqueue-out">5</output><button id="mq-plus" aria-label="Increase minimum queue">+</button></div><div class="hint">Higher values prevent tiny fragments from sounding abrupt.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Instant cues</strong><div class="hint">Speak control feedback in the fast Windows voice.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Fast cues</span><button class="switch" id="cues-switch" role="switch" aria-checked="true" aria-label="Toggle instant cues"></button></div><div class="hint">Muted, Paused and session changes play right away instead of waiting for the neural voice to load.</div></div></div>
         </div>
       </section>
 
@@ -412,6 +413,7 @@ function render(s) {
   document.getElementById("timeout-out").textContent = s.config.summary_timeout + " s";
   setVal("settle", s.config.summary_settle_ms);
   document.getElementById("settle-out").textContent = s.config.summary_settle_ms + " ms";
+  setSwitch("cues-switch", s.config.fast_cues);
   setSwitch("duck-switch", s.config.audio_control);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
@@ -542,6 +544,9 @@ document.getElementById("prompt-reset").addEventListener("click", () => {
 });
 document.getElementById("duck-switch").addEventListener("click", function () {
   set("audio_control", this.getAttribute("aria-checked") !== "true");
+});
+document.getElementById("cues-switch").addEventListener("click", function () {
+  set("fast_cues", this.getAttribute("aria-checked") !== "true");
 });
 document.getElementById("mq-minus").addEventListener("click", () => {
   if (!state) return;
