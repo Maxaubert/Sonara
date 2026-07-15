@@ -95,9 +95,15 @@ def _fire_settle(daemon, session="fg"):
 
 def _capture_spawn(daemon, monkeypatch):
     calls = []
-    monkeypatch.setattr(daemon, "_start_summary_thread",
-                        lambda session, gen, text, token=0, leadin=False:
-                        calls.append((session, gen, text, token)))
+
+    def fake(session, gen, text, token=0, leadin=False, seq=None):
+        calls.append((session, gen, text, token))
+        # Free the ordering slot (#88): these tests run workers manually with
+        # seq=None (sequencer bypass), which would otherwise leave the slot
+        # parked and block later synchronous lands (background short turns).
+        daemon._land_digest(seq, None)
+
+    monkeypatch.setattr(daemon, "_start_summary_thread", fake)
     return calls
 
 
