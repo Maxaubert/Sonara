@@ -437,7 +437,34 @@ class WinTtsBackend(TtsBackend):
         return self._best_voice_info()
 
     def _synthesize_wav(self, text: str, voice, rate: int) -> bytes:
-        """Synthesize *text* to WAV bytes (no playback)."""
+        """Synthesize *text* to WAV bytes (no playback), STA-safe.
+
+        WinRT's blocking .get() refuses to run on a single-threaded-apartment
+        COM thread ("Cannot call blocking method from single-threaded
+        apartment") and the daemon's speak-loop thread IS one, so the native
+        Windows voice raised on every call from there -- surfaced live by the
+        fast-cues override (#60); the Kokoro->Windows fallback had the same
+        latent break. Fresh Python threads join the MTA, so the blocking body
+        always runs on a short-lived worker with exceptions propagated."""
+        result: dict = {}
+
+        def _worker():
+            try:
+                result["wav"] = self._synthesize_wav_blocking(text, voice, rate)
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the caller
+                result["err"] = exc
+
+        t = threading.Thread(target=_worker, name="sonara-winrt-synth", daemon=True)
+        t.start()
+        t.join(60)
+        if "err" in result:
+            raise result["err"]
+        if "wav" not in result:
+            raise RuntimeError("WinRT synthesis timed out")
+        return result["wav"]
+
+    def _synthesize_wav_blocking(self, text: str, voice, rate: int) -> bytes:
+        """The real WinRT synthesis; must run on an MTA-capable thread."""
         from winrt.windows.storage.streams import DataReader
 
         speaking_rate = wpm_to_speaking_rate(rate)

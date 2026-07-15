@@ -64,7 +64,7 @@ RATE_MAX = 400
 
 # Min-queue batching: how many prose items must accumulate before they are read.
 # 1 == read each item as it arrives (the default, unchanged behaviour).
-MINQUEUE_MIN = 1
+MINQUEUE_MIN = 0     # 0 = start reading immediately, no batching (#60 follow-up)
 MINQUEUE_MAX = 10
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
@@ -1685,6 +1685,56 @@ class SpeechDaemon:
         ch.append(item)
         self._wake.set()
 
+    def _cue_voice(self):
+        """The voice cues speak in (#60): config cue_voice (default af_heart,
+        the warm-Kokoro pick -- ~0.3s per cue once loaded, far nicer than the
+        native David/Zira). A Chatterbox voice is refused here (its cold
+        reload is the very unresponsiveness fast cues exist to fix) and maps
+        to None = the platform's native voice, as does any lookup failure."""
+        v = self.config.get("cue_voice")
+        if not v:
+            return None
+        try:
+            from sonara import kokoro, chatterbox
+            if (not kokoro.is_kokoro_voice(v)) and chatterbox.is_chatterbox_voice(v):
+                return None
+        except Exception:  # noqa: BLE001 - a cue must never die on voice lookup
+            return None
+        return v
+
+    def _cue_voice_override(self, item) -> dict:
+        """speaker.speak kwargs for *item* (#60). Control feedback and
+        session-change announcements speak through an always-fast voice
+        (warm Kokoro by default, native Windows as floor) instead of the
+        configured neural voice, so "Muted." never waits out a cold
+        Chatterbox model reload. Config fast_cues (default on) disables."""
+        from sonara.router import CONTROL
+        if (self.config.get("fast_cues", True)
+                and (item.session == CONTROL or item.kind == "session_change")):
+            return {"voice": self._cue_voice()}
+        return {}
+
+    def _maybe_prewarm_cue_voice(self) -> None:
+        """Pre-load the Kokoro engine when cues route to a Kokoro voice (#60):
+        the first cue after daemon start otherwise pays the ~3s engine load.
+        Best-effort, background, never blocks or breaks the caller."""
+        try:
+            from sonara import kokoro
+            if not (self.config.get("fast_cues", True)
+                    and kokoro.is_kokoro_voice(self._cue_voice())
+                    and kokoro.is_installed()):
+                return
+        except Exception:  # noqa: BLE001 - optional engine; never break startup
+            return
+
+        def _warm():
+            try:
+                from sonara.platform import get_platform
+                get_platform().tts._kokoro_wav("Ready.", self.config.get("rate", 200))
+            except Exception:  # noqa: BLE001 - warming is best-effort
+                pass
+        threading.Thread(target=_warm, name="sonara-kokoro-warm", daemon=True).start()
+
     def _maybe_announce_chatterbox_fallback(self) -> None:
         """Speak the pending Chatterbox fallback notice, if any, exactly once per
         daemon run. Called outside self._lock (_speak_cue does not take it)."""
@@ -1737,6 +1787,8 @@ class SpeechDaemon:
                 if str(v) in ("tidy", "natural", "brief") else None),
             "summary_command": lambda v: (str(v)
                 if str(v) in ("claude", "codex") else None),
+            "fast_cues": lambda v: bool(v),
+            "cue_voice": lambda v: str(v).strip() or None,
             "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
             "chatterbox_exaggeration": lambda v: max(0.0, min(1.0, float(v))),
             "chatterbox_variant": lambda v: (str(v)
@@ -1754,6 +1806,8 @@ class SpeechDaemon:
         with self._lock:
             self.config[key] = cleaned
             save_config(self.config)
+        if key in ("cue_voice", "fast_cues"):
+            self._maybe_prewarm_cue_voice()   # switching TO a Kokoro cue voice warms it (#60)
         return True
 
     def set_summary_prompt(self, style, text) -> bool:
@@ -1872,7 +1926,8 @@ class SpeechDaemon:
                 cancel_epoch = self.speaker.cancel_epoch()
             if item is not None:
                 try:
-                    completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
+                    completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
+                                                   **self._cue_voice_override(item))
                 except Exception:  # noqa: BLE001
                     self._signal_speak_failure()
                     completed = False
@@ -1916,7 +1971,8 @@ class SpeechDaemon:
         # first sample plays.
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                           on_play=self._maybe_duck)
+                                           on_play=self._maybe_duck,
+                                           **self._cue_voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False
@@ -2060,6 +2116,7 @@ class SpeechDaemon:
         hotkey_worker.start()
         self._start_hotkeys()
         self._maybe_prewarm_chatterbox()   # warm the model at startup if cb voice
+        self._maybe_prewarm_cue_voice()    # load the Kokoro engine for cues (#60)
 
         try:
             while self._running.is_set():

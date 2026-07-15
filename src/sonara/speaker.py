@@ -5,6 +5,11 @@ import threading
 
 _DEFAULT_WAIT_TIMEOUT = 120  # seconds; generous upper bound for even long TTS
 
+# speak()'s voice-override sentinel: distinguishes "no override, use the
+# configured voice" from an explicit override to None (= the platform's
+# instant native voice; fast cues, #60).
+_UNSET = object()
+
 
 class Speaker:
     def __init__(
@@ -34,7 +39,8 @@ class Speaker:
         with self._current_lock:
             return self._cancel_epoch
 
-    def speak(self, text: str, cancel_epoch=None, on_play=None) -> bool:
+    def speak(self, text: str, cancel_epoch=None, on_play=None,
+              voice=_UNSET) -> bool:
         """Speak text, blocking. Return True iff the utterance COMPLETED
         (say exited 0). A cancelled/terminated utterance returns False so the
         caller can leave it marked unheard (sentence-granular replay).
@@ -49,9 +55,15 @@ class Speaker:
         PLAYBACK start (after synthesis). The daemon passes its audio-duck routine
         here so other apps' audio dips when the voice starts, not seconds earlier
         while a slow neural voice is still synthesizing. Omitted -> the classic
-        three-arg say_runner call, so existing runners keep working."""
+        three-arg say_runner call, so existing runners keep working.
+
+        *voice*, when given, overrides the configured voice for this ONE
+        utterance (fast cues, #60: the daemon passes None so control feedback
+        speaks through the platform's instant native voice instead of waiting
+        out a cold neural model reload)."""
         if self._say_runner is None:
             return False
+        use_voice = self._voice if voice is _UNSET else voice
         # Establish the baseline epoch BEFORE synthesis. say_runner (TTS synthesis)
         # can take tens-hundreds of ms, during which there is no proc to cancel --
         # a cancel() arriving in that window used to be a silent no-op and the
@@ -61,9 +73,9 @@ class Speaker:
         with self._current_lock:
             epoch = self._cancel_epoch if cancel_epoch is None else cancel_epoch
         if on_play is None:
-            proc = self._say_runner(text, self._voice, self._rate)
+            proc = self._say_runner(text, use_voice, self._rate)
         else:
-            proc = self._say_runner(text, self._voice, self._rate, on_play)
+            proc = self._say_runner(text, use_voice, self._rate, on_play)
         with self._current_lock:
             interrupted = self._cancel_epoch != epoch
             if not interrupted:
