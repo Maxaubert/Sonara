@@ -53,6 +53,7 @@ def test_msgtype_has_every_constant_with_exact_values():
     expected = {
         "PROSE": "prose",
         "CHOICE": "choice",
+        "CHOICE_ANSWERED": "choice_answered",
         "PLAN": "plan",
         "TOOL": "tool_announce",
         "PERMISSION": "permission",
@@ -98,6 +99,7 @@ def test_msgtype_defines_no_extra_string_constants():
     expected = {
         "PROSE": "prose",
         "CHOICE": "choice",
+        "CHOICE_ANSWERED": "choice_answered",
         "PLAN": "plan",
         "TOOL": "tool_announce",
         "PERMISSION": "permission",

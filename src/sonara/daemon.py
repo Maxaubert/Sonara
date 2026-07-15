@@ -80,7 +80,15 @@ _DEBOUNCED_HOTKEYS = (
 # Summary mode: a turn whose prose is already shorter than this is spoken
 # as-is instead of being digested (a digest of a short message adds nothing,
 # costs a model call, and risks spoken meta-text on borderline input).
+# EXCEPTION (#83): a lead-in before a pending QUESTION is digested even when
+# short - short mid-turn lead-ins are precisely the "let me check the repo"
+# process narration the digest exists to cut.
 _SUMMARY_MIN_CHARS = 280
+
+# Max seconds a blocking question is HELD behind its in-flight lead-in digest
+# (#83). Context-first ordering is worth a short wait, not the summarizer's
+# full 10-40s call: past the cap the question speaks and the digest follows.
+_DECISION_HOLD_MAX_S = 5.0
 
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
 # (one request each), so this bound is generous; it just stops a misbehaving or
@@ -830,29 +838,23 @@ class SpeechDaemon:
             # UNHEARD (we pop their _pending_heard markers so note_spoken never
             # flips them True), so CATCH_UP / REPEAT can bring them back. Mirrors
             # JUMP_DECISION but advances the cursor to the very end, not the next
-            # decision. Nothing is wiped; this is a cursor move.
+            # decision. Nothing is wiped; this is a cursor move. In summary mode
+            # it ALSO drops deferred/held questions and kills in-flight digests
+            # (#83) - a digest landing after "go to end" used to speak anyway.
             fg = self._engaged_session()
             if fg is None:
                 self._earcon("nav_edge")
                 return None
-            ch = self.router.channel(fg)
-            skipped = 0
-            while ch.cursor < len(ch.items):
-                self._pending_heard.pop(ch.items[ch.cursor].id, None)
-                ch.cursor += 1
-                skipped += 1
-            ch.has_decision = False        # any pending decision was skipped
-            cur = self._current_item
-            cutting = cur is not None and cur.session == fg
-            if cutting:
-                self.speaker.cancel()      # cut the in-progress utterance for fg
-                # Clear now so a rapid SECOND press (before the speak loop's
-                # note_spoken runs) sees nothing left to cut and gives the edge
-                # chime -- "go to end" is top/bottom, it should only move once
-                # (issue #11). note_spoken also nulls this later; idempotent.
-                self._current_item = None
-            self._earcon("nav" if (skipped or cutting) else "nav_edge")
-            self._wake.set()
+            dropped = self._user_caught_up(fg)
+            self._earcon("nav" if dropped else "nav_edge")
+            return None
+
+        if t == MsgType.CHOICE_ANSWERED:
+            # The user ANSWERED the blocking question (#83): they have heard (or
+            # read) everything they need up to it. Silence the stale backlog and
+            # any in-flight lead-in digest; whatever the assistant says AFTER the
+            # answer flows normally. No earcon: answering is its own feedback.
+            self._user_caught_up(session)
             return None
 
         if t == MsgType.CATCH_UP:
@@ -1195,6 +1197,56 @@ class SpeechDaemon:
                 self.router._replay_authorized.add(session)
         self._wake.set()
 
+    def _user_caught_up(self, session: str) -> bool:
+        """The user declared everything queued for *session* stale - they
+        answered the question, or pressed flush-to-end (#83). Skip the channel
+        backlog non-destructively (history entries stay UNHEARD for catch-up),
+        cut the in-progress utterance if it is this session's, drop a
+        settle-deferred or digest-held question, and advance the digest cancel
+        epoch so an in-flight lead-in digest lands dead instead of speaking
+        into the post-answer flow. The turn CONTINUES (unlike FLUSH/new
+        prompt): history and assemblers stay, but _voiced_upto advances past
+        everything already said - the eventual turn-end digest covers only
+        post-answer prose ("I want to hear what comes after", #83).
+        Caller holds the lock. Returns True when anything was skipped/cut."""
+        ch = self.router.channel(session)
+        skipped = 0
+        while ch.cursor < len(ch.items):
+            self._pending_heard.pop(ch.items[ch.cursor].id, None)
+            ch.cursor += 1
+            skipped += 1
+        ch.has_decision = False            # any pending decision was skipped
+        cur = self._current_item
+        cutting = cur is not None and cur.session == session
+        if cutting:
+            self.speaker.cancel()          # cut the in-progress utterance
+            # Clear now so a rapid SECOND press (before the speak loop's
+            # note_spoken runs) sees nothing left to cut and gives the edge
+            # chime -- "go to end" is top/bottom, it should only move once
+            # (issue #11). note_spoken also nulls this later; idempotent.
+            self._current_item = None
+        dropped = bool(self._pending_decision.pop(session, None))
+        self._cancel_settle(session)
+        dropped = bool(self._held_decision.pop(session, None)) or dropped
+        self._await_choice.discard(session)
+        if self._inflight_digests.get(session):
+            # Kill in-flight digests: the worker's gen guard drops the result
+            # ("user answered") exactly like a new prompt's FLUSH does (#13).
+            self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
+            self._inflight_digests.pop(session, None)
+            self._last_dispatch_token.pop(session, None)
+            dropped = True
+        # Everything said BEFORE the catch-up is dealt with: advance the voiced
+        # marker so the post-answer turn-end digest never re-includes the
+        # pre-question lead-in (it was skipped, not merely delayed).
+        entries = [e for mid in self.history.message_ids(session)
+                   for e in self.history.entries_for_message(session, mid)
+                   if e.kind == "prose"]
+        if entries:
+            self._voiced_upto[session] = entries[-1]
+        self._wake.set()
+        return bool(skipped or cutting or dropped)
+
     def _reading_msg_id(self, session: str):
         """The message id of the item currently being spoken for *session*, or None
         (idle / nothing in flight). Used to anchor nav on the live read position."""
@@ -1213,7 +1265,8 @@ class SpeechDaemon:
         return (self.router.active or self.router._last_active
                 or self.sessions.foreground())
 
-    def _maybe_summarize(self, session: str) -> bool:
+    def _maybe_summarize(self, session: str,
+                         leadin_for_decision: bool = False) -> bool:
         """Summary mode: recap the session's prose not yet voiced this turn via a
         throwaway claude -p call (see summarizer.py), or speak it raw when short.
         Runs under the daemon lock, so it only gathers text and spawns the worker
@@ -1224,11 +1277,18 @@ class SpeechDaemon:
         Only prose recorded SINCE the last call this turn is voiced (tracked by
         _voiced_upto), so the two triggers never double-voice the same text.
 
+        *leadin_for_decision* (#83): the gathered text precedes a pending
+        QUESTION. Short lead-ins are then DIGESTED instead of replayed raw
+        (mid-turn narration like "let me check the repo" is exactly the noise
+        the digest cuts), and a SKIP/failed lead-in digest drops silently
+        instead of falling back to the raw text.
+
         Returns True iff an ASYNC digest was dispatched (long lead-in) -- the
         decision handlers use this to HOLD the question until the digest lands, so
         the context is heard before the question rather than ~6s after it."""
         if not self.config.get("summary_mode"):
             return False
+        leadin = bool(leadin_for_decision)
         entries = []
         for mid in self.history.message_ids(session):
             for e in self.history.entries_for_message(session, mid):
@@ -1250,7 +1310,7 @@ class SpeechDaemon:
         if not text:
             return False                 # decision-only / empty / already-voiced
         self._voiced_upto[session] = entries[-1]
-        if len(text) < _SUMMARY_MIN_CHARS:
+        if len(text) < _SUMMARY_MIN_CHARS and not leadin:
             # An already-short turn needs no digest: speak the original prose
             # instead. Digesting borderline-trivial input made the model
             # verbalize meta-text ("no content to be spoken") that was then
@@ -1284,7 +1344,7 @@ class SpeechDaemon:
         token = self._summary_token
         self._last_dispatch_token[session] = token
         self._inflight_digests[session] = self._inflight_digests.get(session, 0) + 1
-        self._start_summary_thread(session, gen, text, token)
+        self._start_summary_thread(session, gen, text, token, leadin=leadin)
         return True                      # async digest in flight -> caller holds
 
     def _arm_settle(self, session: str) -> None:
@@ -1322,7 +1382,10 @@ class SpeechDaemon:
             if item is not None:
                 # A question was waiting on its lead-in: gather it now (present
                 # after the settle) and hold the question after the context (#16).
-                digesting = self._maybe_summarize(session)
+                # Lead-in mode (#83): short lead-ins are digested (not read raw)
+                # and a SKIP result drops instead of raw-falling-back.
+                digesting = self._maybe_summarize(session,
+                                                  leadin_for_decision=True)
                 self._enqueue_or_hold_decision(session, item, digesting)
             else:
                 self._maybe_summarize(session)
@@ -1349,18 +1412,43 @@ class SpeechDaemon:
         if digesting or self._inflight_digests.get(session, 0) > 0:
             owner = self._last_dispatch_token.get(session, 0)
             self._held_decision[session] = (owner, item)
+            # Cap the hold (#83): context-first ordering is worth a short wait,
+            # not the summarizer's whole 10-40s call of silence before a
+            # BLOCKING question. Past the cap the question speaks and the
+            # digest follows (bounded inversion; a caught-up user drops it).
+            self._schedule_hold_release(session, owner, item)
         else:
             self.router.channel(session).append(item)
         self._wake.set()
 
+    def _schedule_hold_release(self, session: str, owner: int, item) -> None:
+        """Arm the held-question release timer. Test seam: tests call
+        _release_held_decision directly instead of waiting on the clock."""
+        t = threading.Timer(_DECISION_HOLD_MAX_S, self._release_held_decision,
+                            args=(session, owner, item))
+        t.daemon = True
+        t.start()
+
+    def _release_held_decision(self, session: str, owner: int, item) -> None:
+        """The hold cap elapsed: if the digest still has not landed, speak the
+        question NOW (#83). Idempotent vs the digest worker: whichever runs
+        first pops the hold; the other finds it gone and does nothing."""
+        with self._lock:
+            held = self._held_decision.get(session)
+            if held is None or held[0] != owner or held[1] is not item:
+                return                     # already released (digest landed / caught up)
+            self._held_decision.pop(session, None)
+            self.router.channel(session).append(item)
+            self._wake.set()
+
     def _start_summary_thread(self, session: str, gen: int, text: str,
-                              token: int = 0) -> None:
+                              token: int = 0, leadin: bool = False) -> None:
         threading.Thread(target=self._summary_worker,
-                         args=(session, gen, text, token),
+                         args=(session, gen, text, token, leadin),
                          name="sonara-summary", daemon=True).start()
 
     def _summary_worker(self, session: str, gen: int, text: str,
-                        token: int = 0) -> None:
+                        token: int = 0, leadin: bool = False) -> None:
         """Run the summarizer subprocess OFF-lock, then apply the result under the
         lock: enqueue the spoken summary, or fire the failure cue. A result whose
         generation was superseded by a newer turn end is dropped silently."""
@@ -1411,6 +1499,14 @@ class SpeechDaemon:
                     _log("digest dropped: user prompted this session since dispatch")
                     return               # the user moved on -> this reading is cancelled
                 if not summary:
+                    if leadin:
+                        # A lead-in digest that came back SKIP/empty/failed is
+                        # pure process narration (#83): drop it silently. The
+                        # question it contextualized still speaks via the
+                        # held-release in the finally below - only the noise
+                        # dies, never the blocking prompt.
+                        _log("lead-in digest empty/SKIP: dropped")
+                        return
                     # SKIP / empty / failed digest. A session's LATEST message must
                     # ALWAYS be read (user spec: never skip the last message --
                     # digested or not). This digest is the latest (it was not

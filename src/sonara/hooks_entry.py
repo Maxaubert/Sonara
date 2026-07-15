@@ -69,6 +69,14 @@ def handle_event(event: str, payload: dict) -> list[dict]:
             )
         ]
 
+    if event == "PostToolUse":
+        # The user ANSWERED a blocking question (#83): everything queued
+        # before it is stale - the daemon flushes the backlog and kills
+        # in-flight lead-in digests. Every other tool's completion is noise.
+        if payload.get("tool_name") == "AskUserQuestion":
+            return [_msg(type=MsgType.CHOICE_ANSWERED, session=session)]
+        return []
+
     if event == "Notification":
         nt = payload.get("notification_type") or payload.get("matcher")
         if nt == "permission_prompt":

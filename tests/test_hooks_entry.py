@@ -295,3 +295,19 @@ def test_missing_cwd_defaults_to_empty_string():
     msgs = handle_event("UserPromptSubmit", {"session_id": "s1"})
     fg = [m for m in msgs if m["type"] == "set_foreground"]
     assert fg and fg[0]["cwd"] == ""
+
+
+def test_post_tool_use_ask_user_question_maps_to_choice_answered():
+    # (#83) answering a question flushes the stale backlog
+    from sonara.hooks_entry import handle_event
+    from sonara.protocol import MsgType
+    msgs = handle_event("PostToolUse", {"session_id": "s1",
+                                        "tool_name": "AskUserQuestion"})
+    assert msgs == [{"v": 1, "type": MsgType.CHOICE_ANSWERED, "session": "s1"}]
+
+
+def test_post_tool_use_other_tools_are_silent():
+    from sonara.hooks_entry import handle_event
+    assert handle_event("PostToolUse", {"session_id": "s1",
+                                        "tool_name": "Bash"}) == []
+    assert handle_event("PostToolUse", {"session_id": "s1"}) == []

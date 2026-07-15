@@ -96,7 +96,7 @@ def _fire_settle(daemon, session="fg"):
 def _capture_spawn(daemon, monkeypatch):
     calls = []
     monkeypatch.setattr(daemon, "_start_summary_thread",
-                        lambda session, gen, text, token=0:
+                        lambda session, gen, text, token=0, leadin=False:
                         calls.append((session, gen, text, token)))
     return calls
 
@@ -152,18 +152,25 @@ def _choice(daemon, session="fg"):
 
 def test_blocking_question_voices_short_lead_in_prose(monkeypatch):
     # A question blocks the turn (no turn_done -> no digest). The short lead-in
-    # prose must still be voiced (raw), BEFORE the question, not silently dropped.
+    # is DIGESTED (#83: raw was mostly "let me check the repo" process noise)
+    # and its recap is heard BEFORE the question once the digest lands.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _set_mode(daemon, True)
     daemon.handle_message(_prose("fg", "Here is the short context. "))
     _choice(daemon)
+    assert len(calls) == 1                     # short lead-in digested, not raw (#83)
+    daemon._summarize_fn = lambda text, **kw: "The short context, recapped."
+    daemon._summary_worker(*calls[0], leadin=True)
     ch = daemon.router.channel("fg")
     items = ch.items[ch.cursor:]
-    prose_idx = next(i for i, it in enumerate(items) if "short context" in it.text)
+    prose_idx = next(i for i, it in enumerate(items) if "recapped" in it.text)
     dec_idx = next(i for i, it in enumerate(items) if it.is_decision)
     assert prose_idx < dec_idx                 # context read before the question
+    # the RAW narration never reached the channel
+    assert not any("Here is the short context" in it.text for it in items)
 
 
 def test_blocking_question_holds_until_long_lead_in_digest_lands(monkeypatch):
@@ -184,15 +191,24 @@ def test_blocking_question_holds_until_long_lead_in_digest_lands(monkeypatch):
     assert daemon._held_decision.get("fg") is None
 
 
-def test_short_lead_in_question_not_held(monkeypatch):
+def test_short_lead_in_question_held_with_capped_release(monkeypatch):
+    # (#83) short lead-ins are digested now, so the question holds - but the
+    # hold is CAPPED: the release timer speaks it even if the digest stalls.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+    timers = []
+    monkeypatch.setattr(daemon, "_schedule_hold_release",
+                        lambda s, o, i: timers.append((s, o, i)))
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     _set_mode(daemon, True)
     daemon.handle_message(_prose("fg", "Short context. "))
     _choice(daemon)
+    assert daemon._held_decision.get("fg") is not None
+    assert len(timers) == 1                     # cap armed alongside the hold
+    daemon._release_held_decision(*timers[0])   # digest stalls -> cap fires
     ch = daemon.router.channel("fg")
-    assert any(it.is_decision for it in ch.items[ch.cursor:])   # short = synchronous
+    assert any(it.is_decision for it in ch.items[ch.cursor:])
     assert daemon._held_decision.get("fg") is None
 
 
@@ -861,7 +877,12 @@ def test_choice_defers_question_until_settle(monkeypatch):
     ch = daemon.router.channel("fg")
     assert not any(it.is_decision for it in ch.items[ch.cursor:])   # deferred
     daemon._settle_fire("fg", scheduled[-1][1])
-    assert any(it.is_decision for it in ch.items[ch.cursor:])       # enqueued after fire
+    # (#83) the settle fire digests the lead-in (even short) and HOLDS the
+    # question behind it; the digest landing releases it.
+    assert daemon._held_decision.get("fg") is not None
+    daemon._summarize_fn = lambda text, **kw: "ctx"
+    daemon._summary_worker(*calls[-1], leadin=True)
+    assert any(it.is_decision for it in ch.items[ch.cursor:])       # released
 
 
 def test_flush_cancels_pending_question_settle(monkeypatch):
@@ -1047,6 +1068,15 @@ def test_flush_clears_inflight_accounting_so_new_question_not_held(monkeypatch):
                            "session": "fg"})             # new prompt cancels W1
     daemon.handle_message(_prose("fg", "Short context. ", 0, True))
     _choice(daemon)                                      # must NOT wait for dead W1
+    # (#83) the question holds behind its OWN fresh lead-in digest - never the
+    # FLUSH-cancelled W1. Its owner token is the post-flush dispatch, and its
+    # own digest landing releases it immediately.
+    held = daemon._held_decision.get("fg")
+    assert held is not None
+    assert held[0] == daemon._last_dispatch_token["fg"]  # owned by W2, not dead W1
+    assert len(calls) == 2                               # W1 + the new lead-in digest
+    daemon._summarize_fn = lambda text, **kw: "ctx"
+    daemon._summary_worker(*calls[-1], leadin=True)      # own digest lands
     ch = daemon.router.channel("fg")
     assert any(it.is_decision for it in ch.items[ch.cursor:])   # enqueued NOW
 
