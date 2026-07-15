@@ -9,6 +9,7 @@ PROTOCOL_VERSION = 1
 class MsgType:
     PROSE = "prose"
     CHOICE = "choice"
+    CHOICE_ANSWERED = "choice_answered"   # user answered AskUserQuestion (#83)
     PLAN = "plan"
     TOOL = "tool_announce"
     PERMISSION = "permission"
