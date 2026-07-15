@@ -30,6 +30,15 @@ class FakeDaemon:
         self.messages.append(msg)
         return {"ok": True}
 
+    def set_summary_prompt(self, style, text):
+        self.prompt_calls = getattr(self, "prompt_calls", [])
+        self.prompt_calls.append((style, text))
+        if style not in ("tidy", "natural", "brief"):
+            return False
+        if text is not None and not str(text).strip():
+            return False
+        return True
+
 
 @pytest.fixture()
 def server(monkeypatch):
@@ -304,3 +313,36 @@ def test_variant_is_page_settable(server, monkeypatch):
     assert calls == [("chatterbox_variant", "original")]
     state = json.loads(_get(s, "/api/state").read())
     assert "chatterbox_variant" in state["config"]
+
+
+def test_state_exposes_summary_style_engine_and_prompts(server):
+    d, s = server
+    d.config["summary_style"] = "brief"
+    d.config["summary_command"] = "codex"
+    d.config["summary_prompts"] = {"brief": "MY RULES"}
+    state = s.state()
+    assert state["config"]["summary_style"] == "brief"
+    assert state["config"]["summary_command"] == "codex"
+    assert state["summary_prompts"] == {"brief": "MY RULES"}
+    from sonara.summarizer import INSTRUCTIONS
+    assert state["summary_prompt_defaults"] == INSTRUCTIONS
+
+
+def test_api_prompt_sets_and_resets(server):
+    d, s = server
+    r = _post(s, "/api/prompt", {"style": "natural", "text": "X"})
+    assert r.status == 200
+    assert d.prompt_calls[-1] == ("natural", "X")
+    r = _post(s, "/api/prompt", {"style": "natural", "text": None})
+    assert r.status == 200
+    assert d.prompt_calls[-1] == ("natural", None)
+
+
+def test_api_prompt_rejects_bad_input(server):
+    d, s = server
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/prompt", {"style": "bogus", "text": "X"})
+    assert ei.value.code == 400
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/prompt", {"style": "brief", "text": "   "})
+    assert ei.value.code == 400

@@ -19,6 +19,7 @@ from urllib.parse import urlparse, parse_qs
 # config keys the page may read and write (verbosity deliberately absent)
 _PAGE_KEYS = (
     "voice", "rate", "minqueue", "summary_mode", "summary_model",
+    "summary_style", "summary_command",
     "summary_timeout", "summary_settle_ms", "audio_control", "duck_level",
     "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
     "chatterbox_variant",
@@ -32,7 +33,8 @@ _MSG_KEYS = {
     "audio_control": lambda v: {"type": "set_audio_control", "enabled": bool(v)},
     "duck_level":    lambda v: {"type": "set_duck_level", "level": int(v)},
 }
-_CONFIG_KEYS = ("summary_model", "summary_timeout", "summary_settle_ms",
+_CONFIG_KEYS = ("summary_model", "summary_style", "summary_command",
+                "summary_timeout", "summary_settle_ms",
                 "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
                 "chatterbox_variant")
 
@@ -118,6 +120,13 @@ def _engine_status() -> dict:
             "chatterbox": safe(chatterbox.is_provisioned)}
 
 
+def _prompt_defaults() -> dict:
+    """Built-in per-style instructions: the page's reset-to-default source and
+    the text shown when no customization exists (#58)."""
+    from sonara.summarizer import INSTRUCTIONS
+    return dict(INSTRUCTIONS)
+
+
 def _page_bytes() -> bytes:
     path = os.path.join(os.path.dirname(__file__), "settings.html")
     with open(path, "rb") as fh:
@@ -185,6 +194,8 @@ class SettingsServer:
         cfg = {k: self._daemon.config.get(k) for k in _PAGE_KEYS}
         return {
             "config": cfg,
+            "summary_prompts": dict(self._daemon.config.get("summary_prompts") or {}),
+            "summary_prompt_defaults": _prompt_defaults(),
             "voices": _installed_voices(),
             "engines": _engine_status(),
             "keymap": _keymap_state(),
@@ -264,6 +275,13 @@ def _make_handler(server: SettingsServer):
                 return self._handle_set(payload)
             if path == "/api/keymap":
                 return self._handle_keymap(payload)
+            if path == "/api/prompt":
+                fn = getattr(server._daemon, "set_summary_prompt", None)
+                style = payload.get("style")
+                text = payload.get("text", None)
+                if fn is not None and fn(style, text):
+                    return self._json(200, server.state())
+                return self._json(400, {"error": "bad style or empty prompt"})
             if path == "/api/preview":
                 fn = getattr(server._daemon, "preview_voice", None)
                 if fn is not None and fn(str(payload.get("voice") or "")):
