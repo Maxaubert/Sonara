@@ -21,9 +21,13 @@ DEFAULTS = {
     "summary_timeout": 60,              # seconds before a summarizer call is abandoned (typical run ~12s; claude cold start adds several more)
     "summary_style": "natural",        # tidy | natural | brief (#58)
     "summary_prompts": {},             # style -> custom instruction; absent = default
-    "fast_cues": True,                 # control cues speak via the instant Windows
+    "fast_cues": True,                 # control cues speak via an always-fast
                                        # voice, never waiting out a cold neural
                                        # model reload (#60)
+    "cue_voice": "af_heart",           # which fast voice speaks the cues: a
+                                       # Kokoro voice (engine kept warm, ~0.3s)
+                                       # or a native Windows voice; Chatterbox
+                                       # names are refused at use time (#60)
     "chatterbox_variant": "turbo",        # default variant for voices without a sidecar
     "chatterbox_idle_unload_s": 600,      # worker frees the model after this idle time
     "chatterbox_timeout": 120,            # seconds per-chunk synthesis worker timeout
