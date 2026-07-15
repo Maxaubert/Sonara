@@ -438,3 +438,12 @@ def test_settings_page_has_summary_styles_ui():
     assert 'id="prompt-text"' in page          # editable prompt textarea
     assert 'id="prompt-reset"' in page         # reset to default
     assert 'id="summary-switch"' not in page   # old on/off switch replaced
+
+
+def test_settings_page_preview_url_is_cache_busted():
+    # (#78 follow-up) regenerated preview files were inaudible behind the
+    # hour-cached old URL; a per-page-load version param busts it.
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    assert "const PREVIEW_V = Date.now()" in page
+    assert '"&v=" + PREVIEW_V' in page
