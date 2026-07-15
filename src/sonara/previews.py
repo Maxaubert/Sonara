@@ -30,6 +30,29 @@ def sample_text(voice: str) -> str:
             "Sonara reads your Claude sessions aloud.").format(voice)
 
 
+def pad_lead(wav_bytes: bytes, ms: int = 600) -> bytes:
+    """Prepend *ms* of silence to a WAV. The first ~half second of playback is
+    routinely swallowed (a sleeping Windows audio endpoint waking up, or a
+    stream starting late), which clipped the preview's opening word ("Hi!" ->
+    "i!", reported live). Silence up front means nothing speakable can be
+    eaten. Returns the input unchanged on any parse failure."""
+    import io
+    import wave
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as r:
+            params = r.getparams()
+            frames = r.readframes(r.getnframes())
+        pad = b"\x00" * (int(params.framerate * ms / 1000)
+                         * params.nchannels * params.sampwidth)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setparams(params)
+            w.writeframes(pad + frames)
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 - a pad failure must never lose the preview
+        return wav_bytes
+
+
 def synth_wav(voice: str, rate: int = 200) -> bytes:
     """Render the sample for *voice* to WAV bytes, routed by engine exactly
     like live speech (Kokoro / Chatterbox / WinRT). Uses the platform backend's
@@ -40,13 +63,15 @@ def synth_wav(voice: str, rate: int = 200) -> bytes:
     backend = get_platform().tts
     text = sample_text(voice)
     if kokoro.is_kokoro_voice(voice):
-        return backend._get_kokoro().wav_bytes(
+        data = backend._get_kokoro().wav_bytes(
             text, voice, kokoro.rate_to_speed(rate))
-    if chatterbox.is_chatterbox_voice(voice):
+    elif chatterbox.is_chatterbox_voice(voice):
         from sonara.config import load_config
         cfg = load_config()
-        return chatterbox.CLIENT.synth_wav(text, voice, cfg)
-    return backend._synthesize_wav(text, voice, rate)
+        data = chatterbox.CLIENT.synth_wav(text, voice, cfg)
+    else:
+        data = backend._synthesize_wav(text, voice, rate)
+    return pad_lead(data)
 
 
 def ensure_all(voices_by_engine: dict, synth=synth_wav, log=None) -> int:

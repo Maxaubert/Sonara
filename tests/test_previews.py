@@ -56,3 +56,26 @@ def test_ensure_all_ignores_empty_synth_output(tmp_path, monkeypatch):
     n = previews.ensure_all({"kokoro": ["v"]}, synth=lambda v: b"")
     assert n == 0
     assert not (tmp_path / "v.wav").exists()
+
+
+def test_pad_lead_prepends_silence():
+    # (#78) the first ~half second of playback is routinely swallowed (audio
+    # endpoint wake-up), clipping the preview opener; silence absorbs it.
+    import io
+    import wave
+    from sonara.previews import pad_lead
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
+        w.writeframes(b"\x11\x22" * 2400)          # 0.1s of "speech"
+    padded = pad_lead(buf.getvalue(), ms=600)
+    with wave.open(io.BytesIO(padded), "rb") as r:
+        frames = r.readframes(r.getnframes())
+        assert r.getnframes() == 2400 + int(24000 * 0.6)
+    assert frames.startswith(b"\x00" * (int(24000 * 0.6) * 2))
+    assert frames.endswith(b"\x11\x22" * 2400)
+
+
+def test_pad_lead_returns_input_on_garbage():
+    from sonara.previews import pad_lead
+    assert pad_lead(b"not a wav") == b"not a wav"
