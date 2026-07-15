@@ -117,6 +117,31 @@ def require_installed() -> None:
         raise RuntimeError(_INSTALL_HINT)
 
 
+def normalize_rms(audio, target=0.08, peak=0.97, frame=480, floor=1e-4):
+    """Scale float mono audio so its VOICED RMS lands on *target* (~-22 dBFS),
+    hard-capped so no sample exceeds *peak*. The same target as the Chatterbox
+    worker's _normalize_rms (kept in sync - the worker cannot import sonara),
+    so loudness is consistent across engines and voices (#81). Frames below a
+    tenth of the loudest frame are pauses and do not count; silent/empty audio
+    returns unchanged."""
+    import numpy as np
+    x = np.asarray(audio, dtype=np.float32)
+    if x.size < frame:
+        return x
+    frames = x[: (len(x) // frame) * frame].reshape(-1, frame)
+    rms = np.sqrt((frames ** 2).mean(axis=1))
+    gate = max(floor, float(rms.max()) * 0.1)
+    voiced = rms[rms > gate]
+    cur = float(voiced.mean()) if voiced.size else 0.0
+    if cur <= floor:
+        return x
+    gain = target / cur
+    peak_now = float(np.abs(x).max())
+    if peak_now * gain > peak:
+        gain = peak / peak_now
+    return (x * gain).astype(np.float32)
+
+
 def to_wav_bytes(audio, sample_rate: int = _SAMPLE_RATE) -> bytes:
     """Encode a float32 [-1, 1] mono array as 16-bit PCM mono WAV bytes."""
     import numpy as np
@@ -229,6 +254,7 @@ class KokoroEngine:
             return np.concatenate([a1, a2]), int(sr)
 
     def wav_bytes(self, text: str, voice: str, speed: float = 1.0) -> bytes:
-        """Synthesize and encode straight to 16-bit PCM mono WAV bytes."""
+        """Synthesize and encode straight to 16-bit PCM mono WAV bytes,
+        loudness-normalized to the shared cross-engine target (#81)."""
         audio, sample_rate = self.synth(text, voice, speed)
-        return to_wav_bytes(audio, sample_rate)
+        return to_wav_bytes(normalize_rms(audio), sample_rate)
