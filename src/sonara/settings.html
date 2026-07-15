@@ -177,7 +177,8 @@
         <div class="group-label"><span>Delivery</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Minimum queue</strong><div class="hint">Words Sonara waits for before beginning.</div></div><div class="control"><div class="stepper"><button id="mq-minus" aria-label="Decrease minimum queue">&minus;</button><output id="minqueue-out">5</output><button id="mq-plus" aria-label="Increase minimum queue">+</button></div><div class="hint">Higher values prevent tiny fragments from sounding abrupt.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Instant cues</strong><div class="hint">Speak control feedback in the fast Windows voice.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Fast cues</span><button class="switch" id="cues-switch" role="switch" aria-checked="true" aria-label="Toggle instant cues"></button></div><div class="hint">Muted, Paused and session changes play right away instead of waiting for the neural voice to load.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Instant cues</strong><div class="hint">Speak control feedback in a fast, always-loaded voice.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Fast cues</span><button class="switch" id="cues-switch" role="switch" aria-checked="true" aria-label="Toggle instant cues"></button></div><div class="hint">Muted, Paused and session changes play right away instead of waiting for the neural voice to load.</div></div></div>
+          <div class="pref" id="cue-voice-row"><div class="pref-copy"><strong>Cue voice</strong><div class="hint">Which voice speaks the feedback.</div></div><div class="control"><select id="cue-voice-select" aria-label="Cue voice"></select><div class="hint">Kokoro voices stay loaded for cues, so they keep their speed.</div></div></div>
         </div>
       </section>
 
@@ -300,6 +301,7 @@ async function set(key, value) {
 }
 let voicesSig = "";
 let modelSig = null;
+let cueVoiceSig = null;
 let engineView = null;          // "kokoro" | "chatterbox" (#42)
 function engineOf(s, voice) {
   if ((s.voices.chatterbox || []).includes(voice)) return "chatterbox";
@@ -414,6 +416,30 @@ function render(s) {
   setVal("settle", s.config.summary_settle_ms);
   document.getElementById("settle-out").textContent = s.config.summary_settle_ms + " ms";
   setSwitch("cues-switch", s.config.fast_cues);
+  // cue voice picker (#60): Kokoro voices (kept warm) + native Windows voices
+  const cueSel = document.getElementById("cue-voice-select");
+  const cueNames = [...(s.voices.kokoro || []), ...(s.voices.windows || [])];
+  const cueSig = JSON.stringify([cueNames, s.config.cue_voice]);
+  if (cueSig !== cueVoiceSig && document.activeElement !== cueSel) {
+    cueVoiceSig = cueSig;
+    cueSel.innerHTML = "";
+    for (const n of cueNames) {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = n.charAt(0).toUpperCase() + n.slice(1);
+      o.selected = (n === s.config.cue_voice);
+      cueSel.appendChild(o);
+    }
+    if (s.config.cue_voice && !cueNames.includes(s.config.cue_voice)) {
+      const o = document.createElement("option");   // off-list value stays visible
+      o.value = s.config.cue_voice; o.textContent = s.config.cue_voice;
+      o.selected = true;
+      cueSel.appendChild(o);
+    }
+  }
+  const cuesOff = !s.config.fast_cues;
+  document.getElementById("cue-voice-row").classList.toggle("dim", cuesOff);
+  cueSel.disabled = cuesOff;
+  cueSel.dataset.lock = cuesOff ? "1" : "";   // setBanner(false) must not re-enable
   setSwitch("duck-switch", s.config.audio_control);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
@@ -548,6 +574,7 @@ document.getElementById("duck-switch").addEventListener("click", function () {
 document.getElementById("cues-switch").addEventListener("click", function () {
   set("fast_cues", this.getAttribute("aria-checked") !== "true");
 });
+document.getElementById("cue-voice-select").addEventListener("change", e => set("cue_voice", e.target.value));
 document.getElementById("mq-minus").addEventListener("click", () => {
   if (!state) return;
   set("minqueue", Math.max(1, state.config.minqueue - 1));

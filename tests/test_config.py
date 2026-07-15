@@ -19,6 +19,7 @@ def test_defaults_has_documented_top_level_keys():
         "summary_style",
         "summary_prompts",
         "fast_cues",
+        "cue_voice",
         "chatterbox_variant",
         "chatterbox_idle_unload_s",
         "chatterbox_timeout",
@@ -274,9 +275,11 @@ def test_chatterbox_chunk_chars_default_and_clamp():
 
 
 def test_fast_cues_default_on():
-    # (#60) control cues speak via the instant Windows voice by default so
+    # (#60) control cues speak via an always-fast voice by default so
     # "Muted." never waits out a cold Chatterbox model reload
     assert DEFAULTS["fast_cues"] is True
+    # warm-Kokoro default: ~0.3s per cue, far nicer than the native voices
+    assert DEFAULTS["cue_voice"] == "af_heart"
 
 
 def test_settings_port_default():
