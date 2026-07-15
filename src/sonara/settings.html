@@ -106,10 +106,11 @@
     .segments button.active{background:var(--accent);color:#fff;box-shadow:0 3px 9px rgba(79,70,229,.28)}
     .pref.dim{opacity:.45}
     .pref.dim input,.pref.dim .segments button{pointer-events:none}
-    .prompt-pref { align-items: flex-start; }
-    .prompt-control { flex: 1; min-width: 0; }
+    .summary-combo { padding: 18px 20px; }
+    .combo-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .seg-wide button { min-width: 76px; }
     #prompt-text { width: 100%; min-height: 220px; resize: vertical; font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--text); background: var(--field-bg, rgba(127,127,127,.08)); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-sizing: border-box; }
-    .prompt-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .prompt-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; }
     #prompt-card.dim { opacity: .45; pointer-events: none; }
     .group-label { display:flex; justify-content:space-between; align-items:baseline; margin:30px 3px 10px; color:var(--secondary); font-size:13px; font-weight:650; }
     .group-label span:last-child { color:var(--tertiary); font-size:11px; font-weight:500; }
@@ -186,12 +187,14 @@
         <div class="title-row"><div><h1>Summary</h1><p>Turn long responses into focused spoken briefings.</p></div><span class="state"><i></i>Saved</span></div>
         <div class="group-label"><span>Spoken summaries</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="tablist"><button data-style="off">Off</button><button data-style="tidy">Tidy</button><button data-style="natural">Natural</button><button data-style="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
-          <div class="pref" id="model-row"><div class="pref-copy"><strong>Model</strong><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint">Fastest options first. Every model runs headless and never touches your session.</div></div></div>
+          <div class="summary-combo">
+            <div class="combo-head"><div class="segments seg-wide" id="summary-seg" role="tablist"><button data-style="off">Off</button><button data-style="tidy">Tidy</button><button data-style="natural">Natural</button><button data-style="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div>
+            <div class="combo-body" id="prompt-card"><textarea id="prompt-text" spellcheck="false" aria-label="Summary instruction"></textarea><div class="prompt-actions"><span class="hint" id="prompt-state"></span><button class="btn" id="prompt-reset">Reset to default</button></div></div>
+          </div>
         </div>
-        <div class="group-label"><span>Prompt</span></div>
-        <div class="inset" id="prompt-card">
-          <div class="pref prompt-pref"><div class="pref-copy"><strong>Instruction</strong><div class="hint">What the summarizer is told to do with each response. Applies to the selected mode only.</div><div class="hint" id="prompt-state"></div></div><div class="control prompt-control"><textarea id="prompt-text" spellcheck="false" aria-label="Summary instruction"></textarea><div class="prompt-actions"><button class="btn" id="prompt-reset">Reset to default</button></div></div></div>
+        <div class="group-label"><span>Engine</span></div>
+        <div class="inset">
+          <div class="pref" id="model-row"><div class="pref-copy"><strong>Model</strong><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint">Fastest options first. Every model runs headless and never touches your session.</div></div></div>
         </div>
         <div class="group-label"><span>Live reading</span></div>
         <div class="inset">

@@ -396,8 +396,9 @@ def test_settings_page_advanced_tab_and_summary_ordering():
     hot_at = page.index('<section class="page" id="hotkeys">')
     for rid in ('id="timeout-row"', 'id="settle-row"', 'id="chunk-row"'):
         assert adv_at < page.index(rid) < hot_at, rid
-    assert (page.index('id="model-row"') < page.index('id="prompt-card"')
-            < page.index('id="minqueue-row"'))
+    # combined component: mode chips directly above the prompt text, then Model
+    assert (page.index('id="summary-seg"') < page.index('id="prompt-card"')
+            < page.index('id="model-row"') < page.index('id="minqueue-row"'))
 
 
 def test_settings_page_minqueue_lives_on_summary_page_and_rate_row_is_hideable():
