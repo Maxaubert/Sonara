@@ -1685,6 +1685,18 @@ class SpeechDaemon:
         ch.append(item)
         self._wake.set()
 
+    def _cue_voice_override(self, item) -> dict:
+        """speaker.speak kwargs for *item* (#60). Control feedback and
+        session-change announcements speak through the platform's instant
+        native voice (voice=None -> best WinRT) instead of the configured
+        neural voice, so "Muted." never waits out a cold Chatterbox model
+        reload. Config fast_cues (default on) disables the override."""
+        from sonara.router import CONTROL
+        if (self.config.get("fast_cues", True)
+                and (item.session == CONTROL or item.kind == "session_change")):
+            return {"voice": None}
+        return {}
+
     def _maybe_announce_chatterbox_fallback(self) -> None:
         """Speak the pending Chatterbox fallback notice, if any, exactly once per
         daemon run. Called outside self._lock (_speak_cue does not take it)."""
@@ -1737,6 +1749,7 @@ class SpeechDaemon:
                 if str(v) in ("tidy", "natural", "brief") else None),
             "summary_command": lambda v: (str(v)
                 if str(v) in ("claude", "codex") else None),
+            "fast_cues": lambda v: bool(v),
             "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
             "chatterbox_exaggeration": lambda v: max(0.0, min(1.0, float(v))),
             "chatterbox_variant": lambda v: (str(v)
@@ -1872,7 +1885,8 @@ class SpeechDaemon:
                 cancel_epoch = self.speaker.cancel_epoch()
             if item is not None:
                 try:
-                    completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch)
+                    completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
+                                                   **self._cue_voice_override(item))
                 except Exception:  # noqa: BLE001
                     self._signal_speak_failure()
                     completed = False
@@ -1916,7 +1930,8 @@ class SpeechDaemon:
         # first sample plays.
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                           on_play=self._maybe_duck)
+                                           on_play=self._maybe_duck,
+                                           **self._cue_voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False

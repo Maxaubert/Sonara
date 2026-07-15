@@ -22,7 +22,7 @@ _PAGE_KEYS = (
     "summary_style", "summary_command",
     "summary_timeout", "summary_settle_ms", "audio_control", "duck_level",
     "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
-    "chatterbox_variant",
+    "chatterbox_variant", "fast_cues",
 )
 
 _MSG_KEYS = {
@@ -36,7 +36,7 @@ _MSG_KEYS = {
 _CONFIG_KEYS = ("summary_model", "summary_style", "summary_command",
                 "summary_timeout", "summary_settle_ms",
                 "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
-                "chatterbox_variant")
+                "chatterbox_variant", "fast_cues")
 
 
 def _dispatch(daemon, msg):
