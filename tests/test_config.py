@@ -16,6 +16,8 @@ def test_defaults_has_documented_top_level_keys():
         "summary_model",
         "summary_command",
         "summary_timeout",
+        "summary_style",
+        "summary_prompts",
         "chatterbox_variant",
         "chatterbox_idle_unload_s",
         "chatterbox_timeout",
@@ -281,3 +283,11 @@ def test_chatterbox_exaggeration_default():
     # (#38) settings-page expressiveness slider; 0.0 matches the turbo engine
     # default so existing voices sound identical until the user moves it
     assert DEFAULTS["chatterbox_exaggeration"] == 0.0
+
+
+def test_summary_style_defaults():
+    # (#58) 4-position summary mode: bool summary_mode stays; style picks the
+    # instruction; prompts holds per-style user customizations (absent = default)
+    from sonara.config import DEFAULTS
+    assert DEFAULTS["summary_style"] == "natural"
+    assert DEFAULTS["summary_prompts"] == {}

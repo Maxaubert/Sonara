@@ -106,6 +106,11 @@
     .segments button.active{background:var(--accent);color:#fff;box-shadow:0 3px 9px rgba(79,70,229,.28)}
     .pref.dim{opacity:.45}
     .pref.dim input,.pref.dim .segments button{pointer-events:none}
+    .prompt-pref { align-items: flex-start; }
+    .prompt-control { flex: 1; min-width: 0; }
+    #prompt-text { width: 100%; min-height: 220px; resize: vertical; font: 12px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--text); background: var(--field-bg, rgba(127,127,127,.08)); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; box-sizing: border-box; }
+    .prompt-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+    #prompt-card.dim { opacity: .45; pointer-events: none; }
     .group-label { display:flex; justify-content:space-between; align-items:baseline; margin:30px 3px 10px; color:var(--secondary); font-size:13px; font-weight:650; }
     .group-label span:last-child { color:var(--tertiary); font-size:11px; font-weight:500; }
     .inset { background:var(--group); border:1px solid var(--line); border-radius:15px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.025); }
@@ -179,13 +184,18 @@
         <div class="title-row"><div><h1>Summary</h1><p>Turn long responses into focused spoken briefings.</p></div><span class="state"><i></i>Saved</span></div>
         <div class="group-label"><span>Spoken summaries</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Summarize long responses</strong><div class="hint">Condense large outputs before playback begins.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Summary mode</span><button class="switch" id="summary-switch" role="switch" aria-checked="false" aria-label="Toggle summaries"></button></div><div class="hint">Only spoken output changes. Claude Code still shows the full response.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Model</strong><div class="hint">Claude model that writes the spoken summary.</div></div><div class="control"><select id="model-select" aria-label="Summary model"><option value="haiku">haiku</option><option value="sonnet">sonnet</option></select><div class="hint">Haiku is faster. Sonnet retains more nuance in dense explanations.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="tablist"><button data-style="off">Off</button><button data-style="tidy">Tidy</button><button data-style="natural">Natural</button><button data-style="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Engine</strong><div class="hint">Which assistant writes the spoken summary.</div></div><div class="control"><select id="engine-select" aria-label="Summary engine"><option value="claude">Claude Code</option><option value="codex">Codex</option></select><div class="hint">Both run headless and never touch your session.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Model</strong></div><div class="control"><select id="model-select" aria-label="Summary model"></select><div class="hint" id="model-hint">Haiku is faster. Sonnet retains more nuance in dense explanations.</div></div></div>
         </div>
         <div class="group-label"><span>Timing</span></div>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
           <div class="pref"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
+        </div>
+        <div class="group-label"><span>Prompt</span></div>
+        <div class="inset" id="prompt-card">
+          <div class="pref prompt-pref"><div class="pref-copy"><strong>Instruction</strong><div class="hint">What the summarizer is told to do with each response. Applies to the selected mode only.</div><div class="hint" id="prompt-state"></div></div><div class="control prompt-control"><textarea id="prompt-text" spellcheck="false" aria-label="Summary instruction"></textarea><div class="prompt-actions"><button class="btn" id="prompt-reset">Reset to default</button></div></div></div>
         </div>
       </section>
 
@@ -267,7 +277,7 @@ async function refresh() {
 }
 function setBanner(down) {
   document.getElementById("offline-banner").style.display = down ? "flex" : "none";
-  document.querySelectorAll("input,select,button").forEach(el =>
+  document.querySelectorAll("input,select,button,textarea").forEach(el =>
     el.disabled = down || el.dataset.lock === "1");
   document.body.classList.toggle("offline", down);
 }
@@ -288,6 +298,7 @@ async function set(key, value) {
   if (r.ok) { await acceptState(r); } else { await showApiError(r); }
 }
 let voicesSig = "";
+let modelSig = null;
 let engineView = null;          // "kokoro" | "chatterbox" (#42)
 function engineOf(s, voice) {
   if ((s.voices.chatterbox || []).includes(voice)) return "chatterbox";
@@ -344,8 +355,59 @@ function render(s) {
   setVal("rate", s.config.rate);
   document.getElementById("rate-out").textContent = s.config.rate + " wpm";
   document.getElementById("minqueue-out").textContent = s.config.minqueue;
-  setSwitch("summary-switch", s.config.summary_mode);
-  setVal("model-select", s.config.summary_model);
+  // 4-position summary mode (#58): Off chip = summary_mode false; a style chip
+  // = summary_mode true + that summary_style.
+  const MODE_HINTS = {off: "Read everything live, as it streams.",
+                      tidy: "Everything, rewritten for the ear at turn end.",
+                      natural: "The full story, minus the noise.",
+                      brief: "Just the outcome."};
+  const active = s.config.summary_mode ? (s.config.summary_style || "natural") : "off";
+  document.querySelectorAll("#summary-seg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.style === active));
+  document.getElementById("summary-mode-hint").textContent = MODE_HINTS[active];
+  // engine + model (#58): the model list follows the engine
+  const ENGINE_MODELS = {claude: ["haiku", "sonnet", "opus"],
+                         codex: ["gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.6-terra",
+                                 "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]};
+  const MODEL_HINTS = {claude: "Haiku is faster. Sonnet retains more nuance in dense explanations.",
+                       codex: "Luna and 5.4-mini are the fast ones; sol retains the most nuance."};
+  const eng = s.config.summary_command || "claude";
+  setVal("engine-select", eng);
+  const mSel = document.getElementById("model-select");
+  const mNames = ENGINE_MODELS[eng] || ENGINE_MODELS.claude;
+  const mSig = JSON.stringify([eng, s.config.summary_model]);
+  if (mSig !== modelSig && document.activeElement !== mSel) {
+    modelSig = mSig;
+    mSel.innerHTML = "";
+    for (const n of mNames) {
+      const o = document.createElement("option");
+      o.value = n; o.textContent = n;
+      o.selected = (n === s.config.summary_model);
+      mSel.appendChild(o);
+    }
+    if (!mNames.includes(s.config.summary_model)) {
+      const o = document.createElement("option");   // off-list model stays visible
+      o.value = s.config.summary_model; o.textContent = s.config.summary_model;
+      o.selected = true;
+      mSel.appendChild(o);
+    }
+  }
+  document.getElementById("model-hint").textContent = MODEL_HINTS[eng] || MODEL_HINTS.claude;
+  // prompt card (#58): show the ACTIVE style's effective instruction; dim when off
+  const pCard = document.getElementById("prompt-card");
+  const pText = document.getElementById("prompt-text");
+  const pStyle = active === "off" ? (s.config.summary_style || "natural") : active;
+  const custom = (s.summary_prompts || {})[pStyle];
+  const effective = custom ?? (s.summary_prompt_defaults || {})[pStyle] ?? "";
+  pCard.classList.toggle("dim", active === "off");
+  if (document.activeElement !== pText && pText.dataset.style !== pStyle + "|" + (custom ? "c" : "d") || pText.value === "") {
+    if (document.activeElement !== pText) { pText.value = effective; pText.dataset.style = pStyle + "|" + (custom ? "c" : "d"); }
+  }
+  document.getElementById("prompt-state").textContent =
+    custom ? "Customized for " + pStyle + " mode." : "Default " + pStyle + " instruction.";
+  const pReset = document.getElementById("prompt-reset");
+  pReset.dataset.lock = custom ? "" : "1";   // setBanner(false) must not re-enable (#38)
+  pReset.disabled = !custom;
   setVal("timeout", s.config.summary_timeout);
   document.getElementById("timeout-out").textContent = s.config.summary_timeout + " s";
   setVal("settle", s.config.summary_settle_ms);
@@ -452,9 +514,31 @@ document.getElementById("chunk").addEventListener("change", e => set("chatterbox
 document.getElementById("exag").addEventListener("change", e => set("chatterbox_exaggeration", +e.target.value));
 document.getElementById("exag").addEventListener("input",
   e => document.getElementById("exag-out").textContent = Number(e.target.value).toFixed(2));
+document.querySelectorAll("#summary-seg button").forEach(b =>
+  b.addEventListener("click", () => {
+    const v = b.dataset.style;
+    if (v === "off") { set("summary_mode", false); return; }
+    if (state && !state.config.summary_mode) set("summary_mode", true);
+    set("summary_style", v);
+  }));
+document.getElementById("engine-select").addEventListener("change", e => {
+  const eng = e.target.value;
+  set("summary_command", eng);
+  const first = {claude: "haiku", codex: "gpt-5.6-luna"}[eng];
+  if (first) set("summary_model", first);      // provider switch picks its default
+});
 document.getElementById("model-select").addEventListener("change", e => set("summary_model", e.target.value));
-document.getElementById("summary-switch").addEventListener("click", function () {
-  set("summary_mode", this.getAttribute("aria-checked") !== "true");
+document.getElementById("prompt-text").addEventListener("change", function () {
+  const st = (state && state.config.summary_style) || "natural";
+  POST("/api/prompt", {style: st, text: this.value}).then(async r => {
+    if (r.ok) { await acceptState(r); } else { await showApiError(r); }
+  });
+});
+document.getElementById("prompt-reset").addEventListener("click", () => {
+  const st = (state && state.config.summary_style) || "natural";
+  POST("/api/prompt", {style: st, text: null}).then(async r => {
+    if (r.ok) { await acceptState(r); } else { await showApiError(r); }
+  });
 });
 document.getElementById("duck-switch").addEventListener("click", function () {
   set("audio_control", this.getAttribute("aria-checked") !== "true");
