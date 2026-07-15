@@ -56,12 +56,17 @@ def _split_text(text, max_chars=_MAX_CHUNK_CHARS):
     sentence boundaries. Chatterbox degrades into gibberish on long input (its
     reliable context is short, which is why the demos cap the box), so a whole
     paragraph digest must be synthesized in pieces. A single sentence longer than
-    the budget is hard-split on spaces."""
+    the budget is hard-split on spaces. Kept in sync with sonara.chatterbox
+    .split_text (the worker cannot import sonara)."""
     import re
     text = (text or "").strip()
     if not text:
         return []
-    sentences = re.findall(r"[^.!?]*[.!?]+|\S[^.!?]*$", text)
+    # Split at whitespace PRECEDED by a terminator (optionally + closing quote/
+    # bracket). The old findall split at EVERY '.', corrupting intra-token dots
+    # with an inserted space: "3.14" -> "3. 14", "daemon.py:123" ->
+    # "daemon. py:123" (#56). re.split never drops text.
+    sentences = re.split(r"(?:(?<=[.!?])|(?<=[.!?][\"')\]]))\s+", text)
     chunks = []
     cur = ""
     for s in sentences:
@@ -88,7 +93,17 @@ def _split_text(text, max_chars=_MAX_CHUNK_CHARS):
             cur = (cur + " " + s).strip()
     if cur:
         chunks.append(cur)
-    return chunks
+    out = []
+    for c in chunks:
+        # Chatterbox renders punctuation-only chunks as unpredictable noise and
+        # trails into hallucinated audio on unterminated ones (#56): skip the
+        # former, terminate the latter (a turn-final fragment or bullet line).
+        if not re.search(r"[A-Za-z0-9]", c):
+            continue
+        if c[-1] not in ".!?…" and len(c) < max_chars:
+            c = c.rstrip(":;,-") + "."
+        out.append(c)
+    return out
 
 
 def _to_float_mono(tensor):
@@ -167,7 +182,9 @@ def handle_request(state, req, now=time.time):
             if req.get("exaggeration") is not None:
                 kwargs["exaggeration"] = req["exaggeration"]
             import numpy as np
-            chunks = _split_text(req.get("text") or "") or [""]
+            # No `or [""]` fallback: an empty/unspeakable text returns zero
+            # samples instead of model.generate("") hallucinating audio (#56).
+            chunks = _split_text(req.get("text") or "")
             parts = [_to_float_mono(state.model.generate(c, **kwargs)) for c in chunks]
             audio = np.concatenate(parts) if parts else np.zeros(0, dtype="float32")
             sr = state.model.sr

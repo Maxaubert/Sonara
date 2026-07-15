@@ -7,14 +7,21 @@ from __future__ import annotations
 
 import re
 
-from sonara.cleaner import clean_markdown
+from sonara.cleaner import normalize_for_speech, stabilize_ordinals
 
 _FENCE = "```"
-# a complete sentence ends at . ! or ? followed by whitespace or end-of-string
-_SENTENCE = re.compile(r"(.+?[.!?])(?:\s+|$)", flags=re.DOTALL)
+# A complete sentence ends at . ! or ? (plus any closing quotes/brackets/
+# markdown markers) followed by WHITESPACE. Requiring the whitespace keeps
+# intra-token dots intact ("3.14", "daemon.py:123", "v2.1.3") and stops a
+# delta boundary that happens to land right after a period from emitting a
+# premature half-sentence; the trailing fragment is delivered by the final
+# flush instead (#56).
+_SENTENCE = re.compile(r"(.+?[.!?][\"'’”)\]*_`]*)\s+", flags=re.DOTALL)
+# a chunk is speakable only if it contains at least one word character
+_WORD = re.compile(r"[A-Za-z0-9]")
 
 # A paragraph boundary = a blank line. We split the RAW buffer on this (before
-# clean_markdown collapses whitespace) so the boundary survives even when the
+# cleaning collapses whitespace) so the boundary survives even when the
 # blank line straddles two streamed deltas. feed() yields PARAGRAPH_BREAK between
 # paragraphs so the daemon can group history by paragraph (the nav 'item' unit).
 _PARA = re.compile(r"\n[ \t]*\n")
@@ -27,7 +34,7 @@ class ProseAssembler:
     def __init__(self) -> None:
         self._seen: set[int] = set()
         self._buf = ""                 # pending prose text (RAW, outside fences)
-        self._emitted = 0              # chars of the CURRENT paragraph's CLEANED text already emitted
+        self._emitted = 0              # chars of the CURRENT paragraph's RAW text already emitted
         self._pending = ""             # raw tail not yet split into a line/fence token
         self._in_fence = False
         self._fence_lang = ""
@@ -190,22 +197,30 @@ class ProseAssembler:
             return f"{n}-line {lang} code block"
         return f"{n}-line code block"
 
+    def _emit_chunk(self, raw: str, out: list) -> None:
+        """Clean one RAW chunk and append it if speakable. Cleaning happens
+        per-chunk AFTER splitting, so a markdown pair whose closing marker
+        arrives in a later delta can never invalidate already-emitted text
+        (the old cleaned-offset bookkeeping chopped characters, #56); an
+        unpaired marker is simply stripped by normalize_for_speech."""
+        cleaned = normalize_for_speech(raw)
+        if _WORD.search(cleaned):
+            out.append(cleaned)
+
     def _sentences_of(self, text: str, keep_remainder: bool):
-        """Split *text* into sentences. Return (sentences, remainder). When
-        keep_remainder is False the trailing fragment is emitted too (a complete
-        paragraph) and remainder is ''."""
+        """Split RAW *text* into cleaned sentences. Return (sentences,
+        raw remainder). When keep_remainder is False the trailing fragment
+        belongs to a complete paragraph: emit it too, one chunk per line, so a
+        closing bullet list never leaves as one giant unpunctuated blob (#56)."""
         out: list = []
         last_end = 0
         for m in _SENTENCE.finditer(text):
-            sentence = m.group(1).strip()
-            if len(sentence) > 1:
-                out.append(sentence)
+            self._emit_chunk(m.group(1), out)
             last_end = m.end()
         remainder = text[last_end:]
         if not keep_remainder:
-            tail = remainder.strip()
-            if len(tail) > 1:
-                out.append(tail)
+            for line in remainder.splitlines():
+                self._emit_chunk(line, out)
             remainder = ""
         return out, remainder
 
@@ -213,45 +228,48 @@ class ProseAssembler:
         """Emit complete sentences from _buf, with PARAGRAPH_BREAK markers between
         paragraphs (blank-line boundaries). Keeps the trailing partial sentence.
 
-        _buf is kept RAW (uncleaned). Cleaning collapses whitespace, so storing the
-        cleaned remainder used to erase the trailing newline of a blank line that
-        straddles two streamed deltas -- the break was lost and the paragraphs
-        merged. Instead we split the RAW buffer on blank lines (preserving the
-        straddling newline for the next delta) and track how much of the current
-        paragraph's CLEANED text has already been emitted (_emitted), so re-cleaning
-        the growing raw buffer never re-emits or drops a sentence."""
+        _buf is kept RAW (uncleaned) and _emitted counts RAW chars of the current
+        paragraph already emitted. Raw text is append-only under streaming, so the
+        offset can never be invalidated by later deltas -- unlike the previous
+        cleaned-text offset, which desynced when a markdown pair straddled an
+        already-emitted sentence (#56). The only pre-split rewrite is
+        stabilize_ordinals, which is length-preserving so offsets stay valid."""
         out: list = []
         raw_paragraphs = _PARA.split(self._buf)
         # All but the last are COMPLETE paragraphs (each was followed by a blank line).
         for raw_para in raw_paragraphs[:-1]:
-            cleaned = clean_markdown(raw_para)
-            start = min(self._emitted, len(cleaned))
-            sents, _ = self._sentences_of(cleaned[start:], keep_remainder=False)
+            start = min(self._emitted, len(raw_para))
+            view = stabilize_ordinals(raw_para)
+            sents, _ = self._sentences_of(view[start:], keep_remainder=False)
             out.extend(sents)
             out.append(PARAGRAPH_BREAK)
             self._emitted = 0                # paragraph done; the next one starts fresh
         # The last raw paragraph is the current, possibly-incomplete one.
         last_raw = raw_paragraphs[-1]
-        cleaned_last = clean_markdown(last_raw)
-        start = min(self._emitted, len(cleaned_last))
-        sents, remainder = self._sentences_of(cleaned_last[start:], keep_remainder=True)
+        start = min(self._emitted, len(last_raw))
+        view = stabilize_ordinals(last_raw)
+        sents, remainder = self._sentences_of(view[start:], keep_remainder=True)
         out.extend(sents)
-        self._emitted = len(cleaned_last) - len(remainder)
+        self._emitted = len(last_raw) - len(remainder)
         self._buf = last_raw                 # keep RAW so a straddling blank line survives
         return out
 
     def _flush_prose(self) -> list[str]:
+        """Emit the not-yet-emitted RAW tail, one chunk per line. The tail used
+        to leave as ONE blob; a closing dash-bullet list (no terminal
+        punctuation anywhere) then hit Chatterbox's 280-char hard word-splits
+        mid-clause -- the end-of-turn garble from the #56 audit."""
         if not self._buf:
             self._emitted = 0
             return []
-        cleaned = clean_markdown(self._buf)
-        start = min(self._emitted, len(cleaned))
-        tail = cleaned[start:]               # only the not-yet-emitted remainder
+        start = min(self._emitted, len(self._buf))
+        tail = self._buf[start:]
         self._buf = ""
         self._emitted = 0
-        if len(tail) > 1:
-            return [tail]
-        return []
+        out: list[str] = []
+        for line in tail.splitlines():
+            self._emit_chunk(line, out)
+        return out
 
     def _reset(self) -> None:
         self._seen = set()

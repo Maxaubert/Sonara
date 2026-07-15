@@ -12,7 +12,11 @@ def test_two_sentences_across_two_feeds_emit_both_and_hold_nothing():
 def test_partial_is_buffered_until_completed_by_later_delta():
     a = ProseAssembler()
     assert a.feed("No terminator yet", 0, False) == []
-    assert a.feed(" but now it ends.", 1, False) == ["No terminator yet but now it ends."]
+    # A terminator at the very END of the buffer may be mid-token ("3." of
+    # "3.14", "daemon." of "daemon.py"), so it is held until following
+    # whitespace confirms the sentence -- or the final flush delivers it (#56).
+    assert a.feed(" but now it ends.", 1, False) == []
+    assert a.feed(" Next thing", 2, False) == ["No terminator yet but now it ends."]
 
 
 def test_partial_is_flushed_on_final():
@@ -172,6 +176,70 @@ def test_fence_with_inner_backtick_literal_does_not_close_early():
     assert summaries[0].startswith("2-line")             # both lines counted
     assert any("After text." in t for t in texts)        # prose resumes cleanly
     assert not any("more code" in t for t in texts)      # code never leaks
+
+
+# --- live-prose audit #56: offset desync, mid-token splits, tail blobs -------
+
+def test_markdown_pair_straddling_deltas_does_not_chop_chars():
+    # "**Bottom line: ... Ship it now.**" split across deltas used to speak
+    # literal asterisks then "hip it now." -- the cleaned-offset bookkeeping
+    # desynced when the closing marker arrived late (#56).
+    a = ProseAssembler()
+    out = a.feed("**Bottom line: it works. ", 0, False)
+    out += a.feed("Ship it now.**", 1, True)
+    assert out == ["Bottom line: it works.", "Ship it now."]
+
+
+def test_inline_code_straddling_deltas_keeps_all_chars():
+    # `daemon.py` split across deltas used to drop the "p" and speak a raw
+    # backtick (#56).
+    a = ProseAssembler()
+    out = a.feed("I updated `daemon.", 0, False)
+    out += a.feed("py` and restarted the service.", 1, True)
+    assert out == ["I updated daemon.py and restarted the service."]
+
+
+def test_decimal_straddling_deltas_stays_one_sentence():
+    # A delta boundary right after "3." used to emit "The cost is 3." as its
+    # own premature utterance (#56).
+    a = ProseAssembler()
+    out = a.feed("The cost is 3.", 0, False)
+    out += a.feed("5 million dollars total.", 1, True)
+    assert out == ["The cost is 3.5 million dollars total."]
+
+
+def test_closing_bullet_list_emits_one_chunk_per_item():
+    # The classic end-of-turn bullet list used to leave the final flush as ONE
+    # unpunctuated 300+ char blob that Chatterbox hard-split mid-clause (#56).
+    a = ProseAssembler()
+    text = ("Here is what changed.\n"
+            "- Fixed the race in the daemon\n"
+            "- Added a regression test\n"
+            "- Deployed the new build")
+    out = a.feed(text, 0, True)
+    assert out == ["Here is what changed.",
+                   "Fixed the race in the daemon",
+                   "Added a regression test",
+                   "Deployed the new build"]
+
+
+def test_snake_case_is_unsnaked_on_the_live_path():
+    # Live prose used to get only clean_markdown, whose emphasis rule GLUED
+    # snake_case into non-words ("handlemessage") before the voice (#56).
+    a = ProseAssembler()
+    out = a.feed("Renamed handle_message and added _voiced_upto. ", 0, True)
+    assert out == ["Renamed handle message and added voiced upto."]
+
+
+def test_arrow_and_ampersand_normalized_on_the_live_path():
+    a = ProseAssembler()
+    out = a.feed("The flow is daemon -> assembler & channel. ", 0, True)
+    assert out == ["The flow is daemon to assembler and channel."]
+
+
+def test_punctuation_only_chunk_is_not_emitted():
+    a = ProseAssembler()
+    assert a.feed("...", 0, True) == []
 
 
 def test_numbered_list_ordinals_attach_to_their_items():
