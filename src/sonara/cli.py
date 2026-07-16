@@ -479,6 +479,7 @@ _WINRT_PACKAGES = (
     "winrt-runtime",
     "winrt-Windows.Media.SpeechSynthesis",
     "winrt-Windows.Storage.Streams",
+    "winrt-Windows.Media.Control",   # SMTC pause/resume of other apps' media (#92)
     "pycaw",     # per-app volume control for audio ducking
 )
 

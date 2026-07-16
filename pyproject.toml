@@ -21,6 +21,7 @@ windows = [
     "winrt-runtime; sys_platform == 'win32'",
     "winrt-Windows.Media.SpeechSynthesis; sys_platform == 'win32'",
     "winrt-Windows.Storage.Streams; sys_platform == 'win32'",
+    "winrt-Windows.Media.Control; sys_platform == 'win32'",
     "pycaw; sys_platform == 'win32'",
 ]
 # Kokoro-82M neural voices (optional, cross-platform). One ~310 MB model + a 6 MB
