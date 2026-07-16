@@ -737,7 +737,7 @@ class SpeechDaemon:
                 # utterance aborts. The speak loop re-queues the interrupted item
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
-                self._maybe_restore()
+                self._maybe_restore_audio()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
@@ -1041,7 +1041,7 @@ class SpeechDaemon:
         self._running.clear()
         self._wake.set()
         self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
-        self._maybe_restore()       # never leave other apps' audio ducked
+        self._maybe_restore_audio()       # never leave other apps' audio ducked or paused
         self._stop_hotkeys()
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
@@ -1960,8 +1960,15 @@ class SpeechDaemon:
             self._speak_cue(None, "Kokoro unavailable, using Windows voice.",
                             exempt_mute=True)
 
-    def _audio_control_on(self) -> bool:
-        return bool(self.config.get("audio_control"))
+    def _audio_mode(self) -> str:
+        mode = self.config.get("audio_mode", "off")
+        return mode if mode in ("off", "duck", "pause") else "off"
+
+    def _audio_duck_on(self) -> bool:
+        return self._audio_mode() == "duck"
+
+    def _audio_pause_on(self) -> bool:
+        return self._audio_mode() == "pause"
 
     def _duck_level(self) -> int:
         try:
@@ -2091,21 +2098,30 @@ class SpeechDaemon:
             pass
         return pids
 
-    def _maybe_duck(self) -> None:
-        if self._audio_control_on() and not self.ducker.is_ducked():
-            self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
+    def _maybe_engage_audio(self) -> None:
+        mode = self._audio_mode()
+        if mode == "duck":
+            if not self.ducker.is_ducked():
+                self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
+        elif mode == "pause":
+            if not self.pauser.is_paused():
+                self.pauser.pause()
 
-    def _maybe_restore(self) -> None:
+    def _maybe_restore_audio(self) -> None:
+        # Disengage BOTH backends defensively: a mid-speech mode switch can leave
+        # the other backend engaged, and idle must never leave media ducked OR paused.
         if self.ducker.is_ducked():
             self.ducker.restore()
+        if self.pauser.is_paused():
+            self.pauser.resume()
 
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
             # Idempotently restore other apps' audio while paused -- closes the window
             # where a re-duck slipped in during the pause transition. Safe to call
-            # repeatedly: _maybe_restore() is a no-op when not ducked.
-            self._maybe_restore()
+            # repeatedly: _maybe_restore_audio() is a no-op when not ducked/paused.
+            self._maybe_restore_audio()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
             # pause rewinds the cursor past where _speak_cue inserted the cue, so a
@@ -2148,7 +2164,7 @@ class SpeechDaemon:
         self._maybe_announce_chatterbox_fallback()
         self._maybe_announce_kokoro_fallback()
         if item is None:
-            self._maybe_restore()
+            self._maybe_restore_audio()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
@@ -2172,7 +2188,7 @@ class SpeechDaemon:
         # over the digest's whole cold synthesis. Only the content ducks, at its
         # own playback; from idle the announcement rides through un-ducked, and
         # mid-listening the existing duck simply stays on across the handoff.
-        on_play = None if item.kind == "session_change" else self._maybe_duck
+        on_play = None if item.kind == "session_change" else self._maybe_engage_audio
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,

@@ -16,7 +16,7 @@ def _seed_item(daemon, text="Hello there."):
 
 def test_duck_fires_via_on_play_not_before_speak():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    config["audio_control"] = True
+    config["audio_mode"] = "duck"
     _seed_item(daemon)
     ducked_at_entry = []
 
@@ -35,7 +35,7 @@ def test_duck_fires_via_on_play_not_before_speak():
 
 def test_no_duck_when_audio_control_off():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    config["audio_control"] = False
+    config["audio_mode"] = "off"
     _seed_item(daemon)
     daemon._speak_loop_once()
     assert daemon.ducker.duck_calls == []
