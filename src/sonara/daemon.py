@@ -2221,15 +2221,20 @@ class SpeechDaemon:
         # preserved: the alert cue itself is played WITHOUT on_play, and the duck/
         # pause engage happens for the CONTENT, after the alert.
         preamble = None
-        if (self._pending_preamble is not None
-                and self._pending_preamble[0] == item.session):
-            preamble = self._pending_preamble[1]
-        self._pending_preamble = None
+        if self._pending_preamble is not None:
+            if self._pending_preamble[0] == item.session:
+                preamble = self._pending_preamble[1]
+            else:
+                self._pending_preamble = None   # stale alert for another session: drop it
         if preamble is not None:
             cue_voice = self._cue_voice()
             rate = self.config.get("rate", 200)
 
             def on_play(_text=preamble, _voice=cue_voice, _rate=rate):
+                # Consume the alert only when it actually plays. If content synthesis
+                # is interrupted (e.g. paused) BEFORE on_play fires, the preamble stays
+                # armed so the replayed content still announces the handoff (#94).
+                self._pending_preamble = None
                 try:
                     self._earcon("session_change")
                 except Exception:  # noqa: BLE001

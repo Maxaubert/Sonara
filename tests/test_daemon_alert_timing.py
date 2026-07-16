@@ -81,3 +81,21 @@ def test_preamble_on_play_still_engages_audio():
     daemon._speak_loop_once()                        # content on_play: alert THEN engage
     assert speaker.cue_untracked_calls              # alert played
     assert daemon.pauser.pause_calls == 1            # audio still engaged after the alert
+
+
+def test_alert_stays_armed_when_content_interrupted_before_on_play():
+    # A pause during the slow synth window interrupts content BEFORE on_play fires,
+    # so the alert never plays; it must stay armed for the content replay (#94).
+    daemon, speaker, config = _handoff()
+    config["fast_cues"] = True
+    daemon._speak_loop_once()                        # session_change -> stashed
+    assert daemon._pending_preamble is not None
+
+    def interrupted_before_playback(text, cancel_epoch=None, on_play=None,
+                                    voice="__default__"):
+        return False                                 # interrupted; on_play never fires
+
+    speaker.speak = interrupted_before_playback
+    daemon._speak_loop_once()                        # content attempt, interrupted
+    assert daemon._pending_preamble is not None      # alert stays armed for replay
+    assert speaker.cue_untracked_calls == []         # alert did not play
