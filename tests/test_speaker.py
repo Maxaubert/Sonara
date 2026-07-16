@@ -427,3 +427,40 @@ def test_speak_without_on_play_keeps_three_arg_call():
     sp = Speaker(voice="Ava", rate=180, say_runner=runner)
     sp.speak("hello")
     assert runner.calls == [("hello", "Ava", 180)]
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (#94): speak_cue_untracked
+# ---------------------------------------------------------------------------
+
+
+def test_speak_cue_untracked_runs_without_touching_current():
+    from sonara.speaker import Speaker
+    calls = []
+
+    class _Proc:
+        returncode = 0
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout)); return 0
+        def terminate(self):
+            calls.append("terminate")
+
+    def runner(text, voice, rate):
+        calls.append(("run", text, voice, rate)); return _Proc()
+
+    sp = Speaker(voice="content-voice", rate=200, say_runner=runner)
+    sp._current = "CONTENT_PROC"                 # simulate a tracked content proc
+    sp.speak_cue_untracked("Reading from repo.", "af_heart")
+    assert ("run", "Reading from repo.", "af_heart", 200) in calls
+    assert any(c[0] == "wait" for c in calls if isinstance(c, tuple))
+    assert sp._current == "CONTENT_PROC"          # never touched -> content cancel intact
+
+
+def test_speak_cue_untracked_uses_explicit_rate_and_survives_errors():
+    from sonara.speaker import Speaker
+
+    def boom(text, voice, rate):
+        raise RuntimeError("synth down")
+
+    sp = Speaker(voice="v", rate=200, say_runner=boom)
+    sp.speak_cue_untracked("hi", "af_heart", rate=150)   # must not raise
