@@ -27,27 +27,31 @@ def test_config_defaults_have_audio_control_off_and_duck_level_20():
 
 
 def test_set_audio_control_on_persists_and_cues(monkeypatch):
+    # #92: SET_AUDIO_CONTROL is now a compat shim that drives audio_mode
+    # (enabled -> "duck") through _apply_audio_mode, not audio_control directly.
     saved = {}
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: saved.update(c))
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL,
                            "enabled": True})
-    assert daemon.config["audio_control"] is True
-    assert saved.get("audio_control") is True
+    assert daemon.config["audio_mode"] == "duck"
+    assert saved.get("audio_mode") == "duck"
     # a spoken confirmation cue was queued on the CONTROL channel
     from sonara.router import CONTROL
     texts = [it.text for it in daemon.router.channel(CONTROL).items]
-    assert any("Audio control on" in t for t in texts)
+    assert any("Audio ducking." in t for t in texts)
 
 
 def test_set_audio_control_off_while_ducked_restores_now(monkeypatch):
+    # #92: the shim maps disabled -> "off" via _apply_audio_mode, which restores
+    # whatever backend was engaged.
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
     daemon, *_ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = True
+    daemon.config["audio_mode"] = "duck"
     daemon.ducker._ducked = True               # pretend currently ducked
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL,
                            "enabled": False})
-    assert daemon.config["audio_control"] is False
+    assert daemon.config["audio_mode"] == "off"
     assert daemon.ducker.restore_calls == 1
 
 
@@ -78,7 +82,7 @@ def test_set_audio_control_missing_enabled_is_noop(monkeypatch):
 def test_set_duck_level_reapplies_when_ducked(monkeypatch):
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
     daemon, *_ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = True   # must be on for re-duck to fire
+    daemon.config["audio_mode"] = "duck"   # #92: must be in duck mode for re-duck to fire
     daemon.ducker._ducked = True
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_DUCK_LEVEL,
                            "level": 35})
@@ -111,7 +115,7 @@ def test_duck_once_then_restore_only_at_global_idle():
     # the idle condition is global -- so one session proves the mechanism without
     # the session-change announcements that would make the count non-deterministic.)
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = True
+    daemon.config["audio_mode"] = "duck"
     queue.enqueue(_prose_item("fg", "One."))
     queue.enqueue(_prose_item("fg", "Two."))
     queue.enqueue(_prose_item("fg", "Three."))
@@ -125,7 +129,7 @@ def test_duck_once_then_restore_only_at_global_idle():
 
 def test_duck_excludes_daemon_and_earcon_pids():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = True
+    daemon.config["audio_mode"] = "duck"
     speaker._earcon_pids = [4242]                    # see Speaker.earcon_pids() below
     queue.enqueue(_prose_item("fg", "Hi."))
     daemon._speak_loop_once()

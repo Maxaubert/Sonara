@@ -95,6 +95,21 @@ class FakeDucker:
         self.restore_calls += 1; self._ducked = False
 
 
+class FakePauser:
+    def __init__(self):
+        self.pause_calls = 0
+        self.resume_calls = 0
+        self._paused = False
+
+    def is_paused(self): return self._paused
+
+    def pause(self):
+        self.pause_calls += 1; self._paused = True
+
+    def resume(self):
+        self.resume_calls += 1; self._paused = False
+
+
 def make_daemon(verbosity: str = "everything", foreground: "str | None" = "fg"):
     """Build a SpeechDaemon wired to a FakeSpeaker.
 
@@ -110,6 +125,7 @@ def make_daemon(verbosity: str = "everything", foreground: "str | None" = "fg"):
     config = {k: (v.copy() if isinstance(v, dict) else v) for k, v in DEFAULTS.items()}
     config["verbosity"] = verbosity
     ducker = FakeDucker()
-    daemon = SpeechDaemon(speaker, sessions, config, ducker=ducker)
+    pauser = FakePauser()
+    daemon = SpeechDaemon(speaker, sessions, config, ducker=ducker, pauser=pauser)
     queue = ChannelQueueProxy(daemon)
     return daemon, queue, speaker, sessions, config

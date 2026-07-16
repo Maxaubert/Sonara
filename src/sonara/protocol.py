@@ -33,6 +33,7 @@ class MsgType:
     SET_VOICE = "set_voice"
     SET_MINQUEUE = "set_minqueue"
     SET_AUDIO_CONTROL = "set_audio_control"   # enable/disable audio ducking
+    SET_AUDIO_MODE = "set_audio_mode"         # off | duck | pause (#92)
     SET_DUCK_LEVEL = "set_duck_level"         # set duck target volume (0-100)
     SET_SUMMARY_MODE = "set_summary_mode"     # toggle spoken turn summaries
     SHUTDOWN = "shutdown"   # exit the daemon process cleanly (lifecycle, #23)

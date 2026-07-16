@@ -15,6 +15,7 @@ DEFAULTS = {
     "minqueue": 1,
     "audio_control": False,   # lower other apps' audio while speaking (opt-in)
     "duck_level": 30,         # target % volume for other apps while ducked (0-100)
+    "audio_mode": "off",      # off | duck | pause -- pause pauses SMTC media (#92)
     "summary_mode": False,    # speak an AI recap of each finished turn (opt-in)
     "summary_model": "haiku",           # model alias for the throwaway claude -p call
     "summary_command": "claude",        # executable for the summarizer subprocess
@@ -80,7 +81,12 @@ def load_config() -> dict:
         return base
     if not isinstance(persisted, dict):
         return base
-    return _deep_merge(base, persisted)
+    merged = _deep_merge(base, persisted)
+    # Migrate the pre-#92 boolean into the three-way mode when the persisted file
+    # predates audio_mode: audio_control True -> "duck", otherwise the default "off".
+    if "audio_mode" not in persisted and persisted.get("audio_control"):
+        merged["audio_mode"] = "duck"
+    return merged
 
 
 def save_config(cfg: dict) -> None:

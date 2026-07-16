@@ -12,6 +12,7 @@ def test_defaults_has_documented_top_level_keys():
         "minqueue",
         "audio_control",
         "duck_level",
+        "audio_mode",
         "summary_mode",
         "summary_model",
         "summary_command",
@@ -302,3 +303,34 @@ def test_summary_style_defaults():
     from sonara.config import DEFAULTS
     assert DEFAULTS["summary_style"] == "natural"
     assert DEFAULTS["summary_prompts"] == {}
+
+
+import json
+import sonara.config as config_mod
+from sonara.config import load_config
+
+
+def test_audio_mode_default_is_off():
+    assert DEFAULTS["audio_mode"] == "off"
+
+
+def test_audio_mode_migrates_from_legacy_audio_control_true(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"audio_control": True}), encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    assert load_config()["audio_mode"] == "duck"
+
+
+def test_audio_mode_off_when_legacy_absent(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"rate": 190}), encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    assert load_config()["audio_mode"] == "off"
+
+
+def test_explicit_audio_mode_is_not_overridden_by_migration(tmp_path, monkeypatch):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"audio_control": True, "audio_mode": "pause"}),
+                    encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    assert load_config()["audio_mode"] == "pause"

@@ -14,7 +14,7 @@ from tests.daemon_helpers import make_daemon
 
 def _handoff_daemon():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
-    config["audio_control"] = True
+    config["audio_mode"] = "duck"
     # simulate that session "a" has been read before, so switching to "b" is a
     # real handoff that arms the session-change announcement.
     daemon.router._last_active = "a"
