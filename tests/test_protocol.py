@@ -79,6 +79,7 @@ def test_msgtype_has_every_constant_with_exact_values():
         "SET_AUDIO_CONTROL": "set_audio_control",
         "SET_DUCK_LEVEL": "set_duck_level",
         "SET_SUMMARY_MODE": "set_summary_mode",
+        "SET_AUDIO_MODE": "set_audio_mode",
         "SHUTDOWN": "shutdown",
         "STATUS": "status",
         "PING": "ping",
@@ -125,6 +126,7 @@ def test_msgtype_defines_no_extra_string_constants():
         "SET_AUDIO_CONTROL": "set_audio_control",
         "SET_DUCK_LEVEL": "set_duck_level",
         "SET_SUMMARY_MODE": "set_summary_mode",
+        "SET_AUDIO_MODE": "set_audio_mode",
         "SHUTDOWN": "shutdown",
         "STATUS": "status",
         "PING": "ping",
@@ -146,3 +148,8 @@ def test_msgtype_values_are_unique():
 def test_reread_options_and_cycle_verbosity_constants():
     assert MsgType.REREAD_OPTIONS == "reread_options"
     assert MsgType.CYCLE_VERBOSITY == "cycle_verbosity"
+
+
+def test_set_audio_mode_type_exists():
+    from sonara.protocol import MsgType
+    assert MsgType.SET_AUDIO_MODE == "set_audio_mode"
