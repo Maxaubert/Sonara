@@ -111,7 +111,7 @@ def test_duck_once_then_restore_only_at_global_idle():
     # the idle condition is global -- so one session proves the mechanism without
     # the session-change announcements that would make the count non-deterministic.)
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = True
+    daemon.config["audio_mode"] = "duck"
     queue.enqueue(_prose_item("fg", "One."))
     queue.enqueue(_prose_item("fg", "Two."))
     queue.enqueue(_prose_item("fg", "Three."))
@@ -125,7 +125,7 @@ def test_duck_once_then_restore_only_at_global_idle():
 
 def test_duck_excludes_daemon_and_earcon_pids():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = True
+    daemon.config["audio_mode"] = "duck"
     speaker._earcon_pids = [4242]                    # see Speaker.earcon_pids() below
     queue.enqueue(_prose_item("fg", "Hi."))
     daemon._speak_loop_once()
