@@ -128,3 +128,4 @@ class PlatformBackend:
     hotkey: HotkeyBackend
     supervisor: SupervisorBackend
     ducker: object = None     # AudioDucker/NullDucker; duck-typed (duck/restore/is_ducked)
+    pauser: object = None     # MediaPauser/NullPauser; duck-typed (pause/resume/is_paused)
