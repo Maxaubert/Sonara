@@ -21,3 +21,10 @@ def test_duck_level_forwards_integer(monkeypatch):
     monkeypatch.setattr(cli, "_send", lambda m, expect_reply=False: sent.update(m))
     assert cli.main(["duck-level", "35"]) == 0
     assert sent["type"] == MsgType.SET_DUCK_LEVEL and sent["level"] == 35
+
+
+def test_audio_mode_command_sends_set_audio_mode(monkeypatch):
+    sent = {}
+    monkeypatch.setattr(cli, "_send", lambda m, expect_reply=False: sent.update(m))
+    assert cli.main(["audio-mode", "pause"]) == 0
+    assert sent["type"] == MsgType.SET_AUDIO_MODE and sent["mode"] == "pause"

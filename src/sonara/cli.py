@@ -109,6 +109,12 @@ def _cmd_duck_level(args) -> int:
     return 0
 
 
+def _cmd_audio_mode(args) -> int:
+    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_MODE, "mode": args.mode})
+    print("Audio mode set to {0}.".format(args.mode))
+    return 0
+
+
 def _cmd_summary(args) -> int:
     if not args.state:
         from sonara.config import load_config
@@ -228,6 +234,10 @@ def _build_parser() -> argparse.ArgumentParser:
     dp = sub.add_parser("duck-level", help="set duck target volume (0-100)")
     dp.add_argument("level", type=int)
     dp.set_defaults(func=_cmd_duck_level)
+
+    am = sub.add_parser("audio-mode", help="off | duck | pause (pause media while speaking)")
+    am.add_argument("mode", choices=["off", "duck", "pause"])
+    am.set_defaults(func=_cmd_audio_mode)
 
     sp = sub.add_parser(
         "summary", help="speak an AI recap of each finished turn (on|off)")
