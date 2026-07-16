@@ -948,18 +948,18 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
+        if t == MsgType.SET_AUDIO_MODE:
+            mode = msg.get("mode")
+            if mode not in ("off", "duck", "pause"):
+                return None
+            self._apply_audio_mode(mode)
+            return None
+
         if t == MsgType.SET_AUDIO_CONTROL:
+            # Pre-#92 compat shim: enabled -> duck, disabled -> off.
             if "enabled" not in msg:
                 return None
-            enabled = bool(msg.get("enabled"))
-            self.config["audio_control"] = enabled
-            save_config(self.config)
-            if not enabled and self.ducker.is_ducked():
-                self.ducker.restore()      # un-duck immediately on turn-off
-            target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target, "Audio control on." if enabled else "Audio control off.",
-                            exempt_mute=True, pause_exempt=True)
-            self._wake.set()
+            self._apply_audio_mode("duck" if bool(msg.get("enabled")) else "off")
             return None
 
         if t == MsgType.SET_DUCK_LEVEL:
@@ -969,7 +969,7 @@ class SpeechDaemon:
                 return None
             self.config["duck_level"] = level
             save_config(self.config)
-            if self._audio_control_on() and self.ducker.is_ducked():  # re-apply at the new level
+            if self._audio_duck_on() and self.ducker.is_ducked():  # re-apply at the new level
                 self.ducker.restore()
                 self.ducker.duck(self._duck_exclude_pids(), level)
             target = self.router.active or self.sessions.foreground()
@@ -2114,6 +2114,22 @@ class SpeechDaemon:
             self.ducker.restore()
         if self.pauser.is_paused():
             self.pauser.resume()
+
+    def _apply_audio_mode(self, mode: str) -> None:
+        """Persist the audio behavior mode, disengage whatever backend was
+        engaged (so a switch never leaves other apps ducked or paused), and
+        speak the mode cue. Shared by SET_AUDIO_MODE and the SET_AUDIO_CONTROL
+        compat shim."""
+        if mode not in ("off", "duck", "pause"):
+            return
+        self.config["audio_mode"] = mode
+        save_config(self.config)
+        self._maybe_restore_audio()
+        target = self.router.active or self.sessions.foreground()
+        cue = {"off": "Audio off.", "duck": "Audio ducking.",
+               "pause": "Media pause."}[mode]
+        self._speak_cue(target, cue, exempt_mute=True, pause_exempt=True)
+        self._wake.set()
 
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""

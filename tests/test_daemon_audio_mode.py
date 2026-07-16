@@ -74,3 +74,55 @@ def test_session_change_announcement_engages_neither():
     assert daemon.ducker.duck_calls == []
     daemon._speak_loop_once()                     # the content
     assert daemon.pauser.pause_calls == 1
+
+
+from sonara.protocol import MsgType, PROTOCOL_VERSION
+
+
+def _msg(daemon, **kw):
+    kw.setdefault("v", PROTOCOL_VERSION)
+    return daemon.handle_message(kw)
+
+
+def test_set_audio_mode_persists_and_cues():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _msg(daemon, type=MsgType.SET_AUDIO_MODE, mode="pause")
+    assert config["audio_mode"] == "pause"
+    # cues are queued on the reserved CONTROL channel, not spoken synchronously
+    # (mirrors test_set_audio_control_on_persists_and_cues in test_daemon_ducking.py)
+    from sonara.router import CONTROL
+    texts = [it.text for it in daemon.router.channel(CONTROL).items]
+    assert any("Media pause." in t for t in texts)
+
+
+def test_set_audio_mode_disengages_previous_backend():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    config["audio_mode"] = "duck"
+    _seed_item(daemon)
+    daemon._speak_loop_once()                     # ducked now
+    assert daemon.ducker.is_ducked() is True
+    _msg(daemon, type=MsgType.SET_AUDIO_MODE, mode="pause")
+    assert daemon.ducker.is_ducked() is False     # old backend released on switch
+
+
+def test_set_audio_mode_ignores_unknown_value():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    config["audio_mode"] = "duck"
+    _msg(daemon, type=MsgType.SET_AUDIO_MODE, mode="bogus")
+    assert config["audio_mode"] == "duck"         # unchanged
+
+
+def test_audio_control_shim_maps_to_mode():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _msg(daemon, type=MsgType.SET_AUDIO_CONTROL, enabled=True)
+    assert config["audio_mode"] == "duck"
+    _msg(daemon, type=MsgType.SET_AUDIO_CONTROL, enabled=False)
+    assert config["audio_mode"] == "off"
+
+
+def test_duck_level_reapplies_only_in_duck_mode():
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    config["audio_mode"] = "pause"
+    daemon.pauser.pause()                          # pretend paused
+    _msg(daemon, type=MsgType.SET_DUCK_LEVEL, level=50)
+    assert daemon.ducker.duck_calls == []         # not in duck mode -> no re-duck

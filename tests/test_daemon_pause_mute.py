@@ -47,7 +47,8 @@ def test_audio_control_confirmation_heard_while_paused():
         daemon.handle_message({"v": PROTOCOL_VERSION,
                                "type": MsgType.SET_AUDIO_CONTROL, "enabled": True})
         daemon._speak_loop_once()
-        assert speaker.spoken == ["Audio control on."]
+        # #92: SET_AUDIO_CONTROL is now a compat shim over audio_mode (enabled -> "duck").
+        assert speaker.spoken == ["Audio ducking."]
 
 
 # ---------------------------------------------------------------------------
