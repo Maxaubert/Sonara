@@ -83,19 +83,37 @@ def test_preamble_on_play_still_engages_audio():
     assert daemon.pauser.pause_calls == 1            # audio still engaged after the alert
 
 
-def test_alert_stays_armed_when_content_interrupted_before_on_play():
-    # A pause during the slow synth window interrupts content BEFORE on_play fires,
-    # so the alert never plays; it must stay armed for the content replay (#94).
+def test_alert_stays_armed_when_content_paused_before_on_play():
+    # A PAUSE during the slow synth window interrupts content before on_play; the
+    # content is requeued for replay, so the alert must stay armed to re-announce (#94).
     daemon, speaker, config = _handoff()
     config["fast_cues"] = True
     daemon._speak_loop_once()                        # session_change -> stashed
     assert daemon._pending_preamble is not None
 
-    def interrupted_before_playback(text, cancel_epoch=None, on_play=None,
-                                    voice="__default__"):
+    def paused_mid_synth(text, cancel_epoch=None, on_play=None, voice="__default__"):
+        daemon._paused.set()                         # pause lands during synthesis
         return False                                 # interrupted; on_play never fires
 
-    speaker.speak = interrupted_before_playback
-    daemon._speak_loop_once()                        # content attempt, interrupted
-    assert daemon._pending_preamble is not None      # alert stays armed for replay
+    speaker.speak = paused_mid_synth
+    daemon._speak_loop_once()                        # content attempt, paused + requeued
+    assert daemon._pending_preamble is not None      # armed for the replay
     assert speaker.cue_untracked_calls == []         # alert did not play
+
+
+def test_alert_dropped_when_content_cancelled_before_on_play():
+    # A non-pause cancel (e.g. answer/catch-up cut) drops the content item; the alert
+    # must NOT stay armed, or it would resurface on a later same-session utterance (#94).
+    daemon, speaker, config = _handoff()
+    config["fast_cues"] = True
+    daemon._speak_loop_once()                        # session_change -> stashed
+    assert daemon._pending_preamble is not None
+
+    def cancelled_before_playback(text, cancel_epoch=None, on_play=None,
+                                  voice="__default__"):
+        return False                                 # interrupted, NOT paused -> dropped
+
+    speaker.speak = cancelled_before_playback
+    daemon._speak_loop_once()                        # content dropped, not requeued
+    assert daemon._pending_preamble is None          # stale alert cleared
+    assert speaker.cue_untracked_calls == []

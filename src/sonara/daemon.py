@@ -2255,6 +2255,16 @@ class SpeechDaemon:
             completed = False
         if not self._requeue_or_note(item, completed):
             self.note_spoken(item, completed)
+            # A deferred alert that never played is kept armed only when the content
+            # was requeued for replay (a pause, handled by _requeue_or_note above).
+            # Here the content was noted, not requeued (completed, or a non-pause
+            # cancel dropped it), so drop any still-armed alert for this session -
+            # otherwise it would resurface on a later utterance for the same session
+            # (#94). If on_play already played the alert, _pending_preamble is None
+            # and this is a no-op.
+            if (self._pending_preamble is not None
+                    and self._pending_preamble[0] == item.session):
+                self._pending_preamble = None
 
     def _handle_conn(self, conn) -> None:
         try:
