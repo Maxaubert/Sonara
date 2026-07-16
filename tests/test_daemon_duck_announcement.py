@@ -29,13 +29,17 @@ def _handoff_daemon():
 def test_announcement_does_not_duck_but_content_does():
     daemon, speaker = _handoff_daemon()
 
-    daemon._speak_loop_once()                      # speaks the announcement
-    assert daemon.ducker.duck_calls == []          # announcement did NOT duck
+    # #94: the announcement is now deferred to the content's on_play, so the
+    # session_change iteration itself just stashes it - nothing is spoken or
+    # ducked yet.
+    daemon._speak_loop_once()                      # session_change -> stashed
+    assert daemon.ducker.duck_calls == []          # nothing engaged yet
     assert not daemon.ducker.is_ducked()
-    # the announcement really was spoken (a session_change item)
-    assert speaker.spoken and speaker.earcons == ["session_change"]
+    assert speaker.spoken == [] and speaker.earcons == []
 
-    daemon._speak_loop_once()                      # speaks the digest body
+    daemon._speak_loop_once()                      # content on_play: alert, then duck
+    assert speaker.earcons == ["session_change"]   # chime fired at synthesis-ready
+    assert speaker.cue_untracked_calls            # announcement really was spoken
     assert daemon.ducker.duck_calls                # content ducked, at playback
     assert daemon.ducker.is_ducked()
     assert "The digest body." in speaker.spoken

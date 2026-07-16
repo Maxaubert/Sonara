@@ -130,12 +130,16 @@ def test_two_sessions_take_turns_nothing_lost():
         f"Spoken: {speaker.spoken!r}"
     )
 
-    # C1: "Session changed: alpha." must appear between B one. and A one.
-    # (A is _last_active=B at the point B drained, then A is a different session)
-    announce_texts = [t for t in speaker.spoken if t.startswith("Session changed:")]
+    # C1: "Session changed: alpha." must have been delivered before A one.
+    # (A is _last_active=B at the point B drained, then A is a different
+    # session). #94: the announcement is now deferred to A's content on_play,
+    # so it is voiced via speak_cue_untracked rather than entering
+    # speaker.spoken.
+    announce_texts = [t for t, _voice in speaker.cue_untracked_calls
+                      if t.startswith("Session changed:")]
     assert any("alpha" in t for t in announce_texts), (
         f"Expected 'Session changed: alpha.' announcement for idle-gap handoff to A. "
-        f"Spoken: {speaker.spoken!r}"
+        f"cue_untracked_calls: {speaker.cue_untracked_calls!r}"
     )
 
 

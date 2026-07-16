@@ -152,6 +152,7 @@ class SpeechDaemon:
         self._digest_parked: dict = {}            # seq -> apply closure (None = dropped)
         self._digest_release_counter = 0          # channel stamp source (#88)
         self._current_item = None                 # item being spoken right now
+        self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
         self._guided_sessions: set = set()
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
@@ -2185,26 +2186,61 @@ class SpeechDaemon:
             self._wake.clear()
             return
         if muted:
+            # A dropped item also drops a pending alert for its session: mute
+            # silences handoffs, so the deferred chime + announcement go too.
+            if (self._pending_preamble is not None
+                    and self._pending_preamble[0] == item.session):
+                self._pending_preamble = None
             return
         if item.kind == "session_change":
-            # Play the session-switch chime (it mixes with the spoken announcement
-            # on a separate audio path). A missing chime must not wedge the loop.
+            if self.config.get("fast_cues", True):
+                # Defer the alert (#94): stash it and play the chime + spoken
+                # announcement from the CONTENT utterance's on_play, so a slow
+                # engine no longer plays the alert seconds before the audio.
+                self._pending_preamble = (item.session, item.text)
+                self._current_item = None
+                return
+            # fast_cues off: legacy immediate announcement in the content voice.
             try:
                 self._earcon("session_change")
             except Exception:  # noqa: BLE001
                 pass
-        # Duck at PLAYBACK start, not here: synthesis (a slow neural voice can
-        # take seconds on a long digest) would otherwise hold other apps' audio
-        # down through the silence. The backend fires on_play right before the
-        # first sample plays.
-        #
-        # A session-change announcement never ducks (#90): it is a short fast-cue
-        # handoff notice that precedes the neural digest. Ducking it engaged the
-        # duck ~7s before the digest's own playback -- so other apps sat ducked
-        # over the digest's whole cold synthesis. Only the content ducks, at its
-        # own playback; from idle the announcement rides through un-ducked, and
-        # mid-listening the existing duck simply stays on across the handoff.
-        on_play = None if item.kind == "session_change" else self._maybe_engage_audio
+            try:
+                completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
+                                               on_play=None)
+            except Exception:  # noqa: BLE001
+                self._signal_speak_failure()
+                completed = False
+            if not self._requeue_or_note(item, completed):
+                self.note_spoken(item, completed)
+            return
+        # Content item. A stashed alert for THIS session plays as a preamble at
+        # synthesis-ready (on_play): chime, then the spoken alert via the fast cue
+        # voice (non-tracked so it never clobbers this utterance's cancellation),
+        # then the normal duck/pause engage. #90's "announcement never ducks" is
+        # preserved: the alert cue itself is played WITHOUT on_play, and the duck/
+        # pause engage happens for the CONTENT, after the alert.
+        preamble = None
+        if (self._pending_preamble is not None
+                and self._pending_preamble[0] == item.session):
+            preamble = self._pending_preamble[1]
+        self._pending_preamble = None
+        if preamble is not None:
+            cue_voice = self._cue_voice()
+            rate = self.config.get("rate", 200)
+
+            def on_play(_text=preamble, _voice=cue_voice, _rate=rate):
+                try:
+                    self._earcon("session_change")
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    self.speaker.speak_cue_untracked(_text, _voice, _rate)
+                except Exception:  # noqa: BLE001
+                    pass
+                self._maybe_engage_audio()
+        else:
+            on_play = self._maybe_engage_audio
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,

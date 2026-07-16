@@ -19,7 +19,10 @@ def test_next_session_switches_to_other_unread_and_announces():
     daemon._speak_loop_once()                    # start reading (A or B)
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
     out = _spoken(daemon, speaker)
-    assert any(t.startswith("Session changed:") for t in out)
+    # #94: the announcement is deferred to the content's on_play and voiced via
+    # speak_cue_untracked, not speaker.spoken.
+    assert any(t.startswith("Session changed:")
+              for t, _voice in speaker.cue_untracked_calls)
     assert "A one." in out and "B one." in out   # both heard, nothing lost
 
 
@@ -44,9 +47,12 @@ def test_next_session_revisit_read_session_says_reading_again():
     daemon.router._replay_authorized.add("A")
     _spoken(daemon, speaker, 12)                  # drain both -> both read
     speaker.spoken.clear()
+    speaker.cue_untracked_calls.clear()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
-    out = _spoken(daemon, speaker, 6)
-    assert any("reading again" in t for t in out)
+    _spoken(daemon, speaker, 6)
+    # #94: the announcement is deferred to the content's on_play and voiced via
+    # speak_cue_untracked, not speaker.spoken.
+    assert any("reading again" in t for t, _voice in speaker.cue_untracked_calls)
 
 
 def test_next_session_is_debounced():
