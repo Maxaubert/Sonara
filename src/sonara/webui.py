@@ -21,6 +21,7 @@ _PAGE_KEYS = (
     "voice", "rate", "minqueue", "summary_mode", "summary_model",
     "summary_style", "summary_command",
     "summary_timeout", "summary_settle_ms", "audio_control", "duck_level",
+    "audio_mode",
     "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
     "chatterbox_variant", "fast_cues", "cue_voice",
 )
@@ -32,6 +33,7 @@ _MSG_KEYS = {
     "summary_mode":  lambda v: {"type": "set_summary_mode", "enabled": bool(v)},
     "audio_control": lambda v: {"type": "set_audio_control", "enabled": bool(v)},
     "duck_level":    lambda v: {"type": "set_duck_level", "level": int(v)},
+    "audio_mode":    lambda v: {"type": "set_audio_mode", "mode": str(v)},
 }
 _CONFIG_KEYS = ("summary_model", "summary_style", "summary_command",
                 "summary_timeout", "summary_settle_ms",

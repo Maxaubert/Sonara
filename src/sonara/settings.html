@@ -202,7 +202,7 @@
         <div class="title-row"><div><h1>Audio</h1><p>Balance spoken output with the rest of Windows.</p></div><span class="state"><i></i>Saved</span></div>
         <div class="group-label"><span>Background sound</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Audio duck</strong><div class="hint">Reduce app and media volume during speech.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status">Audio ducking</span><button class="switch" id="duck-switch" role="switch" aria-checked="false" aria-label="Toggle audio ducking"></button></div><div class="hint">Volume returns to normal when Sonara finishes speaking.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong>Audio</strong><div class="hint">What happens to other apps while Sonara speaks.</div></div><div class="control"><div class="segments" id="audio-seg" role="tablist"><button data-mode="off">Off</button><button data-mode="duck">Duck</button><button data-mode="pause">Pause</button></div><div class="hint" id="audio-mode-hint">Other apps play at full volume.</div></div></div>
           <div class="pref" id="duck-row"><div class="pref-copy"><strong>Duck level</strong><div class="hint">Volume retained by other applications.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out">20%</output></div><input class="range" id="duck" type="range" min="0" max="100" value="20"><div class="ends"><span>Silent</span><span>Full</span></div><div class="hint">Lower values preserve context without competing with speech.</div></div></div>
         </div>
       </section>
@@ -469,11 +469,17 @@ function render(s) {
   gateRow("settle-row", summaryOff, ["settle"]);
   gateRow("minqueue-row", !summaryOff, ["mq-minus", "mq-plus"]);
   gateRow("cue-voice-row", !s.config.fast_cues, ["cue-voice-select"]);
-  gateRow("duck-row", !s.config.audio_control, ["duck"]);
-  gateRow("chunk-row", engineOf(s, s.config.voice) !== "chatterbox", ["chunk"]);
-  setSwitch("duck-switch", s.config.audio_control);
+  const AUDIO_HINTS = {off: "Other apps play at full volume.",
+                       duck: "Lower other apps' volume while speaking.",
+                       pause: "Pause music and video while speaking."};
+  const audioMode = s.config.audio_mode || "off";
+  document.querySelectorAll("#audio-seg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.mode === audioMode));
+  document.getElementById("audio-mode-hint").textContent = AUDIO_HINTS[audioMode];
+  gateRow("duck-row", audioMode !== "duck", ["duck"]);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
+  gateRow("chunk-row", engineOf(s, s.config.voice) !== "chatterbox", ["chunk"]);
   setVal("chunk", s.config.chatterbox_max_chunk_chars);
   document.getElementById("chunk-out").textContent = s.config.chatterbox_max_chunk_chars;
   const exag = s.config.chatterbox_exaggeration ?? 0;
@@ -617,9 +623,8 @@ document.getElementById("prompt-reset").addEventListener("click", () => {
     if (r.ok) { await acceptState(r); } else { await showApiError(r); }
   });
 });
-document.getElementById("duck-switch").addEventListener("click", function () {
-  set("audio_control", this.getAttribute("aria-checked") !== "true");
-});
+document.querySelectorAll("#audio-seg button").forEach(b =>
+  b.addEventListener("click", () => set("audio_mode", b.dataset.mode)));
 document.getElementById("cues-switch").addEventListener("click", function () {
   set("fast_cues", this.getAttribute("aria-checked") !== "true");
 });

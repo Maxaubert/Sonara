@@ -440,6 +440,13 @@ def test_settings_page_has_summary_styles_ui():
     assert 'id="summary-switch"' not in page   # old on/off switch replaced
 
 
+def test_audio_mode_write_dispatches_set_audio_mode():
+    from sonara.webui import _MSG_KEYS, _PAGE_KEYS
+    assert "audio_mode" in _PAGE_KEYS
+    msg = _MSG_KEYS["audio_mode"]("pause")
+    assert msg == {"type": "set_audio_mode", "mode": "pause"}
+
+
 def test_settings_page_preview_url_is_cache_busted():
     # (#78 follow-up) regenerated preview files were inaudible behind the
     # hour-cached old URL; a per-page-load version param busts it.
