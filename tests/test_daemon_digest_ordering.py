@@ -95,10 +95,16 @@ def test_every_cross_session_digest_is_announced(monkeypatch):
     for s in ("c", "a", "b"):
         _run_worker(daemon, by[s])
     heard = _drain(daemon, speaker)
-    for s in ("a", "b", "c"):
-        recap_at = heard.index("Recap " + s)
-        assert any(s in t for t in heard[:recap_at]
-                   if "Recap" not in t), (s, heard)  # announcement named it first
+    # #94: the announcement is now deferred to the content's own on_play, so it
+    # is spoken via speak_cue_untracked (never enters `heard`) instead of
+    # appearing in `heard` ahead of its recap. Each recap must still have been
+    # preceded by its own handoff alert, in the same order.
+    recaps = [t for t in heard if t.startswith("Recap ")]
+    alerts = [text for text, _voice in speaker.cue_untracked_calls]
+    assert len(recaps) == len(alerts) == 3
+    for recap, alert in zip(recaps, alerts):
+        session = recap.rsplit(" ", 1)[-1]
+        assert session in alert, (session, alert, alerts)  # announcement named it first
 
 
 def test_cancelled_digest_releases_the_ordering_slot(monkeypatch):

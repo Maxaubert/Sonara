@@ -95,6 +95,25 @@ class Speaker:
                     self._current = None
         return getattr(proc, "returncode", None) == 0
 
+    def speak_cue_untracked(self, text: str, voice, rate=None) -> None:
+        """Synthesize and play *text* through *voice*, blocking until done, WITHOUT
+        registering the proc as self._current. Used to replay a session-change
+        alert from inside the content utterance's on_play (#94): a re-entrant
+        speak() would overwrite self._current and break the content utterance's
+        cancellation. The cue is short and not separately cancellable; a failure
+        must never break the content utterance."""
+        if self._say_runner is None:
+            return
+        r = self._rate if rate is None else rate
+        try:
+            proc = self._say_runner(text, voice, r)
+            try:
+                proc.wait(timeout=self._wait_timeout)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+        except Exception:  # noqa: BLE001 - a cue must never break the content utterance
+            pass
+
     def cancel(self) -> None:
         with self._current_lock:
             self._cancel_epoch += 1     # so a speak() mid-synthesis aborts on return

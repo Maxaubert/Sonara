@@ -15,6 +15,7 @@ class FakeSpeaker:
         self.speak_voices: list = []  # per-speak voice override ("__default__" = none, #60)
         self.complete = True          # next speak() reports completed?
         self._epoch = 0
+        self.cue_untracked_calls = []  # (text, voice) from speak_cue_untracked (#94)
 
     def speak(self, text: str, cancel_epoch=None, on_play=None,
               voice="__default__") -> bool:
@@ -25,6 +26,9 @@ class FakeSpeaker:
         self.spoken.append(text)
         self.speak_voices.append(voice)
         return self.complete
+
+    def speak_cue_untracked(self, text: str, voice, rate=None) -> None:
+        self.cue_untracked_calls.append((text, voice))
 
     def cancel_epoch(self) -> int:
         return self._epoch
