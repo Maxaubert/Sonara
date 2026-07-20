@@ -399,7 +399,7 @@ function fillVoiceSelect(sel, s, selected) {
     sel.appendChild(og);
   }
 }
-const SESSION_RECENT_S = 3600;   // seen within the last hour = main list
+const SESSION_RECENT_S = 3 * 3600;   // seen within the last 3 hours = main list
 function idleLabel(idle) {
   if (idle == null) return "inactive";
   if (idle < 60) return "just now";
