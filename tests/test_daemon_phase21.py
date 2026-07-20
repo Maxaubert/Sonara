@@ -275,6 +275,19 @@ def test_catch_up_all_heard_says_caught_up():
     assert item.text == "You're all caught up."
 
 
+def test_catch_up_muted_foreground_says_caught_up_not_dead_air():
+    """A muted foreground has unheard entries but nothing AUDIBLE: replaying
+    them into a muted channel is silent dead air. Treat it as empty so the
+    handler falls through to "You're all caught up." instead (finding 3)."""
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    _prose(daemon, "fg", "Hi. ")
+    daemon.handle_message(_msg(MsgType.SET_SESSION_PREF, "fg",
+                               key="muted", value=True))
+    daemon.handle_message(_msg(MsgType.CATCH_UP))
+    item = queue.pop_next()
+    assert item.text == "You're all caught up."
+
+
 def test_catch_up_falls_back_to_other_session_backlog():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="a")
     _prose(daemon, "a", "A heard. ")

@@ -276,6 +276,41 @@ class SpeechDaemon:
             for it in ch.items:
                 self._pending_heard.pop(it.id, None)
 
+    def _teardown_session(self, session: str) -> None:
+        """Per-session cleanup shared by SESSION_END and FORGET_SESSION (#101):
+        both retire a session's live state; FORGET_SESSION targets exactly the
+        sessions that died WITHOUT a SessionEnd, so its cleanup must match.
+        Callers run this BEFORE router.drop(session) -- _drop_channel_pending
+        needs the channel to still exist, or _pending_heard leaks."""
+        self._drop_channel_pending(session)
+        self.history.reset(session)
+        self._options.pop(session, None)
+        self._warned_immediate.discard(session)
+        self._guided_sessions.discard(session)
+        # Ending the session is a user action like FLUSH: BUMP the cancel
+        # epoch so an in-flight digest is dropped when it lands. Popping it
+        # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
+        # dispatched gen 0), letting a dead session's digest resurrect its
+        # history and channel (audit #21).
+        self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
+        self._cancel_settle(session)
+        self._settle_gen.pop(session, None)
+        self._pending_decision.pop(session, None)
+        # Clear the rest of the per-session state; a late _summary_worker
+        # must find no held question to append (zombie channel), and nothing
+        # here may outlive the session (audit #21).
+        self._held_decision.pop(session, None)
+        self._last_digest_text.pop(session, None)
+        self._voiced_upto.pop(session, None)
+        self._nav_cursor.pop(session, None)
+        self._assemblers.pop(session, None)
+        self._last_dispatch_token.pop(session, None)
+        self._inflight_digests.pop(session, None)
+        # A stale _await_choice entry from a dead session would suppress
+        # permission chimes DAEMON-WIDE forever: the chime carries no session,
+        # so the suppression check is global truthiness (audit #19).
+        self._await_choice.discard(session)
+
     def note_spoken(self, item, completed: bool) -> None:
         """Speak-loop bookkeeping: confirm (or decline) the heard-marker for a
         finished utterance."""
@@ -652,35 +687,8 @@ class SpeechDaemon:
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
-            self._drop_channel_pending(session)
+            self._teardown_session(session)
             self.router.drop(session)
-            self.history.reset(session)
-            self._options.pop(session, None)
-            self._warned_immediate.discard(session)
-            self._guided_sessions.discard(session)
-            # Ending the session is a user action like FLUSH: BUMP the cancel
-            # epoch so an in-flight digest is dropped when it lands. Popping it
-            # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
-            # dispatched gen 0), letting a dead session's digest resurrect its
-            # history and channel (audit #21).
-            self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
-            self._cancel_settle(session)
-            self._settle_gen.pop(session, None)
-            self._pending_decision.pop(session, None)
-            # Clear the rest of the per-session state; a late _summary_worker
-            # must find no held question to append (zombie channel), and nothing
-            # here may outlive the session (audit #21).
-            self._held_decision.pop(session, None)
-            self._last_digest_text.pop(session, None)
-            self._voiced_upto.pop(session, None)
-            self._nav_cursor.pop(session, None)
-            self._assemblers.pop(session, None)
-            self._last_dispatch_token.pop(session, None)
-            self._inflight_digests.pop(session, None)
-            # A stale _await_choice entry from a dead session would suppress
-            # permission chimes DAEMON-WIDE forever: the chime carries no session,
-            # so the suppression check is global truthiness (audit #19).
-            self._await_choice.discard(session)
             return None
 
         if t == MsgType.STOP:
@@ -881,7 +889,10 @@ class SpeechDaemon:
             if fg is None:
                 return None
             target = fg
-            entries = self.history.unheard(fg)
+            # A muted foreground has nothing AUDIBLE to catch up on: treat it as
+            # empty so the handler falls through to the other-session pick, or
+            # "You're all caught up." instead of replaying into dead air.
+            entries = [] if self.session_prefs.muted(fg) else self.history.unheard(fg)
             preamble = None
             if not entries:
                 other = self.history.other_session_with_unheard(
@@ -964,6 +975,9 @@ class SpeechDaemon:
                 return None
             self.sessions.unregister(sid)
             self.session_prefs.forget(sid)
+            # Forget targets exactly the stale sessions that died WITHOUT
+            # SessionEnd, so it needs the same per-session teardown (#101).
+            self._teardown_session(sid)
             self.router.drop(sid)
             return None
 
@@ -2251,7 +2265,8 @@ class SpeechDaemon:
                 pass
             try:
                 completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                               on_play=None)
+                                               on_play=None,
+                                               **self._voice_override(item))
             except Exception:  # noqa: BLE001
                 self._signal_speak_failure()
                 completed = False
