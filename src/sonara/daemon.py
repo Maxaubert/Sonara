@@ -1942,6 +1942,16 @@ class SpeechDaemon:
             return {"voice": self._cue_voice()}
         return {}
 
+    def _voice_override(self, item) -> dict:
+        """speaker.speak kwargs for *item*: the fast-cue voice for control
+        feedback and session-change announcements (#60), else the session's
+        voice pref, else {} (the global default voice)."""
+        kw = self._cue_voice_override(item)
+        if kw:
+            return kw
+        v = self.session_prefs.voice(item.session)
+        return {"voice": v} if v else {}
+
     def _maybe_prewarm_cue_voice(self) -> None:
         """Pre-load the Kokoro engine when cues route to a Kokoro voice (#60):
         the first cue after daemon start otherwise pays the ~3s engine load.
@@ -2282,7 +2292,7 @@ class SpeechDaemon:
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,
-                                           **self._cue_voice_override(item))
+                                           **self._voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False
