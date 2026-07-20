@@ -133,7 +133,13 @@
     .sess-id input { width:100%; max-width:260px; }
     .sess-sub { color:var(--secondary); font-size:11px; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .sess-badge { display:inline-block; padding:1px 7px; border-radius:99px; background:var(--accent); color:#fff; font-size:10px; margin-left:6px; }
-    .sess-row select { max-width:170px; }
+    .sess-row select { width:170px; }
+    .sess-head { display:flex; align-items:center; gap:14px; padding:12px 0 2px; color:var(--tertiary); font-size:10.5px; font-weight:650; }
+    .sess-head span { display:flex; align-items:center; gap:5px; }
+    .sess-head svg { width:12px; height:12px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    .sess-head .sh-name { flex:1 1 auto; }
+    .sess-head .sh-audio { width:48px; justify-content:center; }
+    .sess-head .sh-voice { width:170px; }
     #sessions-older { border-top:1px solid var(--line); margin-top:4px; }
     #sessions-older summary { cursor:pointer; color:var(--secondary); font-size:11.5px; padding:10px 0 6px; user-select:none; }
     #sessions-older summary:hover { color:var(--text); }
@@ -219,10 +225,15 @@
       </section>
 
       <section class="page" id="sessions">
-        <div class="title-row"><div><h1>Sessions</h1><p>Name, mute, or re-voice each Claude Code session.</p></div><span class="state"><i></i>Saved</span></div>
+        <div class="title-row"><div><h1>Sessions</h1><p>Name each Claude Code session, switch its audio, or give it a voice.</p></div><span class="state"><i></i>Saved</span></div>
         <div class="group-label"><span>Active sessions</span></div>
         <div class="inset">
           <div style="padding:4px 21px">
+            <div class="sess-head" id="sessions-head" style="display:none">
+              <span class="sh-name"><svg viewBox="0 0 24 24"><path d="M4 4h7l9 9-7 7-9-9z"/><circle cx="8.5" cy="8.5" r="1.5"/></svg>Name</span>
+              <span class="sh-audio"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6"/></svg>Audio</span>
+              <span class="sh-voice"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg>Voice</span>
+            </div>
             <div id="session-rows"></div>
             <div class="hint" id="sessions-empty" style="display:none;padding:14px 0">No sessions yet. Start a Claude Code session and it will appear here.</div>
             <details id="sessions-older" style="display:none">
@@ -231,7 +242,7 @@
             </details>
           </div>
         </div>
-        <div class="hint" style="padding:12px 4px">Muted sessions stay silent (their attention beeps still play). A custom name is what Sonara says on "Session changed". Voice overrides apply only to that session. Unmuting resumes a session where it left off.</div>
+        <div class="hint" style="padding:12px 4px">Switch a session's audio off to silence it (attention beeps still play). A custom name is what Sonara says on "Session changed". Voice overrides apply only to that session. Switching audio back on resumes the session where it left off.</div>
       </section>
 
       <section class="page" id="advanced">
@@ -417,7 +428,7 @@ function buildSessionRow(sess, s) {
       '<input type="text" maxlength="60" aria-label="Session name">' +
       '<div class="sess-sub"></div>' +
     '</div>' +
-    '<button type="button" class="switch sess-mute" role="switch" aria-checked="false" aria-label="Mute this session"></button>' +
+    '<button type="button" class="switch sess-audio" role="switch" aria-checked="true" aria-label="Session audio"></button>' +
     '<select class="sess-voice" aria-label="Voice override for this session"></select>';
   const nameInput = row.querySelector("input[type=text]");
   nameInput.value = sess.name || "";
@@ -440,11 +451,13 @@ function buildSessionRow(sess, s) {
   }
   nameInput.addEventListener("change",
     () => setSession(sess.id, "name", nameInput.value.trim()));
-  const mute = row.querySelector(".sess-mute");
-  mute.setAttribute("aria-checked", sess.muted ? "true" : "false");
-  mute.addEventListener("click", () => {
-    const next = mute.getAttribute("aria-checked") !== "true";
-    setSession(sess.id, "muted", next);
+  // presented as an Audio switch (on = audible, the default); the stored
+  // pref stays `muted`, so on-screen state is the inverse of the pref
+  const audio = row.querySelector(".sess-audio");
+  audio.setAttribute("aria-checked", sess.muted ? "false" : "true");
+  audio.addEventListener("click", () => {
+    const audioOn = audio.getAttribute("aria-checked") === "true";
+    setSession(sess.id, "muted", audioOn);   // switching audio off mutes
   });
   const voiceSel = row.querySelector(".sess-voice");
   fillVoiceSelect(voiceSel, s, sess.voice);
@@ -459,6 +472,7 @@ function renderSessions(s) {
   const olderWrap = document.getElementById("sessions-older");
   const sessions = [...(s.sessions || [])];
   document.getElementById("sessions-empty").style.display = sessions.length ? "none" : "block";
+  document.getElementById("sessions-head").style.display = sessions.length ? "flex" : "none";
   // foreground first, then most recently active; never-seen (closed
   // terminals, restored from disk) sink to the bottom
   sessions.sort((a, b) => (b.foreground - a.foreground)
