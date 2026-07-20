@@ -884,7 +884,8 @@ class SpeechDaemon:
             entries = self.history.unheard(fg)
             preamble = None
             if not entries:
-                other = self.history.other_session_with_unheard(fg)
+                other = self.history.other_session_with_unheard(
+                    fg, skip=self.session_prefs.muted)
                 if other is not None:
                     target = other
                     entries = self.history.unheard(other)
