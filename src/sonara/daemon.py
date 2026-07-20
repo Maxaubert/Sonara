@@ -14,7 +14,7 @@ from sonara.assembler import ProseAssembler
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
-    INSTALL_RECORD_PATH, SESSIONS_PATH,
+    INSTALL_RECORD_PATH, SESSIONS_PATH, SESSION_PREFS_PATH,
 )
 from sonara.platform import transport
 
@@ -97,7 +97,8 @@ _MAX_CONN_THREADS = 32
 
 
 class SpeechDaemon:
-    def __init__(self, speaker, sessions, config, ducker=None, pauser=None) -> None:
+    def __init__(self, speaker, sessions, config, ducker=None, pauser=None,
+                 prefs=None) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
@@ -109,6 +110,10 @@ class SpeechDaemon:
             from sonara.platform.windows.pausing import NullPauser
             pauser = NullPauser()
         self.pauser = pauser
+        if prefs is None:
+            from sonara.session_prefs import SessionPrefs
+            prefs = SessionPrefs()
+        self.session_prefs = prefs
         self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
@@ -931,6 +936,31 @@ class SpeechDaemon:
             self.speaker.set_voice(voice)
             save_config(self.config)
             self._maybe_prewarm_chatterbox()   # switching TO a cb voice warms it
+            return None
+
+        if t == MsgType.SET_SESSION_PREF:
+            sid = msg.get("session")
+            key = msg.get("key")
+            if not isinstance(sid, str) or not self.session_prefs.set(sid, key, msg.get("value")):
+                return None
+            if key == "muted":
+                val = bool(msg.get("value"))
+                ch = self.router.channels.get(sid)
+                if ch is not None:
+                    ch.muted = val
+                cur = self._current_item
+                if val and cur is not None and getattr(cur, "session", None) == sid:
+                    self.speaker.cancel()
+                self._wake.set()
+            return None
+
+        if t == MsgType.FORGET_SESSION:
+            sid = msg.get("session")
+            if not isinstance(sid, str) or self.sessions.is_foreground(sid):
+                return None
+            self.sessions.unregister(sid)
+            self.session_prefs.forget(sid)
+            self.router.drop(sid)
             return None
 
         if t == MsgType.SET_VERBOSITY:
@@ -2611,8 +2641,10 @@ def main() -> None:
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"),
                               store_path=SESSIONS_PATH)
+    from sonara.session_prefs import SessionPrefs
     daemon = SpeechDaemon(speaker, sessions, cfg,
-                          ducker=_backend.ducker, pauser=_backend.pauser)
+                          ducker=_backend.ducker, pauser=_backend.pauser,
+                          prefs=SessionPrefs(store_path=SESSION_PREFS_PATH))
     daemon.run()
 
 

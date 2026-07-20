@@ -25,6 +25,8 @@ class MsgType:
     PAUSE = "pause"      # toggle play/pause of the whole speak loop
     MUTE = "mute"        # toggle a sticky per-session mute (earcons still fire)
     NEXT_SESSION = "next_session"   # hotkey: cycle the active reader to another session
+    SET_SESSION_PREF = "set_session_pref"   # {session, key: name|muted|voice, value}
+    FORGET_SESSION = "forget_session"       # {session}: drop a stale session everywhere
     REPEAT = "repeat"
     JUMP_DECISION = "jump_decision"
     CATCH_UP = "catch_up"
