@@ -81,6 +81,10 @@ for line in sys.stdin:
         sys.exit(1)
     elif req["text"] == "fail":
         print(json.dumps({"ok": False, "error": "synthetic"})); sys.stdout.flush()
+    elif req["text"] == "cudafail":
+        print(json.dumps({"ok": False,
+                          "error": "AcceleratorError: CUDA error: unknown error"}))
+        sys.stdout.flush()
     else:
         print(json.dumps({"ok": True,
                           "wav_b64": base64.b64encode(b"RIFFfake").decode()}))
@@ -176,6 +180,43 @@ def test_cooldown_expires_and_success_resets_it(tmp_path, monkeypatch):
     out = c.synth_wav("cooldown reset probe", "cb_default", {"chatterbox_timeout": 5})
     assert out == b"RIFFfake"                        # request went through
     assert c._cooldown_until == 0.0                  # success cleared the memo
+
+
+def test_fatal_cuda_error_kills_worker_and_arms_cooldown(tmp_path, monkeypatch):
+    # A worker whose CUDA context died (driver swap/reset) stays alive on the
+    # pipe and answers EVERY synth with "CUDA error: unknown error" forever.
+    # The dead-pipe respawn never fires, so without this the daemon is stuck on
+    # the Kokoro fallback until restart (verified live, 2026-07-20).
+    import time
+    import pytest
+    c = _client(tmp_path, monkeypatch)
+    with pytest.raises(cb.ChatterboxError):
+        c.synth_wav("cudafail", "cb_default", {"chatterbox_timeout": 5})
+    assert c._proc is None                           # poisoned worker was killed
+    assert c._cooldown_until > time.monotonic()      # rest of utterance fails fast
+
+
+def test_fatal_cuda_error_recovers_with_fresh_worker(tmp_path, monkeypatch):
+    import time
+    import pytest
+    c = _client(tmp_path, monkeypatch)
+    with pytest.raises(cb.ChatterboxError):
+        c.synth_wav("cudafail", "cb_default", {"chatterbox_timeout": 5})
+    c._cooldown_until = time.monotonic() - 1         # cooldown elapsed
+    out = c.synth_wav("post-cuda recovery probe", "cb_default",
+                      {"chatterbox_timeout": 5})
+    assert out == b"RIFFfake"                        # fresh spawn, healthy again
+
+
+def test_ordinary_synth_error_keeps_worker_alive(tmp_path, monkeypatch):
+    # A per-text failure (bad input, transient OOM) must NOT kill the warm
+    # worker: only poisoned-process errors get the kill treatment.
+    import pytest
+    c = _client(tmp_path, monkeypatch)
+    with pytest.raises(cb.ChatterboxError):
+        c.synth_wav("fail", "cb_default", {"chatterbox_timeout": 5})
+    assert c._proc is not None and c._proc.poll() is None
+    assert c._cooldown_until == 0.0
 
 
 def test_fallback_notice_pops_once():
