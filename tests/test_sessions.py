@@ -160,3 +160,37 @@ def test_reload_does_not_override_live_record(tmp_path):
     assert sm2.folder("s1") == "new"
     assert json.loads(p.read_text(encoding="utf-8"))["s1"] == "new"
 
+
+
+def test_touch_and_last_seen():
+    import time
+    m = SessionManager()
+    assert m.last_seen("s1") is None
+    before = time.time()
+    m.touch("s1")
+    seen = m.last_seen("s1")
+    assert seen is not None and before <= seen <= time.time()
+
+
+def test_register_touches():
+    m = SessionManager()
+    m.register("s1", cwd="/x/proj")
+    assert m.last_seen("s1") is not None
+
+
+def test_unregister_clears_last_seen():
+    m = SessionManager()
+    m.touch("s1")
+    m.unregister("s1")
+    assert m.last_seen("s1") is None
+
+
+def test_store_load_does_not_touch(tmp_path):
+    # a session restored from disk must look INACTIVE until it sends real
+    # traffic: recency is the liveness signal for the Sessions tab
+    store = tmp_path / "sessions.json"
+    m1 = SessionManager(store_path=store)
+    m1.register("s1", cwd="/x/proj")
+    m2 = SessionManager(store_path=store)
+    assert m2.folder("s1") == "proj"
+    assert m2.last_seen("s1") is None

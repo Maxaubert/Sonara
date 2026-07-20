@@ -468,6 +468,12 @@ class SpeechDaemon:
         t = msg.get("type")
         session = msg.get("session", "")
         verbosity = self.config.get("verbosity", "everything")
+        # Liveness for the Sessions tab: any session-bearing hook traffic
+        # counts as activity. Settings-page mutations are excluded, or naming
+        # a stale row would bump it back into the recent list.
+        if (isinstance(session, str) and session
+                and t not in (MsgType.SET_SESSION_PREF, MsgType.FORGET_SESSION)):
+            self.sessions.touch(session)
 
         if t == MsgType.PROSE:
             final = msg.get("final", False)

@@ -135,6 +135,9 @@
     .sess-badge { display:inline-block; padding:1px 7px; border-radius:99px; background:var(--accent); color:#fff; font-size:10px; margin-left:6px; }
     .sess-row select { max-width:170px; }
     .sess-forget { border:0; background:transparent; color:var(--secondary); font-size:15px; cursor:pointer; }
+    #sessions-older { border-top:1px solid var(--line); margin-top:4px; }
+    #sessions-older summary { cursor:pointer; color:var(--secondary); font-size:11.5px; padding:10px 0 6px; user-select:none; }
+    #sessions-older summary:hover { color:var(--text); }
     .sess-forget:hover { color:#d05050; }
     .unit{position:relative}.unit input{padding-right:56px}.unit span{position:absolute;right:11px;top:10px;color:var(--secondary);font-size:10.5px}
     .key-list .key-row{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center;margin-left:17px;padding:15px 17px 15px 0;border-top:1px solid var(--line)}.key-list .key-row:first-child{border-top:0}.key-copy strong{display:block;font-size:12.5px;margin-bottom:3px}.key-copy span{display:block;color:var(--secondary);font-size:10px}.keys{display:flex;align-items:center;gap:4px}
@@ -224,6 +227,10 @@
           <div style="padding:4px 21px">
             <div id="session-rows"></div>
             <div class="hint" id="sessions-empty" style="display:none;padding:14px 0">No sessions yet. Start a Claude Code session and it will appear here.</div>
+            <details id="sessions-older" style="display:none">
+              <summary id="sessions-older-sum">Older sessions</summary>
+              <div id="session-rows-older"></div>
+            </details>
           </div>
         </div>
         <div class="hint" style="padding:12px 4px">Muted sessions stay silent (their attention beeps still play). A custom name is what Sonara says on "Session changed". Voice overrides apply only to that session. Unmuting resumes a session where it left off.</div>
@@ -398,71 +405,100 @@ function fillVoiceSelect(sel, s, selected) {
     sel.appendChild(og);
   }
 }
+const SESSION_RECENT_S = 3600;   // seen within the last hour = main list
+function idleLabel(idle) {
+  if (idle == null) return "inactive";
+  if (idle < 60) return "just now";
+  if (idle < 3600) return Math.floor(idle / 60) + " min ago";
+  return Math.floor(idle / 3600) + " h ago";
+}
+function buildSessionRow(sess, s) {
+  const row = document.createElement("div");
+  row.className = "sess-row";
+  // structure only: no session-derived text is interpolated into this
+  // HTML string; folder/name/id are all assigned below via textContent,
+  // .value, or the .placeholder PROPERTY (never a raw attribute string)
+  row.innerHTML =
+    '<div class="sess-id">' +
+      '<input type="text" maxlength="60" aria-label="Session name">' +
+      '<div class="sess-sub"></div>' +
+    '</div>' +
+    '<button type="button" class="switch sess-mute" role="switch" aria-checked="false" aria-label="Mute this session"></button>' +
+    '<select class="sess-voice" aria-label="Voice override for this session"></select>' +
+    '<button type="button" class="sess-forget" title="Forget this session">&times;</button>';
+  const nameInput = row.querySelector("input[type=text]");
+  nameInput.value = sess.name || "";
+  nameInput.placeholder = sess.folder || "Name this session";
+  const subEl = row.querySelector(".sess-sub");
+  const shortId = sess.id.slice(0, 8);
+  subEl.textContent = (sess.folder || "unknown folder") + " - " + shortId
+    + " - " + idleLabel(sess.idle_s);
+  if (sess.foreground) {
+    const b = document.createElement("span");
+    b.className = "sess-badge"; b.textContent = "Active";
+    subEl.appendChild(b);
+  }
+  if (sess.pending > 0) {
+    const b = document.createElement("span");
+    b.className = "sess-badge"; b.style.background = "var(--subtle)";
+    b.style.color = "var(--secondary)";
+    b.textContent = sess.pending + " queued";
+    subEl.appendChild(b);
+  }
+  nameInput.addEventListener("change",
+    () => setSession(sess.id, "name", nameInput.value.trim()));
+  const mute = row.querySelector(".sess-mute");
+  mute.setAttribute("aria-checked", sess.muted ? "true" : "false");
+  mute.addEventListener("click", () => {
+    const next = mute.getAttribute("aria-checked") !== "true";
+    setSession(sess.id, "muted", next);
+  });
+  const voiceSel = row.querySelector(".sess-voice");
+  fillVoiceSelect(voiceSel, s, sess.voice);
+  voiceSel.addEventListener("change",
+    () => setSession(sess.id, "voice", voiceSel.value));
+  const forget = row.querySelector(".sess-forget");
+  if (sess.foreground) forget.style.display = "none";   // never forget the active session
+  forget.addEventListener("click", () => forgetSession(sess.id));
+  return row;
+}
 let sessionsSig = "";
 function renderSessions(s) {
   const rows = document.getElementById("session-rows");
-  const sessions = s.sessions || [];
+  const older = document.getElementById("session-rows-older");
+  const olderWrap = document.getElementById("sessions-older");
+  const sessions = [...(s.sessions || [])];
   document.getElementById("sessions-empty").style.display = sessions.length ? "none" : "block";
-  // poll-safe: rebuild only when content actually changed, and never while
-  // the user is editing a field inside the list (mirrors the #38 select fix)
-  const sig = JSON.stringify(sessions) + "|" + JSON.stringify(s.voices);
+  // foreground first, then most recently active; never-seen (closed
+  // terminals, restored from disk) sink to the bottom
+  sessions.sort((a, b) => (b.foreground - a.foreground)
+    || ((a.idle_s == null ? Infinity : a.idle_s) - (b.idle_s == null ? Infinity : b.idle_s)));
+  const recent = sessions.filter(x => x.foreground
+    || (x.idle_s != null && x.idle_s < SESSION_RECENT_S));
+  const stale = sessions.filter(x => !recent.includes(x));
+  // poll-safe: rebuild only when content actually changed. idle_s ticks every
+  // poll, so the signature quantizes it to minutes (one rebuild per minute,
+  // which also keeps the "N min ago" labels fresh); never rebuild while the
+  // user is editing a field inside either list (mirrors the #38 select fix)
+  const quant = x => ({...x, idle_s: x.idle_s == null ? null : Math.floor(x.idle_s / 60)});
+  const sig = JSON.stringify(recent.map(quant)) + "|" + JSON.stringify(stale.map(quant))
+    + "|" + JSON.stringify(s.voices);
   if (sig === sessionsSig) return;
   // only text inputs and selects are mid-edit state a rebuild would clobber;
   // buttons (mute switch, forget) keep focus after a click but have no
   // in-progress value to lose, so they must not block the rebuild (finding 1)
   const ae = document.activeElement;
-  if (rows.contains(ae) && ae !== rows && ae.matches("input, select")) return;
+  if ((rows.contains(ae) || older.contains(ae)) && ae.matches("input, select")) return;
   sessionsSig = sig;
   rows.textContent = "";
-  for (const sess of sessions) {
-    const row = document.createElement("div");
-    row.className = "sess-row";
-    // structure only: no session-derived text is interpolated into this
-    // HTML string; folder/name/id are all assigned below via textContent,
-    // .value, or the .placeholder PROPERTY (never a raw attribute string)
-    row.innerHTML =
-      '<div class="sess-id">' +
-        '<input type="text" maxlength="60" aria-label="Session name">' +
-        '<div class="sess-sub"></div>' +
-      '</div>' +
-      '<button type="button" class="switch sess-mute" role="switch" aria-checked="false" aria-label="Mute this session"></button>' +
-      '<select class="sess-voice" aria-label="Voice override for this session"></select>' +
-      '<button type="button" class="sess-forget" title="Forget this session">&times;</button>';
-    const nameInput = row.querySelector("input[type=text]");
-    nameInput.value = sess.name || "";
-    nameInput.placeholder = sess.folder || "Name this session";
-    const subEl = row.querySelector(".sess-sub");
-    const shortId = sess.id.slice(0, 8);
-    subEl.textContent = (sess.folder || "unknown folder") + " - " + shortId;
-    if (sess.foreground) {
-      const b = document.createElement("span");
-      b.className = "sess-badge"; b.textContent = "Active";
-      subEl.appendChild(b);
-    }
-    if (sess.pending > 0) {
-      const b = document.createElement("span");
-      b.className = "sess-badge"; b.style.background = "var(--subtle)";
-      b.style.color = "var(--secondary)";
-      b.textContent = sess.pending + " queued";
-      subEl.appendChild(b);
-    }
-    nameInput.addEventListener("change",
-      () => setSession(sess.id, "name", nameInput.value.trim()));
-    const mute = row.querySelector(".sess-mute");
-    mute.setAttribute("aria-checked", sess.muted ? "true" : "false");
-    mute.addEventListener("click", () => {
-      const next = mute.getAttribute("aria-checked") !== "true";
-      setSession(sess.id, "muted", next);
-    });
-    const voiceSel = row.querySelector(".sess-voice");
-    fillVoiceSelect(voiceSel, s, sess.voice);
-    voiceSel.addEventListener("change",
-      () => setSession(sess.id, "voice", voiceSel.value));
-    const forget = row.querySelector(".sess-forget");
-    if (sess.foreground) forget.style.display = "none";   // never forget the active session
-    forget.addEventListener("click", () => forgetSession(sess.id));
-    rows.appendChild(row);
-  }
+  for (const sess of recent) rows.appendChild(buildSessionRow(sess, s));
+  // the details disclosure itself is static markup, so its open/closed state
+  // survives rebuilds; only its inner rows and summary count are re-rendered
+  olderWrap.style.display = stale.length ? "block" : "none";
+  document.getElementById("sessions-older-sum").textContent =
+    "Older sessions (" + stale.length + ")";
+  older.textContent = "";
+  for (const sess of stale) older.appendChild(buildSessionRow(sess, s));
 }
 function render(s) {
   // engine-first voice picker (#42): the select shows ONLY the active

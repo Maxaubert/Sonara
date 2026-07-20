@@ -513,3 +513,15 @@ def test_settings_page_preview_url_is_cache_busted():
     page = _page_bytes().decode("utf-8")
     assert "const PREVIEW_V = Date.now()" in page
     assert '"&v=" + PREVIEW_V' in page
+
+
+def test_state_sessions_carry_idle_seconds(server):
+    d, s = server
+    d.sessions.register("sess-old")           # known but never touched
+    d.sessions._last_seen.pop("sess-old", None)   # registration touches; simulate a store-restored session
+    state = json.loads(_get(s, "/api/state").read())
+    ids = [row["id"] for row in state["sessions"]]
+    live = state["sessions"][ids.index("sess-1")]     # set_foreground touched it
+    stale = state["sessions"][ids.index("sess-old")]
+    assert isinstance(live["idle_s"], int) and live["idle_s"] >= 0
+    assert stale["idle_s"] is None

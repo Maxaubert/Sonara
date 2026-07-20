@@ -195,9 +195,11 @@ class SettingsServer:
         d = self._daemon
         fg = d.sessions.foreground()
         out = []
+        now = time.time()
         for sid in d.sessions.ids():
             ch = d.router.channels.get(sid)
             prefs = d.session_prefs
+            seen = d.sessions.last_seen(sid)
             out.append({
                 "id": sid,
                 "folder": d.sessions.folder(sid),
@@ -206,6 +208,9 @@ class SettingsServer:
                 "voice": prefs.voice(sid),
                 "foreground": sid == fg,
                 "pending": ch.pending() if ch is not None else 0,
+                # seconds since this session's last hook traffic THIS daemon
+                # run; None = not seen since start (likely a closed terminal)
+                "idle_s": None if seen is None else max(0, int(now - seen)),
             })
         return out
 

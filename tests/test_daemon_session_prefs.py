@@ -90,3 +90,20 @@ def test_forget_session_clears_history():
     assert d.history.unheard("s1") != []
     d.handle_message({"v": 1, "type": "forget_session", "session": "s1"})
     assert d.history.unheard("s1") == []
+
+
+def test_session_bearing_message_touches_last_seen():
+    d = make_daemon()
+    d.handle_message({"v": 1, "type": "set_foreground", "session": "s1"})
+    assert d.sessions.last_seen("s1") is not None
+
+
+def test_page_mutations_do_not_touch_last_seen():
+    # managing a stale session from the settings page must not make it look
+    # recently active, or naming an old row would bump it back into the list
+    d = make_daemon()
+    d.handle_message({"v": 1, "type": "set_session_pref",
+                      "session": "s1", "key": "name", "value": "alpha"})
+    d.handle_message({"v": 1, "type": "forget_session", "session": "s2"})
+    assert d.sessions.last_seen("s1") is None
+    assert d.sessions.last_seen("s2") is None

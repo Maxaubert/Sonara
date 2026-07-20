@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 
 def _basename(cwd) -> "str | None":
@@ -31,10 +32,26 @@ class SessionManager:
         # stay pure (no I/O).
         self._store_path = store_path
         self._store_cap = store_cap
+        # Wall-clock last activity, THIS daemon run only. Deliberately not
+        # persisted and not seeded by _load: a closed terminal never sends
+        # hook traffic again, so "touched this run" is the liveness signal
+        # the Sessions tab ranks by; store-restored sessions start as
+        # never-seen and only look alive once they actually speak.
+        self._last_seen: "dict[str, float]" = {}
         if store_path is not None:
             self._load()
 
+    def touch(self, session: str) -> None:
+        """Record hook traffic from *session* now (ranks the Sessions tab)."""
+        if isinstance(session, str) and session:
+            self._last_seen[session] = time.time()
+
+    def last_seen(self, session: str) -> "float | None":
+        """Epoch seconds of the last hook traffic this run, or None if none."""
+        return self._last_seen.get(session)
+
     def _record(self, session: str, cwd) -> None:
+        self.touch(session)
         folder = _basename(cwd)
         changed = False
         if session not in self._sessions:
@@ -64,6 +81,7 @@ class SessionManager:
     def unregister(self, session: str) -> None:
         existed = session in self._sessions
         self._sessions.pop(session, None)
+        self._last_seen.pop(session, None)
         if self._foreground == session:
             self._foreground = None
         if existed:
