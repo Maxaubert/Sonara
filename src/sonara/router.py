@@ -12,10 +12,13 @@ CONTROL = "\x00sonara-control"
 
 
 class Router:
-    def __init__(self, sessions, minqueue, announce_text) -> None:
+    def __init__(self, sessions, minqueue, announce_text,
+                 display_name=None, channel_init=None) -> None:
         self.sessions = sessions          # exposes foreground()/folder()
         self._minqueue = minqueue          # () -> int
         self._announce_text = announce_text  # (folder, replay=False) -> str
+        self._display_name = display_name    # sid -> custom label | None
+        self._channel_init = channel_init    # (SessionChannel) -> None, on create
         self.channels: "dict[str, SessionChannel]" = {}
         self.active: "str | None" = None
         self._last_active: "str | None" = None   # last session that actually read (persists across idle gaps)
@@ -34,6 +37,8 @@ class Router:
         ch = self.channels.get(session)
         if ch is None:
             ch = SessionChannel(session)
+            if self._channel_init is not None:
+                self._channel_init(ch)       # seed prefs (e.g. muted) on creation
             self.channels[session] = ch
         return ch
 
@@ -69,6 +74,11 @@ class Router:
         unread target resumes from its cursor (replay=False). Returns (None, False)
         only when there are no channels. Arms the session-change announcement."""
         keys = [s for s in self.channels if s != CONTROL]
+        # A muted session never takes the floor on a manual cycle; if EVERY
+        # other session is muted, degrade to the plain ring (never dead-end).
+        audible = [s for s in keys if not self.channels[s].muted]
+        if audible:
+            keys = audible
         if not keys:
             return (None, False)
         old = self.active
@@ -170,7 +180,11 @@ class Router:
     def next_item(self) -> "SpeechItem | None":
         # emit a queued hand-off announcement before the new reader's first item
         if self._pending_announce is not None:
-            folder = self.sessions.folder(self._pending_announce) or "another session"
+            label = None
+            if self._display_name is not None:
+                label = self._display_name(self._pending_announce)
+            folder = (label or self.sessions.folder(self._pending_announce)
+                      or "another session")
             text = self._announce_text(folder, self._pending_announce_replay)
             self._pending_announce = None
             self._pending_announce_replay = False

@@ -191,6 +191,29 @@ class SettingsServer:
                 pass
             self._httpd = None
 
+    def _sessions(self) -> list:
+        d = self._daemon
+        fg = d.sessions.foreground()
+        out = []
+        now = time.time()
+        for sid in d.sessions.ids():
+            ch = d.router.channels.get(sid)
+            prefs = d.session_prefs
+            seen = d.sessions.last_seen(sid)
+            out.append({
+                "id": sid,
+                "folder": d.sessions.folder(sid),
+                "name": prefs.name(sid),
+                "muted": prefs.muted(sid),
+                "voice": prefs.voice(sid),
+                "foreground": sid == fg,
+                "pending": ch.pending() if ch is not None else 0,
+                # seconds since this session's last hook traffic THIS daemon
+                # run; None = not seen since start (likely a closed terminal)
+                "idle_s": None if seen is None else max(0, int(now - seen)),
+            })
+        return out
+
     # ---- state assembly ------------------------------------------------
     def state(self) -> dict:
         cfg = {k: self._daemon.config.get(k) for k in _PAGE_KEYS}
@@ -202,6 +225,7 @@ class SettingsServer:
             "engines": _engine_status(),
             "keymap": _keymap_state(),
             "keys": _key_names(),
+            "sessions": self._sessions(),
             "daemon": {
                 "pid": os.getpid(),
                 "uptime_s": int(time.monotonic() - self._started),
@@ -291,7 +315,27 @@ def _make_handler(server: SettingsServer):
                 return self._json(409, {"error": "preview busy or unavailable"})
             if path == "/api/daemon":
                 return self._handle_daemon(payload)
+            if path == "/api/session":
+                return self._handle_session(payload)
             return self._json(404, {"error": "unknown path"})
+
+        def _handle_session(self, payload):
+            sid = payload.get("id")
+            if not isinstance(sid, str) or not sid:
+                return self._json(400, {"error": "missing session id"})
+            if payload.get("op") == "forget":
+                if server._daemon.sessions.is_foreground(sid):
+                    return self._json(400, {"error": "cannot forget the active session"})
+                _dispatch(server._daemon,
+                          {"v": 1, "type": "forget_session", "session": sid})
+                return self._json(200, server.state())
+            key = payload.get("key")
+            if key not in ("name", "muted", "voice"):
+                return self._json(400, {"error": f"unknown key {key!r}"})
+            _dispatch(server._daemon,
+                      {"v": 1, "type": "set_session_pref", "session": sid,
+                       "key": key, "value": payload.get("value")})
+            return self._json(200, server.state())
 
         def _handle_set(self, payload):
             key = payload.get("key")

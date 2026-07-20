@@ -160,3 +160,73 @@ def test_reload_does_not_override_live_record(tmp_path):
     assert sm2.folder("s1") == "new"
     assert json.loads(p.read_text(encoding="utf-8"))["s1"] == "new"
 
+
+
+def test_touch_and_last_seen():
+    import time
+    m = SessionManager()
+    assert m.last_seen("s1") is None
+    before = time.time()
+    m.touch("s1")
+    seen = m.last_seen("s1")
+    assert seen is not None and before <= seen <= time.time()
+
+
+def test_register_touches():
+    m = SessionManager()
+    m.register("s1", cwd="/x/proj")
+    assert m.last_seen("s1") is not None
+
+
+def test_unregister_clears_last_seen():
+    m = SessionManager()
+    m.touch("s1")
+    m.unregister("s1")
+    assert m.last_seen("s1") is None
+
+
+def test_last_seen_survives_restart(tmp_path):
+    # deploys and hook respawns restart the daemon constantly; a session that
+    # spoke five minutes ago must NOT rank as inactive after a restart
+    seen = tmp_path / "session_seen.json"
+    m1 = SessionManager(seen_path=seen)
+    m1.touch("s1")
+    was = m1.last_seen("s1")
+    m2 = SessionManager(seen_path=seen)
+    assert m2.last_seen("s1") == was
+
+
+def test_no_seen_path_is_pure(tmp_path):
+    m = SessionManager()
+    m.touch("s1")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_seen_store_throttles_writes(tmp_path, monkeypatch):
+    from sonara import sessions as sessions_mod
+    clock = iter([1000.0, 1030.0, 1070.0])
+    monkeypatch.setattr(sessions_mod.time, "time", lambda: next(clock))
+    seen = tmp_path / "session_seen.json"
+    m = SessionManager(seen_path=seen)
+    m.touch("s1")                                    # first touch always persists
+    assert json.loads(seen.read_text(encoding="utf-8"))["s1"] == 1000.0
+    m.touch("s1")                                    # +30s: within throttle, no write
+    assert json.loads(seen.read_text(encoding="utf-8"))["s1"] == 1000.0
+    m.touch("s1")                                    # +70s: past throttle, persisted
+    assert json.loads(seen.read_text(encoding="utf-8"))["s1"] == 1070.0
+    assert m.last_seen("s1") == 1070.0
+
+
+def test_seen_store_tolerates_missing_and_corrupt(tmp_path):
+    assert SessionManager(seen_path=tmp_path / "nope.json").last_seen("x") is None
+    corrupt = tmp_path / "bad.json"
+    corrupt.write_text("{ not json", encoding="utf-8")
+    assert SessionManager(seen_path=corrupt).last_seen("x") is None
+
+
+def test_unregister_removes_from_seen_store(tmp_path):
+    seen = tmp_path / "session_seen.json"
+    m = SessionManager(seen_path=seen)
+    m.touch("s1")
+    m.unregister("s1")
+    assert "s1" not in json.loads(seen.read_text(encoding="utf-8"))

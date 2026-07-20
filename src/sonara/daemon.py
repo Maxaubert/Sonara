@@ -14,7 +14,7 @@ from sonara.assembler import ProseAssembler
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
-    INSTALL_RECORD_PATH, SESSIONS_PATH,
+    INSTALL_RECORD_PATH, SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
 )
 from sonara.platform import transport
 
@@ -97,7 +97,8 @@ _MAX_CONN_THREADS = 32
 
 
 class SpeechDaemon:
-    def __init__(self, speaker, sessions, config, ducker=None, pauser=None) -> None:
+    def __init__(self, speaker, sessions, config, ducker=None, pauser=None,
+                 prefs=None) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
@@ -109,6 +110,10 @@ class SpeechDaemon:
             from sonara.platform.windows.pausing import NullPauser
             pauser = NullPauser()
         self.pauser = pauser
+        if prefs is None:
+            from sonara.session_prefs import SessionPrefs
+            prefs = SessionPrefs()
+        self.session_prefs = prefs
         self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
@@ -118,6 +123,9 @@ class SpeechDaemon:
             announce_text=lambda folder, replay=False: (
                 "Session changed: {0}, reading again.".format(folder) if replay
                 else "Session changed: {0}.".format(folder)),
+            display_name=lambda sid: self.session_prefs.name(sid),
+            channel_init=lambda ch: setattr(
+                ch, "muted", self.session_prefs.muted(ch.session)),
         )
         self._running = threading.Event()
         self._wake = threading.Event()
@@ -267,6 +275,41 @@ class SpeechDaemon:
         if ch is not None:
             for it in ch.items:
                 self._pending_heard.pop(it.id, None)
+
+    def _teardown_session(self, session: str) -> None:
+        """Per-session cleanup shared by SESSION_END and FORGET_SESSION (#101):
+        both retire a session's live state; FORGET_SESSION targets exactly the
+        sessions that died WITHOUT a SessionEnd, so its cleanup must match.
+        Callers run this BEFORE router.drop(session) -- _drop_channel_pending
+        needs the channel to still exist, or _pending_heard leaks."""
+        self._drop_channel_pending(session)
+        self.history.reset(session)
+        self._options.pop(session, None)
+        self._warned_immediate.discard(session)
+        self._guided_sessions.discard(session)
+        # Ending the session is a user action like FLUSH: BUMP the cancel
+        # epoch so an in-flight digest is dropped when it lands. Popping it
+        # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
+        # dispatched gen 0), letting a dead session's digest resurrect its
+        # history and channel (audit #21).
+        self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
+        self._cancel_settle(session)
+        self._settle_gen.pop(session, None)
+        self._pending_decision.pop(session, None)
+        # Clear the rest of the per-session state; a late _summary_worker
+        # must find no held question to append (zombie channel), and nothing
+        # here may outlive the session (audit #21).
+        self._held_decision.pop(session, None)
+        self._last_digest_text.pop(session, None)
+        self._voiced_upto.pop(session, None)
+        self._nav_cursor.pop(session, None)
+        self._assemblers.pop(session, None)
+        self._last_dispatch_token.pop(session, None)
+        self._inflight_digests.pop(session, None)
+        # A stale _await_choice entry from a dead session would suppress
+        # permission chimes DAEMON-WIDE forever: the chime carries no session,
+        # so the suppression check is global truthiness (audit #19).
+        self._await_choice.discard(session)
 
     def note_spoken(self, item, completed: bool) -> None:
         """Speak-loop bookkeeping: confirm (or decline) the heard-marker for a
@@ -425,6 +468,12 @@ class SpeechDaemon:
         t = msg.get("type")
         session = msg.get("session", "")
         verbosity = self.config.get("verbosity", "everything")
+        # Liveness for the Sessions tab: any session-bearing hook traffic
+        # counts as activity. Settings-page mutations are excluded, or naming
+        # a stale row would bump it back into the recent list.
+        if (isinstance(session, str) and session
+                and t not in (MsgType.SET_SESSION_PREF, MsgType.FORGET_SESSION)):
+            self.sessions.touch(session)
 
         if t == MsgType.PROSE:
             final = msg.get("final", False)
@@ -644,35 +693,8 @@ class SpeechDaemon:
 
         if t == MsgType.SESSION_END:
             self.sessions.unregister(session)
-            self._drop_channel_pending(session)
+            self._teardown_session(session)
             self.router.drop(session)
-            self.history.reset(session)
-            self._options.pop(session, None)
-            self._warned_immediate.discard(session)
-            self._guided_sessions.discard(session)
-            # Ending the session is a user action like FLUSH: BUMP the cancel
-            # epoch so an in-flight digest is dropped when it lands. Popping it
-            # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
-            # dispatched gen 0), letting a dead session's digest resurrect its
-            # history and channel (audit #21).
-            self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
-            self._cancel_settle(session)
-            self._settle_gen.pop(session, None)
-            self._pending_decision.pop(session, None)
-            # Clear the rest of the per-session state; a late _summary_worker
-            # must find no held question to append (zombie channel), and nothing
-            # here may outlive the session (audit #21).
-            self._held_decision.pop(session, None)
-            self._last_digest_text.pop(session, None)
-            self._voiced_upto.pop(session, None)
-            self._nav_cursor.pop(session, None)
-            self._assemblers.pop(session, None)
-            self._last_dispatch_token.pop(session, None)
-            self._inflight_digests.pop(session, None)
-            # A stale _await_choice entry from a dead session would suppress
-            # permission chimes DAEMON-WIDE forever: the chime carries no session,
-            # so the suppression check is global truthiness (audit #19).
-            self._await_choice.discard(session)
             return None
 
         if t == MsgType.STOP:
@@ -873,10 +895,14 @@ class SpeechDaemon:
             if fg is None:
                 return None
             target = fg
-            entries = self.history.unheard(fg)
+            # A muted foreground has nothing AUDIBLE to catch up on: treat it as
+            # empty so the handler falls through to the other-session pick, or
+            # "You're all caught up." instead of replaying into dead air.
+            entries = [] if self.session_prefs.muted(fg) else self.history.unheard(fg)
             preamble = None
             if not entries:
-                other = self.history.other_session_with_unheard(fg)
+                other = self.history.other_session_with_unheard(
+                    fg, skip=self.session_prefs.muted)
                 if other is not None:
                     target = other
                     entries = self.history.unheard(other)
@@ -931,6 +957,34 @@ class SpeechDaemon:
             self.speaker.set_voice(voice)
             save_config(self.config)
             self._maybe_prewarm_chatterbox()   # switching TO a cb voice warms it
+            return None
+
+        if t == MsgType.SET_SESSION_PREF:
+            sid = msg.get("session")
+            key = msg.get("key")
+            if not isinstance(sid, str) or not self.session_prefs.set(sid, key, msg.get("value")):
+                return None
+            if key == "muted":
+                val = bool(msg.get("value"))
+                ch = self.router.channels.get(sid)
+                if ch is not None:
+                    ch.muted = val
+                cur = self._current_item
+                if val and cur is not None and getattr(cur, "session", None) == sid:
+                    self.speaker.cancel()
+                self._wake.set()
+            return None
+
+        if t == MsgType.FORGET_SESSION:
+            sid = msg.get("session")
+            if not isinstance(sid, str) or self.sessions.is_foreground(sid):
+                return None
+            self.sessions.unregister(sid)
+            self.session_prefs.forget(sid)
+            # Forget targets exactly the stale sessions that died WITHOUT
+            # SessionEnd, so it needs the same per-session teardown (#101).
+            self._teardown_session(sid)
+            self.router.drop(sid)
             return None
 
         if t == MsgType.SET_VERBOSITY:
@@ -1909,6 +1963,16 @@ class SpeechDaemon:
             return {"voice": self._cue_voice()}
         return {}
 
+    def _voice_override(self, item) -> dict:
+        """speaker.speak kwargs for *item*: the fast-cue voice for control
+        feedback and session-change announcements (#60), else the session's
+        voice pref, else {} (the global default voice)."""
+        kw = self._cue_voice_override(item)
+        if kw:
+            return kw
+        v = self.session_prefs.voice(item.session)
+        return {"voice": v} if v else {}
+
     def _maybe_prewarm_cue_voice(self) -> None:
         """Pre-load the Kokoro engine when cues route to a Kokoro voice (#60):
         the first cue after daemon start otherwise pays the ~3s engine load.
@@ -2207,7 +2271,8 @@ class SpeechDaemon:
                 pass
             try:
                 completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                               on_play=None)
+                                               on_play=None,
+                                               **self._voice_override(item))
             except Exception:  # noqa: BLE001
                 self._signal_speak_failure()
                 completed = False
@@ -2249,7 +2314,7 @@ class SpeechDaemon:
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,
-                                           **self._cue_voice_override(item))
+                                           **self._voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False
@@ -2610,9 +2675,11 @@ def main() -> None:
         earcons=cfg.get("earcons"),
     )
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"),
-                              store_path=SESSIONS_PATH)
+                              store_path=SESSIONS_PATH, seen_path=SESSION_SEEN_PATH)
+    from sonara.session_prefs import SessionPrefs
     daemon = SpeechDaemon(speaker, sessions, cfg,
-                          ducker=_backend.ducker, pauser=_backend.pauser)
+                          ducker=_backend.ducker, pauser=_backend.pauser,
+                          prefs=SessionPrefs(store_path=SESSION_PREFS_PATH))
     daemon.run()
 
 

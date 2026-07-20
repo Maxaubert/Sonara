@@ -114,13 +114,16 @@ class SessionHistory:
         self._group_seq.pop(session, None)
         self._touch.pop(session, None)
 
-    def other_session_with_unheard(self, exclude: str):
+    def other_session_with_unheard(self, exclude: str, skip=None):
         """The most recently active OTHER session that has unheard entries,
         or None. Lets catch_up recover a session you left without re-typing
-        in it (there is no OS window-focus hook)."""
+        in it (there is no OS window-focus hook). *skip*, when given, filters
+        out sessions the caller must not surface (e.g. muted ones)."""
         best, best_tick = None, -1
         for session, tick in self._touch.items():
             if session == exclude:
+                continue
+            if skip is not None and skip(session):
                 continue
             if tick > best_tick and self.unheard(session):
                 best, best_tick = session, tick

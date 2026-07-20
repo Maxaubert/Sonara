@@ -90,6 +90,15 @@ def test_other_session_excludes_the_given_session():
     assert h.other_session_with_unheard("fg") is None
 
 
+def test_other_session_with_unheard_honors_skip():
+    h = SessionHistory()
+    h.record("a", "prose", "A1.")
+    h.record("b", "prose", "B1.")          # b touched most recently
+    assert h.other_session_with_unheard("fg") == "b"
+    assert h.other_session_with_unheard("fg", skip=lambda s: s == "b") == "a"
+    assert h.other_session_with_unheard("fg", skip=lambda s: True) is None
+
+
 def test_nth_last_message_walks_back_through_groups():
     from sonara.history import SessionHistory
     h = SessionHistory()
