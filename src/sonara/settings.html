@@ -226,7 +226,7 @@
             <div class="hint" id="sessions-empty" style="display:none;padding:14px 0">No sessions yet. Start a Claude Code session and it will appear here.</div>
           </div>
         </div>
-        <div class="hint" style="padding:12px 4px">Muted sessions stay silent (their attention beeps still play). A custom name is what Sonara says on "Session changed". Voice overrides apply only to that session.</div>
+        <div class="hint" style="padding:12px 4px">Muted sessions stay silent (their attention beeps still play). A custom name is what Sonara says on "Session changed". Voice overrides apply only to that session. Unmuting resumes a session where it left off.</div>
       </section>
 
       <section class="page" id="advanced">
@@ -407,7 +407,11 @@ function renderSessions(s) {
   // the user is editing a field inside the list (mirrors the #38 select fix)
   const sig = JSON.stringify(sessions) + "|" + JSON.stringify(s.voices);
   if (sig === sessionsSig) return;
-  if (rows.contains(document.activeElement) && document.activeElement !== rows) return;
+  // only text inputs and selects are mid-edit state a rebuild would clobber;
+  // buttons (mute switch, forget) keep focus after a click but have no
+  // in-progress value to lose, so they must not block the rebuild (finding 1)
+  const ae = document.activeElement;
+  if (rows.contains(ae) && ae !== rows && ae.matches("input, select")) return;
   sessionsSig = sig;
   rows.textContent = "";
   for (const sess of sessions) {
