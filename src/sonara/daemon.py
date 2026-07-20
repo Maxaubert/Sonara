@@ -123,6 +123,9 @@ class SpeechDaemon:
             announce_text=lambda folder, replay=False: (
                 "Session changed: {0}, reading again.".format(folder) if replay
                 else "Session changed: {0}.".format(folder)),
+            display_name=lambda sid: self.session_prefs.name(sid),
+            channel_init=lambda ch: setattr(
+                ch, "muted", self.session_prefs.muted(ch.session)),
         )
         self._running = threading.Event()
         self._wake = threading.Event()
