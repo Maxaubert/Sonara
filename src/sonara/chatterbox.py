@@ -238,6 +238,21 @@ def _synth_cache_put(key, wav) -> None:
 # success clears it immediately (audit #21).
 _COOLDOWN_S = 60.0
 
+# Error texts that mean the worker PROCESS is poisoned, not just this request:
+# a lost CUDA context (driver update/reset mid-run) survives inside the process
+# and fails every later synth with "CUDA error: unknown error" even after the
+# GPU is healthy again. The worker keeps answering the pipe, so the dead-pipe
+# respawn never fires -- the client must kill it so the next attempt gets a
+# fresh process (verified live 2026-07-20: a driver swap stranded the daemon on
+# the Kokoro fallback until restart). "CUDA out of memory" does NOT match:
+# transient OOM should not cost the warm model.
+_FATAL_WORKER_ERRORS = ("CUDA error", "AcceleratorError")
+
+
+def _is_fatal_worker_error(message) -> bool:
+    text = str(message)
+    return any(marker in text for marker in _FATAL_WORKER_ERRORS)
+
 
 class ChatterboxClient:
     """Owns (at most) one chatterbox_worker.py subprocess, spawned on demand.
@@ -361,7 +376,15 @@ class ChatterboxClient:
             except ChatterboxError:
                 self._cooldown_until = time.monotonic() + _COOLDOWN_S
                 raise
-            self._cooldown_until = 0.0   # healthy again: clear the memo
+            if (not resp.get("ok")
+                    and _is_fatal_worker_error(resp.get("error", ""))):
+                # Poisoned process: alive on the pipe but every synth fails.
+                # Kill it and cool down; the post-cooldown attempt respawns a
+                # fresh process, which recovers once the GPU/driver is healthy.
+                self._kill()
+                self._cooldown_until = time.monotonic() + _COOLDOWN_S
+            else:
+                self._cooldown_until = 0.0   # healthy again: clear the memo
             return resp
 
     def warm(self, config) -> bool:
