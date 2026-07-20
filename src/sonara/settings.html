@@ -134,11 +134,9 @@
     .sess-sub { color:var(--secondary); font-size:11px; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .sess-badge { display:inline-block; padding:1px 7px; border-radius:99px; background:var(--accent); color:#fff; font-size:10px; margin-left:6px; }
     .sess-row select { max-width:170px; }
-    .sess-forget { border:0; background:transparent; color:var(--secondary); font-size:15px; cursor:pointer; }
     #sessions-older { border-top:1px solid var(--line); margin-top:4px; }
     #sessions-older summary { cursor:pointer; color:var(--secondary); font-size:11.5px; padding:10px 0 6px; user-select:none; }
     #sessions-older summary:hover { color:var(--text); }
-    .sess-forget:hover { color:#d05050; }
     .unit{position:relative}.unit input{padding-right:56px}.unit span{position:absolute;right:11px;top:10px;color:var(--secondary);font-size:10.5px}
     .key-list .key-row{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center;margin-left:17px;padding:15px 17px 15px 0;border-top:1px solid var(--line)}.key-list .key-row:first-child{border-top:0}.key-copy strong{display:block;font-size:12.5px;margin-bottom:3px}.key-copy span{display:block;color:var(--secondary);font-size:10px}.keys{display:flex;align-items:center;gap:4px}
     .kbd{display:inline-flex;gap:4px;min-height:22px;align-items:center}
@@ -376,10 +374,6 @@ async function setSession(id, key, value) {
   const r = await POST("/api/session", {id, key, value});
   if (r.ok) { await acceptState(r); } else { await showApiError(r); }
 }
-async function forgetSession(id) {
-  const r = await POST("/api/session", {id, op: "forget"});
-  if (r.ok) { await acceptState(r); } else { await showApiError(r); }
-}
 function fillVoiceSelect(sel, s, selected) {
   // built via createElement (matches voice-select/cue-voice-select below):
   // voice names come from the daemon's installed-voice lists, but this also
@@ -424,8 +418,7 @@ function buildSessionRow(sess, s) {
       '<div class="sess-sub"></div>' +
     '</div>' +
     '<button type="button" class="switch sess-mute" role="switch" aria-checked="false" aria-label="Mute this session"></button>' +
-    '<select class="sess-voice" aria-label="Voice override for this session"></select>' +
-    '<button type="button" class="sess-forget" title="Forget this session">&times;</button>';
+    '<select class="sess-voice" aria-label="Voice override for this session"></select>';
   const nameInput = row.querySelector("input[type=text]");
   nameInput.value = sess.name || "";
   nameInput.placeholder = sess.folder || "Name this session";
@@ -457,9 +450,6 @@ function buildSessionRow(sess, s) {
   fillVoiceSelect(voiceSel, s, sess.voice);
   voiceSel.addEventListener("change",
     () => setSession(sess.id, "voice", voiceSel.value));
-  const forget = row.querySelector(".sess-forget");
-  if (sess.foreground) forget.style.display = "none";   // never forget the active session
-  forget.addEventListener("click", () => forgetSession(sess.id));
   return row;
 }
 let sessionsSig = "";
