@@ -18,7 +18,8 @@ def _basename(cwd) -> "str | None":
 
 class SessionManager:
     def __init__(self, background_policy: str = "earcon_only",
-                 store_path=None, store_cap: int = 200) -> None:
+                 store_path=None, store_cap: int = 200,
+                 seen_path=None, seen_throttle_s: float = 60.0) -> None:
         self.background_policy = background_policy
         # session id -> cwd basename (or None). Insertion-ordered (dict) so a future
         # list/cycle is stable; membership/`in`/len behave like the old set.
@@ -32,19 +33,32 @@ class SessionManager:
         # stay pure (no I/O).
         self._store_path = store_path
         self._store_cap = store_cap
-        # Wall-clock last activity, THIS daemon run only. Deliberately not
-        # persisted and not seeded by _load: a closed terminal never sends
-        # hook traffic again, so "touched this run" is the liveness signal
-        # the Sessions tab ranks by; store-restored sessions start as
-        # never-seen and only look alive once they actually speak.
+        # Wall-clock last activity, persisted to its own tiny store: deploys
+        # and hook respawns restart the daemon constantly, and a memory-only
+        # timestamp made a session that spoke five minutes ago rank as
+        # inactive after every restart (the mute-persistence lesson, #65).
+        # Writes are throttled to seen_throttle_s per session; minute-level
+        # resolution is plenty for the Sessions tab's hour threshold.
         self._last_seen: "dict[str, float]" = {}
+        self._seen_path = seen_path
+        self._seen_throttle_s = seen_throttle_s
+        self._persisted_seen: "dict[str, float]" = {}
+        if seen_path is not None:
+            self._load_seen()
         if store_path is not None:
             self._load()
 
     def touch(self, session: str) -> None:
         """Record hook traffic from *session* now (ranks the Sessions tab)."""
-        if isinstance(session, str) and session:
-            self._last_seen[session] = time.time()
+        if not (isinstance(session, str) and session):
+            return
+        now = time.time()
+        self._last_seen[session] = now
+        if self._seen_path is None:
+            return
+        last = self._persisted_seen.get(session)
+        if last is None or now - last >= self._seen_throttle_s:
+            self._persist_seen()
 
     def last_seen(self, session: str) -> "float | None":
         """Epoch seconds of the last hook traffic this run, or None if none."""
@@ -81,7 +95,9 @@ class SessionManager:
     def unregister(self, session: str) -> None:
         existed = session in self._sessions
         self._sessions.pop(session, None)
-        self._last_seen.pop(session, None)
+        seen = self._last_seen.pop(session, None)
+        if seen is not None and self._seen_path is not None:
+            self._persist_seen()                 # removal is durable too
         if self._foreground == session:
             self._foreground = None
         if existed:
@@ -102,6 +118,45 @@ class SessionManager:
     def ids(self) -> "list[str]":
         """Known session ids, insertion-ordered (live plus persisted)."""
         return list(self._sessions)
+
+    # --- durable last-seen map (opt-in via seen_path) ---------------------
+
+    def _load_seen(self) -> None:
+        """Seed last-seen from the store. Missing/corrupt file is a silent
+        no-op; junk entries are skipped."""
+        try:
+            with open(str(self._seen_path), "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (FileNotFoundError, ValueError, OSError):
+            return
+        if not isinstance(data, dict):
+            return
+        for sid, seen in data.items():
+            if isinstance(sid, str) and isinstance(seen, (int, float)):
+                self._last_seen[sid] = float(seen)
+                self._persisted_seen[sid] = float(seen)
+
+    def _persist_seen(self) -> None:
+        """Best-effort atomic write of the last-seen map, capped to the most
+        recent store_cap by timestamp. Failures are swallowed."""
+        if self._seen_path is None:
+            return
+        try:
+            data = dict(sorted(self._last_seen.items(),
+                               key=lambda kv: kv[1])[-self._store_cap:])
+            path = str(self._seen_path)
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, path)
+            self._persisted_seen = dict(data)
+        except OSError:
+            pass
 
     # --- durable folder map (opt-in via store_path) -----------------------
 
