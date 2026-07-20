@@ -7,11 +7,15 @@ import urllib.error
 import pytest
 
 from sonara import webui
+from sonara.sessions import SessionManager
+from sonara.session_prefs import SessionPrefs
 
 
-class FakeSessions:
-    def foreground(self):
-        return "sess-1"
+class FakeRouter:
+    """Mirrors the real Router's public surface `_sessions()` reads: a plain
+    channels dict, no routing logic needed for these tests."""
+    def __init__(self):
+        self.channels = {}
 
 
 class FakeDaemon:
@@ -23,7 +27,10 @@ class FakeDaemon:
                        "chatterbox_max_chunk_chars": 280, "chatterbox_exaggeration": 0.0,
                        "chatterbox_variant": "turbo",
                        "settings_port": 0}
-        self.sessions = FakeSessions()
+        self.sessions = SessionManager()
+        self.sessions.set_foreground("sess-1")
+        self.session_prefs = SessionPrefs()
+        self.router = FakeRouter()
         self.messages = []
 
     def handle_message(self, msg):
@@ -161,6 +168,58 @@ def test_set_dispatches_under_daemon_lock(server):
     d.handle_message = guarded
     _post(s, "/api/set", {"key": "rate", "value": 200})
     assert held == [True]
+
+
+def test_state_includes_sessions(server):
+    d, s = server
+    state = json.loads(_get(s, "/api/state").read())
+    assert isinstance(state["sessions"], list)
+    ids = [row["id"] for row in state["sessions"]]
+    assert "sess-1" in ids
+    row = state["sessions"][ids.index("sess-1")]
+    assert row["foreground"] is True
+    assert row["pending"] == 0
+
+
+def test_api_session_sets_pref(server):
+    d, s = server
+    r = _post(s, "/api/session", {"id": "s1", "key": "name", "value": "alpha"})
+    assert r.status == 200
+    assert d.messages[-1]["type"] == "set_session_pref"
+    assert d.messages[-1]["session"] == "s1"
+    assert d.messages[-1]["key"] == "name"
+    assert d.messages[-1]["value"] == "alpha"
+
+
+def test_api_session_rejects_unknown_key(server):
+    d, s = server
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/session", {"id": "s1", "key": "rate", "value": 1})
+    assert ei.value.code == 400
+
+
+def test_api_session_forget_refuses_foreground(server):
+    d, s = server
+    d.sessions.set_foreground("s1")
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/session", {"id": "s1", "op": "forget"})
+    assert ei.value.code == 400
+    assert d.messages == []                       # refused before dispatch
+
+
+def test_api_session_forget_dispatches_for_background_session(server):
+    d, s = server
+    d.sessions.register("s1")
+    r = _post(s, "/api/session", {"id": "s1", "op": "forget"})
+    assert r.status == 200
+    assert d.messages[-1] == {"v": 1, "type": "forget_session", "session": "s1"}
+
+
+def test_api_session_missing_id_is_400(server):
+    d, s = server
+    with pytest.raises(urllib.error.HTTPError) as ei:
+        _post(s, "/api/session", {"key": "name", "value": "alpha"})
+    assert ei.value.code == 400
 
 
 def test_non_object_json_body_is_400(server):

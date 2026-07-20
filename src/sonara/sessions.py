@@ -81,6 +81,10 @@ class SessionManager:
     def folder(self, session: str) -> "str | None":
         return self._sessions.get(session)
 
+    def ids(self) -> "list[str]":
+        """Known session ids, insertion-ordered (live plus persisted)."""
+        return list(self._sessions)
+
     # --- durable folder map (opt-in via store_path) -----------------------
 
     def _load(self) -> None:
