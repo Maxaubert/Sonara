@@ -1042,10 +1042,17 @@ class SpeechDaemon:
             self.config["volume"] = vol
             save_config(self.config)
             self._apply_volume(vol)
-            target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target, "Volume {0} percent.".format(vol),
-                            exempt_mute=True, pause_exempt=True,
-                            cue_key="volume")
+            # Confirm aloud ONLY when the cue can play NOW: while content is
+            # speaking, the instant session-volume change IS the feedback, and
+            # a spoken confirmation minutes later (queued behind the current
+            # utterance) was pure noise (user report). A stale volume cue
+            # mid-speech is cut and replaced instead.
+            cur = self._current_item
+            if cur is None or getattr(cur, "cue_key", None) == "volume":
+                target = self.router.active or self.sessions.foreground()
+                self._speak_cue(target, "Volume {0} percent.".format(vol),
+                                exempt_mute=True, pause_exempt=True,
+                                cue_key="volume")
             self._wake.set()
             return None
 

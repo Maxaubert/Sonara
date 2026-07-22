@@ -71,17 +71,49 @@ def wpm_to_speaking_rate(wpm: float) -> float:
 
 _TMP_PREFIX = "sonara-tts-"
 
-# Speech gain percent (25..200); 100 = bypass. Digital gain is the only
-# both-ways volume mechanism here: winsound has no volume API and Windows
-# per-app session volume can only attenuate.
+# Speech volume percent (25..200); 100 = bypass. Split delivery (#105 rework):
+# the 25..100 range rides the process's OWN Windows audio-session volume, which
+# applies INSTANTLY to audio already playing (winsound itself has no volume
+# API); the boost above 100 rides digital sample gain, which can only take
+# effect on the next synthesized playback. _SESSION_APPLIED tracks the last
+# session target that actually stuck: the process has no audio session until
+# winsound first plays, so _play_wav_bytes retries after starting playback
+# until the target lands.
 _VOLUME = [100]
+_SESSION_APPLIED = [None]
+
+
+def _gain_percent() -> int:
+    """The sample-gain half: unity for any volume at or below 100."""
+    return max(100, _VOLUME[0])
+
+
+def _session_target() -> int:
+    """The session-volume half: capped at unity (sessions cannot boost)."""
+    return min(100, _VOLUME[0])
+
+
+def _push_session_volume() -> None:
+    """Try to land the session target on our own audio session; record success
+    so repeat playbacks skip the COM enumeration once it stuck."""
+    target = _session_target()
+    if _SESSION_APPLIED[0] == target:
+        return
+    try:
+        from sonara.platform.windows.self_volume import apply_self_volume
+        if apply_self_volume(target):
+            _SESSION_APPLIED[0] = target
+    except Exception:  # noqa: BLE001 - volume must never break playback
+        pass
 
 
 def set_volume(percent) -> None:
     try:
         _VOLUME[0] = max(25, min(200, int(percent)))
     except (TypeError, ValueError):
-        pass
+        return
+    _SESSION_APPLIED[0] = None    # force a re-push (instant when mid-playback)
+    _push_session_volume()
 
 
 # Alias captured right after definition so WinTtsBackend.set_volume (same name,
@@ -224,7 +256,7 @@ def _play_wav_bytes(data: bytes):
     a _TtsHandle. Shared by the WinRT and Kokoro synth paths. If PlaySound raises
     before the handle owns the file, unlink it so a failed utterance doesn't leak a
     temp WAV (the #26 init-sweep would otherwise only reclaim it on the next start)."""
-    data = _scale_wav(data, _VOLUME[0])
+    data = _scale_wav(data, _gain_percent())
     import winsound
     fd, path = tempfile.mkstemp(suffix=".wav", prefix=_TMP_PREFIX)
     try:
@@ -240,6 +272,9 @@ def _play_wav_bytes(data: bytes):
         except OSError:
             pass
         raise
+    # The first playback CREATES this process's audio session; land the
+    # attenuation target on it now if it has not stuck yet (no-op once applied).
+    _push_session_volume()
     return _TtsHandle(path, duration)
 
 

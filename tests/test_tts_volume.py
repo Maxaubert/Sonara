@@ -64,3 +64,23 @@ def test_set_volume_clamps_and_get_reports():
     tts.set_volume("junk")
     assert tts.get_volume() == 25          # unchanged on junk
     tts.set_volume(100)                    # restore for other tests
+
+
+def test_gain_applies_only_above_100():
+    # Lowering goes through the instant session volume, not sample gain: the
+    # scaling half must treat any volume <= 100 as unity.
+    tts.set_volume(50)
+    assert tts._gain_percent() == 100
+    tts.set_volume(150)
+    assert tts._gain_percent() == 150
+    tts.set_volume(100)
+    assert tts._gain_percent() == 100
+
+
+def test_session_target_caps_at_100():
+    tts.set_volume(50)
+    assert tts._session_target() == 50
+    tts.set_volume(150)
+    assert tts._session_target() == 100
+    tts.set_volume(100)
+    assert tts._session_target() == 100

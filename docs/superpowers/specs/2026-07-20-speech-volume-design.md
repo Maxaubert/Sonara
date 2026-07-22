@@ -63,6 +63,27 @@ gain application covers every engine and every cue.
 - Global, not per-session (the Sessions tab governs per-session behavior;
   volume is an output-device concern).
 
+## Rework after live testing (2026-07-22)
+
+Pure sample gain failed the live test: it cannot touch audio that is already
+synthesized or playing, so lowering the volume waited out the current
+Chatterbox chunk or the ENTIRE single-WAV Kokoro utterance, and the spoken
+confirmation queued behind the current utterance arrived minutes late (or
+felt absent). Split delivery instead:
+
+- **25..100 (attenuation): instant.** The daemon sets its OWN Windows
+  audio-session volume (`self_volume.apply_self_volume`, same pycaw session
+  API the ducker uses), which affects playback mid-WAV. The process has no
+  audio session until winsound first plays, so the playback path re-pushes
+  the target after starting playback until it sticks.
+- **Above 100 (boost): sample gain as designed**, effective from the next
+  synthesized playback (sessions cannot exceed unity).
+- **Confirmation cue: only when it can play immediately** (daemon idle, or
+  cutting a stale volume cue mid-speech). While content is speaking, the
+  instant volume change itself is the feedback; queued late confirmations
+  were noise. Rapid changes coalesce via cue_key (only the latest pending
+  cue survives).
+
 ## Error handling
 
 - Malformed/short WAV data in `_scale_wav`: return input unchanged (playback

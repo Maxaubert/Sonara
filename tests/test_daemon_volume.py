@@ -101,3 +101,20 @@ def test_rapid_duck_level_changes_supersede_pending_cues(monkeypatch):
     _msg(daemon, type=MsgType.SET_DUCK_LEVEL, level=60)
     pending = [i for i in ch.items[ch.cursor:] if "percent" in i.text]
     assert [i.text for i in pending] == ["Duck level 60 percent."]
+
+
+def test_no_cue_while_content_is_speaking(monkeypatch):
+    # Mid-speech the instant session volume IS the feedback; a spoken
+    # confirmation minutes later was pure noise (user report). Only an idle
+    # daemon (or one speaking a stale volume cue) confirms aloud.
+    from sonara.queue import SpeechItem
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    monkeypatch.setattr(daemon, "_apply_volume", lambda v: None)
+    daemon._current_item = SpeechItem(id=1, session="fg", kind="summary",
+                                      text="a digest being spoken",
+                                      is_decision=False)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
+    from sonara.router import CONTROL
+    ch = daemon.router.channel(CONTROL)
+    assert not any("percent" in i.text for i in ch.items[ch.cursor:])
+    assert config["volume"] == 150                    # change still applied
