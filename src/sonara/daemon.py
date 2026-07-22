@@ -871,20 +871,15 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.FLUSH_SESSION:
-            # Flush to end: skip ALL pending items for the engaged session and go
-            # idle. Non-destructive: skipped items keep their history entries
-            # UNHEARD (we pop their _pending_heard markers so note_spoken never
-            # flips them True), so CATCH_UP / REPEAT can bring them back. Mirrors
-            # JUMP_DECISION but advances the cursor to the very end, not the next
-            # decision. Nothing is wiped; this is a cursor move. In summary mode
-            # it ALSO drops deferred/held questions and kills in-flight digests
-            # (#83) - a digest landing after "go to end" used to speak anyway.
-            fg = self._engaged_session()
-            if fg is None:
-                self._earcon("nav_edge")
-                return None
-            dropped = self._user_caught_up(fg)
-            self._earcon("nav" if dropped else "nav_edge")
+            # Flush to end: silence EVERYTHING queued or in flight across ALL
+            # sessions and go idle (#107). The old per-engaged-session flush
+            # left other sessions' landed or reorder-parked digests holding
+            # the floor: the key chimed success, a handoff started reading
+            # seconds later anyway, and a re-press in the silent gap found an
+            # "empty" queue (the flush soft-lock). Non-destructive: skipped
+            # items keep their history entries UNHEARD, so CATCH_UP / REPEAT
+            # can bring them back.
+            self._earcon("nav" if self._flush_all() else "nav_edge")
             return None
 
         if t == MsgType.CHOICE_ANSWERED:
@@ -1311,6 +1306,9 @@ class SpeechDaemon:
             # (issue #11). note_spoken also nulls this later; idempotent.
             self._current_item = None
         dropped = bool(self._pending_decision.pop(session, None))
+        # A live settle window means a digest was ABOUT to dispatch: killing
+        # it is a user-visible silencing, so it counts as dropped (#107).
+        dropped = (session in self._settle_pending) or dropped
         self._cancel_settle(session)
         dropped = bool(self._held_decision.pop(session, None)) or dropped
         self._await_choice.discard(session)
@@ -1331,6 +1329,37 @@ class SpeechDaemon:
             self._voiced_upto[session] = entries[-1]
         self._wake.set()
         return bool(skipped or cutting or dropped)
+
+    def _flush_all(self) -> bool:
+        """Flush-to-end (#107): silence everything queued or in flight across
+        ALL sessions. Per-session state goes through _user_caught_up
+        (non-destructive skip, current-utterance cut, in-flight digest kill,
+        settle cancel); completed digests PARKED in the reorder buffer are
+        landed dead in place (they already left the in-flight count, so the
+        per-session kill cannot see them); a stale deferred handoff alert and
+        an armed-but-unemitted switch announcement are dropped. Caller holds
+        the lock. Returns True when anything was skipped, cut, or killed."""
+        from sonara.router import CONTROL
+        sessions = (set(self.router.channels) | set(self._inflight_digests)
+                    | set(self._pending_decision) | set(self._held_decision)
+                    | set(self._settle_pending))
+        cur = self._current_item
+        if cur is not None:
+            sessions.add(cur.session)      # cut audio even for an untracked session
+        sessions.discard(CONTROL)          # control cues are sub-second; let them be
+        dropped = False
+        for sid in sessions:
+            dropped = self._user_caught_up(sid) or dropped
+        for seq, fn in list(self._digest_parked.items()):
+            if fn is not None:
+                self._digest_parked[seq] = None    # land the slot dead
+                dropped = True
+        if self._pending_preamble is not None:
+            self._pending_preamble = None
+        if self.router._pending_announce is not None:
+            self.router._pending_announce = None
+            self.router._pending_announce_replay = False
+        return dropped
 
     def _reading_msg_id(self, session: str):
         """The message id of the item currently being spoken for *session*, or None
