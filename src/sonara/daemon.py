@@ -1033,6 +1033,20 @@ class SpeechDaemon:
             self._wake.set()
             return None
 
+        if t == MsgType.SET_VOLUME:
+            try:
+                vol = max(25, min(200, int(msg.get("volume"))))
+            except (TypeError, ValueError):
+                return None
+            self.config["volume"] = vol
+            save_config(self.config)
+            self._apply_volume(vol)
+            target = self.router.active or self.sessions.foreground()
+            self._speak_cue(target, "Volume {0} percent.".format(vol),
+                            exempt_mute=True, pause_exempt=True)
+            self._wake.set()
+            return None
+
         if t == MsgType.SET_SUMMARY_MODE:
             if "enabled" not in msg:
                 return None
@@ -2163,6 +2177,15 @@ class SpeechDaemon:
             pass
         return pids
 
+    def _apply_volume(self, percent) -> None:
+        """Push the speech gain to the platform playback layer. Best-effort:
+        tests and non-Windows runs have no platform backend."""
+        try:
+            from sonara.platform import get_platform
+            get_platform().tts.set_volume(percent)
+        except Exception:  # noqa: BLE001 - volume must never break the daemon
+            pass
+
     def _maybe_engage_audio(self) -> None:
         mode = self._audio_mode()
         if mode == "duck":
@@ -2680,6 +2703,7 @@ def main() -> None:
     daemon = SpeechDaemon(speaker, sessions, cfg,
                           ducker=_backend.ducker, pauser=_backend.pauser,
                           prefs=SessionPrefs(store_path=SESSION_PREFS_PATH))
+    daemon._apply_volume(cfg.get("volume", 100))   # restore persisted speech gain
     daemon.run()
 
 

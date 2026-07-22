@@ -15,6 +15,7 @@ DEFAULTS = {
     "minqueue": 1,
     "audio_control": False,   # lower other apps' audio while speaking (opt-in)
     "duck_level": 30,         # target % volume for other apps while ducked (0-100)
+    "volume": 100,            # speech gain percent (25-200)
     "audio_mode": "off",      # off | duck | pause -- pause pauses SMTC media (#92)
     "summary_mode": False,    # speak an AI recap of each finished turn (opt-in)
     "summary_model": "haiku",           # model alias for the throwaway claude -p call
