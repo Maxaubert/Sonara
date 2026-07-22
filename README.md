@@ -21,6 +21,7 @@ off.
 - **Selection by number** - answer prompts with the option's number; no key injection.
 - **Global hotkeys** - navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
 - **Session manager** - a Sessions tab in the settings page: name each Claude Code session, mute it, or give it its own voice.
+- **Speech volume** - a settings slider from 25 to 200 percent, so Sonara can sit quieter or louder than your other apps.
 - **Lightweight** - the daemon runs on Python's standard library; the one-time `sonara install` fetches the Windows speech engine (PyWinRT) for you, and neural voices stay optional.
 
 ## Requirements
