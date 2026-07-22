@@ -28,3 +28,25 @@ def test_set_volume_speaks_confirmation(monkeypatch):
     from sonara.router import CONTROL
     ch = daemon.router.channel(CONTROL)
     assert any("150 percent" in i.text for i in ch.items)
+
+
+def test_set_volume_reaches_platform_gain(monkeypatch):
+    # The whole-branch review found _apply_volume calling a nonexistent
+    # method on the backend instance - swallowed by its except, so the
+    # feature was a silent no-op live. This test crosses the real seam:
+    # daemon -> get_platform().tts.set_volume -> module gain state. It does
+    # NOT monkeypatch _apply_volume, unlike the tests above.
+    import sonara.platform as platform_mod
+    from sonara.platform.windows.tts import WinTtsBackend
+    from sonara.platform.windows import tts as tts_mod
+
+    class _StubPlatform:
+        def __init__(self):
+            self.tts = WinTtsBackend()
+
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    monkeypatch.setattr(platform_mod, "get_platform", lambda: _StubPlatform())
+    tts_mod.set_volume(100)                # known baseline
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
+    assert tts_mod.get_volume() == 150
+    tts_mod.set_volume(100)                # restore for other tests

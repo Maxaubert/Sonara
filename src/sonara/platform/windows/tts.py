@@ -84,6 +84,13 @@ def set_volume(percent) -> None:
         pass
 
 
+# Alias captured right after definition so WinTtsBackend.set_volume (same name,
+# shadowed inside the class body) can still reach this MODULE-level function
+# by reference instead of an unqualified name lookup that would recurse into
+# the method itself.
+_module_set_volume = set_volume
+
+
 def get_volume() -> int:
     return _VOLUME[0]
 
@@ -648,3 +655,11 @@ class WinTtsBackend(TtsBackend):
             except Exception:  # noqa: BLE001 - ducking must never block speech
                 pass
         return _play_wav_bytes(data)
+
+    def set_volume(self, percent) -> None:
+        """ABC contract: push the speech gain to the module-level state that
+        _play_wav_bytes reads on every utterance. Calls the alias captured
+        right after the module function's definition, not the bare name, so
+        this same-named method can never be mistaken for recursing into
+        itself."""
+        _module_set_volume(percent)
