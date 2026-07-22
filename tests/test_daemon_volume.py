@@ -50,3 +50,54 @@ def test_set_volume_reaches_platform_gain(monkeypatch):
     _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
     assert tts_mod.get_volume() == 150
     tts_mod.set_volume(100)                # restore for other tests
+
+
+def test_rapid_volume_changes_supersede_pending_cues(monkeypatch):
+    # Dragging the slider fires many changes; without coalescing every value
+    # was queued and read out ("volume 20, 25, 30, ..."). Only the LATEST
+    # pending volume cue may remain.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    monkeypatch.setattr(daemon, "_apply_volume", lambda v: None)
+    from sonara.router import CONTROL
+    ch = daemon.router.channel(CONTROL)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=50)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=75)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
+    pending = [i for i in ch.items[ch.cursor:] if "percent" in i.text]
+    assert [i.text for i in pending] == ["Volume 150 percent."]
+
+
+def test_volume_cue_does_not_supersede_other_cues(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    monkeypatch.setattr(daemon, "_apply_volume", lambda v: None)
+    from sonara.router import CONTROL
+    ch = daemon.router.channel(CONTROL)
+    daemon._speak_cue(None, "Muted.", exempt_mute=True, pause_exempt=True)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=50)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
+    texts = [i.text for i in ch.items[ch.cursor:]]
+    assert "Muted." in texts                          # unrelated cue survives
+    assert texts.count("Volume 150 percent.") == 1
+    assert "Volume 50 percent." not in texts
+
+
+def test_new_volume_cue_cuts_the_one_being_spoken(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    monkeypatch.setattr(daemon, "_apply_volume", lambda v: None)
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=50)
+    from sonara.router import CONTROL
+    ch = daemon.router.channel(CONTROL)
+    daemon._current_item = ch.next()                  # "Volume 50 percent." speaking
+    before = speaker.cancels
+    _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
+    assert speaker.cancels == before + 1              # stale value cut short
+
+
+def test_rapid_duck_level_changes_supersede_pending_cues(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
+    from sonara.router import CONTROL
+    ch = daemon.router.channel(CONTROL)
+    _msg(daemon, type=MsgType.SET_DUCK_LEVEL, level=20)
+    _msg(daemon, type=MsgType.SET_DUCK_LEVEL, level=60)
+    pending = [i for i in ch.items[ch.cursor:] if "percent" in i.text]
+    assert [i.text for i in pending] == ["Duck level 60 percent."]

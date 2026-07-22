@@ -1029,7 +1029,8 @@ class SpeechDaemon:
                 self.ducker.duck(self._duck_exclude_pids(), level)
             target = self.router.active or self.sessions.foreground()
             self._speak_cue(target, "Duck level {0} percent.".format(level),
-                            exempt_mute=True, pause_exempt=True)
+                            exempt_mute=True, pause_exempt=True,
+                            cue_key="duck_level")
             self._wake.set()
             return None
 
@@ -1043,7 +1044,8 @@ class SpeechDaemon:
             self._apply_volume(vol)
             target = self.router.active or self.sessions.foreground()
             self._speak_cue(target, "Volume {0} percent.".format(vol),
-                            exempt_mute=True, pause_exempt=True)
+                            exempt_mute=True, pause_exempt=True,
+                            cue_key="volume")
             self._wake.set()
             return None
 
@@ -1927,21 +1929,34 @@ class SpeechDaemon:
             pass
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
-                   pause_exempt: bool = False) -> None:
+                   pause_exempt: bool = False, cue_key=None) -> None:
         """Speak a one-off confirmation/feedback cue (pause/mute/repeat/reread/...).
         These ALWAYS go to the reserved CONTROL channel, which the router serves
         ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
         session channel is gated by `ready()` (minqueue items / turn_done), so a cue
         placed there during a live stream would sit unplayed and then burst out when
         the turn flushed; CONTROL makes the cue immediate regardless of stream state.
-        The *session* arg is accepted for call-site clarity but no longer routes."""
+        The *session* arg is accepted for call-site clarity but no longer routes.
+
+        *cue_key* coalesces slider spam: a keyed cue removes every pending cue
+        with the same key and cuts one mid-speech, so dragging a slider speaks
+        only the final value instead of the whole stacked sweep."""
         from sonara.router import CONTROL
         ch = self.router.channel(CONTROL)
         if ch.caught_up():
             ch.wipe()                      # control cues don't replay; keep it small
+        elif cue_key is not None:
+            stale = [i for i in range(ch.cursor, len(ch.items))
+                     if ch.items[i].cue_key == cue_key]
+            for i in reversed(stale):
+                ch.items.pop(i)
+        if cue_key is not None:
+            cur = self._current_item
+            if cur is not None and getattr(cur, "cue_key", None) == cue_key:
+                self.speaker.cancel()      # stale value mid-utterance: cut it
         item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
-                          pause_exempt=pause_exempt)
+                          pause_exempt=pause_exempt, cue_key=cue_key)
         # APPEND, do not cursor-insert: CONTROL is already served ahead of every
         # session, and inserting at the cursor made STACKED cues play LIFO --
         # the user heard state confirmations newest-first (deep audit #25).
