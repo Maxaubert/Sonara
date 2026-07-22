@@ -1034,7 +1034,22 @@ class SpeechDaemon:
                 self.ducker.duck(self._duck_exclude_pids(), level)
             target = self.router.active or self.sessions.foreground()
             self._speak_cue(target, "Duck level {0} percent.".format(level),
-                            exempt_mute=True, pause_exempt=True)
+                            exempt_mute=True, pause_exempt=True,
+                            cue_key="duck_level")
+            self._wake.set()
+            return None
+
+        if t == MsgType.SET_VOLUME:
+            try:
+                vol = max(25, min(200, int(msg.get("volume"))))
+            except (TypeError, ValueError):
+                return None
+            self.config["volume"] = vol
+            save_config(self.config)
+            self._apply_volume(vol)
+            # No spoken confirmation, ever (user decision): the instant
+            # session-volume change is its own feedback, and the slider is
+            # the only surface, so the number is already on screen.
             self._wake.set()
             return None
 
@@ -1919,21 +1934,34 @@ class SpeechDaemon:
             pass
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
-                   pause_exempt: bool = False) -> None:
+                   pause_exempt: bool = False, cue_key=None) -> None:
         """Speak a one-off confirmation/feedback cue (pause/mute/repeat/reread/...).
         These ALWAYS go to the reserved CONTROL channel, which the router serves
         ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
         session channel is gated by `ready()` (minqueue items / turn_done), so a cue
         placed there during a live stream would sit unplayed and then burst out when
         the turn flushed; CONTROL makes the cue immediate regardless of stream state.
-        The *session* arg is accepted for call-site clarity but no longer routes."""
+        The *session* arg is accepted for call-site clarity but no longer routes.
+
+        *cue_key* coalesces slider spam: a keyed cue removes every pending cue
+        with the same key and cuts one mid-speech, so dragging a slider speaks
+        only the final value instead of the whole stacked sweep."""
         from sonara.router import CONTROL
         ch = self.router.channel(CONTROL)
         if ch.caught_up():
             ch.wipe()                      # control cues don't replay; keep it small
+        elif cue_key is not None:
+            stale = [i for i in range(ch.cursor, len(ch.items))
+                     if ch.items[i].cue_key == cue_key]
+            for i in reversed(stale):
+                ch.items.pop(i)
+        if cue_key is not None:
+            cur = self._current_item
+            if cur is not None and getattr(cur, "cue_key", None) == cue_key:
+                self.speaker.cancel()      # stale value mid-utterance: cut it
         item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
-                          pause_exempt=pause_exempt)
+                          pause_exempt=pause_exempt, cue_key=cue_key)
         # APPEND, do not cursor-insert: CONTROL is already served ahead of every
         # session, and inserting at the cursor made STACKED cues play LIFO --
         # the user heard state confirmations newest-first (deep audit #25).
@@ -2168,6 +2196,15 @@ class SpeechDaemon:
         except AttributeError:
             pass
         return pids
+
+    def _apply_volume(self, percent) -> None:
+        """Push the speech gain to the platform playback layer. Best-effort:
+        tests and non-Windows runs have no platform backend."""
+        try:
+            from sonara.platform import get_platform
+            get_platform().tts.set_volume(percent)
+        except Exception:  # noqa: BLE001 - volume must never break the daemon
+            pass
 
     def _maybe_engage_audio(self) -> None:
         mode = self._audio_mode()
@@ -2686,6 +2723,7 @@ def main() -> None:
     daemon = SpeechDaemon(speaker, sessions, cfg,
                           ducker=_backend.ducker, pauser=_backend.pauser,
                           prefs=SessionPrefs(store_path=SESSION_PREFS_PATH))
+    daemon._apply_volume(cfg.get("volume", 100))   # restore persisted speech gain
     daemon.run()
 
 

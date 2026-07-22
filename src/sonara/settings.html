@@ -219,6 +219,7 @@
         <div class="title-row"><div><h1>Audio</h1><p>Balance spoken output with the rest of Windows.</p></div><span class="state"><i></i>Saved</span></div>
         <div class="group-label"><span>Background sound</span></div>
         <div class="inset">
+          <div class="pref" id="volume-row"><div class="pref-copy"><strong>Speech volume</strong><div class="hint">How loud Sonara speaks.</div></div><div class="control"><div class="range-head"><span>Volume</span><output id="volume-out">100 %</output></div><input class="range" id="volume" type="range" min="25" max="200" step="5" value="100"><div class="ends"><span>25 quiet</span><span>200 loud</span></div><div class="hint">Applies to speech from every engine. Beeps are unaffected.</div></div></div>
           <div class="pref"><div class="pref-copy"><strong>Audio</strong><div class="hint">What happens to other apps while Sonara speaks.</div></div><div class="control"><div class="segments" id="audio-seg" role="tablist"><button data-mode="off">Off</button><button data-mode="duck">Duck</button><button data-mode="pause">Pause</button></div><div class="hint" id="audio-mode-hint">Other apps play at full volume.</div></div></div>
           <div class="pref" id="duck-row"><div class="pref-copy"><strong>Duck level</strong><div class="hint">Volume retained by other applications.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out">20%</output></div><input class="range" id="duck" type="range" min="0" max="100" value="20"><div class="ends"><span>Silent</span><span>Full</span></div><div class="hint">Lower values preserve context without competing with speech.</div></div></div>
         </div>
@@ -637,6 +638,8 @@ function render(s) {
   document.querySelectorAll("#audio-seg button").forEach(b =>
     b.classList.toggle("active", b.dataset.mode === audioMode));
   document.getElementById("audio-mode-hint").textContent = AUDIO_HINTS[audioMode];
+  setVal("volume", s.config.volume);
+  document.getElementById("volume-out").textContent = s.config.volume + " %";
   gateRow("duck-row", audioMode !== "duck", ["duck"]);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
@@ -755,6 +758,7 @@ document.getElementById("voice-preview").addEventListener("click", () => {
 document.getElementById("rate").addEventListener("change", e => set("rate", +e.target.value));
 document.getElementById("timeout").addEventListener("change", e => set("summary_timeout", +e.target.value));
 document.getElementById("settle").addEventListener("change", e => set("summary_settle_ms", +e.target.value));
+document.getElementById("volume").addEventListener("change", e => set("volume", parseInt(e.target.value)));
 document.getElementById("duck").addEventListener("change", e => set("duck_level", +e.target.value));
 document.getElementById("chunk").addEventListener("change", e => set("chatterbox_max_chunk_chars", +e.target.value));
 document.getElementById("exag").addEventListener("change", e => set("chatterbox_exaggeration", +e.target.value));

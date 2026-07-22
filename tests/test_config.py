@@ -12,6 +12,7 @@ def test_defaults_has_documented_top_level_keys():
         "minqueue",
         "audio_control",
         "duck_level",
+        "volume",
         "audio_mode",
         "summary_mode",
         "summary_model",

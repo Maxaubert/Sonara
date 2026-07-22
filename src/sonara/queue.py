@@ -12,3 +12,4 @@ class SpeechItem:
     is_decision: bool  # True for choice|plan|permission
     mute_exempt: bool = False  # spoken even when the session is muted (e.g. "muted")
     pause_exempt: bool = False  # spoken even while the loop is paused (e.g. "Paused.")
+    cue_key: "str | None" = None  # coalescing key: a new cue supersedes pending/speaking cues with the same key (slider spam)

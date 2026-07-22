@@ -26,6 +26,10 @@ class TtsBackend(abc.ABC):
     def list_voices(self) -> "list[str]":
         """Return installed voice names (may be empty)."""
 
+    def set_volume(self, percent) -> None:
+        """Speech gain percent (25-200). Default: no-op (backend has no gain)."""
+        return None
+
 
 class EarconBackend(abc.ABC):
     @abc.abstractmethod
