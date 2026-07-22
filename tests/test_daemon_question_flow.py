@@ -116,7 +116,7 @@ def test_hold_release_speaks_question_when_digest_is_slow(monkeypatch):
     _fire_settle(daemon)
     assert "fg" in daemon._held_decision
     assert len(timers) == 1
-    daemon._release_held_decision(*timers[0])           # the 5s cap fires
+    daemon._release_held_decision(*timers[0])           # the wedge-guard cap fires
     ch = daemon.router.channel("fg")
     assert any(i.is_decision for i in ch.items)          # question speaks NOW
     assert "fg" not in daemon._held_decision
@@ -222,3 +222,15 @@ def test_post_answer_prose_still_flows(monkeypatch):
     assert spawned, "post-answer turn-end digest must still dispatch"
     assert "after your answer" in spawned[-1]["text"]
     assert "Lead-in before question" not in spawned[-1]["text"]
+
+
+def test_hold_cap_covers_real_leadin_latency():
+    # The cap is the WEDGE guard, not the normal path: live logs measured
+    # digests at median 8.7s / p90 17.7s, so the original 5s cap made the
+    # "bounded inversion" (question speaks before its context) the COMMON
+    # case instead of the escape hatch. The worker's finally releases the
+    # question the moment the digest lands or fails, so a generous cap only
+    # bounds a genuinely hung summarizer; the attention earcon fires
+    # instantly either way.
+    from sonara.daemon import _DECISION_HOLD_MAX_S
+    assert _DECISION_HOLD_MAX_S >= 30.0

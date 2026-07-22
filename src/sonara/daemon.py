@@ -86,9 +86,14 @@ _DEBOUNCED_HOTKEYS = (
 _SUMMARY_MIN_CHARS = 280
 
 # Max seconds a blocking question is HELD behind its in-flight lead-in digest
-# (#83). Context-first ordering is worth a short wait, not the summarizer's
-# full 10-40s call: past the cap the question speaks and the digest follows.
-_DECISION_HOLD_MAX_S = 5.0
+# (#83). This is the WEDGE guard, not the normal path: the digest worker's
+# finally releases the question the instant the digest lands or fails, and the
+# question's attention earcon fires immediately regardless. Live logs measured
+# digests at median 8.7s / p90 17.7s, so the original 5s cap fired on nearly
+# every question and made the "bounded inversion" (question before context)
+# the common case (#103). The cap must comfortably exceed real digest latency;
+# past it the question speaks and the digest follows (hung summarizer only).
+_DECISION_HOLD_MAX_S = 30.0
 
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
 # (one request each), so this bound is generous; it just stops a misbehaving or
@@ -1484,10 +1489,11 @@ class SpeechDaemon:
         if digesting or self._inflight_digests.get(session, 0) > 0:
             owner = self._last_dispatch_token.get(session, 0)
             self._held_decision[session] = (owner, item)
-            # Cap the hold (#83): context-first ordering is worth a short wait,
-            # not the summarizer's whole 10-40s call of silence before a
-            # BLOCKING question. Past the cap the question speaks and the
-            # digest follows (bounded inversion; a caught-up user drops it).
+            # Cap the hold (#83, retuned #103): the wedge guard for a hung
+            # summarizer. The normal release is the digest worker's finally,
+            # which frees the question the moment its context lands or fails.
+            # Past the cap the question speaks and the digest follows
+            # (bounded inversion; a caught-up user drops it).
             self._schedule_hold_release(session, owner, item)
         else:
             self.router.channel(session).append(item)
