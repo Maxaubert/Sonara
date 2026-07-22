@@ -23,7 +23,7 @@ class FakeDaemon:
         self.config = {"voice": "af_heart", "rate": 250, "minqueue": 5,
                        "summary_mode": True, "summary_model": "haiku",
                        "summary_timeout": 60, "summary_settle_ms": 600,
-                       "audio_control": False, "duck_level": 20,
+                       "audio_control": False, "duck_level": 20, "volume": 100,
                        "chatterbox_max_chunk_chars": 280, "chatterbox_exaggeration": 0.0,
                        "chatterbox_variant": "turbo",
                        "settings_port": 0}
@@ -118,6 +118,14 @@ def test_set_message_backed_key_dispatches(server):
     assert r.status == 200
     assert d.messages[-1]["type"] == "set_rate"
     assert d.messages[-1]["rate"] == 220
+
+
+def test_api_set_volume_dispatches(server):
+    d, s = server
+    r = _post(s, "/api/set", {"key": "volume", "value": 150})
+    assert r.status == 200
+    assert any(m.get("type") == "set_volume" and m.get("volume") == 150
+               for m in d.messages)
 
 
 def test_set_summary_mode_uses_enabled_field(server):
