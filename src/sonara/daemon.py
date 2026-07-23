@@ -871,20 +871,15 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.FLUSH_SESSION:
-            # Flush to end: skip ALL pending items for the engaged session and go
-            # idle. Non-destructive: skipped items keep their history entries
-            # UNHEARD (we pop their _pending_heard markers so note_spoken never
-            # flips them True), so CATCH_UP / REPEAT can bring them back. Mirrors
-            # JUMP_DECISION but advances the cursor to the very end, not the next
-            # decision. Nothing is wiped; this is a cursor move. In summary mode
-            # it ALSO drops deferred/held questions and kills in-flight digests
-            # (#83) - a digest landing after "go to end" used to speak anyway.
-            fg = self._engaged_session()
-            if fg is None:
-                self._earcon("nav_edge")
-                return None
-            dropped = self._user_caught_up(fg)
-            self._earcon("nav" if dropped else "nav_edge")
+            # Flush to end: silence EVERYTHING queued or in flight across ALL
+            # sessions and go idle (#107). The old per-engaged-session flush
+            # left other sessions' landed or reorder-parked digests holding
+            # the floor: the key chimed success, a handoff started reading
+            # seconds later anyway, and a re-press in the silent gap found an
+            # "empty" queue (the flush soft-lock). Non-destructive: skipped
+            # items keep their history entries UNHEARD, so CATCH_UP / REPEAT
+            # can bring them back.
+            self._earcon("nav" if self._flush_all() else "nav_edge")
             return None
 
         if t == MsgType.CHOICE_ANSWERED:
@@ -1311,6 +1306,9 @@ class SpeechDaemon:
             # (issue #11). note_spoken also nulls this later; idempotent.
             self._current_item = None
         dropped = bool(self._pending_decision.pop(session, None))
+        # A live settle window means a digest was ABOUT to dispatch: killing
+        # it is a user-visible silencing, so it counts as dropped (#107).
+        dropped = (session in self._settle_pending) or dropped
         self._cancel_settle(session)
         dropped = bool(self._held_decision.pop(session, None)) or dropped
         self._await_choice.discard(session)
@@ -1331,6 +1329,37 @@ class SpeechDaemon:
             self._voiced_upto[session] = entries[-1]
         self._wake.set()
         return bool(skipped or cutting or dropped)
+
+    def _flush_all(self) -> bool:
+        """Flush-to-end (#107): silence everything queued or in flight across
+        ALL sessions. Per-session state goes through _user_caught_up
+        (non-destructive skip, current-utterance cut, in-flight digest kill,
+        settle cancel); completed digests PARKED in the reorder buffer are
+        landed dead in place (they already left the in-flight count, so the
+        per-session kill cannot see them); a stale deferred handoff alert and
+        an armed-but-unemitted switch announcement are dropped. Caller holds
+        the lock. Returns True when anything was skipped, cut, or killed."""
+        from sonara.router import CONTROL
+        sessions = (set(self.router.channels) | set(self._inflight_digests)
+                    | set(self._pending_decision) | set(self._held_decision)
+                    | set(self._settle_pending))
+        cur = self._current_item
+        if cur is not None:
+            sessions.add(cur.session)      # cut audio even for an untracked session
+        sessions.discard(CONTROL)          # control cues are sub-second; let them be
+        dropped = False
+        for sid in sessions:
+            dropped = self._user_caught_up(sid) or dropped
+        for seq, fn in list(self._digest_parked.items()):
+            if fn is not None:
+                self._digest_parked[seq] = None    # land the slot dead
+                dropped = True
+        if self._pending_preamble is not None:
+            self._pending_preamble = None
+        if self.router._pending_announce is not None:
+            self.router._pending_announce = None
+            self.router._pending_announce_replay = False
+        return dropped
 
     def _reading_msg_id(self, session: str):
         """The message id of the item currently being spoken for *session*, or None
@@ -1510,9 +1539,42 @@ class SpeechDaemon:
             # Past the cap the question speaks and the digest follows
             # (bounded inversion; a caught-up user drops it).
             self._schedule_hold_release(session, owner, item)
+            # The digest and the question are SERIALIZED at playback, so the
+            # question's first Chatterbox chunk used to start synthesizing only
+            # after the context finished playing: an audible 10-20s silence
+            # between context and question (probe-confirmed live, #109). The
+            # question text is already final here and the GPU idles while the
+            # summarizer runs, so warm the synth cache now.
+            self._prefetch_decision_audio(item)
         else:
             self.router.channel(session).append(item)
         self._wake.set()
+
+    def _prefetch_decision_audio(self, item) -> None:
+        """Pre-synthesize a held question's FIRST Chatterbox chunk into the
+        synth cache while its lead-in digest is still generating (#109). At
+        playback time the handle gets a cache hit and the question follows its
+        context with no synthesis silence. Chatterbox only: the fast engines
+        have no gap worth hiding. Best-effort on a daemon thread; the client's
+        own lock serializes it against digest chunk synthesis."""
+        def work():
+            try:
+                from sonara import chatterbox, kokoro
+                voice = (self.session_prefs.voice(item.session)
+                         or self.config.get("voice"))
+                if kokoro.is_kokoro_voice(voice):
+                    return               # Kokoro names take precedence (tts.run)
+                if not (chatterbox.is_chatterbox_voice(voice)
+                        and chatterbox.is_provisioned()):
+                    return
+                cfg = load_config()
+                chunks = chatterbox.split_text(
+                    item.text, max_chars=chatterbox.chunk_chars(cfg))
+                if chunks:
+                    chatterbox.CLIENT.synth_wav(chunks[0], voice, cfg)
+            except Exception:  # noqa: BLE001 - a prefetch failure must never break the flow
+                pass
+        threading.Thread(target=work, name="sonara-prefetch", daemon=True).start()
 
     def _schedule_hold_release(self, session: str, owner: int, item) -> None:
         """Arm the held-question release timer. Test seam: tests call
