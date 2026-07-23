@@ -234,3 +234,53 @@ def test_hold_cap_covers_real_leadin_latency():
     # instantly either way.
     from sonara.daemon import _DECISION_HOLD_MAX_S
     assert _DECISION_HOLD_MAX_S >= 30.0
+
+
+# --- D: the held question's audio is prefetched during digest generation ------
+
+def test_held_question_prefetches_first_chunk(monkeypatch):
+    # The context digest and the question are serialized at playback, so the
+    # question's first Chatterbox chunk used to start synthesizing only AFTER
+    # the context finished playing: an audible 10-20s silence between context
+    # and question (probe-confirmed live). Holding must kick a cache prefetch
+    # of the question's first chunk while the digest generates on idle GPU.
+    import time
+    from sonara import chatterbox, kokoro
+    daemon, speaker, spawned = _summary_daemon(monkeypatch)
+    daemon.config["voice"] = "linus"
+    calls = []
+    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
+    monkeypatch.setattr(chatterbox, "is_chatterbox_voice", lambda v: v == "linus")
+    monkeypatch.setattr(kokoro, "is_kokoro_voice", lambda v: False)
+    monkeypatch.setattr(chatterbox.CLIENT, "synth_wav",
+                        lambda text, name, cfg: calls.append((text, name)) or b"RIFF")
+    import sonara.daemon as daemon_mod
+    monkeypatch.setattr(daemon_mod, "load_config", lambda: dict(daemon.config))
+    _prose(daemon, "Some meaty lead-in prose before the question arrives here. ")
+    _question(daemon)
+    _fire_settle(daemon)
+    assert "fg" in daemon._held_decision      # held: prefetch should be running
+    for _ in range(100):
+        if calls:
+            break
+        time.sleep(0.02)
+    assert calls, "no prefetch happened"
+    text, name = calls[0]
+    assert name == "linus"
+    assert text.startswith("Deploy now?")     # first chunk of the question
+
+
+def test_no_prefetch_for_non_chatterbox_voice(monkeypatch):
+    import time
+    from sonara import chatterbox, kokoro
+    daemon, speaker, spawned = _summary_daemon(monkeypatch)
+    daemon.config["voice"] = "af_heart"
+    calls = []
+    monkeypatch.setattr(kokoro, "is_kokoro_voice", lambda v: v == "af_heart")
+    monkeypatch.setattr(chatterbox.CLIENT, "synth_wav",
+                        lambda text, name, cfg: calls.append(text))
+    _prose(daemon, "Some meaty lead-in prose before the question arrives here. ")
+    _question(daemon)
+    _fire_settle(daemon)
+    time.sleep(0.3)
+    assert calls == []                        # Kokoro is fast; no prefetch

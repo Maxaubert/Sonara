@@ -1539,9 +1539,42 @@ class SpeechDaemon:
             # Past the cap the question speaks and the digest follows
             # (bounded inversion; a caught-up user drops it).
             self._schedule_hold_release(session, owner, item)
+            # The digest and the question are SERIALIZED at playback, so the
+            # question's first Chatterbox chunk used to start synthesizing only
+            # after the context finished playing: an audible 10-20s silence
+            # between context and question (probe-confirmed live, #109). The
+            # question text is already final here and the GPU idles while the
+            # summarizer runs, so warm the synth cache now.
+            self._prefetch_decision_audio(item)
         else:
             self.router.channel(session).append(item)
         self._wake.set()
+
+    def _prefetch_decision_audio(self, item) -> None:
+        """Pre-synthesize a held question's FIRST Chatterbox chunk into the
+        synth cache while its lead-in digest is still generating (#109). At
+        playback time the handle gets a cache hit and the question follows its
+        context with no synthesis silence. Chatterbox only: the fast engines
+        have no gap worth hiding. Best-effort on a daemon thread; the client's
+        own lock serializes it against digest chunk synthesis."""
+        def work():
+            try:
+                from sonara import chatterbox, kokoro
+                voice = (self.session_prefs.voice(item.session)
+                         or self.config.get("voice"))
+                if kokoro.is_kokoro_voice(voice):
+                    return               # Kokoro names take precedence (tts.run)
+                if not (chatterbox.is_chatterbox_voice(voice)
+                        and chatterbox.is_provisioned()):
+                    return
+                cfg = load_config()
+                chunks = chatterbox.split_text(
+                    item.text, max_chars=chatterbox.chunk_chars(cfg))
+                if chunks:
+                    chatterbox.CLIENT.synth_wav(chunks[0], voice, cfg)
+            except Exception:  # noqa: BLE001 - a prefetch failure must never break the flow
+                pass
+        threading.Thread(target=work, name="sonara-prefetch", daemon=True).start()
 
     def _schedule_hold_release(self, session: str, owner: int, item) -> None:
         """Arm the held-question release timer. Test seam: tests call
