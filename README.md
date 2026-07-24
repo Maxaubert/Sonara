@@ -189,28 +189,22 @@ they apply.
 
 ### Slash commands and CLI
 
-Most of these ship as `/sonara:` slash commands (the files in `commands/`); the rest are
-CLI-only (run `sonara <cmd>` in a terminal).
+Day-to-day tuning (voice, rate, summaries, audio, sessions, hotkeys) lives in the
+**settings page** (`/sonara:settings`). Only the lifecycle essentials ship as
+`/sonara:` slash commands; everything else remains available as a CLI subcommand
+(run `sonara <cmd>` in a terminal).
 
 | Slash command | CLI | Effect |
 |---|---|---|
 | `/sonara:install` | `sonara install` | One-time setup: speech engine (PyWinRT), autostart, global hotkeys, control CLI (copies runtime to `~/.sonara/app`) |
-| `/sonara:uninstall` | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
-| `/sonara:status` | `sonara status` | Show voice, rate, verbosity, min-queue, foreground session, queue length |
-| `/sonara:verbosity <level>` | `sonara verbosity <level>` | Set `everything` / `medium` / `quiet` |
-| `/sonara:voice <name>` | `sonara voice <name>` | Set the speech voice (omit the name to list voices) |
-| `/sonara:voices` | `sonara voices` | Install or remove neural voices (Kokoro or Chatterbox) |
-| `/sonara:rate <wpm>` | `sonara rate <wpm>` | Set words-per-minute |
-| `/sonara:minqueue <n>` | `sonara minqueue <n>` | Batch this many items before reading (1-10; 1 = read immediately) |
-| `/sonara:summary [on\|off]` | `sonara summary [on\|off]` | Speak an AI recap of each finished turn instead of full narration (off = full narration; bare prints state) |
-| - | `sonara repeat` | Re-speak the last item |
-| - | `sonara skip` | Skip the current item |
-| - | `sonara stop` | Stop now and clear the queue |
-| - | `sonara shutdown` | Stop the daemon and supervisor; stays stopped until `sonara start` |
-| - | `sonara start` | Start the daemon (clears a previous shutdown) |
-| `/sonara:settings` | `sonara settings` | Open the browser settings page (voice, rate, summary, audio duck, hotkeys, daemon) |
+| `/sonara:settings` | `sonara settings` | Open the browser settings page (voice, rate, summary, audio, sessions, hotkeys, daemon) |
+| `/sonara:start` | `sonara start` | Start the daemon (clears a previous shutdown; the settings page cannot do this because the daemon serves it) |
 | `/sonara:doctor` | `sonara doctor` | Run all health checks |
-| `/sonara:keymap` | `sonara keymap` | Show the active global hotkey bindings |
+| `/sonara:uninstall` | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
+
+CLI-only (no slash command): `sonara status`, `verbosity`, `voice`, `voices`
+(install/remove Kokoro or Chatterbox), `rate`, `minqueue`, `summary`,
+`audio-mode`, `duck-level`, `keymap`, `repeat`, `skip`, `stop`, `shutdown`.
 
 ## Verbosity
 
