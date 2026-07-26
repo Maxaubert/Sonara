@@ -24,6 +24,7 @@ class Router:
         self._last_active: "str | None" = None   # last session that actually read (persists across idle gaps)
         self._pending_announce: "str | None" = None
         self._pending_announce_replay = False
+        self._pending_announce_manual = False   # True when armed by NEXT_SESSION
         # Sessions explicitly authorized to bypass the background-policy gate
         # (set by catch_up / nav cross-session replay so their replayed items
         # are voiced even when the session is not the current foreground).
@@ -51,6 +52,7 @@ class Router:
         if self._pending_announce == session:
             self._pending_announce = None
             self._pending_announce_replay = False
+            self._pending_announce_manual = False
         self._replay_authorized.discard(session)
         self._suppressed.pop(session, None)
 
@@ -67,26 +69,39 @@ class Router:
         return True
 
     def next_session(self) -> "tuple[str | None, bool]":
-        """Manual session-change: a pure round-robin. Advance the active reader to
-        the next session after the current one in a FIXED order (channel insertion
-        order, excluding CONTROL), wrapping; with one session it lands on itself.
+        """Manual session-change: a pure round-robin. Advance the reader to the
+        next session after the CURRENT RING POSITION in a FIXED order (channel
+        insertion order, excluding CONTROL), wrapping; with one session it lands
+        on itself. The ring position is the active reader, falling back to the
+        last session that read (_pick() clears `active` whenever the queue
+        drains, and a ring keyed only on `active` reset to the FIRST session
+        after every idle gap - sessions past it were unreachable, #111).
         A read (caught-up) target is reset to 0 and replayed (replay=True); an
         unread target resumes from its cursor (replay=False). Returns (None, False)
         only when there are no channels. Arms the session-change announcement."""
-        keys = [s for s in self.channels if s != CONTROL]
+        all_keys = [s for s in self.channels if s != CONTROL]
+        if not all_keys:
+            return (None, False)
         # A muted session never takes the floor on a manual cycle; if EVERY
         # other session is muted, degrade to the plain ring (never dead-end).
-        audible = [s for s in keys if not self.channels[s].muted]
-        if audible:
-            keys = audible
-        if not keys:
-            return (None, False)
+        audible = [s for s in all_keys if not self.channels[s].muted]
+        ring = audible if audible else all_keys
         old = self.active
-        if self.active in keys:
-            i = keys.index(self.active)
-            target = keys[(i + 1) % len(keys)]     # next in the fixed ring (wraps)
+        cur = self.active if self.active is not None else self._last_active
+        if cur in ring:
+            target = ring[(ring.index(cur) + 1) % len(ring)]  # next in the ring (wraps)
+        elif cur in all_keys:
+            # The position session exists but is muted out of the ring: advance
+            # from its slot in the full order to the next audible session.
+            i = all_keys.index(cur)
+            target = ring[0]
+            for j in range(1, len(all_keys) + 1):
+                cand = all_keys[(i + j) % len(all_keys)]
+                if cand in ring:
+                    target = cand
+                    break
         else:
-            target = keys[0]
+            target = ring[0]
         # Force-switching AWAY from a session suppresses its auto-resume until it
         # gets new content; landing on a session (manual return) clears suppression.
         if old is not None and old != target and old in self.channels:
@@ -95,14 +110,15 @@ class Router:
         replay = self.channels[target].caught_up()
         if replay:
             self.channels[target].reset()
-        self._arm_switch(target, replay)
+        self._arm_switch(target, replay, manual=True)
         return (target, replay)
 
-    def _arm_switch(self, target: str, replay: bool) -> None:
+    def _arm_switch(self, target: str, replay: bool, manual: bool = False) -> None:
         self.active = target
         self._last_active = target                 # auto won't re-announce after
         self._pending_announce = target
         self._pending_announce_replay = replay
+        self._pending_announce_manual = manual
 
     def _ready(self, session: str) -> bool:
         ch = self.channels.get(session)
@@ -186,14 +202,19 @@ class Router:
             folder = (label or self.sessions.folder(self._pending_announce)
                       or "another session")
             text = self._announce_text(folder, self._pending_announce_replay)
+            manual = self._pending_announce_manual
             self._pending_announce = None
             self._pending_announce_replay = False
+            self._pending_announce_manual = False
             # kind "session_change" lets the speak loop fire the session-switch
             # earcon (chime) just before voicing the announcement. NOT mute_exempt:
             # global mute silences hand-offs too (both the chime and the spoken
-            # announcement) -- mute means silence.
+            # announcement) -- mute means silence. manual=True marks a NEXT_SESSION
+            # press: the speak loop voices it immediately in the cue voice instead
+            # of deferring to the target content's synthesis-ready callback (#111).
             return SpeechItem(id=0, session=self.active or "", kind="session_change",
-                              text=text, is_decision=False, mute_exempt=False)
+                              text=text, is_decision=False, mute_exempt=False,
+                              manual=manual)
         # Global control cues (pause/mute/rate confirmations) are served ahead of
         # every session and never announce or change _last_active -- so they are
         # heard even when no session is registered/foreground.
@@ -214,6 +235,7 @@ class Router:
                     and target != self._last_active):
                 self._pending_announce = target
                 self._pending_announce_replay = False
+                self._pending_announce_manual = False
                 self._last_active = target
                 return self.next_item()
             self._last_active = target

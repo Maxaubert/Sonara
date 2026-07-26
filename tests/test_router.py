@@ -117,6 +117,50 @@ def test_next_session_advances_one_slot_in_fixed_order():
     assert r.next_session()[0] == "A"              # C -> A (wrap)
 
 
+def test_next_session_continues_ring_after_idle_gap():
+    # _pick() clears `active` whenever the queue drains; the ring must continue
+    # from the LAST reader, not reset to the first channel (#111: sessions past
+    # the first were unreachable when presses were spaced across idle gaps).
+    r, s = _router()
+    for name in ("A", "B", "C"):
+        ch = r.channel(name); ch.append(_item(name, name.lower())); ch.turn_done = True
+    r.active = None; r._last_active = "B"          # idle gap after B read
+    assert r.next_session()[0] == "C"              # continues B -> C, not reset to A
+    r.active = None; r._last_active = "C"
+    assert r.next_session()[0] == "A"              # wraps
+
+
+def test_next_session_muted_last_active_advances_to_next_audible():
+    # The ring position may be a session that is now muted (excluded from the
+    # audible ring): advance from ITS slot to the next audible session instead
+    # of resetting to the first.
+    r, s = _router()
+    for name in ("A", "B", "C"):
+        ch = r.channel(name); ch.append(_item(name, name.lower())); ch.turn_done = True
+    r.channels["B"].muted = True
+    r.active = None; r._last_active = "B"
+    assert r.next_session()[0] == "C"              # B's slot -> next audible (C)
+
+
+def test_next_session_arms_manual_announcement():
+    # A manual switch emits its session_change item with manual=True so the
+    # speak loop voices it immediately; an auto handoff stays manual=False.
+    r, s = _router()
+    s._folders = {"A": "alpha", "B": "beta"}; s._fg = "A"
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    assert r.next_item().text == "a1"              # A is the reader
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.next_session()                               # manual: A -> B
+    item = r.next_item()
+    assert item.kind == "session_change" and item.manual is True
+    # drain B, then an AUTO handoff back to a refilled A announces manual=False
+    assert r.next_item().text == "b1"
+    s._fg = "A"
+    a.append(_item("A", "a2")); a.turn_done = True
+    item = r.next_item()
+    assert item.kind == "session_change" and item.manual is False
+
+
 def test_next_session_resumes_an_unread_target_no_replay():
     r, s = _router()
     a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True

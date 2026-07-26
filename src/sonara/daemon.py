@@ -69,12 +69,14 @@ MINQUEUE_MIN = 0     # 0 = start reading immediately, no batching (#60 follow-up
 MINQUEUE_MAX = 10
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
-# accidental/rapid double-tap doesn't flip pause/mute/session several times (and pile
+# accidental/rapid double-tap doesn't flip pause/mute several times (and pile
 # up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced --
-# repeated presses there are intentional.
+# repeated presses there are intentional. NEXT_SESSION is directional too: each
+# press is a deliberate ring advance (and now chimes instantly, #111), and
+# MOD_NOREPEAT already guards key-hold auto-repeat, so it is not debounced.
 _HOTKEY_DEBOUNCE_S = 0.30
 _DEBOUNCED_HOTKEYS = (
-    MsgType.PAUSE, MsgType.MUTE, MsgType.NEXT_SESSION, MsgType.CYCLE_VERBOSITY,
+    MsgType.PAUSE, MsgType.MUTE, MsgType.CYCLE_VERBOSITY,
 )
 
 # Summary mode: a turn whose prose is already shorter than this is spoken
@@ -810,6 +812,16 @@ class SpeechDaemon:
             if target is None:
                 self._speak_cue(None, "No session.", exempt_mute=True,
                                 pause_exempt=True)
+            else:
+                # Instant press feedback (#111): fire the switch chime NOW, from
+                # the handler (the earcon player is a non-blocking subprocess).
+                # The deferred #94 alert only sounded at the target content's
+                # synthesis-ready callback, leaving a manual press with ZERO
+                # audio for the whole first-chunk synthesis - it felt dead.
+                try:
+                    self._earcon("session_change")
+                except Exception:  # noqa: BLE001 - feedback must not break the switch
+                    pass
             self._wake.set()
             return None
 
@@ -2362,6 +2374,23 @@ class SpeechDaemon:
                 self._pending_preamble = None
             return
         if item.kind == "session_change":
+            if item.manual:
+                # Manual switch (#111): the press already chimed from the hotkey
+                # handler; speak the announcement NOW in the fast cue voice
+                # instead of deferring to the target content's synthesis-ready
+                # callback. Deferral (#94) exists so an AUTO handoff's alert
+                # doesn't play seconds before slow-engine audio; a manual press
+                # needs immediate confirmation, and the cue voice is warm.
+                try:
+                    completed = self.speaker.speak(item.text,
+                                                   cancel_epoch=cancel_epoch,
+                                                   **self._cue_voice_override(item))
+                except Exception:  # noqa: BLE001
+                    self._signal_speak_failure()
+                    completed = False
+                if not self._requeue_or_note(item, completed):
+                    self.note_spoken(item, completed)
+                return
             if self.config.get("fast_cues", True):
                 # Defer the alert (#94): stash it and play the chime + spoken
                 # announcement from the CONTENT utterance's on_play, so a slow
