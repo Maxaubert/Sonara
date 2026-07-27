@@ -340,6 +340,41 @@ def test_cancel_during_synthesis_aborts_before_play():
     assert made[0].wait_calls == 0         # never waited on / played
 
 
+def test_cancel_mid_synthesis_unblocks_speak_immediately():
+    """#116: speak() must not wait out a cancelled utterance's synthesis. A
+    cancel during a SLOW say_runner returns False promptly (so the speak loop
+    can voice the next item, e.g. a session-change announcement); the abandoned
+    helper terminates the late-arriving proc so its audio never plays."""
+    import threading
+    import time
+    release = threading.Event()
+    made = []
+
+    def slow_runner(text, voice, rate):
+        release.wait(5.0)                 # synthesis in progress
+        proc = FakePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=slow_runner)
+    result = {}
+    th = threading.Thread(target=lambda: result.setdefault("r", sp.speak("x")))
+    th.start()
+    time.sleep(0.15)                      # ensure speak is inside synthesis
+    t0 = time.monotonic()
+    sp.cancel()
+    th.join(2.0)
+    assert not th.is_alive()              # unblocked without finishing synthesis
+    assert time.monotonic() - t0 < 1.0    # promptly, not after the 5s synth
+    assert result["r"] is False
+    release.set()                         # synthesis finally completes
+    deadline = time.time() + 2.0
+    while time.time() < deadline and (not made or made[0].terminate_calls == 0):
+        time.sleep(0.01)
+    assert made and made[0].terminate_calls == 1   # orphan killed on arrival
+    assert made[0].wait_calls == 0                 # never waited on / played
+
+
 def test_speak_honors_external_cancel_epoch_baseline():
     """M2: the daemon captures the cancel epoch at CLAIM time (under its lock),
     then calls speak() AFTER releasing the lock. A cancel landing in that gap bumps
