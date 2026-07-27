@@ -164,6 +164,22 @@ def test_instructions_has_three_styles_each_with_firewall_and_skip():
         assert "first person" in text, style
 
 
+def test_every_style_protects_list_items_with_rule_and_example():
+    # #113: enumerations the user asked for were getting truncated (a 10-item
+    # "one sentence each" answer came back with a few items). Every style must
+    # carry an explicit keep-every-item rule AND a worked list example.
+    from sonara.summarizer import INSTRUCTIONS
+    for style, text in INSTRUCTIONS.items():
+        assert "EVERY item" in text or "item for item" in text, style
+        low = text.lower()
+        assert ("never drop" in low or "never by dropping" in low
+                or "never allowed" in low), style
+        # the shared 4-mod example input, preserved item-for-item in the output
+        assert "Waystones" in text, style
+        for mod in ("Create", "Waystones", "JEI", "Sodium"):
+            assert text.count(mod) >= 2, (style, mod)   # in the input AND the output
+
+
 def test_natural_style_is_the_legacy_instruction():
     from sonara.summarizer import INSTRUCTION, INSTRUCTIONS
     assert INSTRUCTIONS["natural"] == INSTRUCTION   # back-compat alias kept

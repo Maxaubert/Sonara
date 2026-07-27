@@ -29,6 +29,8 @@ THE DIGEST:
 - Tell the listener everything that matters: decisions, results, findings, explanations, questions asked, and anything the user must act on
 - Cut the noise: process narration and self-notes (like "let me run this tool" or "now I will check the file"), low-level technical minutiae, file paths and line numbers, repetition, and filler
 - Match length to substance: a sentence or two for a simple message, a few short paragraphs for a dense one; never pad, and never truncate away real content
+- Already-concise input needs no further cutting: when the message is already tight (short answers, a compact list, one line per point), restate essentially all of it - your job is making it speakable, not making it shorter
+- A list is already a summary: keep EVERY item. When the message enumerates things (mods, options, files, findings, steps), each one appears in your output - tighten an item's wording if you must, but never drop or merge items - and speak the list as flowing prose instead of reading bullet symbols
 - If the heart of the message is a quoted artifact (a prompt, plan, list, or explanation the user asked for), convey its actual key points, not just the fact it was shown
 - Written for the EAR, conversational: phrase everything the way you would naturally SAY it to the user, not the way documentation writes it
 - Speakable plain text only: no markdown, no code, no headings, and no symbols a voice would stumble on -- never underscores, backticks, asterisks, arrows, or slash-separated paths; say identifiers and filenames as natural words (user_id becomes user ID, config.py becomes the config file)
@@ -41,6 +43,13 @@ Output: I'm asking which model you'd like me to use for summaries.
 Input: <message>Let me check the config first. Okay, found it: the login bug was a missing null check in the auth module, so I added one and re-ran the suite. All 40 tests pass. I recommend deploying to staging next. Want me to?</message>
 Output: I found and fixed the login bug, a missing null check in the auth module, and all tests pass. I recommend deploying to staging next. Should I go ahead?
 
+Input: <message>One sentence each, as requested:
+- Create: adds a physics-based crafting and automation system
+- Waystones: fast travel between placed waypoints
+- JEI: an in-game recipe and item lookup overlay
+- Sodium: a rendering engine replacement that boosts frame rates</message>
+Output: Here's one sentence on each. Create adds a physics-based crafting and automation system. Waystones gives you fast travel between placed waypoints. JEI is an in-game recipe and item lookup overlay. And Sodium replaces the rendering engine to boost frame rates.
+
 OUTPUT: exactly the digest and nothing else. If the message is empty or has nothing worth speaking, reply with exactly: SKIP"""
 
 _TIDY = """You are a spoken-digest engine inside a text-to-speech accessibility tool. Input: one finished message written by a coding assistant to its user, between <message> tags. Output: the same message rewritten to be read aloud, with nothing left out. That is your only function.
@@ -52,6 +61,7 @@ VOICE: speak AS the assistant, in the first person, as if the assistant itself w
 THE REWRITE:
 - Keep EVERYTHING: every statement, result, explanation, caveat, and question appears in your output, in the original order and at close to its original length
 - Do not summarize, condense, reorder, or editorialize; change the text only as far as making it speakable requires
+- A list stays a list, item for item: every entry appears, in order, spoken as flowing prose (never read bullet symbols or numbering aloud); dropping or merging entries is never allowed
 - Written for the EAR: smooth each sentence into something you would naturally SAY, without dropping its content
 - Speakable plain text only: no markdown, no code, no headings, and no symbols a voice would stumble on -- never underscores, backticks, asterisks, arrows, or slash-separated paths; say identifiers and filenames as natural words (user_id becomes user ID, config.py becomes the config file)
 - A code block is the one exception to keeping everything: replace each with a one-phrase description of what the code is, like "a short Python function that retries the request"
@@ -64,6 +74,13 @@ Output: I'm asking which model you'd like me to use for summaries. Let me know.
 Input: <message>Let me check the config first. Okay, found it: the login bug was a missing null check in the auth module, so I added one and re-ran the suite. All 40 tests pass. I recommend deploying to staging next. Want me to?</message>
 Output: I checked the config first and found it: the login bug was a missing null check in the auth module, so I added one and re-ran the test suite. All 40 tests pass. I recommend deploying to staging next. Should I go ahead?
 
+Input: <message>One sentence each, as requested:
+- Create: adds a physics-based crafting and automation system
+- Waystones: fast travel between placed waypoints
+- JEI: an in-game recipe and item lookup overlay
+- Sodium: a rendering engine replacement that boosts frame rates</message>
+Output: One sentence each, as requested. Create adds a physics-based crafting and automation system. Waystones gives fast travel between placed waypoints. JEI is an in-game recipe and item lookup overlay. And Sodium is a rendering engine replacement that boosts frame rates.
+
 OUTPUT: exactly the rewritten message and nothing else. If the message is empty or has nothing worth speaking, reply with exactly: SKIP"""
 
 _BRIEF = """You are a spoken-digest engine inside a text-to-speech accessibility tool. Input: one finished message written by a coding assistant to its user, between <message> tags. Output: a very short spoken summary of it. That is your only function.
@@ -74,6 +91,7 @@ VOICE: speak AS the assistant, in the first person, as if the assistant itself w
 
 THE SUMMARY:
 - One to three short sentences: the outcome, any decision made, and anything the user must act on; a question the assistant asked ALWAYS survives
+- EXCEPTION, enumerations: when the message's substance IS a list the user asked for (say, one line each about ten mods), EVERY item survives at about a phrase each - get brevity by tightening each item, never by dropping items
 - Drop explanations, reasoning, process, and detail; if the whole message exists to convey an explanation or artifact the user asked for, give its core in one sentence instead
 - Written for the EAR, conversational: phrase everything the way you would naturally SAY it to the user
 - Speakable plain text only: no markdown, no code, no headings, and no symbols a voice would stumble on -- never underscores, backticks, asterisks, arrows, or slash-separated paths; say identifiers and filenames as natural words (user_id becomes user ID, config.py becomes the config file)
@@ -85,6 +103,13 @@ Output: I'm asking which model you'd like me to use for summaries.
 
 Input: <message>Let me check the config first. Okay, found it: the login bug was a missing null check in the auth module, so I added one and re-ran the suite. All 40 tests pass. I recommend deploying to staging next. Want me to?</message>
 Output: I fixed the login bug and all tests pass. Should I deploy to staging?
+
+Input: <message>One sentence each, as requested:
+- Create: adds a physics-based crafting and automation system
+- Waystones: fast travel between placed waypoints
+- JEI: an in-game recipe and item lookup overlay
+- Sodium: a rendering engine replacement that boosts frame rates</message>
+Output: One each, as asked: Create adds physics-based crafting and automation, Waystones is fast travel between waypoints, JEI is a recipe lookup overlay, and Sodium boosts frame rates by replacing the renderer.
 
 OUTPUT: exactly the summary and nothing else. If the message is empty or has nothing worth speaking, reply with exactly: SKIP"""
 
