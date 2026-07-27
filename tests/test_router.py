@@ -117,6 +117,27 @@ def test_next_session_advances_one_slot_in_fixed_order():
     assert r.next_session()[0] == "A"              # C -> A (wrap)
 
 
+def test_force_switched_session_resumes_after_wipe_and_new_digest():
+    # #115: digest-mode channels hold exactly ONE item; every new turn is
+    # wipe (len 0) then append (len 1), landing back on the recorded length,
+    # and the lazy suppression check never runs while the channel is empty.
+    # Length-keyed suppression therefore never lifted: a session you switched
+    # away from went silent FOREVER. Keyed on channel.gen it lifts on any
+    # new content.
+    r, s = _router()
+    s._fg = "B"
+    a = r.channel("A"); a.append(_item("A", "digest one")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.active = "A"
+    r.next_session()                               # force-switch A -> B
+    assert r._is_suppressed("A") is True
+    a.wipe()                                       # new prompt in A (unchecked while empty)
+    a.append(_item("A", "digest two"))             # next turn's digest lands
+    a.turn_done = True
+    assert r._is_suppressed("A") is False          # new content lifts suppression
+    assert r.next_item() is not None               # A speaks again
+
+
 def test_next_session_continues_ring_after_idle_gap():
     # _pick() clears `active` whenever the queue drains; the ring must continue
     # from the LAST reader, not reset to the first channel (#111: sessions past

@@ -30,8 +30,11 @@ class Router:
         # are voiced even when the session is not the current foreground).
         self._replay_authorized: "set[str]" = set()
         # Sessions you FORCE-switched away from (manual next_session): not
-        # auto-resumed until they get NEW content. session -> len(items) when
-        # suppressed; a different len (new content or a wipe) lifts it -> auto again.
+        # auto-resumed until they get NEW content. session -> channel.gen when
+        # suppressed; a different gen (new content or a wipe) lifts it -> auto
+        # again. Keyed on gen, NOT len(items): summary-mode turns wipe then
+        # append one digest, landing back on the same length while the channel
+        # was never checked empty - length-keyed suppression stuck forever (#115).
         self._suppressed: "dict[str, int]" = {}
 
     def channel(self, session: str) -> SessionChannel:
@@ -58,12 +61,12 @@ class Router:
 
     def _is_suppressed(self, session: str) -> bool:
         """True if *session* was force-switched away from and has not changed since.
-        New content or a wipe changes len(items) and lifts the suppression; a
+        New content or a wipe bumps channel.gen and lifts the suppression; a
         dropped channel lifts it too."""
         if session not in self._suppressed:
             return False
         ch = self.channels.get(session)
-        if ch is None or len(ch.items) != self._suppressed[session]:
+        if ch is None or ch.gen != self._suppressed[session]:
             self._suppressed.pop(session, None)
             return False
         return True
@@ -105,7 +108,7 @@ class Router:
         # Force-switching AWAY from a session suppresses its auto-resume until it
         # gets new content; landing on a session (manual return) clears suppression.
         if old is not None and old != target and old in self.channels:
-            self._suppressed[old] = len(self.channels[old].items)
+            self._suppressed[old] = self.channels[old].gen
         self._suppressed.pop(target, None)
         replay = self.channels[target].caught_up()
         if replay:
