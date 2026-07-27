@@ -89,13 +89,22 @@ class Router:
         # other session is muted, degrade to the plain ring (never dead-end).
         audible = [s for s in all_keys if not self.channels[s].muted]
         ring = audible if audible else all_keys
+        # A channel with NOTHING to hear (freshly wiped by a new prompt, or
+        # never fed) is skipped too: landing there announced the switch, had
+        # nothing to read, and fell straight through to an auto handoff --
+        # two back-to-back announcements for one press (#117). Degrade to the
+        # unfiltered ring only if every candidate is empty (never dead-end).
+        nonempty = [s for s in ring if self.channels[s].items]
+        if nonempty:
+            ring = nonempty
         old = self.active
         cur = self.active if self.active is not None else self._last_active
         if cur in ring:
             target = ring[(ring.index(cur) + 1) % len(ring)]  # next in the ring (wraps)
         elif cur in all_keys:
-            # The position session exists but is muted out of the ring: advance
-            # from its slot in the full order to the next audible session.
+            # The position session exists but is filtered out of the ring
+            # (muted, or empty): advance from its slot in the full order to
+            # the next ring member.
             i = all_keys.index(cur)
             target = ring[0]
             for j in range(1, len(all_keys) + 1):

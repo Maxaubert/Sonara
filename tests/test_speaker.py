@@ -491,6 +491,35 @@ def test_speak_cue_untracked_runs_without_touching_current():
     assert sp._current == "CONTENT_PROC"          # never touched -> content cancel intact
 
 
+def test_cancel_terminates_a_playing_untracked_cue():
+    """#117: the deferred session-change alert plays via speak_cue_untracked,
+    which was invisible to cancel() - once started, no hotkey could cut it.
+    The cue registers in its own _cue_current slot and cancel() kills it,
+    WITHOUT the cue path ever touching the content utterance's _current slot."""
+    captured = {}
+    made = []
+
+    class CancelDuringCuePopen(FakePopen):
+        def wait(self, timeout=None):
+            captured["sp"].cancel()        # a press lands while the cue plays
+            return super().wait(timeout=timeout)
+
+    def runner(text, voice, rate):
+        proc = CancelDuringCuePopen()
+        made.append(proc)
+        return proc
+
+    sp = Speaker(say_runner=runner)
+    captured["sp"] = sp
+    content = FakePopen()
+    sp._current = content                  # simulate tracked content mid-flight
+    sp.speak_cue_untracked("Session changed: alpha.", "af_heart")
+    assert made[0].terminate_calls == 1     # the playing cue was cut
+    assert sp._cue_current is None          # slot cleared after the cue ends
+    assert sp._current is content           # content slot untouched by the cue path
+    assert content.terminate_calls == 1     # cancel cuts the content too (by design)
+
+
 def test_speak_cue_untracked_uses_explicit_rate_and_survives_errors():
     from sonara.speaker import Speaker
 

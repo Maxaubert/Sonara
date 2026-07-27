@@ -138,6 +138,28 @@ def test_force_switched_session_resumes_after_wipe_and_new_digest():
     assert r.next_item() is not None               # A speaks again
 
 
+def test_next_session_skips_channels_with_nothing_to_hear():
+    # #117: landing on an EMPTY channel (freshly wiped by a new prompt, digest
+    # still in flight) announced the switch and then fell straight through to
+    # an auto handoff - two back-to-back announcements for one press. The
+    # manual ring skips empty channels.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    r.channel("B")                                 # B exists but has NO items
+    c = r.channel("C"); c.append(_item("C", "c1")); c.turn_done = True
+    r.active = "A"
+    assert r.next_session()[0] == "C"              # skips empty B
+    assert r.next_session()[0] == "A"              # wraps, still skipping B
+
+
+def test_next_session_degrades_to_full_ring_when_all_empty():
+    # Never dead-end: with every channel empty the plain ring still answers.
+    r, s = _router()
+    r.channel("A"); r.channel("B")
+    target, replay = r.next_session()
+    assert target in ("A", "B")
+
+
 def test_next_session_continues_ring_after_idle_gap():
     # _pick() clears `active` whenever the queue drains; the ring must continue
     # from the LAST reader, not reset to the first channel (#111: sessions past

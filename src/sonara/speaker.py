@@ -27,6 +27,7 @@ class Speaker:
         self._earcon_player = earcon_player
         self._earcons = dict(earcons) if earcons else {}
         self._current = None
+        self._cue_current = None        # untracked-cue proc; cancel() cuts it too (#117)
         self._current_lock = threading.Lock()
         self._cancel_epoch = 0          # bumped by cancel(); closes the synth-gap race
         self._earcon_procs: list = []
@@ -139,17 +140,25 @@ class Speaker:
         registering the proc as self._current. Used to replay a session-change
         alert from inside the content utterance's on_play (#94): a re-entrant
         speak() would overwrite self._current and break the content utterance's
-        cancellation. The cue is short and not separately cancellable; a failure
-        must never break the content utterance."""
+        cancellation. The cue IS still cancellable (#117): it registers in its
+        own _cue_current slot, which cancel() terminates alongside _current --
+        a hotkey press must be able to cut a playing alert. A failure must
+        never break the content utterance."""
         if self._say_runner is None:
             return
         r = self._rate if rate is None else rate
         try:
             proc = self._say_runner(text, voice, r)
+            with self._current_lock:
+                self._cue_current = proc
             try:
                 proc.wait(timeout=self._wait_timeout)
             except subprocess.TimeoutExpired:
                 proc.terminate()
+            finally:
+                with self._current_lock:
+                    if self._cue_current is proc:
+                        self._cue_current = None
         except Exception:  # noqa: BLE001 - a cue must never break the content utterance
             pass
 
@@ -157,8 +166,14 @@ class Speaker:
         with self._current_lock:
             self._cancel_epoch += 1     # so a speak() mid-synthesis aborts on return
             proc = self._current
+            cue = self._cue_current
         if proc is not None:
             proc.terminate()
+        if cue is not None:             # a playing alert cue dies too (#117)
+            try:
+                cue.terminate()
+            except Exception:  # noqa: BLE001 - cue cleanup must never mask the cancel
+                pass
 
     def _reap_earcon_procs(self) -> None:
         """Non-blocking poll: discard entries whose process has finished."""
