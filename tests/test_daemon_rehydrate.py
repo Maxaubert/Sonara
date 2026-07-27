@@ -60,6 +60,56 @@ def test_heard_decision_mirrors_into_the_persisted_store():
     assert daemon.digest_store.get("A") == "Lead-in. Pick one?"
 
 
+def test_flush_reseeds_the_wiped_channel_from_the_store():
+    # #118 round 2: a new prompt's FLUSH bare-wiped the channel, dropping the
+    # session out of the manual ring (empty channels are skipped) for the
+    # WHOLE turn. The persisted digest re-seeds it: cycle-reachable and
+    # replayable, but never auto-spoken.
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    daemon.digest_store.set("A", "Old digest.")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
+                           "session": "A"})
+    ch = daemon.router.channel("A")
+    assert [i.text for i in ch.items] == ["Old digest."]
+    assert ch.caught_up() and ch.seeded
+    assert _spoken(daemon, speaker, 4) == []       # never auto-spoken
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
+    assert "Old digest." in _spoken(daemon, speaker)   # but cycle-reachable
+
+
+def test_real_content_replaces_the_seed():
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    daemon.digest_store.set("A", "Old digest.")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
+                           "session": "A"})
+    assert daemon.router.channel("A").seeded
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
+                           "session": "A", "delta": "Fresh turn. ", "index": 0,
+                           "final": True})
+    ch = daemon.router.channel("A")
+    assert all(i.text != "Old digest." for i in ch.items)   # seed replaced
+    assert not ch.seeded
+    assert any("Fresh turn." in i.text for i in ch.items)
+
+
+def test_new_prose_lifts_force_switch_suppression_without_a_wipe():
+    # Latent #115 gap: _enqueue appends via ch.items.append directly, which
+    # bypassed channel.append's gen bump - streamed prose never lifted the
+    # force-switch suppression. _enqueue now bumps gen itself.
+    daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
+                           "session": "A", "delta": "A one. ", "index": 0,
+                           "final": True})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
+                           "session": "B", "delta": "B one. ", "index": 0,
+                           "final": True})
+    daemon.router.active = "A"
+    daemon.router.next_session()                   # away from A -> suppressed
+    assert daemon.router._is_suppressed("A") is True
+    daemon._enqueue("A", "prose", "fresh prose", False)
+    assert daemon.router._is_suppressed("A") is False
+
+
 def test_session_end_forgets_the_persisted_digest():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
     daemon.digest_store.set("A", "to be forgotten")

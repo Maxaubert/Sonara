@@ -253,10 +253,20 @@ class SpeechDaemon:
         if entry is not None:
             self._pending_heard[item.id] = entry
         ch = self.router.channel(session)
+        if ch.seeded:
+            # Real content replaces the placeholder seed (#118): the seed only
+            # kept the session cycle-reachable while its turn cooked.
+            ch.wipe()
         if at_front:
             ch.items.insert(ch.cursor, item)
         else:
             ch.items.append(item)
+        # Any-new-content signals, kept in sync for BOTH insert paths (the
+        # direct items.append above bypasses channel.append): the suppression
+        # lift (#115) keys on gen, and new content ends a replay-in-progress
+        # so the next manual landing resumes instead of restarting (#118).
+        ch.gen += 1
+        ch.replaying = False
         self._wake.set()
 
     def _minqueue(self) -> int:
@@ -317,6 +327,7 @@ class SpeechDaemon:
                                      is_decision=False))
                 ch.cursor = len(ch.items)       # heard: replay-only, no auto-speak
                 ch.turn_done = True
+                ch.seeded = True                # real content replaces the seed
                 self._last_digest_text[sid] = text   # Up re-read parity
 
     def _teardown_session(self, session: str) -> None:
@@ -695,7 +706,21 @@ class SpeechDaemon:
             if cur is not None and cur.session == session:
                 self.speaker.cancel()
             self._drop_channel_pending(session)
-            self.router.channel(session).wipe()
+            ch = self.router.channel(session)
+            ch.wipe()
+            seed = self.digest_store.get(session)
+            if seed:
+                # Keep the session cycle-reachable while its new turn cooks
+                # (#118): a bare-wiped channel fell out of the manual ring
+                # (empty channels are skipped, #117) for the WHOLE turn. The
+                # persisted last digest re-seeds it as an already-heard,
+                # replay-only item; real content replaces it (see _enqueue).
+                ch.append(SpeechItem(id=self._alloc_id(), session=session,
+                                     kind="summary", text=seed,
+                                     is_decision=False))
+                ch.cursor = len(ch.items)
+                ch.turn_done = True
+                ch.seeded = True
             self._assemblers.pop(session, None)
             self.history.reset(session)
             # A new prompt is the user cancelling this session: advance the cancel
@@ -1922,6 +1947,8 @@ class SpeechDaemon:
         self._nav_cursor.pop(session, None)
         self.speaker.cancel()                    # restart now, don't wait out the read
         ch = self.router.channel(session)
+        if ch.seeded:
+            ch.wipe()    # the re-read replaces the placeholder seed (#118)
         # Drop pending prose so the re-read is next -- but PRESERVE queued
         # decision items (a blocking question deleted here was gone forever,
         # nothing replayed it; audit #21). They re-queue after the digest,

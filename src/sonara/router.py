@@ -119,15 +119,16 @@ class Router:
         if old is not None and old != target and old in self.channels:
             self._suppressed[old] = self.channels[old].gen
         self._suppressed.pop(target, None)
-        replay = self.channels[target].caught_up()
-        if target == cur:
-            # Landing on yourself (single-member ring) is ALWAYS a replay from
-            # the top: pressing again before the previous replay finished used
-            # to see an un-caught-up channel, announce WITHOUT "reading again",
-            # and resume mid-message (#118).
-            replay = True
+        ch_t = self.channels[target]
+        # Replay from the top when the target is fully heard, when landing on
+        # yourself (single-member ring), or when an earlier manual replay of it
+        # is still mid-flight (#118): re-landing on a half-played replay used
+        # to see an un-caught-up channel, announce WITHOUT "reading again",
+        # and resume mid-message. Only genuinely NEW unheard content resumes.
+        replay = ch_t.caught_up() or target == cur or ch_t.replaying
         if replay:
-            self.channels[target].reset()
+            ch_t.reset()
+            ch_t.replaying = True
         self._arm_switch(target, replay, manual=True)
         return (target, replay)
 

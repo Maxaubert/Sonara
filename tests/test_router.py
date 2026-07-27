@@ -228,6 +228,37 @@ def test_next_session_replays_a_read_target():
     assert r.channels["B"].cursor == 0             # cursor reset for replay
 
 
+def test_next_session_relanding_on_half_played_replay_restarts_it():
+    # #118: after another session took the ring position, re-landing on a
+    # session whose manual replay was cut halfway used to RESUME mid-message
+    # and announce without "reading again". A replay-in-progress restarts.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    a.next(); a.next()                             # A fully heard
+    r.active = None; r._last_active = "B"
+    assert r.next_session() == ("A", True)         # manual replay of A armed
+    a.next()                                       # replay half-played (cursor 1/2)
+    r.active = None; r._last_active = "B"          # ring position moved off A
+    target, replay = r.next_session()
+    assert (target, replay) == ("A", True)         # STILL announced as a replay
+    assert a.cursor == 0                           # restarted from the top
+
+
+def test_new_content_after_a_cut_replay_resumes():
+    # Genuinely NEW unheard content still resumes (no forced restart).
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    a.next()                                       # A heard
+    r.active = None; r._last_active = "B"
+    assert r.next_session() == ("A", True)         # replaying A
+    a.append(_item("A", "a2")); a.turn_done = True   # NEW content lands mid-replay
+    r.active = None; r._last_active = "B"
+    target, replay = r.next_session()
+    assert (target, replay) == ("A", False)        # resume: new content wins
+
+
 def test_next_session_landing_on_yourself_mid_replay_still_replays():
     # #118: pressing cycle again before the previous replay finished saw an
     # un-caught-up channel, announced WITHOUT "reading again", and resumed
