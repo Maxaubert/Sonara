@@ -120,6 +120,12 @@ class Router:
             self._suppressed[old] = self.channels[old].gen
         self._suppressed.pop(target, None)
         replay = self.channels[target].caught_up()
+        if target == cur:
+            # Landing on yourself (single-member ring) is ALWAYS a replay from
+            # the top: pressing again before the previous replay finished used
+            # to see an un-caught-up channel, announce WITHOUT "reading again",
+            # and resume mid-message (#118).
+            replay = True
         if replay:
             self.channels[target].reset()
         self._arm_switch(target, replay, manual=True)

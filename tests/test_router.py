@@ -228,6 +228,19 @@ def test_next_session_replays_a_read_target():
     assert r.channels["B"].cursor == 0             # cursor reset for replay
 
 
+def test_next_session_landing_on_yourself_mid_replay_still_replays():
+    # #118: pressing cycle again before the previous replay finished saw an
+    # un-caught-up channel, announced WITHOUT "reading again", and resumed
+    # mid-message. Landing on yourself is always a replay from the top.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    a.next()                                       # mid-read (cursor 1)
+    r.active = "A"                                 # single-member ring
+    target, replay = r.next_session()
+    assert (target, replay) == ("A", True)         # replay, not resume
+    assert a.cursor == 0
+
+
 def test_next_session_single_session_lands_on_itself():
     r, s = _router()
     a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True; a.next()  # read
