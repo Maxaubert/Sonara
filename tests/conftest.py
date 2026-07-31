@@ -114,3 +114,33 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, "_SINGLETON", None, raising=False)
 
     yield
+
+
+@pytest.fixture(autouse=True)
+def _never_sweep_the_live_daemon(monkeypatch):
+    """Stop the suite from killing the DEVELOPER'S running daemon.
+
+    cli.stop_sonara() ends with _kill_stray_daemons(), whose default runner
+    shells out to PowerShell and Stop-Process -Force's every `-m sonara.daemon`
+    process on the MACHINE (#65). No path repoint can contain that: it matches
+    on process command line, not on SONARA_DIR. Any test that drives
+    stop_sonara() down the "socket not connectable" branch therefore killed the
+    live daemon mid-run -- `sonara status` then reported "not running" with no
+    stop sentinel and no crash trace to explain it.
+
+    The guard is deliberately narrow: an EXPLICIT runner still reaches the real
+    implementation, so the tests that actually cover _kill_stray_daemons
+    (test_daemon_state_persistence) keep exercising its counting and
+    failure-swallowing logic unchanged. Only the implicit, real-PowerShell path
+    is refused.
+    """
+    import sonara.cli as cli
+
+    real = cli._kill_stray_daemons
+
+    def guarded(runner=None):
+        if runner is None:
+            return 0        # refuse the machine-wide sweep
+        return real(runner=runner)
+
+    monkeypatch.setattr(cli, "_kill_stray_daemons", guarded)

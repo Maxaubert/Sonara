@@ -2,7 +2,15 @@
 # Self-contained: run the plugin's own src with no installed 'sonara'.
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/.." && pwd)"
-export PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}"
+# PYTHONPATH is read by the WINDOWS python.exe, which splits on ';' -- not the
+# ':' Git Bash would naturally use. Joining with ':' collapsed both entries into
+# one bogus path, so an already-set PYTHONPATH produced "No module named sonara"
+# (only an EMPTY PYTHONPATH happened to work, which is why this survived).
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) _sep=';' ;;
+    *)                             _sep=':' ;;
+esac
+export PYTHONPATH="$root/src${PYTHONPATH:+$_sep$PYTHONPATH}"
 # Windows (Git Bash): prefer the real `python`; else the interpreter recorded by
 # /sonara:install (the zero-Python case).
 py="$(command -v python || command -v python3 || true)"
