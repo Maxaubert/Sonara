@@ -1,4 +1,8 @@
-import socket, threading
+import os, socket, threading
+from unittest import mock
+
+import pytest
+
 from sonara.platform import transport
 
 
@@ -8,7 +12,29 @@ def test_write_then_read_lockfile_roundtrips(tmp_path):
     info = transport.read_lockfile(lock)
     assert info == {"host": "127.0.0.1", "port": 54321,
                     "token": "deadbeef", "pid": 4242}
+
+
+@pytest.mark.skipif(os.name == "nt",
+                    reason="Windows chmod only honours the read-only bit, so the "
+                           "mode reads 666; the owner-only guarantee comes from "
+                           "the %USERPROFILE% ACL instead. Intent is covered by "
+                           "test_write_lockfile_requests_owner_only_mode.")
+def test_write_lockfile_is_owner_only_on_posix(tmp_path):
+    lock = tmp_path / "daemon.lock"
+    transport.write_lockfile(lock, "127.0.0.1", 54321, "deadbeef", 4242)
     assert oct(lock.stat().st_mode)[-3:] == "600"
+
+
+def test_write_lockfile_requests_owner_only_mode(tmp_path):
+    """The lockfile carries the daemon's auth token, so write_lockfile must ask
+    for 0o600 on every platform. Windows cannot honour it (see the skip above),
+    which is exactly why the REQUEST is asserted separately from the resulting
+    mode -- otherwise the only check of this intent silently vanishes on the
+    one OS Sonara actually ships to."""
+    lock = tmp_path / "daemon.lock"
+    with mock.patch("os.chmod", wraps=os.chmod) as chmod:
+        transport.write_lockfile(lock, "127.0.0.1", 54321, "deadbeef", 4242)
+    assert [c.args[1] for c in chmod.call_args_list] == [0o600]
 
 
 def test_read_lockfile_missing_returns_none(tmp_path):

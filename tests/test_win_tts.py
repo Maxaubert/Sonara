@@ -101,10 +101,16 @@ def test_run_raises_actionable_error_when_no_voices(monkeypatch):
     # On a box with no OneCore voices, run() must surface the actionable
     # "install a voice" RuntimeError -- NOT the raw FileNotFoundError that real
     # SpeechSynthesizer activation throws. Regression for the no-voices error.
-    import winrt.windows.media.speechsynthesis as ss
-    monkeypatch.setattr(ss.SpeechSynthesizer, "all_voices", [])
+    #
+    # Patch the backend's own _all_voice_infos() seam (which _resolve_voice ->
+    # _best_voice_info goes through) rather than SpeechSynthesizer.all_voices:
+    # on a real Windows box that is a projected WinRT type whose attributes are
+    # read-only, so the old setattr died with "attribute 'all_voices' ... is not
+    # writable" and this test could only ever pass under the macOS fakes.
+    b = WinTtsBackend()
+    monkeypatch.setattr(b, "_all_voice_infos", lambda: [])
     with pytest.raises(RuntimeError, match="No TTS voices installed"):
-        WinTtsBackend().run("hello", None, 200)
+        b.run("hello", None, 200)
 
 
 def test_list_voices_returns_display_name_strings():
@@ -115,18 +121,28 @@ def test_list_voices_returns_display_name_strings():
     assert all(isinstance(v, str) for v in voices), voices
 
 
-def test_terminate_issues_a_real_stop_playsound_call():
+def test_terminate_issues_a_real_stop_playsound_call(monkeypatch):
     # SND_PURGE is documented "not supported on modern Windows"; the stop must
     # go through PlaySound(None, 0). The fake winsound has no SND_PURGE, so the
     # old call raised AttributeError and was swallowed -> interrupt never stopped
     # audio, and no test ever caught it. (#17)
+    #
+    # Record via a stubbed winsound.PlaySound instead of the fake module's
+    # winsound._calls list: the real stdlib winsound has no _calls, so this only
+    # ever ran under the macOS fakes -- and left unstubbed on a real box it would
+    # blare the test utterance out of the speakers. Both call sites
+    # (_play_wav_bytes and _TtsHandle.terminate) go through the module
+    # attribute, so one patch covers the start AND the stop.
     import winsound
-    winsound._calls.clear()
+    calls = []
+    monkeypatch.setattr(winsound, "PlaySound",
+                        lambda sound, flags: calls.append((sound, flags)))
     h = WinTtsBackend().run("hello", None, 200)
-    played = winsound._calls[-1]
+    assert calls, "playback was never started"
+    played = calls[-1]
     assert played[1] & winsound.SND_ASYNC, played   # async playback, not SND_SYNC
     h.terminate()
-    assert (None, 0) in winsound._calls, winsound._calls  # a real stop was issued
+    assert (None, 0) in calls, calls                # a real stop was issued
 
 
 def test_init_sweeps_stale_temp_wavs(tmp_path, monkeypatch):

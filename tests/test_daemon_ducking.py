@@ -21,9 +21,11 @@ from sonara.protocol import MsgType, PROTOCOL_VERSION
 from sonara.config import DEFAULTS
 
 
-def test_config_defaults_have_audio_control_off_and_duck_level_20():
+def test_config_defaults_have_audio_control_off_and_duck_level_30():
+    # ad9013d raised the shipped default from 20 to 30 (per user preference);
+    # ducking itself still stays opt-in.
     assert DEFAULTS["audio_control"] is False
-    assert DEFAULTS["duck_level"] == 20
+    assert DEFAULTS["duck_level"] == 30
 
 
 def test_set_audio_control_on_persists_and_cues(monkeypatch):

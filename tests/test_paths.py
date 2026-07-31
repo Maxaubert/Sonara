@@ -5,8 +5,21 @@ from unittest import mock
 
 
 def _fresh_paths(monkeypatch, home):
-    """Reload sonara.paths so the module-level Path.home() constants pick up the patched HOME."""
-    monkeypatch.setenv("HOME", str(home))
+    """Reload sonara.paths so the module-level Path.home() constants pick up the patched home.
+
+    Path.home() goes through os.path.expanduser("~"), and ntpath.expanduser
+    reads USERPROFILE (then HOMEDRIVE/HOMEPATH) and ignores HOME entirely. A
+    HOME-only patch therefore left SONARA_DIR pointing at the developer's REAL
+    profile on Windows, so the tmp_path assertions below failed -- and
+    test_ensure_sonara_dir_creates_directory asserted the live ~/.sonara did
+    not exist. Set every variable both platforms consult.
+    """
+    home = str(home)
+    monkeypatch.setenv("HOME", home)              # POSIX
+    monkeypatch.setenv("USERPROFILE", home)       # Windows, checked first
+    drive, tail = os.path.splitdrive(home)
+    monkeypatch.setenv("HOMEDRIVE", drive)        # Windows fallback pair
+    monkeypatch.setenv("HOMEPATH", tail)
     import sonara.paths as paths
     return importlib.reload(paths)
 
