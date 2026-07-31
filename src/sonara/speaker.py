@@ -27,6 +27,7 @@ class Speaker:
         self._earcon_player = earcon_player
         self._earcons = dict(earcons) if earcons else {}
         self._current = None
+        self._cue_current = None        # untracked-cue proc; cancel() cuts it too (#117)
         self._current_lock = threading.Lock()
         self._cancel_epoch = 0          # bumped by cancel(); closes the synth-gap race
         self._earcon_procs: list = []
@@ -60,22 +61,61 @@ class Speaker:
         *voice*, when given, overrides the configured voice for this ONE
         utterance (fast cues, #60: the daemon passes None so control feedback
         speaks through the platform's instant native voice instead of waiting
-        out a cold neural model reload)."""
+        out a cold neural model reload).
+
+        Synthesis runs on a helper thread so a cancel() landing MID-SYNTHESIS
+        unblocks this call immediately (#116): the caller (the speak loop) is
+        free to voice the next item -- e.g. a session-change announcement --
+        instead of waiting out the cancelled utterance's multi-second neural
+        synthesis. The abandoned helper terminates its process the moment it
+        materializes, so the orphaned audio never plays."""
         if self._say_runner is None:
             return False
         use_voice = self._voice if voice is _UNSET else voice
         # Establish the baseline epoch BEFORE synthesis. say_runner (TTS synthesis)
-        # can take tens-hundreds of ms, during which there is no proc to cancel --
-        # a cancel() arriving in that window used to be a silent no-op and the
-        # utterance played anyway. If the epoch advanced past the baseline while we
-        # synthesized, a cancel landed: honor it by terminating immediately and
-        # reporting the utterance as NOT completed (so the caller replays it).
+        # can take seconds, during which there is no proc to cancel -- a cancel()
+        # arriving in that window used to be a silent no-op and the utterance
+        # played anyway (then #2/#9 made it abort AFTER synthesis returned, and
+        # #116 stops waiting for synthesis at all).
         with self._current_lock:
             epoch = self._cancel_epoch if cancel_epoch is None else cancel_epoch
-        if on_play is None:
-            proc = self._say_runner(text, use_voice, self._rate)
-        else:
-            proc = self._say_runner(text, use_voice, self._rate, on_play)
+        state = {"proc": None, "exc": None, "abandoned": False}
+        done = threading.Event()
+
+        def _synth():
+            try:
+                if on_play is None:
+                    proc = self._say_runner(text, use_voice, self._rate)
+                else:
+                    proc = self._say_runner(text, use_voice, self._rate, on_play)
+            except Exception as exc:  # noqa: BLE001 - re-raised on the caller thread
+                state["exc"] = exc
+                done.set()
+                return
+            with self._current_lock:
+                state["proc"] = proc
+                abandoned = state["abandoned"]
+            done.set()
+            if abandoned:
+                # The caller already gave up on this utterance: kill the process
+                # before its playback is heard. Registered under the lock above,
+                # so exactly one side (caller or helper) terminates it.
+                try:
+                    proc.terminate()
+                except Exception:  # noqa: BLE001 - orphan cleanup must not crash the helper
+                    pass
+
+        threading.Thread(target=_synth, name="sonara-synth", daemon=True).start()
+        while not done.wait(0.05):
+            with self._current_lock:
+                if self._cancel_epoch != epoch:
+                    state["abandoned"] = True   # helper terminates its proc on arrival
+                    break
+        if state["abandoned"]:
+            return False
+        if state["exc"] is not None:
+            raise state["exc"]
+        proc = state["proc"]
         with self._current_lock:
             interrupted = self._cancel_epoch != epoch
             if not interrupted:
@@ -100,17 +140,25 @@ class Speaker:
         registering the proc as self._current. Used to replay a session-change
         alert from inside the content utterance's on_play (#94): a re-entrant
         speak() would overwrite self._current and break the content utterance's
-        cancellation. The cue is short and not separately cancellable; a failure
-        must never break the content utterance."""
+        cancellation. The cue IS still cancellable (#117): it registers in its
+        own _cue_current slot, which cancel() terminates alongside _current --
+        a hotkey press must be able to cut a playing alert. A failure must
+        never break the content utterance."""
         if self._say_runner is None:
             return
         r = self._rate if rate is None else rate
         try:
             proc = self._say_runner(text, voice, r)
+            with self._current_lock:
+                self._cue_current = proc
             try:
                 proc.wait(timeout=self._wait_timeout)
             except subprocess.TimeoutExpired:
                 proc.terminate()
+            finally:
+                with self._current_lock:
+                    if self._cue_current is proc:
+                        self._cue_current = None
         except Exception:  # noqa: BLE001 - a cue must never break the content utterance
             pass
 
@@ -118,8 +166,14 @@ class Speaker:
         with self._current_lock:
             self._cancel_epoch += 1     # so a speak() mid-synthesis aborts on return
             proc = self._current
+            cue = self._cue_current
         if proc is not None:
             proc.terminate()
+        if cue is not None:             # a playing alert cue dies too (#117)
+            try:
+                cue.terminate()
+            except Exception:  # noqa: BLE001 - cue cleanup must never mask the cancel
+                pass
 
     def _reap_earcon_procs(self) -> None:
         """Non-blocking poll: discard entries whose process has finished."""

@@ -15,6 +15,7 @@ from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
     INSTALL_RECORD_PATH, SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
+    SESSION_DIGESTS_PATH,
 )
 from sonara.platform import transport
 
@@ -69,12 +70,14 @@ MINQUEUE_MIN = 0     # 0 = start reading immediately, no batching (#60 follow-up
 MINQUEUE_MAX = 10
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
-# accidental/rapid double-tap doesn't flip pause/mute/session several times (and pile
+# accidental/rapid double-tap doesn't flip pause/mute several times (and pile
 # up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced --
-# repeated presses there are intentional.
+# repeated presses there are intentional. NEXT_SESSION is directional too: each
+# press is a deliberate ring advance (and now chimes instantly, #111), and
+# MOD_NOREPEAT already guards key-hold auto-repeat, so it is not debounced.
 _HOTKEY_DEBOUNCE_S = 0.30
 _DEBOUNCED_HOTKEYS = (
-    MsgType.PAUSE, MsgType.MUTE, MsgType.NEXT_SESSION, MsgType.CYCLE_VERBOSITY,
+    MsgType.PAUSE, MsgType.MUTE, MsgType.CYCLE_VERBOSITY,
 )
 
 # Summary mode: a turn whose prose is already shorter than this is spoken
@@ -100,10 +103,16 @@ _DECISION_HOLD_MAX_S = 30.0
 # hostile peer from leaking unbounded threads by opening many connections.
 _MAX_CONN_THREADS = 32
 
+# Startup channel rehydration horizon (#118): sessions seen within this window
+# get their persisted last digest re-seeded as a replayable channel, so the
+# manual cycle reaches them across daemon restarts. Matches the settings
+# page's "recent sessions" threshold.
+_REHYDRATE_WINDOW_S = 3 * 3600
+
 
 class SpeechDaemon:
     def __init__(self, speaker, sessions, config, ducker=None, pauser=None,
-                 prefs=None) -> None:
+                 prefs=None, digests=None) -> None:
         self.speaker = speaker
         self.sessions = sessions
         self.config = config
@@ -119,6 +128,10 @@ class SpeechDaemon:
             from sonara.session_prefs import SessionPrefs
             prefs = SessionPrefs()
         self.session_prefs = prefs
+        if digests is None:
+            from sonara.digest_store import DigestStore
+            digests = DigestStore()
+        self.digest_store = digests
         self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
@@ -240,10 +253,20 @@ class SpeechDaemon:
         if entry is not None:
             self._pending_heard[item.id] = entry
         ch = self.router.channel(session)
+        if ch.seeded:
+            # Real content replaces the placeholder seed (#118): the seed only
+            # kept the session cycle-reachable while its turn cooked.
+            ch.wipe()
         if at_front:
             ch.items.insert(ch.cursor, item)
         else:
             ch.items.append(item)
+        # Any-new-content signals, kept in sync for BOTH insert paths (the
+        # direct items.append above bypasses channel.append): the suppression
+        # lift (#115) keys on gen, and new content ends a replay-in-progress
+        # so the next manual landing resumes instead of restarting (#118).
+        ch.gen += 1
+        ch.replaying = False
         self._wake.set()
 
     def _minqueue(self) -> int:
@@ -281,6 +304,32 @@ class SpeechDaemon:
             for it in ch.items:
                 self._pending_heard.pop(it.id, None)
 
+    def _rehydrate_channels(self) -> None:
+        """Re-seed each recently-seen session's channel with its persisted last
+        digest as an already-heard item (#118). Channels are in-memory, so a
+        restart emptied every queue and the manual cycle could only reach
+        sessions that spoke SINCE the restart - everyone else's last message
+        was lost. Rehydrated channels are caught up (pending 0): never
+        auto-spoken, but landing on them replays the digest like any read
+        session, and Up re-reads it."""
+        import time
+        now = time.time()
+        with self._lock:
+            for sid, text in self.digest_store.items():
+                if not text or sid in self.router.channels:
+                    continue
+                seen = self.sessions.last_seen(sid)
+                if seen is None or (now - seen) > _REHYDRATE_WINDOW_S:
+                    continue
+                ch = self.router.channel(sid)
+                ch.append(SpeechItem(id=self._alloc_id(), session=sid,
+                                     kind="summary", text=text,
+                                     is_decision=False))
+                ch.cursor = len(ch.items)       # heard: replay-only, no auto-speak
+                ch.turn_done = True
+                ch.seeded = True                # real content replaces the seed
+                self._last_digest_text[sid] = text   # Up re-read parity
+
     def _teardown_session(self, session: str) -> None:
         """Per-session cleanup shared by SESSION_END and FORGET_SESSION (#101):
         both retire a session's live state; FORGET_SESSION targets exactly the
@@ -306,6 +355,7 @@ class SpeechDaemon:
         # here may outlive the session (audit #21).
         self._held_decision.pop(session, None)
         self._last_digest_text.pop(session, None)
+        self.digest_store.forget(session)         # ended sessions don't rehydrate (#118)
         self._voiced_upto.pop(session, None)
         self._nav_cursor.pop(session, None)
         self._assemblers.pop(session, None)
@@ -333,6 +383,8 @@ class SpeechDaemon:
                 prev = self._last_digest_text.get(item.session)
                 self._last_digest_text[item.session] = (
                     prev + " " + item.text) if prev else item.text
+                self.digest_store.set(item.session,
+                                      self._last_digest_text[item.session])
 
     def _requeue_or_note(self, item, completed) -> bool:
         """On a pause-interrupted utterance, re-queue it so resume re-speaks it and
@@ -654,7 +706,21 @@ class SpeechDaemon:
             if cur is not None and cur.session == session:
                 self.speaker.cancel()
             self._drop_channel_pending(session)
-            self.router.channel(session).wipe()
+            ch = self.router.channel(session)
+            ch.wipe()
+            seed = self.digest_store.get(session)
+            if seed:
+                # Keep the session cycle-reachable while its new turn cooks
+                # (#118): a bare-wiped channel fell out of the manual ring
+                # (empty channels are skipped, #117) for the WHOLE turn. The
+                # persisted last digest re-seeds it as an already-heard,
+                # replay-only item; real content replaces it (see _enqueue).
+                ch.append(SpeechItem(id=self._alloc_id(), session=session,
+                                     kind="summary", text=seed,
+                                     is_decision=False))
+                ch.cursor = len(ch.items)
+                ch.turn_done = True
+                ch.seeded = True
             self._assemblers.pop(session, None)
             self.history.reset(session)
             # A new prompt is the user cancelling this session: advance the cancel
@@ -810,6 +876,16 @@ class SpeechDaemon:
             if target is None:
                 self._speak_cue(None, "No session.", exempt_mute=True,
                                 pause_exempt=True)
+            else:
+                # Instant press feedback (#111): fire the switch chime NOW, from
+                # the handler (the earcon player is a non-blocking subprocess).
+                # The deferred #94 alert only sounded at the target content's
+                # synthesis-ready callback, leaving a manual press with ZERO
+                # audio for the whole first-chunk synthesis - it felt dead.
+                try:
+                    self._earcon("session_change")
+                except Exception:  # noqa: BLE001 - feedback must not break the switch
+                    pass
             self._wake.set()
             return None
 
@@ -1439,6 +1515,7 @@ class SpeechDaemon:
                 # short-turn and digest paths; without this, Up after a short
                 # foreground turn gave a dead edge chime (deep audit #25).
                 self._last_digest_text[session] = text
+                self.digest_store.set(session, text)
             else:
                 # Background sessions are not voiced from their own channel;
                 # speak the short turn via the session channel. It joins the
@@ -1727,6 +1804,7 @@ class SpeechDaemon:
                 entry = self.history.record(session, "summary", out)
                 self._enqueue(session, "summary", out, False, entry=entry)
                 self._last_digest_text[session] = out   # Up re-reads this verbatim
+                self.digest_store.set(session, out)     # survives restarts (#118)
                 ch = self.router.channel(session)
                 ch.turn_done = True
                 # Stamp the channel with the release index (#88): the router
@@ -1775,6 +1853,7 @@ class SpeechDaemon:
         entry = self.history.record(session, "summary", text)
         self._enqueue(session, "summary", text, False, entry=entry)
         self._last_digest_text[session] = text   # Up re-reads this verbatim
+        self.digest_store.set(session, text)     # survives restarts (#118)
         ch = self.router.channel(session)
         ch.turn_done = True
         ch.release_order = self._digest_release_counter   # heard in release order (#88)
@@ -1868,6 +1947,8 @@ class SpeechDaemon:
         self._nav_cursor.pop(session, None)
         self.speaker.cancel()                    # restart now, don't wait out the read
         ch = self.router.channel(session)
+        if ch.seeded:
+            ch.wipe()    # the re-read replaces the placeholder seed (#118)
         # Drop pending prose so the re-read is next -- but PRESERVE queued
         # decision items (a blocking question deleted here was gone forever,
         # nothing replayed it; audit #21). They re-queue after the digest,
@@ -2362,6 +2443,23 @@ class SpeechDaemon:
                 self._pending_preamble = None
             return
         if item.kind == "session_change":
+            if item.manual:
+                # Manual switch (#111): the press already chimed from the hotkey
+                # handler; speak the announcement NOW in the fast cue voice
+                # instead of deferring to the target content's synthesis-ready
+                # callback. Deferral (#94) exists so an AUTO handoff's alert
+                # doesn't play seconds before slow-engine audio; a manual press
+                # needs immediate confirmation, and the cue voice is warm.
+                try:
+                    completed = self.speaker.speak(item.text,
+                                                   cancel_epoch=cancel_epoch,
+                                                   **self._cue_voice_override(item))
+                except Exception:  # noqa: BLE001
+                    self._signal_speak_failure()
+                    completed = False
+                if not self._requeue_or_note(item, completed):
+                    self.note_spoken(item, completed)
+                return
             if self.config.get("fast_cues", True):
                 # Defer the alert (#94): stash it and play the chime + spoken
                 # announcement from the CONTENT utterance's on_play, so a slow
@@ -2557,6 +2655,10 @@ class SpeechDaemon:
 
     def run(self) -> None:
         ensure_sonara_dir()
+        try:
+            self._rehydrate_channels()      # restarts keep the cycle populated (#118)
+        except Exception:  # noqa: BLE001 - rehydration must never block startup
+            pass
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((transport.HOST, 0))
@@ -2782,9 +2884,11 @@ def main() -> None:
     sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"),
                               store_path=SESSIONS_PATH, seen_path=SESSION_SEEN_PATH)
     from sonara.session_prefs import SessionPrefs
+    from sonara.digest_store import DigestStore
     daemon = SpeechDaemon(speaker, sessions, cfg,
                           ducker=_backend.ducker, pauser=_backend.pauser,
-                          prefs=SessionPrefs(store_path=SESSION_PREFS_PATH))
+                          prefs=SessionPrefs(store_path=SESSION_PREFS_PATH),
+                          digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
     daemon._apply_volume(cfg.get("volume", 100))   # restore persisted speech gain
     daemon.run()
 

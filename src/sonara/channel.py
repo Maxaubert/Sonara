@@ -16,6 +16,18 @@ class SessionChannel:
         self.cursor = 0
         self.turn_done = False
         self.muted = False
+        self.gen = 0        # content generation: bumped on append AND wipe. "Has
+        #                     this channel changed since X?" checks key on this,
+        #                     NOT on len(items): in summary mode every turn is
+        #                     wipe(->0)+append(->1), landing back on the same
+        #                     length, which left length-based router suppression
+        #                     stuck forever (#115).
+        self.replaying = False  # a manual replay is in progress: re-landing
+        #                         restarts from the top instead of resuming
+        #                         mid-message (#118); cleared by new content
+        self.seeded = False     # items are a persisted-digest placeholder that
+        #                         keeps the session cycle-reachable while its
+        #                         turn cooks (#118); real content replaces it
         self.has_decision = False   # a user-blocking item is pending -> preempt
         self.release_order = None   # digest release stamp (#88): among READY
         #                             waiting sessions the router serves the
@@ -23,7 +35,11 @@ class SessionChannel:
         #                             in turn-finish order, not channel order
 
     def append(self, item: SpeechItem) -> None:
+        if self.seeded:
+            self.wipe()   # real content replaces the placeholder seed (#118)
         self.items.append(item)
+        self.gen += 1
+        self.replaying = False
         if item.is_decision:
             self.has_decision = True
 
@@ -68,3 +84,6 @@ class SessionChannel:
         self.cursor = 0
         self.turn_done = False
         self.has_decision = False
+        self.gen += 1
+        self.replaying = False
+        self.seeded = False

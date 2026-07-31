@@ -117,6 +117,93 @@ def test_next_session_advances_one_slot_in_fixed_order():
     assert r.next_session()[0] == "A"              # C -> A (wrap)
 
 
+def test_force_switched_session_resumes_after_wipe_and_new_digest():
+    # #115: digest-mode channels hold exactly ONE item; every new turn is
+    # wipe (len 0) then append (len 1), landing back on the recorded length,
+    # and the lazy suppression check never runs while the channel is empty.
+    # Length-keyed suppression therefore never lifted: a session you switched
+    # away from went silent FOREVER. Keyed on channel.gen it lifts on any
+    # new content.
+    r, s = _router()
+    s._fg = "B"
+    a = r.channel("A"); a.append(_item("A", "digest one")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.active = "A"
+    r.next_session()                               # force-switch A -> B
+    assert r._is_suppressed("A") is True
+    a.wipe()                                       # new prompt in A (unchecked while empty)
+    a.append(_item("A", "digest two"))             # next turn's digest lands
+    a.turn_done = True
+    assert r._is_suppressed("A") is False          # new content lifts suppression
+    assert r.next_item() is not None               # A speaks again
+
+
+def test_next_session_skips_channels_with_nothing_to_hear():
+    # #117: landing on an EMPTY channel (freshly wiped by a new prompt, digest
+    # still in flight) announced the switch and then fell straight through to
+    # an auto handoff - two back-to-back announcements for one press. The
+    # manual ring skips empty channels.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    r.channel("B")                                 # B exists but has NO items
+    c = r.channel("C"); c.append(_item("C", "c1")); c.turn_done = True
+    r.active = "A"
+    assert r.next_session()[0] == "C"              # skips empty B
+    assert r.next_session()[0] == "A"              # wraps, still skipping B
+
+
+def test_next_session_degrades_to_full_ring_when_all_empty():
+    # Never dead-end: with every channel empty the plain ring still answers.
+    r, s = _router()
+    r.channel("A"); r.channel("B")
+    target, replay = r.next_session()
+    assert target in ("A", "B")
+
+
+def test_next_session_continues_ring_after_idle_gap():
+    # _pick() clears `active` whenever the queue drains; the ring must continue
+    # from the LAST reader, not reset to the first channel (#111: sessions past
+    # the first were unreachable when presses were spaced across idle gaps).
+    r, s = _router()
+    for name in ("A", "B", "C"):
+        ch = r.channel(name); ch.append(_item(name, name.lower())); ch.turn_done = True
+    r.active = None; r._last_active = "B"          # idle gap after B read
+    assert r.next_session()[0] == "C"              # continues B -> C, not reset to A
+    r.active = None; r._last_active = "C"
+    assert r.next_session()[0] == "A"              # wraps
+
+
+def test_next_session_muted_last_active_advances_to_next_audible():
+    # The ring position may be a session that is now muted (excluded from the
+    # audible ring): advance from ITS slot to the next audible session instead
+    # of resetting to the first.
+    r, s = _router()
+    for name in ("A", "B", "C"):
+        ch = r.channel(name); ch.append(_item(name, name.lower())); ch.turn_done = True
+    r.channels["B"].muted = True
+    r.active = None; r._last_active = "B"
+    assert r.next_session()[0] == "C"              # B's slot -> next audible (C)
+
+
+def test_next_session_arms_manual_announcement():
+    # A manual switch emits its session_change item with manual=True so the
+    # speak loop voices it immediately; an auto handoff stays manual=False.
+    r, s = _router()
+    s._folders = {"A": "alpha", "B": "beta"}; s._fg = "A"
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    assert r.next_item().text == "a1"              # A is the reader
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.next_session()                               # manual: A -> B
+    item = r.next_item()
+    assert item.kind == "session_change" and item.manual is True
+    # drain B, then an AUTO handoff back to a refilled A announces manual=False
+    assert r.next_item().text == "b1"
+    s._fg = "A"
+    a.append(_item("A", "a2")); a.turn_done = True
+    item = r.next_item()
+    assert item.kind == "session_change" and item.manual is False
+
+
 def test_next_session_resumes_an_unread_target_no_replay():
     r, s = _router()
     a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
@@ -139,6 +226,50 @@ def test_next_session_replays_a_read_target():
     target, replay = r.next_session()
     assert (target, replay) == ("B", True)         # read -> replay
     assert r.channels["B"].cursor == 0             # cursor reset for replay
+
+
+def test_next_session_relanding_on_half_played_replay_restarts_it():
+    # #118: after another session took the ring position, re-landing on a
+    # session whose manual replay was cut halfway used to RESUME mid-message
+    # and announce without "reading again". A replay-in-progress restarts.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    a.next(); a.next()                             # A fully heard
+    r.active = None; r._last_active = "B"
+    assert r.next_session() == ("A", True)         # manual replay of A armed
+    a.next()                                       # replay half-played (cursor 1/2)
+    r.active = None; r._last_active = "B"          # ring position moved off A
+    target, replay = r.next_session()
+    assert (target, replay) == ("A", True)         # STILL announced as a replay
+    assert a.cursor == 0                           # restarted from the top
+
+
+def test_new_content_after_a_cut_replay_resumes():
+    # Genuinely NEW unheard content still resumes (no forced restart).
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    a.next()                                       # A heard
+    r.active = None; r._last_active = "B"
+    assert r.next_session() == ("A", True)         # replaying A
+    a.append(_item("A", "a2")); a.turn_done = True   # NEW content lands mid-replay
+    r.active = None; r._last_active = "B"
+    target, replay = r.next_session()
+    assert (target, replay) == ("A", False)        # resume: new content wins
+
+
+def test_next_session_landing_on_yourself_mid_replay_still_replays():
+    # #118: pressing cycle again before the previous replay finished saw an
+    # un-caught-up channel, announced WITHOUT "reading again", and resumed
+    # mid-message. Landing on yourself is always a replay from the top.
+    r, s = _router()
+    a = r.channel("A"); a.append(_item("A", "a1")); a.append(_item("A", "a2")); a.turn_done = True
+    a.next()                                       # mid-read (cursor 1)
+    r.active = "A"                                 # single-member ring
+    target, replay = r.next_session()
+    assert (target, replay) == ("A", True)         # replay, not resume
+    assert a.cursor == 0
 
 
 def test_next_session_single_session_lands_on_itself():
