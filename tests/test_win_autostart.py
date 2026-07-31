@@ -86,3 +86,35 @@ def test_main_skips_loop_off_win32(monkeypatch):
     monkeypatch.setattr(sl, "run_supervisor_loop", lambda pw: calls.append(pw))
     sl._main()
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# #123: which COPY of the code is running must be observable from the log
+# ---------------------------------------------------------------------------
+
+def test_package_root_is_the_dir_containing_the_sonara_package():
+    """paths.package_root() answers "where does the code I am executing live",
+    which is correct in BOTH layouts (<repo>/src and ~/.sonara/app). Contrast
+    repo_root(), which assumes the repo shape and returns ~/.sonara from the
+    deployed copy -- the defect behind the nonexistent ~/.sonara/src that the
+    lazy start was putting on PYTHONPATH."""
+    from sonara import paths
+    root = paths.package_root()
+    assert os.path.isdir(os.path.join(root, "sonara")), root
+    assert os.path.isfile(os.path.join(root, "sonara", "paths.py")), root
+
+
+def test_daemon_start_log_records_which_copy_is_running(monkeypatch, capsys):
+    """speechd.log said only `[daemon] started pid=N`, so two daemons running
+    DIFFERENT copies of Sonara were indistinguishable in the log (observed live:
+    one on ~/.sonara/app, the next on the repo checkout). The start marker must
+    name the root the daemon imported from."""
+    from tests.daemon_helpers import make_daemon
+    from sonara import paths
+
+    daemon, *_ = make_daemon(foreground="fg")
+    # run() blocks; drive only the startup marker the same way run() emits it.
+    daemon._log_start_marker()
+    err = capsys.readouterr().err
+    assert "[daemon] started pid=" in err
+    assert paths.package_root() in err, err

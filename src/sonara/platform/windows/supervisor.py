@@ -26,11 +26,10 @@ from sonara.platform.base import SupervisorBackend
 
 TASK_NAME = "Sonara.Speechd"
 
-# Windows process-creation flags. Defined in subprocess only on win32, so use
-# hex literals to keep this module importable on macOS/Linux.
-_CREATE_NO_WINDOW = 0x08000000
-_DETACHED_PROCESS = 0x00000008
-_SPAWN_FLAGS = _CREATE_NO_WINDOW | _DETACHED_PROCESS  # 0x08000008
+# Daemon process-creation flags live with the single launch_spec in
+# supervisor_loop (#123). This module's copy went dead when launch_spec was
+# de-duplicated; a second definition here is exactly how the two spawn paths
+# drifted in the first place.
 
 
 # ---------------------------------------------------------------------------
@@ -735,31 +734,22 @@ class WinSupervisorBackend(SupervisorBackend):
         return resolve_python_windows()
 
     def launch_spec(self) -> tuple:
-        """Return (argv, spawn_kwargs) for lazy daemon start."""
-        from sonara import paths
-        pw = daemon_pythonw() or "pythonw.exe"
-        argv = [pw, "-m", "sonara.daemon"]
-        # The daemon runs in a fresh process; without PYTHONPATH it cannot import
-        # 'sonara' -> it exits instantly -> every hook event respawns it (a
-        # relaunch storm). Put the plugin's own src/ first so the lazy start
-        # resolves the package self-containedly.
-        env = dict(os.environ)
-        src = os.path.join(paths.repo_root(), "src")
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = src + (os.pathsep + existing if existing else "")
-        # Route the daemon's stderr to the daemon log (parity with the macOS plist
-        # StandardErrorPath) so the speak-loop catch-all traceback survives (#20);
-        # DEVNULL made it unrecoverable. Open lazily inside launch_spec.
-        paths.ensure_sonara_dir()
-        err = open(paths.LOG_PATH, "a")
-        kwargs = dict(
-            creationflags=_SPAWN_FLAGS,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=err,
-            env=env,
-        )
-        return argv, kwargs
+        """Return (argv, spawn_kwargs) for lazy daemon start.
+
+        Delegates to the supervisor_loop implementation so the hook lazy start
+        and the Task Scheduler loop spawn the daemon IDENTICALLY (#123). This
+        used to be a hand-maintained second copy whose comment promised "parity
+        with WinSupervisorBackend.launch_spec"; the two had already drifted on
+        the one thing that matters most -- which copy of Sonara the daemon runs.
+
+        The copy here derived PYTHONPATH from `repo_root() + "/src"`, valid only
+        in a checkout. Started from the DEPLOYED runtime it prepended the
+        nonexistent ~/.sonara/src and imported only because ~/.sonara/app
+        happened to be inherited on PYTHONPATH. supervisor_loop derives it from
+        __file__, which is right in both layouts.
+        """
+        from .supervisor_loop import launch_spec as _shared_launch_spec
+        return _shared_launch_spec(daemon_pythonw() or "pythonw.exe")
 
     def doctor_rows(self) -> list:
         """Return Windows-specific [(name, ok, detail), ...] rows.
