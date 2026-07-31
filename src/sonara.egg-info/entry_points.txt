@@ -1,0 +1,2 @@
+[console_scripts]
+sonara = sonara.cli:main

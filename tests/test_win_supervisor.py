@@ -26,7 +26,7 @@ if sys.platform != "win32":
 
 from sonara.platform.windows import supervisor as sup_mod
 from sonara.platform.windows.supervisor import (
-    WinSupervisorBackend, TASK_NAME, TASK_XML_TEMPLATE, _SPAWN_FLAGS,
+    WinSupervisorBackend, TASK_NAME, TASK_XML_TEMPLATE,
     daemon_pythonw,
 )
 
@@ -78,21 +78,84 @@ def test_launch_spec_creationflags(monkeypatch):
     kwargs["stderr"].close()
 
 
-def test_launch_spec_sets_pythonpath_to_src(monkeypatch):
+def test_launch_spec_pythonpath_actually_contains_the_sonara_package(monkeypatch):
     # The lazily-spawned daemon runs `pythonw -m sonara.daemon` in a fresh
     # process; without PYTHONPATH it cannot import sonara, dies instantly, and
-    # every hook event respawns it -> a relaunch storm. The spawn env must put
-    # the repo's src/ first on PYTHONPATH.
+    # every hook event respawns it -> a relaunch storm.
+    #
+    # This used to assert `repo_root() + "/src"`, which is only the right answer
+    # in the <repo>/src/sonara layout. From the DEPLOYED copy at
+    # ~/.sonara/app/sonara, repo_root() is ~/.sonara, so the lazy start
+    # prepended the nonexistent ~/.sonara/src and only imported because
+    # ~/.sonara/app happened to be inherited on PYTHONPATH (observed live, #123).
+    # Assert the property that actually matters in BOTH layouts.
     import os
-    from sonara import paths
 
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
     argv, kwargs = WinSupervisorBackend().launch_spec()
     env = kwargs.get("env")
     assert env is not None, "launch_spec must pass an env so the daemon can import sonara"
-    src = os.path.join(paths.repo_root(), "src")
-    assert env.get("PYTHONPATH", "").split(os.pathsep)[0] == src
+    root = env.get("PYTHONPATH", "").split(os.pathsep)[0]
+    assert os.path.isdir(os.path.join(root, "sonara")), (
+        "first PYTHONPATH entry must be the dir CONTAINING the sonara package, "
+        "got {0!r}".format(root))
     kwargs["stderr"].close()
+
+
+def test_both_launch_spec_entry_points_are_the_same_implementation(monkeypatch):
+    # #123: launch_spec existed twice -- once here for the hook lazy start, once
+    # in supervisor_loop for the Task Scheduler loop -- and the copies computed
+    # the package root differently. Which COPY of Sonara the daemon ran then
+    # depended on who started it, with nothing in the log to distinguish them.
+    # supervisor_loop's docstring already promised it served both paths; this
+    # asserts the promise instead of restating it in a comment.
+    import os
+    from sonara.platform.windows import supervisor_loop as sl
+
+    monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
+    argv_a, kwargs_a = WinSupervisorBackend().launch_spec()
+    argv_b, kwargs_b = sl.launch_spec(r"C:\Python311\pythonw.exe")
+    try:
+        assert argv_a == argv_b
+        assert kwargs_a["env"]["PYTHONPATH"] == kwargs_b["env"]["PYTHONPATH"]
+        assert kwargs_a["creationflags"] == kwargs_b["creationflags"]
+    finally:
+        kwargs_a["stderr"].close()
+        kwargs_b["stderr"].close()
+
+
+def test_lazy_start_does_not_depend_on_repo_root(monkeypatch, tmp_path):
+    # The exact live failure (#123). In the DEPLOYED layout repo_root() returns
+    # ~/.sonara, so `repo_root() + "/src"` is ~/.sonara/src, which does not
+    # exist; the daemon only imported because ~/.sonara/app was already
+    # inherited on PYTHONPATH. Parity alone cannot catch this -- in the repo
+    # layout the two formulas agree by coincidence -- so pin the dependency
+    # itself: launch_spec must not consult repo_root() at all.
+    import os
+    from sonara import paths
+
+    monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
+    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path / "wrong"))
+    argv, kwargs = WinSupervisorBackend().launch_spec()
+    try:
+        root = kwargs["env"]["PYTHONPATH"].split(os.pathsep)[0]
+        assert "wrong" not in root, (
+            "launch_spec still derives PYTHONPATH from repo_root(); it must use "
+            "the __file__-derived package root, got {0!r}".format(root))
+        assert os.path.isdir(os.path.join(root, "sonara")), root
+    finally:
+        kwargs["stderr"].close()
+
+
+def test_package_root_agrees_across_its_two_unavoidable_definitions():
+    # supervisor_loop cannot import sonara to get this: Task Scheduler launches
+    # it by BARE SCRIPT PATH, so sys.path[0] is its own dir and `import sonara`
+    # fails until _ensure_importable() has already run. It therefore keeps a
+    # local __file__-derived copy by necessity. Where a second copy is
+    # unavoidable, pin the two together with an equality test (#123).
+    from sonara import paths
+    from sonara.platform.windows import supervisor_loop as sl
+    assert paths.package_root() == sl._package_root()
 
 
 def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch):
@@ -198,7 +261,11 @@ def test_resolve_python_skips_store_stub(monkeypatch, tmp_path):
 
 
 def test_spawn_flags_value():
-    # Hex literal correctness -- no subprocess import needed
+    # Hex literal correctness -- no subprocess import needed. Asserted against
+    # supervisor_loop, which owns the single launch_spec (#123); supervisor's
+    # own copy went dead with the de-duplication and was removed rather than
+    # left for a future reader to trust.
+    from sonara.platform.windows.supervisor_loop import _SPAWN_FLAGS
     assert _SPAWN_FLAGS == 0x08000008
 
 

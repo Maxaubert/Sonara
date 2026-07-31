@@ -79,6 +79,23 @@ def repo_root() -> str:
 
     The canonical derivation: this file lives at <repo>/src/sonara/paths.py,
     so the repo root is two directories up from the directory containing it.
+
+    ONLY valid in the repo layout. The package is deliberately redeployed to
+    APP_DIR, where this file is at ~/.sonara/app/sonara/paths.py and this
+    returns ~/.sonara -- a directory with no src/ and no bin/. Anything that
+    wants "where does the code I am executing live" wants package_root().
     """
     here = os.path.dirname(os.path.abspath(__file__))  # src/sonara
     return os.path.dirname(os.path.dirname(here))       # repo root
+
+
+def package_root() -> str:
+    """Return the directory that CONTAINS the 'sonara' package.
+
+    Correct in BOTH layouts, because it asks where the running code actually
+    lives instead of assuming a repo shape: <repo>/src in a checkout,
+    ~/.sonara/app in a deployed install. This is the value that belongs on a
+    spawned daemon's PYTHONPATH (#123) -- repo_root() + "/src" yields the
+    nonexistent ~/.sonara/src once deployed.
+    """
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

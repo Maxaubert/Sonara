@@ -15,7 +15,7 @@ from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
     INSTALL_RECORD_PATH, SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
-    SESSION_DIGESTS_PATH,
+    SESSION_DIGESTS_PATH, package_root,
 )
 from sonara.platform import transport
 
@@ -1674,6 +1674,20 @@ class SpeechDaemon:
                 pass
         threading.Thread(target=work, name="sonara-prefetch", daemon=True).start()
 
+    def _log_start_marker(self) -> None:
+        """Startup marker (#63): volatile state (mute level, pause) dies with the
+        process, so an unexplained "setting reset itself" is diagnosable only if
+        restarts are visible in the log.
+
+        Records the package root too (#123). Sonara deliberately lives in two
+        places -- the checkout and the deployed ~/.sonara/app -- and which one a
+        daemon imported used to depend on who started it, with nothing in the
+        log to tell them apart. Two consecutive daemons on the same box ran
+        different copies and looked identical here.
+        """
+        print("[daemon] started pid={0} root={1}".format(
+            os.getpid(), package_root()), file=sys.stderr, flush=True)
+
     def _schedule_hold_release(self, session: str, owner: int, item) -> None:
         """Arm the held-question release timer. Test seam: tests call
         _release_held_decision directly instead of waiting on the clock.
@@ -2712,11 +2726,7 @@ class SpeechDaemon:
         accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
         hotkey_worker = threading.Thread(target=self._hotkey_worker,
                                          name="sonara-hotkey-worker", daemon=True)
-        # Startup marker (#63): volatile state (mute level, pause) dies with the
-        # process, so an unexplained "setting reset itself" is diagnosable only
-        # if restarts are visible in the log.
-        print("[daemon] started pid={0}".format(os.getpid()),
-              file=sys.stderr, flush=True)
+        self._log_start_marker()
         speak_thread.start()
         accept_thread.start()
         hotkey_worker.start()
