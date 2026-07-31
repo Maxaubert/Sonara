@@ -88,15 +88,35 @@ _DEBOUNCED_HOTKEYS = (
 # process narration the digest exists to cut.
 _SUMMARY_MIN_CHARS = 280
 
-# Max seconds a blocking question is HELD behind its in-flight lead-in digest
-# (#83). This is the WEDGE guard, not the normal path: the digest worker's
-# finally releases the question the instant the digest lands or fails, and the
-# question's attention earcon fires immediately regardless. Live logs measured
-# digests at median 8.7s / p90 17.7s, so the original 5s cap fired on nearly
-# every question and made the "bounded inversion" (question before context)
-# the common case (#103). The cap must comfortably exceed real digest latency;
-# past it the question speaks and the digest follows (hung summarizer only).
-_DECISION_HOLD_MAX_S = 30.0
+# Seconds added to summary_timeout to get the hold cap below. Covers the gap
+# between the summarizer subprocess timing out and the worker's finally
+# actually running (process teardown, post-processing).
+_DECISION_HOLD_GRACE_S = 5.0
+
+
+def _decision_hold_max_s(config) -> float:
+    """Max seconds a blocking question is HELD behind its in-flight lead-in
+    digest (#83). This is the WEDGE guard for a summarizer that never returns
+    AT ALL, not a bound on slow ones: the digest worker's finally releases the
+    question the instant the digest lands OR fails OR SKIPs, and the question's
+    attention earcon fires immediately regardless.
+
+    So the cap must outlive any digest the summarizer can still come back from,
+    which is exactly summary_timeout. A hardcoded value cannot: #103 raised it
+    5s -> 30s against codex latency (median 8.7s / p90 17.7s), and switching the
+    engine to claude+haiku tripled that (median 24.6s, 25% of digests past 30s)
+    with summary_timeout untouched at 60. The guard then fired on healthy work
+    and made the "bounded inversion" (question before its context) common again
+    (#121). Deriving it means any engine or timeout change carries the cap along.
+
+    Past the cap the question speaks and the digest follows."""
+    try:
+        timeout = float(config.get("summary_timeout", 60))
+    except (AttributeError, TypeError, ValueError):
+        timeout = 60.0
+    if timeout != timeout or timeout in (float("inf"), float("-inf")):
+        timeout = 60.0                      # NaN / inf from a hand-edited config
+    return max(timeout, 0.0) + _DECISION_HOLD_GRACE_S
 
 # Cap on concurrent connection-handler threads. Legitimate clients are short-lived
 # (one request each), so this bound is generous; it just stops a misbehaving or
@@ -1610,9 +1630,10 @@ class SpeechDaemon:
         if digesting or self._inflight_digests.get(session, 0) > 0:
             owner = self._last_dispatch_token.get(session, 0)
             self._held_decision[session] = (owner, item)
-            # Cap the hold (#83, retuned #103): the wedge guard for a hung
-            # summarizer. The normal release is the digest worker's finally,
-            # which frees the question the moment its context lands or fails.
+            # Cap the hold (#83, retuned #103, derived from summary_timeout in
+            # #121): the wedge guard for a hung summarizer. The normal release
+            # is the digest worker's finally, which frees the question the
+            # moment its context lands or fails.
             # Past the cap the question speaks and the digest follows
             # (bounded inversion; a caught-up user drops it).
             self._schedule_hold_release(session, owner, item)
@@ -1655,8 +1676,12 @@ class SpeechDaemon:
 
     def _schedule_hold_release(self, session: str, owner: int, item) -> None:
         """Arm the held-question release timer. Test seam: tests call
-        _release_held_decision directly instead of waiting on the clock."""
-        t = threading.Timer(_DECISION_HOLD_MAX_S, self._release_held_decision,
+        _release_held_decision directly instead of waiting on the clock.
+
+        Reads the cap from the LIVE config so a summary_timeout change from the
+        settings page widens the hold with it (#121)."""
+        t = threading.Timer(_decision_hold_max_s(self.config),
+                            self._release_held_decision,
                             args=(session, owner, item))
         t.daemon = True
         t.start()

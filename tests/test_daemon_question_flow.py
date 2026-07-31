@@ -224,16 +224,63 @@ def test_post_answer_prose_still_flows(monkeypatch):
     assert "Lead-in before question" not in spawned[-1]["text"]
 
 
-def test_hold_cap_covers_real_leadin_latency():
-    # The cap is the WEDGE guard, not the normal path: live logs measured
-    # digests at median 8.7s / p90 17.7s, so the original 5s cap made the
-    # "bounded inversion" (question speaks before its context) the COMMON
-    # case instead of the escape hatch. The worker's finally releases the
-    # question the moment the digest lands or fails, so a generous cap only
-    # bounds a genuinely hung summarizer; the attention earcon fires
-    # instantly either way.
-    from sonara.daemon import _DECISION_HOLD_MAX_S
-    assert _DECISION_HOLD_MAX_S >= 30.0
+def test_hold_cap_outlives_any_digest_the_summarizer_can_still_return():
+    # The cap is the WEDGE guard for a summarizer that never returns AT ALL --
+    # not a bound on slow ones. A digest that lands, fails or SKIPs already
+    # frees the question through _summary_worker's finally, so the only case
+    # the timer must cover is a worker wedged past its own subprocess timeout.
+    #
+    # It must therefore track summary_timeout rather than a magic number. A
+    # hardcoded 30.0 silently became an inversion generator the moment the
+    # engine got slower than the latency it was tuned against (#121): live
+    # logs went from median 8.1s / 1% over cap on codex to median 24.6s /
+    # 25% over cap on claude+haiku, with summary_timeout unchanged at 60.
+    from sonara.daemon import _decision_hold_max_s
+    from sonara.config import DEFAULTS
+
+    # every summary_timeout the setter will accept (daemon.py clamps 15..300)
+    for timeout in (15, 30, 60, 120, 300):
+        cap = _decision_hold_max_s({"summary_timeout": timeout})
+        assert cap > timeout, (
+            "a digest that returns at its own timeout must still beat the cap; "
+            "cap={0} timeout={1}".format(cap, timeout))
+
+    # the shipped default must be covered too, without anyone setting the key
+    assert _decision_hold_max_s({}) > DEFAULTS["summary_timeout"]
+    assert _decision_hold_max_s(DEFAULTS) > DEFAULTS["summary_timeout"]
+
+
+def test_hold_cap_survives_a_corrupt_summary_timeout():
+    # A hand-edited config.json can hold a non-numeric summary_timeout. The
+    # cap must fall back to the default rather than raise inside the hold
+    # path, which runs while a blocking question is already parked.
+    from sonara.daemon import _decision_hold_max_s
+    from sonara.config import DEFAULTS
+    for bad in ("soon", None, [], {}):
+        assert _decision_hold_max_s({"summary_timeout": bad}) > DEFAULTS["summary_timeout"]
+
+
+def test_schedule_hold_release_arms_the_config_derived_cap(monkeypatch):
+    # The seam that matters: _schedule_hold_release must read the CAP from the
+    # daemon's live config, so raising summary_timeout in the settings page
+    # widens the hold too instead of leaving a stale 30s guard behind.
+    import sonara.daemon as dmod
+    daemon, speaker, spawned = _summary_daemon(monkeypatch)
+    armed = []
+    monkeypatch.setattr(dmod.threading, "Timer",
+                        lambda delay, fn, args=(): armed.append(delay) or _NullTimer())
+    daemon.config["summary_timeout"] = 120
+    daemon._schedule_hold_release("fg", 1, object())
+    assert armed == [dmod._decision_hold_max_s({"summary_timeout": 120})]
+    assert armed[0] > 120
+
+
+class _NullTimer:
+    """threading.Timer stand-in: records the delay without arming a real clock."""
+    daemon = False
+
+    def start(self):
+        pass
 
 
 # --- D: the held question's audio is prefetched during digest generation ------
