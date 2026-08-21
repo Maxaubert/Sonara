@@ -676,10 +676,16 @@ class WinSupervisorBackend(SupervisorBackend):
     # --- monkeypatchable thin wrappers ---
 
     def _schtasks(self, args: list) -> int:
-        """Run 'schtasks <args>'. Monkeypatched in tests."""
+        """Run 'schtasks <args>'. Monkeypatched in tests.
+
+        CREATE_NO_WINDOW is required: is_installed() runs inside the daemon
+        (pythonw, no console) at every SESSION_START, and a console child of a
+        consoleless parent otherwise pops a visible console window (#125).
+        """
         return subprocess.call(
             ["schtasks"] + args,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW (hex: imports on POSIX)
         )
 
     def _probe_python_version(self, candidate: str):

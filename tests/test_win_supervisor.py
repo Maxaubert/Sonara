@@ -225,6 +225,24 @@ def test_is_installed_calls_schtasks_query(monkeypatch):
     assert calls[0] == ["/query", "/tn", TASK_NAME]
 
 
+def test_schtasks_spawns_windowless(monkeypatch):
+    # The daemon runs under pythonw (no console). is_installed() runs at every
+    # SESSION_START via _setup_health; a console child spawned without
+    # CREATE_NO_WINDOW allocates a brand-new VISIBLE console window each time.
+    captured = {}
+
+    def fake_call(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(sup_mod.subprocess, "call", fake_call)
+    assert WinSupervisorBackend()._schtasks(["/query", "/tn", TASK_NAME]) == 0
+    assert captured["argv"] == ["schtasks", "/query", "/tn", TASK_NAME]
+    flags = captured["kwargs"].get("creationflags", 0)
+    assert flags & 0x08000000, "CREATE_NO_WINDOW must be set"
+
+
 def test_doctor_rows_include_task_and_neural_voice(monkeypatch):
     sup = WinSupervisorBackend()
     monkeypatch.setattr(sup, "_schtasks", lambda args: 0)
