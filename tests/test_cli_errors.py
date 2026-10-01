@@ -32,8 +32,6 @@ def _silent_server(lock_path, stop):
 
 def test_send_to_a_hung_daemon_raises_unresponsive():
     stop = threading.Event()
-    _silent_server(paths.LOCK_PATH.__class__(str(client.LOCK_PATH)), stop) \
-        if False else None
     paths.ensure_sonara_dir()
     t = _silent_server(client.LOCK_PATH, stop)
     try:
