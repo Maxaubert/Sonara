@@ -96,13 +96,6 @@ def _cmd_minqueue(args) -> int:
     return 0
 
 
-def _cmd_audio_control(args) -> int:
-    enabled = args.state == "on"
-    _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL, "enabled": enabled})
-    print("Audio control {0}.".format("on" if enabled else "off"))
-    return 0
-
-
 def _cmd_duck_level(args) -> int:
     _send({"v": PROTOCOL_VERSION, "type": MsgType.SET_DUCK_LEVEL, "level": args.level})
     print("Duck level set to {0} percent.".format(args.level))
@@ -226,10 +219,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "minqueue", help="items to batch before reading (1 = read immediately)")
     sp.add_argument("n", type=int)
     sp.set_defaults(func=_cmd_minqueue)
-
-    ap = sub.add_parser("audio-control", help="duck other apps' audio while speaking")
-    ap.add_argument("state", choices=["on", "off"])
-    ap.set_defaults(func=_cmd_audio_control)
 
     dp = sub.add_parser("duck-level", help="set duck target volume (0-100)")
     dp.add_argument("level", type=int)
@@ -661,7 +650,6 @@ def install() -> int:
     # 3. Keymap setup.
     keymap.migrate_default_chord()
     keymap.write_default_keymap_if_absent()
-    keymap.write_resolved()
 
     # 4. Durable install record.
     plugin_version = _read_plugin_version(plugin_root)
@@ -733,9 +721,11 @@ def uninstall() -> int:
     artifacts = [
         paths.LOCK_PATH,
         paths.LOG_PATH,
-        paths.HOTKEYD_RESOLVED_PATH,
         paths.INSTALL_RECORD_PATH,
         paths.STOPPED_SENTINEL_PATH,   # clean slate: a reinstall starts fresh (#23)
+        # Legacy files from the removed macOS hotkeyd; older installs still
+        # wrote hotkeyd.resolved.json, so uninstall keeps sweeping them.
+        sonara_dir / "hotkeyd.resolved.json",
         sonara_dir / "hotkeyd.log",
         sonara_dir / "faulthandler.log",
     ]

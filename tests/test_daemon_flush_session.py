@@ -1,6 +1,6 @@
 """Ctrl+Alt+Down = flush to end: silence EVERYTHING queued or in flight across
-ALL sessions and go idle, non-destructively (skipped items stay unheard so
-catch-up recovers them). Global since #107: the old per-engaged-session flush
+ALL sessions and go idle, non-destructively (skipped items stay in history
+so Up recovers them). Global since #107: the old per-engaged-session flush
 left other sessions' landed or reorder-parked digests holding the floor, so a
 flush chimed success and a handoff started reading seconds later anyway."""
 from sonara.protocol import MsgType, PROTOCOL_VERSION
@@ -85,16 +85,16 @@ def test_flush_with_no_engaged_session_edges():
     assert speaker.earcons[-1] == "nav_edge"
 
 
-def test_flushed_items_stay_recoverable_via_catch_up():
+def test_flushed_items_stay_recoverable_via_up():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.handle_message(_prose("fg", "One. ", 0))
     daemon.handle_message(_prose("fg", "Two. ", 1))
     _flush(daemon)
     assert daemon.router.channel("fg").pending() == 0        # flushed
-    daemon.handle_message({"type": MsgType.CATCH_UP, "session": "fg"})
+    daemon.handle_message({"type": MsgType.NAV, "to": "first", "session": "fg"})
     ch = daemon.router.channel("fg")
     texts = [it.text for it in ch.items[ch.cursor:]]
-    assert "One." in texts and "Two." in texts               # catch-up brought them back
+    assert "One." in texts and "Two." in texts               # Up brought them back
 
 
 def test_flush_drains_every_sessions_backlog_in_one_press():

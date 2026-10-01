@@ -1,7 +1,7 @@
 """Windows earcon backend -- winsound.PlaySound with poll()-able handles.
 
 winsound is Windows-only; imported lazily (guarded try/except ModuleNotFoundError)
-so this module is importable on macOS/Linux for tests via the _winfakes harness.
+so this module is importable off Windows for tests via the _winfakes harness.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pathlib
 from sonara.platform.base import EarconBackend
 
 # winsound is Windows-only; imported lazily so the module is importable
-# on macOS/Linux (for tests / dev).
+# off Windows (for tests / dev).
 try:
     import winsound as _winsound
 except ModuleNotFoundError:  # non-Windows; reached at import-time when winsound is absent

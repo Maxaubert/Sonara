@@ -28,7 +28,6 @@ def test_uninstall_dispatches_and_cleans_shared_artifacts_preserving_user_files(
          mock.patch.object(cli.paths, "CONFIG_PATH", config), \
          mock.patch.object(cli.paths, "LOG_PATH", log), \
          mock.patch.object(cli.paths, "LOCK_PATH", lock), \
-         mock.patch.object(cli.paths, "HOTKEYD_RESOLVED_PATH", resolved), \
          mock.patch.object(cli.paths, "KEYMAP_PATH", keymap), \
          mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
          mock.patch.object(cli.paths, "APP_DIR", app_dir):

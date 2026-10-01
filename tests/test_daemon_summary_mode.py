@@ -41,7 +41,7 @@ def test_summary_mode_suppresses_prose_speech_but_records_history(monkeypatch):
     daemon.handle_message(_prose("fg", "A long explanation. "))
     ch = daemon.router.channel("fg")
     assert ch.pending() == 0                              # nothing queued to speak
-    assert daemon.history.unheard("fg")                   # but history recorded it
+    assert daemon.history.last_message("fg")              # but history recorded it
 
 
 def test_summary_mode_off_prose_is_spoken_as_today():
@@ -556,7 +556,7 @@ def test_flush_supersedes_inflight_summary(monkeypatch):
     daemon._summary_worker(*calls[0])                    # late gen-1 result
     ch = daemon.router.channel("fg")
     assert "Stale recap." not in [it.text for it in ch.items[ch.cursor:]]
-    assert not daemon.history.unheard("fg")              # nothing recorded either
+    assert not daemon.history.last_message("fg")         # nothing recorded either
 
 
 def test_recorded_summary_is_not_resummarized(monkeypatch):
@@ -592,7 +592,7 @@ def test_session_end_clears_await_choice(monkeypatch):
 def test_short_turn_does_not_suppress_session_announcement(monkeypatch):
     # The short-turn path reused _replay, which pre-sets router._last_active to
     # suppress the "Session changed" announcement -- correct for user replays
-    # (catch_up/nav/repeat), WRONG for automatic turn delivery: a short turn
+    # (Up/repeat), WRONG for automatic turn delivery: a short turn
     # after another session read played unattributed (audit #21).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     import sonara.daemon as daemon_module
@@ -760,7 +760,7 @@ def test_session_end_cancels_inflight_digest(monkeypatch):
     daemon._summarize_fn = lambda text, **kw: "Ghost digest."
     daemon._summary_worker(*calls[0])                     # lands after the session died
     assert "fg" not in daemon.router.channels             # channel NOT resurrected
-    assert not daemon.history.unheard("fg")               # history NOT resurrected
+    assert not daemon.history.last_message("fg")          # history NOT resurrected
 
 
 def test_session_end_clears_held_decision(monkeypatch):
@@ -786,13 +786,11 @@ def test_session_end_clears_per_session_state(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon._last_digest_text["fg"] = "stale"
     daemon._voiced_upto["fg"] = object()
-    daemon._nav_cursor["fg"] = 7
     daemon._assemblers["fg"] = object()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
                            "session": "fg"})
     assert "fg" not in daemon._last_digest_text
     assert "fg" not in daemon._voiced_upto
-    assert "fg" not in daemon._nav_cursor
     assert "fg" not in daemon._assemblers
 
 

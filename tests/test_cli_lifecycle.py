@@ -148,7 +148,6 @@ def test_install_stops_before_copying_and_clears_sentinel(monkeypatch, tmp_path)
     monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.migrate_default_chord", lambda: None)
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
-    monkeypatch.setattr("sonara.keymap.write_resolved", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
     rc = cli.install()
     assert rc == 0

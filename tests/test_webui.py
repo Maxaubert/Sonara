@@ -23,7 +23,7 @@ class FakeDaemon:
         self.config = {"voice": "af_heart", "rate": 250, "minqueue": 5,
                        "summary_mode": True, "summary_model": "haiku",
                        "summary_timeout": 60, "summary_settle_ms": 600,
-                       "audio_control": False, "duck_level": 20, "volume": 100,
+                       "duck_level": 20, "volume": 100,
                        "settings_port": 0}
         self.sessions = SessionManager()
         self.sessions.set_foreground("sess-1")
@@ -538,3 +538,30 @@ def test_state_sessions_carry_idle_seconds(server):
     stale = state["sessions"][ids.index("sess-old")]
     assert isinstance(live["idle_s"], int) and live["idle_s"] >= 0
     assert stale["idle_s"] is None
+
+
+def test_keymap_state_skips_removed_nav_actions(tmp_path, monkeypatch):
+    # D1: an existing ~/.sonara/keymap.json still binds nav_prev/nav_next. The
+    # settings page's hotkey editor lists only live actions, never those two.
+    import json
+    import sonara.platform as platform
+    from sonara import keymap
+    monkeypatch.setattr(platform.sys, "platform", "win32")
+    platform._CACHE = None
+    km = tmp_path / "keymap.json"
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "alt"]},
+        "nav_next": {"key": "right", "mods": ["ctrl", "alt"]}}), encoding="utf-8")
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", km)
+    try:
+        actions = [row["action"] for row in webui._keymap_state()]
+    finally:
+        platform._CACHE = None
+    assert "nav_prev" not in actions and "nav_next" not in actions
+    assert actions == list(keymap.ACTION_MESSAGES)
+
+
+def test_page_keys_have_no_audio_control():
+    # The pre-#92 audio_control shim was removed; audio_mode replaces it.
+    assert "audio_control" not in webui._PAGE_KEYS
+    assert "audio_control" not in webui._MSG_KEYS

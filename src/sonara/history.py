@@ -1,10 +1,9 @@
 """Per-session narration history + sentence-granular heard-marker.
 
-PURE: no I/O. The Phase 2.1 substrate behind repeat / catch_up /
-voice-continuity capture: every narrated-or-captured sentence is recorded per
-session; `heard` flips True only when the speak loop confirms the utterance
-COMPLETED, so an interrupted sentence stays unheard and a replay restarts from
-the start of that sentence.
+PURE: no I/O. The substrate behind repeat and Up (restart the latest turn):
+every narrated-or-captured sentence of the current turn is recorded per
+session, grouped into messages; `heard` flips True only when the speak loop
+confirms the utterance COMPLETED.
 """
 from __future__ import annotations
 
@@ -28,8 +27,6 @@ class SessionHistory:
         self._entries: "dict[str, deque]" = {}
         self._msg_id: "dict[str, int]" = {}
         self._group_seq: "dict[str, int]" = {}   # next entry index within the open group
-        self._touch: "dict[str, int]" = {}   # recency across sessions
-        self._tick = 0
 
     def record(self, session: str, kind: str, text: str) -> HistoryEntry:
         d = self._entries.get(session)
@@ -40,8 +37,6 @@ class SessionHistory:
         entry = HistoryEntry(text, kind, self._msg_id.get(session, 0), seq)
         self._group_seq[session] = seq + 1
         d.append(entry)
-        self._tick += 1
-        self._touch[session] = self._tick
         return entry
 
     def end_message(self, session: str) -> None:
@@ -61,8 +56,8 @@ class SessionHistory:
     def message_ids(self, session: str) -> list:
         """Distinct message ids for the session, oldest first. Each id is one
         'item' (one assistant message) within the current turn; the list is the
-        current turn's messages (history resets on each new prompt). Powers the
-        next/prev/first/last navigation cursor."""
+        current turn's messages (history resets on each new prompt). Up replays
+        them from the first."""
         d = self._entries.get(session)
         if not d:
             return []
@@ -74,7 +69,7 @@ class SessionHistory:
             seen.add(e.msg_id)
             # The first PRESENT entry of a group. If its seq != 0 the group's head
             # was evicted by the rolling cap, so the group is truncated -- exclude it
-            # from navigation rather than letting nav replay a fragment (#8).
+            # from the replay rather than reading a fragment (#8).
             if e.seq == 0:
                 ids.append(e.msg_id)
         return ids
@@ -86,45 +81,8 @@ class SessionHistory:
             return []
         return [e for e in d if e.msg_id == msg_id]
 
-    def nth_last_message(self, session: str, n: int) -> list:
-        """Entries of the n-th most recent message group, oldest first.
-        n=0 is the current/most-recent message (== last_message); n=1 is the one
-        before it, and so on. Returns [] if n is out of range. Powers skip-back
-        ('previous item') navigation."""
-        d = self._entries.get(session)
-        if not d or n < 0:
-            return []
-        ordered_ids = []                       # distinct msg_ids, most-recent first
-        for e in reversed(d):
-            if e.msg_id not in ordered_ids:
-                ordered_ids.append(e.msg_id)
-        if n >= len(ordered_ids):
-            return []
-        target = ordered_ids[n]
-        return [e for e in d if e.msg_id == target]
-
-    def unheard(self, session: str) -> list:
-        """All not-yet-completed entries for session, oldest first."""
-        return [e for e in self._entries.get(session, ()) if not e.heard]
-
     def reset(self, session: str) -> None:
         """Forget a session entirely (new prompt / session end)."""
         self._entries.pop(session, None)
         self._msg_id.pop(session, None)
         self._group_seq.pop(session, None)
-        self._touch.pop(session, None)
-
-    def other_session_with_unheard(self, exclude: str, skip=None):
-        """The most recently active OTHER session that has unheard entries,
-        or None. Lets catch_up recover a session you left without re-typing
-        in it (there is no OS window-focus hook). *skip*, when given, filters
-        out sessions the caller must not surface (e.g. muted ones)."""
-        best, best_tick = None, -1
-        for session, tick in self._touch.items():
-            if session == exclude:
-                continue
-            if skip is not None and skip(session):
-                continue
-            if tick > best_tick and self.unheard(session):
-                best, best_tick = session, tick
-        return best

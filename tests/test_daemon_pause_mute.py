@@ -36,7 +36,7 @@ def test_mute_confirmation_heard_while_paused():
     assert speaker.spoken == ["Muted."]
 
 
-def test_audio_control_confirmation_heard_while_paused():
+def test_audio_mode_confirmation_heard_while_paused():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     import sonara.daemon as daemon_module
     import unittest.mock as mock
@@ -45,9 +45,8 @@ def test_audio_control_confirmation_heard_while_paused():
         daemon._speak_loop_once()
         speaker.spoken.clear()
         daemon.handle_message({"v": PROTOCOL_VERSION,
-                               "type": MsgType.SET_AUDIO_CONTROL, "enabled": True})
+                               "type": MsgType.SET_AUDIO_MODE, "mode": "duck"})
         daemon._speak_loop_once()
-        # #92: SET_AUDIO_CONTROL is now a compat shim over audio_mode (enabled -> "duck").
         assert speaker.spoken == ["Audio ducking."]
 
 

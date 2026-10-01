@@ -46,3 +46,22 @@ def test_hooks_json_event_is_exec_form(event: str):
         assert hook["command"].endswith("pythonw.exe")
         assert hook["args"][0].endswith("hook.py")
         assert hook["args"][-1] == event
+
+
+def test_no_redundant_registrations():
+    # DC9: the '' PreToolUse matcher already routes AskUserQuestion and
+    # ExitPlanMode (hooks_entry branches on tool_name), and idle_prompt produced
+    # no message, so neither the tool-specific matchers nor idle_prompt ship.
+    data = json.loads(build_hooks_json(r"C:\u\.sonara\pythonw.exe", r"C:\plug\hook.py"))
+    assert [e["matcher"] for e in data["hooks"]["PreToolUse"]] == [""]
+    assert [e["matcher"] for e in data["hooks"]["Notification"]] == ["permission_prompt"]
+
+
+def test_template_matchers_mirror_the_plugin_hooks_file():
+    # The settings.json template mirrors hooks/hooks.json event by event.
+    from pathlib import Path
+    plugin = json.loads((Path(__file__).resolve().parent.parent / "hooks" / "hooks.json")
+                        .read_text(encoding="utf-8"))["hooks"]
+    data = json.loads(build_hooks_json(r"C:\u\.sonara\pythonw.exe", r"C:\plug\hook.py"))
+    for event, entries in data["hooks"].items():
+        assert [e["matcher"] for e in entries] == [e["matcher"] for e in plugin[event]], event

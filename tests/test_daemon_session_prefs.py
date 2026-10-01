@@ -87,9 +87,9 @@ def test_forget_session_clears_history():
     d = make_daemon()
     d.router.channel("s1")
     d.history.record("s1", "prose", "Hello there.")
-    assert d.history.unheard("s1") != []
+    assert d.history.last_message("s1") != []
     d.handle_message({"v": 1, "type": "forget_session", "session": "s1"})
-    assert d.history.unheard("s1") == []
+    assert d.history.last_message("s1") == []
 
 
 def test_session_bearing_message_touches_last_seen():

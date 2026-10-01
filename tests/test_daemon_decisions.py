@@ -1,5 +1,4 @@
 from sonara.protocol import MsgType, PROTOCOL_VERSION
-from sonara.queue import SpeechItem
 from tests.daemon_helpers import make_daemon
 
 
@@ -165,42 +164,3 @@ def test_decision_enqueued_at_quiet():
         items = _channel_items(daemon, "fg")
         assert len(items) == 1, f"{kind} not enqueued at quiet"
         assert items[0].kind == kind
-
-
-def test_jump_decision_advances_channel_cursor_to_decision():
-    """M6: JUMP_DECISION advances the channel cursor past non-decision items
-    to the next decision, drops their heard-markers, and marks the current
-    item heard so a later CATCH_UP doesn't replay them out of order."""
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    # A current item being spoken, with a heard-marker entry.
-    cur_entry = daemon.history.record("fg", "prose", "current")
-    cur = SpeechItem(id=99, session="fg", kind="prose", text="current", is_decision=False)
-    daemon._current_item = cur
-    daemon._pending_heard[cur.id] = cur_entry
-    # Two queued prose items (with heard-markers) ahead of a decision, in the channel.
-    e1 = daemon.history.record("fg", "prose", "p1")
-    e2 = daemon.history.record("fg", "prose", "p2")
-    daemon._enqueue("fg", "prose", "p1", False, entry=e1)
-    daemon._enqueue("fg", "prose", "p2", False, entry=e2)
-    daemon._enqueue("fg", "choice", "decide", True)
-    ch = daemon.router.channel("fg")
-    prose_ids = [it.id for it in ch.items if not it.is_decision]
-    assert all(pid in daemon._pending_heard for pid in prose_ids)
-
-    daemon.handle_message({"type": "jump_decision", "session": "fg"})
-
-    assert speaker.cancels == 1
-    assert cur_entry.heard is True                 # cancelled current marked heard
-    # The dropped prose items' pending-heard entries are gone (no leak).
-    assert all(pid not in daemon._pending_heard for pid in prose_ids)
-    # The channel cursor now points at the decision item.
-    decision_item = ch.items[ch.cursor]
-    assert decision_item.text == "decide"
-    assert decision_item.is_decision is True
-
-
-def test_bare_earcon_message_plays_kind():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(MsgType.EARCON, "fg", kind="turn_done"))
-    assert speaker.earcons == ["turn_done"]
-    assert len(_channel_items(daemon, "fg")) == 0

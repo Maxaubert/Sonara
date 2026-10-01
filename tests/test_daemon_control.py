@@ -53,26 +53,6 @@ def test_skip_only_cancels_current():
     assert len(queue) == 3
 
 
-def test_jump_decision_drops_to_first_decision_and_cancels():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    # items 0,1 prose; item 2 is a decision
-    _seed(queue, daemon, "fg", 4, decision_at=2)
-    daemon.handle_message(_msg(MsgType.JUMP_DECISION, "fg"))
-    assert speaker.cancels == 1
-    nxt = queue.pop_next()
-    assert nxt.is_decision is True
-    assert nxt.text == "item 2"
-
-
-def test_catch_up_no_longer_discards_the_backlog():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(MsgType.PROSE, "fg", delta="Keep me. ",
-                               index=0, final=True))
-    daemon.handle_message(_msg(MsgType.CATCH_UP))
-    texts = [queue.pop_next().text for _ in range(len(queue))]
-    assert "Keep me." in texts
-
-
 def test_set_foreground_sets_foreground():
     daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
     daemon.handle_message(_msg(MsgType.SET_FOREGROUND, "s9"))

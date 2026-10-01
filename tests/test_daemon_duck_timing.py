@@ -33,7 +33,7 @@ def test_duck_fires_via_on_play_not_before_speak():
     assert daemon.ducker.duck_calls           # ...but on_play ducked for playback
 
 
-def test_no_duck_when_audio_control_off():
+def test_no_duck_when_audio_mode_off():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "off"
     _seed_item(daemon)

@@ -115,10 +115,6 @@ OUTPUT: exactly the summary and nothing else. If the message is empty or has not
 
 INSTRUCTIONS = {"tidy": _TIDY, "natural": _NATURAL, "brief": _BRIEF}
 
-# Back-compat alias: the pre-#58 single instruction (= natural). Tests and any
-# external references keep working.
-INSTRUCTION = _NATURAL
-
 
 def default_instruction(style) -> str:
     """The built-in instruction for *style*; anything unknown maps to natural.

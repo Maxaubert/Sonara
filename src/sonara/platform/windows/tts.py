@@ -11,7 +11,7 @@ object), run() returns a _TtsHandle whose .wait(timeout)/.terminate()/
 .returncode mimic subprocess.Popen.
 
 WINDOWS-only: every winrt.* / winsound import is LAZY (inside methods) so this
-module imports cleanly on macOS/Linux for the mock test suite. "Working" under
+module imports cleanly off Windows for the mock test suite. "Working" under
 the mocks is NOT a claim that real OneCore playback works -- only Windows is.
 
 Requirements (Windows only):

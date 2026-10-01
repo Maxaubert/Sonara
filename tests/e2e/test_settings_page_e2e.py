@@ -106,7 +106,7 @@ def test_preview_plays_prerendered_file_without_live_synth(live, tmp_path, monke
     assert audio_hits and audio_hits[0] == 200     # file streamed
 
 
-ALL_ACTIONS = ("nav_prev", "nav_next", "nav_start", "flush", "pause",
+ALL_ACTIONS = ("nav_start", "flush", "pause",
                "mute", "next_session", "faster", "slower")
 
 
@@ -131,12 +131,30 @@ def test_second_capture_cancels_first_and_binds_once(live, monkeypatch):
         page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
         page.wait_for_selector("#voice-select option", state="attached")
         page.click("button[data-page='hotkeys']")
-        page.click("[data-action='nav_prev'] .kbd")
+        page.click("[data-action='nav_start'] .kbd")
         page.click("[data-action='flush'] .kbd")      # must cancel the first
         page.keyboard.press("Control+Alt+z")
         page.wait_for_timeout(400)
         browser.close()
     assert binds == [("flush", "z", ("ctrl", "alt"))]  # exactly ONE bind
+
+
+def test_hotkey_editor_lists_no_prev_next_rows(live, monkeypatch):
+    # D1: paragraph stepping (Ctrl+Alt+Left/Right) was removed; the editor
+    # offers exactly the live actions, so a stale nav_prev/nav_next is never shown.
+    _bind_recorder(monkeypatch)
+    d, s = live
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='hotkeys']")
+        rows = page.eval_on_selector_all(
+            ".key-row[data-action]", "els => els.map(e => e.dataset.action)")
+        browser.close()
+    assert sorted(rows) == sorted(ALL_ACTIONS)
+    assert "nav_prev" not in rows and "nav_next" not in rows
 
 
 def test_unsupported_key_shows_error_and_never_persists(live, monkeypatch):

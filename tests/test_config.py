@@ -10,7 +10,6 @@ def test_defaults_has_documented_top_level_keys():
         "background_policy",
         "history_cap",
         "minqueue",
-        "audio_control",
         "duck_level",
         "volume",
         "audio_mode",
@@ -290,3 +289,20 @@ def test_explicit_audio_mode_is_not_overridden_by_migration(tmp_path, monkeypatc
                     encoding="utf-8")
     monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
     assert load_config()["audio_mode"] == "pause"
+
+
+def test_legacy_audio_control_config_loads_and_drops_the_key(tmp_path, monkeypatch):
+    # The audio_control shim was removed: an existing config that still carries
+    # it must load (mapped to audio_mode) and the stale key must not survive the
+    # load, so the next save stops persisting it.
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"audio_control": True, "rate": 210}), encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", path)
+    cfg = load_config()
+    assert cfg["audio_mode"] == "duck"
+    assert cfg["rate"] == 210
+    assert "audio_control" not in cfg
+
+
+def test_audio_control_is_not_a_default():
+    assert "audio_control" not in DEFAULTS

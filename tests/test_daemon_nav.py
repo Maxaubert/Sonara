@@ -1,7 +1,9 @@
-"""Message-cursor navigation (nav next/prev/first/last) over the current turn.
-Each move cuts current speech, inserts replay items at the channel cursor, and
-replays the target message forward; next/prev clamp at the ends (no wrap);
-new content appends after the replay without interleaving."""
+"""Up (nav 'first'): restart the latest turn from the top.
+
+One message, always the last: Sonara reads the latest turn and Up replays it
+from its first message, cutting current speech and chiming 'nav'. With nothing
+recorded it chimes 'nav_edge'. There is no stepping between paragraphs or
+older turns: any other nav target is a silent no-op."""
 from sonara.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon
 
@@ -33,6 +35,16 @@ def _prose(s, delta, idx, final):
             "delta": delta, "index": idx, "final": final}
 
 
+def _start_reading(daemon, session, msg_id):
+    """Simulate the speak loop currently reading a given message."""
+    from sonara.queue import SpeechItem
+    entry = daemon.history.entries_for_message(session, msg_id)[0]
+    item = SpeechItem(id=9000 + msg_id, session=session, kind="prose",
+                      text=entry.text, is_decision=False)
+    daemon._pending_heard[item.id] = entry
+    daemon._current_item = item
+
+
 def test_repeat_reads_last_message_via_channel():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "Hello. ", 0, True))
@@ -43,99 +55,33 @@ def test_repeat_reads_last_message_via_channel():
     assert speaker.spoken == ["Hello."]
 
 
-def test_prev_steps_back_one_message_then_plays_forward():
-    # Seek-and-play: stepping back lands on the previous item AND reads every
-    # later one, so playback continues instead of stopping after one item.
-    daemon, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _nav(daemon, "prev")
-    assert [s.text for s in _drain_channel(daemon)] == ["m1", "m2"]
-    _nav(daemon, "prev")
-    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
-
-
-def _start_reading(daemon, session, msg_id):
-    """Simulate the speak loop currently reading a given message: point
-    _current_item at an item whose history entry has that msg_id."""
-    from sonara.queue import SpeechItem
-    entry = daemon.history.entries_for_message(session, msg_id)[0]
-    item = SpeechItem(id=9000 + msg_id, session=session, kind="prose",
-                      text=entry.text, is_decision=False)
-    daemon._pending_heard[item.id] = entry
-    daemon._current_item = item
-
-
-def test_nav_next_while_reading_earlier_message_anchors_on_it_not_latest():
-    # Bug repro: reading m1 (msg 1) of a 3-message turn, pressing next must go to
-    # m2 (the message AFTER what's playing), NOT jump to the latest with an edge
-    # chime. Anchor = the message currently being read, not n-1.
-    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
-    _seed(daemon)                                    # messages 0, 1, 2 (m2 latest)
-    _start_reading(daemon, "fg", 1)                  # currently hearing m1
-    _nav(daemon, "next")
-    assert speaker.earcons[-1] == "nav"              # moved, NOT nav_edge
-    assert [s.text for s in _drain_channel(daemon)] == ["m2"]
-
-
-def test_nav_prev_while_reading_anchors_on_current_not_latest():
-    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _start_reading(daemon, "fg", 1)                  # hearing m1
-    _nav(daemon, "prev")                             # -> m0 (before m1)
-    assert speaker.earcons[-1] == "nav"
-    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
-
-
-def test_nav_next_while_reading_the_latest_message_edges():
-    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _start_reading(daemon, "fg", 2)                  # hearing the newest (m2)
-    _nav(daemon, "next")                             # nothing after -> edge
-    assert speaker.earcons[-1] == "nav_edge"
-
-
-def test_prev_clamps_at_first():
-    daemon, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    for _ in range(5):
-        _nav(daemon, "prev")
-    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
-    assert daemon._nav_cursor["fg"] == 0
-
-
-def test_next_clamps_at_last_no_wrap():
-    daemon, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _nav(daemon, "first"); _drain_channel(daemon)                 # cursor at m0
-    _nav(daemon, "next"); assert [s.text for s in _drain_channel(daemon)] == ["m1", "m2"]
-    _nav(daemon, "next"); assert [s.text for s in _drain_channel(daemon)] == ["m2"]
-    _nav(daemon, "next")                                           # at last -> re-read m2
-    assert [s.text for s in _drain_channel(daemon)] == ["m2"]     # never wrapped to 0
-    # reaching the latest clears the cursor: "following live" again, not pinned
-    assert daemon._nav_cursor.get("fg") is None
-
-
-def test_first_and_last_jump():
+def test_up_replays_the_whole_turn_from_the_top():
     daemon, *_ = make_daemon(foreground="fg")
     _seed(daemon)
     _nav(daemon, "first")
-    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]   # whole turn
-    _nav(daemon, "last")
-    assert [s.text for s in _drain_channel(daemon)] == ["m2"]
+    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
 
 
-# --- nav chimes: 'nav' when a move lands, 'nav_edge' at a boundary/no-op -------
-
-def test_nav_move_fires_nav_chime(speakerless=None):
+def test_up_fires_nav_chime_and_cuts_current_speech():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     _seed(daemon)
-    _nav(daemon, "first")          # cursor was at latest -> moving to first MOVES
+    _nav(daemon, "first")
+    assert speaker.earcons == ["nav"]
+    assert speaker.cancels == 1
+
+
+def test_up_while_reading_a_later_message_restarts_from_the_first():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    _start_reading(daemon, "fg", 1)                  # currently hearing m1
+    _nav(daemon, "first")
     assert speaker.earcons[-1] == "nav"
+    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
 
 
-def test_repeated_first_always_chimes_nav_and_replays():
+def test_repeated_up_always_chimes_nav_and_replays():
     # Up is a restart, not a step: every press re-reads the turn from the top
-    # and chimes "nav", even when the cursor is already parked at the start (#128).
+    # and chimes "nav" (#128).
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     _seed(daemon)
     for _ in range(3):
@@ -144,7 +90,7 @@ def test_repeated_first_always_chimes_nav_and_replays():
     assert [it.text for it in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
 
 
-def test_first_on_single_message_turn_chimes_nav():
+def test_up_on_single_message_turn_chimes_nav():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     daemon.history.record("fg", "prose", "only")
     _nav(daemon, "first")
@@ -152,77 +98,65 @@ def test_first_on_single_message_turn_chimes_nav():
     assert [it.text for it in _drain_channel(daemon)] == ["only"]
 
 
-def test_nav_at_edge_fires_nav_edge_chime():
-    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _nav(daemon, "last")           # already at the latest -> no move -> edge
-    assert speaker.earcons[-1] == "nav_edge"
-
-
-def test_nav_prev_at_first_fires_nav_edge():
-    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _nav(daemon, "first")          # move to first (nav)
-    speaker.earcons.clear()
-    _nav(daemon, "prev")           # already first -> edge
+def test_up_with_no_history_fires_nav_edge_and_announces():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")   # nothing recorded
+    _nav(daemon, "first")
     assert speaker.earcons == ["nav_edge"]
-
-
-def test_nav_with_no_history_fires_nav_edge():
-    daemon, queue, speaker, *_ = make_daemon(foreground="fg")   # no messages seeded
-    _nav(daemon, "next")
-    assert speaker.earcons[-1] == "nav_edge"
-
-
-def test_nav_with_no_foreground_fires_nav_edge():
-    daemon, queue, speaker, *_ = make_daemon(foreground=None)
-    daemon.handle_message({"type": "nav", "to": "next", "session": "x"})
-    assert speaker.earcons == ["nav_edge"]
-
-
-def test_streaming_content_does_not_move_the_cursor_but_flush_resets_it():
-    # The streaming-nav bug fix: new paragraphs arriving while you navigate must
-    # NOT yank the cursor to latest; only a new prompt (FLUSH) clears it.
-    daemon, *_ = make_daemon(foreground="fg")
-    _seed(daemon)
-    _nav(daemon, "prev")
-    anchored = daemon._nav_cursor.get("fg")
-    assert anchored is not None
-    # more content streams in -> cursor stays put
-    daemon.handle_message({"type": "prose", "session": "fg",
-                           "delta": "More streamed text.", "index": 9, "final": False})
-    assert daemon._nav_cursor.get("fg") == anchored
-    # a new prompt clears navigation
-    daemon.handle_message({"type": "flush", "session": "fg"})
-    assert "fg" not in daemon._nav_cursor
-
-
-def test_nav_then_live_prose_continues_after_replay_no_interleave():
-    # After navigating back, newly streamed prose enqueues AFTER the replayed
-    # items (a contiguous catch-up) rather than jumping into the middle of the
-    # replay. Seek-and-play makes the in-between items play seamlessly.
-    daemon, *_ = make_daemon(foreground="fg")
-    _seed(daemon)                                    # m0, m1, m2
-    _drain_channel(daemon)                           # clear initial channel state
-    _nav(daemon, "prev")                             # inserts m1, m2 at cursor
-    daemon.handle_message({"type": "prose", "session": "fg",
-                           "delta": "Live continues.\n\n", "index": 7, "final": False})
-    texts = [s.text for s in _drain_channel(daemon)]
-    assert texts[:2] == ["m1", "m2"]
-    assert "Live continues." in texts
-    assert texts.index("Live continues.") > texts.index("m2")   # after, not interleaved
-
-
-def test_nav_with_empty_history_announces():
-    daemon, *_ = make_daemon(foreground="fg")
-    _nav(daemon, "prev")
     ch = daemon.router.channel("fg")
     assert any("Nothing to navigate" in it.text for it in ch.items)
 
 
+def test_up_with_no_foreground_fires_nav_edge():
+    daemon, queue, speaker, *_ = make_daemon(foreground=None)
+    daemon.handle_message({"type": "nav", "to": "first", "session": "x"})
+    assert speaker.earcons == ["nav_edge"]
+
+
+def test_nav_without_a_target_means_up():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    daemon.handle_message({"type": "nav", "session": "fg"})
+    assert speaker.earcons == ["nav"]
+    assert [s.text for s in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
+
+
+def test_removed_nav_targets_are_silent_noops():
+    # D1: prev/next/last stepping was removed. A stale client sending them gets
+    # nothing: no chime, no cut, nothing replayed.
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    for to in ("prev", "next", "last", "bogus"):
+        _nav(daemon, to)
+    assert speaker.earcons == []
+    assert speaker.cancels == 0
+    assert daemon.router.channel("fg").pending() == 0
+
+
+def test_daemon_has_no_nav_cursor_state():
+    # The per-session paragraph cursor only served prev/next; it is gone.
+    daemon, *_ = make_daemon(foreground="fg")
+    assert not hasattr(daemon, "_nav_cursor")
+    assert not hasattr(daemon, "_reading_msg_id")
+
+
+def test_up_then_live_prose_continues_after_replay_no_interleave():
+    # After Up, newly streamed prose enqueues AFTER the replayed items rather
+    # than jumping into the middle of the replay.
+    daemon, *_ = make_daemon(foreground="fg")
+    _seed(daemon)                                    # m0, m1, m2
+    _drain_channel(daemon)                           # clear initial channel state
+    _nav(daemon, "first")
+    daemon.handle_message({"type": "prose", "session": "fg",
+                           "delta": "Live continues.\n\n", "index": 7, "final": False})
+    texts = [s.text for s in _drain_channel(daemon)]
+    assert texts[:4] == ["m0a", "m0b", "m1", "m2"]
+    assert "Live continues." in texts
+    assert texts.index("Live continues.") > texts.index("m2")   # after, not interleaved
+
+
 def test_engaged_session_is_the_active_reader_not_the_foreground():
     # After a session change the active reader differs from the foreground. The
-    # session the user is ENGAGED with (and navigates) is what they HEAR.
+    # session the user is ENGAGED with (and restarts with Up) is what they HEAR.
     daemon, *_ = make_daemon(foreground="B")
     daemon.router.active = "A"
     assert daemon._engaged_session() == "A"           # active reader wins
@@ -233,35 +167,27 @@ def test_engaged_session_is_the_active_reader_not_the_foreground():
     assert daemon._engaged_session() == "B"           # falls back to foreground
 
 
-def test_nav_navigates_the_engaged_reader_not_the_foreground():
-    # Bug repro: content was read for session A (the active reader) while the
-    # foreground is B (no turn of its own). A nav press must navigate A's history,
-    # not B's -- before the fix it hit foreground B, found nothing, and gave the
-    # "nothing to navigate" edge chime instead of rereading A.
+def test_up_restarts_the_engaged_reader_not_the_foreground():
+    # Content was read for session A (the active reader) while the foreground is
+    # B (no turn of its own). Up must restart A's turn, not find nothing in B.
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="B")
     h = daemon.history
     h.record("A", "prose", "a0"); h.end_message("A")
     h.record("A", "prose", "a1")                      # A has a 2-message turn
     daemon.router.active = "A"                        # A is what the user hears
-    daemon.handle_message({"type": "nav", "to": "prev", "session": "B"})
-    assert speaker.earcons[-1] == "nav"               # moved within A, not nav_edge
+    daemon.handle_message({"type": "nav", "to": "first", "session": "B"})
+    assert speaker.earcons[-1] == "nav"
     ch = daemon.router.channel("A")
     assert [it.text for it in ch.items[ch.cursor:]] == ["a0", "a1"]   # replayed A
 
 
-def test_nav_steps_by_paragraph_within_one_message():
+def test_up_replays_every_paragraph_of_a_message():
     daemon, *_ = make_daemon(foreground="fg")
     daemon.handle_message({
         "type": "prose", "session": "fg",
         "delta": "Para one sentence.\n\nPara two sentence.\n\nPara three sentence.",
         "index": 0, "final": True})
     _drain_channel(daemon)                           # clear the channel
-    # the one message became three paragraph 'items'
-    assert len(daemon.history.message_ids("fg")) == 3
-    _nav(daemon, "prev")                             # latest(para3) -> para2 onward
-    assert [s.text for s in _drain_channel(daemon)] == ["Para two sentence.", "Para three sentence."]
-    _nav(daemon, "first")                            # -> para1 onward (whole message)
+    _nav(daemon, "first")
     assert [s.text for s in _drain_channel(daemon)] == [
         "Para one sentence.", "Para two sentence.", "Para three sentence."]
-    _nav(daemon, "last")                             # -> para3 only
-    assert [s.text for s in _drain_channel(daemon)] == ["Para three sentence."]

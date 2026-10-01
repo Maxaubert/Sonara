@@ -43,7 +43,7 @@ class Speaker:
     def speak(self, text: str, cancel_epoch=None, on_play=None,
               voice=_UNSET) -> bool:
         """Speak text, blocking. Return True iff the utterance COMPLETED
-        (say exited 0). A cancelled/terminated utterance returns False so the
+        (the synthesis process exited 0). A cancelled/terminated utterance returns False so the
         caller can leave it marked unheard (sentence-granular replay).
 
         *cancel_epoch* is the baseline to compare against. The daemon captures it
@@ -136,7 +136,7 @@ class Speaker:
             try:
                 proc.wait(timeout=self._wait_timeout)
             except subprocess.TimeoutExpired:
-                # 'say' hung past the generous deadline; kill it and move on.
+                # The synthesis process hung past the generous deadline; kill it and move on.
                 proc.terminate()
         finally:
             with self._current_lock:

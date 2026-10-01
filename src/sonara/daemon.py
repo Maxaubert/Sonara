@@ -76,9 +76,7 @@ MINQUEUE_MAX = 10
 # press is a deliberate ring advance (and now chimes instantly, #111), and
 # MOD_NOREPEAT already guards key-hold auto-repeat, so it is not debounced.
 _HOTKEY_DEBOUNCE_S = 0.30
-_DEBOUNCED_HOTKEYS = (
-    MsgType.PAUSE, MsgType.MUTE, MsgType.CYCLE_VERBOSITY,
-)
+_DEBOUNCED_HOTKEYS = (MsgType.PAUSE, MsgType.MUTE)
 
 # Summary mode: a turn whose prose is already shorter than this is spoken
 # as-is instead of being digested (a digest of a short message adds nothing,
@@ -174,9 +172,7 @@ class SpeechDaemon:
         self._poll_interval = 0.1
         from sonara.history import SessionHistory
         self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
-        self._options: "dict[str, str]" = {}
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
-        self._nav_cursor: dict = {}               # session -> anchored message id (absent = latest)
         self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
         self._voiced_upto: dict = {}       # session -> last HistoryEntry voiced this turn (summary mode: a blocking question and turn-end must not double-voice; identity survives history-cap eviction, audit #21)
         self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
@@ -312,10 +308,6 @@ class SpeechDaemon:
         if state != "ok" and cue:
             self._enqueue(session, "prose", cue, False)
 
-    def _drop_pending(self, items) -> None:
-        for it in items:
-            self._pending_heard.pop(it.id, None)
-
     def _drop_channel_pending(self, session: str) -> None:
         """Drop heard-tracking entries for a session's not-yet-spoken channel items
         (called before wiping/dropping the channel, so _pending_heard can't leak)."""
@@ -358,7 +350,6 @@ class SpeechDaemon:
         needs the channel to still exist, or _pending_heard leaks."""
         self._drop_channel_pending(session)
         self.history.reset(session)
-        self._options.pop(session, None)
         self._warned_immediate.discard(session)
         self._guided_sessions.discard(session)
         # Ending the session is a user action like FLUSH: BUMP the cancel
@@ -377,7 +368,6 @@ class SpeechDaemon:
         self._last_digest_text.pop(session, None)
         self.digest_store.forget(session)         # ended sessions don't rehydrate (#118)
         self._voiced_upto.pop(session, None)
-        self._nav_cursor.pop(session, None)
         self._assemblers.pop(session, None)
         self._last_dispatch_token.pop(session, None)
         self._inflight_digests.pop(session, None)
@@ -566,7 +556,7 @@ class SpeechDaemon:
                 entry = self.history.record(session, "prose", chunk)
                 # Quiet verbosity AND summary mode both record prose to history
                 # without enqueueing speech (summary mode reads a recap at turn
-                # end instead; catch_up / re-read still work from history).
+                # end instead; repeat / Up still work from history).
                 if verbosity != "quiet" and not self.config.get("summary_mode"):
                     item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
                                       text=chunk, is_decision=False)
@@ -578,7 +568,6 @@ class SpeechDaemon:
                 # turn_done earcon (or FLUSH) arrives. This keeps minqueue batching
                 # correct: items accumulate until the threshold OR the turn ends.
                 self.history.end_message(session)
-                self._options.pop(session, None)
             # Wake the speak loop ONLY when a batch is actually ready to read
             # (>= minqueue, the turn is done, or a decision is waiting). Waking on
             # every buffered delta made the loop spin on self._lock and starve the
@@ -610,7 +599,6 @@ class SpeechDaemon:
                                   self._selection_cue(session, verbosity)) if e]
             if extras:
                 text = "{0} {1}".format(text, " ".join(extras))
-            self._options[session] = text
             entry = self.history.record(session, "choice", text)
             self.history.end_message(session)
             item = SpeechItem(id=self._alloc_id(), session=session, kind="choice",
@@ -637,7 +625,6 @@ class SpeechDaemon:
             cue = self._selection_cue(session, verbosity)
             if cue:
                 text = "{0} {1}".format(text, cue)
-            self._options[session] = text
             entry = self.history.record(session, "plan", text)
             self.history.end_message(session)
             item = SpeechItem(id=self._alloc_id(), session=session, kind="plan",
@@ -667,7 +654,6 @@ class SpeechDaemon:
             cue = self._selection_cue(session, verbosity)
             if cue:
                 text = "{0} {1}".format(text, cue)
-            self._options[session] = text
             entry = self.history.record(session, "permission", text)
             self.history.end_message(session)
             item = SpeechItem(id=self._alloc_id(), session=session, kind="permission",
@@ -749,7 +735,6 @@ class SpeechDaemon:
             # rather than spoken into the new turn (#13).
             self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
             self._cancel_settle(session)      # new prompt abandons any settling turn (#14)
-            self._nav_cursor.pop(session, None)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
             self._voiced_upto.pop(session, None)         # new turn: nothing voiced yet
             self._await_choice.discard(session)          # new prompt: no question pending
@@ -763,7 +748,6 @@ class SpeechDaemon:
             self._last_dispatch_token.pop(session, None)
             self._paused.clear()
             self._wake.set()
-            self._options.pop(session, None)
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
@@ -807,28 +791,25 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.NAV:
-            to = msg.get("to", "prev")
+            # One message, always the last: the only nav target is 'first' (Up),
+            # which restarts the latest turn from the top. Any other target (the
+            # removed prev/next/last stepping) is a SILENT no-op, so a stale
+            # client cannot pile items onto a channel.
+            if msg.get("to", "first") != "first":
+                return None
             fg = self._engaged_session()
             if self.config.get("summary_mode"):
-                # Summary mode speaks ONE digest per turn, not the raw per-message
-                # prose. Message-cursor nav (prev/next) is meaningless here, so it
-                # is a SILENT no-op: no chime, and nothing enqueued onto the gated
-                # session channel (which otherwise piled up and burst at turn end,
-                # issue #11). Only Up (nav 'first') acts, re-reading the last
-                # digest. Flush ('go to end', Ctrl+Alt+Down) is a separate handler
-                # and still cuts the foreground digest.
-                if to == "first":
-                    moved = self._reread_last(fg) if fg is not None else False
-                    self._earcon("nav" if moved else "nav_edge")
+                # Summary mode speaks ONE digest per turn: Up re-reads it. Flush
+                # ('go to end', Ctrl+Alt+Down) is a separate handler.
+                moved = self._reread_last(fg) if fg is not None else False
+                self._earcon("nav" if moved else "nav_edge")
                 return None
-            # Every nav press chimes: the "nav" earcon when the cursor moves to a
-            # message, the "nav_edge" earcon at a boundary / nothing to navigate
-            # (the wavs are user-supplied; an unconfigured kind is a silent no-op).
+            # The "nav" earcon when the turn restarts, "nav_edge" when there is
+            # nothing to restart.
             if fg is None:
                 self._earcon("nav_edge")
                 return None
-            result = self._nav(fg, to)
-            self._earcon("nav" if result == "moved" else "nav_edge")
+            self._earcon("nav" if self._restart_turn(fg) else "nav_edge")
             return None
 
         if t == MsgType.PAUSE:
@@ -927,44 +908,11 @@ class SpeechDaemon:
             fg = self._engaged_session()
             if fg is None:
                 return None
-            self._nav_cursor.pop(fg, None)   # repeat returns to the latest message
             entries = self.history.last_message(fg)
             if not entries:
                 self._speak_cue(fg, "Nothing to repeat.")
                 return None
             self._replay(fg, entries)
-            return None
-
-        if t == MsgType.REREAD_OPTIONS:
-            fg = self._engaged_session()
-            if fg is None:
-                return None
-            text = self._options.get(fg)
-            if text:
-                self._speak_cue(fg, text)
-            else:
-                self._speak_cue(fg, "No options right now.")
-            return None
-
-        if t == MsgType.JUMP_DECISION:
-            # Mark the cancelled current item heard and advance the active
-            # channel cursor past any leading non-decision items, dropping their
-            # heard-markers so a later CATCH_UP doesn't replay them out of order
-            # (mirrors SKIP, extended to the whole channel) (M6).
-            cur = self._current_item
-            if cur is not None:
-                entry = self._pending_heard.get(cur.id)
-                if entry is not None:
-                    entry.heard = True
-            # Advance the engaged session's channel cursor to the next decision item.
-            fg = self._engaged_session()
-            if fg is not None:
-                ch = self.router.channel(fg)
-                while ch.cursor < len(ch.items) and not ch.items[ch.cursor].is_decision:
-                    skipped = ch.items[ch.cursor]
-                    self._pending_heard.pop(skipped.id, None)
-                    ch.cursor += 1
-            self.speaker.cancel()
             return None
 
         if t == MsgType.FLUSH_SESSION:
@@ -974,8 +922,8 @@ class SpeechDaemon:
             # the floor: the key chimed success, a handoff started reading
             # seconds later anyway, and a re-press in the silent gap found an
             # "empty" queue (the flush soft-lock). Non-destructive: skipped
-            # items keep their history entries UNHEARD, so CATCH_UP / REPEAT
-            # can bring them back.
+            # items keep their history entries, so REPEAT / Up can bring them
+            # back.
             self._earcon("nav" if self._flush_all() else "nav_edge")
             return None
 
@@ -985,43 +933,6 @@ class SpeechDaemon:
             # any in-flight lead-in digest; whatever the assistant says AFTER the
             # answer flows normally. No earcon: answering is its own feedback.
             self._user_caught_up(session)
-            return None
-
-        if t == MsgType.CATCH_UP:
-            fg = self.sessions.foreground()
-            if fg is None:
-                return None
-            target = fg
-            # A muted foreground has nothing AUDIBLE to catch up on: treat it as
-            # empty so the handler falls through to the other-session pick, or
-            # "You're all caught up." instead of replaying into dead air.
-            entries = [] if self.session_prefs.muted(fg) else self.history.unheard(fg)
-            preamble = None
-            if not entries:
-                other = self.history.other_session_with_unheard(
-                    fg, skip=self.session_prefs.muted)
-                if other is not None:
-                    target = other
-                    entries = self.history.unheard(other)
-                    preamble = "Catching up on another session."
-            if not entries:
-                self._speak_cue(fg, "You're all caught up.")
-                return None
-            # Replay cleanly: cut the target's current utterance (it stays
-            # unheard, so it replays FROM ITS START) and drop its queued
-            # duplicates -- every unheard entry is re-replayed in order below.
-            cur = self._current_item
-            if cur is not None and cur.session == target:
-                self.speaker.cancel()
-            # Drop pending (not-yet-spoken) channel items for the target so we
-            # don't double-speak: _replay re-inserts them fresh at the cursor.
-            ch = self.router.channel(target)
-            for it in ch.items[ch.cursor:]:
-                self._pending_heard.pop(it.id, None)
-            del ch.items[ch.cursor:]
-            if preamble:
-                self._speak_cue(fg, preamble)
-            self._replay(target, entries)
             return None
 
         if t == MsgType.SET_RATE:
@@ -1106,13 +1017,6 @@ class SpeechDaemon:
             self._apply_audio_mode(mode)
             return None
 
-        if t == MsgType.SET_AUDIO_CONTROL:
-            # Pre-#92 compat shim: enabled -> duck, disabled -> off.
-            if "enabled" not in msg:
-                return None
-            self._apply_audio_mode("duck" if bool(msg.get("enabled")) else "off")
-            return None
-
         if t == MsgType.SET_DUCK_LEVEL:
             try:
                 level = max(0, min(100, int(msg.get("level"))))
@@ -1155,20 +1059,6 @@ class SpeechDaemon:
                             "Summary mode on." if enabled else "Summary mode off.",
                             exempt_mute=True, pause_exempt=True)
             self._wake.set()
-            return None
-
-        if t == MsgType.CYCLE_VERBOSITY:
-            order = ["everything", "medium", "quiet"]
-            cur = self.config.get("verbosity", "everything")
-            if cur in order:
-                nxt = order[(order.index(cur) + 1) % len(order)]
-            else:
-                nxt = order[0]
-            self.config["verbosity"] = nxt
-            save_config(self.config)
-            fg = self.sessions.foreground()
-            if fg is not None:
-                self._enqueue(fg, "prose", "Verbosity {0}.".format(nxt), False)
             return None
 
         if t == MsgType.STATUS:
@@ -1219,9 +1109,8 @@ class SpeechDaemon:
                 pass
 
     def _start_hotkeys(self) -> None:
-        """Start the platform's global-hotkey listener. On Windows this spawns an
-        in-process RegisterHotKey thread; on macOS it is a no-op (the hotkeyd is a
-        separate process)."""
+        """Start the platform's global-hotkey listener: an in-process
+        RegisterHotKey thread."""
         # Kill-switch: a ~/.sonara/no_hotkeys file (or SONARA_DISABLE_HOTKEYS=1)
         # runs speech-only (no in-process hotkey thread). A FILE flag is honoured
         # by EVERY daemon however it is spawned (hooks inherit their own env, not
@@ -1268,8 +1157,7 @@ class SpeechDaemon:
         (see the RELOAD_KEYMAP handler) and is serialized by _reload_lock so two
         rapid reloads can't interleave their stop/start cycles. Honors the
         no_hotkeys kill switch, then delegates to the platform backend's reload()
-        seam: Windows does a (thread-joined) stop+start; macOS rewrites the resolved
-        keymap and reloads the separate hotkeyd process."""
+        seam, a (thread-joined) stop+start."""
         with self._reload_lock:
             flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
             if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
@@ -1294,14 +1182,14 @@ class SpeechDaemon:
         with replayed items will be reached once the fg channel drains.
 
         Pre-set _last_active to the replay target so the router does not emit a
-        "Session changed" announcement for programmatic replays (catch_up / nav /
-        repeat). The caller (CATCH_UP) already speaks a "Catching up..." preamble
-        when crossing sessions; the auto-announce would be a spurious duplicate."""
+        "Session changed" announcement for programmatic replays (Up / repeat):
+        the user asked for this session's content, so the auto-announce would be
+        a spurious interruption."""
         ch = self.router.channel(session)
         # append=True adds at the END (after any queued decision), like the long
         # digest path -- so a new short turn never overtakes a queued question
         # (#17). append=False keeps cursor-insert for explicit user replay
-        # (catch_up / nav / repeat), which should read next.
+        # (Up / repeat), which should read next.
         at = len(ch.items) if append else ch.cursor
         n = 0
         for e in entries:
@@ -1321,7 +1209,7 @@ class SpeechDaemon:
             # waiting for minqueue threshold.
             ch.turn_done = True
             # Suppress the "Session changed" auto-announce for programmatic
-            # replay (catch_up/nav/repeat): the handoff is not user-visible.
+            # replay (Up/repeat): the handoff is not user-visible.
             # NOT for automatic turn delivery (the short-turn digest path):
             # there the handoff IS user-visible, and suppressing it played
             # content unattributed after another session read (audit #21).
@@ -1329,7 +1217,7 @@ class SpeechDaemon:
                 self.router._last_active = session
             # Authorize cross-session reading: replay targets that are not the
             # current fg bypass the background-policy gate so their replayed
-            # items are voiced (catch_up / nav cross-session scenarios).
+            # items are voiced (Up / repeat on a non-foreground reader).
             fg = self.sessions.foreground()
             if session != fg:
                 self.router._replay_authorized.add(session)
@@ -1338,7 +1226,7 @@ class SpeechDaemon:
     def _user_caught_up(self, session: str) -> bool:
         """The user declared everything queued for *session* stale - they
         answered the question, or pressed flush-to-end (#83). Skip the channel
-        backlog non-destructively (history entries stay UNHEARD for catch-up),
+        backlog non-destructively (history entries stay for repeat / Up),
         cut the in-progress utterance if it is this session's, drop a
         settle-deferred or digest-held question, and advance the digest cancel
         epoch so an in-flight lead-in digest lands dead instead of speaking
@@ -1377,7 +1265,7 @@ class SpeechDaemon:
             self._inflight_digests.pop(session, None)
             self._last_dispatch_token.pop(session, None)
             dropped = True
-        # Everything said BEFORE the catch-up is dealt with: advance the voiced
+        # Everything said BEFORE this point is dealt with: advance the voiced
         # marker so the post-answer turn-end digest never re-includes the
         # pre-question lead-in (it was skipped, not merely delayed).
         entries = [e for mid in self.history.message_ids(session)
@@ -1419,20 +1307,11 @@ class SpeechDaemon:
             self.router._pending_announce_replay = False
         return dropped
 
-    def _reading_msg_id(self, session: str):
-        """The message id of the item currently being spoken for *session*, or None
-        (idle / nothing in flight). Used to anchor nav on the live read position."""
-        cur = self._current_item
-        if cur is None or cur.session != session:
-            return None
-        entry = self._pending_heard.get(cur.id)
-        return entry.msg_id if entry is not None else None
-
     def _engaged_session(self):
         """The session the user is currently engaged with: the one being read
         (router.active), else the one that most recently read (persists across idle
         gaps), else the foreground. After a session-change the active reader differs
-        from the foreground, so nav/repeat/reread/jump must operate on what the user
+        from the foreground, so Up/repeat must operate on what the user
         HEARS, not the last session to submit a prompt."""
         return (self.router.active or self.router._last_active
                 or self.sessions.foreground())
@@ -1825,71 +1704,32 @@ class SpeechDaemon:
         self.router._replay_authorized.add(session)
         self._wake.set()
 
-    def _nav(self, session: str, to: str) -> str:
-        """Move the per-session message cursor and play from there to the end.
-        Returns "moved" if the cursor actually moved (or for 'first', which always
-        restarts), else "edge" (already at the boundary, or nothing to navigate) --
-        the NAV handler uses this to pick the nav vs nav-edge chime.
+    def _restart_turn(self, session: str) -> bool:
+        """Up: restart the current turn from its first message and read it to the
+        end. Returns True when there was a turn to restart (the NAV handler
+        chimes "nav"), False when nothing is recorded yet ("nav_edge").
 
-        The cursor indexes the current turn's messages (history resets each
-        prompt), oldest..newest; absent == the latest. 'next'/'prev' step one
-        message and CLAMP at the ends (no wrap; at the newest, 'next' just
-        re-reads it); 'first'/'last' jump to the start/end of the turn. Every
-        move cuts current speech, resets the channel cursor to the target message,
-        and reads the target message AND every later one (seek-and-play) so
-        playback continues instead of stopping after a single item. Newly
-        streamed prose enqueues after these and continues seamlessly."""
+        The turn is the history since the last prompt (history resets on FLUSH).
+        A restart always plays, even when pressed repeatedly (#128): it cuts
+        current speech, drops the channel's not-yet-spoken items and replays
+        every message of the turn at the channel cursor. Newly streamed prose
+        enqueues after these and continues seamlessly."""
         ids = self.history.message_ids(session)
         if not ids:
             self._enqueue(session, "prose", "Nothing to navigate yet.", False)
-            return "edge"
-        n = len(ids)
-        # Anchor on a STABLE message id, not a position: new paragraphs streaming
-        # in append ids without shifting where the cursor points. Unset/stale ->
-        # the latest. The cursor only clears on a new prompt (FLUSH).
-        cur_id = self._nav_cursor.get(session)
-        if cur_id is None:
-            # No parked nav cursor (the user hasn't navigated yet this turn):
-            # anchor on the message currently being READ, so next/prev move
-            # relative to what the user hears -- not the latest message (which made
-            # 'next' during a live read jump to the end with an edge chime).
-            cur_id = self._reading_msg_id(session)
-        cur = ids.index(cur_id) if cur_id in ids else n - 1
-        if to == "next":
-            new = min(cur + 1, n - 1)
-        elif to == "prev":
-            new = max(cur - 1, 0)
-        elif to == "first":
-            new = 0
-        elif to == "last":
-            new = n - 1
-        else:
-            return "edge"
-        # 'first' (Up) is a restart of the turn, never an edge: there is always
-        # a message to read here, even when the cursor is already parked at it (#128).
-        moved = new != cur or to == "first"
-        if new >= n - 1:
-            # Reached the latest message: clear the cursor so it tracks the live
-            # edge again (absent == latest), and so a following 'prev' steps back
-            # from the newest rather than a stale anchor.
-            self._nav_cursor.pop(session, None)
-        else:
-            self._nav_cursor[session] = ids[new]   # parked on a past message
+            return False
         self.speaker.cancel()
         # Clear any not-yet-spoken items from the channel so the replay is the
-        # sole pending work (mirrors the old queue-clear semantics of _nav).
+        # sole pending work.
         ch = self.router.channel(session)
         for it in ch.items[ch.cursor:]:
             self._pending_heard.pop(it.id, None)
         del ch.items[ch.cursor:]
-        # Seek-and-play: insert the target AND every later item at the channel
-        # cursor so they read from here forward. Newly streamed prose appends
-        # after these and continues seamlessly -- no jump from replay into live.
         entries = []
-        for mid in ids[new:]:
+        for mid in ids:
             entries.extend(self.history.entries_for_message(session, mid))
         self._replay(session, entries)
-        return "moved" if moved else "edge"
+        return True
 
     def _reread_last(self, session: str) -> bool:
         """Re-read the last digest immediately (summary-mode Up, issue #11). Speaks
@@ -1910,7 +1750,6 @@ class SpeechDaemon:
             cur = None
         if not text and cur is None:
             return False
-        self._nav_cursor.pop(session, None)
         self.speaker.cancel()                    # restart now, don't wait out the read
         ch = self.router.channel(session)
         if ch.seeded:
@@ -1943,13 +1782,6 @@ class SpeechDaemon:
         ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
         self._wake.set()
         return True
-
-    def _resume(self) -> None:
-        """Clear pause and wake the speak loop. The interrupted utterance was
-        already re-queued at the front by the speak loop when its speak() returned
-        not-completed during the pause, so resume picks back up where it stopped."""
-        self._paused.clear()
-        self._wake.set()
 
     def _dispatch_hotkey(self, message: dict) -> None:
         """Called ON the Windows hotkey PUMP thread for each fire. It MUST NOT block:
@@ -2044,7 +1876,7 @@ class SpeechDaemon:
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
                    pause_exempt: bool = False, cue_key=None) -> None:
-        """Speak a one-off confirmation/feedback cue (pause/mute/repeat/reread/...).
+        """Speak a one-off confirmation/feedback cue (pause/mute/repeat/...).
         These ALWAYS go to the reserved CONTROL channel, which the router serves
         ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
         session channel is gated by `ready()` (minqueue items / turn_done), so a cue
@@ -2152,9 +1984,6 @@ class SpeechDaemon:
 
     def _audio_duck_on(self) -> bool:
         return self._audio_mode() == "duck"
-
-    def _audio_pause_on(self) -> bool:
-        return self._audio_mode() == "pause"
 
     def _duck_level(self) -> int:
         try:
@@ -2309,8 +2138,7 @@ class SpeechDaemon:
     def _apply_audio_mode(self, mode: str) -> None:
         """Persist the audio behavior mode, disengage whatever backend was
         engaged (so a switch never leaves other apps ducked or paused), and
-        speak the mode cue. Shared by SET_AUDIO_MODE and the SET_AUDIO_CONTROL
-        compat shim."""
+        speak the mode cue."""
         if mode not in ("off", "duck", "pause"):
             return
         self.config["audio_mode"] = mode
