@@ -1,4 +1,5 @@
-"""Fake Windows modules so platform/windows/* imports + unit-tests on macOS/Linux.
+"""Fake Windows modules so platform/windows/* imports and unit-tests on a
+non-Windows host.
 
 install() is idempotent and uses setdefault -- a no-op on real Windows.
 force(monkeypatch) swaps the fake winsound + winrt tree in for one test on EVERY

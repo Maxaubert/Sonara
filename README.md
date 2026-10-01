@@ -244,8 +244,8 @@ Run `sonara doctor` first - it reports each check as pass/fail. Common issues:
   `sonara cleanup` deletes them. Your own voice clips in `~/.sonara/voices/` are kept. A saved
   Chatterbox voice now speaks as Kokoro's Heart (`af_heart`).
 
-State, config, the socket, and logs all live under `~/.sonara/`
-(`config.json`, `speechd.sock`, `speechd.log`).
+State, config, the daemon lockfile, and logs all live under `~/.sonara/`
+(`config.json`, `daemon.lock`, `speechd.log`).
 
 ## Uninstall
 

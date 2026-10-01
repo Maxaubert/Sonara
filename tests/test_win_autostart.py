@@ -49,8 +49,7 @@ def test_launch_spec_sets_pythonpath_so_the_spawned_daemon_can_import():
 def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch):
     """The spawned daemon's stderr must land in the daemon log under SONARA_DIR so
     the speak-loop catch-all traceback survives on Windows (it was DEVNULL'd -> the
-    resilience traceback was unrecoverable). Mirrors the macOS plist StandardErrorPath.
-    Regression for #20."""
+    resilience traceback was unrecoverable). Regression for #20."""
     from sonara import paths
 
     log = tmp_path / "speechd.log"

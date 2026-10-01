@@ -1,6 +1,6 @@
 """Mock-based tests for WinSupervisorBackend, Task XML, resolve_python.
 
-WINDOWS-only code, exercised on macOS via the _winfakes harness (winreg fake is
+WINDOWS-only code, exercised through the _winfakes harness (winreg fake is
 installed by tests/conftest.py before this module imports the backend). "Green"
 here means the MOCKED contract holds, NOT that it works on Windows. The real gate
 is docs/history/M2-WINDOWS-ACCEPTANCE.md.
@@ -161,8 +161,7 @@ def test_package_root_agrees_across_its_two_unavoidable_definitions():
 def test_launch_spec_routes_stderr_to_log_file_not_devnull(tmp_path, monkeypatch):
     """The lazily-spawned daemon's stderr must land in the daemon log under
     SONARA_DIR (paths.LOG_PATH) rather than subprocess.DEVNULL, so the speak-loop
-    catch-all traceback survives on Windows. Mirrors the macOS plist
-    StandardErrorPath. Regression for #20. stdin/stdout stay DEVNULL."""
+    catch-all traceback survives on Windows. Regression for #20. stdin/stdout stay DEVNULL."""
     import subprocess
     from sonara import paths
 

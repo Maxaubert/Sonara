@@ -1,4 +1,4 @@
-"""Ctrl+Alt+Down = flush to end: silence EVERYTHING queued or in flight across
+"""Flush to end (default Win+Alt+End): silence EVERYTHING queued or in flight across
 ALL sessions and go idle, non-destructively (skipped items stay in history
 so Up recovers them). Global since #107: the old per-engaged-session flush
 left other sessions' landed or reorder-parked digests holding the floor, so a
