@@ -17,7 +17,7 @@ lets you answer and control the speech without looking. Run a full session with 
 off.
 
 - **Ordered narration** - prose, plans, questions, and permissions are spoken in order, never out of sequence.
-- **Per-decision earcons** - a distinct sound the moment a question, plan, permission, or error appears.
+- **Per-decision earcons** - a distinct sound the moment a question, permission, or error appears.
 - **Selection by number** - answer prompts with the option's number; no key injection.
 - **Global hotkeys** - replay the latest response, flush, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
 - **Session manager** - a Sessions tab in the settings page: name each Claude Code session, mute it, or give it its own voice.

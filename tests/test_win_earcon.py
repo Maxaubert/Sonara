@@ -47,5 +47,6 @@ def test_play_spawn_failure_is_logged_not_swallowed(tmp_path, capsys):
     assert "spawn boom" in err
 
 
-def test_default_earcons_six():
-    assert len(WinEarconBackend().default_earcons()) == 6
+def test_default_earcons_come_from_the_bundled_set():
+    from sonara.platform.windows.earcons import default_earcons
+    assert WinEarconBackend().default_earcons() == default_earcons()
