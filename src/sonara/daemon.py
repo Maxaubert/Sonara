@@ -1158,7 +1158,20 @@ class SpeechDaemon:
             backend.start(self._dispatch_hotkey)
             self._announce_hotkey_collisions(getattr(backend, "collisions", None))
         except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-            pass
+            self._hotkeys_failed("start")
+
+    def _hotkeys_failed(self, what: str) -> None:
+        """Log why the hotkeys did not start (traceback to the log) and say so
+        once per run (M4): a bad keymap.json used to leave every hotkey dead
+        with no sign at all. Called from an except block."""
+        import traceback
+        print("[hotkeys] {0} failed:".format(what), file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        if getattr(self, "_hotkey_failure_announced", False):
+            return
+        self._hotkey_failure_announced = True
+        self._speak_cue(None, "Sonara hotkeys could not start. Run sonara "
+                        "doctor to see why.", exempt_mute=True, pause_exempt=True)
 
     def _announce_hotkey_collisions(self, collisions) -> None:
         """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
@@ -1199,7 +1212,7 @@ class SpeechDaemon:
             try:
                 get_platform().hotkey.reload(self._dispatch_hotkey)
             except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-                pass
+                self._hotkeys_failed("reload")
 
     def _replay(self, session: str, entries, append: bool = False,
                 suppress_announce: bool = True) -> None:
