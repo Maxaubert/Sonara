@@ -295,8 +295,16 @@ class WinTtsBackend(TtsBackend):
     The SpeechSynthesizer is created ONCE and reused (synthesis is stable). All
     winrt.*/winsound imports are lazy (inside methods)."""
 
+    # M9: one SpeechSynthesizer is shared by the speak loop, the preview
+    # builder and settings previews, each on its own thread. Its voice and
+    # rate are set per call, so set-voice/rate/synthesize/read run under this
+    # lock or one thread's voice lands on another's text. (Class-level too, so
+    # a backend built without __init__ still has one.)
+    _synth_lock = threading.Lock()
+
     def __init__(self) -> None:
         self._synth = None         # reused SpeechSynthesizer (lazy)
+        self._synth_lock = threading.Lock()
         self._kokoro = None        # lazy KokoroEngine (only if a Kokoro voice is used)
         _sweep_stale_wavs()        # clear temp WAVs leaked by a prior crash (#26)
 
@@ -431,6 +439,12 @@ class WinTtsBackend(TtsBackend):
 
         speaking_rate = wpm_to_speaking_rate(rate)
         resolved_voice = self._resolve_voice(voice)   # raises if no voices
+        with self._synth_lock:
+            return self._synthesize_locked(text, resolved_voice, speaking_rate,
+                                           DataReader)
+
+    def _synthesize_locked(self, text, resolved_voice, speaking_rate,
+                           DataReader) -> bytes:
         synth = self._get_synth()
         synth.voice = resolved_voice
         opts = synth.options
