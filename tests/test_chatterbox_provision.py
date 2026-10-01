@@ -1,5 +1,3 @@
-import os
-import sys
 
 import pytest
 from sonara import paths, chatterbox_provision as cbp

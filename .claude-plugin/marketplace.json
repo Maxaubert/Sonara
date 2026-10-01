@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "sonara",
-  "description": "Sonara \u2014 eyes-free text-to-speech for Claude Code (blind/low-vision developers)",
+  "description": "Sonara: eyes-free text-to-speech for Claude Code (blind/low-vision developers)",
   "owner": {
     "name": "Max Aubert",
     "email": "aubert@post.com"
@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "sonara",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Eyes-free text-to-speech layer for Claude Code (Windows): narrates prose, options, plans, and permissions per session with per-type earcons.",
       "author": {
         "name": "Max Aubert"

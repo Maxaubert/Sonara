@@ -1,4 +1,4 @@
-"""WinTtsBackend (OneCore via PyWinRT) -- mock-tested on macOS via _winfakes.
+"""WinTtsBackend (OneCore via PyWinRT) -- mock-tested on every OS via _winfakes.
 
 WINDOWS-only code. "Green" here means the MOCKED contract holds (the fake
 winrt tree injected by tests/_winfakes.py); it is NOT a claim that OneCore TTS
@@ -10,7 +10,20 @@ import subprocess
 
 import pytest
 
+import tests._winfakes as _winfakes
 from sonara.platform.windows.tts import WinTtsBackend, wpm_to_speaking_rate
+
+
+@pytest.fixture(autouse=True)
+def _fake_windows(monkeypatch):
+    # Hermetic on real Windows too (E22): fake winrt + winsound, never live
+    # OneCore or the speakers. Live checks live in test_win_tts_live.py.
+    _winfakes.force(monkeypatch)
+    # Playback also pushes the session volume through pycaw/COM; keep that
+    # (and its module-global cache) out of the unit tests as well.
+    import sonara.platform.windows.tts as tts
+    monkeypatch.setattr(tts, "_push_session_volume", lambda: None)
+    monkeypatch.setattr(tts, "_SESSION_APPLIED", [None])
 
 
 def test_list_voices():
@@ -177,7 +190,7 @@ def test_pyproject_declares_windows_winrt_extra():
     # winrt is a hard Windows dependency; it must be declared so `pip install`
     # users on Windows actually get speech (not green-doctor + silence). (#7)
     import os
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")   # stdlib from 3.11
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(os.path.join(root, "pyproject.toml"), "rb") as fh:
         data = tomllib.load(fh)

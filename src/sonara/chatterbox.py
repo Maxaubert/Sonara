@@ -301,7 +301,7 @@ class ChatterboxClient:
             # success (audit #19).
             self._proc = None
             raise ChatterboxError(
-                "failed to spawn chatterbox worker: {0}".format(exc))
+                "failed to spawn chatterbox worker: {0}".format(exc)) from exc
 
     def _kill(self) -> None:
         proc, self._proc = self._proc, None

@@ -1,7 +1,6 @@
 """Pre-rendered voice previews (#38): the settings page must play a preview
 INSTANTLY from a file; live synthesis (seconds on Chatterbox) is fallback only.
 """
-import pytest
 
 from sonara import previews
 

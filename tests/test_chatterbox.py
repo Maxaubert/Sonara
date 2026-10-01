@@ -93,9 +93,14 @@ for line in sys.stdin:
 
 
 def _client(tmp_path, monkeypatch, timeout=5):
+    import pytest
+    import sys
+    if sys.version_info < (3, 11):
+        # The worker argv passes -P (3.11+); the real Chatterbox venv is always
+        # 3.12, but these tests spawn the fake worker with the TEST interpreter.
+        pytest.skip("Chatterbox worker spawn needs Python 3.11+ (-P flag)")
     script = tmp_path / "fake_worker.py"
     script.write_text(FAKE_WORKER, encoding="utf-8")
-    import sys
     monkeypatch.setattr(cb, "chatterbox_venv_python", lambda: sys.executable)
     monkeypatch.setattr(cb, "worker_script_path", lambda: str(script))
     monkeypatch.setattr(cb, "CHATTERBOX_VOICES_DIR", tmp_path)  # empty registry
@@ -259,7 +264,6 @@ def test_warm_sends_warm_request_and_reports_ok(tmp_path, monkeypatch):
     c = _client(tmp_path, monkeypatch)
     # extend the fake worker to answer warm; _client's FAKE_WORKER answers ping
     # and synth. Drive warm via a direct request to confirm the method shape.
-    import sys
     calls = []
     monkeypatch.setattr(c, "_request",
                         lambda payload, timeout, config: calls.append((payload, timeout)) or {"ok": True, "loaded": True})

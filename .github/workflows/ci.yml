@@ -1,0 +1,33 @@
+# CI gate: lint + full unit suite on every PR and every push to main.
+# The e2e settings-page tests skip here (no playwright installed); they are the
+# local PR gate for UI changes. Live OneCore checks (-m live_windows) never run.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: python -m pip install -e ".[dev,windows]"
+      - name: Lint
+        if: matrix.python == '3.12'
+        run: ruff check src tests
+      - name: Unit tests
+        run: python -m pytest -q

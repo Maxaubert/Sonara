@@ -7,12 +7,12 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - `gh` default repo is `Maxaubert/Sonara`. Issue numbers in commits and docs refer to the fork.
 
 ## Build, test, release
-- Typecheck/lint: none yet (ruff lands with #133)
-- Unit: `python -m pytest -q` (system Python with `.[dev,windows]`; conftest adds `src/` to `sys.path`)
+- Typecheck/lint: `ruff check src tests` (no typechecker)
+- Unit: `python -m pytest -q` (system Python with `.[dev,windows]`; conftest adds `src/` to `sys.path`). Live OneCore checks: `-m live_windows` (opt-in)
 - E2E (headless): `python -m pytest tests/e2e -q` (needs `playwright install chromium`)   Run when: `src/sonara/settings.html`, `src/sonara/webui.py`
 - Build / package: none (plugin, no build step)   Artifact: n/a
-- Known failures to tolerate: the 5 real-OneCore tests in `tests/test_win_tts.py` (machine-dependent, fixed by #133)
-- Version source: `pyproject.toml` + `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (keep equal, `test_manifests.py`)   Release: release.yml on push to main (#133)
+- Known failures to tolerate: none
+- Version source: `pyproject.toml` + `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (keep equal, `test_manifests.py`)   Release: release.yml on push to main (CI: ci.yml, Python 3.9 + 3.12)
 - Install locally after merge: safe redeploy below   Confirm version: `sonara doctor`
 - Deploy: plugin marketplace
 - Signing: unsigned

@@ -1,6 +1,5 @@
 """The out-of-band turn summarizer: a throwaway tool-disabled `claude -p` call.
 All tests inject a fake runner; nothing here spawns a real process."""
-import pytest
 
 from sonara import summarizer
 

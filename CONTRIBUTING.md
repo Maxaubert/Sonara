@@ -24,10 +24,13 @@ OS, including a non-Windows dev box or CI. Before opening a PR, run it:
 
 ```
 python -m venv .venv && .venv\Scripts\pip install -e ".[dev,windows]"
+.venv\Scripts\ruff check src tests
 .venv\Scripts\python -m pytest -q
 ```
 
-It must be green. A test that can only run on Windows must be `skipif`-guarded
+Both must be green; CI (`.github/workflows/ci.yml`) runs the same on Python 3.9
+and 3.12. Checks that drive real OneCore speech are marked `live_windows` and
+run only on request (`python -m pytest -m live_windows`). A test that can only run on Windows must be `skipif`-guarded
 for other platforms (see `test_win_supervisor.py`), never left to fail.
 
 **2. Runtime acceptance (human, on Windows).**

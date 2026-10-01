@@ -1,6 +1,5 @@
 """CLI lifecycle commands (#23): sonara shutdown / sonara start, and the
 stop-before-mutate ordering in install/uninstall."""
-import os
 
 import pytest
 from sonara import cli, paths
@@ -101,7 +100,7 @@ def test_copy_app_failure_leaves_live_app_intact(monkeypatch, tmp_path):
     (live / "daemon.py").write_text("LIVE")
     monkeypatch.setattr(paths, "APP_DIR", app)
 
-    def boom(src, dst):
+    def boom(src, dst, **kw):
         raise OSError("disk full")
     monkeypatch.setattr(cli.shutil, "copytree", boom)
     with pytest.raises(OSError):

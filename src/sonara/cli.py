@@ -464,7 +464,9 @@ def _copy_app(plugin_root: str) -> str:
     for stale in (new_pkg, old_pkg):                # prior-crash residue
         if os.path.isdir(stale):
             shutil.rmtree(stale, ignore_errors=True)
-    shutil.copytree(src_pkg, new_pkg)
+    # Repo bytecode is dead weight in the app and can mask a source change.
+    shutil.copytree(src_pkg, new_pkg,
+                    ignore=shutil.ignore_patterns("__pycache__"))
     if os.path.isdir(dst_pkg):
         os.rename(dst_pkg, old_pkg)
     os.rename(new_pkg, dst_pkg)

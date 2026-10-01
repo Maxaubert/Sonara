@@ -144,3 +144,17 @@ def _never_sweep_the_live_daemon(monkeypatch):
         return real(runner=runner)
 
     monkeypatch.setattr(cli, "_kill_stray_daemons", guarded)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip @pytest.mark.live_windows tests unless explicitly selected.
+
+    They drive real OneCore / winsound, so they depend on the machine's voices
+    and audio stack (E22). Run them with: python -m pytest -m live_windows
+    """
+    if "live_windows" in (config.getoption("markexpr") or ""):
+        return
+    skip = pytest.mark.skip(reason="live Windows check; select with -m live_windows")
+    for item in items:
+        if "live_windows" in item.keywords:
+            item.add_marker(skip)

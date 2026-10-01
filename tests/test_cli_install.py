@@ -140,6 +140,24 @@ def test_copy_app_copies_package_into_app_dir(tmp_path):
     assert (app_dir / "sonara" / "daemon.py").exists()
 
 
+def test_copy_app_skips_pycache_dirs(tmp_path):
+    # Bytecode compiled from the repo checkout must not ride into the deployed
+    # app: it is dead weight and can mask a source change in the live copy.
+    plugin_root = tmp_path / "plugin"
+    src_pkg = plugin_root / "src" / "sonara"
+    (src_pkg / "__pycache__").mkdir(parents=True)
+    (src_pkg / "platform" / "__pycache__").mkdir(parents=True)
+    (src_pkg / "__init__.py").write_text("# sonara\n")
+    (src_pkg / "__pycache__" / "daemon.cpython-312.pyc").write_bytes(b"x")
+    (src_pkg / "platform" / "__init__.py").write_text("# platform\n")
+    (src_pkg / "platform" / "__pycache__" / "base.cpython-312.pyc").write_bytes(b"x")
+    app_dir = tmp_path / "home" / ".sonara" / "app"
+    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
+        cli._copy_app(str(plugin_root))
+    assert (app_dir / "sonara" / "platform" / "__init__.py").exists()
+    assert not list(app_dir.rglob("__pycache__"))
+
+
 def test_copy_app_is_remove_then_copy_so_stale_modules_vanish(tmp_path):
     app_dir = tmp_path / "home" / ".sonara" / "app"
 
