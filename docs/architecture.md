@@ -48,7 +48,7 @@ waits behind the digest of the text that leads into it.
 
 **One message, always the last.** A channel holds only its session's current turn; a new prompt
 (FLUSH) wipes it. Spoken items are not discarded, a cursor moves over them, so restart (NAV first,
-`nav_start`, default Win+Alt+Home) replays the turn from its start and a session switch can resume
+`nav_start`, default Ctrl+Alt+Up) replays the turn from its start and a session switch can resume
 or replay it. Nothing may silently drop the latest turn.
 
 ## Threads and the lock contract
@@ -197,7 +197,8 @@ before #136 (which stored every key), a value equal to a current or past default
 **Add a hotkey action**
 
 1. Add `action: message` to `keymap.ACTION_MESSAGES`; the message must already be handled.
-2. Leave it unbound, or add a default key to `keymap._DEFAULT_KEYS`. Check that the Win+Alt
-   chord is free on Windows 11 (see the README) and run `sonara doctor`.
+2. Leave it unbound, or add a default key to `keymap._DEFAULT_KEYS`. Check that the Ctrl+Alt
+   chord is free on Windows 11 and is not an AltGr character on common layouts (see the
+   README), and run `sonara doctor`.
 3. If it is a toggle, add its message type to `daemon/hotkeys.DEBOUNCED_TYPES`.
 4. Add a row with `data-action="<action>"` to the Hotkeys page in `settings.html`.
