@@ -28,13 +28,13 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - Logs: `~/.sonara/speechd.log`, `~/.sonara/faulthandler.log`. Config: `~/.sonara/config.json`; change keys live with POST `http://127.0.0.1:27431/api/set` and the token in `~/.sonara/webui.token`.
 
 ## Architecture map
-- `hooks/hooks.json` -> `bin/sonara-hook-run` -> `bin/sonara-hook` -> `hooks_entry.py` (pure event translation) -> `client.py` -> TCP (token in `~/.sonara/daemon.lock`) -> `daemon.py`.
-- `daemon.py`: message handling, speak loop, summary pipeline, hotkeys, audio. `router.py` + `channel.py`: per-session channels. `speaker.py`: playback and cancel epochs.
+- `hooks/hooks.json` -> `bin/sonara-hook-run` -> `bin/sonara-hook` -> `hooks_entry.py` (pure event translation) -> `client.py` -> TCP (token in `~/.sonara/daemon.lock`) -> `daemon/`. Hooks never import the daemon: `client.py` starts it via `lifecycle.py`.
+- `daemon/` package (split in progress, #141): `__init__.py` is still the bulk (`SpeechDaemon`: message handling, speak loop, summary pipeline, hotkeys, audio; `main`). Split out: `decision_text`, `tokens`, `setup_health`, `summary/reorder` (digest order), `core` (debug lock check, `SONARA_DEBUG_LOCKS=1`). Tests patch names on the module that now owns them. `router.py` + `channel.py`: per-session channels. `speaker.py`: playback and cancel epochs.
 - `assembler.py`, `cleaner.py`: text to spoken items. `summarizer.py`: `claude -p` / `codex exec` digests.
 - Persisted state under `~/.sonara`, every path via `paths.py`: history, sessions, session prefs, digests.
 - Settings: one table in `config_schema.py` (default, validator, page path, live-apply hook) feeds config DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys (pre-#136 full dumps: values equal to a current or past default count as unset). Bundled earcons resolve at runtime, never stored.
 - `platform/`: OS seam (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = install, autostart, hooks).
-- `webui.py` + `settings.html`: token-protected settings page. `cli.py`: CLI verbs, install, doctor. `kokoro*.py`: neural voices.
+- `webui.py` + `settings.html`: token-protected settings page. `cli.py`: CLI verbs, install, doctor. `install_record.py`: install.json. `platform/windows/process.py`: daemon process hardening. `kokoro*.py`: neural voices.
 
 ## Product rules
 - One message, always the last: Sonara reads the latest turn; Up restarts it. Nothing may silently drop it.

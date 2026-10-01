@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "sonara",
-      "version": "0.6.7",
+      "version": "0.6.8",
       "description": "Eyes-free text-to-speech layer for Claude Code (Windows): narrates prose, options, plans, and permissions per session with per-type earcons.",
       "author": {
         "name": "Max Aubert"
