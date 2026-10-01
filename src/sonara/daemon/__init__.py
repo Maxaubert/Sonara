@@ -11,6 +11,7 @@ from sonara.assembler import ProseAssembler
 from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
 from sonara.daemon.audio import AudioControl
+from sonara.daemon.core import SharedState
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
 from sonara.daemon.server import ConnectionServer
@@ -148,7 +149,9 @@ class SpeechDaemon:
         from sonara.history import SessionHistory
         self.history = SessionHistory(cap=int(config_schema.get(config, "history_cap")))
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
-        self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
+        # Shared by several features (#141): the item being spoken and the
+        # per-session text summary-mode Up re-reads verbatim.
+        self._shared = SharedState()
         self._voiced_upto: dict = {}       # session -> last HistoryEntry voiced this turn (summary mode: a blocking question and turn-end must not double-voice; identity survives history-cap eviction, audit #21)
         self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
         self._held_decision: dict = {}            # session -> (owner token, [decision items]) held until the lead-in digest lands (context-first ordering)
@@ -161,7 +164,6 @@ class SpeechDaemon:
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
         self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
-        self._current_item = None                 # item being spoken right now
         # Control cues on the CONTROL channel, their voice, Kokoro notices.
         self._cues = Cues(config, self.router, speaker, self.session_prefs,
                           alloc_id=self._alloc_id,
@@ -210,6 +212,20 @@ class SpeechDaemon:
         self._last_dispatch_token: dict = {}   # session -> newest dispatch token
         self._inflight_digests: dict = {}      # session -> workers in flight
         self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
+
+    @property
+    def _current_item(self):
+        """The item being spoken right now (core.SharedState)."""
+        return self._shared.current_item
+
+    @_current_item.setter
+    def _current_item(self, item) -> None:
+        self._shared.current_item = item
+
+    @property
+    def _last_digest_text(self) -> dict:
+        """session -> exact spoken digest text (core.SharedState)."""
+        return self._shared.last_digest_text
 
     def _alloc_id(self) -> int:
         self._next_id += 1
