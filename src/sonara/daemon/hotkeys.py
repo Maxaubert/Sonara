@@ -23,6 +23,16 @@ DEBOUNCE_S = 0.30
 DEBOUNCED_TYPES = (MsgType.PAUSE, MsgType.MUTE)
 
 
+def hotkeys_disabled() -> bool:
+    """The kill switch: SONARA_DISABLE_HOTKEYS, or a no_hotkeys file in the
+    Sonara dir. Resolved through paths.SONARA_DIR at call time, like every
+    other ~/.sonara path."""
+    if os.environ.get("SONARA_DISABLE_HOTKEYS"):
+        return True
+    from sonara import paths
+    return os.path.exists(str(paths.SONARA_DIR / "no_hotkeys"))
+
+
 class HotkeyController:
     """Owns the hotkey worker queue, the debounce state and the reload lock.
     Given the daemon's shared state explicitly: *lock* is the daemon lock,
@@ -119,8 +129,7 @@ class HotkeyController:
         # runs speech-only (no in-process hotkey thread). A FILE flag is honoured
         # by EVERY daemon however it is spawned (hooks inherit their own env, not
         # ours), so it reliably isolates the hotkey thread when diagnosing crashes.
-        flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
-        if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
+        if hotkeys_disabled():
             return
         from sonara.platform import get_platform
         try:
@@ -180,8 +189,7 @@ class HotkeyController:
         kill switch, then delegates to the platform backend's reload() seam, a
         (thread-joined) stop+start."""
         with self._reload_lock:
-            flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
-            if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
+            if hotkeys_disabled():
                 self.stop()
                 return
             from sonara.platform import get_platform
