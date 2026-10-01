@@ -111,7 +111,7 @@ def test_restore_from_state_file_never_raises_on_pycaw_failure(monkeypatch, tmp_
     state.write_text(json.dumps({"sessions": [{"pid": 1, "name": "x.exe", "original": 0.5}]}), encoding="utf-8")
     monkeypatch.setattr(ducking, "_all_sessions", lambda: (_ for _ in ()).throw(RuntimeError("no COM")))
     ducking.restore_from_state_file()        # must swallow
-    assert not state.exists()                # and still clear the file
+    assert state.exists()                    # nothing restored -> keep the record (#130)
 
 
 def test_null_ducker_is_noop():
@@ -144,3 +144,103 @@ def test_duck_skips_never_duck_audio_engine_processes(monkeypatch, tmp_path):
     assert engine.SimpleAudioVolume.v == 0.9     # audio engine untouched
     assert router.SimpleAudioVolume.v == 0.9     # virtual router untouched
     assert media.SimpleAudioVolume.v == 0.2      # real media ducked
+
+
+# ---------------------------------------------------------------------------
+# #130: a partial duck or a failed restore must never strand an app ducked
+# ---------------------------------------------------------------------------
+
+
+class _BadVol:
+    def GetMasterVolume(self): raise OSError("AUDCLNT_E_DEVICE_INVALIDATED")
+    def SetMasterVolume(self, v, ctx): raise OSError("AUDCLNT_E_DEVICE_INVALIDATED")
+
+
+class _BadSession(_FakeSession):
+    def __init__(self, pid, name="bad.exe"):
+        super().__init__(pid, 1.0, name)
+        self.SimpleAudioVolume = _BadVol()
+
+
+class _FlakyVol(_FakeVol):
+    """SetMasterVolume raises on the Nth call (1-based), succeeds otherwise."""
+    def __init__(self, v, fail_on):
+        super().__init__(v); self.calls = 0; self.fail_on = fail_on
+    def SetMasterVolume(self, v, ctx):
+        self.calls += 1
+        if self.calls == self.fail_on:
+            raise OSError("transient")
+        self.v = v
+
+
+def test_partial_duck_is_recorded_and_restored(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    zen = _FakeSession(100, 1.0, "zen.exe")
+    _sessions(monkeypatch, [zen, _BadSession(200)])   # a later session raises
+    d = AudioDucker()
+    d.duck(set(), 30)
+    assert zen.SimpleAudioVolume.v == 0.3
+    assert d.is_ducked() is True
+    assert [e["name"] for e in json.loads(state.read_text(encoding="utf-8"))["sessions"]] == ["zen.exe"]
+    d.restore()
+    assert zen.SimpleAudioVolume.v == 1.0
+    assert not state.exists()
+
+
+def test_duck_never_saves_an_already_ducked_level_as_original(monkeypatch, tmp_path):
+    monkeypatch.setattr(ducking, "_DUCK_STATE", tmp_path / "duck_state.json")
+    zen = _FakeSession(100, 0.3, "zen.exe")            # already at the duck level
+    _sessions(monkeypatch, [zen])
+    d = AudioDucker()
+    d.duck(set(), 30)
+    assert d._saved == []                              # 0.3 is never recorded as "original"
+
+
+def test_failed_restore_retries_by_fresh_enumeration(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    zen = _FakeSession(100, 1.0, "zen.exe")
+    zen.SimpleAudioVolume = _FlakyVol(1.0, fail_on=2)  # duck ok, first restore fails
+    _sessions(monkeypatch, [zen])
+    d = AudioDucker()
+    d.duck(set(), 30)
+    d.restore()
+    assert zen.SimpleAudioVolume.v == 1.0              # retried and restored
+    assert not state.exists()
+    assert d.is_ducked() is False
+
+
+def test_unrecoverable_restore_keeps_the_record_and_next_duck_keeps_it(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    zen = _FakeSession(100, 1.0, "zen.exe")
+    _sessions(monkeypatch, [zen])
+    d = AudioDucker()
+    d.duck(set(), 30)
+    zen.SimpleAudioVolume = _BadVol()                  # every restore attempt fails
+    d.restore()
+    assert d.is_ducked() is False
+    recs = json.loads(state.read_text(encoding="utf-8"))["sessions"]
+    assert recs[0]["name"] == "zen.exe" and recs[0]["original"] == 1.0
+    # The device comes back at the ducked level; the next duck skips it (already
+    # at target) but must keep the pending record so its real original survives.
+    zen.SimpleAudioVolume = _FakeVol(0.3)
+    d.duck(set(), 30)
+    d.restore()
+    assert zen.SimpleAudioVolume.v == 1.0
+    assert not state.exists()
+
+
+def test_restore_from_state_file_keeps_entries_that_failed(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    state.write_text(json.dumps({"sessions": [
+        {"pid": 100, "name": "zen.exe", "original": 1.0},
+        {"pid": 200, "name": "vlc.exe", "original": 0.8}]}), encoding="utf-8")
+    vlc = _FakeSession(200, 0.3, "vlc.exe")
+    _sessions(monkeypatch, [_BadSession(100, "zen.exe"), vlc])
+    ducking.restore_from_state_file()
+    assert vlc.SimpleAudioVolume.v == 0.8
+    recs = json.loads(state.read_text(encoding="utf-8"))["sessions"]
+    assert [e["name"] for e in recs] == ["zen.exe"]
