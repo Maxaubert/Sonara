@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from sonara.install import claude_hooks
+from sonara.install import deps
 from sonara import paths
 from sonara.platform.windows import supervisor as sup
 
@@ -153,7 +154,6 @@ def test_backend_probe_is_the_module_probe(monkeypatch):
 
 
 def test_cli_and_backend_share_the_venv_choice(monkeypatch):
-    from sonara import cli
     from sonara import kokoro_provision as kp
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: r"C:\v\Scripts\python.exe")
@@ -170,7 +170,7 @@ def test_cli_and_backend_share_the_venv_choice(monkeypatch):
         def _probe_python_version(self, p):
             return (3, 12)
 
-    assert cli._daemon_python(_Sup()) == r"C:\v\Scripts\python.exe"
+    assert deps.daemon_python(_Sup()) == r"C:\v\Scripts\python.exe"
     assert len(picked) == 2
 
 

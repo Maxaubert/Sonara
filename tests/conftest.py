@@ -109,30 +109,55 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
 def _never_sweep_the_live_daemon(monkeypatch):
     """Stop the suite from killing the DEVELOPER'S running daemon.
 
-    cli.stop_sonara() ends with _kill_stray_daemons(), whose default runner
-    shells out to PowerShell and Stop-Process -Force's every `-m sonara.daemon`
-    process on the MACHINE (#65). No path repoint can contain that: it matches
+    install.service.stop_sonara() ends with the supervisor's
+    kill_stray_daemons(), whose default runner shells out to PowerShell and
+    Stop-Process -Force's every `-m sonara.daemon` process on the MACHINE (#65). No path repoint can contain that: it matches
     on process command line, not on SONARA_DIR. Any test that drives
     stop_sonara() down the "socket not connectable" branch therefore killed the
     live daemon mid-run -- `sonara status` then reported "not running" with no
     stop sentinel and no crash trace to explain it.
 
     The guard is deliberately narrow: an EXPLICIT runner still reaches the real
-    implementation, so the tests that actually cover _kill_stray_daemons
+    implementation, so the tests that actually cover kill_stray_daemons
     (test_daemon_state_persistence) keep exercising its counting and
     failure-swallowing logic unchanged. Only the implicit, real-PowerShell path
     is refused.
     """
-    import sonara.cli as cli
+    import sonara.platform.windows.supervisor as supervisor
 
-    real = cli._kill_stray_daemons
+    real = supervisor.kill_stray_daemons
 
     def guarded(runner=None):
         if runner is None:
             return 0        # refuse the machine-wide sweep
         return real(runner=runner)
 
-    monkeypatch.setattr(cli, "_kill_stray_daemons", guarded)
+    monkeypatch.setattr(supervisor, "kill_stray_daemons", guarded)
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_autostart_or_launcher(tmp_path, monkeypatch):
+    """Keep a test that reaches the REAL Windows supervisor (a missed platform
+    patch) away from this machine's install: the Task Scheduler task and
+    ~/.local/bin/sonara.cmd live outside ~/.sonara, so the path isolation above
+    does not cover them. A mutating schtasks call is refused (read-only
+    /query still runs), and the launcher directory is a tmp dir. Tests that
+    exercise these paths patch subprocess.call or _local_bin_dir themselves,
+    which overrides this guard."""
+    import subprocess
+
+    import sonara.platform.windows.supervisor as supervisor
+
+    real_call = subprocess.call
+
+    def guarded_call(args, *a, **k):
+        argv = [str(x).lower() for x in (args if isinstance(args, (list, tuple)) else [args])]
+        if argv and argv[0].endswith("schtasks") and "/query" not in argv:
+            return 1        # refuse /create, /delete, /end, /run on the real box
+        return real_call(args, *a, **k)
+
+    monkeypatch.setattr(subprocess, "call", guarded_call)
+    monkeypatch.setattr(supervisor, "_local_bin_dir", lambda: str(tmp_path / "local-bin"))
 
 
 def pytest_collection_modifyitems(config, items):

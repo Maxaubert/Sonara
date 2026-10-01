@@ -3,6 +3,7 @@ model cache and smoke-test files on request. The daemon is stopped first
 (a running worker locks files in the venv), and voices/chatterbox, the
 user's own recorded clips, is never touched."""
 from sonara import cli, paths
+from sonara.install import service
 
 
 def _leftovers():
@@ -24,8 +25,8 @@ def _daemon(monkeypatch, running, order):
         paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")   # as the real one
         return True
     monkeypatch.setattr(paths, "socket_connectable", lambda: running)
-    monkeypatch.setattr(cli, "stop_sonara", stop)
-    monkeypatch.setattr(cli, "start_sonara", lambda: order.append("start") or 0)
+    monkeypatch.setattr(service, "stop_sonara", stop)
+    monkeypatch.setattr(service, "start_sonara", lambda: order.append("start") or 0)
 
 
 def test_cleanup_is_registered():
@@ -90,8 +91,8 @@ def test_cleanup_refuses_when_the_daemon_does_not_stop(monkeypatch):
     from sonara import chatterbox_legacy as cl
     _leftovers()
     monkeypatch.setattr(paths, "socket_connectable", lambda: True)
-    monkeypatch.setattr(cli, "stop_sonara", lambda sup=None: False)
-    monkeypatch.setattr(cli, "start_sonara", lambda: 0)
+    monkeypatch.setattr(service, "stop_sonara", lambda sup=None: False)
+    monkeypatch.setattr(service, "start_sonara", lambda: 0)
     monkeypatch.setattr(cl, "remove_leftovers",
                         lambda: (_ for _ in ()).throw(AssertionError("removed")))
     assert cli.main(["cleanup"]) == 1
@@ -116,8 +117,8 @@ def test_cleanup_that_refuses_restores_the_daemon_state(monkeypatch):
         paths.STOPPED_SENTINEL_PATH.unlink()
         return 0
     monkeypatch.setattr(paths, "socket_connectable", lambda: True)
-    monkeypatch.setattr(cli, "stop_sonara", stop)
-    monkeypatch.setattr(cli, "start_sonara", start)
+    monkeypatch.setattr(service, "stop_sonara", stop)
+    monkeypatch.setattr(service, "start_sonara", start)
     monkeypatch.setattr(cl, "remove_leftovers",
                         lambda: (_ for _ in ()).throw(AssertionError("removed")))
     assert cli.main(["cleanup"]) == 1
@@ -131,9 +132,9 @@ def test_cleanup_that_refuses_keeps_an_explicit_shutdown(monkeypatch):
     paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")
     order = []
     monkeypatch.setattr(paths, "socket_connectable", lambda: False)
-    monkeypatch.setattr(cli, "stop_sonara",
+    monkeypatch.setattr(service, "stop_sonara",
                         lambda sup=None: order.append("stop") and False)
-    monkeypatch.setattr(cli, "start_sonara", lambda: order.append("start") or 0)
+    monkeypatch.setattr(service, "start_sonara", lambda: order.append("start") or 0)
     monkeypatch.setattr(cl, "remove_leftovers",
                         lambda: (_ for _ in ()).throw(AssertionError("removed")))
     assert cli.main(["cleanup"]) == 1

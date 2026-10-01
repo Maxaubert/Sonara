@@ -1,6 +1,8 @@
 from unittest import mock
 
 from sonara import cli
+from sonara.install import installer
+from sonara import paths
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
 
@@ -23,15 +25,15 @@ def test_uninstall_dispatches_and_cleans_shared_artifacts_preserving_user_files(
 
     sup = FakeSupervisor()
     hk = FakeHotkey()
-    monkeypatch.setattr(cli, "_platform", lambda: fake_platform(supervisor=sup, hotkey=hk))
-    with mock.patch.object(cli.paths, "SONARA_DIR", sonara_dir), \
-         mock.patch.object(cli.paths, "CONFIG_PATH", config), \
-         mock.patch.object(cli.paths, "LOG_PATH", log), \
-         mock.patch.object(cli.paths, "LOCK_PATH", lock), \
-         mock.patch.object(cli.paths, "KEYMAP_PATH", keymap), \
-         mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", record), \
-         mock.patch.object(cli.paths, "APP_DIR", app_dir):
-        rc = cli.uninstall()
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: fake_platform(supervisor=sup, hotkey=hk))
+    with mock.patch.object(paths, "SONARA_DIR", sonara_dir), \
+         mock.patch.object(paths, "CONFIG_PATH", config), \
+         mock.patch.object(paths, "LOG_PATH", log), \
+         mock.patch.object(paths, "LOCK_PATH", lock), \
+         mock.patch.object(paths, "KEYMAP_PATH", keymap), \
+         mock.patch.object(paths, "INSTALL_RECORD_PATH", record), \
+         mock.patch.object(paths, "APP_DIR", app_dir):
+        rc = installer.uninstall()
 
     assert rc == 0
     # Backend teardown was dispatched.
@@ -46,7 +48,7 @@ def test_uninstall_dispatches_and_cleans_shared_artifacts_preserving_user_files(
 
 
 def test_uninstall_subcommand_invokes_uninstall():
-    with mock.patch("sonara.cli.uninstall", return_value=0) as un:
+    with mock.patch("sonara.install.installer.uninstall", return_value=0) as un:
         rc = cli.main(["uninstall"])
     un.assert_called_once()
     assert rc == 0

@@ -268,6 +268,37 @@ def resolve_python_windows() -> "str | None":
 
 
 # ---------------------------------------------------------------------------
+# Stray daemon sweep (#65)
+# ---------------------------------------------------------------------------
+
+def kill_stray_daemons(runner=None) -> int:
+    """Terminate any `-m sonara.daemon` processes still alive after the socket
+    owner died (#65). SHUTDOWN only reaches the lockfile/socket owner; a
+    split-brain survivor (an older daemon that lost the socket race but still
+    holds the global hotkeys) outlives every `sonara shutdown` and keeps
+    swallowing hotkey presses - mute appears broken. Best-effort: returns the
+    number of processes killed, 0 on any failure."""
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
+        "Where-Object { $_.CommandLine -match 'sonara[.]daemon' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
+        "$_.ProcessId }")
+    run = runner or (lambda argv: subprocess.run(
+        argv, capture_output=True, timeout=15,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+    try:
+        proc = run(["powershell", "-NoProfile", "-Command", script])
+        killed = [ln for ln in (proc.stdout or b"").decode("utf-8", "replace").split()
+                  if ln.strip().isdigit()]
+        if killed:
+            print("stopped {0} stray daemon process(es): {1}".format(
+                len(killed), ", ".join(killed)))
+        return len(killed)
+    except Exception:  # noqa: BLE001 - a failed sweep must never fail a stop
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Windows launcher (the ~/.local/bin/sonara analogue: a sonara.cmd shim)
 # ---------------------------------------------------------------------------
 
@@ -438,8 +469,12 @@ class WinSupervisorBackend(SupervisorBackend):
     def end_task(self) -> None:
         """Best-effort end of the RUNNING scheduled task (the task-launched
         supervisor tree). Lazy-started daemons are stopped via the SHUTDOWN
-        protocol message instead; cli.stop_sonara() composes both (#23)."""
+        protocol message instead; install.service.stop_sonara() composes both
+        (#23)."""
         self._schtasks(["/end", "/tn", TASK_NAME])
+
+    def kill_stray_daemons(self) -> int:
+        return kill_stray_daemons()
 
     def uninstall(self) -> None:
         rc = task_uninstall()

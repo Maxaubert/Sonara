@@ -123,6 +123,15 @@ class SupervisorBackend(abc.ABC):
 
     # Concrete defaults (overridden per platform) so existing subclasses and test
     # doubles keep working without implementing them.
+    def end_task(self) -> None:
+        """End the autostart-launched supervisor tree. Default: nothing."""
+        return None
+
+    def kill_stray_daemons(self) -> int:
+        """After a stop, end any daemon process the SHUTDOWN message could not
+        reach (#65). Returns how many were ended. Default: none."""
+        return 0
+
     def post_install_notes(self) -> None:
         """Print OS-specific post-install next steps. Default: nothing."""
         return None

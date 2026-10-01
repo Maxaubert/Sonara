@@ -1,12 +1,13 @@
 """The keymap subcommand.
 
 Post-seam-refactor, Windows hotkeys run in-process (started by the daemon), so
-there is no build step to test here. cli.install/uninstall/doctor dispatch is
+there is no build step to test here. install/uninstall/doctor dispatch is
 covered in test_cli_install/_uninstall/_doctor.
 """
 from unittest import mock
 
 from sonara import cli
+from sonara import keymap
 
 
 def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeypatch):
@@ -16,7 +17,7 @@ def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeyp
     monkeypatch.setattr(platform.sys, "platform", "win32")
     platform._CACHE = None
     cli._PLATFORM = None
-    monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
     try:
         rc = cli.main(["keymap"])
         assert rc == 0
@@ -35,7 +36,7 @@ def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeyp
 
 def test_keymap_clear_unbinds_and_requests_live_reload(monkeypatch, tmp_path):
     import json
-    monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
     sent = []
     with mock.patch("sonara.client.send", side_effect=lambda m, **k: sent.append(m)):
         rc = cli.main(["keymap", "nav_start", "clear"])
@@ -46,7 +47,7 @@ def test_keymap_clear_unbinds_and_requests_live_reload(monkeypatch, tmp_path):
 
 
 def test_keymap_clear_rejects_unknown_action(monkeypatch, tmp_path):
-    monkeypatch.setattr(cli.keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
     with mock.patch("sonara.client.send"):
         rc = cli.main(["keymap", "bogus", "clear"])
     assert rc == 1

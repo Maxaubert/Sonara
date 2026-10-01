@@ -133,22 +133,20 @@ def test_no_collisions_stays_silent():
 
 # --- stray daemon sweep ---------------------------------------------------------
 
-def test_kill_stray_daemons_counts_killed_pids(monkeypatch):
-    from sonara import cli
+def test_kill_stray_daemons_counts_killed_pids():
+    from sonara.platform.windows import supervisor
 
     class FakeProc:
         stdout = b"1234\n5678\n"
 
-    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
-    out = cli._kill_stray_daemons(runner=lambda argv: FakeProc())
+    out = supervisor.kill_stray_daemons(runner=lambda argv: FakeProc())
     assert out == 2
 
 
-def test_kill_stray_daemons_swallows_failures(monkeypatch):
-    from sonara import cli
-    monkeypatch.setattr(cli.os, "name", "nt", raising=False)
+def test_kill_stray_daemons_swallows_failures():
+    from sonara.platform.windows import supervisor
 
     def boom(argv):
         raise RuntimeError("no powershell")
 
-    assert cli._kill_stray_daemons(runner=boom) == 0
+    assert supervisor.kill_stray_daemons(runner=boom) == 0
