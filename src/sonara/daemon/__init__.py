@@ -21,21 +21,12 @@ from sonara.daemon.server import ConnectionServer
 from sonara.daemon.settings import Settings
 from sonara.daemon.summary.pipeline import SummaryPipeline, summary_log
 from sonara.daemon.summary.reorder import DigestReorderBuffer
-from sonara.config import save_config, load_config
-from sonara.paths import (
-    LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
-    SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
-    SESSION_DIGESTS_PATH, package_root,
-)
+from sonara.config import save_config
+from sonara.paths import LOCK_PATH, ensure_sonara_dir, package_root
 from sonara.platform import transport
 # Re-exported: ensure_running moved to sonara.lifecycle (#141) so clients
 # start the daemon without importing it.
 from sonara.lifecycle import ensure_running  # noqa: F401
-
-# Holds the single-instance flock for this process's lifetime (see main()).
-_SINGLETON = None
-_MUTEX = None       # process-lifetime handle to the named single-instance mutex
-
 
 # Setting bounds live in the config schema (#136); re-exported for callers.
 RATE_MIN = config_schema.RATE_MIN
@@ -545,83 +536,6 @@ class SpeechDaemon:
                 pass
 
 
-def resolve_earcons(bundled: dict, overrides) -> dict:
-    """The earcon map the speaker plays: the bundled set, resolved from the
-    running package on every start, with the user's own wavs (config
-    "earcons") on top. Never stored back into config, so new bundled kinds
-    reach every install (#136, audit M8)."""
-    out = dict(bundled)
-    if isinstance(overrides, dict):
-        out.update({k: v for k, v in overrides.items()
-                    if isinstance(v, str) and v})
-    return out
-
-
-def main() -> None:
-    from sonara.platform.windows import process as _process
-    _process.arm_faulthandler()
-    # Single-instance guard. The fast path avoids work when a daemon is clearly
-    # already serving. The AUTHORITATIVE guard is the exclusive flock below:
-    # with an ephemeral TCP port, bind() never collides (unlike the old fixed
-    # AF_UNIX path), so socket_connectable() alone is racy and lets concurrent
-    # lazy-starts each bind their own port -> a daemon explosion. The flock lets
-    # exactly one process win; the rest exit. The lock auto-releases on death.
-    global _SINGLETON, _MUTEX
-    if socket_connectable():
-        return
-    ensure_sonara_dir()
-    # AUTHORITATIVE single-instance guard: a named kernel mutex. The byte-lock
-    # below is tied to the lock FILE's inode, so a deleted/recreated file or two
-    # daemons racing to create it stop excluding -> a daemon explosion (observed
-    # live). The mutex is keyed by name, immune to that, and frees on death.
-    try:
-        _MUTEX = transport.acquire_singleton_mutex()
-    except OSError as exc:
-        # M11: a mutex that cannot be created is not "another daemon owns
-        # it". Log it and let the lock-file byte-lock below decide.
-        print("[singleton] {0}; using the lock file instead".format(exc),
-              file=sys.stderr, flush=True)
-        _MUTEX = False
-    if _MUTEX is None:
-        print("[singleton] another Sonara daemon is already running for this "
-              "user; exiting", file=sys.stderr, flush=True)
-        return
-    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
-    if _MUTEX is False and _SINGLETON is None:
-        print("[singleton] the lock file is held by another daemon; exiting",
-              file=sys.stderr, flush=True)
-        return
-
-    _process.harden_process()   # win32: opt out of EcoQoS throttling + raise
-                                # priority so global hotkeys stay responsive
-                                # after long idle
-    _process.preload_vc_runtime()   # win32: system VC runtime first, before any engine (#29)
-
-    from sonara.speaker import Speaker
-    from sonara.sessions import SessionManager
-    from sonara.platform import get_platform
-
-    _backend = get_platform()
-    from sonara.platform.windows.ducking import restore_from_state_file
-    restore_from_state_file()   # un-duck anything a crashed prior daemon left down
-    from sonara.platform.windows.pausing import resume_from_state_file as _resume_paused
-    _resume_paused()   # resume anything a crashed prior daemon left paused
-    cfg = load_config()
-    speaker = Speaker(
-        voice=cfg.get("voice"),
-        rate=config_schema.get(cfg, "rate"),
-        say_runner=_backend.tts.run,
-        earcon_player=_backend.earcon.play,
-        earcons=resolve_earcons(_backend.earcon.default_earcons(),
-                                cfg.get("earcons")),
-    )
-    sessions = SessionManager(background_policy=config_schema.get(cfg, "background_policy"),
-                              store_path=SESSIONS_PATH, seen_path=SESSION_SEEN_PATH)
-    from sonara.session_prefs import SessionPrefs
-    from sonara.digest_store import DigestStore
-    daemon = SpeechDaemon(speaker, sessions, cfg,
-                          ducker=_backend.ducker, pauser=_backend.pauser,
-                          prefs=SessionPrefs(store_path=SESSION_PREFS_PATH),
-                          digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
-    daemon._audio.apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
-    daemon.run()
+# The process entry point lives in daemon/startup (#141); re-exported so
+# `python -m sonara.daemon` and the CLI keep calling sonara.daemon.main.
+from sonara.daemon.startup import main, resolve_earcons  # noqa: E402,F401
