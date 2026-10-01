@@ -7,7 +7,7 @@ from tests.daemon_helpers import make_daemon
 
 def _drain(daemon, n=4):
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
 
 
 def test_preview_voice_speaks_sample_with_named_voice():

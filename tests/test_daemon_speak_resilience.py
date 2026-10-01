@@ -14,9 +14,9 @@ def test_speak_loop_survives_internal_exception(monkeypatch):
             raise RuntimeError("boom in the loop body")   # iteration 1 crashes
         daemon._running.clear()                            # iteration 2: end loop
 
-    monkeypatch.setattr(daemon, "_speak_loop_once", boom_first_then_stop)
+    monkeypatch.setattr(daemon._playback, "run_once", boom_first_then_stop)
     daemon._running.set()
-    daemon._speak_loop()   # must return normally despite the iteration-1 raise
+    daemon._playback.run()   # must return normally despite the iteration-1 raise
     assert len(seen) >= 2  # the loop kept going after the exception
 
 
@@ -26,7 +26,7 @@ def test_speak_loop_once_speaks_and_notes(monkeypatch):
     noted = []
     monkeypatch.setattr(daemon, "note_spoken", lambda item, completed: noted.append(completed))
     daemon._enqueue("fg", "prose", "hello", False)
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert noted == [True]          # FakeSpeaker.speak returns True (completed)
 
 
@@ -46,7 +46,7 @@ def test_speak_thread_keeps_speaking_after_a_bad_note_spoken(monkeypatch):
     monkeypatch.setattr(daemon, "note_spoken", flaky_note)
     daemon._enqueue("fg", "prose", "first", False)
     daemon._enqueue("fg", "prose", "second", False)
-    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t = threading.Thread(target=daemon._playback.run, daemon=True)
     t.start()
     deadline = time.time() + 3.0
     while time.time() < deadline and n["calls"] < 2:
@@ -76,7 +76,7 @@ def test_speak_failure_fires_error_earcon_and_notes_not_completed(monkeypatch):
     monkeypatch.setattr(speaker, "speak", _raise(RuntimeError("kokoro extra not installed")))
     daemon._enqueue("fg", "prose", "hello", False)
 
-    daemon._speak_loop_once()                    # exception contained, must not raise
+    daemon._playback.run_once()                    # exception contained, must not raise
 
     assert speaker.earcons == ["error"]          # eyes-free user hears the failure
     assert noted == [False]                       # still marked not-completed (unchanged)
@@ -88,7 +88,7 @@ def test_speak_failure_on_pause_exempt_cue_fires_error_earcon(monkeypatch):
     daemon._paused.set()
     daemon._enqueue("fg", "prose", "Paused.", False, pause_exempt=True)
 
-    daemon._speak_loop_once()                    # paused-branch failure, contained
+    daemon._playback.run_once()                    # paused-branch failure, contained
 
     assert speaker.earcons == ["error"]
 
@@ -100,7 +100,7 @@ def test_cancelled_utterance_does_not_fire_error_earcon(monkeypatch):
     speaker.complete = False                     # next speak() reports not-completed
     daemon._enqueue("fg", "prose", "hello", False)
 
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
 
     assert speaker.earcons == []                 # no false-positive error signal
 
@@ -112,4 +112,4 @@ def test_error_earcon_failure_is_contained(monkeypatch):
     monkeypatch.setattr(speaker, "earcon", _raise(RuntimeError("earcon backend down")))
     daemon._enqueue("fg", "prose", "hello", False)
 
-    daemon._speak_loop_once()                    # must return normally despite both raising
+    daemon._playback.run_once()                    # must return normally despite both raising

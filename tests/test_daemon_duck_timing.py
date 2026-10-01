@@ -28,7 +28,7 @@ def test_duck_fires_via_on_play_not_before_speak():
         return original_speak(text, cancel_epoch=cancel_epoch, on_play=on_play)
 
     speaker.speak = probing_speak
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert ducked_at_entry == [False]          # no duck during "synthesis"
     assert daemon.ducker.duck_calls           # ...but on_play ducked for playback
 
@@ -37,5 +37,5 @@ def test_no_duck_when_audio_mode_off():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "off"
     _seed_item(daemon)
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert daemon.ducker.duck_calls == []

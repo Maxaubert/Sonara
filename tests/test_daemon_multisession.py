@@ -35,7 +35,7 @@ def _fg(daemon, s):
 def _drain(daemon, n=20):
     """Drive the speak loop up to *n* times until the loop yields nothing."""
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ def test_global_mute_silences_the_session_change_announcement_and_chime():
     daemon.handle_message(_prose("A", "A one. "))
     daemon.router.channel("A").turn_done = True
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.MUTE})   # global mute
-    daemon._speak_loop_once()                                             # consume "Muted." cue
+    daemon._playback.run_once()                                             # consume "Muted." cue
     speaker.spoken.clear(); speaker.earcons.clear()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "B"})
     daemon.handle_message(_prose("B", "B one. "))
@@ -207,7 +207,7 @@ def test_cooperative_handoff_waits_for_current_session():
     daemon.router.channel("A").turn_done = True
 
     # Start reading A's first item (this sets active=A).
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert "A part one." in speaker.spoken, "First read of A must succeed."
 
     # B switches in while A still has one item pending (active=A).
@@ -255,7 +255,7 @@ def test_background_tool_announcement_deferred_until_session_is_active():
     })
 
     # Drive one iteration: A should speak (it is fg and active).
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert "Running bash." not in speaker.spoken, (
         "B's tool announcement was spoken while A was the active reader."
     )
@@ -316,7 +316,7 @@ def test_background_decision_preempts_current_reader():
     daemon.handle_message(_prose("A", "Long A message one. "))
     daemon.handle_message(_prose("A", "Long A message two. "))
     daemon.router.channel("A").turn_done = True
-    daemon._speak_loop_once()  # reads A's first item, sets active=A
+    daemon._playback.run_once()  # reads A's first item, sets active=A
     assert "Long A message one." in sp.spoken
 
     # B (background, policy allows it) submits a blocking choice.
@@ -328,7 +328,7 @@ def test_background_decision_preempts_current_reader():
 
     # Drain. B's decision preempts (with announcement), then A finishes.
     for _ in range(10):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
 
     # Both B's decision and A's remaining item must be heard.
     assert any("Pick one." in t for t in sp.spoken), (
@@ -539,13 +539,13 @@ def test_session_change_cycles_and_revisits():
     daemon.handle_message(_prose("B", "Beta message. "))
     daemon.router.channel("B").turn_done = True
     # One drain: auto-selects A (fg), reads 'Alpha message.', sets active=A.
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     # NEXT_SESSION: cycles from active=A to B; arms the session-change announcement.
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
     # B is now the active reader (bypasses earcon_only gate via "current reader
     # keeps floor" path in _pick), so it is served without _replay_authorized.
     for _ in range(12):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     assert "Alpha message." in speaker.spoken and "Beta message." in speaker.spoken, (
         f"Both sessions must be heard. Spoken: {speaker.spoken!r}"
     )

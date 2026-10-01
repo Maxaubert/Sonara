@@ -32,12 +32,12 @@ def test_announcement_does_not_duck_but_content_does():
     # #94: the announcement is now deferred to the content's on_play, so the
     # session_change iteration itself just stashes it - nothing is spoken or
     # ducked yet.
-    daemon._speak_loop_once()                      # session_change -> stashed
+    daemon._playback.run_once()                      # session_change -> stashed
     assert daemon.ducker.duck_calls == []          # nothing engaged yet
     assert not daemon.ducker.is_ducked()
     assert speaker.spoken == [] and speaker.earcons == []
 
-    daemon._speak_loop_once()                      # content on_play: alert, then duck
+    daemon._playback.run_once()                      # content on_play: alert, then duck
     assert speaker.earcons == ["session_change"]   # chime fired at synthesis-ready
     assert speaker.cue_untracked_calls            # announcement really was spoken
     assert daemon.ducker.duck_calls                # content ducked, at playback
@@ -52,6 +52,6 @@ def test_existing_duck_survives_the_announcement():
     daemon.ducker.duck({0}, 30)                     # pretend we were mid-reading
     assert daemon.ducker.is_ducked()
 
-    daemon._speak_loop_once()                       # announcement
+    daemon._playback.run_once()                       # announcement
     assert daemon.ducker.is_ducked()               # still ducked across handoff
     assert daemon.ducker.restore_calls == 0

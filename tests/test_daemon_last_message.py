@@ -143,7 +143,7 @@ def _paused_while_reading_a(daemon):
     ch.append(SpeechItem(id=99, session="A", kind="prose", text="a1",
                          is_decision=False))
     ch.turn_done = True
-    daemon._speak_loop_once()                    # A reads: engaged session
+    daemon._playback.run_once()                    # A reads: engaged session
     daemon.handle_message(_msg(MsgType.PAUSE))
     assert daemon._paused.is_set()
 
@@ -296,32 +296,34 @@ def test_replayed_decision_marks_the_channel(monkeypatch):
     assert daemon.router.channel("fg").has_decision is True
 
 
-# --- L-preamble: check-then-act on _pending_preamble -----------------------
+# --- L-preamble: check-then-act on pending_preamble ------------------------
 
 def test_preamble_cleared_between_check_and_use_does_not_crash():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
 
-    class _Racy(type(daemon)):
+    playback = daemon._playback
+
+    class _Racy(type(playback)):
         # Every read hands out the value, then "on_play on the synth thread"
         # clears it - the window between the old double read.
         @property
-        def _pending_preamble(self):
+        def pending_preamble(self):
             v = self.__dict__.get("_pp")
             self.__dict__["_pp"] = None
             return v
 
-        @_pending_preamble.setter
-        def _pending_preamble(self, v):
+        @pending_preamble.setter
+        def pending_preamble(self, v):
             self.__dict__["_pp"] = v
 
-    daemon.__dict__.pop("_pending_preamble", None)
-    daemon.__class__ = _Racy
+    playback.__dict__.pop("pending_preamble", None)
+    playback.__class__ = _Racy
     ch = daemon.router.channel("fg")
     ch.append(SpeechItem(id=7, session="fg", kind="prose", text="content",
                          is_decision=False))
     ch.turn_done = True
-    daemon._pending_preamble = ("fg", "Session changed: fg.")
-    daemon._speak_loop_once()
+    daemon._playback.pending_preamble = ("fg", "Session changed: fg.")
+    daemon._playback.run_once()
     assert "content" in speaker.spoken
     assert [t for t, _v in speaker.cue_untracked_calls] == ["Session changed: fg."]
 

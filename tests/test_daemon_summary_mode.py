@@ -922,12 +922,12 @@ def test_reread_after_bare_question_replays_the_question(monkeypatch):
     _set_mode(daemon, True)
     _choice(daemon)                                      # bare question, no prose
     for _ in range(4):
-        daemon._speak_loop_once()                        # question is spoken
+        daemon._playback.run_once()                        # question is spoken
     assert any("Pick one?" in t for t in speaker.spoken)
     speaker.spoken.clear()
     assert daemon._reread_last("fg") is True             # was: False -> edge chime
     for _ in range(4):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     assert any("Pick one?" in t for t in speaker.spoken)  # question heard again
 
 
@@ -942,12 +942,12 @@ def test_reread_after_digest_and_question_replays_both(monkeypatch):
     daemon._summary.worker(*calls[0])                    # digest lands
     _choice(daemon)
     for _ in range(6):
-        daemon._speak_loop_once()                        # digest + question spoken
+        daemon._playback.run_once()                        # digest + question spoken
     assert any("Pick one?" in t for t in speaker.spoken)
     speaker.spoken.clear()
     assert daemon._reread_last("fg") is True
     for _ in range(6):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     joined = " ".join(speaker.spoken)
     assert "The digest." in joined and "Pick one?" in joined
 
@@ -973,7 +973,7 @@ def test_up_during_speaking_question_restarts_it(monkeypatch):
     assert daemon._reread_last("fg") is True             # was: False -> edge chime
     daemon.note_spoken(item, False)                      # cancelled speak returns
     for _ in range(4):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     assert any("Pick one?" in t for t in speaker.spoken)  # question re-asked
     ch = daemon.router.channel("fg")
     qs = [it for it in ch.items if it.is_decision and "Pick one?" in it.text]
@@ -995,7 +995,7 @@ def test_up_during_speaking_digest_does_not_double_speak(monkeypatch):
     assert daemon._reread_last("fg") is True
     daemon.note_spoken(item, False)
     for _ in range(6):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     assert speaker.spoken.count("The digest.") == 1      # spoken once, not twice
 
 
@@ -1008,11 +1008,11 @@ def test_reread_does_not_double_append_on_repeat_rereads(monkeypatch):
     _set_mode(daemon, True)
     _choice(daemon)
     for _ in range(4):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     baseline = daemon._last_digest_text.get("fg")
     daemon._reread_last("fg")
     for _ in range(4):
-        daemon._speak_loop_once()                        # re-read heard
+        daemon._playback.run_once()                        # re-read heard
     assert daemon._last_digest_text.get("fg") == baseline
 
 

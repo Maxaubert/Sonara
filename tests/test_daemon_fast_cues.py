@@ -5,7 +5,7 @@ from tests.daemon_helpers import make_daemon
 
 def _drain(daemon, n=4):
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
 
 
 def test_control_cue_speaks_with_cue_voice_override(monkeypatch):

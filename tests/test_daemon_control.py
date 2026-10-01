@@ -129,7 +129,7 @@ def test_repeat_drives_speak_path():
     _prose(daemon, "fg", "Repeat me please. ")
 
     # Kick the speak loop.
-    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t = threading.Thread(target=daemon._playback.run, daemon=True)
     t.start()
     try:
         deadline = time.time() + 2.0

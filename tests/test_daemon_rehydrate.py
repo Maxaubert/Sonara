@@ -10,7 +10,7 @@ from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 def _spoken(daemon, speaker, n=8):
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     return speaker.spoken
 
 

@@ -6,7 +6,7 @@ from tests.daemon_helpers import make_daemon
 
 def _drain(daemon, n=4):
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
 
 
 def test_cue_voice_is_native_when_kokoro_is_not_installed(monkeypatch):

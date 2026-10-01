@@ -46,9 +46,9 @@ def _run_worker(daemon, d):
 
 
 def _drain(daemon, speaker, n=30):
-    daemon._poll_interval = 0.01
+    daemon._playback.poll_interval = 0.01
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     return list(speaker.spoken)
 
 

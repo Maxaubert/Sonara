@@ -103,7 +103,7 @@ def test_no_duck_when_audio_mode_off():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.config["audio_mode"] = "off"
     queue.enqueue(_prose_item("fg", "Hello."))
-    daemon._speak_loop_once()                       # speaks the item
+    daemon._playback.run_once()                       # speaks the item
     assert daemon.ducker.duck_calls == []
 
 
@@ -119,10 +119,10 @@ def test_duck_once_then_restore_only_at_global_idle():
     queue.enqueue(_prose_item("fg", "Two."))
     queue.enqueue(_prose_item("fg", "Three."))
     for _ in range(3):                               # drain every queued item
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     assert len(daemon.ducker.duck_calls) == 1        # ducked once at first speak
     assert daemon.ducker.restore_calls == 0          # still speaking -> held
-    daemon._speak_loop_once()                        # next_item() now None -> idle
+    daemon._playback.run_once()                        # next_item() now None -> idle
     assert daemon.ducker.restore_calls == 1          # restored only at global idle
 
 
@@ -131,7 +131,7 @@ def test_duck_excludes_daemon_and_earcon_pids():
     daemon.config["audio_mode"] = "duck"
     speaker._earcon_pids = [4242]                    # see Speaker.earcon_pids() below
     queue.enqueue(_prose_item("fg", "Hi."))
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     import os
     exclude = daemon.ducker.duck_calls[0][0]
     assert os.getpid() in exclude and 4242 in exclude
@@ -149,11 +149,11 @@ def test_stop_restores_if_ducked():
 # ---------------------------------------------------------------------------
 
 def test_paused_branch_restores_if_ducked():
-    """The paused branch of _speak_loop_once must call restore() when ducked."""
+    """The paused branch of SpeakLoop.run_once must call restore() when ducked."""
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.ducker._ducked = True
     daemon._paused.set()
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert daemon.ducker.restore_calls >= 1
 
 

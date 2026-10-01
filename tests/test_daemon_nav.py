@@ -48,10 +48,10 @@ def _start_reading(daemon, session, msg_id):
 def test_repeat_reads_last_message_via_channel():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "Hello. ", 0, True))
-    daemon._speak_loop_once()                     # reads "Hello."
+    daemon._playback.run_once()                     # reads "Hello."
     speaker.spoken.clear()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.REPEAT})
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert speaker.spoken == ["Hello."]
 
 
