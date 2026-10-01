@@ -31,8 +31,9 @@ class _Audio:
         self.engaged = 0
         self.restored = 0
 
-    def engage(self):
-        self.engaged += 1
+    def engage(self, still_wanted=None):
+        if still_wanted is None or still_wanted():
+            self.engaged += 1
 
     def restore(self):
         self.restored += 1

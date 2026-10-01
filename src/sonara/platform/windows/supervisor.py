@@ -273,14 +273,14 @@ def resolve_python_windows() -> "str | None":
 
 def kill_stray_daemons(runner=None) -> int:
     """Terminate any `-m sonara.daemon` processes still alive after the socket
-    owner died (#65). SHUTDOWN only reaches the lockfile/socket owner; a
+    owner died (#65), and any supervisor loop that would restart one (E14). SHUTDOWN only reaches the lockfile/socket owner; a
     split-brain survivor (an older daemon that lost the socket race but still
     holds the global hotkeys) outlives every `sonara shutdown` and keeps
     swallowing hotkey presses - mute appears broken. Best-effort: returns the
     number of processes killed, 0 on any failure."""
     script = (
         "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-        "Where-Object { $_.CommandLine -match 'sonara[.]daemon' } | "
+        "Where-Object { $_.CommandLine -match 'sonara[.]daemon|windows.supervisor_loop[.]py' } | "
         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
         "$_.ProcessId }")
     run = runner or (lambda argv: subprocess.run(
@@ -304,6 +304,16 @@ def kill_stray_daemons(runner=None) -> int:
 
 def _local_bin_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".local", "bin")
+
+
+def _on_path(folder: str) -> bool:
+    """True if *folder* is one of the PATH entries (case and trailing
+    separators ignored)."""
+    def norm(p):
+        p = p.strip().strip('"')
+        return os.path.normcase(os.path.normpath(p)) if p else ""
+    want = norm(folder)
+    return any(norm(p) == want for p in os.environ.get("PATH", "").split(os.pathsep))
 
 
 def _console_python(pythonw: str) -> str:
@@ -501,6 +511,14 @@ class WinSupervisorBackend(SupervisorBackend):
         # voice.md, ...), so the /sonara:* slash commands now work on Windows too.
         print("  - Enable the 'sonara' plugin for its /sonara:* slash commands "
               "(optional; speech and hotkeys work without it).")
+        # D3: install writes sonara.cmd to ~/.local/bin and never edits PATH.
+        bin_dir = _local_bin_dir()
+        if not _on_path(bin_dir):
+            print("  - The 'sonara' command is in {0}, which is not on your "
+                  "PATH. Add that folder to your user Path (Start > 'Edit "
+                  "environment variables for your account'), then open a new "
+                  "terminal; until then run {1}.".format(
+                      bin_dir, os.path.join(bin_dir, "sonara.cmd")))
 
     def hooks_doctor_row(self) -> tuple:
         """The Claude Code hooks row (sonara.install.claude_hooks)."""

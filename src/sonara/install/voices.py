@@ -2,6 +2,7 @@
 re-run install() so the daemon moves onto (or off) its interpreter."""
 from __future__ import annotations
 
+import os
 import sys
 
 from sonara import paths
@@ -22,7 +23,10 @@ def install_voices() -> int:
     # created: a failed re-run or upgrade keeps the one that worked.
     existed = kp.neural_enabled()
     restore = service.stopped_state_restorer()
-    service.stop_sonara()
+    if not service.stop_sonara():
+        restore()
+        service.print_not_stopped()
+        return 1
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
         # Pass the running package's root as PYTHONPATH so predownload_model can
@@ -37,9 +41,18 @@ def install_voices() -> int:
         if isinstance(exc, Exception):
             print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
         if existed:
-            if isinstance(exc, Exception):
+            # provision() rebuilds a venv whose python cannot start, so a
+            # failed rebuild may have removed (or half-removed) it already.
+            if not isinstance(exc, Exception):
+                pass  # Ctrl+C: re-raised below, no message
+            elif os.path.exists(paths.kokoro_venv_python()):
                 print("Kept your existing neural voices in {0}.".format(
                     paths.KOKORO_VENV), file=sys.stderr)
+            else:
+                print("The neural voices in {0} could not be rebuilt and are "
+                      "gone. Run 'sonara voices uninstall' to switch back to "
+                      "the built-in voices, or try 'sonara voices install' "
+                      "again.".format(paths.KOKORO_VENV), file=sys.stderr)
         else:
             try:
                 kp.uninstall_kokoro()
@@ -75,7 +88,13 @@ def uninstall_voices() -> int:
     if app_copy.resolve_plugin_root() is None:
         app_copy.print_no_plugin_root()
         return 1
-    service.stop_sonara()
+    restore = service.stopped_state_restorer()
+    if not service.stop_sonara():
+        # Deleting under a live daemon hit its locked pythonw and left a
+        # half-deleted venv plus a traceback (#166).
+        restore()
+        service.print_not_stopped()
+        return 1
     try:
         kp.uninstall_kokoro()
         rc = installer.install()  # neural_enabled() now False -> reverts to resolve_python()

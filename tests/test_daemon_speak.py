@@ -165,3 +165,72 @@ def test_client_speak_sends_the_speak_message(monkeypatch):
         {"v": PROTOCOL_VERSION, "type": "speak", "text": "Yo.",
          "source": "other", "tab": None, "label": "Other", "interrupt": True},
     ]
+
+
+# --- One message, always the last (FE-1) -----------------------------------
+# Each SPEAK replaces the session's turn, the way a new prompt does for a
+# Claude session: read texts do not pile up in the channel or the history,
+# and Up replays only the latest text.
+
+def _read_all(queue):
+    out = []
+    while True:
+        item = queue.pop_next()
+        if item is None:
+            return out
+        out.append(item.text)
+
+
+def test_repeated_speak_keeps_exactly_one_message():
+    daemon, queue, _sp, _s, _cfg = make_daemon(foreground="fg")
+    sid = "prism:tab-1"
+    for text in ("One.", "Two.", "Three."):
+        _speak(daemon, text)
+        assert _read_all(queue) == [text]
+    ch = daemon.router.channels[sid]
+    assert [it.text for it in ch.items] == ["Three."]
+    assert len(daemon.history.message_ids(sid)) == 1
+
+
+def test_restart_on_a_speak_session_replays_only_the_latest_text():
+    daemon, queue, speaker, _s, _cfg = make_daemon(foreground="fg")
+    sid = "prism:tab-1"
+    _speak(daemon, "First.")
+    _read_all(queue)
+    _speak(daemon, "Second.")
+    _read_all(queue)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NAV,
+                           "to": "first"})
+    assert speaker.earcons[-1] == "nav"
+    assert _pending_texts(daemon, sid) == ["Second."]
+
+
+def test_summary_mode_up_on_a_speak_session_rereads_the_latest_text():
+    daemon, queue, speaker, _s, cfg = make_daemon(foreground="fg")
+    cfg["summary_mode"] = True
+    _speak(daemon, "First.")
+    _read_all(queue)
+    _speak(daemon, "Second.")
+    _read_all(queue)
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NAV,
+                           "to": "first"})
+    assert speaker.earcons[-1] == "nav"
+    assert _pending_texts(daemon, "prism:tab-1") == ["Second."]
+
+
+def test_speak_does_not_touch_other_sessions_or_the_pause():
+    daemon, _q, _sp, _s, _cfg = make_daemon(foreground="fg")
+    daemon.history.record("fg", "prose", "Claude text.")
+    daemon._paused.set()
+    _speak(daemon, "A.")
+    _speak(daemon, "B.")
+    assert daemon._paused.is_set()
+    assert daemon.history.message_ids("fg") != []
+
+
+def test_speak_text_is_normalized_only_never_assembled():
+    # D11: SPEAK is spoken as given. normalize_for_speech strips markdown,
+    # but there is no assembler pass, so a code block is not summarised.
+    daemon, queue, _sp, _s, _cfg = make_daemon(foreground="fg")
+    _speak(daemon, "Run this:\n```py\nprint(1)\n```\nDone **ok**.")
+    assert _read_all(queue) == ["Run this: py print(1) Done ok."]

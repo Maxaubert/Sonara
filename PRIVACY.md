@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-01_
+_Last updated: 2026-10-02_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -11,9 +11,10 @@ your computer and what, if anything, leaves it.
 - Sonara runs on your computer. It has no servers, accounts, telemetry, analytics or crash
   reporting.
 - With summary mode **off** (the default), nothing Sonara reads ever leaves your machine.
-- With summary mode **on**, the text of each finished Claude reply is sent to make a short spoken
-  recap: to **Anthropic** through `claude -p`, or to **OpenAI** through `codex exec`, depending on
-  the summary engine you chose. Nothing else leaves the machine.
+- With summary mode **on**, the text of Claude's replies is sent to make a short spoken recap:
+  to **Anthropic** through `claude -p`, or to **OpenAI** through `codex exec`, depending on the
+  summary engine you chose. Short replies are read as they are and never sent. Nothing else
+  leaves the machine.
 - Sonara keeps a few small files in `~/.sonara`, listed below. Some of them hold session text.
 
 ## What Sonara processes
@@ -30,7 +31,10 @@ daemon stops.
 ## Summary mode (opt-in)
 
 When summary mode is on, Sonara waits for each reply to finish and starts a separate, throwaway
-process with that reply's text (and the summary instruction) on its standard input:
+process with that reply's text (and the summary instruction) on its standard input. Two
+exceptions: a reply shorter than 280 characters is read as it is and never sent, and when Claude
+asks a question mid-reply, the text before the question is sent at that moment (even when short)
+so its recap can be read before the question:
 
 - **Claude engine** (default): `claude -p`, with tools and settings disabled. It runs on your own
   Claude Code login, so the text goes to **Anthropic** under the same terms as your Claude Code
@@ -60,8 +64,8 @@ Everything lives under `~/.sonara` (`C:\Users\<you>\.sonara`). None of it is sen
 
 | File | What it holds |
 |---|---|
-| `sessions.json` | Each Claude Code session id and the name of its working folder (up to 200 sessions) |
-| `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page |
+| `sessions.json` | Each Claude Code session id and the name of its working folder, plus the sessions an embedding host opened with `speak` (`<source>:<tab>`) (up to 200 sessions) |
+| `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, and the label an embedding host gave a `speak` session (forgotten when the host ends that session) |
 | `session_seen.json` | When each session was last active |
 | `session_digests.json` | **The text of each session's latest spoken digest** (up to 4,000 characters each, 200 sessions), so a restarted daemon can still read a session's last message |
 
@@ -113,9 +117,12 @@ troubleshooting. It is off unless you set it. Delete the folder to remove what i
 
 ## Removing your data
 
-Run `sonara uninstall` (or `/sonara:uninstall`) to remove the autostart task, launcher, hooks,
-app copy, daemon logs (`faulthandler.prev.log` stays) and lock files, then delete the `~/.sonara` folder to remove everything else,
-including session data and your settings.
+Run `sonara uninstall` (or `/sonara:uninstall`) to remove the autostart task, the launcher,
+Sonara's hooks in `~/.claude/settings.json`, the app copy (`app/`), and `daemon.lock`,
+`install.json`, `hotkeys.state.json`, `speechd.log`, `speechd.old.log` and `faulthandler.log`.
+It then writes the `stopped` file so Sonara stays off. Everything else stays, including
+`faulthandler.prev.log`, `daemon.singleton`, `webui.token`, the state files, session data, voices
+and your settings: delete the `~/.sonara` folder to remove it all.
 
 ## Changes to this policy
 

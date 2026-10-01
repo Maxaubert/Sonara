@@ -137,6 +137,12 @@ def _voices_env(monkeypatch, tmp_path, order, *, existed, running=False):
     monkeypatch.setattr(service, "stop_sonara", lambda sup=None: order.append("stop") or True)
     monkeypatch.setattr(service, "start_sonara", lambda: order.append("start") or 0)
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: order.append("rm"))
+    venv_py = tmp_path / "venv" / "Scripts" / "python.exe"
+    if existed:
+        venv_py.parent.mkdir(parents=True)
+        venv_py.write_text("")
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: str(venv_py))
+    return venv_py
 
 
 def test_voices_install_stops_the_daemon_before_provisioning(monkeypatch, tmp_path):
@@ -164,6 +170,25 @@ def test_voices_install_keeps_a_working_venv_when_it_fails(monkeypatch, tmp_path
     assert "rm" not in order
     err = capsys.readouterr().err
     assert "network down" in err and "kept" in err.lower()
+
+
+def test_voices_install_does_not_claim_kept_when_the_rebuild_removed_the_venv(
+        monkeypatch, tmp_path, capsys):
+    """provision() deletes a venv whose python cannot start before rebuilding
+    it. If the rebuild then fails, the venv is gone: saying "Kept" would be
+    wrong, and the user needs the way back to system Python (E10)."""
+    order = []
+    venv_py = _voices_env(monkeypatch, tmp_path, order, existed=True)
+
+    def boom(pythonpath):
+        os.remove(str(venv_py))
+        raise RuntimeError("network down")
+    monkeypatch.setattr(kp, "install_kokoro", boom)
+    monkeypatch.setattr(installer, "install", lambda: pytest.fail("must not rewire"))
+    assert cli._cmd_voices_install(object()) == 1
+    err = capsys.readouterr().err
+    assert "kept" not in err.lower()
+    assert "sonara voices uninstall" in err
 
 
 def test_voices_install_failure_restarts_a_daemon_that_was_running(monkeypatch, tmp_path):

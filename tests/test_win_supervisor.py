@@ -457,3 +457,21 @@ def test_resolve_python_windows_none_when_no_system_and_no_record(monkeypatch):
     monkeypatch.setattr(sup.shutil, "which", lambda name: None)
     monkeypatch.setattr(paths, "recorded_pythonw", lambda: None)
     assert sup.resolve_python_windows() is None
+
+
+def test_post_install_notes_say_how_to_add_the_launcher_dir_to_path(
+        capsys, monkeypatch):
+    # D3: install writes sonara.cmd to ~/.local/bin but never edits PATH.
+    from sonara.platform.windows import supervisor
+    monkeypatch.setenv("PATH", r"C:\Windows\System32")
+    WinSupervisorBackend().post_install_notes()
+    out = capsys.readouterr().out
+    assert supervisor._local_bin_dir() in out and "PATH" in out
+
+
+def test_post_install_notes_quiet_about_path_when_it_is_on_path(
+        capsys, monkeypatch):
+    from sonara.platform.windows import supervisor
+    monkeypatch.setenv("PATH", r"C:\Windows;" + supervisor._local_bin_dir().upper() + "\\")
+    WinSupervisorBackend().post_install_notes()
+    assert "not on your PATH" not in capsys.readouterr().out

@@ -4,6 +4,7 @@ stopped Sonara fails."""
 from __future__ import annotations
 
 import os
+import sys
 import time
 
 from sonara import paths
@@ -19,9 +20,11 @@ def _send(msg: dict, expect_reply: bool = False):
 def stop_sonara(sup=None) -> bool:
     """Stop Sonara everywhere (#23): write the stop sentinel (gates the
     supervisor loop AND the per-hook-event lazy start), end the scheduled task,
-    SHUTDOWN the daemon, and wait for it to be gone. Returns True when the
-    daemon is confirmed gone (a daemon that was not running counts as stopped).
-    install()/uninstall() call this BEFORE mutating files under APP_DIR."""
+    SHUTDOWN the daemon, and wait for it to be gone; one that still runs
+    after the grace is killed. Returns True when the daemon is confirmed gone
+    (a daemon that was not running counts as stopped). install()/uninstall()
+    call this BEFORE mutating files under APP_DIR and change nothing when it
+    returns False."""
     paths.ensure_sonara_dir()
     try:
         with open(str(paths.STOPPED_SENTINEL_PATH), "w", encoding="utf-8") as fh:
@@ -38,14 +41,35 @@ def stop_sonara(sup=None) -> bool:
         _send({"v": PROTOCOL_VERSION, "type": MsgType.SHUTDOWN}, expect_reply=True)
     except Exception:  # noqa: BLE001 - not running IS stopped
         pass
-    deadline = time.time() + 5.0
+    if _wait_gone(5.0):
+        time.sleep(0.3)     # grace: process exit releases the mutex
+        sup.kill_stray_daemons()
+        return True
+    # Still accepting after the grace: a daemon wedged under its lock (E18)
+    # answers connects but never runs SHUTDOWN, and a lazily started one is
+    # outside the task tree end_task ended. Kill it by command line.
+    # Known trade-off: a slow but healthy daemon still exiting after 5 s is
+    # killed too, and a kill skips its audio restore, so apps it was ducking
+    # or pausing at that moment stay ducked or paused.
+    sup.kill_stray_daemons()
+    return _wait_gone(2.0)
+
+
+def _wait_gone(seconds: float) -> bool:
+    """True once the daemon socket stops accepting, within *seconds*."""
+    deadline = time.time() + seconds
     while time.time() < deadline:
         if not paths.socket_connectable():
-            time.sleep(0.3)     # grace: process exit releases the mutex
-            sup.kill_stray_daemons()
             return True
         time.sleep(0.1)
     return False
+
+
+def print_not_stopped() -> None:
+    """Explain a refused command after stop_sonara() returned False."""
+    print("Sonara did not stop, so nothing was changed (a running daemon "
+          "locks its files). Run 'sonara shutdown', then try again.",
+          file=sys.stderr)
 
 
 def start_sonara() -> int:

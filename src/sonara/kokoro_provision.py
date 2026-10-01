@@ -47,15 +47,35 @@ def _default_user_scripts(py: str) -> str:
         text=True).strip()
 
 
+def _local_uv():
+    from sonara.install import deps
+    return deps.local_uv()
+
+
+def _python_env(py: str) -> dict:
+    from sonara.install import deps
+    return deps.python_env(py)
+
+
+_NO_UV = ("Could not install or locate `uv`, needed to provision neural voices. "
+          "Install uv (https://docs.astral.sh/uv/) and re-run: sonara voices install")
+
+
 def ensure_uv(which=shutil.which, run=subprocess.check_call,
-              base_python=None, user_scripts=_default_user_scripts) -> str:
-    """Return a path to `uv`, bootstrapping it via `pip install --user uv` when
-    it is not already on PATH. Raises RuntimeError (actionable) if uv cannot be
+              base_python=None, user_scripts=_default_user_scripts,
+              local_uv=_local_uv, py_env=_python_env) -> str:
+    """Return a path to `uv`: on PATH, else the copy the bootstrap downloaded
+    to ~/.sonara/tools (E2-uv, the deps.find_uv order), else bootstrapped via
+    `pip install --user uv`. A PEP 668 (externally managed) Python, such as
+    the uv-managed one a zero-Python install runs on, refuses --user (E1), so
+    it is never tried there. Raises RuntimeError (actionable) if uv cannot be
     obtained -- never returns a non-existent path."""
-    found = which("uv")
+    found = which("uv") or local_uv()
     if found:
         return found
     py = base_python or sys.executable
+    if py_env(py).get("managed"):
+        raise RuntimeError(_NO_UV)
     run([py, "-m", "pip", "install", "--user", "--quiet", "uv"])
     cand = os.path.join(user_scripts(py), "uv.exe")
     if os.path.exists(cand):
@@ -63,9 +83,7 @@ def ensure_uv(which=shutil.which, run=subprocess.check_call,
     found = which("uv")
     if found:
         return found
-    raise RuntimeError(
-        "Could not install or locate `uv`, needed to provision neural voices. "
-        "Install uv (https://docs.astral.sh/uv/) and re-run: sonara voices install")
+    raise RuntimeError(_NO_UV)
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +96,31 @@ def requirements_path() -> str:
                         "requirements-kokoro.txt")
 
 
-def provision(uv: str, run=subprocess.check_call) -> None:
+def _venv_python_starts(python: str) -> bool:
+    """True if *python* runs at all. A venv whose base interpreter is gone
+    keeps its python.exe stub, which then fails to start."""
+    try:
+        r = subprocess.run([python, "-c", "import sys"], capture_output=True,
+                           timeout=30,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:  # noqa: BLE001 - any failure means it cannot start
+        return False
+    return r.returncode == 0
+
+
+def provision(uv: str, run=subprocess.check_call, starts=_venv_python_starts,
+              rmtree=shutil.rmtree) -> None:
     """Create the uv-managed venv (downloading CPython 3.12 if absent) and install
     the pinned Kokoro stack into it. Raises subprocess.CalledProcessError on failure
     (the caller aborts without rewiring the daemon). An existing venv is
     reused and its packages upgraded in place: recreating it would first
-    delete a working one (E10)."""
+    delete a working one (E10). One whose python cannot start (its base
+    interpreter is gone) is rebuilt: reusing it could never succeed."""
     venv_dir = str(paths.KOKORO_VENV)
-    if not os.path.exists(paths.kokoro_venv_python()):
+    venv_py = paths.kokoro_venv_python()
+    if os.path.exists(venv_py) and not starts(venv_py):
+        rmtree(venv_dir)
+    if not os.path.exists(venv_py):
         run([uv, "venv", venv_dir, "--python", "3.12"])
     run([uv, "pip", "install", "--python", paths.kokoro_venv_python(),
          "-r", requirements_path()])

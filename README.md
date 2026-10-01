@@ -28,8 +28,8 @@ answer by number, and global hotkeys control the voice from any window.
 
 - **One message, always the last.** Sonara reads the latest reply. Press **Ctrl+Alt+Up** and it
   starts that reply over; nothing older gets in the way.
-- **Decision earcons.** A short sound the instant a question, permission prompt or error appears,
-  in every session, even one that is not speaking.
+- **Decision earcons.** A short sound the instant a question or permission prompt appears, in
+  every session, even one that is not speaking.
 - **Answer by number.** Questions and permission prompts are read with their options; press the
   option's number in Claude Code. No key injection.
 - **Global hotkeys.** Restart, flush, mute and switch sessions without leaving your editor.
@@ -66,10 +66,11 @@ answer by number, and global hotkeys control the voice from any window.
    ```
    It finds or provisions Python, installs the Windows speech engine (PyWinRT), copies the
    runtime to `~/.sonara/app` (so plugin updates never pull files out from under a running
-   daemon), registers autostart as a per-user scheduled task, wires up the hooks and hotkeys,
-   and puts a `sonara` command on your PATH. Each step is printed. The first run can take a
-   couple of minutes.
-4. Start a new Claude Code session, then run `/sonara:doctor`. Every row should say `ok`.
+   daemon), registers autostart as a per-user scheduled task, wires up the hooks, and puts a
+   `sonara` command in `~/.local/bin`. If that folder is not on your PATH, install says so and
+   how to add it. Each step is printed. The first run can take a couple of minutes.
+4. Start a new Claude Code session, then run `/sonara:doctor`. No row should say `FAIL`
+   (`warn` rows are advice, such as the AltGr warning below).
 
 After a plugin update Sonara says once: "Sonara was updated. Run /sonara:install to apply."
 Running it refreshes the copy in `~/.sonara/app`.
@@ -79,8 +80,13 @@ Running it refreshes the copy in `~/.sonara/app`.
 - **The latest reply, as it streams.** Sonara turns Markdown into speakable sentences (code
   blocks are summarised, not spelled out) and reads them in order. A question, plan or
   permission prompt is spoken in its natural place, after the text that explains it.
-- **The alert is instant, the words wait their turn.** When a decision appears, its earcon
-  plays at once; its spoken text follows the sentences before it.
+- **The alert is instant, the words wait their turn.** When a question or permission prompt
+  appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
+  has no earcon; it is read in its place.
+- **Other earcons** come from the daemon: `turn_done` when a reply ends, `nav` and `nav_edge`
+  for a restart or flush (`nav_edge`: nothing to restart or flush), `session_change` when the
+  voice moves to another session, `error` when speech fails, and `summary_failed` when a
+  summary-mode turn had no text to read.
 - **A new prompt starts fresh.** When you send the next prompt, the previous reply is dropped
   and Sonara follows the new one.
 - **Restart, never rewind.** Ctrl+Alt+Up restarts the latest reply from the top (in summary
@@ -160,8 +166,9 @@ still plays. The recap comes from a separate, throwaway call that never touches 
 - **Codex** (GPT-5.6 Luna or GPT-5.4 Mini): `codex exec` in a read-only sandbox, on your Codex
   login. Needs the Codex CLI on your PATH.
 
-Each finished reply costs one small call on that account. If the call fails or times out,
-Sonara plays a short cue and stays quiet. See [PRIVACY.md](PRIVACY.md) for what is sent.
+Each finished reply costs one small call on that account. If the call fails, times out or
+returns nothing, Sonara reads the original reply instead; the `summary_failed` earcon plays only
+when the turn had no text at all. See [PRIVACY.md](PRIVACY.md) for what is sent.
 
 ## Voices
 

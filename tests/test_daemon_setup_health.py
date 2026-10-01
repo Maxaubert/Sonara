@@ -133,3 +133,27 @@ def test_setup_health_exception_never_breaks_session(monkeypatch):
     # Must not raise; just no cue.
     daemon.handle_message(_ss("s1"))
     assert len(queue) == 0
+
+
+def test_setup_cue_is_a_control_cue_a_new_prompt_cannot_wipe(monkeypatch):
+    # F6: the setup cue sat on the session channel, so the prompt that
+    # usually follows SESSION_START at once (FLUSH) wiped it unheard.
+    from sonara.router import CONTROL
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    monkeypatch.setattr(daemon._setup_guide, "health",
+                        lambda v: ("not_installed", "RUN slash sonara install"))
+    daemon.handle_message(_ss("s1"))
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH,
+                           "session": "s1"})
+    item = queue.pop_next()
+    assert item is not None and item.session == CONTROL
+    assert "slash sonara install" in item.text.lower()
+
+
+def test_sessions_starting_together_hear_the_setup_cue_once(monkeypatch):
+    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
+    monkeypatch.setattr(daemon._setup_guide, "health",
+                        lambda v: ("not_installed", "RUN slash sonara install"))
+    daemon.handle_message(_ss("s1"))
+    daemon.handle_message(_ss("s2"))
+    assert len(queue) == 1

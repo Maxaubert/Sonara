@@ -12,7 +12,7 @@ A stable, well-structured, documented Sonara before any embedding work (PrismTer
 
 ## Status (2026-10-01)
 
-**Phase 0 is complete pending merges.** Every PR below is open against main on Maxaubert/Sonara, stacked in this order; none is merged yet.
+**Phase 0 is complete pending merges.** Every PR below is open on Maxaubert/Sonara; none is merged yet. #129, #131 and #145 target main. From #146 on the PRs are stacked: each targets the previous PR's branch, in table order, and is retargeted as the one below it merges.
 
 | Item | Issue | PR |
 |---|---|---|
@@ -32,13 +32,14 @@ A stable, well-structured, documented Sonara before any embedding work (PrismTer
 | D8 hotkey reset and AltGr warning (Win+Alt default reverted) | #160 | #162 |
 | P15 protocol for embedded players | #143 | #163 |
 | Review follow-ups | #161 | #164 |
-| P16 README, PRIVACY, architecture, embedding research (0.8.2) | #144 | this PR (branch `docs/144-readme-privacy-architecture`) |
+| P16 README, PRIVACY, architecture, embedding research (0.8.2) | #144 | #165 |
+| Final verification findings (0.8.3) | #166 | branch `fix/166-final-verification`, stacked on #165 |
 
-Open after Phase 0: the fresh-eyes review over the whole diff (see Verification), and removing the v1 singleton mutex probe in the first release after 0.8.1 (`platform/windows/singleton.py`, TODO #161). Next: PrismTerminal integration, researched in [embedding-research.md](embedding-research.md).
+The fresh-eyes review over the whole diff and the audit re-run (see Verification) ran on 2026-10-02; their findings are fixed in #166. Open after Phase 0: removing the v1 singleton mutex probe in the first release after 0.8.3 is published (`platform/windows/singleton.py`, TODO #161). No release has been published yet, so users still run daemons that hold the v1 mutex. Next: PrismTerminal integration, researched in [embedding-research.md](embedding-research.md).
 
 ## Product rules this plan encodes
 
-1. **One message, always the last.** Sonara reads the latest turn. Up restarts it (#128, PR #129). No reading of older turns. Nothing may silently drop the latest turn (fixes: seeded-channel wipe, parked digest, lost settle seq).
+1. **One message, always the last.** Sonara reads the latest turn. Up restarts it (#128, PR #129). No reading of older turns. Nothing may silently drop the latest turn (fixes: seeded-channel wipe, parked digest, lost settle seq). A SPEAK session follows the same rule: each SPEAK replaces its turn (#166).
 2. **Never strand other apps' audio.** (#130, PR #131.)
 3. **Kokoro + Windows native are the only voices.** User voice clips are never auto-deleted.
 
@@ -57,7 +58,7 @@ Open after Phase 0: the fresh-eyes review over the whole diff (see Verification)
 
 ## Delivery model
 
-- One issue, branch (`type/issue-slug`) and PR per item below, opened against main. Later PRs are stacked on earlier ones where they touch the same code and get rebased as earlier ones merge.
+- One issue, branch (`type/issue-slug`) and PR per item below. As shipped, the first three target main and the rest form one stack, each PR on the previous one's branch (see Status); each is retargeted as the one below it merges.
 - Each PR: TDD for every bug fix, full suite + ruff green, deployed to `~/.sonara/app` for hands-on testing when user-facing, then "merge?" to you. I keep building the next PRs while earlier ones wait for approval.
 - Execution via workflows: implementer per PR in its own worktree, then an independent reviewer pass before the PR is opened.
 
@@ -74,9 +75,9 @@ Open after Phase 0: the fresh-eyes review over the whole diff (see Verification)
 - Close fork issues already fixed in code (#14-#17, #19, #21, #115-#118 after a quick verify), #10 as won't-do.
 
 **P2. ci: CI, release, ruff, hermetic tests, 0.6.0**
-- `ci.yml`: ruff + pytest on push/PR (windows-latest with fakes forced, plus ubuntu for py3.9 compat).
+- `ci.yml`: ruff + pytest on push/PR. As shipped: windows-latest only, unit suite on Python 3.9 and 3.12, ruff and a `SONARA_DEBUG_LOCKS=1` run on 3.12. No ubuntu job: the suite is Windows-only, and `test_py39_compat.py` plus the 3.9 job cover the syntax check.
 - `release.yml`: on push to main, tag + GitHub release `v<version>`, refusing an existing version.
-- ruff in `dev` extra (`E9,F,B,UP`, py39 target), fix what it finds.
+- ruff in `dev` extra (py39 target), fix what it finds. As shipped: `E9,F,B`; `UP` (pyupgrade) was left out as ~270 mechanical rewrites with no bug signal (see `pyproject.toml`).
 - Make `test_win_tts.py` hermetic; real-OneCore checks behind a `live_windows` marker.
 - `pyproject`: version 0.6.0 (plus plugin.json, marketplace.json), maintainers, readme, urls, `requirements-kokoro.txt` in package data; `_copy_app` ignores `__pycache__`.
 

@@ -42,7 +42,7 @@ Read a text aloud.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `text` | string, required | The text. Markdown and symbols are cleaned for speech (same rules as live prose); it is never summarized. |
+| `text` | string, required | The text. Markdown and symbols are cleaned for speech (the cleaner's normalization only: no sentence assembly, so a code block is read as text, not summarised); it is never summarized. |
 | `source` | non-empty string, required | The host's name. |
 | `tab` | string or null | The host tab the text belongs to. null means one shared queue for the host. |
 | `label` | string or null | Display name for the session, used in "Session changed: <label>." announcements and the settings page. Omit it to keep the current name (a user may have renamed the session). |
@@ -51,7 +51,7 @@ Read a text aloud.
 Behaviour:
 
 - Session id is `f"{source}:{tab or 'default'}"`. It is registered on the first SPEAK and gets `host_tab = tab`.
-- **Queue of one:** a SPEAK replaces that session's unread text; it never queues behind it. Text that is already playing finishes unless `interrupt` is true. A SPEAK whose text cleans to nothing just clears the unread text.
+- **Queue of one:** a SPEAK replaces that session's turn: its unread text and the texts it already read are dropped, so Up (restart) and a manual session switch replay only the latest SPEAK. It never queues behind earlier text. Text that is already playing finishes unless `interrupt` is true. A SPEAK whose text cleans to nothing just clears the session.
 - The text is voiced even though the session is not the foreground Claude session. Global pause and mute still apply: SPEAK never un-pauses or un-mutes.
 - A SPEAK session lives until SESSION_END or FORGET_SESSION with its id. Either one also forgets its label and other session settings, so a host should send `session_end` for a tab it closes.
 
@@ -65,7 +65,7 @@ Keep the connection open and receive the daemon's state whenever it changes.
 {"v": 1, "type": "subscribe", "events": ["state"]}
 ```
 
-- `events` must contain `"state"` (the only event kind today; default `["state"]`).
+- `events` must contain `"state"` and nothing else (the only event kind today; default `["state"]`). Any other kind is refused.
 - SUBSCRIBE must be the last message on its connection; later messages on it are ignored. Send commands on separate connections.
 - The first event is the current state; after that a `state` event is pushed only when the state changed. The daemon checks after every handled message and when an utterance starts or ends. Changes that arrive without a message (a background turn digest joining the queue, a config edit on the settings page) show up at the next of those checks, which can be the end of the current utterance.
 - At most 4 subscribers at once. Subscribers are exempt from the 5 s read timeout and the 32-connection cap.

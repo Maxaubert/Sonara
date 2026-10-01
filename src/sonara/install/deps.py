@@ -108,9 +108,11 @@ def python_env(python: str) -> dict:
 
 def find_uv() -> Optional[str]:
     """uv on PATH, else the copy the bootstrap downloaded to ~/.sonara/tools."""
-    found = shutil.which("uv")
-    if found:
-        return found
+    return shutil.which("uv") or local_uv()
+
+
+def local_uv() -> Optional[str]:
+    """The uv the bootstrap downloaded to ~/.sonara/tools (never on PATH)."""
     local = os.path.join(str(paths.SONARA_DIR), "tools", "uv.exe")
     return local if os.path.isfile(local) else None
 

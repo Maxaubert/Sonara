@@ -5,7 +5,7 @@ onnxruntime==1.27.0
 numpy==2.4.6
 # The daemon runs on this venv once neural voices are on, so it also needs the
 # Windows speech engine and audio control (E2), kept in sync with the
-# [windows] extra in pyproject.toml and cli._WINRT_PACKAGES.
+# [windows] extra in pyproject.toml and sonara.install.deps.WINRT_PACKAGES.
 winrt-runtime
 winrt-Windows.Media.SpeechSynthesis
 winrt-Windows.Storage.Streams

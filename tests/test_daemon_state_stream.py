@@ -337,6 +337,17 @@ def test_unknown_event_kind_is_refused(server):
         sock.close()
 
 
+def test_an_unknown_kind_next_to_state_is_refused(server):
+    # D12: every requested kind must exist, so a host learns at once that
+    # this daemon cannot stream what it asked for.
+    sock, reader, refused = _subscribe(server, events=("state", "nope"))
+    try:
+        assert refused["type"] == "error"
+        assert reader.event() is None
+    finally:
+        sock.close()
+
+
 def test_a_closed_subscriber_frees_its_slot(server, monkeypatch):
     monkeypatch.setattr(state_stream, "POLL_S", 0.05)
     sock, _reader, _first = _subscribe(server)

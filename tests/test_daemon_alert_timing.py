@@ -117,3 +117,32 @@ def test_alert_dropped_when_content_cancelled_before_on_play():
     daemon._playback.run_once()                        # content dropped, not requeued
     assert daemon._playback.pending_preamble is None          # stale alert cleared
     assert speaker.cue_untracked_calls == []
+
+
+def test_pause_during_the_alert_does_not_reengage_audio():
+    # F3: the preamble on_play blocks while the alert plays. A PAUSE landing
+    # then restores other apps' audio; the engage after the alert must see
+    # the cancel and not duck or pause them again.
+    daemon, speaker, config = _handoff()
+    config["fast_cues"] = True
+    config["audio_mode"] = "pause"
+    daemon._playback.run_once()                        # stash
+
+    def alert_then_pause(text, voice, rate=None):
+        speaker.cue_untracked_calls.append((text, voice))
+        daemon.handle_message({"v": 1, "type": "pause"})
+    speaker.speak_cue_untracked = alert_then_pause
+    daemon._playback.run_once()                        # content: alert, PAUSE, engage?
+    assert speaker.cue_untracked_calls              # the alert played
+    assert daemon.pauser.pause_calls == 0            # never re-paused the media
+
+
+def test_engage_rechecks_its_condition_under_the_audio_lock():
+    # F3: engage is check-then-act. A cancel that lands before engage takes
+    # the audio lock must win, so the condition is evaluated inside it.
+    daemon, _speaker, config = _handoff()
+    config["audio_mode"] = "duck"
+    daemon._audio.engage(still_wanted=lambda: False)
+    assert daemon.ducker.duck_calls == []
+    daemon._audio.engage(still_wanted=lambda: True)
+    assert len(daemon.ducker.duck_calls) == 1
