@@ -185,10 +185,7 @@
         <div class="title-row"><div><h1>Speech</h1><p>How Claude Code sounds when Sonara reads aloud.</p></div><span class="state"><i></i>Saved</span></div>
         <div class="group-label"><span>Voice</span></div>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Engine</strong><div class="hint">Kokoro answers fastest; Chatterbox has character voices.</div></div><div class="control"><div class="segments" id="engine-seg" role="tablist"><button data-engine="kokoro">Kokoro</button><button data-engine="chatterbox">Chatterbox</button></div><div class="hint">Switching engines picks your last-used voice for that engine.</div></div></div>
           <div class="pref"><div class="pref-copy"><strong>Voice</strong></div><div class="control"><div class="voice"><select id="voice-select" aria-label="Preferred voice"></select><button class="play" id="voice-preview" aria-label="Preview selected voice"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint preview-hint">Play a short sample before choosing.</div></div></div>
-          <div class="pref" id="cb-mode-row"><div class="pref-copy"><strong>Mode</strong><div class="hint">Original speaks with emotion; Turbo answers faster.</div></div><div class="control"><div class="segments" id="mode-seg"><button data-variant="turbo">Turbo</button><button data-variant="original">Original</button></div><div class="hint">Switching reloads the voice model once, about twenty seconds.</div></div></div>
-          <div class="pref" id="cb-exag-row"><div class="pref-copy"><strong>Expressiveness</strong></div><div class="control"><div class="range-head"><span>Exaggeration</span><output id="exag-out">0.00</output></div><input class="range" id="exag" type="range" min="0" max="1" step="0.05" value="0"><div class="ends"><span>0 monotone</span><span>1 dramatic</span></div><div class="hint" id="exag-hint">Applies to every Chatterbox voice.</div></div></div>
           <div class="pref" id="rate-row"><div class="pref-copy"><strong>Speaking rate</strong></div><div class="control"><div class="range-head"><span>Words per minute</span><output id="rate-out">250 wpm</output></div><input class="range" id="rate" type="range" min="120" max="350" value="250"><div class="ends"><span>120</span><span>350</span></div><div class="hint">Higher values keep technical prose moving faster.</div></div></div>
         </div>
         <div class="group-label"><span>Delivery</span></div>
@@ -253,10 +250,6 @@
           <div class="pref" id="timeout-row"><div class="pref-copy"><strong>Timeout</strong><div class="hint">Maximum wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" min="15" max="300"><span id="timeout-out">60 s</span></div><div class="hint">After the timeout, Sonara reads the original response instead.</div></div></div>
           <div class="pref" id="settle-row"><div class="pref-copy"><strong>Settle time</strong><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" min="0" max="5000" step="100"><span id="settle-out">600 ms</span></div><div class="hint">Keeps incomplete sentences out of summaries.</div></div></div>
         </div>
-        <div class="group-label"><span>Streaming</span></div>
-        <div class="inset">
-          <div class="pref" id="chunk-row"><div class="pref-copy"><strong>Chunk size</strong><div class="hint">Characters sent to the Chatterbox engine at once.</div></div><div class="control"><div class="range-head"><span>Characters</span><output id="chunk-out">280</output></div><input class="range" id="chunk" type="range" min="80" max="280" value="280"><div class="ends"><span>80 responsive</span><span>280 smooth</span></div><div class="hint">Larger chunks favor natural phrasing over the quickest start.</div></div></div>
-        </div>
       </section>
 
       <section class="page" id="hotkeys">
@@ -287,9 +280,8 @@
         <div class="group-label"><span>Speech engines</span></div>
         <div class="inset">
           <div class="engine-row"><div><strong>Kokoro</strong><div class="desc" id="engine-kokoro-hint">Fast local neural speech.</div></div><span class="pill" id="engine-kokoro">&mdash;</span></div>
-          <div class="engine-row"><div><strong>Chatterbox</strong><div class="desc" id="engine-chatterbox-hint">Expressive character voices.</div></div><span class="pill" id="engine-chatterbox">&mdash;</span></div>
         </div>
-        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.6.0</span></footer>
+        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.6.1</span></footer>
       </section>
     </main>
   </div>
@@ -366,11 +358,6 @@ const SUMMARY_MODELS = [
   {cmd: "codex",  model: "gpt-5.4-mini",  label: "GPT-5.4 Mini (faster)"},
   {cmd: "claude", model: "haiku",         label: "Haiku (fast)"},
 ];
-let engineView = null;          // "kokoro" | "chatterbox" (#42)
-function engineOf(s, voice) {
-  if ((s.voices.chatterbox || []).includes(voice)) return "chatterbox";
-  return "kokoro";
-}
 function updateFill(el) {
   if (el.type !== "range") return;
   const pct = (el.value - el.min) / (el.max - el.min) * 100;
@@ -396,7 +383,6 @@ function fillVoiceSelect(sel, s, selected) {
   def.selected = !selected;
   sel.appendChild(def);
   const groups = [["Kokoro", s.voices.kokoro || []],
-                  ["Chatterbox", s.voices.chatterbox || []],
                   ["Windows", s.voices.windows || []]];
   for (const [label, voices] of groups) {
     if (!voices.length) continue;
@@ -506,45 +492,25 @@ function renderSessions(s) {
   for (const sess of stale) older.appendChild(buildSessionRow(sess, s));
 }
 function render(s) {
-  // engine-first voice picker (#42): the select shows ONLY the active
-  // engine's voices; rebuild only on change and never while open (#38)
-  if (engineView === null) engineView = engineOf(s, s.config.voice);
+  // voice picker: the Kokoro voices; rebuild only on change and never while
+  // open (#38). A configured voice outside that list (a native Windows voice
+  // set from the CLI) still shows as the selected option, never a silent
+  // jump to the first Kokoro voice.
   const sel = document.getElementById("voice-select");
-  const names = s.voices[engineView] || [];
-  const sig = JSON.stringify([engineView, names, s.config.voice]);
+  const names = (s.voices.kokoro || []).slice();
+  if (s.config.voice && !names.includes(s.config.voice)) names.push(s.config.voice);
+  const sig = JSON.stringify([names, s.config.voice]);
   if (sig !== voicesSig && document.activeElement !== sel) {
     voicesSig = sig;
     sel.innerHTML = "";
     for (const n of names) {
       const o = document.createElement("option");
-      // display with an uppercase first letter; the value stays the real
-      // (lowercase) stem so it keeps matching the engine's voice clips
+      // display with an uppercase first letter; the value stays the real name
       o.value = n; o.textContent = n.charAt(0).toUpperCase() + n.slice(1);
       o.selected = (n === s.config.voice);
       sel.appendChild(o);
     }
   }
-  // engine + mode segmented controls
-  document.querySelectorAll("#engine-seg button").forEach(b =>
-    b.classList.toggle("active", b.dataset.engine === engineView));
-  const isCb = engineView === "chatterbox";
-  document.getElementById("cb-mode-row").style.display = isCb ? "" : "none";
-  document.getElementById("cb-exag-row").style.display = isCb ? "" : "none";
-  // Chatterbox clones the reference clip's pacing and has no speed knob, so the
-  // wpm slider does nothing there: hide it, like expressiveness on Kokoro.
-  document.getElementById("rate-row").style.display = isCb ? "none" : "";
-  const variant = s.config.chatterbox_variant || "turbo";
-  document.querySelectorAll("#mode-seg button").forEach(b =>
-    b.classList.toggle("active", b.dataset.variant === variant));
-  // Turbo IGNORES expressiveness (model limitation): gray the slider out
-  const turbo = variant !== "original";
-  document.getElementById("cb-exag-row").classList.toggle("dim", turbo);
-  const exagEl = document.getElementById("exag");
-  exagEl.disabled = turbo;
-  exagEl.dataset.lock = turbo ? "1" : "";   // setBanner(false) must not re-enable (#42)
-  document.getElementById("exag-hint").textContent = turbo
-    ? "Turbo mode ignores expressiveness - switch Mode to Original to use it."
-    : "Applies to every Chatterbox voice.";
   setVal("rate", s.config.rate);
   document.getElementById("rate-out").textContent = s.config.rate + " wpm";
   document.getElementById("minqueue-out").textContent = s.config.minqueue;
@@ -624,7 +590,7 @@ function render(s) {
   // Gate every control whose setting is currently ignored (#67): summary
   // machinery while the mode is Off, minqueue while a style is on (one digest
   // per turn, nothing to batch), cue voice while fast cues are off, duck
-  // level while ducking is off, chunk size while the voice is not Chatterbox.
+  // level while ducking is off.
   const summaryOff = active === "off";
   gateRow("model-row", summaryOff, ["model-select"]);
   gateRow("timeout-row", summaryOff, ["timeout"]);
@@ -643,12 +609,6 @@ function render(s) {
   gateRow("duck-row", audioMode !== "duck", ["duck"]);
   setVal("duck", s.config.duck_level);
   document.getElementById("duck-out").textContent = s.config.duck_level + "%";
-  gateRow("chunk-row", engineOf(s, s.config.voice) !== "chatterbox", ["chunk"]);
-  setVal("chunk", s.config.chatterbox_max_chunk_chars);
-  document.getElementById("chunk-out").textContent = s.config.chatterbox_max_chunk_chars;
-  const exag = s.config.chatterbox_exaggeration ?? 0;
-  setVal("exag", exag);
-  document.getElementById("exag-out").textContent = Number(exag).toFixed(2);
   renderSessions(s);
   // hotkeys (skip rows mid-capture and identical content; escape names)
   const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -666,11 +626,8 @@ function render(s) {
   document.getElementById("sys-uptime").textContent = fmtUptime(s.daemon.uptime_s);
   document.getElementById("sys-port").textContent = s.daemon.port;
   document.getElementById("engine-kokoro").textContent = s.engines.kokoro ? "Installed" : "Not installed";
-  document.getElementById("engine-chatterbox").textContent = s.engines.chatterbox ? "Installed" : "Not installed";
   document.getElementById("engine-kokoro-hint").textContent = s.engines.kokoro
     ? "Fast local neural speech." : "sonara voices install kokoro";
-  document.getElementById("engine-chatterbox-hint").textContent = s.engines.chatterbox
-    ? "Expressive character voices." : "sonara voices install chatterbox";
 }
 function setSwitch(id, on) {
   document.getElementById(id).setAttribute("aria-checked", on ? "true" : "false");
@@ -715,23 +672,8 @@ function pulseSaved() {
     .forEach(el => el.classList.remove("flash")), 1200);
 }
 // control wiring
-document.getElementById("voice-select").addEventListener("change", e => {
-  localStorage.setItem("sonara-voice-" + engineView, e.target.value);
-  set("voice", e.target.value);
-});
-document.querySelectorAll("#engine-seg button").forEach(b =>
-  b.addEventListener("click", () => {
-    const eng = b.dataset.engine;
-    if (eng === engineView) return;
-    engineView = eng;
-    const names = (state && state.voices[eng]) || [];
-    const remembered = localStorage.getItem("sonara-voice-" + eng);
-    const pick = names.includes(remembered) ? remembered : names[0];
-    if (pick) { localStorage.setItem("sonara-voice-" + eng, pick); set("voice", pick); }
-    else if (state) render(state);
-  }));
-document.querySelectorAll("#mode-seg button").forEach(b =>
-  b.addEventListener("click", () => set("chatterbox_variant", b.dataset.variant)));
+document.getElementById("voice-select").addEventListener("change",
+  e => set("voice", e.target.value));
 let previewAudio = null;
 const PREVIEW_V = Date.now();   // one cache generation per page load
 document.getElementById("voice-preview").addEventListener("click", () => {
@@ -760,10 +702,6 @@ document.getElementById("timeout").addEventListener("change", e => set("summary_
 document.getElementById("settle").addEventListener("change", e => set("summary_settle_ms", +e.target.value));
 document.getElementById("volume").addEventListener("change", e => set("volume", parseInt(e.target.value)));
 document.getElementById("duck").addEventListener("change", e => set("duck_level", +e.target.value));
-document.getElementById("chunk").addEventListener("change", e => set("chatterbox_max_chunk_chars", +e.target.value));
-document.getElementById("exag").addEventListener("change", e => set("chatterbox_exaggeration", +e.target.value));
-document.getElementById("exag").addEventListener("input",
-  e => document.getElementById("exag-out").textContent = Number(e.target.value).toFixed(2));
 document.querySelectorAll("#summary-seg button").forEach(b =>
   b.addEventListener("click", () => {
     const v = b.dataset.style;

@@ -96,62 +96,6 @@ sound much better and are free and offline. To install one:
 sonara voice "Microsoft Ava (Natural)"
 ```
 
-## Chatterbox voices (optional, GPU)
-
-Sonara can use **Resemble AI Chatterbox** (MIT) as a third voice engine alongside Windows
-native and Kokoro. Chatterbox runs on your GPU via a persistent worker subprocess; voices are
-your own 10-second reference WAV clips, which the model imitates for unlimited voice
-variety. Requires an NVIDIA GPU.
-
-**One-time setup:**
-
-```powershell
-sonara voices install chatterbox
-```
-
-This downloads the Chatterbox Turbo model (~2 GB) and cached weights to `~/.sonara/chatterbox/`.
-Network is required; the setup includes a smoke-test synthesis to measure your GPU latency and
-VRAM footprint. After installation, voice models stay on disk; synthesis is fully local.
-
-**Adding voices:**
-
-Drop 10-second clean speech WAV clips into `~/.sonara/voices/chatterbox/`. The filename
-(without `.wav`) becomes the voice name. For example, `alice.wav` creates the voice `alice`.
-Run `sonara voice` to list all available voices across all engines, or `sonara voice alice`
-to select.
-
-Voices are your registered clips; without any, Chatterbox uses the model's
-standard voice.
-
-**Fallback:**
-
-A chosen Chatterbox voice always tries Chatterbox. When the model is loaded, it idles for 10
-minutes before unloading to free VRAM back to your system (configurable via
-`chatterbox_idle_unload_s`).
-
-A genuine failure (missing weights, worker error, or timeout) falls back to Kokoro, and
-the first such failure in a daemon run speaks a short notice ("Chatterbox unavailable, using
-Heart") so you know why the voice changed; later failures stay quiet. Every fallback logs its
-reason to `~/.sonara/speechd.log`. The fallback voice is Kokoro's af_heart, so keep the Kokoro
-voices installed alongside Chatterbox.
-Speech is synthesized and played in chunks, so hotkeys (mute, navigate, pause, skip) take
-effect within a chunk (roughly 2 seconds) rather than waiting for the whole utterance. The
-`chatterbox_timeout` setting (default 120 seconds; it must cover the ~40s post-idle cold model reload) bounds each chunk, not the entire utterance.
-Also expect a one-time pause of roughly 10 to 40 seconds before the first Chatterbox
-utterance after a daemon start or an idle unload; that is the model loading onto the GPU.
-Later utterances start immediately.
-
-**Limitation:**
-
-The `sonara rate <wpm>` speech-rate setting does not affect Chatterbox voices (the model has
-no rate control). Kokoro rate changes apply normally.
-
-**To remove:**
-
-```powershell
-sonara voices uninstall chatterbox
-```
-
 ## Controls and slash commands
 
 Control is via global hotkeys (work even mid-speech), the `sonara` CLI, and namespaced slash
@@ -203,8 +147,8 @@ Day-to-day tuning (voice, rate, summaries, audio, sessions, hotkeys) lives in th
 | `/sonara:uninstall` | `sonara uninstall` | Remove the autostart entry, launcher, and `~/.sonara/app` (keeps your settings) |
 
 CLI-only (no slash command): `sonara status`, `verbosity`, `voice`, `voices`
-(install/remove Kokoro or Chatterbox), `rate`, `minqueue`, `summary`,
-`audio-mode`, `duck-level`, `keymap`, `repeat`, `skip`, `stop`, `shutdown`.
+(install/remove Kokoro), `rate`, `minqueue`, `summary`,
+`audio-mode`, `duck-level`, `keymap`, `repeat`, `skip`, `stop`, `shutdown`, `cleanup`.
 
 ## Verbosity
 
@@ -275,6 +219,10 @@ Run `sonara doctor` first - it reports each check as pass/fail. Common issues:
 - **Speech too fast/slow.** `sonara rate 180` (default is 200 wpm).
 - **Too chatty.** `sonara verbosity medium` or `sonara verbosity quiet`.
 - **Everything is stuck.** `sonara stop` clears the queue and cancels the current utterance.
+- **Disk space after upgrading.** Sonara 0.6.1 removed the optional Chatterbox engine. If you
+  had installed it, `sonara doctor` lists the leftover venv and model cache (several GB) and
+  `sonara cleanup` deletes them. Your own voice clips in `~/.sonara/voices/` are kept. A saved
+  Chatterbox voice now speaks as Kokoro's Heart (`af_heart`).
 
 State, config, the socket, and logs all live under `~/.sonara/`
 (`config.json`, `speechd.sock`, `speechd.log`).

@@ -23,12 +23,6 @@ def test_defaults_has_documented_top_level_keys():
         "fast_cues",
         "cue_voice",
         "mute_level",
-        "chatterbox_variant",
-        "chatterbox_idle_unload_s",
-        "chatterbox_timeout",
-        "chatterbox_warm_timeout",
-        "chatterbox_max_chunk_chars",
-        "chatterbox_exaggeration",
         "settings_port",
     }
 
@@ -38,13 +32,6 @@ def test_defaults_scalar_values():
     assert DEFAULTS["rate"] == 200
     assert DEFAULTS["verbosity"] == "everything"
     assert DEFAULTS["background_policy"] == "earcon_only"
-
-
-def test_chatterbox_timeout_default_covers_cold_reload():
-    # 30 drifted below the ~40s post-idle cold model reload, so every post-idle
-    # chunk timed out and cascaded the utterance to Kokoro (audit #19). 120
-    # covers the reload with slack and matches the value long persisted live.
-    assert DEFAULTS["chatterbox_timeout"] == 120
 
 
 def test_defaults_no_longer_carries_earcons():
@@ -251,35 +238,9 @@ def test_summary_mode_defaults():
     assert DEFAULTS["summary_timeout"] == 60
 
 
-def test_chatterbox_defaults():
-    from sonara.config import DEFAULTS
-    assert DEFAULTS["chatterbox_variant"] == "turbo"
-    assert "chatterbox_min_free_vram_gb" not in DEFAULTS   # VRAM gate removed (#49)
-    assert DEFAULTS["chatterbox_idle_unload_s"] == 600
-    assert DEFAULTS["chatterbox_timeout"] == 120
-
-
-def test_chatterbox_warm_timeout_default():
-    from sonara.config import DEFAULTS
-    assert DEFAULTS["chatterbox_warm_timeout"] == 90
-
-
-def test_chatterbox_chunk_chars_default_and_clamp():
-    # (#27) synth chunk size is configurable for pronunciation A/B testing,
-    # clamped to the worker's fixed 280 defensive re-split ceiling.
-    from sonara.config import DEFAULTS
-    from sonara import chatterbox as cb
-    assert DEFAULTS["chatterbox_max_chunk_chars"] == 280
-    assert cb.chunk_chars({}) == 280
-    assert cb.chunk_chars({"chatterbox_max_chunk_chars": 160}) == 160
-    assert cb.chunk_chars({"chatterbox_max_chunk_chars": 999}) == 280
-    assert cb.chunk_chars({"chatterbox_max_chunk_chars": 10}) == 80
-    assert cb.chunk_chars({"chatterbox_max_chunk_chars": "junk"}) == 280
-
-
 def test_fast_cues_default_on():
     # (#60) control cues speak via an always-fast voice by default so
-    # "Muted." never waits out a cold Chatterbox model reload
+    # "Muted." never waits on a slow neural synthesis
     assert DEFAULTS["fast_cues"] is True
     # warm-Kokoro default: ~0.3s per cue, far nicer than the native voices
     assert DEFAULTS["cue_voice"] == "af_heart"
@@ -290,12 +251,6 @@ def test_settings_port_default():
     # reconnect-after-restart polling survive daemon restarts.
     from sonara.config import DEFAULTS
     assert DEFAULTS["settings_port"] == 27431
-
-
-def test_chatterbox_exaggeration_default():
-    # (#38) settings-page expressiveness slider; 0.0 matches the turbo engine
-    # default so existing voices sound identical until the user moves it
-    assert DEFAULTS["chatterbox_exaggeration"] == 0.0
 
 
 def test_summary_style_defaults():

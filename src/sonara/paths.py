@@ -54,14 +54,14 @@ def kokoro_venv_python() -> str:
     return str(KOKORO_VENV / "Scripts" / "python.exe")
 
 
-CHATTERBOX_VENV = SONARA_DIR / "chatterbox-venv"    # opt-in uv venv for Chatterbox
-CHATTERBOX_HF_CACHE = SONARA_DIR / "chatterbox" / "hf-cache"
+# Leftovers of the removed Chatterbox engine (#134), read only by
+# chatterbox_legacy. The venv, model cache and smoke-test files are what
+# `sonara cleanup` removes. CHATTERBOX_VOICES_DIR holds the user's own recorded
+# clips: it is read to recognise old voice names and is NEVER deleted.
+CHATTERBOX_VENV = SONARA_DIR / "chatterbox-venv"
+CHATTERBOX_MODEL_CACHE = SONARA_DIR / "chatterbox"
 CHATTERBOX_VOICES_DIR = SONARA_DIR / "voices" / "chatterbox"
-
-
-def chatterbox_venv_python() -> str:
-    """Absolute path to the Chatterbox venv's Python (may not exist)."""
-    return str(CHATTERBOX_VENV / "Scripts" / "python.exe")
+CHATTERBOX_SMOKE_GLOBS = ("cb-*.wav", "chatterbox-smoke-*")
 
 
 def ensure_sonara_dir() -> None:

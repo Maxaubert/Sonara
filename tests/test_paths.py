@@ -167,8 +167,8 @@ def test_recorded_pythonw_reads_its_own_file(tmp_path, monkeypatch):
     assert paths.recorded_pythonw() == str(tmp_path / "pyw.exe")
 
 
-def test_chatterbox_paths_are_under_sonara_dir():
+def test_chatterbox_leftover_paths_are_under_sonara_dir():
     from sonara import paths
-    assert str(paths.CHATTERBOX_VENV).startswith(str(paths.SONARA_DIR))
-    assert str(paths.CHATTERBOX_VOICES_DIR).startswith(str(paths.SONARA_DIR))
-    assert paths.chatterbox_venv_python().endswith("python.exe")
+    for p in (paths.CHATTERBOX_VENV, paths.CHATTERBOX_MODEL_CACHE,
+              paths.CHATTERBOX_VOICES_DIR):
+        assert str(p).startswith(str(paths.SONARA_DIR))

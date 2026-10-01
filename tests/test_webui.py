@@ -24,8 +24,6 @@ class FakeDaemon:
                        "summary_mode": True, "summary_model": "haiku",
                        "summary_timeout": 60, "summary_settle_ms": 600,
                        "audio_control": False, "duck_level": 20, "volume": 100,
-                       "chatterbox_max_chunk_chars": 280, "chatterbox_exaggeration": 0.0,
-                       "chatterbox_variant": "turbo",
                        "settings_port": 0}
         self.sessions = SessionManager()
         self.sessions.set_foreground("sess-1")
@@ -50,10 +48,8 @@ class FakeDaemon:
 @pytest.fixture()
 def server(monkeypatch):
     monkeypatch.setattr(webui, "_installed_voices", lambda: {
-        "windows": ["Microsoft Zira"], "kokoro": ["af_heart"],
-        "chatterbox": ["cb_default"]})
-    monkeypatch.setattr(webui, "_engine_status", lambda: {
-        "kokoro": True, "chatterbox": True})
+        "windows": ["Microsoft Zira"], "kokoro": ["af_heart"]})
+    monkeypatch.setattr(webui, "_engine_status", lambda: {"kokoro": True})
     monkeypatch.setattr(webui, "_keymap_state", lambda: [
         {"action": "mute", "key": "m", "mods": ["ctrl", "alt"]}])
     d = FakeDaemon()
@@ -97,7 +93,8 @@ def test_state_shape(server):
     assert state["config"]["voice"] == "af_heart"
     assert "verbosity" not in state["config"]          # NOT on the page
     assert state["voices"]["kokoro"] == ["af_heart"]
-    assert state["engines"] == {"kokoro": True, "chatterbox": True}
+    assert state["engines"] == {"kokoro": True}
+    assert "chatterbox" not in state["voices"]
     assert state["keymap"][0]["action"] == "mute"
     assert state["daemon"]["foreground"] == "sess-1"
     assert isinstance(state["daemon"]["pid"], int)
@@ -365,33 +362,42 @@ def test_deeply_nested_json_is_400(server):
 
 def test_windows_group_excludes_neural_duplicates(monkeypatch):
     # (#38) the WinRT voice list includes the neural voices; the page showed
-    # every kokoro/chatterbox voice twice
+    # every kokoro voice twice
     class V:
         def __init__(self, n): self.display_name = n
     import types
-    fake_tts = types.SimpleNamespace(list_voices=lambda: [V("Microsoft Zira"), V("af_heart"), V("poki")])
+    fake_tts = types.SimpleNamespace(list_voices=lambda: [V("Microsoft Zira"), V("af_heart")])
     fake_platform = types.SimpleNamespace(tts=fake_tts)
     import sonara.platform as plat
     monkeypatch.setattr(plat, "get_platform", lambda: fake_platform)
-    import sonara.kokoro as kokoro, sonara.chatterbox as chatterbox
+    import sonara.kokoro as kokoro
     monkeypatch.setattr(kokoro, "is_installed", lambda: True)
     monkeypatch.setattr(kokoro, "VOICES", ["af_heart"])
-    monkeypatch.setattr(chatterbox, "is_provisioned", lambda: True)
-    monkeypatch.setattr(chatterbox, "list_voices", lambda: ["poki"])
     out = webui._installed_voices()
-    assert out["windows"] == ["Microsoft Zira"]
-    assert out["kokoro"] == ["af_heart"] and out["chatterbox"] == ["poki"]
+    assert out == {"windows": ["Microsoft Zira"], "kokoro": ["af_heart"]}
 
 
-def test_variant_is_page_settable(server, monkeypatch):
-    # (#42) mode toggle routes through the config setter like the other keys
+def test_removed_chatterbox_settings_are_not_page_settable(server):
+    # Chatterbox was removed (#134): a stale cached page that still posts one
+    # of its settings never reaches the config setter.
     d, s = server
     calls = []
     d.set_config_value = lambda k, v: calls.append((k, v)) or True
-    _post(s, "/api/set", {"key": "chatterbox_variant", "value": "original"})
-    assert calls == [("chatterbox_variant", "original")]
-    state = json.loads(_get(s, "/api/state").read())
-    assert "chatterbox_variant" in state["config"]
+    for key in ("chatterbox_variant", "chatterbox_exaggeration",
+                "chatterbox_max_chunk_chars"):
+        try:
+            _post(s, "/api/set", {"key": key, "value": 1})
+        except urllib.error.HTTPError:
+            pass
+    assert calls == []
+
+
+def test_settings_page_has_no_chatterbox_controls():
+    from sonara.webui import _page_bytes
+    page = _page_bytes().decode("utf-8")
+    assert "chatterbox" not in page.lower()
+    for gone in ('id="engine-seg"', 'id="exag"', 'id="mode-seg"', 'id="chunk-row"'):
+        assert gone not in page, gone
 
 
 def test_state_exposes_summary_style_engine_and_prompts(server):
@@ -445,7 +451,7 @@ def test_settings_page_gates_ignored_controls_and_remembers_tab():
     page = _page_bytes().decode("utf-8")
     assert "function gateRow(" in page
     for row in ("model-row", "timeout-row", "settle-row", "minqueue-row",
-                "cue-voice-row", "duck-row", "chunk-row"):
+                "cue-voice-row", "duck-row"):
         assert 'id="{0}"'.format(row) in page, row
         assert 'gateRow("{0}"'.format(row) in page, row
     assert "localStorage.setItem('sonara-page'" in page
@@ -453,7 +459,7 @@ def test_settings_page_gates_ignored_controls_and_remembers_tab():
 
 
 def test_settings_page_advanced_tab_and_summary_ordering():
-    # (#73) rarely-touched tuning (timeout, settle, chunk size) lives on its
+    # (#73) rarely-touched tuning (timeout, settle) lives on its
     # own Advanced tab; the Summary page orders most-relevant-first with the
     # Prompt card directly under Model.
     from sonara.webui import _page_bytes
@@ -461,7 +467,7 @@ def test_settings_page_advanced_tab_and_summary_ordering():
     assert 'data-page="advanced"' in page
     adv_at = page.index('<section class="page" id="advanced">')
     hot_at = page.index('<section class="page" id="hotkeys">')
-    for rid in ('id="timeout-row"', 'id="settle-row"', 'id="chunk-row"'):
+    for rid in ('id="timeout-row"', 'id="settle-row"'):
         assert adv_at < page.index(rid) < hot_at, rid
     # combined component: mode chips directly above the prompt text, then Model
     assert (page.index('id="summary-seg"') < page.index('id="prompt-card"')
@@ -470,8 +476,7 @@ def test_settings_page_advanced_tab_and_summary_ordering():
 
 def test_settings_page_minqueue_lives_on_summary_page_and_rate_row_is_hideable():
     # (#60 follow-up) minqueue gates LIVE reading, so it moved to the Summary
-    # page (dimmed while a summary style is active) and supports 0 = instant;
-    # the wpm slider hides for Chatterbox voices, which have no speed knob.
+    # page (dimmed while a summary style is active) and supports 0 = instant.
     from sonara.webui import _page_bytes
     page = _page_bytes().decode("utf-8")
     summary_at = page.index('<section class="page" id="summary">')

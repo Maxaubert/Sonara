@@ -1,5 +1,5 @@
 """Pre-rendered voice previews (#38): the settings page must play a preview
-INSTANTLY from a file; live synthesis (seconds on Chatterbox) is fallback only.
+INSTANTLY from a file; live synthesis is fallback only.
 """
 
 from sonara import previews

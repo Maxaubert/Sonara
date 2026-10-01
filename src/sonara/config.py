@@ -28,24 +28,11 @@ DEFAULTS = {
                                        # model reload (#60)
     "cue_voice": "af_heart",           # which fast voice speaks the cues: a
                                        # Kokoro voice (engine kept warm, ~0.3s)
-                                       # or a native Windows voice; Chatterbox
-                                       # names are refused at use time (#60)
+                                       # or a native Windows voice (#60)
     "mute_level": 0,                   # persisted mute cycle (0/1/2): hooks
                                        # silently respawn a dead daemon, so a
                                        # memory-only mute reset itself between
                                        # two messages (#65)
-    "chatterbox_variant": "turbo",        # default variant for voices without a sidecar
-    "chatterbox_idle_unload_s": 600,      # worker frees the model after this idle time
-    "chatterbox_timeout": 120,            # seconds per-chunk synthesis worker timeout
-                                          # (must cover the ~40s post-idle cold model
-                                          # reload, or every post-idle chunk times out
-                                          # and cascades to Kokoro -- audit #19)
-    "chatterbox_warm_timeout": 90,        # seconds for a pre-warm (covers the cold load)
-    "chatterbox_max_chunk_chars": 280,    # synth chunk size (80-280): smaller can
-                                          # pronounce better, larger flows better (#27)
-    "chatterbox_exaggeration": 0.0,       # expressiveness 0-1 (0 = monotone,
-                                          # matches the turbo engine default);
-                                          # a voice sidecar overrides it (#38)
     "settings_port": 27431,               # settings page port (pinned so bookmarks
                                           # and restart-reconnect work; 0 = ephemeral)
 }
@@ -87,7 +74,10 @@ def load_config() -> dict:
     # predates audio_mode: audio_control True -> "duck", otherwise the default "off".
     if "audio_mode" not in persisted and persisted.get("audio_control"):
         merged["audio_mode"] = "duck"
-    return merged
+    # Chatterbox was removed (#134): a saved Chatterbox voice speaks as Heart,
+    # and its old settings are dropped so the next save stops persisting them.
+    from sonara import chatterbox_legacy
+    return chatterbox_legacy.migrate_config(merged)
 
 
 def save_config(cfg: dict) -> None:

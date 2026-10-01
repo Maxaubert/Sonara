@@ -21,9 +21,7 @@ _PAGE_KEYS = (
     "voice", "rate", "minqueue", "summary_mode", "summary_model",
     "summary_style", "summary_command",
     "summary_timeout", "summary_settle_ms", "audio_control", "duck_level",
-    "audio_mode", "volume",
-    "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
-    "chatterbox_variant", "fast_cues", "cue_voice",
+    "audio_mode", "volume", "fast_cues", "cue_voice",
 )
 
 _MSG_KEYS = {
@@ -37,9 +35,7 @@ _MSG_KEYS = {
     "volume":        lambda v: {"type": "set_volume", "volume": int(v)},
 }
 _CONFIG_KEYS = ("summary_model", "summary_style", "summary_command",
-                "summary_timeout", "summary_settle_ms",
-                "chatterbox_max_chunk_chars", "chatterbox_exaggeration",
-                "chatterbox_variant", "fast_cues", "cue_voice")
+                "summary_timeout", "summary_settle_ms", "fast_cues", "cue_voice")
 
 
 def _dispatch(daemon, msg):
@@ -88,19 +84,14 @@ def _unbind_action(action):
 
 def _installed_voices() -> dict:
     """Voices grouped by engine. Lazy imports; each group degrades to []."""
-    from sonara import kokoro, chatterbox
-    out = {"windows": [], "kokoro": [], "chatterbox": []}
+    from sonara import kokoro
+    out = {"windows": [], "kokoro": []}
     try:
         if kokoro.is_installed():
             out["kokoro"] = list(kokoro.VOICES)
     except Exception:  # noqa: BLE001
         pass
-    try:
-        if chatterbox.is_provisioned():
-            out["chatterbox"] = list(chatterbox.list_voices())
-    except Exception:  # noqa: BLE001
-        pass
-    neural = set(out["kokoro"]) | set(out["chatterbox"])
+    neural = set(out["kokoro"])
     try:
         from sonara.platform import get_platform
         for v in get_platform().tts.list_voices():
@@ -113,14 +104,13 @@ def _installed_voices() -> dict:
 
 
 def _engine_status() -> dict:
-    from sonara import kokoro, chatterbox
+    from sonara import kokoro
     def safe(fn):
         try:
             return bool(fn())
         except Exception:  # noqa: BLE001
             return False
-    return {"kokoro": safe(kokoro.is_installed),
-            "chatterbox": safe(chatterbox.is_provisioned)}
+    return {"kokoro": safe(kokoro.is_installed)}
 
 
 def _prompt_defaults() -> dict:

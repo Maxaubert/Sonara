@@ -326,22 +326,23 @@ def doctor() -> list:
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("neural voices", False, f"error: {exc}"))
 
+    # Leftovers of the removed Chatterbox engine (#134): several GB that only
+    # `sonara cleanup` deletes. Informational, so never a failing row.
     try:
-        from sonara import chatterbox as cb
-        if not cb.is_provisioned():
-            results.append(("chatterbox", True, "not installed (optional)"))
+        from sonara import chatterbox_legacy as cl
+        found = cl.leftovers()
+        if not found:
+            results.append(("chatterbox leftovers", True, "none"))
         else:
-            py = paths.chatterbox_venv_python()
-            voices_dir = str(paths.CHATTERBOX_VOICES_DIR)
-            if os.path.exists(py):
-                results.append(("chatterbox", True,
-                                f"ready ({py}, voices: {voices_dir})"))
-            else:
-                results.append(("chatterbox", False,
-                                f"venv present but missing python at {py} - "
-                                "re-run: sonara voices install chatterbox"))
+            total = sum(size for _p, size in found)
+            parts = ", ".join("{0} ({1})".format(p.name, cl.format_size(size))
+                              for p, size in found)
+            results.append(("chatterbox leftovers", True,
+                            "{0} reclaimable: {1}. Remove with: sonara cleanup "
+                            "(your voice clips are kept)".format(
+                                cl.format_size(total), parts)))
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
-        results.append(("chatterbox", False, f"error: {exc}"))
+        results.append(("chatterbox leftovers", True, f"could not check: {exc}"))
 
     # python3 >= 3.9 resolved.
     try:
@@ -772,31 +773,8 @@ def _cmd_uninstall(_args) -> int:
     return uninstall()
 
 
-def _cmd_voices_install(args) -> int:
-    """Provision the requested voice engine's venv (kokoro, default; or
-    chatterbox, opt-in). Kokoro re-wires the daemon onto its venv; chatterbox
-    needs no daemon rewiring (the worker is spawned on demand per-utterance)."""
-    engine = getattr(args, "engine", "kokoro") or "kokoro"
-    if engine == "chatterbox":
-        from sonara import chatterbox_provision as cbp
-        paths.ensure_sonara_dir()
-        print("Provisioning Chatterbox voices (uv + torch/torchaudio cu128 + "
-              "chatterbox-tts, several GB download)…")
-        try:
-            cbp.install_chatterbox()
-        except Exception as exc:  # noqa: BLE001 - report, do not half-install
-            print(f"Chatterbox setup failed: {exc}", file=sys.stderr)
-            cbp.uninstall_chatterbox()  # revert any half-built venv
-            return 1
-        except BaseException:
-            # Ctrl+C / kill mid-download: still revert -- a half-built venv reads
-            # as fully provisioned forever (the python.exe existence check is
-            # true after step 1 of a multi-GB install) (audit #21).
-            cbp.uninstall_chatterbox()
-            raise
-        print("Chatterbox voices ready. Pick one with: sonara voice chatterbox:cb_default")
-        return 0
-
+def _cmd_voices_install(_args) -> int:
+    """Provision the Kokoro venv and re-wire the daemon onto it."""
     from sonara import kokoro_provision as kp
     paths.ensure_sonara_dir()
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
@@ -819,29 +797,66 @@ def _cmd_voices_install(args) -> int:
     return rc
 
 
-def _cmd_voices_uninstall(args) -> int:
-    """Remove the requested voice engine's venv. Kokoro reverts the daemon to
-    system Python; chatterbox needs no daemon rewiring.
+def _cmd_voices_uninstall(_args) -> int:
+    """Remove the Kokoro venv and revert the daemon to system Python.
 
     STOP the daemon first (#23): the kokoro venv IS the daemon's interpreter
-    (pythonw locks Scripts/) and the chatterbox venv hosts the resident worker;
-    deleting either live raised a raw PermissionError and left a half-deleted
-    venv that still read as provisioned."""
-    engine = getattr(args, "engine", "kokoro") or "kokoro"
-    if engine == "chatterbox":
-        from sonara import chatterbox_provision as cbp
-        stop_sonara()
-        cbp.uninstall_chatterbox()
-        print("Chatterbox voices removed.")
-        start_sonara()   # nothing to rewire; bring the daemon back up
-        return 0
-
+    (pythonw locks Scripts/); deleting it live raised a raw PermissionError and
+    left a half-deleted venv that still read as provisioned."""
     from sonara import kokoro_provision as kp
     stop_sonara()
     kp.uninstall_kokoro()
     rc = install()  # neural_enabled() now False -> reverts to resolve_python()
     print("Neural voices removed; reverted to the system voice.")
     return rc
+
+
+def _cmd_cleanup(_args) -> int:
+    """Remove the removed Chatterbox engine's leftovers (#134): its venv, model
+    cache and smoke-test files. voices/chatterbox, the user's own recorded
+    clips, is never touched.
+
+    The daemon is stopped first: a still-running Chatterbox worker locks files
+    in the venv, and deleting it live failed partway. It is started again only
+    if it was running, and an earlier explicit shutdown stays in place."""
+    from sonara import chatterbox_legacy as cl
+    found = cl.leftovers()
+    if not found:
+        print("Nothing to clean up: no Chatterbox leftovers in {0}.".format(
+            paths.SONARA_DIR))
+        return 0
+    total = sum(size for _p, size in found)
+    was_running = paths.socket_connectable()
+    was_shut_down = os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
+
+    def restore():
+        if was_running:
+            start_sonara()
+        elif not was_shut_down:
+            try:   # stop_sonara wrote it; leave hook lazy-start working as before
+                os.remove(str(paths.STOPPED_SENTINEL_PATH))
+            except OSError:
+                pass
+
+    if not stop_sonara():
+        # stop_sonara already wrote the sentinel and ended the task: undo
+        # that, or a daemon that later exits would never come back.
+        restore()
+        print("Sonara did not stop, so nothing was removed (a running worker "
+              "would lock the files). Run 'sonara shutdown', then try again.",
+              file=sys.stderr)
+        return 1
+    removed, failed = cl.remove_leftovers()
+    for p in removed:
+        print("Removed {0}".format(p))
+    for p, exc in failed:
+        print("Could not remove {0}: {1}".format(p, exc), file=sys.stderr)
+    restore()
+    if failed:
+        return 1
+    print("Freed {0}. Your voice clips in {1} were kept.".format(
+        cl.format_size(total), paths.CHATTERBOX_VOICES_DIR))
+    return 0
 
 
 def _cmd_daemon(_args) -> int:
@@ -877,14 +892,18 @@ def _register_local(sub) -> None:
     sp.add_argument("action", nargs="?", help="action to unbind")
     sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
     sp.set_defaults(func=_cmd_keymap)
-    vp = sub.add_parser("voices", help="install/remove neural (Kokoro/Chatterbox) voices")
+    sub.add_parser(
+        "cleanup",
+        help="remove leftover Chatterbox files (venv, model cache); keeps voice clips",
+    ).set_defaults(func=_cmd_cleanup)
+    vp = sub.add_parser("voices", help="install/remove neural (Kokoro) voices")
     vsub = vp.add_subparsers(dest="voices_command")
     vip = vsub.add_parser("install", help="provision neural voices")
-    vip.add_argument("engine", nargs="?", choices=["kokoro", "chatterbox"],
+    vip.add_argument("engine", nargs="?", choices=["kokoro"],
                      default="kokoro", help="voice engine to install (default: kokoro)")
     vip.set_defaults(func=_cmd_voices_install)
     vup = vsub.add_parser("uninstall", help="remove neural voices")
-    vup.add_argument("engine", nargs="?", choices=["kokoro", "chatterbox"],
+    vup.add_argument("engine", nargs="?", choices=["kokoro"],
                      default="kokoro", help="voice engine to remove (default: kokoro)")
     vup.set_defaults(func=_cmd_voices_uninstall)
     vp.set_defaults(func=lambda _a: (vp.print_help() or 2))

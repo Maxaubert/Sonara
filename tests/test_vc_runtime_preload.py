@@ -1,6 +1,6 @@
 """VC++ runtime preload (#29): PyWinRT bundles an old MSVCP140.dll inside its
 package; whichever engine imports first binds its copy process-wide, and
-onnxruntime (Kokoro) crashes inside the old one whenever a WinRT/Chatterbox
+onnxruntime (Kokoro) crashes inside the old one whenever a native WinRT
 voice spoke first. The daemon preloads the SYSTEM runtime before any engine
 import so engine order is irrelevant."""
 import ctypes
