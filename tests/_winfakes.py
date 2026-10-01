@@ -1,6 +1,29 @@
 """Fake Windows modules so platform/windows/* imports + unit-tests on macOS/Linux.
-install() is idempotent and uses setdefault -- a no-op on real Windows."""
+
+install() is idempotent and uses setdefault -- a no-op on real Windows.
+force(monkeypatch) swaps the fake winsound + winrt tree in for one test on EVERY
+platform, so the TTS unit tests never drive live OneCore or the speakers (E22).
+"""
 import sys, types
+
+
+def force(monkeypatch):
+    """Put the fake winsound and winrt modules in sys.modules for one test.
+
+    msvcrt and winreg are left alone: on real Windows the stdlib (subprocess)
+    needs the genuine msvcrt, and nothing under test reads winreg here."""
+    monkeypatch.setitem(sys.modules, "winsound", _build_winsound())
+    for name, mod in _build_winrt().items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+def _build_winsound():
+    ws = types.ModuleType("winsound")
+    ws.SND_FILENAME = 0x20000; ws.SND_ASYNC = 0x0004
+    ws.SND_NODEFAULT = 0x0002; ws.SND_SYNC = 0x0000
+    ws._calls = []
+    ws.PlaySound = lambda sound, flags: ws._calls.append((sound, flags))
+    return ws
 
 
 def install():
@@ -12,12 +35,7 @@ def install():
     import subprocess  # noqa: F401
     # --- winsound ---
     if "winsound" not in sys.modules:
-        ws = types.ModuleType("winsound")
-        ws.SND_FILENAME = 0x20000; ws.SND_ASYNC = 0x0004
-        ws.SND_NODEFAULT = 0x0002; ws.SND_SYNC = 0x0000
-        ws._calls = []
-        ws.PlaySound = lambda sound, flags: ws._calls.append((sound, flags))
-        sys.modules["winsound"] = ws
+        sys.modules["winsound"] = _build_winsound()
     # --- winreg ---
     if "winreg" not in sys.modules:
         wr = types.ModuleType("winreg")
@@ -48,11 +66,16 @@ def install():
         sys.modules["msvcrt"] = mc
     # --- winrt tree ---
     if "winrt" not in sys.modules:
-        _install_winrt()
+        for name, mod in _build_winrt().items():
+            sys.modules.setdefault(name, mod)
 
 
-def _install_winrt():
-    mk = lambda n: sys.modules.setdefault(n, types.ModuleType(n))
+def _build_winrt():
+    """A fresh fake winrt package tree, as {module name: module}."""
+    mods = {}
+
+    def mk(n):
+        return mods.setdefault(n, types.ModuleType(n))
     mk("winrt"); sysmod = mk("winrt.system")
     mk("winrt.windows"); mk("winrt.windows.media")
     synth = mk("winrt.windows.media.speechsynthesis")
@@ -111,3 +134,4 @@ def _install_winrt():
         def read_bytes(self, buf):
             buf[:] = self._data[:len(buf)]
     streams.DataReader = DataReader
+    return mods
