@@ -101,7 +101,6 @@ def _client(tmp_path, monkeypatch, timeout=5):
         pytest.skip("Chatterbox worker spawn needs Python 3.11+ (-P flag)")
     script = tmp_path / "fake_worker.py"
     script.write_text(FAKE_WORKER, encoding="utf-8")
-    import sys
     monkeypatch.setattr(cb, "chatterbox_venv_python", lambda: sys.executable)
     monkeypatch.setattr(cb, "worker_script_path", lambda: str(script))
     monkeypatch.setattr(cb, "CHATTERBOX_VOICES_DIR", tmp_path)  # empty registry

@@ -22,7 +22,7 @@ sonara = "sonara.cli:main"
 
 [project.optional-dependencies]
 # numpy: tests/test_kokoro.py builds fake Kokoro audio arrays.
-dev = ["pytest>=7", "ruff", "numpy"]
+dev = ["pytest>=7", "ruff>=0.16,<0.17", "numpy"]
 # Headless settings-page tests (tests/e2e); also run `playwright install chromium`.
 e2e = ["playwright"]
 # Windows TTS runtime. OneCore speech is reached via PyWinRT; without these the

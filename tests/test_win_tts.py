@@ -19,6 +19,11 @@ def _fake_windows(monkeypatch):
     # Hermetic on real Windows too (E22): fake winrt + winsound, never live
     # OneCore or the speakers. Live checks live in test_win_tts_live.py.
     _winfakes.force(monkeypatch)
+    # Playback also pushes the session volume through pycaw/COM; keep that
+    # (and its module-global cache) out of the unit tests as well.
+    import sonara.platform.windows.tts as tts
+    monkeypatch.setattr(tts, "_push_session_volume", lambda: None)
+    monkeypatch.setattr(tts, "_SESSION_APPLIED", [None])
 
 
 def test_list_voices():
