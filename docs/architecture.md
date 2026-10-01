@@ -47,9 +47,9 @@ worker thread, and `daemon/summary/reorder.py` releases digests in turn-finish o
 waits behind the digest of the text that leads into it.
 
 **One message, always the last.** A channel holds only its session's current turn; a new prompt
-(FLUSH) wipes it. Spoken items are not discarded, a cursor moves over them, so Up (NAV first)
-restarts the turn and a session switch can resume or replay it. Nothing may silently drop the
-latest turn.
+(FLUSH) wipes it. Spoken items are not discarded, a cursor moves over them, so restart (NAV first,
+`nav_start`, default Win+Alt+Home) replays the turn from its start and a session switch can resume
+or replay it. Nothing may silently drop the latest turn.
 
 ## Threads and the lock contract
 
@@ -91,7 +91,7 @@ Rules:
 | `__init__.py` | `SpeechDaemon` facade: wiring, the lock, wake and paused events, mute level, item ids, heard-markers, `_enqueue`, `_replay`, `note_spoken`, `handle_message`, `run`, `stop`; owns PING, SHUTDOWN, SUBSCRIBE |
 | `core.py` | `add_handlers` (one owner per message type), `SessionRegistry`, `SharedState`, `assert_lock_held` |
 | `ingest.py` | Hook traffic: PROSE, CHOICE, PLAN, PERMISSION, TOOL, EARCON, FLUSH, CHOICE_ANSWERED, session lifecycle, SPEAK; owns the prose assemblers |
-| `controls.py` | PAUSE, MUTE, SKIP, STOP, NAV (Up), REPEAT, NEXT_SESSION, FLUSH_SESSION |
+| `controls.py` | PAUSE, MUTE, SKIP, STOP, NAV (restart), REPEAT, NEXT_SESSION, FLUSH_SESSION |
 | `settings.py` | SET_RATE, SET_VOICE, SET_VERBOSITY, SET_MINQUEUE, SET_SUMMARY_MODE, SET_SESSION_PREF, STATUS; `set_config_value`, `set_summary_prompt` |
 | `audio.py` | SET_AUDIO_MODE, SET_DUCK_LEVEL, SET_VOLUME; duck or pause other apps and restore them |
 | `hotkeys.py` | Start, stop and reload the listener, debounce toggles, RELOAD_KEYMAP |

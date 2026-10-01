@@ -86,13 +86,14 @@ awaiting merge (plan: [phase0-plan.md](phase0-plan.md)).
 4. Done: the hook passes `SONARA_HOST_TAB` or `PRISM_TAB_ID` as `host_tab` (#143, PR #163).
 5. Done: golden text-rule fixtures in `tests/fixtures/text_rules/` (#143, PR #163).
 
-The contract a host can rely on is [docs/protocol.md](../protocol.md). Two facts above are now out
-of date: the lockfile is `~/.sonara/daemon.lock`, and `STATUS` reports now-playing, queue, pause
-and mute state.
+The contract a host can rely on is [docs/protocol.md](../protocol.md). Three facts in this research are now
+out of date: the lockfile is `~/.sonara/daemon.lock`; `STATUS` reports now-playing, queue, pause
+and mute state; and back/next navigation was removed in #135 (one message, always the last), so
+NAV only restarts the current turn and NEXT_SESSION switches sessions.
 
 **Phase 1: prototype on your machine (option A, about 1 PR).**
 - A `sonaraBridge` in PrismTerminal's main process connects with the lockfile token and subscribes to events.
-- A `<SpeechPlayer>` pill in `core/renderer` (pause, skip, stop, mute, back/next, volume) sends the existing protocol messages.
+- A `<SpeechPlayer>` pill in `core/renderer` (pause, skip, stop, mute, restart, next session, volume) sends the existing protocol messages.
 - It's hidden unless the daemon is running. This settles the player design before any porting.
 
 **Phase 2: native audio mode for all users (option D).**

@@ -76,6 +76,7 @@ Everything lives under `~/.sonara` (`C:\Users\<you>\.sonara`). None of it is sen
 | `duck_state.json` | Which apps Sonara lowered and their original volume, so they are restored after a crash |
 | `pause_state.json` | Which media apps Sonara paused, so they are resumed after a crash |
 | `hotkeys.state.json` | Hotkey conflicts and whether the daemon runs elevated, for `sonara doctor` |
+| `no_hotkeys` | Present only if you created it to turn global hotkeys off |
 | `previews/` | Short voice samples for the settings page ("Hi! This is the ... voice.") |
 
 **Logs**
@@ -91,6 +92,7 @@ Everything lives under `~/.sonara` (`C:\Users\<you>\.sonara`). None of it is sen
 |---|---|
 | `venv/`, `kokoro/` | The Kokoro neural voice environment and model |
 | `tools/` | `uv.exe`, used to set up Python and Kokoro |
+| `chatterbox-venv/`, `chatterbox/` | The environment and model cache of the removed Chatterbox engine, left on upgraded installs until you run `sonara cleanup` |
 | `voices/chatterbox/` | Voice clips you recorded for the removed Chatterbox engine. Sonara never deletes them |
 
 Outside `~/.sonara`, setup adds a per-user Task Scheduler task (autostart), a `sonara.cmd`
@@ -112,7 +114,7 @@ troubleshooting. It is off unless you set it. Delete the folder to remove what i
 ## Removing your data
 
 Run `sonara uninstall` (or `/sonara:uninstall`) to remove the autostart task, launcher, hooks,
-app copy, logs and lock files, then delete the `~/.sonara` folder to remove everything else,
+app copy, daemon logs (`faulthandler.prev.log` stays) and lock files, then delete the `~/.sonara` folder to remove everything else,
 including session data and your settings.
 
 ## Changes to this policy
