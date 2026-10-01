@@ -54,7 +54,7 @@ def _bash_argv(args):
 
 def _find_bash():
     """Git Bash, not the WSL launcher: on Windows `bash` on PATH can be
-    System32\bash.exe, which fails when no WSL distro is installed (the
+    the System32 bash.exe, which fails when no WSL distro is installed (the
     GitHub windows runner). Prefer Git for Windows' bash, as Claude Code does."""
     if os.name == "nt":
         for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
