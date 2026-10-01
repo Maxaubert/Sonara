@@ -32,6 +32,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - `daemon.py`: message handling, speak loop, summary pipeline, hotkeys, audio. `router.py` + `channel.py`: per-session channels. `speaker.py`: playback and cancel epochs.
 - `assembler.py`, `cleaner.py`: text to spoken items. `summarizer.py`: `claude -p` / `codex exec` digests.
 - Persisted state under `~/.sonara`, every path via `paths.py`: history, sessions, session prefs, digests.
+- Settings: one table in `config_schema.py` (default, validator, page path, live-apply hook) feeds config DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys (pre-#136 full dumps: values equal to a current or past default count as unset). Bundled earcons resolve at runtime, never stored.
 - `platform/`: OS seam (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = install, autostart, hooks).
 - `webui.py` + `settings.html`: token-protected settings page. `cli.py`: CLI verbs, install, doctor. `kokoro*.py`: neural voices.
 

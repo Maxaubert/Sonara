@@ -16,25 +16,14 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-# config keys the page may read and write (verbosity deliberately absent)
-_PAGE_KEYS = (
-    "voice", "rate", "minqueue", "summary_mode", "summary_model",
-    "summary_style", "summary_command",
-    "summary_timeout", "summary_settle_ms", "duck_level",
-    "audio_mode", "volume", "fast_cues", "cue_voice",
-)
+from sonara import config_schema
 
-_MSG_KEYS = {
-    "voice":         lambda v: {"type": "set_voice", "voice": str(v)},
-    "rate":          lambda v: {"type": "set_rate", "rate": int(v)},
-    "minqueue":      lambda v: {"type": "set_minqueue", "minqueue": int(v)},
-    "summary_mode":  lambda v: {"type": "set_summary_mode", "enabled": bool(v)},
-    "duck_level":    lambda v: {"type": "set_duck_level", "level": int(v)},
-    "audio_mode":    lambda v: {"type": "set_audio_mode", "mode": str(v)},
-    "volume":        lambda v: {"type": "set_volume", "volume": int(v)},
-}
-_CONFIG_KEYS = ("summary_model", "summary_style", "summary_command",
-                "summary_timeout", "summary_settle_ms", "fast_cues", "cue_voice")
+# Config keys the page may read and write (verbosity deliberately absent), all
+# from the schema (#136): message keys dispatch the same protocol message the
+# CLI sends, config-only keys go through daemon.set_config_value.
+_PAGE_KEYS = config_schema.page_keys()
+_MSG_KEYS = config_schema.page_messages()
+_CONFIG_KEYS = config_schema.config_only_keys()
 
 
 def _dispatch(daemon, msg):
@@ -206,7 +195,7 @@ class SettingsServer:
 
     # ---- state assembly ------------------------------------------------
     def state(self) -> dict:
-        cfg = {k: self._daemon.config.get(k) for k in _PAGE_KEYS}
+        cfg = {k: config_schema.get(self._daemon.config, k) for k in _PAGE_KEYS}
         return {
             "config": cfg,
             "summary_prompts": dict(self._daemon.config.get("summary_prompts") or {}),

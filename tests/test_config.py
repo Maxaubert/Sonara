@@ -17,6 +17,7 @@ def test_defaults_has_documented_top_level_keys():
         "summary_model",
         "summary_command",
         "summary_timeout",
+        "summary_settle_ms",
         "summary_style",
         "summary_prompts",
         "fast_cues",
@@ -34,9 +35,9 @@ def test_defaults_scalar_values():
 
 
 def test_defaults_no_longer_carries_earcons():
-    # Earcon defaults now live in the platform backend (the Windows earcon
-    # backend); the daemon backfills them at startup, so config DEFAULTS must not
-    # own them.
+    # Earcon defaults live in the platform backend (the Windows earcon
+    # backend); the daemon resolves them at runtime (#136), so config DEFAULTS
+    # must not own them.
     assert "earcons" not in DEFAULTS
 
 
@@ -204,7 +205,8 @@ def test_save_config_writes_valid_json_on_disk(monkeypatch, tmp_path):
     cfg["rate"] = 123
     config.save_config(cfg)
     on_disk = _json.loads(cfg_path.read_text(encoding="utf-8"))
-    assert on_disk == cfg
+    # only the changed key (+ the format marker) is written, not every default (#136)
+    assert on_disk == {"rate": 123, config.FORMAT_KEY: config.FORMAT_VERSION}
 
 
 def test_save_config_is_atomic_on_replace_failure(monkeypatch, tmp_path):
