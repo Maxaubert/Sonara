@@ -9,7 +9,6 @@ then plays a brief cue instead of speaking).
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 
 # Modeled on transcript-cleanup engine prompts: a hard "never addressed to you"
@@ -149,35 +148,104 @@ def build_argv(command: str, model: str) -> list:
             "--setting-sources", ""]
 
 
+def _resolve_command(name):
+    """The engine's full path from PATH alone, or None (#138, audit H1).
+
+    shutil.which() on Windows searches the CURRENT directory before PATH
+    (even with an explicit path= on Python < 3.12, and on newer ones unless
+    NoDefaultCurrentDirectoryInExePath is set), so a claude.exe planted in
+    whatever folder the daemon was started from would run with the user's
+    login. Only absolute PATH entries are searched, with PATHEXT applied
+    because CreateProcess does not apply it to a bare name like 'claude' (an
+    npm .cmd shim). A name with a directory part is taken as given."""
+    if os.path.dirname(name):
+        return name if os.path.isfile(name) else None
+    names = [name]
+    if os.name == "nt":
+        exts = [e for e in os.environ.get(
+            "PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if e]
+        if not any(name.lower().endswith(e.lower()) for e in exts):
+            names = [name + e for e in exts]
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        d = d.strip('"')
+        if not d or not os.path.isabs(d):
+            continue                   # "." or a relative entry is the cwd again
+        for n in names:
+            p = os.path.join(d, n)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return p
+    return None
+
+
+def _kill_tree(proc) -> None:
+    """Kill *proc* and every process it started. An npm .cmd shim (codex) runs
+    as cmd.exe -> node: killing cmd.exe alone leaves node holding the pipes,
+    and the summarizer then waits for node instead of its timeout (#138, audit
+    F5). Never raises."""
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 def _default_runner(argv, text: str, timeout):
     """Spawn the real subprocess: text on stdin, neutral cwd (the user home, so a
-    project CLAUDE.md is never picked up), no console window on Windows. Resolve
-    the command via shutil.which because Windows CreateProcess does not apply
-    PATHEXT to a bare name like 'claude' (an npm .cmd shim).
+    project CLAUDE.md is never picked up), no console window on Windows. The
+    command is resolved from PATH only (see _resolve_command); a missing engine
+    raises, which summarize() logs, instead of falling back to the bare name.
+
+    The timeout is enforced by this function, not subprocess.run: on Windows
+    run() kills only the direct child on timeout and then waits for the pipes
+    with no limit, which a grandchild can hold open indefinitely (#138, audit
+    F5). Here the whole tree is killed and the pipes are abandoned.
 
     SONARA_SUMMARIZER=1 marks the child so the hook shim (bin/sonara-hook)
     bails out instantly if hooks ever DO fire inside it - the second, redundant
     layer of the recursion guard described in build_argv."""
-    exe = shutil.which(argv[0]) or argv[0]
+    exe = _resolve_command(argv[0])
+    if exe is None:
+        raise FileNotFoundError(
+            "summarizer command not found on PATH: {0}".format(argv[0]))
     env = dict(os.environ)
     env["SONARA_SUMMARIZER"] = "1"
     kwargs = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         [exe] + list(argv[1:]),
-        input=text.encode("utf-8"),
-        capture_output=True,
-        timeout=timeout,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         cwd=os.path.expanduser("~"),
         env=env,
         **kwargs
     )
+    try:
+        stdout, stderr = proc.communicate(text.encode("utf-8"), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+    except BaseException:
+        _kill_tree(proc)
+        raise
     if proc.returncode != 0:
         # stdout is unused on failure; hand back stderr so the failure log
         # says WHY claude exited non-zero.
-        return proc.returncode, proc.stderr.decode("utf-8", "replace")
-    return proc.returncode, proc.stdout.decode("utf-8", "replace")
+        return proc.returncode, (stderr or b"").decode("utf-8", "replace")
+    return proc.returncode, (stdout or b"").decode("utf-8", "replace")
 
 
 def summarize(text, *, model, command: str = "claude", timeout=60,

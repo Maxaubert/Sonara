@@ -65,14 +65,19 @@ def test_default_runner_marks_child_as_summarizer(monkeypatch):
 
     class _Proc:
         returncode = 0
-        stdout = b"ok"
 
-    def fake_run(argv, **kwargs):
+        def communicate(self, input=None, timeout=None):
+            seen["input"] = input
+            seen["timeout"] = timeout
+            return b"ok", b""
+
+    def fake_popen(argv, **kwargs):
         seen["argv"] = argv
         seen.update(kwargs)
         return _Proc()
 
-    monkeypatch.setattr(summarizer.subprocess, "run", fake_run)
+    monkeypatch.setattr(summarizer.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(summarizer, "_resolve_command", lambda name: name)
     code, out = summarizer._default_runner(["claude", "-p"], "text", 5)
     assert code == 0 and out == "ok"
     assert seen["env"]["SONARA_SUMMARIZER"] == "1"

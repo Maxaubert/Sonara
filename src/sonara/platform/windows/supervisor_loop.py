@@ -75,6 +75,11 @@ def launch_spec(pythonw: str) -> tuple:
         stdout=subprocess.DEVNULL,
         stderr=err,
         env=env,
+        # A hook-started daemon inherited the PROJECT folder as its cwd and
+        # pinned it (the folder could not be renamed or deleted while Sonara
+        # ran), and anything resolved relative to the cwd came from that
+        # project (#138, audit H1). Its own state dir is the one neutral place.
+        cwd=str(paths.SONARA_DIR),
         # start_new_session intentionally absent -- incompatible with DETACHED_PROCESS
     )
     return argv, kwargs
