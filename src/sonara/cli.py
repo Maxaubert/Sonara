@@ -67,8 +67,15 @@ def _cmd_settings(_args) -> int:
     """Open the browser settings page at its tokenized URL (#34)."""
     from sonara.platform import transport
     info = transport.read_lockfile(paths.LOCK_PATH)
-    if not info or not info.get("http_port"):
+    if not info or (not info.get("http_port") and not paths.socket_connectable()):
         print(_daemon_not_running_message())
+        return 1
+    if not info.get("http_port"):
+        # E18: the daemon runs, but its settings page failed to start (for
+        # example the port was taken). "Not running" sent users the wrong way.
+        print("Sonara is running, but its settings page did not start. See "
+              "~/.sonara/speechd.log, then restart: sonara shutdown, then "
+              "sonara start")
         return 1
     url = "http://127.0.0.1:{0}/settings?token={1}".format(
         info["http_port"], info.get("token", ""))
@@ -1158,9 +1165,15 @@ def main(argv: Optional[list] = None) -> int:
     try:
         return args.func(args)
     except OSError as exc:
-        from .client import DaemonNotRunning  # local import; client may not be loaded
+        from .client import DaemonNotRunning, DaemonUnresponsive  # client may not be loaded
         if isinstance(exc, DaemonNotRunning):
             print(_daemon_not_running_message(), file=sys.stderr)
+            return 1
+        if isinstance(exc, DaemonUnresponsive):
+            # E18: a daemon stuck under its lock used to print a traceback.
+            print("Sonara daemon is not responding (busy or stuck). Try again in "
+                  "a moment, or restart it: sonara shutdown, then sonara start",
+                  file=sys.stderr)
             return 1
         raise
 

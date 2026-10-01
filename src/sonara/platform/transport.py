@@ -62,10 +62,18 @@ def connect(path, timeout=2.0):
     info = read_lockfile(path)
     if not info:
         raise OSError("daemon lockfile missing")
+    try:
+        host, port, token = info["host"], info["port"], info["token"]
+    except (KeyError, TypeError) as exc:
+        raise OSError("daemon lockfile is damaged: {0!r}".format(exc)) from exc
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    s.connect((info["host"], info["port"]))
-    s.sendall((info["token"] + "\n").encode("utf-8"))   # token handshake first
+    try:
+        s.settimeout(timeout)
+        s.connect((host, port))
+        s.sendall((token + "\n").encode("utf-8"))   # token handshake first
+    except BaseException:
+        s.close()                  # E18: never leak the socket on a failed connect
+        raise
     return s
 
 

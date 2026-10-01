@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import time
 
 from sonara import paths
@@ -12,6 +13,11 @@ from sonara.daemon import ensure_running
 
 class DaemonNotRunning(OSError):
     """Raised when the Sonara daemon socket cannot be reached."""
+
+
+class DaemonUnresponsive(OSError):
+    """Raised when the daemon took the connection but did not answer in time,
+    for example stuck under its lock (E18)."""
 
 
 def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
@@ -35,6 +41,8 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
             return None
         line = buf.split(b"\n", 1)[0]
         return decode(line)
+    except (socket.timeout, TimeoutError) as exc:
+        raise DaemonUnresponsive("Sonara daemon is not responding") from exc
     finally:
         try:
             s.close()
