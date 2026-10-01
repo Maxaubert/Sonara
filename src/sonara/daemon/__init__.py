@@ -11,7 +11,7 @@ from sonara.assembler import ProseAssembler
 from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
 from sonara.daemon.audio import AudioControl
-from sonara.daemon.core import SharedState
+from sonara.daemon.core import SessionRegistry, SharedState
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
 from sonara.daemon.playback import SpeakLoop
@@ -144,6 +144,28 @@ class SpeechDaemon:
             note_spoken=lambda item, completed: self.note_spoken(item, completed),
             requeue_or_note=lambda item, completed: self._requeue_or_note(
                 item, completed))
+        # Per-session state (#141): ending or forgetting a session clears
+        # everything registered here (_teardown_session).
+        self._session_state = SessionRegistry()
+        reg = self._session_state
+        reg.register_hook("pending_heard", self._drop_channel_pending)
+        reg.register_hook("history", self.history.reset)
+        reg.register("warned_immediate", self._warned_immediate)
+        reg.register_hook("setup_guide", self._setup_guide.forget)
+        # Ending the session is a user action like FLUSH: cancel its summary
+        # work (bumps the cancel epoch and the settle generation, drops held
+        # and deferred questions). A late worker must find no held question
+        # to append (zombie channel), and nothing here may outlive the
+        # session (audit #21).
+        reg.register_hook("summary", self._summary.cancel)
+        reg.register("last_digest_text", self._last_digest_text)
+        # Ended sessions don't rehydrate (#118).
+        reg.register_hook("digest_store", self.digest_store.forget)
+        reg.register("assemblers", self._assemblers)
+        # A stale _await_choice entry from a dead session would suppress
+        # permission chimes DAEMON-WIDE forever: the chime carries no session,
+        # so the suppression check is global truthiness (audit #19).
+        reg.register("await_choice", self._await_choice)
 
     @property
     def _current_item(self):
@@ -246,25 +268,11 @@ class SpeechDaemon:
         """Per-session cleanup shared by SESSION_END and FORGET_SESSION (#101):
         both retire a session's live state; FORGET_SESSION targets exactly the
         sessions that died WITHOUT a SessionEnd, so its cleanup must match.
-        Callers run this BEFORE router.drop(session) -- _drop_channel_pending
-        needs the channel to still exist, or _pending_heard leaks."""
-        self._drop_channel_pending(session)
-        self.history.reset(session)
-        self._warned_immediate.discard(session)
-        self._setup_guide.forget(session)
-        # Ending the session is a user action like FLUSH: cancel its summary
-        # work (bumps the cancel epoch and the settle generation, drops held
-        # and deferred questions). A late worker must find no held question
-        # to append (zombie channel), and nothing here may outlive the
-        # session (audit #21).
-        self._summary.cancel(session)
-        self._last_digest_text.pop(session, None)
-        self.digest_store.forget(session)         # ended sessions don't rehydrate (#118)
-        self._assemblers.pop(session, None)
-        # A stale _await_choice entry from a dead session would suppress
-        # permission chimes DAEMON-WIDE forever: the chime carries no session,
-        # so the suppression check is global truthiness (audit #19).
-        self._await_choice.discard(session)
+        Callers run this BEFORE router.drop(session): the pending_heard
+        hook (_drop_channel_pending) needs the channel to still exist, or
+        _pending_heard leaks. Every feature's per-session state is in the
+        registry, so nothing here is hand-listed (#141)."""
+        self._session_state.forget_session(session)
 
     def note_spoken(self, item, completed: bool) -> None:
         """Speak-loop bookkeeping: confirm (or decline) the heard-marker for a
