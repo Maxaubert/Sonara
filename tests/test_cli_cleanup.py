@@ -98,6 +98,49 @@ def test_cleanup_refuses_when_the_daemon_does_not_stop(monkeypatch):
     assert paths.CHATTERBOX_VENV.exists()
 
 
+def test_cleanup_that_refuses_restores_the_daemon_state(monkeypatch):
+    # stop_sonara writes the sentinel and ends the task before it gives up.
+    # A refused cleanup must not leave Sonara half shut down: a daemon that
+    # was running is started again, so the sentinel and the task are restored.
+    from sonara import chatterbox_legacy as cl
+    _leftovers()
+    order = []
+
+    def stop(sup=None):
+        order.append("stop")
+        paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")
+        return False
+
+    def start():
+        order.append("start")
+        paths.STOPPED_SENTINEL_PATH.unlink()
+        return 0
+    monkeypatch.setattr(paths, "socket_connectable", lambda: True)
+    monkeypatch.setattr(cli, "stop_sonara", stop)
+    monkeypatch.setattr(cli, "start_sonara", start)
+    monkeypatch.setattr(cl, "remove_leftovers",
+                        lambda: (_ for _ in ()).throw(AssertionError("removed")))
+    assert cli.main(["cleanup"]) == 1
+    assert order == ["stop", "start"]
+    assert not paths.STOPPED_SENTINEL_PATH.exists()
+
+
+def test_cleanup_that_refuses_keeps_an_explicit_shutdown(monkeypatch):
+    from sonara import chatterbox_legacy as cl
+    _leftovers()
+    paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")
+    order = []
+    monkeypatch.setattr(paths, "socket_connectable", lambda: False)
+    monkeypatch.setattr(cli, "stop_sonara",
+                        lambda sup=None: order.append("stop") and False)
+    monkeypatch.setattr(cli, "start_sonara", lambda: order.append("start") or 0)
+    monkeypatch.setattr(cl, "remove_leftovers",
+                        lambda: (_ for _ in ()).throw(AssertionError("removed")))
+    assert cli.main(["cleanup"]) == 1
+    assert "start" not in order
+    assert paths.STOPPED_SENTINEL_PATH.exists()
+
+
 def test_cleanup_reports_a_path_it_could_not_remove(monkeypatch, capsys):
     from sonara import chatterbox_legacy as cl
     _leftovers()

@@ -828,7 +828,20 @@ def _cmd_cleanup(_args) -> int:
     total = sum(size for _p, size in found)
     was_running = paths.socket_connectable()
     was_shut_down = os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
+
+    def restore():
+        if was_running:
+            start_sonara()
+        elif not was_shut_down:
+            try:   # stop_sonara wrote it; leave hook lazy-start working as before
+                os.remove(str(paths.STOPPED_SENTINEL_PATH))
+            except OSError:
+                pass
+
     if not stop_sonara():
+        # stop_sonara already wrote the sentinel and ended the task: undo
+        # that, or a daemon that later exits would never come back.
+        restore()
         print("Sonara did not stop, so nothing was removed (a running worker "
               "would lock the files). Run 'sonara shutdown', then try again.",
               file=sys.stderr)
@@ -838,13 +851,7 @@ def _cmd_cleanup(_args) -> int:
         print("Removed {0}".format(p))
     for p, exc in failed:
         print("Could not remove {0}: {1}".format(p, exc), file=sys.stderr)
-    if was_running:
-        start_sonara()
-    elif not was_shut_down:
-        try:   # stop_sonara wrote it; leave hook lazy-start working as before
-            os.remove(str(paths.STOPPED_SENTINEL_PATH))
-        except OSError:
-            pass
+    restore()
     if failed:
         return 1
     print("Freed {0}. Your voice clips in {1} were kept.".format(
