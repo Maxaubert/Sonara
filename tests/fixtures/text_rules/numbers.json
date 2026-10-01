@@ -1,0 +1,57 @@
+{
+  "description": "Numbers, versions and dotted tokens.",
+  "cases": [
+    {
+      "name": "decimal_not_split",
+      "fn": "assemble",
+      "deltas": [
+        "Pi is 3.14 roughly. Next."
+      ],
+      "output": [
+        "Pi is 3.14 roughly.",
+        "Next."
+      ]
+    },
+    {
+      "name": "version_not_split",
+      "fn": "assemble",
+      "deltas": [
+        "Bumped to v2.1.3 today. ",
+        "Done."
+      ],
+      "output": [
+        "Bumped to v2.1.3 today.",
+        "Done."
+      ]
+    },
+    {
+      "name": "file_line_ref_not_split",
+      "fn": "assemble",
+      "deltas": [
+        "See daemon.py:123 for it. Ok."
+      ],
+      "output": [
+        "See daemon.py:123 for it.",
+        "Ok."
+      ]
+    },
+    {
+      "name": "ordinal_dot_split_across_deltas",
+      "fn": "assemble",
+      "deltas": [
+        "1",
+        ". First\n2. Second"
+      ],
+      "output": [
+        "1: First",
+        "2: Second"
+      ]
+    },
+    {
+      "name": "numbers_untouched_by_normalize",
+      "fn": "normalize_for_speech",
+      "input": "Took 1,234 ms at 99.5% on port 27431.",
+      "output": "Took 1,234 ms at 99.5% on port 27431."
+    }
+  ]
+}

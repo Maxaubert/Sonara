@@ -1,0 +1,75 @@
+{
+  "description": "Headings, emphasis, inline code and tables.",
+  "cases": [
+    {
+      "name": "heading_hashes_dropped",
+      "fn": "clean_markdown",
+      "input": "## Summary\nAll good.",
+      "output": "Summary All good."
+    },
+    {
+      "name": "bold_and_italic_unwrapped",
+      "fn": "clean_markdown",
+      "input": "This is **bold**, *italic* and ***both***.",
+      "output": "This is bold, italic and both."
+    },
+    {
+      "name": "underscore_emphasis",
+      "fn": "clean_markdown",
+      "input": "Use __strong__ and _soft_ words.",
+      "output": "Use strong and soft words."
+    },
+    {
+      "name": "inline_code_keeps_text",
+      "fn": "clean_markdown",
+      "input": "Run `pytest -q` now.",
+      "output": "Run pytest -q now."
+    },
+    {
+      "name": "table_separator_removed",
+      "fn": "clean_markdown",
+      "input": "| a | b |\n|---|---|\n| 1 | 2 |",
+      "output": "| a | b | | 1 | 2 |"
+    },
+    {
+      "name": "whitespace_collapsed",
+      "fn": "clean_markdown",
+      "input": "one\n\n  two\tthree  ",
+      "output": "one two three"
+    },
+    {
+      "name": "snake_case_unsnaked",
+      "fn": "normalize_for_speech",
+      "input": "Call get_user_id and _voiced_upto.",
+      "output": "Call get user id and voiced upto."
+    },
+    {
+      "name": "arrow_and_ampersand",
+      "fn": "normalize_for_speech",
+      "input": "A -> B => C & D",
+      "output": "A to B to C and D"
+    },
+    {
+      "name": "stray_markdown_chars",
+      "fn": "normalize_for_speech",
+      "input": "Done ~ok~ | next # item",
+      "output": "Done ok next item"
+    },
+    {
+      "name": "prose_heading_paragraphs",
+      "fn": "assemble",
+      "deltas": [
+        "# Title\n\nFirst para. ",
+        "Second sentence.\n\nNext para."
+      ],
+      "output": [
+        "Title",
+        null,
+        "First para.",
+        "Second sentence.",
+        null,
+        "Next para."
+      ]
+    }
+  ]
+}

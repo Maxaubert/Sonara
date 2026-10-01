@@ -1,0 +1,35 @@
+{
+  "description": "Emoji and check marks.",
+  "cases": [
+    {
+      "name": "check_marks_stripped",
+      "fn": "normalize_for_speech",
+      "input": "✅ tests pass ❌ lint fails ✓ ok",
+      "output": "tests pass lint fails ok"
+    },
+    {
+      "name": "bullet_dot_stripped",
+      "fn": "normalize_for_speech",
+      "input": "• first • second",
+      "output": "first second"
+    },
+    {
+      "name": "emoji_kept_by_cleaner",
+      "fn": "clean_markdown",
+      "input": "Great job 🎉 done.",
+      "output": "Great job 🎉 done."
+    },
+    {
+      "name": "emoji_run_joins_next_sentence",
+      "fn": "assemble",
+      "deltas": [
+        "Shipped. 🚀🚀 ",
+        "All green."
+      ],
+      "output": [
+        "Shipped.",
+        "🚀🚀 All green."
+      ]
+    }
+  ]
+}

@@ -7,7 +7,10 @@ does not check it, and messages without it (hotkey fires, keymap actions)
 are handled the same. A hook running from one plugin copy can talk to a
 daemon running from another (~/.sonara/app), and rejecting a version
 mismatch would silently drop the latest turn. Changes stay compatible
-instead: new types and fields are added, and an unknown type gets no reply."""
+instead: new types and fields are added, and an unknown type gets no reply.
+
+The full contract, every message with its fields and direction, is
+docs/protocol.md."""
 from __future__ import annotations
 
 import json
@@ -49,6 +52,16 @@ class MsgType:
     STATUS = "status"
     PING = "ping"
     RELOAD_KEYMAP = "reload_keymap"   # re-read keymap.json + re-register hotkeys
+    # Embedding hosts (#143).
+    SPEAK = "speak"           # {text, source, tab, label, interrupt}: read a text
+    SUBSCRIBE = "subscribe"   # {events: ["state"]}: keep the connection open for events
+
+
+class EventType:
+    """Types of the messages the daemon PUSHES on a subscribed connection
+    (#143). Never sent to the daemon."""
+    STATE = "state"   # the state snapshot, sent on subscribe and on every change
+    ERROR = "error"   # {error}: the subscribe was refused; the daemon closes
 
 
 def encode(msg: dict) -> bytes:

@@ -25,11 +25,24 @@ def _tool_summary(tool: str, ti: dict) -> str:
     return tool or ""
 
 
-def handle_event(event: str, payload: dict) -> list[dict]:
+def _host_tab(env) -> dict:
+    """The embedding host's tab id as message fields (#143): {"host_tab": id}
+    when the hook runs inside a host tab, else {} so a plain terminal sends
+    the same messages as before. SONARA_HOST_TAB is the generic name;
+    PRISM_TAB_ID (PrismTerminal) is accepted too."""
+    tab = env.get("SONARA_HOST_TAB") or env.get("PRISM_TAB_ID")
+    return {"host_tab": tab} if tab else {}
+
+
+def handle_event(event: str, payload: dict, env=None) -> list[dict]:
     """Map (event name, parsed stdin payload) to a list of protocol messages.
 
-    PURE: no I/O. Returns [] for any event it does not handle.
+    PURE: no I/O. *env* is the hook's environment (default os.environ, read
+    at call time); every environment read goes through it. Returns [] for
+    any event it does not handle.
     """
+    if env is None:
+        env = os.environ
     session = payload.get("session_id", "")
 
     if event == "MessageDisplay":
@@ -101,20 +114,21 @@ def handle_event(event: str, payload: dict) -> list[dict]:
     if event == "UserPromptSubmit":
         return [
             _msg(type=MsgType.SET_FOREGROUND, session=session,
-                 cwd=payload.get("cwd", "")),
+                 cwd=payload.get("cwd", ""), **_host_tab(env)),
             _msg(type=MsgType.FLUSH, session=session),
         ]
 
     if event == "SessionStart":
         return [
             _msg(type=MsgType.SET_FOREGROUND, session=session,
-                 cwd=payload.get("cwd", "")),
+                 cwd=payload.get("cwd", ""), **_host_tab(env)),
             _msg(
                 type=MsgType.SESSION_START,
                 session=session,
                 cwd=payload.get("cwd", ""),
-                plugin_version=os.environ.get("CLAUDE_PLUGIN_VERSION", ""),
-                plugin_root=os.environ.get("CLAUDE_PLUGIN_ROOT", ""),
+                plugin_version=env.get("CLAUDE_PLUGIN_VERSION", ""),
+                plugin_root=env.get("CLAUDE_PLUGIN_ROOT", ""),
+                **_host_tab(env),
             ),
         ]
 

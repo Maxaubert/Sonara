@@ -1,0 +1,43 @@
+{
+  "description": "Bullet and numbered lists.",
+  "cases": [
+    {
+      "name": "bullets_unmarked",
+      "fn": "clean_markdown",
+      "input": "- fixed the race\n- added tests\n* more\n+ plus",
+      "output": "fixed the race added tests more plus"
+    },
+    {
+      "name": "numbered_ordinal_colon",
+      "fn": "clean_markdown",
+      "input": "1. Install the package\n2. Run the tests\n",
+      "output": "1: Install the package. 2: Run the tests."
+    },
+    {
+      "name": "stabilize_numbered_list",
+      "fn": "assemble",
+      "deltas": [
+        "Steps:\n1. Install the package\n2. Run the tests\n3. Ship it."
+      ],
+      "output": [
+        "Steps:",
+        "1: Install the package",
+        "2: Run the tests",
+        "3: Ship it."
+      ]
+    },
+    {
+      "name": "bullet_list_chunks",
+      "fn": "assemble",
+      "deltas": [
+        "Changes:\n\n- fixed the race.\n- added tests.\n"
+      ],
+      "output": [
+        "Changes:",
+        null,
+        "fixed the race.",
+        "added tests."
+      ]
+    }
+  ]
+}

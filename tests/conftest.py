@@ -106,6 +106,14 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_host_tab_from_the_runner(monkeypatch):
+    """A suite run inside an embedding host's tab must not leak its tab id
+    into every hook message the tests build (#143)."""
+    monkeypatch.delenv("SONARA_HOST_TAB", raising=False)
+    monkeypatch.delenv("PRISM_TAB_ID", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _never_sweep_the_live_daemon(monkeypatch):
     """Stop the suite from killing the DEVELOPER'S running daemon.
 

@@ -19,6 +19,7 @@ from sonara.daemon.ingest import Ingest
 from sonara.daemon.playback import SpeakLoop
 from sonara.daemon.server import ConnectionServer
 from sonara.daemon.settings import Settings
+from sonara.daemon import state_stream
 from sonara.daemon.summary.pipeline import SummaryPipeline, summary_log
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config
@@ -78,10 +79,16 @@ class SpeechDaemon:
         self._running = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
+        # The state stream for embedded players (#143): STATUS and SUBSCRIBE
+        # read its snapshot; it is published after every handled message and
+        # around every utterance.
+        self._state = state_stream.StateStream(
+            lambda: state_stream.snapshot(self))
         # The loopback socket: accept loop, token check, handler threads.
         # handle_message is looked up at call time, as for the hotkeys.
         self._server = ConnectionServer(
-            self._running, self._lock, lambda m: self.handle_message(m))
+            self._running, self._lock, lambda m: self.handle_message(m),
+            stream=self._state)
         self._webui = None
         from sonara.history import SessionHistory
         self.history = SessionHistory(cap=int(config_schema.get(config, "history_cap")))
@@ -134,7 +141,8 @@ class SpeechDaemon:
             earcon=self._earcon,
             note_spoken=lambda item, completed: self.note_spoken(item, completed),
             requeue_or_note=lambda item, completed: self._requeue_or_note(
-                item, completed))
+                item, completed),
+            on_change=self._publish_state)
         # Per-session state (#141): ending or forgetting a session clears
         # everything registered here (_teardown_session).
         self._session_state = SessionRegistry()
@@ -171,6 +179,9 @@ class SpeechDaemon:
         core.add_handlers(self._handlers, {
             MsgType.SHUTDOWN: self._on_shutdown,
             MsgType.PING: lambda msg: {"ok": True},
+            # Served by the socket server (daemon/server); reaching here
+            # (hotkey, settings page) there is no connection to stream to.
+            MsgType.SUBSCRIBE: lambda msg: None,
         })
 
     @property
@@ -324,7 +335,21 @@ class SpeechDaemon:
         # Table dispatch (#141): unknown types get no reply. A malformed
         # (unhashable) type is unknown, not a crash.
         handler = self._handlers.get(t) if isinstance(t, str) else None
-        return handler(msg) if handler is not None else None
+        if handler is None:
+            return None
+        reply = handler(msg)
+        self._publish_state()
+        return reply
+
+    def _publish_state(self) -> None:
+        """Push the state to subscribers if it changed (#143). Caller holds
+        the daemon lock. Contained: the stream must never break a message
+        or the speak loop."""
+        try:
+            self._state.publish()
+        except Exception:  # noqa: BLE001 - a stream bug must not drop speech
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     def _on_shutdown(self, msg):
         if msg.get("stay_down"):
@@ -351,6 +376,7 @@ class SpeechDaemon:
         self._hotkeys.stop()
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
+        self._state.close_all()         # end the subscriber threads (#143)
         self._server.close()
 
     def _replay(self, session: str, entries, append: bool = False,

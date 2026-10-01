@@ -129,6 +129,8 @@ def test_msgtype_defines_no_extra_string_constants():
         "STATUS": "status",
         "PING": "ping",
         "RELOAD_KEYMAP": "reload_keymap",
+        "SPEAK": "speak",
+        "SUBSCRIBE": "subscribe",
     }
     assert actual == expected
 

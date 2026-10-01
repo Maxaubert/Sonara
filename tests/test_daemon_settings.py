@@ -99,6 +99,8 @@ def test_status_returns_documented_dict():
     config["voice"] = "Samantha"
     config["minqueue"] = 4
     resp = daemon.handle_message(_msg(MsgType.STATUS))
+    seq = resp.pop("seq")
+    assert isinstance(seq, int) and seq >= 1
     assert resp == {
         "verbosity": "medium",
         "rate": 175,
@@ -106,6 +108,12 @@ def test_status_returns_documented_dict():
         "foreground": "fg",
         "minqueue": 4,
         "summary_mode": False,
+        # the state-stream snapshot (#143)
+        "now_playing": None,
+        "queue": 0,
+        "paused": False,
+        "mute_level": 0,
+        "volume": 100,
     }
 
 

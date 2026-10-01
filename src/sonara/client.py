@@ -5,7 +5,7 @@ import socket
 import time
 
 from sonara import paths
-from sonara.protocol import encode, decode
+from sonara.protocol import PROTOCOL_VERSION, MsgType, encode, decode
 from sonara.paths import LOCK_PATH, socket_connectable
 from sonara.platform import transport
 from sonara.lifecycle import ensure_running
@@ -69,6 +69,55 @@ def send_many(msgs, timeout: float = 2.0) -> None:
         ) from exc
     try:
         s.sendall(payload)
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
+def speak(text: str, source: str, tab=None, label=None,
+          interrupt: bool = False, timeout: float = 2.0) -> None:
+    """Ask the daemon to read *text* aloud for an embedding host (#143). It
+    goes to the session f"{source}:{tab or 'default'}" and replaces that
+    session's unread text (queue of one). interrupt=True also cuts what
+    that session is saying right now. No reply is read."""
+    send({"v": PROTOCOL_VERSION, "type": MsgType.SPEAK, "text": text,
+          "source": source, "tab": tab, "label": label,
+          "interrupt": bool(interrupt)}, timeout=timeout)
+
+
+def subscribe(events=("state",), timeout: float = 2.0):
+    """Generator over the daemon's pushed events (#143): connects, sends
+    SUBSCRIBE and yields every decoded event until the daemon closes the
+    connection (shutdown, or this subscriber was dropped for reading too
+    slowly). The first event is the current state. A refused subscription
+    yields one {"type": "error"} event and ends. Closing the generator
+    closes the connection. Raises DaemonNotRunning on the first next() when
+    the daemon cannot be reached."""
+    try:
+        s = transport.connect(LOCK_PATH, timeout=timeout)
+    except OSError as exc:
+        raise DaemonNotRunning(
+            "Sonara daemon is not running. Run: sonara start"
+        ) from exc
+    try:
+        s.sendall(encode({"v": PROTOCOL_VERSION, "type": MsgType.SUBSCRIBE,
+                          "events": list(events)}))
+        s.settimeout(None)      # events arrive only on change: no read timeout
+        buf = b""
+        while True:
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if line.strip():
+                    yield decode(line)
+            try:
+                data = s.recv(4096)
+            except OSError:
+                return
+            if not data:
+                return
+            buf += data
     finally:
         try:
             s.close()

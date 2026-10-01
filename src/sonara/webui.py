@@ -206,6 +206,7 @@ class SettingsServer:
                 "muted": prefs.muted(sid),
                 "voice": prefs.voice(sid),
                 "foreground": sid == fg,
+                "host_tab": d.sessions.host_tab(sid),   # embedding host tab (#143)
                 "pending": ch.pending() if ch is not None else 0,
                 # seconds since this session's last hook traffic THIS daemon
                 # run; None = not seen since start (likely a closed terminal)

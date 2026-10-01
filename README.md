@@ -125,12 +125,6 @@ others (Win+Alt+B/D/G/K/R/T, digits), so Win+Alt was not made the default. If an
 app already holds a chord, `sonara doctor` reports it in its **hotkey chords** row;
 rebind that action on the settings page.
 
-**European keyboard layouts:** Windows sends AltGr as Ctrl+Alt, so on layouts with AltGr
-characters (German, Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character
-away: with Ctrl+Alt+M bound to mute, AltGr+M no longer types µ. `sonara doctor` checks
-your active layout and names every clash in its **AltGr** row. Rebind a clashing action on
-the settings page, for example to a Win+Alt chord. A hotkey must include Ctrl, Alt or Win.
-
 Only these actions are bound by default (kept minimal so Sonara doesn't hog
 hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** –
 add a key in `~/.sonara/keymap.json` if you want one. Stop, repeat and skip

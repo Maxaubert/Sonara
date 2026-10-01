@@ -25,6 +25,9 @@ class SessionManager:
         # list/cycle is stable; membership/`in`/len behave like the old set.
         self._sessions: "dict[str, str | None]" = {}
         self._foreground: "str | None" = None
+        # session id -> the embedding host's tab id (#143), from the hook's
+        # host_tab. Memory-only: a host's tab ids do not outlive its run.
+        self._host_tabs: "dict[str, str]" = {}
         # Optional durable folder map. cwd only arrives on SessionStart /
         # UserPromptSubmit hooks, so a daemon restart would otherwise lose the folder
         # name of any background session that isn't re-prompted -> the session-change
@@ -92,9 +95,20 @@ class SessionManager:
     def register(self, session: str, cwd=None) -> None:
         self._record(session, cwd)
 
+    def set_host_tab(self, session: str, tab) -> None:
+        """Remember *session*'s host tab id. A missing (None or empty) tab
+        keeps the known one: an older hook copy sends no host_tab at all."""
+        if isinstance(tab, str) and tab:
+            self._host_tabs[session] = tab
+
+    def host_tab(self, session) -> "str | None":
+        """The embedding host's tab id for *session*, or None."""
+        return self._host_tabs.get(session)
+
     def unregister(self, session: str) -> None:
         existed = session in self._sessions
         self._sessions.pop(session, None)
+        self._host_tabs.pop(session, None)
         seen = self._last_seen.pop(session, None)
         if seen is not None and self._seen_path is not None:
             self._persist_seen()                 # removal is durable too
