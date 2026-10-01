@@ -765,6 +765,13 @@ function armCapture(row, action) {
     if (e.ctrlKey) mods.push("ctrl");
     if (e.altKey) mods.push("alt");
     if (e.shiftKey) mods.push("shift");
+    if (e.metaKey) mods.push("win");            // Win+X used to capture as bare x (E13)
+    if (!mods.some(m => m === "ctrl" || m === "alt" || m === "win")) {
+      // E13: without Ctrl, Alt or Win a global hotkey takes the key away
+      // from every app (a bare "m" stops typing m anywhere). Refuse it.
+      flashError("Add Ctrl, Alt or Win: a hotkey without one would block that key in every app");
+      return;
+    }
     let key = e.key.toLowerCase();
     key = KEY_ALIASES[key] || key;
     const valid = state && state.keys && state.keys.keys;

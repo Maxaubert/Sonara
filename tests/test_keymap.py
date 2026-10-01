@@ -338,3 +338,24 @@ def test_rewriting_keymap_json_prunes_unknown_actions(monkeypatch, tmp_path):
     on_disk = json.loads(km.read_text(encoding="utf-8"))
     assert set(on_disk) == {"mute", "next_session"}
     assert on_disk["mute"] == {"key": "j", "mods": ["ctrl", "alt"]}
+
+
+def test_bind_action_refuses_a_modifier_less_hotkey(tmp_path, monkeypatch):
+    """E13: a bare 'm' registers system-wide and m stops typing everywhere."""
+    from sonara import keymap
+    import pytest
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    monkeypatch.setattr(keymap, "ensure_sonara_dir", lambda: None)
+    for mods in ([], ["shift"]):
+        with pytest.raises(ValueError) as ei:
+            keymap.bind_action("mute", "m", mods)
+        assert "ctrl" in str(ei.value).lower()
+    assert not (tmp_path / "keymap.json").exists()      # nothing persisted
+
+
+def test_bind_action_accepts_win_as_the_modifier(tmp_path, monkeypatch):
+    from sonara import keymap
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", tmp_path / "keymap.json")
+    monkeypatch.setattr(keymap, "ensure_sonara_dir", lambda: None)
+    keymap.bind_action("mute", "m", ["win", "shift"])
+    assert keymap.load_keymap()["mute"]["mods"] == ["win", "shift"]

@@ -252,3 +252,35 @@ def test_voice_picker_keeps_an_off_list_voice_selected(live):
     assert opts == [["af_heart", False], ["af_bella", False],
                     ["Microsoft Zira", True]]
     assert not any(m.get("type") == "set_voice" for m in d.messages)
+
+
+def _capture(s, combo):
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='hotkeys']")
+        page.click("[data-action='mute'] .kbd")
+        page.keyboard.press(combo)
+        page.wait_for_timeout(400)
+        error_shown = page.evaluate("!!document.querySelector('.state.error')")
+        browser.close()
+    return error_shown
+
+
+def test_modifier_less_hotkey_is_refused_with_a_reason(live, monkeypatch):
+    """E13: a bare letter would be swallowed system-wide."""
+    binds = _bind_recorder(monkeypatch)
+    d, s = live
+    assert _capture(s, "m") is True
+    assert _capture(s, "Shift+m") is True
+    assert binds == []
+
+
+def test_win_key_is_captured_as_the_win_modifier(live, monkeypatch):
+    """E13: metaKey was ignored, so Win+X captured as a bare 'x'."""
+    binds = _bind_recorder(monkeypatch)
+    d, s = live
+    _capture(s, "Meta+Alt+x")
+    assert binds == [("mute", "x", ("alt", "win"))]
