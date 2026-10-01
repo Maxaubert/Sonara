@@ -220,8 +220,6 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
-        self._preview_busy = False                  # preview_voice coalescing flag
-        self._preview_runner = None                 # injected by tests; runtime uses platform tts.run
         # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
         # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
         # since it was dispatched. A turn merely ending does NOT advance it, so the
@@ -2031,7 +2029,7 @@ class SpeechDaemon:
             pass
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
-                   pause_exempt: bool = False, cue_key=None) -> None:
+                   pause_exempt: bool = False, cue_key=None, voice=None) -> None:
         """Speak a one-off confirmation/feedback cue (pause/mute/repeat/...).
         These ALWAYS go to the reserved CONTROL channel, which the router serves
         ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
@@ -2042,7 +2040,10 @@ class SpeechDaemon:
 
         *cue_key* coalesces slider spam: a keyed cue removes every pending cue
         with the same key and cuts one mid-speech, so dragging a slider speaks
-        only the final value instead of the whole stacked sweep."""
+        only the final value instead of the whole stacked sweep.
+
+        *voice* speaks this one cue in that voice instead of the cue voice
+        (a settings-page preview, M6)."""
         from sonara.router import CONTROL
         ch = self.router.channel(CONTROL)
         if ch.caught_up():
@@ -2055,7 +2056,8 @@ class SpeechDaemon:
                 self.speaker.cancel()      # stale value mid-utterance: cut it
         item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
-                          pause_exempt=pause_exempt, cue_key=cue_key)
+                          pause_exempt=pause_exempt, cue_key=cue_key,
+                          voice=voice or None)
         # APPEND, do not cursor-insert: CONTROL is already served ahead of every
         # session, and inserting at the cursor made STACKED cues play LIFO --
         # the user heard state confirmations newest-first (deep audit #25).
@@ -2087,6 +2089,8 @@ class SpeechDaemon:
         configured voice, so "Muted." never waits on a slow synthesis.
         Config fast_cues (default on) disables."""
         from sonara.router import CONTROL
+        if item.session == CONTROL and getattr(item, "voice", None):
+            return {"voice": item.voice}         # a voice preview (M6)
         if (config_schema.get(self.config, "fast_cues")
                 and (item.session == CONTROL or item.kind == "session_change")):
             return {"voice": self._cue_voice()}
@@ -2227,35 +2231,17 @@ class SpeechDaemon:
 
     def preview_voice(self, voice: str) -> bool:
         """Speak a short sample in *voice* WITHOUT changing config (settings
-        page, #34). Runs on its own thread via the platform tts runner (same
-        say_runner contract the Speaker uses); coalesced to one at a time.
-        The busy check-and-set is under self._lock: HTTP requests run on
-        their own threads, and a bare check-then-act let two previews race."""
-        with self._lock:
-            if getattr(self, "_preview_busy", False):
-                return False
-            self._preview_busy = True
-        try:
-            runner = getattr(self, "_preview_runner", None)
-            if runner is None:
-                from sonara.platform import get_platform
-                runner = get_platform().tts.run
-            text = "This is {0} speaking for Sonara.".format(voice)
-            rate = config_schema.get(self.config, "rate")
-
-            def _run():
-                try:
-                    handle = runner(text, voice, rate)
-                    handle.wait(30)
-                except Exception:  # noqa: BLE001 - preview must never crash anything
-                    pass
-                finally:
-                    self._preview_busy = False
-            threading.Thread(target=_run, name="sonara-preview", daemon=True).start()
-            return True
-        except Exception:  # noqa: BLE001 - a failed spawn must not wedge the flag
-            self._preview_busy = False
+        page, #34). It queues on the CONTROL channel like any cue (M6): it
+        plays after the utterance in progress, never over it. Playing it on
+        its own thread cut live speech (winsound has one channel) and the cut
+        utterance was still marked heard. A newer preview replaces a pending
+        or playing one; mute and pause do not swallow it, the user asked."""
+        if not voice:
             return False
+        text = "This is {0} speaking for Sonara.".format(voice)
+        self._speak_cue(None, text, exempt_mute=True, pause_exempt=True,
+                        cue_key="voice_preview", voice=str(voice))
+        return True
 
     def _duck_exclude_pids(self) -> "set[int]":
         pids = {os.getpid()}
