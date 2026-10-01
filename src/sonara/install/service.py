@@ -48,6 +48,9 @@ def stop_sonara(sup=None) -> bool:
     # Still accepting after the grace: a daemon wedged under its lock (E18)
     # answers connects but never runs SHUTDOWN, and a lazily started one is
     # outside the task tree end_task ended. Kill it by command line.
+    # Known trade-off: a slow but healthy daemon still exiting after 5 s is
+    # killed too, and a kill skips its audio restore, so apps it was ducking
+    # or pausing at that moment stay ducked or paused.
     sup.kill_stray_daemons()
     return _wait_gone(2.0)
 

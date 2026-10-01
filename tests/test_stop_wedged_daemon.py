@@ -77,6 +77,33 @@ def test_stray_sweep_also_matches_the_supervisor_loop():
     assert "sonara[.]daemon" in script and "supervisor_loop" in script
 
 
+def test_stray_sweep_matches_only_the_launched_supervisor_script():
+    # The sweep force-kills by command line, so it must match the script the
+    # scheduled task launches, not any python that mentions "supervisor_loop"
+    # (a pytest -k run, a REPL, another tool).
+    import re
+    from sonara.platform.windows import supervisor
+    seen = []
+
+    class FakeProc:
+        stdout = b""
+
+    supervisor.kill_stray_daemons(runner=lambda argv: seen.append(argv) or FakeProc())
+    pattern = re.search(r"-match '([^']+)'", seen[0][-1]).group(1)
+    hits = [
+        r'"C:\Py\pythonw.exe" "C:\Users\u\.sonara\app\sonara\platform\windows\supervisor_loop.py"',
+        r"C:\Py\pythonw.exe -m sonara.daemon",
+    ]
+    misses = [
+        "python -m pytest -k supervisor_loop",
+        r"python -m pytest tests\test_supervisor_loop.py",
+    ]
+    for cmd in hits:
+        assert re.search(pattern, cmd), cmd
+    for cmd in misses:
+        assert not re.search(pattern, cmd), cmd
+
+
 # --- callers respect a failed stop -------------------------------------------
 
 def _failed_stop(monkeypatch):

@@ -280,7 +280,7 @@ def kill_stray_daemons(runner=None) -> int:
     number of processes killed, 0 on any failure."""
     script = (
         "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-        "Where-Object { $_.CommandLine -match 'sonara[.]daemon|supervisor_loop' } | "
+        "Where-Object { $_.CommandLine -match 'sonara[.]daemon|windows.supervisor_loop[.]py' } | "
         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
         "$_.ProcessId }")
     run = runner or (lambda argv: subprocess.run(
