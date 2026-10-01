@@ -365,6 +365,8 @@ def test_altgr_warning_names_shift_for_a_shifted_binding(live, monkeypatch):
         text = warn.text_content()
         browser.close()
     assert "AltGr+Shift+M" in text
+
+
 def test_footer_shows_the_version_from_the_state(live):
     # #161: the footer reads sonara.__version__ through /api/state instead of
     # a hard-coded copy that had to be bumped with every release.

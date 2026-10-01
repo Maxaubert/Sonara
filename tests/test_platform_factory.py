@@ -42,6 +42,8 @@ def test_transport_is_os_free():
     src = inspect.getsource(transport)
     for word in ("msvcrt", "ctypes", "kernel32", "os.name"):
         assert word not in src, word
+
+
 def test_child_processes_is_the_windows_child_process_module(monkeypatch):
     # The summarizer spawns, finds and kills its engine through the seam (#161).
     from sonara.platform.windows import child_process

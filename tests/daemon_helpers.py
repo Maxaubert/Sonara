@@ -140,7 +140,12 @@ def locked_call(daemon, fn, *args, **kwargs):
     """Run fn(*args, **kwargs) under the daemon lock, as the socket server
     and the hotkey worker do. A caller that already holds it (a handler
     reaching handle_message, a test inside `with daemon._lock`) runs it
-    directly: threading.Lock is not reentrant."""
+    directly: threading.Lock is not reentrant.
+
+    threading.Lock does not record its owner, so "held" may also mean another
+    thread holds it, and the call then runs unlocked and races that holder.
+    A test that runs live daemon threads (a speak loop, a webui handler) must
+    take `with daemon._lock` itself around its direct calls."""
     lock = daemon._lock
     if lock.locked():
         return fn(*args, **kwargs)
