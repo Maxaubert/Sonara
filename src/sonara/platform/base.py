@@ -96,7 +96,10 @@ class HotkeyBackend(abc.ABC):
 
 class SupervisorBackend(abc.ABC):
     @abc.abstractmethod
-    def install(self, python: str, app_dir: str) -> None: ...
+    def install(self, python: str, app_dir: str,
+                plugin_root: "str | None" = None) -> None:
+        """Wire autostart, hooks and launcher. *plugin_root* is the plugin tree
+        the hooks point at (None: the tree this code runs from)."""
     @abc.abstractmethod
     def uninstall(self) -> None: ...
     @abc.abstractmethod

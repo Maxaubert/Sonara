@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook MessageDisplay"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" MessageDisplay"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook PreToolUse"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" PreToolUse"
           }
         ]
       }
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook PostToolUse"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" PostToolUse"
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook Notification"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" Notification"
           }
         ]
       }
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook Stop"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" Stop"
           }
         ]
       }
@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook UserPromptSubmit"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" UserPromptSubmit"
           }
         ]
       }
@@ -72,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook SessionStart"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" SessionStart"
           }
         ]
       }
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook SessionEnd"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run\" SessionEnd"
           }
         ]
       }

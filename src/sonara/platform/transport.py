@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import time
 
 HOST = "127.0.0.1"
 
@@ -21,15 +22,39 @@ def write_lockfile(path, host, port, token, pid, http_port=None) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(data, fh)
     os.chmod(tmp, 0o600)
-    os.replace(tmp, str(path))
+    # E20: on Windows a hook process reading the old lockfile holds it open
+    # without FILE_SHARE_DELETE, so the replace is denied for that moment.
+    # Retry briefly instead of letting the daemon's startup die on it.
+    for attempt in range(_SHARE_RETRIES):
+        try:
+            os.replace(tmp, str(path))
+            return
+        except PermissionError:
+            if attempt == _SHARE_RETRIES - 1:
+                raise
+            time.sleep(_SHARE_DELAY)
+
+
+# A sharing violation between the lockfile writer and its readers lasts
+# milliseconds (one json read or write); this rides it out without stalling.
+_SHARE_RETRIES = 20
+_SHARE_DELAY = 0.025
 
 
 def read_lockfile(path):
-    try:
-        with open(str(path), "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except (OSError, ValueError):
-        return None
+    for attempt in range(_SHARE_RETRIES):
+        try:
+            with open(str(path), "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except PermissionError:
+            # Mid-replace on Windows (E20): the file is there, just briefly
+            # unopenable. Retry rather than report "no daemon".
+            if attempt == _SHARE_RETRIES - 1:
+                return None
+            time.sleep(_SHARE_DELAY)
+        except (OSError, ValueError):
+            return None
+    return None
 
 
 def connect(path, timeout=2.0):

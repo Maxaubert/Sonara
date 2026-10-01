@@ -27,7 +27,10 @@ function Find-SystemPython {
   # Returns a console python.exe path, or $null. Prefers the py launcher.
   $cands = @()
   if (Get-Command py -ErrorAction SilentlyContinue) {
-    $real = & py -3 -c "import sys; print(sys.executable)" 2>$null
+    # In a try: under PowerShell 5.1 with EAP=Stop, a py.exe left behind with no
+    # Python 3 writes to stderr, which becomes a terminating error and killed
+    # the script before the uv provisioning below could run (E5).
+    try { $real = & py -3 -c "import sys; print(sys.executable)" 2>$null } catch { $real = $null }
     if ($real) { $cands += $real }
   }
   foreach ($n in @("python","python3")) {
@@ -83,9 +86,12 @@ if (-not $python) {
 $pythonw = Join-Path (Split-Path -Parent $python) "pythonw.exe"
 if (-not (Test-Path $pythonw)) { $pythonw = $python }
 
-# Record both for the shims + the daemon resolver.
-Set-Content -Path (Join-Path $SonaraDir "python.path")  -Value $python  -NoNewline -Encoding ASCII
-Set-Content -Path (Join-Path $SonaraDir "pythonw.path") -Value $pythonw -NoNewline -Encoding ASCII
+# Record both for the shims + the daemon resolver. UTF-8 without a BOM: ASCII
+# turned any non-ASCII letter in the path into '?', and PowerShell 5.1's UTF8
+# adds a BOM that cmd's `set /p` reads as part of the path (M14).
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $SonaraDir "python.path"),  $python,  $Utf8NoBom)
+[IO.File]::WriteAllText((Join-Path $SonaraDir "pythonw.path"), $pythonw, $Utf8NoBom)
 
 # Hand off to the real installer under that interpreter.
 $env:PYTHONPATH = $PySrc + ";" + $env:PYTHONPATH

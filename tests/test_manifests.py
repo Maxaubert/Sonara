@@ -1,5 +1,5 @@
 """Validate the shipped plugin manifests as real JSON and assert every
-hooks.json command points at an existing bin/sonara-hook under the repo root."""
+hooks.json command points at the bin/sonara-hook-run launcher under the repo root."""
 import json
 from pathlib import Path
 
@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
 HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
 SONARA_HOOK = REPO_ROOT / "bin" / "sonara-hook"
+SONARA_HOOK_RUN = REPO_ROOT / "bin" / "sonara-hook-run"
 
 
 def _load(path: Path) -> dict:
@@ -45,24 +46,26 @@ def _iter_hook_commands(data: dict):
     yield from walk(data)
 
 
-def test_hooks_json_commands_point_at_existing_sonara_hook():
+def test_hooks_json_commands_point_at_the_hook_launcher():
     data = _load(HOOKS_JSON)
     commands = list(_iter_hook_commands(data))
     assert commands, "hooks.json declares no commands"
 
     for cmd in commands:
-        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook <Event>.
+        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run <Event>.
         assert "${CLAUDE_PLUGIN_ROOT}" in cmd, (
             f"command must use ${{CLAUDE_PLUGIN_ROOT}}: {cmd!r}"
         )
         # Resolve the plugin-root-relative path to this repo and assert it
-        # points at the existing bin/sonara-hook shim.
+        # points at the existing interpreter launcher, which runs
+        # bin/sonara-hook on a real Python (E3).
         rel = cmd.split("${CLAUDE_PLUGIN_ROOT}", 1)[1].lstrip("/")
-        # rel looks like 'bin/sonara-hook MessageDisplay' -> take the path token.
-        path_token = rel.split()[0]
+        # rel looks like 'bin/sonara-hook-run" MessageDisplay' -> the path token.
+        path_token = rel.split()[0].rstrip('"')
         resolved = REPO_ROOT / path_token
-        assert resolved == SONARA_HOOK, f"command path {path_token!r} != bin/sonara-hook"
+        assert resolved == SONARA_HOOK_RUN, f"command path {path_token!r} != bin/sonara-hook-run"
         assert resolved.is_file(), f"hook command target does not exist: {resolved}"
+        assert SONARA_HOOK.is_file()
 
 
 def test_every_phase1_event_is_hooked():
@@ -115,8 +118,8 @@ def test_package_and_settings_page_versions_match_pyproject():
     assert f"<span>Version {version}</span>" in html
 
 
-def test_pyproject_version_is_0_6_5():
-    assert _pyproject_version() == "0.6.5"
+def test_pyproject_version_is_0_6_6():
+    assert _pyproject_version() == "0.6.6"
 
 
 def test_manifests_have_no_em_dash():

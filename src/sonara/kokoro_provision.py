@@ -23,6 +23,20 @@ def neural_enabled() -> bool:
     return os.path.exists(paths.kokoro_venv_python())
 
 
+def usable_venv_python(probe) -> "str | None":
+    """The neural venv's python.exe when it is provisioned AND *probe* (a
+    callable returning (major, minor) or None) reports >= 3.10, else None.
+    The one venv choice behind both cli._daemon_python and the Windows
+    daemon_pythonw (L-interp-dup)."""
+    if not neural_enabled():
+        return None
+    venv_py = paths.kokoro_venv_python()
+    ver = probe(venv_py)
+    if ver is not None and ver >= (3, 10):
+        return venv_py
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Task 3: ensure_uv
 # ---------------------------------------------------------------------------

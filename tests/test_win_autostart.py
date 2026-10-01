@@ -118,3 +118,66 @@ def test_daemon_start_log_records_which_copy_is_running(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "[daemon] started pid=" in err
     assert paths.package_root() in err, err
+
+
+# ---------------------------------------------------------------------------
+# L-log: speechd.log is size-capped and the parent never keeps its handle
+# ---------------------------------------------------------------------------
+
+def test_launch_spec_rotates_an_oversized_log(tmp_path, monkeypatch):
+    from sonara import paths
+    log = tmp_path / "speechd.log"
+    log.write_text("x" * 64)
+    monkeypatch.setattr(paths, "SONARA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "LOG_PATH", log)
+    monkeypatch.setattr(sl, "_LOG_MAX_BYTES", 32)
+    argv, kwargs = sl.launch_spec("pythonw.exe")
+    kwargs["stderr"].close()
+    assert log.stat().st_size == 0                       # a fresh log
+    assert (tmp_path / "speechd.old.log").read_text() == "x" * 64
+
+
+def test_launch_spec_keeps_a_small_log(tmp_path, monkeypatch):
+    from sonara import paths
+    log = tmp_path / "speechd.log"
+    log.write_text("keep")
+    monkeypatch.setattr(paths, "SONARA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "LOG_PATH", log)
+    argv, kwargs = sl.launch_spec("pythonw.exe")
+    kwargs["stderr"].close()
+    assert log.read_text() == "keep"
+    assert not (tmp_path / "speechd.old.log").exists()
+
+
+def test_supervisor_loop_closes_its_log_handle_after_each_spawn(tmp_path, monkeypatch):
+    from sonara import paths
+    monkeypatch.setattr(paths, "SONARA_DIR", tmp_path)
+    monkeypatch.setattr(paths, "LOG_PATH", tmp_path / "speechd.log")
+    handles = []
+
+    class _Proc:
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        handles.append(kwargs["stderr"])
+        return _Proc()
+
+    stops = iter([False, True])
+    monkeypatch.setattr(sl, "_stop_requested", lambda: next(stops, True))
+    monkeypatch.setattr(sl.subprocess, "Popen", fake_popen)
+    sl.run_supervisor_loop("pythonw.exe")
+    assert handles and all(h.closed for h in handles)
+
+
+def test_lazy_start_closes_its_log_handle(tmp_path, monkeypatch):
+    import types
+    from sonara import daemon
+    fh = open(str(tmp_path / "speechd.log"), "a")
+    plat = types.SimpleNamespace(supervisor=types.SimpleNamespace(
+        launch_spec=lambda: (["pythonw.exe"], {"stderr": fh})))
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: plat)
+    monkeypatch.setattr(daemon, "socket_connectable", lambda: False)
+    monkeypatch.setattr(daemon.subprocess, "Popen", lambda argv, **kw: None)
+    daemon.ensure_running()
+    assert fh.closed

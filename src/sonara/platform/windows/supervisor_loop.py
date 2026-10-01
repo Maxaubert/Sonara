@@ -44,6 +44,35 @@ def _ensure_importable() -> str:
         sys.path.insert(0, root)
     return root
 
+# speechd.log is rotated aside (to speechd.old.log) once it passes this size, at
+# the next daemon spawn; it used to grow without bound (L-log).
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _rotate_log(log_path) -> None:
+    """Move an oversized log to <name>.old.log, replacing an older one.
+    Best-effort: a log another process holds open stays where it is."""
+    log = str(log_path)
+    try:
+        if os.path.getsize(log) <= _LOG_MAX_BYTES:
+            return
+        root, ext = os.path.splitext(log)
+        os.replace(log, root + ".old" + ext)
+    except OSError:
+        pass
+
+
+def _close_spawn_handles(kwargs: dict) -> None:
+    """Close the parent's copy of the log handle launch_spec opened, once the
+    child has been spawned (it holds its own). Left open, the supervisor loop
+    leaked one handle per respawn (L-log)."""
+    err = kwargs.get("stderr")
+    if hasattr(err, "close"):
+        try:
+            err.close()
+        except OSError:
+            pass
+
 # Never combine start_new_session=True with DETACHED_PROCESS:
 # Python 3.9+ raises ValueError on Windows if both are set.
 
@@ -68,6 +97,7 @@ def launch_spec(pythonw: str) -> tuple:
     # inside launch_spec.
     from sonara import paths
     paths.ensure_sonara_dir()
+    _rotate_log(paths.LOG_PATH)
     err = open(paths.LOG_PATH, "a")
     kwargs = dict(
         creationflags=_SPAWN_FLAGS,
@@ -108,7 +138,10 @@ def run_supervisor_loop(pythonw: str) -> None:
             return
         argv, kwargs = launch_spec(pythonw)
         t_start = time.monotonic()
-        proc = subprocess.Popen(argv, **kwargs)
+        try:
+            proc = subprocess.Popen(argv, **kwargs)
+        finally:
+            _close_spawn_handles(kwargs)
         proc.wait()  # blocks until daemon exits
         elapsed = time.monotonic() - t_start
         if elapsed >= HEALTHY_UPTIME:

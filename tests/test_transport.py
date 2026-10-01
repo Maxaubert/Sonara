@@ -91,3 +91,40 @@ def test_write_lockfile_optional_http_port(tmp_path):
     assert "http_port" not in transport.read_lockfile(p)
     transport.write_lockfile(p, "127.0.0.1", 5000, "tok", 42, http_port=27431)
     assert transport.read_lockfile(p)["http_port"] == 27431
+
+
+def test_write_lockfile_retries_a_replace_denied_by_a_reader(tmp_path, monkeypatch):
+    # E20: on Windows a hook reading the old lockfile blocks os.replace for a
+    # moment (PermissionError); the daemon startup used to die on it.
+    real_replace = os.replace
+    denied = {"n": 0}
+
+    def flaky(src, dst):
+        if denied["n"] < 2:
+            denied["n"] += 1
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(transport.os, "replace", flaky)
+    monkeypatch.setattr(transport.time, "sleep", lambda s: None)
+    p = tmp_path / "daemon.lock"
+    transport.write_lockfile(p, "127.0.0.1", 5, "tok", 9)
+    assert transport.read_lockfile(p)["port"] == 5
+    assert denied["n"] == 2
+
+
+def test_read_lockfile_retries_a_transient_sharing_violation(tmp_path, monkeypatch):
+    p = tmp_path / "daemon.lock"
+    transport.write_lockfile(p, "127.0.0.1", 7, "tok", 9)
+    real_open = open
+    denied = {"n": 0}
+
+    def flaky_open(path, *a, **k):
+        if str(path) == str(p) and denied["n"] < 1:
+            denied["n"] += 1
+            raise PermissionError(32, "being used by another process")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", flaky_open)
+    monkeypatch.setattr(transport.time, "sleep", lambda s: None)
+    assert transport.read_lockfile(p)["port"] == 7

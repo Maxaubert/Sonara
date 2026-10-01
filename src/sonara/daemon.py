@@ -2634,7 +2634,17 @@ def ensure_running() -> None:
         return
     from sonara.platform import get_platform
     argv, kwargs = get_platform().supervisor.launch_spec()
-    subprocess.Popen(argv, **kwargs)
+    try:
+        subprocess.Popen(argv, **kwargs)
+    finally:
+        # The child has its own copy of the log handle; the parent's is closed
+        # here instead of leaking until this process exits (L-log).
+        err = kwargs.get("stderr")
+        if hasattr(err, "close"):
+            try:
+                err.close()
+            except OSError:
+                pass
 
 
 _FAULT_FILE = None

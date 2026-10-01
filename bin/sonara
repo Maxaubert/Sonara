@@ -11,10 +11,33 @@ case "$(uname -s 2>/dev/null)" in
     *)                             _sep=':' ;;
 esac
 export PYTHONPATH="$root/src${PYTHONPATH:+$_sep$PYTHONPATH}"
-# Windows (Git Bash): prefer the real `python`; else the interpreter recorded by
-# /sonara:install (the zero-Python case).
-py="$(command -v python || command -v python3 || true)"
-if [ -z "$py" ] && [ -f "$HOME/.sonara/python.path" ]; then
-    py="$(cat "$HOME/.sonara/python.path")"
+# The interpreter /sonara:install recorded comes first: it is the one install
+# validated. PATH `python` was preferred before, but on Windows that is the
+# WindowsApps Store alias by default, which runs nothing (E4). Then a PATH
+# python/python3 that is not the Store alias, then the py launcher.
+py=""
+rec="$HOME/.sonara/python.path"
+if [ -f "$rec" ]; then
+    IFS= read -r line < "$rec" || true
+    line="${line#$'\xef\xbb\xbf'}"     # a BOM from older PowerShell records (M14)
+    line="${line%$'\r'}"
+    line="${line//\\//}"
+    [ -n "$line" ] && [ -f "$line" ] && py="$line"
+fi
+if [ -z "$py" ]; then
+    for name in python python3; do
+        cand="$(command -v "$name" 2>/dev/null)" || continue
+        case "$cand" in
+            *WindowsApps*|*windowsapps*) ;;   # the Store alias: runs nothing
+            *) py="$cand"; break ;;
+        esac
+    done
+fi
+if [ -z "$py" ]; then
+    if command -v py >/dev/null 2>&1; then
+        exec py -3 -m sonara.cli "$@"
+    fi
+    echo "No Python found. Run /sonara:install to set up Sonara." >&2
+    exit 1
 fi
 exec "$py" -m sonara.cli "$@"
