@@ -17,7 +17,7 @@ def test_provision_creates_venv_and_installs(monkeypatch, tmp_path):
     cmds = []
     cbp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd))
 
-    # Full verified sequence from docs/superpowers/specs/2026-07-12-chatterbox-
+    # Full verified sequence from docs/history/specs/2026-07-12-chatterbox-
     # smoke.md: torch cu128, chatterbox-tts (which downgrades torch/torchaudio
     # to CPU builds), torch cu128 --reinstall, torchaudio cu128 --reinstall.
     # Pinned in full so a future "simplification" of the order fails here.

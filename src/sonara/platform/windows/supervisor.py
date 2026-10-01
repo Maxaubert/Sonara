@@ -5,9 +5,9 @@ WinSupervisorBackend ABC implementation.
 WINDOWS-only. Every Windows-only stdlib import (winreg, ctypes) is lazy (inside
 a method/function) so this module imports cleanly on macOS/Linux for the mock
 test suite. "Importable + mock-green" here does NOT mean Windows-verified -- the
-real gate is docs/superpowers/M2-WINDOWS-ACCEPTANCE.md.
+real gate is docs/history/M2-WINDOWS-ACCEPTANCE.md.
 
-Bodies copied verbatim from docs/superpowers/m2-windows-api-reference.md
+Bodies copied verbatim from docs/history/m2-windows-api-reference.md
 (§Windows SupervisorBackend), adapting only: the file/import location to our
 layout (src/sonara/platform/windows/...), subclassing the real ABC from
 sonara.platform.base, and keeping Windows-only imports lazy.

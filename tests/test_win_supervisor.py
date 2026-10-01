@@ -3,7 +3,7 @@
 WINDOWS-only code, exercised on macOS via the _winfakes harness (winreg fake is
 installed by tests/conftest.py before this module imports the backend). "Green"
 here means the MOCKED contract holds, NOT that it works on Windows. The real gate
-is docs/superpowers/M2-WINDOWS-ACCEPTANCE.md.
+is docs/history/M2-WINDOWS-ACCEPTANCE.md.
 
 Inject a fake winreg module before importing the Windows backend, then monkeypatch
 instance methods for all external calls. XML structure is validated via

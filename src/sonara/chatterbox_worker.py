@@ -37,7 +37,7 @@ def _isolate_from_own_dir(path_list):
 
 
 def _load_model(variant):
-    # Verified against docs/superpowers/specs/2026-07-12-chatterbox-smoke.md;
+    # Verified against docs/history/specs/2026-07-12-chatterbox-smoke.md;
     # adjust there first if the package API changes.
     import sys
     _isolate_from_own_dir(sys.path)

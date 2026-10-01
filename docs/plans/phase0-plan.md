@@ -1,0 +1,128 @@
+# Sonara Phase 0: stabilise, clean up, document
+
+Spec and implementation plan, 2026-10-01. Source: `docs/history/audits/2026-10-01-phase0-audit.md` (71 verified findings + architecture and docs reviews).
+
+## Goal
+
+A stable, well-structured, documented Sonara before any embedding work (PrismTerminal phases 1 and 2 are out of scope). Done means:
+- CI green on every PR (ruff + full unit suite), hermetic tests, a lean CLAUDE.md, current README/PRIVACY/architecture docs.
+- Chatterbox gone, dead features gone, `daemon.py` split into focused modules.
+- Every confirmed high/medium finding fixed or explicitly deferred with an issue.
+- Protocol ready for an embedded player (SUBSCRIBE, SPEAK, host tab id), without building the player.
+
+## Product rules this plan encodes
+
+1. **One message, always the last.** Sonara reads the latest turn. Up restarts it (#128, PR #129). No reading of older turns. Nothing may silently drop the latest turn (fixes: seeded-channel wipe, parked digest, lost settle seq).
+2. **Never strand other apps' audio.** (#130, PR #131.)
+3. **Kokoro + Windows native are the only voices.** User voice clips are never auto-deleted.
+
+## Decisions (approved 2026-10-01)
+
+| # | Decision | Default |
+|---|---|---|
+| D1 | Ctrl+Alt+Left/Right (step paragraph back/forward inside the current turn) | **Remove** (one message, always the last; Up restarts it). |
+| D2 | Dead hotkey features with no key bound (jump-to-decision, catch-up, re-read options, cycle verbosity, the old `audio-control` shim) | **Delete** with their tests (#40 upstream list). |
+| D3 | Chatterbox chunked player | **Delete.** Kokoro never used it. |
+| D4 | Chatterbox leftovers on disk (8.7 GB venv + model cache) | `sonara doctor` reports them and `sonara cleanup` removes them on request. `voices/chatterbox/` clips are never touched. |
+| D5 | Git remotes | Rename locally: `origin` (upstream nimkimi/sonari) to `upstream`, `sonara` (your fork) to `origin`; `gh repo set-default Maxaubert/Sonara`. Nothing is pushed upstream. |
+| D6 | Versioning | Bump to 0.6.0 in the CI PR (manifests in sync), then patch/minor per PR from then on. `release.yml` publishes `v<version>` on push to main. |
+| D7 | Native Windows voices fail to synthesise on this PC (`FileNotFoundError`, all OneCore voices) | Investigate in the runtime-edges PR; if it is machine-only, document it in doctor output. |
+
+## Delivery model
+
+- One issue, branch (`type/issue-slug`) and PR per item below, opened against main. Later PRs are stacked on earlier ones where they touch the same code and get rebased as earlier ones merge.
+- Each PR: TDD for every bug fix, full suite + ruff green, deployed to `~/.sonara/app` for hands-on testing when user-facing, then "merge?" to you. I keep building the next PRs while earlier ones wait for approval.
+- Execution via workflows: implementer per PR in its own worktree, then an independent reviewer pass before the PR is opened.
+
+## PRs
+
+### Wave 1: foundations (unblocks everything)
+
+**P1. chore: repo hygiene + CLAUDE.md** (docs/tooling only)
+- Local: remote rename + gh default (D5); prune gone branches; remove stale worktrees (`.claude/worktrees/...` via `git worktree remove` once confirmed merged).
+- Delete root clutter (`.py`, mangled task-report file, `.claire/`), untrack `.superpowers/`, extend `.gitignore`, fix `.gitattributes` (LF for `bin/sonara`, `bin/sonara-hook`).
+- `git mv docs/superpowers/* docs/phase*.md` to `docs/history/`; `AUDIT-2026-07-31.md` and the new audit to `docs/history/audits/`; update the ~20 code comments that cite spec paths.
+- New lean `CLAUDE.md` (remotes, commands, deploy-drift and safe redeploy, architecture map, conventions).
+- CONTRIBUTING fixes (Windows paths, branch naming, CI).
+- Close fork issues already fixed in code (#14-#17, #19, #21, #115-#118 after a quick verify), #10 as won't-do.
+
+**P2. ci: CI, release, ruff, hermetic tests, 0.6.0**
+- `ci.yml`: ruff + pytest on push/PR (windows-latest with fakes forced, plus ubuntu for py3.9 compat).
+- `release.yml`: on push to main, tag + GitHub release `v<version>`, refusing an existing version.
+- ruff in `dev` extra (`E9,F,B,UP`, py39 target), fix what it finds.
+- Make `test_win_tts.py` hermetic; real-OneCore checks behind a `live_windows` marker.
+- `pyproject`: version 0.6.0 (plus plugin.json, marketplace.json), maintainers, readme, urls, `requirements-kokoro.txt` in package data; `_copy_app` ignores `__pycache__`.
+
+### Wave 2: remove weight
+
+**P3. refactor: remove Chatterbox** (scope per the removal plan)
+- Delete 3 modules, requirements, `tools/clean_voice_clip.py`, 7 test files; strip daemon/tts/cli/config/paths/webui/settings.html/previews.
+- Migration: a saved Chatterbox voice (config `voice`, `cue_voice`, session prefs) maps to `af_heart` on load; `chatterbox_*` keys are stripped.
+- D4 cleanup via doctor/cleanup; README/PRIVACY sections removed; settings-page e2e tests rewritten for the single-engine picker.
+
+**P4. refactor: remove dead features and macOS leftovers**
+- D2 features + `_options` store + their protocol types; dead helpers (`_resume`, `_drop_pending`, `_audio_pause_on`, `nth_last_message`, `HOTKEYD_*`, `keymap.write_resolved`, `test_hotkeyd_contract.py`).
+- Redundant hook registrations (`idle_prompt`, duplicate matchers). Stale protocol/daemon docstrings.
+
+### Wave 3: correctness (TDD, each fix with a regression test)
+
+**P5. fix: config single source of truth**
+- `config_schema.py` (default, validator, live-apply per key) used by daemon, webui, CLI.
+- Persist only user-changed keys (M7) and no absolute earcon paths (M8), so new defaults reach existing installs.
+- Add `summary_settle_ms` default; `duck_level` fallback 30.
+- Earcons in sync (H2): add nav, nav_edge, session_change, summary_failed wavs; drop unused plan/ready; set-equality test against every `_earcon()` call.
+
+**P6. fix: speech pipeline never loses the last message**
+- `SessionChannel` API (`insert_at`, `truncate_pending`, `skip_to_end`) keeping the seeded/gen/has_decision rules; daemon stops editing `ch.items` directly (fixes the confirmed "rate change wipes the unread short turn" bug).
+- Rate/verbosity cues go through the control channel (F6).
+- #69: a background session's FLUSH no longer un-pauses the foreground voice (F1).
+- Parked short background digest can't resurrect an ended session (F2).
+- STOP also cancels settle timers, in-flight and parked digests (M3/F8).
+- Speaker cancel/abandon race (F4); router private-field writes replaced by methods (M13); `_replay` sets `has_decision` (L); preamble race (L).
+- Hook messages from one event sent on one connection, in order (`client.send_many`).
+
+**P7. fix: summary pipeline robustness**
+- Watchdog lands a hung digest slot (M1); summarizer timeout enforced for `.cmd` engines (F5); `_settle_fire` catch-all and the `_settle_gen` pop (L); `_pending_decision` overwrite (F7).
+- H1: daemon spawned with `cwd=~/.sonara`; `which('claude')` restricted to PATH, no bare-name fallback.
+
+**P8. fix: install, launcher and hooks**
+- H3/E6: install never leaves Sonara stopped on failure; guard when run from the deployed copy.
+- H4: settings.json hook template generated from `hooks/hooks.json` (+ set-equality test).
+- E1-E5: bootstrap/shim interpreter selection (uv Python PEP 668, Store `python` stub, PS 5.1, ASCII path record M14).
+- E7 (3 s hook block after shutdown), E8 (uninstall undone by next hook), E9 (console flashes from probes), #127 (`_copy_app` rename rollback), L-xml escaping, log rotation.
+
+**P9. fix: runtime edges**
+- Kokoro: download timeout outside the engine lock, status cue, cached failure (M2/E11, upstream #53); no bogus "Kokoro unavailable" on default installs (E12); `voices install` stops the daemon first and never deletes a working venv (E10).
+- WinRT synth lock (M9); preview doesn't cut live speech (M6); hotkey start failure logged and spoken (M4); single-instance mutex scoped to the user (M11); settings page rejects modifier-less hotkeys (E13); CLI errors instead of tracebacks (E18); D7.
+
+### Wave 4: structure
+
+**P10-P13. refactor: split `daemon.py`** (pure moves, suite green after each step)
+- P10: `daemon/` package; pure modules (`decision_text`, `platform/windows/process`, `install_record`, `lifecycle` so the client stops importing the daemon); `DigestReorderBuffer`; `setup_health`.
+- P11: `hotkeys`, `audio`, `cues`, `server`.
+- P12: `summary/pipeline`, `playback`.
+- P13: `handle_message` becomes table dispatch; per-session state registry replaces the 20 hand-written pops; tests move to public seams.
+
+**P14. refactor: installer out of cli.py**
+- `sonara/install/` (install, uninstall, copy-app, deps) and `install/claude_hooks.py` (from supervisor.py); `cli.py` becomes argparse only. Platform seam leaks fixed (ducking/pausing via `get_platform()`, transport Win32 code under `platform/windows/`).
+
+### Wave 5: embedding-ready and documented
+
+**P15. feat: protocol for embedded players**
+- `SUBSCRIBE` state stream (now playing, queue, paused, mute, volume) from `daemon/server.py`; STATUS returns the same snapshot.
+- `SPEAK` (text, source, tab) with queue-of-one semantics.
+- `PRISM_TAB_ID` passed through the hook as `host_tab`.
+- Golden test fixtures for cleaner/assembler text rules (for a later TypeScript port).
+
+**P16. docs: README, PRIVACY, architecture**
+- README rewrite (readme skill): current model (channels, last message only), settings page, Kokoro, accurate CLI list, one uninstall story.
+- PRIVACY: persisted digests and session files, Codex egress, contact.
+- `docs/architecture.md` (data flow, threads, persisted state, platform seam, protocol).
+
+## Out of scope
+
+PrismTerminal player and native port (phases 1-3), installer bundling of Python/Kokoro, macOS, upstream issues.
+
+## Verification
+
+Per PR: ruff, full suite, e2e when UI changes, deployed build smoke on this PC for user-facing changes. At the end: a fresh-eyes review workflow over the whole diff from 8d90005 and a re-run of the audit dimensions to confirm the finding list is closed.
