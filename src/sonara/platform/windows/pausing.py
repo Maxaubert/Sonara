@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 
 from sonara.paths import SONARA_DIR, ensure_sonara_dir
@@ -153,24 +154,37 @@ def _clear_state() -> None:
 
 def resume_from_state_file() -> None:
     """Daemon-startup crash sweep: if a prior daemon died mid-pause, resume any
-    live SMTC session whose app id matches a recorded entry, then delete the
-    file. Best-effort; never raises."""
+    live SMTC session whose app id matches a recorded entry. Like the duck
+    sweep (#131), the record is only dropped once it is done: apps whose
+    resume failed stay in the file for the next sweep, and if the sessions
+    cannot be listed at all the file is kept untouched (L-pause-state). An
+    app with no live session is dropped: it is gone. Never raises."""
     try:
         with open(_PAUSE_STATE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception:  # noqa: BLE001 - no/unreadable state -> nothing to resume
         return
+    failed = []
     try:
-        wanted = set(data.get("apps", []))
+        wanted = list(data.get("apps", []))
         if wanted:
             mgr = _session_manager()
             for s in _sessions(mgr):
                 try:
-                    if _app_id(s) in wanted:
-                        _play(s)
-                except Exception:  # noqa: BLE001
+                    app = _app_id(s)
+                except Exception:  # noqa: BLE001 - unidentifiable: not ours
                     continue
-    except Exception:  # noqa: BLE001
-        pass
-    finally:
+                if app not in wanted:
+                    continue
+                try:
+                    _play(s)
+                except Exception:  # noqa: BLE001 - kept for the next sweep
+                    failed.append(app)
+    except Exception as exc:  # noqa: BLE001 - keep the record untouched
+        print("[pause] startup resume could not list sessions: {0!r}".format(exc),
+              file=sys.stderr, flush=True)
+        return
+    if failed:
+        _write_state(failed)
+    else:
         _clear_state()

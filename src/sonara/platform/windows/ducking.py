@@ -208,7 +208,13 @@ def _restore_records(records):
     by_name = {r["name"]: r for r in records if r.get("name")}
     done, failed = set(), []
     for s in _all_sessions():
-        rec = by_pid.get(s.ProcessId) or by_name.get(_session_name(s))
+        name = _session_name(s)
+        rec = by_pid.get(s.ProcessId)
+        if (rec is not None and rec.get("name") and name
+                and rec["name"].lower() != name.lower()):
+            rec = None   # L-duck-pid: a reused pid belongs to another app now
+        if rec is None:
+            rec = by_name.get(name)
         if rec is None or id(rec) in done:
             continue
         try:

@@ -94,3 +94,37 @@ def test_null_pauser_is_noop():
     assert n.is_paused() is False
     n.pause(); n.resume()                         # no error, no state
     assert n.is_paused() is False
+
+
+# --- L-pause-state: keep the record when the resume sweep fails (cf. #131) --
+
+def test_resume_from_state_file_keeps_state_when_smtc_is_unavailable(monkeypatch, tmp_path):
+    state = tmp_path / "pause_state.json"
+    state.write_text(json.dumps({"apps": ["spotify"]}), encoding="utf-8")
+    monkeypatch.setattr(pausing, "_PAUSE_STATE", state)
+
+    def no_smtc():
+        raise RuntimeError("SMTC manager unavailable")
+    monkeypatch.setattr(pausing, "_session_manager", no_smtc)
+    pausing.resume_from_state_file()            # never raises
+    assert json.loads(state.read_text(encoding="utf-8")) == {"apps": ["spotify"]}
+
+
+def test_resume_from_state_file_keeps_only_the_apps_that_failed(monkeypatch, tmp_path):
+    state = tmp_path / "pause_state.json"
+    state.write_text(json.dumps({"apps": ["spotify", "vlc"]}), encoding="utf-8")
+    spotify = _FakeSession("spotify", False)
+    vlc = _FakeSession("vlc", False)
+    monkeypatch.setattr(pausing, "_PAUSE_STATE", state)
+    monkeypatch.setattr(pausing, "_session_manager", lambda: object())
+    monkeypatch.setattr(pausing, "_sessions", lambda mgr: [spotify, vlc])
+    monkeypatch.setattr(pausing, "_app_id", lambda s: s.app_id)
+
+    def play(s):
+        if s.app_id == "vlc":
+            raise OSError("busy")
+        s.played = True
+    monkeypatch.setattr(pausing, "_play", play)
+    pausing.resume_from_state_file()
+    assert spotify.played is True
+    assert json.loads(state.read_text(encoding="utf-8")) == {"apps": ["vlc"]}
