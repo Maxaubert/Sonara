@@ -2454,6 +2454,18 @@ def resolve_earcons(bundled: dict, overrides) -> dict:
     return out
 
 
+def resolve_earcons(bundled: dict, overrides) -> dict:
+    """The earcon map the speaker plays: the bundled set, resolved from the
+    running package on every start, with the user's own wavs (config
+    "earcons") on top. Never stored back into config, so new bundled kinds
+    reach every install (#136, audit M8)."""
+    out = dict(bundled)
+    if isinstance(overrides, dict):
+        out.update({k: v for k, v in overrides.items()
+                    if isinstance(v, str) and v})
+    return out
+
+
 def main() -> None:
     from sonara.platform.windows import process as _process
     _process.arm_faulthandler()
