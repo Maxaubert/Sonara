@@ -273,14 +273,14 @@ def resolve_python_windows() -> "str | None":
 
 def kill_stray_daemons(runner=None) -> int:
     """Terminate any `-m sonara.daemon` processes still alive after the socket
-    owner died (#65). SHUTDOWN only reaches the lockfile/socket owner; a
+    owner died (#65), and any supervisor loop that would restart one (E14). SHUTDOWN only reaches the lockfile/socket owner; a
     split-brain survivor (an older daemon that lost the socket race but still
     holds the global hotkeys) outlives every `sonara shutdown` and keeps
     swallowing hotkey presses - mute appears broken. Best-effort: returns the
     number of processes killed, 0 on any failure."""
     script = (
         "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-        "Where-Object { $_.CommandLine -match 'sonara[.]daemon' } | "
+        "Where-Object { $_.CommandLine -match 'sonara[.]daemon|supervisor_loop' } | "
         "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; "
         "$_.ProcessId }")
     run = runner or (lambda argv: subprocess.run(

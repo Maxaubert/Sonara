@@ -84,7 +84,12 @@ def install() -> int:
     #     lazily respawning the daemon mid-install. It is cleared whether the
     #     steps below succeed or fail (E6): a failed install that left it in
     #     place kept Sonara off with no cue.
-    service.stop_sonara(sup)
+    if not service.stop_sonara(sup):
+        # A daemon that will not go (wedged, and the kill sweep failed)
+        # would run from the tree being replaced (#166).
+        service.clear_stop_sentinel()
+        service.print_not_stopped()
+        return 1
     try:
         app_dir = install_runtime(sup, python, py_ver, plugin_root)
     finally:
@@ -129,7 +134,11 @@ def uninstall() -> int:
     # STOP everything FIRST (#23): the old order deleted the task definition and
     # files while the supervisor/daemon kept running (and kept respawning from a
     # deleted install).
-    service.stop_sonara(sup)
+    restore = service.stopped_state_restorer()
+    if not service.stop_sonara(sup):
+        restore()
+        service.print_not_stopped()
+        return 1
     sup.uninstall()
     try:
         plat.hotkey.uninstall()

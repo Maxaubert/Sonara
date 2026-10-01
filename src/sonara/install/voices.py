@@ -22,7 +22,10 @@ def install_voices() -> int:
     # created: a failed re-run or upgrade keeps the one that worked.
     existed = kp.neural_enabled()
     restore = service.stopped_state_restorer()
-    service.stop_sonara()
+    if not service.stop_sonara():
+        restore()
+        service.print_not_stopped()
+        return 1
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
         # Pass the running package's root as PYTHONPATH so predownload_model can
@@ -75,7 +78,13 @@ def uninstall_voices() -> int:
     if app_copy.resolve_plugin_root() is None:
         app_copy.print_no_plugin_root()
         return 1
-    service.stop_sonara()
+    restore = service.stopped_state_restorer()
+    if not service.stop_sonara():
+        # Deleting under a live daemon hit its locked pythonw and left a
+        # half-deleted venv plus a traceback (#166).
+        restore()
+        service.print_not_stopped()
+        return 1
     try:
         kp.uninstall_kokoro()
         rc = installer.install()  # neural_enabled() now False -> reverts to resolve_python()
