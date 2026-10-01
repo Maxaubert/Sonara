@@ -87,3 +87,46 @@ def test_owner_gets_the_handle(monkeypatch):
     monkeypatch.setattr(os, "name", "nt")
     assert transport.acquire_singleton_mutex(
         "n", kernel32=_K32(99), last_error=lambda: 0) == 99
+
+
+# ---------------------------------------------------------------------------
+# v1 -> v2 rename: a surviving 0.6.6 daemon still excludes a new one
+# ---------------------------------------------------------------------------
+
+class _K32Legacy(_K32):
+    def __init__(self, handle, legacy):
+        super().__init__(handle)
+        self._legacy = legacy
+        self.opened = []
+
+    def OpenMutexW(self, access, inherit, name):
+        self.opened.append(name)
+        return self._legacy
+
+
+def test_a_surviving_v1_daemon_excludes_the_default_mutex(monkeypatch):
+    """The old fixed v1 name and the per-user v2 name do not exclude each
+    other: a 0.6.6 daemon that survived an upgrade must still keep a second
+    daemon from starting (the 'daemon explosion')."""
+    monkeypatch.setattr(os, "name", "nt")
+    k = _K32Legacy(99, legacy=555)
+    assert transport.acquire_singleton_mutex(
+        kernel32=k, last_error=lambda: 0) is None
+    assert k.opened == [transport.LEGACY_MUTEX_NAME]
+    assert 99 in k.closed and 555 in k.closed
+
+
+def test_no_v1_daemon_keeps_the_default_mutex(monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    k = _K32Legacy(99, legacy=0)          # OpenMutexW: not found / no access
+    assert transport.acquire_singleton_mutex(
+        kernel32=k, last_error=lambda: 0) == 99
+    assert k.closed == []
+
+
+def test_an_explicit_name_skips_the_v1_probe(monkeypatch):
+    monkeypatch.setattr(os, "name", "nt")
+    k = _K32Legacy(99, legacy=555)
+    assert transport.acquire_singleton_mutex(
+        "n", kernel32=k, last_error=lambda: 0) == 99
+    assert k.opened == []

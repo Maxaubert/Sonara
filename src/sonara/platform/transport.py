@@ -124,6 +124,10 @@ def acquire_singleton(path):
 # on process death. This is the AUTHORITATIVE single-instance guard on Windows.
 _MUTEX_PREFIX = "Global\\Sonara-Daemon-Singleton-v2-"
 _ERROR_ALREADY_EXISTS = 183
+# The fixed name 0.6.6 and earlier held. It does not exclude the v2 name, so a
+# daemon that survived an upgrade is probed by it for one release.
+LEGACY_MUTEX_NAME = "Global\\Sonara-Daemon-Singleton-v1"
+_SYNCHRONIZE = 0x00100000
 
 
 def singleton_mutex_name(sonara_dir) -> str:
@@ -151,12 +155,14 @@ def acquire_singleton_mutex(name=None, kernel32=None, last_error=None):
     it (the byte-lock remains the guard there)."""
     if os.name != "nt":
         return True
+    probe_legacy = name is None
     if name is None:
         name = default_mutex_name()
     if kernel32 is None:
         import ctypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.OpenMutexW.restype = ctypes.c_void_p
         kernel32.CloseHandle.argtypes = [ctypes.c_void_p]   # 64-bit handles
         last_error = ctypes.get_last_error
     handle = kernel32.CreateMutexW(None, True, name)   # bInitialOwner=True
@@ -166,7 +172,21 @@ def acquire_singleton_mutex(name=None, kernel32=None, last_error=None):
     if err == _ERROR_ALREADY_EXISTS:
         kernel32.CloseHandle(handle)
         return None
+    if probe_legacy and _legacy_mutex_held(kernel32):
+        kernel32.CloseHandle(handle)
+        return None
     return handle
+
+
+def _legacy_mutex_held(kernel32) -> bool:
+    """True when an older daemon (0.6.6 or earlier) still holds the v1 name.
+    Another user's v1 daemon is access-denied, so it reads as absent, which
+    is the per-user scoping M11 wants anyway."""
+    legacy = kernel32.OpenMutexW(_SYNCHRONIZE, False, LEGACY_MUTEX_NAME)
+    if not legacy:
+        return False
+    kernel32.CloseHandle(legacy)
+    return True
 
 
 def release_singleton_mutex(handle) -> None:
