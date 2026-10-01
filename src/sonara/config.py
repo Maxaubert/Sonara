@@ -49,6 +49,16 @@ class Config(dict):
         self.explicit.discard(key)
         return super().pop(key, *default)
 
+    def update(self, *args, **kwargs):
+        # dict.update bypasses __setitem__, so route it through.
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
 
 def _deep_merge(base: dict, override: dict) -> dict:
     """Return a new dict: override applied onto base, recursing into nested dicts."""

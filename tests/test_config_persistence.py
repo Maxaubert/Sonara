@@ -68,6 +68,20 @@ def test_explicit_set_to_the_default_value_is_kept(cfg_path):
     assert _user_keys(cfg_path) == {"duck_level": 30, "rate": 220}
 
 
+def test_update_and_setdefault_mark_keys_explicit(cfg_path):
+    # Every dict write path counts as a user set, not only cfg[key] = value.
+    cfg = config.load_config()
+    cfg.update({"duck_level": 30}, rate=config.DEFAULTS["rate"])
+    del cfg["volume"]
+    cfg.setdefault("volume", config.DEFAULTS["volume"])
+    config.save_config(cfg)
+    assert _user_keys(cfg_path) == {
+        "duck_level": 30,
+        "rate": config.DEFAULTS["rate"],
+        "volume": config.DEFAULTS["volume"],
+    }
+
+
 def test_new_default_reaches_a_config_saved_by_this_version(cfg_path, monkeypatch):
     cfg = config.load_config()
     cfg["rate"] = 250
