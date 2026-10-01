@@ -21,7 +21,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - The daemon runs the deployed copy in `~/.sonara/app/sonara`, NOT the repo. Before diagnosing behaviour: `diff -rq ~/.sonara/app/sonara src/sonara`. Python caches modules, so a redeploy needs a daemon restart.
 - Safe redeploy (from the repo or a worktree):
   1. `PYTHONPATH=src python -m sonara.cli shutdown`, then wait until no `pythonw.exe` remains.
-  2. `PYTHONPATH=src python -c "from sonara.cli import _copy_app; _copy_app(r'<repo>')"`
+  2. `PYTHONPATH=src python -c "from sonara.install.app_copy import copy_app; copy_app(r'<repo>')"`
   3. If only `sonara.old` / `sonara.new` remain (#127), rename `sonara.new` to `sonara`.
   4. `PYTHONPATH=~/.sonara/app python -m sonara.cli start` (starting with `PYTHONPATH=src` runs the REPO copy).
 - Hooks run through Git Bash: `bin/sonara-hook-run` picks the interpreter (`~/.sonara/python.path`, then a non-Store PATH python, then `py -3`) and runs `bin/sonara-hook` on it. `bin/sonara-hook.cmd` is not used by `hooks/hooks.json`. settings.json installs get exec-form hooks generated from `hooks/hooks.json`.
@@ -33,17 +33,18 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - `assembler.py`, `cleaner.py`: text to spoken items. `summarizer.py`: `claude -p` / `codex exec` digests.
 - Persisted state under `~/.sonara`, every path via `paths.py`: history, sessions, session prefs, digests.
 - Settings: one table in `config_schema.py` (default, validator, page path, live-apply hook) feeds config DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys (pre-#136 full dumps: values equal to a current or past default count as unset). Bundled earcons resolve at runtime, never stored.
-- `platform/`: OS seam (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = install, autostart, hooks).
-- `webui.py` + `settings.html`: token-protected settings page. `cli.py`: CLI verbs, install, doctor. `install_record.py`: install.json. `platform/windows/process.py`: daemon process hardening. `kokoro*.py`: neural voices.
+- `platform/`: OS seam. `get_platform()` gives the backends (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = autostart task, launcher, stray-daemon sweep); `daemon_process()` gives `windows/process.py` (faulthandler, priority, VC preload, single-instance guard from `windows/singleton.py`) before any backend loads. `transport.py` is OS-free TCP + lockfile.
+- `install/` (#142): `installer` (install, uninstall), `app_copy` (plugin root, runtime copy), `deps` (daemon interpreter, PyWinRT), `service` (stop/start around file changes), `voices`, `cleanup`, `doctor`, `claude_hooks` (settings.json hooks generated from `hooks/hooks.json`; the Windows supervisor calls it). Modules call each other via module attributes: tests patch the owning module, and the platform via `sonara.platform.get_platform`.
+- `webui.py` + `settings.html`: token-protected settings page. `cli.py`: argparse + thin command functions only. `install_record.py`: install.json. `kokoro*.py`: neural voices.
 
 ## Product rules
 - One message, always the last: Sonara reads the latest turn; Up restarts it. Nothing may silently drop it.
 - Never leave other apps ducked or paused.
 
 ## Conventions
-- Core stays OS-free: no win32 imports outside `platform/windows` (`test_no_os_branch_in_core.py`).
+- Core stays OS-free: no `sys.platform`/`os.name` branch, win32 import or `platform.windows` import outside `platform/` (`test_no_os_branch_in_core.py` covers `daemon/`, `install/`, `webui.py`, `cli.py`).
 - Python 3.9 syntax (`test_py39_compat.py`), `from __future__ import annotations`.
-- Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test).
+- Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
 - No em-dashes in user-facing text.
 - Current work plan: `docs/plans/phase0-plan.md`. Historical specs, plans and audits: `docs/history/`.
