@@ -2,6 +2,7 @@
 re-run install() so the daemon moves onto (or off) its interpreter."""
 from __future__ import annotations
 
+import os
 import sys
 
 from sonara import paths
@@ -40,9 +41,18 @@ def install_voices() -> int:
         if isinstance(exc, Exception):
             print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
         if existed:
-            if isinstance(exc, Exception):
+            # provision() rebuilds a venv whose python cannot start, so a
+            # failed rebuild may have removed (or half-removed) it already.
+            if not isinstance(exc, Exception):
+                pass  # Ctrl+C: re-raised below, no message
+            elif os.path.exists(paths.kokoro_venv_python()):
                 print("Kept your existing neural voices in {0}.".format(
                     paths.KOKORO_VENV), file=sys.stderr)
+            else:
+                print("The neural voices in {0} could not be rebuilt and are "
+                      "gone. Run 'sonara voices uninstall' to switch back to "
+                      "the built-in voices, or try 'sonara voices install' "
+                      "again.".format(paths.KOKORO_VENV), file=sys.stderr)
         else:
             try:
                 kp.uninstall_kokoro()
