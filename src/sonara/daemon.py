@@ -1170,8 +1170,11 @@ class SpeechDaemon:
         if getattr(self, "_hotkey_failure_announced", False):
             return
         self._hotkey_failure_announced = True
-        self._speak_cue(None, "Sonara hotkeys could not start. Run sonara "
-                        "doctor to see why.", exempt_mute=True, pause_exempt=True)
+        # Off-lock caller (start/reload): the cue reslices CONTROL, take the lock.
+        with self._lock:
+            self._speak_cue(None, "Sonara hotkeys could not start. Run sonara "
+                            "doctor to see why.", exempt_mute=True,
+                            pause_exempt=True)
 
     def _announce_hotkey_collisions(self, collisions) -> None:
         """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
@@ -1185,10 +1188,11 @@ class SpeechDaemon:
         names = ", ".join(sorted(str(c.get("action", "?")) for c in collisions))
         print("[hotkeys] failed to register: {0}".format(names),
               file=sys.stderr, flush=True)
-        self._speak_cue(None,
-                        "Some Sonara hotkeys are held by another program. "
-                        "Restarting Sonara may fix it.",
-                        exempt_mute=True, pause_exempt=True)
+        with self._lock:                   # called off-lock from _start_hotkeys
+            self._speak_cue(None,
+                            "Some Sonara hotkeys are held by another program. "
+                            "Restarting Sonara may fix it.",
+                            exempt_mute=True, pause_exempt=True)
 
     def _stop_hotkeys(self) -> None:
         from sonara.platform import get_platform
@@ -2252,8 +2256,11 @@ class SpeechDaemon:
         if not voice:
             return False
         text = "This is {0} speaking for Sonara.".format(voice)
-        self._speak_cue(None, text, exempt_mute=True, pause_exempt=True,
-                        cue_key="voice_preview", voice=str(voice))
+        # HTTP requests run on their own threads: _speak_cue reslices CONTROL
+        # and allocates an id, which the speak loop does under the lock too.
+        with self._lock:
+            self._speak_cue(None, text, exempt_mute=True, pause_exempt=True,
+                            cue_key="voice_preview", voice=str(voice))
         return True
 
     def _duck_exclude_pids(self) -> "set[int]":
