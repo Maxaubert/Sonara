@@ -12,7 +12,7 @@ import pytest
 import sonara.daemon as daemon_module
 from sonara import summarizer
 from sonara.protocol import MsgType, PROTOCOL_VERSION
-from tests.daemon_helpers import make_daemon
+from tests.daemon_helpers import locked_call, make_daemon
 
 _PAD = "This filler sentence carries the turn well past the digest threshold. "
 
@@ -183,10 +183,11 @@ def test_settle_fire_failure_never_loses_the_question(monkeypatch):
 def test_a_raising_release_does_not_strand_later_slots(monkeypatch):
     daemon, speaker = _daemon(monkeypatch)
     ran = []
-    s0, s1, s2 = (daemon._digests.alloc() for _ in range(3))
-    daemon._digests.land(s2, lambda: ran.append(2))
-    daemon._digests.land(s1, lambda: (_ for _ in ()).throw(RuntimeError("x")))
-    daemon._digests.land(s0, lambda: ran.append(0))
+    s0, s1, s2 = (locked_call(daemon, daemon._digests.alloc) for _ in range(3))
+    locked_call(daemon, daemon._digests.land, s2, lambda: ran.append(2))
+    locked_call(daemon, daemon._digests.land, s1,
+                lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    locked_call(daemon, daemon._digests.land, s0, lambda: ran.append(0))
     assert ran == [0, 2]
     assert daemon._digests.parked == {}
 
@@ -300,7 +301,8 @@ def test_watchdog_arm_failure_still_reports_the_digest_in_flight(monkeypatch):
 
     monkeypatch.setattr(daemon._summary, "schedule_digest_watchdog", boom)
     daemon.handle_message(_prose("a", "Report alpha. " + _PAD * 6))
-    assert daemon._summary.maybe_summarize("a") is True  # the worker is already out
+    # the worker is already out
+    assert locked_call(daemon, daemon._summary.maybe_summarize, "a") is True
     assert len(calls) == 1
 
 

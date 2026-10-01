@@ -31,3 +31,10 @@ jobs:
         run: ruff check src tests
       - name: Unit tests
         run: python -m pytest -q
+      # The daemon's lock-discipline asserts (daemon/core.py) are off in
+      # production; one run with them on catches a caller that forgot the lock.
+      - name: Unit tests with lock checks
+        if: matrix.python == '3.12'
+        env:
+          SONARA_DEBUG_LOCKS: "1"
+        run: python -m pytest -q

@@ -5,7 +5,7 @@ left other sessions' landed or reorder-parked digests holding the floor, so a
 flush chimed success and a handoff started reading seconds later anyway."""
 from sonara.protocol import MsgType, PROTOCOL_VERSION
 from sonara.queue import SpeechItem
-from tests.daemon_helpers import make_daemon
+from tests.daemon_helpers import locked_call, make_daemon
 
 
 def _flush(daemon, session="fg"):
@@ -126,7 +126,7 @@ def test_flush_lands_parked_reorder_digests_dead():
     daemon._digests.parked[1] = lambda: ran.append(1)   # completed, waiting on seq 0
     _flush(daemon)
     assert speaker.earcons[-1] == "nav"      # killing it counts as success
-    daemon._digests.land(0, None)             # the earlier slot finally releases
+    locked_call(daemon, daemon._digests.land, 0, None)  # the earlier slot releases
     assert ran == []                         # the parked digest never speaks
 
 
