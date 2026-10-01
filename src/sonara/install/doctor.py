@@ -1,5 +1,5 @@
 """`sonara doctor`: the health-check rows, from the platform backend plus the
-portable checks (Sonara dir, daemon socket, hooks, keymap, summary command,
+portable checks (version, Sonara dir, daemon socket, hooks, keymap, summary command,
 neural voices, Chatterbox leftovers, Python, the deployed copy)."""
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ def doctor() -> list:
     results.extend(plat.hotkey.doctor_rows())
 
     # Neutral rows (portable, keep inline).
+    results.append(version_row())
     try:
         paths.ensure_sonara_dir()
         writable = os.access(str(paths.SONARA_DIR), os.W_OK)
@@ -121,6 +122,21 @@ def doctor() -> list:
         results.append(("plugin path resolved", False, f"error: {exc}"))
 
     return results
+
+
+def version_row() -> tuple:
+    """This copy's version, plus the one install.json recorded when they
+    differ (a deploy that did not take). Informational: never a FAIL."""
+    import sonara
+    mine = sonara.__version__
+    try:
+        installed = (install_record.read() or {}).get("plugin_version")
+    except Exception:  # noqa: BLE001 - doctor must never raise
+        installed = None
+    if installed and installed != mine:
+        return ("version", True, "{0} (install.json records {1})".format(
+            mine, installed))
+    return ("version", True, mine)
 
 
 def neural_voices_row() -> tuple:

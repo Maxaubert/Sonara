@@ -302,3 +302,21 @@ def test_doctor_output_survives_a_narrow_console_encoding(monkeypatch):
     assert cli._cmd_doctor(None) == 1
     out.flush()
     assert b"AltGr" in raw.getvalue()
+
+
+def test_doctor_reports_the_sonara_version():
+    # D2: CLAUDE.md's "Confirm version" step names doctor.
+    import sonara
+    _, patches = _patches(install_record={"app_path": "/a",
+                                          "plugin_version": sonara.__version__})
+    ok, detail = _as_dict(_run(patches))["version"]
+    assert ok is True and detail == sonara.__version__
+
+
+def test_doctor_version_row_flags_a_different_installed_copy():
+    import sonara
+    _, patches = _patches(install_record={"app_path": "/a",
+                                          "plugin_version": "0.0.1"})
+    ok, detail = _as_dict(_run(patches))["version"]
+    assert ok is True                       # informational, never a FAIL
+    assert sonara.__version__ in detail and "0.0.1" in detail

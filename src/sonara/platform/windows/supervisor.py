@@ -306,6 +306,16 @@ def _local_bin_dir() -> str:
     return os.path.join(os.path.expanduser("~"), ".local", "bin")
 
 
+def _on_path(folder: str) -> bool:
+    """True if *folder* is one of the PATH entries (case and trailing
+    separators ignored)."""
+    def norm(p):
+        p = p.strip().strip('"')
+        return os.path.normcase(os.path.normpath(p)) if p else ""
+    want = norm(folder)
+    return any(norm(p) == want for p in os.environ.get("PATH", "").split(os.pathsep))
+
+
 def _console_python(pythonw: str) -> str:
     """python.exe sibling of pythonw.exe (console interpreter, for the CLI launcher)."""
     cand = pythonw.replace("pythonw.exe", "python.exe")
@@ -501,6 +511,14 @@ class WinSupervisorBackend(SupervisorBackend):
         # voice.md, ...), so the /sonara:* slash commands now work on Windows too.
         print("  - Enable the 'sonara' plugin for its /sonara:* slash commands "
               "(optional; speech and hotkeys work without it).")
+        # D3: install writes sonara.cmd to ~/.local/bin and never edits PATH.
+        bin_dir = _local_bin_dir()
+        if not _on_path(bin_dir):
+            print("  - The 'sonara' command is in {0}, which is not on your "
+                  "PATH. Add that folder to your user Path (Start > 'Edit "
+                  "environment variables for your account'), then open a new "
+                  "terminal; until then run {1}.".format(
+                      bin_dir, os.path.join(bin_dir, "sonara.cmd")))
 
     def hooks_doctor_row(self) -> tuple:
         """The Claude Code hooks row (sonara.install.claude_hooks)."""
