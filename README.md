@@ -103,8 +103,27 @@ commands inside a session.
 
 ### Global hotkeys
 
-Default modifier is **Ctrl+Alt** (rebindable via `~/.sonara/keymap.json`). The daemon
-registers these as Windows global hotkeys, so no extra accessibility permission is needed.
+Default modifier is **Ctrl+Alt** (rebind on the settings page or in
+`~/.sonara/keymap.json`). The daemon registers these as Windows global hotkeys, so no
+extra accessibility permission is needed. A hotkey must include Ctrl, Alt or Win.
+
+> **New in 0.7.0:** the defaults are unchanged from 0.6.x, so there are no keys to
+> relearn. The settings page's Hotkeys tab has a **Reset hotkeys to defaults** button
+> (or run `sonara keymap --reset`), Home/End/PageUp/PageDown can be bound, and chords
+> with the Win key work.
+
+**European keyboard layouts:** Windows sends AltGr as Ctrl+Alt, so on layouts with AltGr
+characters (German, Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character
+away: with Ctrl+Alt+M bound to mute, AltGr+M no longer types µ. `sonara doctor` names
+each clashing hotkey and the character it eats in a **[warn] AltGr** row, and the
+settings page shows the same warning next to the binding. The fix is to rebind that key
+with Win, for example to Win+Alt+Home/End or Ctrl+Win+Up/Down. Resetting to the defaults
+does not help, since they use Ctrl+Alt.
+
+**Keys Windows already owns:** Windows 11 and Game Bar hold Win+Alt+Up/Down/M/P and
+others (Win+Alt+B/D/G/K/R/T, digits), so Win+Alt was not made the default. If another
+app already holds a chord, `sonara doctor` reports it in its **hotkey chords** row;
+rebind that action on the settings page.
 
 **European keyboard layouts:** Windows sends AltGr as Ctrl+Alt, so on layouts with AltGr
 characters (German, Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character
@@ -154,7 +173,7 @@ Day-to-day tuning (voice, rate, summaries, audio, sessions, hotkeys) lives in th
 
 CLI-only (no slash command): `sonara status`, `verbosity`, `voice`, `voices`
 (install/remove Kokoro), `rate`, `minqueue`, `summary`,
-`audio-mode`, `duck-level`, `keymap`, `repeat`, `skip`, `stop`, `shutdown`, `cleanup`.
+`audio-mode`, `duck-level`, `keymap` (`--reset` restores the default hotkeys), `repeat`, `skip`, `stop`, `shutdown`, `cleanup`.
 
 ## Verbosity
 

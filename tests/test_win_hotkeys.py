@@ -223,8 +223,26 @@ def test_doctor_row_names_the_eaten_character_and_the_fix(monkeypatch):
                         lambda resolved, to_char=None: [("mute", "Ctrl+Alt+M", "\u00b5")])
     rows = {r[0]: r for r in hk.doctor_rows()}
     ok, detail = rows["AltGr"][1:]
-    assert ok is False
     assert "Ctrl+Alt+M" in detail and "\u00b5" in detail and "settings" in detail
+
+
+def test_altgr_collision_is_a_warning_naming_every_chord_and_the_rebind_fix(monkeypatch):
+    """#160: an AltGr clash is a warning, not a failure: Sonara works, the user
+    just loses a character. The row names each chord, its character, and the
+    fix: rebind with Win. The defaults are Ctrl+Alt, so a reset never helps
+    and must not be offered as a fix."""
+    from sonara.platform.base import DOCTOR_WARN
+    hk = WinHotkeyBackend()
+    monkeypatch.setattr(hk, "altgr_conflicts", lambda resolved, to_char=None: [
+        ("mute", "Ctrl+Alt+M", "\u00b5"), ("next_session", "Ctrl+Alt+P", "\u03c0")])
+    rows = {r[0]: r for r in hk.doctor_rows()}
+    ok, detail = rows["AltGr"][1:]
+    assert ok == DOCTOR_WARN
+    assert "Ctrl+Alt+M" in detail and "\u00b5" in detail
+    assert "Ctrl+Alt+P" in detail and "\u03c0" in detail
+    assert "rebind" in detail.lower() and "Win" in detail
+    assert "--reset" not in detail
+    assert "defaults use Ctrl+Alt" in detail
 
 
 def test_doctor_row_ok_without_conflicts(monkeypatch):

@@ -14,7 +14,14 @@ def test_mod_masks_are_registerhotkey_fsmodifiers():
 
 
 def test_default_mods_is_ctrl_alt():
+    # #160: Win+Alt was reverted (Windows owns Win+Alt+arrows/M/P). Ctrl+Alt
+    # stays, and an AltGr clash is a warning that asks for a rebind.
     assert wk.DEFAULT_MODS == ["ctrl", "alt"]
+
+
+def test_home_end_and_page_keys_are_bindable():
+    assert wk.KEY_CODES["home"] == 0x24 and wk.KEY_CODES["end"] == 0x23
+    assert wk.KEY_CODES["pageup"] == 0x21 and wk.KEY_CODES["pagedown"] == 0x22
 
 
 def test_arrow_key_vk_codes():

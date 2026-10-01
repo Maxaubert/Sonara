@@ -43,8 +43,17 @@ def test_action_messages_faster_has_delta_25():
 
 def test_default_keymap_windows_uses_ctrl_alt(win):
     d = keymap.default_keymap()
-    assert d["nav_start"]["mods"] == ["ctrl", "alt"]
+    assert all(b["mods"] == ["ctrl", "alt"] for b in d.values())
     assert d["mute"]["key"] == "m"
+
+
+def test_defaults_are_the_0_6_bindings(win):
+    # #160 (user decision 2026-10-02): Win+Alt was tried and reverted, since
+    # Windows owns Win+Alt+Up/Down/M/P (RegisterHotKey returned 1409 for all
+    # four). The defaults stay Ctrl+Alt+Up/Down/M/P, so nobody relearns keys.
+    d = keymap.default_keymap()
+    assert {a: b["key"] for a, b in d.items()} == {
+        "nav_start": "up", "flush": "down", "mute": "m", "next_session": "p"}
 
 
 # --- resolve_keymap ---------------------------------------------------------
@@ -159,7 +168,7 @@ def test_load_keymap_drops_unknown_actions(monkeypatch, tmp_path):
 
 def test_removed_paragraph_nav_actions_are_gone():
     # D1: Ctrl+Alt+Left/Right paragraph stepping was removed (one message,
-    # always the last). Up (nav_start) is the only nav action.
+    # always the last). Restart (nav_start) is the only nav action.
     for action in ("nav_prev", "nav_next"):
         assert action not in keymap.ACTION_MESSAGES
         assert action not in keymap.default_keymap()
@@ -250,6 +259,45 @@ def test_nav_start_and_flush_default_to_up_and_down():
     km = keymap.default_keymap()
     assert km["nav_start"]["key"] == "up"
     assert km["flush"]["key"] == "down"
+
+
+def test_existing_keymap_file_keeps_its_ctrl_alt_bindings(win, monkeypatch, tmp_path):
+    # #160: loading never rewrites an existing install's bindings. A
+    # keymap.json materialized by an earlier install keeps what it holds.
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    old = {"nav_start": {"key": "up", "mods": ["ctrl", "alt"]},
+           "flush": {"key": "down", "mods": ["ctrl", "alt"]},
+           "mute": {"key": "m", "mods": ["ctrl", "alt"]},
+           "next_session": {"key": "p", "mods": ["ctrl", "alt"]}}
+    km.write_text(json.dumps(old), encoding="utf-8")
+    keymap.migrate_default_chord()                     # daemon start runs it
+    loaded = keymap.load_keymap()
+    for action, binding in old.items():
+        assert loaded[action] == binding
+
+
+def test_reset_keymap_restores_the_defaults(win, monkeypatch, tmp_path):
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "mute": {"key": "m", "mods": ["ctrl", "alt"]},
+        "faster": {"key": "f", "mods": ["ctrl", "alt"]},
+        "nav_start": {"key": None, "mods": []}}), encoding="utf-8")
+    keymap.reset_keymap()
+    assert keymap.load_keymap() == keymap.default_keymap()
+    assert json.loads(km.read_text(encoding="utf-8")) == keymap.default_keymap()
+
+
+def test_migrate_legacy_chord_never_lands_on_a_windows_shortcut(win, monkeypatch, tmp_path):
+    # A pre-Ctrl+Alt keymap (Ctrl+Shift+Alt+Up) upgrades to Ctrl+Alt+Up, the
+    # default chord; never to Win+Alt+Up, which Windows owns (#160).
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({"nav_start": {"key": "up", "mods": ["ctrl", "shift", "alt"]},
+                              "next_session": {"key": "p", "mods": ["ctrl", "shift", "alt"]}}),
+                  encoding="utf-8")
+    assert keymap.migrate_default_chord() is True
+    user = json.loads(km.read_text(encoding="utf-8"))
+    assert user["nav_start"] == {"key": "up", "mods": ["ctrl", "alt"]}
+    assert user["next_session"] == {"key": "p", "mods": ["ctrl", "alt"]}
 
 
 def test_left_and_right_are_free_by_default():

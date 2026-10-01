@@ -6,6 +6,11 @@ from __future__ import annotations
 import abc
 from dataclasses import dataclass
 
+# A doctor row is (check, ok, detail). ok is True, False, or DOCTOR_WARN: a
+# warning `sonara doctor` prints as [warn] without failing its exit code
+# (#160: an AltGr clash costs a character, Sonara itself still works).
+DOCTOR_WARN = "warn"
+
 
 class TtsBackend(abc.ABC):
     @abc.abstractmethod
@@ -96,6 +101,12 @@ class HotkeyBackend(abc.ABC):
 
     def doctor_rows(self) -> "list":
         """Platform hotkey diagnostics (collisions, integrity). Default: none."""
+        return []
+
+    def altgr_conflicts(self, resolved: list, to_char=None) -> "list":
+        """[(action, combo label, character)] for each resolved binding that
+        an AltGr key types a character with on the current keyboard layout
+        (E16). Default: none (no AltGr concept on this platform)."""
         return []
 
 

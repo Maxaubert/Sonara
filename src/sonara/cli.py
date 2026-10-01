@@ -172,6 +172,18 @@ def _combo_label(modifiers: int, key_code: int) -> str:
 def _cmd_keymap(args) -> int:
     action = getattr(args, "action", None)
     value = getattr(args, "value", None)
+    # `keymap --reset` -> every binding back to the current defaults (#160).
+    if getattr(args, "reset", False):
+        if action or value:
+            print("sonara: usage: sonara keymap --reset", file=sys.stderr)
+            return 2
+        keymap.reset_keymap()
+        try:                                  # apply live; harmless if daemon is down
+            _send({"v": PROTOCOL_VERSION, "type": MsgType.RELOAD_KEYMAP})
+        except Exception:  # noqa: BLE001 - the keymap.json write is what matters
+            pass
+        print("Hotkeys reset to the defaults.")
+        return _cmd_keymap(argparse.Namespace(action=None, value=None, reset=False))
     # `keymap <action> clear|none` -> unbind that action.
     if action:
         if value not in ("clear", "none"):
@@ -257,7 +269,11 @@ def _cmd_doctor(_args) -> int:
     rows = doctor.doctor()
     all_ok = True
     for check, ok, detail in rows:
-        mark = "ok " if ok else "FAIL"
+        if ok == doctor.DOCTOR_WARN:
+            mark = "warn"               # shown, but never fails the exit code
+            ok = True
+        else:
+            mark = "ok " if ok else "FAIL"
         line = f"[{mark}] {check}: {detail}"
         try:
             print(line)
@@ -289,26 +305,6 @@ def _cmd_install(_args) -> int:
     return installer.install()
 
 
-def _print_uninstall_leftovers() -> None:
-    """Say what uninstall deliberately keeps in ~/.sonara and how to remove it
-    (E19). Never raises."""
-    try:
-        neural = [os.path.join(str(paths.SONARA_DIR), d) for d in ("venv", "kokoro")]
-        neural = [d for d in neural if os.path.isdir(d)]
-        if neural:
-            print("Neural voices are kept in {0}; delete those folders to free "
-                  "the space.".format(" and ".join(neural)))
-        from sonara import chatterbox_legacy as cl
-        found = cl.leftovers()
-        if found:
-            print("Old Chatterbox files remain ({0}); 'sonara cleanup' removes "
-                  "them.".format(cl.format_size(sum(s for _p, s in found))))
-        print("Anything else left in {0} (logs, caches, voice clips) can be "
-              "deleted by hand once Sonara is off.".format(paths.SONARA_DIR))
-    except Exception:  # noqa: BLE001 - an advisory note must never fail uninstall
-        pass
-
-
 def _cmd_uninstall(_args) -> int:
     from sonara.install import installer
     return installer.uninstall()
@@ -330,43 +326,6 @@ def _cmd_cleanup(_args) -> int:
     """Remove the removed Chatterbox engine's leftovers (#134)."""
     from sonara.install import cleanup
     return cleanup.cleanup()
-
-
-def _cmd_cleanup(_args) -> int:
-    """Remove the removed Chatterbox engine's leftovers (#134): its venv, model
-    cache and smoke-test files. voices/chatterbox, the user's own recorded
-    clips, is never touched.
-
-    The daemon is stopped first: a still-running Chatterbox worker locks files
-    in the venv, and deleting it live failed partway. It is started again only
-    if it was running, and an earlier explicit shutdown stays in place."""
-    from sonara import chatterbox_legacy as cl
-    found = cl.leftovers()
-    if not found:
-        print("Nothing to clean up: no Chatterbox leftovers in {0}.".format(
-            paths.SONARA_DIR))
-        return 0
-    total = sum(size for _p, size in found)
-    restore = _stopped_state_restorer()
-    if not stop_sonara():
-        # stop_sonara already wrote the sentinel and ended the task: undo
-        # that, or a daemon that later exits would never come back.
-        restore()
-        print("Sonara did not stop, so nothing was removed (a running worker "
-              "would lock the files). Run 'sonara shutdown', then try again.",
-              file=sys.stderr)
-        return 1
-    removed, failed = cl.remove_leftovers()
-    for p in removed:
-        print("Removed {0}".format(p))
-    for p, exc in failed:
-        print("Could not remove {0}: {1}".format(p, exc), file=sys.stderr)
-    restore()
-    if failed:
-        return 1
-    print("Freed {0}. Your voice clips in {1} were kept.".format(
-        cl.format_size(total), paths.CHATTERBOX_VOICES_DIR))
-    return 0
 
 
 def _cmd_daemon(_args) -> int:
@@ -398,9 +357,12 @@ def _register_local(sub) -> None:
         func=_cmd_daemon)
     sp = sub.add_parser(
         "keymap",
-        help="list hotkey bindings (incl. unbound); '<action> clear' to unbind")
+        help="list hotkey bindings (incl. unbound); '<action> clear' to unbind; "
+             "--reset for the defaults")
     sp.add_argument("action", nargs="?", help="action to unbind")
     sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
+    sp.add_argument("--reset", action="store_true",
+                    help="replace every binding with the defaults (Ctrl+Alt)")
     sp.set_defaults(func=_cmd_keymap)
     sub.add_parser(
         "cleanup",

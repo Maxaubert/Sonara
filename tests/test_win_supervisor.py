@@ -355,16 +355,6 @@ def _plugin_with_hooks(root):
     return str(root)
 
 
-def _plugin_with_hooks(root):
-    """A plugin dir holding the real hooks/hooks.json: the settings.json hooks
-    are generated from it (H4)."""
-    import shutil
-    (root / "hooks").mkdir(parents=True, exist_ok=True)
-    shutil.copy(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "hooks", "hooks.json"), str(root / "hooks" / "hooks.json"))
-    return str(root)
-
-
 def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monkeypatch):
     from sonara.platform.windows import supervisor as sup
     calls = []

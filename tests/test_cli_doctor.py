@@ -85,6 +85,19 @@ def test_doctor_subcommand_prints_and_returns(capsys):
     assert rc == 1  # any failing check -> non-zero
 
 
+def test_doctor_warning_row_prints_warn_and_keeps_exit_zero(capsys):
+    """#160: a warning row (the AltGr clash) is shown as [warn] and does not
+    turn doctor's exit code into a failure."""
+    from sonara.platform.base import DOCTOR_WARN
+    with mock.patch("sonara.install.doctor.doctor",
+                    return_value=[("schtasks", True, "ok"),
+                                  ("AltGr", DOCTOR_WARN, "Ctrl+Alt+M types \u00b5")]):
+        rc = cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert "[warn] AltGr:" in out
+    assert rc == 0
+
+
 def test_doctor_subcommand_all_ok_returns_zero(capsys):
     with mock.patch("sonara.install.doctor.doctor", return_value=[("schtasks", True, "ok")]):
         rc = cli.main(["doctor"])

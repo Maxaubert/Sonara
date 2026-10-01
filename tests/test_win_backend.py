@@ -26,6 +26,14 @@ def test_display_combo_labels_ctrl_alt_o():
     assert WinHotkeyBackend().display_combo(0x0003, 0x4F) == "Ctrl+Alt+O"
 
 
+def test_display_combo_labels_win_first_and_the_navigation_keys():
+    from sonara.platform.windows.hotkeys import WinHotkeyBackend
+    hk = WinHotkeyBackend()
+    assert hk.display_combo(0x0008 | 0x0001, 0x24) == "Win+Alt+Home"
+    assert hk.display_combo(0x0008 | 0x0001, 0x23) == "Win+Alt+End"
+    assert hk.display_combo(0x0008 | 0x0001, 0x4E) == "Win+Alt+N"
+
+
 def test_get_platform_win32(monkeypatch):
     import sonara.platform as platform
     monkeypatch.setattr(platform.sys, "platform", "win32")

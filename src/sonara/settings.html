@@ -149,6 +149,8 @@
     .kbd i{font-style:normal;min-width:34px;padding:7px 10px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:7px;background:var(--subtle);text-align:center;font-size:12px;font-weight:650}
     .kbd .unbound{opacity:.5;font-style:italic}
     .key-row.listen .kbd{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+    .key-copy .altgr-warn{margin-top:5px;color:var(--red);font-size:10.5px;line-height:1.4}.key-copy .altgr-warn[hidden]{display:none}
+    .key-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 4px}.key-actions .btn{flex-shrink:0;white-space:nowrap}
     .unbind{width:22px;height:22px;margin-left:2px;border:0;border-radius:6px;background:transparent;color:var(--tertiary);font-size:15px}.unbind:hover{background:rgba(196,61,76,.09);color:var(--red)}
     .daemon{padding:18px}.daemon-top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}.daemon-name{display:flex;align-items:center;gap:12px}.daemon-glyph{width:39px;height:39px;border-radius:11px;background:var(--green-wash);color:var(--green);display:grid;place-items:center}.daemon-glyph svg{width:20px;fill:none;stroke:currentColor;stroke-width:1.8}.daemon-name strong{display:block;font-size:13px;margin-bottom:3px}.running{color:var(--green);font-size:10.5px;font-weight:700}.running::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:5px}.daemon-actions{display:flex;gap:6px}.btn{height:32px;padding:0 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--subtle);font-size:10.5px;font-weight:650}.btn:hover{color:var(--accent);border-color:rgba(79,70,229,.38)}.btn.danger{color:var(--red)}
     .daemon-info{display:grid;grid-template-columns:1fr 1fr 1fr;margin-top:17px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--subtle)}.metric{padding:10px 12px}.metric+ .metric{border-left:1px solid var(--line)}.metric span{display:block;color:var(--secondary);font-size:9px;text-transform:uppercase;letter-spacing:.07em}.metric b{display:block;margin-top:3px;font-size:12px}
@@ -264,7 +266,7 @@
           <div class="key-row" data-action="faster"><div class="key-copy"><strong>Faster</strong><span>Increase the speaking rate.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Faster">&times;</button></div></div>
           <div class="key-row" data-action="slower"><div class="key-copy"><strong>Slower</strong><span>Decrease the speaking rate.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Slower">&times;</button></div></div>
         </div>
-        <div class="hint" style="padding:9px 4px">Click a shortcut to capture a new key, or use &times; to unbind it. A combination may need to be changed if another Windows app has claimed it.</div>
+        <div class="key-actions"><div class="hint">Click a shortcut to capture a new key, or use &times; to unbind it. The defaults use Ctrl+Alt, which is AltGr on many European keyboards: if a shortcut warns that it eats a character, rebind it with Win. A combination may need to be changed if another Windows app has claimed it.</div><button class="btn" id="keymap-reset">Reset hotkeys to defaults</button></div>
       </section>
 
       <section class="page" id="system">
@@ -279,7 +281,7 @@
         <div class="inset">
           <div class="engine-row"><div><strong>Kokoro</strong><div class="desc" id="engine-kokoro-hint">Fast local neural speech.</div></div><span class="pill" id="engine-kokoro">&mdash;</span></div>
         </div>
-        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.6.12</span></footer>
+        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.7.0</span></footer>
       </section>
     </main>
   </div>
@@ -618,6 +620,23 @@ function render(s) {
       ? [...b.mods, b.key].map(k => `<i>${esc(k)}</i>`).join("")
       : `<i class="unbound">unbound</i>`;
     if (kbd && kbd.innerHTML !== html) kbd.innerHTML = html;
+    // AltGr (E16, #160): a Ctrl+Alt hotkey that is AltGr typing a character
+    // on this keyboard layout takes that character away from every app.
+    const copy = rowEl.querySelector(".key-copy");
+    let warn = copy && copy.querySelector(".altgr-warn");
+    if (copy && !warn) {
+      warn = document.createElement("span");
+      warn.className = "altgr-warn";
+      warn.setAttribute("role", "note");
+      copy.appendChild(warn);
+    }
+    if (warn) {
+      const text = b.altgr
+        ? `This is AltGr+${b.mods.includes("shift") ? "Shift+" : ""}${b.key.toUpperCase()} on your keyboard, so ${b.altgr} cannot be typed. Rebind it with Win, for example Win+Alt+Home or Ctrl+Win+Up.`
+        : "";
+      if (warn.textContent !== text) warn.textContent = text;
+      warn.hidden = !b.altgr;
+    }
   }
   // system
   document.getElementById("sys-pid").textContent = s.daemon.pid;
@@ -809,6 +828,12 @@ document.querySelectorAll("[data-action]").forEach(row => {
     const r = await POST("/api/keymap", {action, unbind: true});
     if (r.ok) { await acceptState(r); } else { await showApiError(r); }
   });
+});
+document.getElementById("keymap-reset").addEventListener("click", async () => {
+  if (!confirm("Reset every hotkey to the Ctrl+Alt defaults?")) return;
+  cancelCapture();
+  const r = await POST("/api/keymap", {reset: true});
+  if (r.ok) { await acceptState(r); } else { await showApiError(r); }
 });
 // daemon buttons
 document.getElementById("btn-restart").addEventListener("click",
