@@ -10,6 +10,32 @@ A stable, well-structured, documented Sonara before any embedding work (PrismTer
 - Every confirmed high/medium finding fixed or explicitly deferred with an issue.
 - Protocol ready for an embedded player (SUBSCRIBE, SPEAK, host tab id), without building the player.
 
+## Status (2026-10-01)
+
+**Phase 0 is complete pending merges.** Every PR below is open against main on Maxaubert/Sonara, stacked in this order; none is merged yet.
+
+| Item | Issue | PR |
+|---|---|---|
+| Up always restarts the turn | #128 | #129 |
+| Never strand ducked apps | #130 | #131 |
+| P1 repo hygiene + CLAUDE.md | #132 | #145 |
+| P2 CI, release, ruff, hermetic tests | #133 | #146 |
+| P3 remove Chatterbox | #134 | #147 |
+| P4 remove dead features | #135 | #148 |
+| P5 config single source of truth, earcons | #136 | #149 |
+| P6 pipeline never loses the last message | #137 | #150 |
+| P7 summary robustness | #138 | #151 |
+| P8 install, launcher, hooks | #139 | #152 |
+| P9 runtime edges | #140 | #153 |
+| P10-P13 daemon split 1-4 | #141 | #154, #156, #157, #158 |
+| P14 installer package | #142 | #159 |
+| D8 hotkey reset and AltGr warning (Win+Alt default reverted) | #160 | #162 |
+| P15 protocol for embedded players | #143 | #163 |
+| Review follow-ups | #161 | #164 |
+| P16 README, PRIVACY, architecture, embedding research (0.8.2) | #144 | this PR (branch `docs/144-readme-privacy-architecture`) |
+
+Open after Phase 0: the fresh-eyes review over the whole diff (see Verification), and removing the v1 singleton mutex probe in the first release after 0.8.1 (`platform/windows/singleton.py`, TODO #161). Next: PrismTerminal integration, researched in [embedding-research.md](embedding-research.md).
+
 ## Product rules this plan encodes
 
 1. **One message, always the last.** Sonara reads the latest turn. Up restarts it (#128, PR #129). No reading of older turns. Nothing may silently drop the latest turn (fixes: seeded-channel wipe, parked digest, lost settle seq).
@@ -119,6 +145,7 @@ A stable, well-structured, documented Sonara before any embedding work (PrismTer
 - README rewrite (readme skill): current model (channels, last message only), settings page, Kokoro, accurate CLI list, one uninstall story.
 - PRIVACY: persisted digests and session files, Codex egress, contact.
 - `docs/architecture.md` (data flow, threads, persisted state, platform seam, protocol).
+- `docs/plans/embedding-research.md`: the PrismTerminal integration research, with its Phase 0 prerequisites marked done.
 
 ## Out of scope
 
