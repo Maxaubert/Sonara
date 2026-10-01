@@ -12,6 +12,7 @@ from sonara.protocol import MsgType, encode, decode
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema
+from sonara.daemon import decision_text
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
@@ -435,57 +436,6 @@ class SpeechDaemon:
             self._current_item = None
             return True
 
-    @staticmethod
-    def _choice_text(msg) -> str:
-        parts = []
-        for q in msg.get("questions", []) or []:
-            qtext = q.get("question", "") if isinstance(q, dict) else str(q)
-            multi = bool(isinstance(q, dict) and q.get("multiSelect"))
-            opts = q.get("options", []) if isinstance(q, dict) else []
-            segs = []
-            for i, o in enumerate(opts, 1):
-                if isinstance(o, dict):
-                    label = o.get("label", "")
-                    desc = (o.get("description") or "").strip()
-                else:
-                    label, desc = str(o), ""
-                if not label:
-                    continue   # keep numbering aligned with the TUI's digits
-                seg = "Option {0}: {1}.".format(i, label)
-                if desc:
-                    seg += " {0}{1}".format(
-                        desc, "" if desc.endswith((".", "!", "?")) else ".")
-                segs.append(seg)
-            head = qtext
-            if multi:
-                head = "{0}{1}".format(
-                    (qtext + " ") if qtext else "",
-                    "This is a multi-select; you can pick more than one.")
-            if head and segs:
-                parts.append("{0} {1}".format(head, " ".join(segs)))
-            elif segs:
-                parts.append(" ".join(segs))
-            elif head:
-                parts.append(head)
-        return " ".join(parts) if parts else "A question needs your answer."
-
-    @staticmethod
-    def _plan_text(msg) -> str:
-        text = (msg.get("text") or "").strip()
-        if text:
-            return "Plan ready. {0}".format(text)
-        return "A plan is ready for your review."
-
-    @staticmethod
-    def _permission_text(msg) -> str:
-        # The 'permission' earcon already signals approval is needed; speak the
-        # pending action, else the human-readable message, else a generic cue.
-        action = (msg.get("action") or "").strip()
-        if action:
-            return action
-        message = (msg.get("message") or "").strip()
-        return message if message else "Permission needed."
-
     def _selection_cue(self, session: str, verbosity: str) -> str:
         if verbosity != "everything":
             return ""
@@ -494,22 +444,6 @@ class SpeechDaemon:
             self._warned_immediate.add(session)
             cue += " Selecting is immediate."
         return cue
-
-    @staticmethod
-    def _choice_notes(msg) -> str:
-        notes = []
-        questions = msg.get("questions", []) or []
-        if any(isinstance(q, dict) and q.get("multiSelect") for q in questions):
-            notes.append(
-                "Select multiple: press each number, or Space on the "
-                "highlighted item, then Enter to confirm."
-            )
-        if any(
-            isinstance(q, dict) and len(q.get("options", []) or []) > 9
-            for q in questions
-        ):
-            notes.append("More than nine options; use arrow keys for ten and up.")
-        return " ".join(notes)
 
     @staticmethod
     def _read_install_record():
@@ -614,8 +548,8 @@ class SpeechDaemon:
             # race), so gathering the lead-in now would find nothing and speak the
             # question alone. Build the question item now, then DEFER the lead-in
             # gather + hold/enqueue through the settle window (#16).
-            text = self._choice_text(msg)
-            extras = [e for e in (self._choice_notes(msg),
+            text = decision_text.choice_text(msg)
+            extras = [e for e in (decision_text.choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
             if extras:
                 text = "{0} {1}".format(text, " ".join(extras))
@@ -641,7 +575,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.PLAN:
-            text = self._plan_text(msg)
+            text = decision_text.plan_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
                 text = "{0} {1}".format(text, cue)
@@ -670,7 +604,7 @@ class SpeechDaemon:
             if session in self._await_choice or (not session and self._await_choice):
                 self._await_choice.discard(session)
                 return None
-            text = self._permission_text(msg)
+            text = decision_text.permission_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
                 text = "{0} {1}".format(text, cue)
