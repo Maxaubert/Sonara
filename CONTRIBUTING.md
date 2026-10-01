@@ -1,63 +1,73 @@
 # Contributing to Sonara
 
-Sonara is a Windows-only tool. The workflow separates the two kinds of
-verification: machines check the portable logic; humans check the Windows
-runtime on real hardware.
+Sonara is a Windows-only tool. Verification has two layers: the test suite checks the logic,
+and a human checks the Windows runtime on real hardware. Start with
+[docs/architecture.md](docs/architecture.md) for how the code fits together.
 
 ## Branch model
 
-- **`main` is the trunk and is always releasable.** There are no long-lived
-  integration branches.
+- **`main` is the trunk and is always releasable.** There are no long-lived integration
+  branches.
 - **One issue, one branch, one PR.** Branch off `main` as `type/<issue>-slug`
   (`fix/128-up-always-restart`, `feat/...`, `refactor/...`, `docs/...`, `ci/...`).
-  Commits are `type(scope): subject`. A version bump or tooling change needed by a
-  feature rides inside that feature's PR.
-- **Squash-merge into `main`**, every PR becomes a single commit on `main`.
-  Commit however you like *inside* your branch; history is squashed at merge.
-- **Delete the branch after it merges** (locally and on the remote).
+  Commits are `type(scope): subject (#issue)`. A version bump or tooling change needed by a
+  change rides inside that change's PR.
+- **Bump the version in every PR**: patch for fixes, minor for features, in `pyproject.toml`,
+  `src/sonara/__init__.py`, `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+  (`tests/test_manifests.py` keeps them equal). A push to `main` runs `release.yml`, which
+  publishes `v<version>` and refuses a version that already exists.
+- **Squash-merge into `main`**, then delete the branch locally and on the remote.
 
-## Two layers of verification
+## 1. The test suite (runs anywhere)
 
-**1. The logic suite (machine-checkable, runs anywhere).**
-The `pytest` suite uses fakes for audio and hotkeys, so it runs headless on any
-OS, including a non-Windows dev box or CI. Before opening a PR, run it:
+The suite uses fakes for speech, audio and hotkeys, so it needs no speech engine and runs
+headless. Before opening a PR:
 
-```
-python -m venv .venv && .venv\Scripts\pip install -e ".[dev,windows]"
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -e ".[dev,windows]"
 .venv\Scripts\ruff check src tests
 .venv\Scripts\python -m pytest -q
 ```
 
-Both must be green; CI (`.github/workflows/ci.yml`) runs the same on Python 3.9
-and 3.12. Checks that drive real OneCore speech are marked `live_windows` and
-run only on request (`python -m pytest -m live_windows`). A test that can only run on Windows must be `skipif`-guarded
-for other platforms (see `test_win_supervisor.py`), never left to fail.
+Both must be green. CI (`.github/workflows/ci.yml`) runs the same on Windows with Python 3.9
+and 3.12, with lock checks on (`SONARA_DEBUG_LOCKS=1`). Tests must not depend on what is
+installed on your PC (Kokoro, Windows voices): patch the platform and `kokoro.is_installed`.
 
-**2. Runtime acceptance (human, on Windows).**
-The suite proves *nothing* about real speech, the daemon crash/interrupt path, the
-global-hotkey pump, earcon mixing, or autostart, those are OS-runtime behaviors
-only a real machine can confirm. **Run the Windows acceptance checklist on real
-hardware and sign off before merge.** A change that alters runtime behavior
-cannot merge until it has been accepted on hardware.
+- **Settings page changes** (`settings.html`, `webui.py`) also need the browser tests:
+  `pip install -e ".[e2e]"`, `playwright install chromium`, then `python -m pytest tests/e2e -q`.
+  CI skips them, so they are the local gate.
+- **Real speech checks** are marked `live_windows` and run only on request:
+  `python -m pytest -m live_windows`.
+- **Bug fixes are test-first**: a regression test named after the behaviour, failing before the
+  fix.
 
-## Platform discipline
+## 2. Runtime acceptance (a human, on Windows)
 
-The platform seam (`src/sonara/platform/`) keeps OS-specific code isolated, so
-the portable core stays free of Windows-only imports and remains testable on any
-OS.
+The suite proves nothing about real speech, the daemon's crash and restart paths, the global
+hotkeys, earcon mixing, ducking or autostart. For a change that touches runtime behaviour,
+deploy the branch to `~/.sonara/app` (see the safe redeploy steps in `CLAUDE.md`), use it in a
+real Claude Code session, and say in the PR what you tested.
+
+## Code rules
+
+- The core stays OS-free. Windows code lives behind the platform seam in
+  `src/sonara/platform/` (`tests/test_no_os_branch_in_core.py` enforces it).
+- Python 3.9 syntax (`tests/test_py39_compat.py`).
+- Every `~/.sonara` path goes through `paths.py`.
+- Protocol changes are additive and update `docs/protocol.md`.
+- No em-dashes in user-facing text.
 
 ## A PR merges when
 
 1. It is one concern, branched off `main`.
-2. The logic suite is green, locally and in CI.
-3. At least one maintainer has approved.
-4. If it touches runtime behavior, it has been accepted on real hardware.
-5. It is squash-merged, and the branch is deleted.
+2. Ruff and the test suite are green, locally and in CI.
+3. A maintainer has approved it.
+4. If it touches runtime behaviour, it has been tested on real hardware.
 
-## Behavior changes
+## Behaviour changes
 
-Sonara is an eyes-free tool, so changes to core controls (hotkeys, what gets
-spoken, default bindings) are user-facing decisions. **Call them out explicitly**
-in the PR description (a `⚠️ behavior change` line) rather than burying them in a
-feature branch, and raise anything that removes or remaps a default before you
+Sonara is an eyes-free tool, so changes to core controls (hotkeys, what gets spoken, default
+bindings) are user-facing decisions. Call them out in the PR description with a
+**Behaviour change:** line, and raise anything that removes or remaps a default before you
 build it.
