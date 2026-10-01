@@ -87,6 +87,16 @@ def main() -> None:
         client.ensure_daemon()
     except Exception:
         pass
+    # One event's messages travel on ONE connection, in order: the daemon
+    # serves each connection on its own thread, so separate connections let
+    # it apply FLUSH before SET_FOREGROUND, or CHOICE before its EARCON.
+    try:
+        client.send_many(msgs)
+        return
+    except Exception:
+        pass
+    # Best-effort fallback (e.g. an older client module): one connection per
+    # message, each failure contained so later messages are still attempted.
     for m in msgs:
         try:
             client.send(m)

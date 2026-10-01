@@ -13,6 +13,10 @@ Environment variables:
   SONARA_FAKE_RAISE_ON      -- integer N; raise only on send call with exact
                                index N (0-indexed); all other calls succeed.
   SONARA_FAKE_SENT_LOG      -- path to append sent messages as newline-delimited JSON.
+  SONARA_FAKE_BATCH_RAISE   -- raise on every send_many call (the hook then
+                               falls back to one send per message).
+  SONARA_FAKE_BATCH_LOG     -- path to append one JSON list of message types
+                               per send_many call.
 """
 import json
 import os
@@ -57,3 +61,17 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
         with open(log, "a") as f:
             f.write(json.dumps(msg) + "\n")
     return None
+
+
+def send_many(msgs, timeout: float = 2.0) -> None:
+    if os.environ.get("SONARA_FAKE_RAISE") or os.environ.get("SONARA_FAKE_BATCH_RAISE"):
+        raise RuntimeError("forced send_many failure")
+    batch_log = os.environ.get("SONARA_FAKE_BATCH_LOG")
+    if batch_log:
+        with open(batch_log, "a") as f:
+            f.write(json.dumps([m.get("type") for m in msgs]) + "\n")
+    log = os.environ.get("SONARA_FAKE_SENT_LOG")
+    if log:
+        with open(log, "a") as f:
+            for m in msgs:
+                f.write(json.dumps(m) + "\n")

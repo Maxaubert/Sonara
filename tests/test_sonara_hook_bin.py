@@ -67,6 +67,20 @@ def test_hook_empty_stdin_exits_zero(tmp_path):
     assert lines[0]["kind"] == "turn_done"
 
 
+def test_hook_sends_one_event_as_one_ordered_batch(tmp_path):
+    # Architecture review 0.5 (#137): every message of one hook event goes
+    # over ONE connection, in order, so the daemon cannot apply FLUSH before
+    # SET_FOREGROUND.
+    sent_log = tmp_path / "sent.jsonl"
+    batch_log = tmp_path / "batches.jsonl"
+    payload = json.dumps({"session_id": "s1", "cwd": "C:/x"}).encode()
+    res = _run("UserPromptSubmit", payload, {"SONARA_FAKE_SENT_LOG": str(sent_log),
+                                             "SONARA_FAKE_BATCH_LOG": str(batch_log)})
+    assert res.returncode == 0, res.stderr.decode()
+    batches = [json.loads(x) for x in batch_log.read_text().splitlines() if x.strip()]
+    assert batches == [["set_foreground", "flush"]]
+
+
 def test_hook_unknown_event_sends_nothing(tmp_path):
     sent_log = tmp_path / "sent.jsonl"
     res = _run("MadeUp", b"{}", {"SONARA_FAKE_SENT_LOG": str(sent_log)})
@@ -112,7 +126,10 @@ def test_hook_partial_batch_send_failure_does_not_drop_subsequent_messages(tmp_p
     res = _run(
         "PreToolUse",
         payload,
-        {"SONARA_FAKE_SENT_LOG": str(sent_log), "SONARA_FAKE_RAISE_ON": "0"},
+        # The ordered one-connection batch fails first, so the hook falls
+        # back to one send per message (#137).
+        {"SONARA_FAKE_SENT_LOG": str(sent_log), "SONARA_FAKE_RAISE_ON": "0",
+         "SONARA_FAKE_BATCH_RAISE": "1"},
     )
     assert res.returncode == 0, res.stderr.decode()
     # The second message (CHOICE) must have been sent despite the error on the first.

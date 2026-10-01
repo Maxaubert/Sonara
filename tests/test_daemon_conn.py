@@ -76,3 +76,46 @@ def test_handle_conn_guarded_releases_permit_even_on_error():
     while daemon._conn_sem.acquire(blocking=False):
         n += 1
     assert n == _MAX_CONN_THREADS           # capacity fully restored
+
+
+def test_messages_on_one_connection_are_handled_in_order():
+    # Architecture review 0.5 (#137): client.send_many writes all messages of
+    # one hook event on ONE connection; the daemon applies them sequentially
+    # on that connection's thread, in the order sent.
+    import socket
+    import threading
+    from sonara.protocol import encode
+    daemon, *_ = make_daemon(foreground="fg")
+    daemon._token = "tok"
+    daemon._running.set()
+    seen = []
+    daemon.handle_message = lambda msg: seen.append(msg["type"])
+    server_end, client_end = socket.socketpair()
+    t = threading.Thread(target=daemon._handle_conn, args=(server_end,), daemon=True)
+    t.start()
+    client_end.sendall(b"tok\n" + b"".join(
+        encode({"type": n}) for n in ("set_foreground", "flush", "earcon", "choice")))
+    client_end.close()
+    t.join(timeout=3.0)
+    assert seen == ["set_foreground", "flush", "earcon", "choice"]
+
+
+def test_single_message_connections_still_work():
+    # Backward compatibility: the old one-message-per-connection client.
+    import socket
+    import threading
+    from sonara.protocol import encode
+    daemon, *_ = make_daemon(foreground="fg")
+    daemon._token = "tok"
+    daemon._running.set()
+    seen = []
+    daemon.handle_message = lambda msg: seen.append(msg["type"])
+    for name in ("set_foreground", "flush"):
+        server_end, client_end = socket.socketpair()
+        t = threading.Thread(target=daemon._handle_conn, args=(server_end,),
+                             daemon=True)
+        t.start()
+        client_end.sendall(b"tok\n" + encode({"type": name}))
+        client_end.close()
+        t.join(timeout=3.0)
+    assert seen == ["set_foreground", "flush"]

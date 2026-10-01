@@ -40,6 +40,32 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
             pass
 
 
+def send_many(msgs, timeout: float = 2.0) -> None:
+    """Send every message of ONE hook event over ONE connection, in order.
+
+    The daemon serves each connection on its own thread, so one connection
+    per message let SET_FOREGROUND/FLUSH (or EARCON/CHOICE) of a single event
+    be applied in either order (architecture review 0.5). On one connection
+    the daemon applies them sequentially, as sent. No reply is read.
+    Raises DaemonNotRunning when the daemon cannot be reached (nothing sent)."""
+    payload = b"".join(encode(m) for m in msgs)
+    if not payload:
+        return
+    try:
+        s = transport.connect(LOCK_PATH, timeout=timeout)
+    except OSError as exc:
+        raise DaemonNotRunning(
+            "Sonara daemon is not running. Run: sonara start"
+        ) from exc
+    try:
+        s.sendall(payload)
+    finally:
+        try:
+            s.close()
+        except OSError:
+            pass
+
+
 def ensure_daemon(timeout: float = 3.0) -> None:
     if _connectable():
         return
