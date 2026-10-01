@@ -275,7 +275,11 @@ def test_paused_manual_switch_resumes_as_a_manual_replay_announcement():
 
 
 def test_daemon_never_edits_channel_items_or_router_privates():
-    src = Path(daemon_module.__file__).read_text(encoding="utf-8")
+    # The whole daemon package (#141): code split out of __init__ keeps the rule.
+    pkg = Path(daemon_module.__file__).parent
+    src = "\n".join(p.read_text(encoding="utf-8")
+                    for p in sorted(pkg.rglob("*.py")))
+    assert "class SpeechDaemon" in src
     assert not re.search(r"\.items\.(insert|append|pop|remove)\(", src)
     assert not re.search(r"del\s+\w+\.items\[", src)
     assert not re.search(r"\.items\[[^\]]*\]\s*=", src)
