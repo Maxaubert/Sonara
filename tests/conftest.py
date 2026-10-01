@@ -135,6 +135,19 @@ def _never_sweep_the_live_daemon(monkeypatch):
     monkeypatch.setattr(supervisor, "kill_stray_daemons", guarded)
 
 
+def _is_mutating_schtasks(args) -> bool:
+    """True for any schtasks invocation other than a read-only /query, however
+    the program is spelled (bare, .exe, full path, any case) or passed (argv
+    list or one command string)."""
+    import ntpath
+
+    argv = [str(x) for x in args] if isinstance(args, (list, tuple)) else str(args).split()
+    if not argv:
+        return False
+    exe = ntpath.basename(argv[0]).lower()
+    return exe in ("schtasks", "schtasks.exe") and "/query" not in (x.lower() for x in argv)
+
+
 @pytest.fixture(autouse=True)
 def _never_touch_the_real_autostart_or_launcher(tmp_path, monkeypatch):
     """Keep a test that reaches the REAL Windows supervisor (a missed platform
@@ -149,14 +162,20 @@ def _never_touch_the_real_autostart_or_launcher(tmp_path, monkeypatch):
     import sonara.platform.windows.supervisor as supervisor
 
     real_call = subprocess.call
+    real_run = subprocess.run
 
     def guarded_call(args, *a, **k):
-        argv = [str(x).lower() for x in (args if isinstance(args, (list, tuple)) else [args])]
-        if argv and argv[0].endswith("schtasks") and "/query" not in argv:
+        if _is_mutating_schtasks(args):
             return 1        # refuse /create, /delete, /end, /run on the real box
         return real_call(args, *a, **k)
 
+    def guarded_run(args, *a, **k):
+        if _is_mutating_schtasks(args):
+            return subprocess.CompletedProcess(args, 1, b"", b"")
+        return real_run(args, *a, **k)
+
     monkeypatch.setattr(subprocess, "call", guarded_call)
+    monkeypatch.setattr(subprocess, "run", guarded_run)
     monkeypatch.setattr(supervisor, "_local_bin_dir", lambda: str(tmp_path / "local-bin"))
 
 
