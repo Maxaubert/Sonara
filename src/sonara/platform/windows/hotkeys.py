@@ -216,6 +216,8 @@ class WinHotkeyBackend(HotkeyBackend):
         Ctrl+Alt chords match it and eat that character. Lazy ctypes."""
         import ctypes
         user32 = ctypes.windll.user32
+        # The calling thread's layout, not the foreground app's: with per-app
+        # layouts this can differ from what the user types (follow-up, #160).
         hkl = user32.GetKeyboardLayout(0)
         state = (ctypes.c_ubyte * 256)()
         for k in (0x11, 0x12, 0xA2, 0xA5):          # CONTROL, MENU, LCONTROL, RMENU

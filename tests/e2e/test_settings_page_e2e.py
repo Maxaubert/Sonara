@@ -345,3 +345,23 @@ def test_altgr_collision_warning_shows_next_to_the_binding(live, monkeypatch):
         browser.close()
     assert "\u00b5" in text and "Reset hotkeys to defaults" in text
     assert flush_visible is False
+
+
+def test_altgr_warning_names_shift_for_a_shifted_binding(live, monkeypatch):
+    """#160: Ctrl+Alt+Shift+M eats the AltGr+Shift+M character, so the
+    warning names Shift too."""
+    monkeypatch.setattr(webui, "_keymap_state", lambda: [
+        {"action": "mute", "key": "m", "mods": ["ctrl", "shift", "alt"],
+         "altgr": "\u00ba"}])
+    d, s = live
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='hotkeys']")
+        warn = page.locator("[data-action='mute'] .altgr-warn")
+        warn.wait_for(state="visible")
+        text = warn.text_content()
+        browser.close()
+    assert "AltGr+Shift+M" in text

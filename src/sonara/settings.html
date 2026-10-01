@@ -632,7 +632,7 @@ function render(s) {
     }
     if (warn) {
       const text = b.altgr
-        ? `This is AltGr+${b.key.toUpperCase()} on your keyboard, so ${b.altgr} cannot be typed. Reset hotkeys to defaults, or rebind it with Win.`
+        ? `This is AltGr+${b.mods.includes("shift") ? "Shift+" : ""}${b.key.toUpperCase()} on your keyboard, so ${b.altgr} cannot be typed. Reset hotkeys to defaults, or rebind it with Win.`
         : "";
       if (warn.textContent !== text) warn.textContent = text;
       warn.hidden = !b.altgr;
@@ -830,7 +830,7 @@ document.querySelectorAll("[data-action]").forEach(row => {
   });
 });
 document.getElementById("keymap-reset").addEventListener("click", async () => {
-  if (!confirm("Reset every hotkey to the defaults (Win+Alt+Home, Win+Alt+End, Win+Alt+S, Win+Alt+N)?")) return;
+  if (!confirm("Reset every hotkey to the Win+Alt defaults?")) return;
   cancelCapture();
   const r = await POST("/api/keymap", {reset: true});
   if (r.ok) { await acceptState(r); } else { await showApiError(r); }
