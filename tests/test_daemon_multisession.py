@@ -530,6 +530,9 @@ def test_session_change_cycles_and_revisits():
     - Assertions: both messages heard; 'session_change' earcon in speaker.earcons.
     """
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="A")
+    # No setup cue: this machine's real install state must not decide what
+    # the first drain reads.
+    daemon._setup_guide.health = lambda v: ("ok", None)
     for s, cwd in (("A", "/u/alpha"), ("B", "/u/beta")):
         daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_START,
                                "session": s, "cwd": cwd, "plugin_version": ""})

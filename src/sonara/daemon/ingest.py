@@ -81,7 +81,8 @@ class Ingest:
         if cue:
             # A control cue (F6): on the session channel the prompt that
             # usually follows SESSION_START at once (FLUSH) wiped it unheard.
-            d._cues.speak(session, cue)
+            # Keyed, so sessions starting together say it once.
+            d._cues.speak(session, cue, cue_key="setup_guide")
 
     def on_prose(self, msg):
         d = self._d
