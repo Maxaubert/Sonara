@@ -1,0 +1,35 @@
+{
+  "description": "Markdown links and bare URLs.",
+  "cases": [
+    {
+      "name": "markdown_link_label_kept",
+      "fn": "clean_markdown",
+      "input": "See [the docs](https://example.com/docs) for more.",
+      "output": "See the docs for more."
+    },
+    {
+      "name": "bare_url_becomes_link",
+      "fn": "clean_markdown",
+      "input": "Open https://example.com/a?b=1. Then continue.",
+      "output": "Open link. Then continue."
+    },
+    {
+      "name": "bare_url_in_parens",
+      "fn": "clean_markdown",
+      "input": "(see https://example.com)",
+      "output": "(see link)"
+    },
+    {
+      "name": "link_in_stream",
+      "fn": "assemble",
+      "deltas": [
+        "Read [this](http://x.y/z) first. ",
+        "Then go."
+      ],
+      "output": [
+        "Read this first.",
+        "Then go."
+      ]
+    }
+  ]
+}

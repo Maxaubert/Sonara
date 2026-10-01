@@ -1,0 +1,53 @@
+{
+  "description": "Fenced code blocks become a one-line spoken summary.",
+  "cases": [
+    {
+      "name": "python_fence",
+      "fn": "assemble",
+      "deltas": [
+        "Here is code:\n```python\nprint('hi')\nx = 1\n```\nDone."
+      ],
+      "output": [
+        "Here is code:",
+        "2-line python code block",
+        "Done."
+      ]
+    },
+    {
+      "name": "fence_split_across_deltas",
+      "fn": "assemble",
+      "deltas": [
+        "Before.\n``",
+        "`js\nconst a = 1;\n",
+        "```\nAfter."
+      ],
+      "output": [
+        "Before.",
+        "1-line js code block",
+        "After."
+      ]
+    },
+    {
+      "name": "fence_without_language",
+      "fn": "assemble",
+      "deltas": [
+        "See:\n```\nls -la\n```\n"
+      ],
+      "output": [
+        "See:",
+        "1-line code block"
+      ]
+    },
+    {
+      "name": "unclosed_fence_flushed_on_final",
+      "fn": "assemble",
+      "deltas": [
+        "Start.\n```bash\necho hi\n"
+      ],
+      "output": [
+        "Start.",
+        "1-line bash code block"
+      ]
+    }
+  ]
+}
