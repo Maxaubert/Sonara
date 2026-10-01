@@ -210,7 +210,7 @@ def test_decimal_straddling_deltas_stays_one_sentence():
 
 def test_closing_bullet_list_emits_one_chunk_per_item():
     # The classic end-of-turn bullet list used to leave the final flush as ONE
-    # unpunctuated 300+ char blob that Chatterbox hard-split mid-clause (#56).
+    # unpunctuated 300+ char blob that the engine split mid-clause (#56).
     a = ProseAssembler()
     text = ("Here is what changed.\n"
             "- Fixed the race in the daemon\n"

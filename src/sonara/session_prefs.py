@@ -69,9 +69,13 @@ class SessionPrefs:
             return
         if not isinstance(data, dict):
             return
+        from sonara import chatterbox_legacy
         for sid, entry in data.items():
             if isinstance(sid, str) and isinstance(entry, dict) and entry:
                 kept = {k: entry[k] for k in _ALLOWED_KEYS if k in entry}
+                if kept.get("voice"):
+                    # Chatterbox was removed (#134): its voices speak as Heart.
+                    kept["voice"] = chatterbox_legacy.migrate_voice(kept["voice"])
                 if kept:
                     self._prefs[sid] = kept
 

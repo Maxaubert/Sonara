@@ -1053,7 +1053,6 @@ class SpeechDaemon:
             self.config["voice"] = voice
             self.speaker.set_voice(voice)
             save_config(self.config)
-            self._maybe_prewarm_chatterbox()   # switching TO a cb voice warms it
             return None
 
         if t == MsgType.SET_SESSION_PREF:
@@ -1218,44 +1217,6 @@ class SpeechDaemon:
                 srv.close()
             except OSError:
                 pass
-
-    def _warm_chatterbox_async(self) -> None:
-        """Run the prewarm warm() OFF-thread (#27): it can spawn/load the GPU
-        worker, which must never run under the daemon lock (dispatch calls this
-        from handle_message). Coalesced to one warm at a time."""
-        if getattr(self, "_warm_inflight", False):
-            return
-        self._warm_inflight = True
-
-        def _run():
-            try:
-                self._maybe_prewarm_chatterbox()
-            finally:
-                self._warm_inflight = False
-        threading.Thread(target=_run, name="sonara-cb-warm", daemon=True).start()
-
-    def _maybe_prewarm_chatterbox(self) -> None:
-        """If the selected voice is a Chatterbox voice, the engine is provisioned,
-        load the model in the worker in the BACKGROUND so the
-        first digest does not pay the ~40s cold load. Best-effort: never blocks the
-        caller and never crashes it (chatterbox is optional). Called at daemon
-        startup and when the user switches TO a chatterbox voice."""
-        try:
-            from sonara import chatterbox
-            voice = self.config.get("voice")
-            if not (chatterbox.is_provisioned()
-                    and chatterbox.is_chatterbox_voice(voice)):
-                return
-        except Exception:  # noqa: BLE001 - optional engine; never break startup
-            return
-
-        def _warm():
-            try:
-                from sonara import chatterbox
-                chatterbox.CLIENT.warm(self.config)
-            except Exception:  # noqa: BLE001 - warming is best-effort
-                pass
-        threading.Thread(target=_warm, name="sonara-cb-warm", daemon=True).start()
 
     def _start_hotkeys(self) -> None:
         """Start the platform's global-hotkey listener. On Windows this spawns an
@@ -1551,10 +1512,6 @@ class SpeechDaemon:
         # turn-ends with no user action between them each keep their digest (they
         # queue and play) -- the system never drops a finished message (#13).
         gen = self._summary_gen.get(session, 0)
-        # Overlap the GPU warm-up with the digest (#27): the ~40s post-idle cold
-        # model reload then hides inside the 10-30s haiku call instead of
-        # stalling speech AFTER it (the reported ~1 minute to first audio).
-        self._warm_chatterbox_async()
         self._summary_token += 1
         token = self._summary_token
         self._last_dispatch_token[session] = token
@@ -1638,42 +1595,9 @@ class SpeechDaemon:
             # Past the cap the question speaks and the digest follows
             # (bounded inversion; a caught-up user drops it).
             self._schedule_hold_release(session, owner, item)
-            # The digest and the question are SERIALIZED at playback, so the
-            # question's first Chatterbox chunk used to start synthesizing only
-            # after the context finished playing: an audible 10-20s silence
-            # between context and question (probe-confirmed live, #109). The
-            # question text is already final here and the GPU idles while the
-            # summarizer runs, so warm the synth cache now.
-            self._prefetch_decision_audio(item)
         else:
             self.router.channel(session).append(item)
         self._wake.set()
-
-    def _prefetch_decision_audio(self, item) -> None:
-        """Pre-synthesize a held question's FIRST Chatterbox chunk into the
-        synth cache while its lead-in digest is still generating (#109). At
-        playback time the handle gets a cache hit and the question follows its
-        context with no synthesis silence. Chatterbox only: the fast engines
-        have no gap worth hiding. Best-effort on a daemon thread; the client's
-        own lock serializes it against digest chunk synthesis."""
-        def work():
-            try:
-                from sonara import chatterbox, kokoro
-                voice = (self.session_prefs.voice(item.session)
-                         or self.config.get("voice"))
-                if kokoro.is_kokoro_voice(voice):
-                    return               # Kokoro names take precedence (tts.run)
-                if not (chatterbox.is_chatterbox_voice(voice)
-                        and chatterbox.is_provisioned()):
-                    return
-                cfg = load_config()
-                chunks = chatterbox.split_text(
-                    item.text, max_chars=chatterbox.chunk_chars(cfg))
-                if chunks:
-                    chatterbox.CLIENT.synth_wav(chunks[0], voice, cfg)
-            except Exception:  # noqa: BLE001 - a prefetch failure must never break the flow
-                pass
-        threading.Thread(target=work, name="sonara-prefetch", daemon=True).start()
 
     def _log_start_marker(self) -> None:
         """Startup marker (#63): volatile state (mute level, pause) dies with the
@@ -2156,17 +2080,10 @@ class SpeechDaemon:
     def _cue_voice(self):
         """The voice cues speak in (#60): config cue_voice (default af_heart,
         the warm-Kokoro pick -- ~0.3s per cue once loaded, far nicer than the
-        native David/Zira). A Chatterbox voice is refused here (its cold
-        reload is the very unresponsiveness fast cues exist to fix) and maps
-        to None = the platform's native voice, as does any lookup failure."""
+        native David/Zira). Unset maps to None = the platform's native
+        voice."""
         v = self.config.get("cue_voice")
         if not v:
-            return None
-        try:
-            from sonara import kokoro, chatterbox
-            if (not kokoro.is_kokoro_voice(v)) and chatterbox.is_chatterbox_voice(v):
-                return None
-        except Exception:  # noqa: BLE001 - a cue must never die on voice lookup
             return None
         return v
 
@@ -2174,8 +2091,8 @@ class SpeechDaemon:
         """speaker.speak kwargs for *item* (#60). Control feedback and
         session-change announcements speak through an always-fast voice
         (warm Kokoro by default, native Windows as floor) instead of the
-        configured neural voice, so "Muted." never waits out a cold
-        Chatterbox model reload. Config fast_cues (default on) disables."""
+        configured voice, so "Muted." never waits on a slow synthesis.
+        Config fast_cues (default on) disables."""
         from sonara.router import CONTROL
         if (self.config.get("fast_cues", True)
                 and (item.session == CONTROL or item.kind == "session_change")):
@@ -2213,25 +2130,10 @@ class SpeechDaemon:
                 pass
         threading.Thread(target=_warm, name="sonara-kokoro-warm", daemon=True).start()
 
-    def _maybe_announce_chatterbox_fallback(self) -> None:
-        """Speak the pending Chatterbox fallback notice, if any, exactly once per
-        daemon run. Called outside self._lock (_speak_cue does not take it)."""
-        if getattr(self, "_cb_fallback_announced", False):
-            return
-        try:
-            from sonara import chatterbox
-            reason = chatterbox.pop_fallback_notice()
-        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
-            return
-        if reason:
-            self._cb_fallback_announced = True
-            self._speak_cue(None, "Chatterbox unavailable, using Heart.",
-                            exempt_mute=True)
-
     def _maybe_announce_kokoro_fallback(self) -> None:
         """Speak the pending Kokoro fallback notice, if any, exactly once per
-        daemon run (#29). Mirrors the Chatterbox notice: a dead engine is
-        announced instead of producing unexplained error noise."""
+        daemon run (#29): a dead engine is announced instead of producing
+        unexplained error noise."""
         if getattr(self, "_kokoro_fallback_announced", False):
             return
         try:
@@ -2274,10 +2176,6 @@ class SpeechDaemon:
                 if str(v) in ("claude", "codex") else None),
             "fast_cues": lambda v: bool(v),
             "cue_voice": lambda v: str(v).strip() or None,
-            "chatterbox_max_chunk_chars": lambda v: max(80, min(280, int(v))),
-            "chatterbox_exaggeration": lambda v: max(0.0, min(1.0, float(v))),
-            "chatterbox_variant": lambda v: (str(v)
-                if str(v) in ("turbo", "original") else None),
         }
         fn = clamps.get(key)
         if fn is None:
@@ -2470,7 +2368,6 @@ class SpeechDaemon:
                       file=sys.stderr, flush=True)
         # Engine fallback notices: spoken once per daemon run so an eyes-free
         # user knows WHY the voice changed (the reason is already in the log).
-        self._maybe_announce_chatterbox_fallback()
         self._maybe_announce_kokoro_fallback()
         if item is None:
             self._maybe_restore_audio()
@@ -2734,7 +2631,6 @@ class SpeechDaemon:
         accept_thread.start()
         hotkey_worker.start()
         self._start_hotkeys()
-        self._maybe_prewarm_chatterbox()   # warm the model at startup if cb voice
         self._maybe_prewarm_cue_voice()    # load the Kokoro engine for cues (#60)
 
         try:
@@ -2811,7 +2707,7 @@ def _preload_vc_runtime() -> None:
     (#29). PyWinRT bundles an old MSVCP140.dll inside its package; whichever
     engine imports first binds its copy process-wide, and onnxruntime (Kokoro)
     crashes inside the old one ('DLL initialization routine failed') whenever a
-    WinRT/Chatterbox voice spoke first in this daemon's lifetime. The System32
+    WinRT voice spoke first in this daemon's lifetime. The System32
     runtime is newer and serves BOTH engines, so loading it first makes engine
     import order irrelevant. Missing DLLs are tolerated: engines then fall back
     to their bundled copies exactly as before."""

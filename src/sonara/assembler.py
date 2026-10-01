@@ -257,8 +257,8 @@ class ProseAssembler:
     def _flush_prose(self) -> list[str]:
         """Emit the not-yet-emitted RAW tail, one chunk per line. The tail used
         to leave as ONE blob; a closing dash-bullet list (no terminal
-        punctuation anywhere) then hit Chatterbox's 280-char hard word-splits
-        mid-clause -- the end-of-turn garble from the #56 audit."""
+        punctuation anywhere) then reached the engine as one 300+ char chunk
+        that was split mid-clause -- the end-of-turn garble from the #56 audit."""
         if not self._buf:
             self._emitted = 0
             return []

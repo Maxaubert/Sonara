@@ -1034,19 +1034,6 @@ def test_digest_text_is_normalized_for_speech(monkeypatch):
     assert "get user id" in summ.text
 
 
-def test_digest_dispatch_prewarms_chatterbox(monkeypatch):
-    # (#27) the GPU model loads WHILE haiku digests, hiding the ~40s post-idle
-    # cold reload inside the digest latency instead of stalling speech after it.
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    _capture_spawn(daemon, monkeypatch)
-    warms = []
-    monkeypatch.setattr(daemon, "_warm_chatterbox_async",
-                        lambda: warms.append(True))
-    _enable_and_feed(daemon, monkeypatch)
-    _turn_done(daemon)                                   # async digest dispatched
-    assert warms                                         # warm kicked at dispatch
-
-
 def test_short_foreground_turn_sets_reread_text(monkeypatch):
     # Deep audit (#25): short FOREGROUND turns never set _last_digest_text, so
     # summary-mode Up (the only hotkey re-read) gave a dead edge chime after a

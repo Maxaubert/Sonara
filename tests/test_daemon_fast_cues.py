@@ -1,5 +1,5 @@
 """#60: control cues speak via the instant Windows voice (voice=None override)
-so "Muted." never waits out a cold Chatterbox model reload."""
+so "Muted." never waits on a slow neural synthesis."""
 from tests.daemon_helpers import make_daemon
 
 
@@ -26,19 +26,6 @@ def test_cue_voice_unset_falls_back_to_native_windows_voice():
     _drain(daemon, 2)
     i = speaker.spoken.index("Muted.")
     assert speaker.speak_voices[i] is None          # None = best WinRT voice
-
-
-def test_cue_voice_refuses_a_chatterbox_voice(monkeypatch):
-    # A Chatterbox cue voice would reintroduce the cold-reload lag fast cues
-    # exist to fix (#60): it maps to the native voice instead.
-    import sonara.chatterbox as cb
-    monkeypatch.setattr(cb, "is_chatterbox_voice", lambda v: v == "linus")
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.config["cue_voice"] = "linus"
-    daemon._speak_cue("fg", "Muted.", exempt_mute=True)
-    _drain(daemon, 2)
-    i = speaker.spoken.index("Muted.")
-    assert speaker.speak_voices[i] is None
 
 
 def test_set_config_value_accepts_cue_voice():

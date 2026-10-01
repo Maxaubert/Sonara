@@ -1,10 +1,9 @@
 """Pre-rendered voice previews for the settings page (#38).
 
-Live preview synthesis felt broken for Chatterbox voices (multi-second GPU
-render per click). Previews are rendered ONCE into ~/.sonara/previews/ by a
-background daemon thread; the page then streams the file instantly via
-GET /api/preview-audio, and only falls back to live synthesis while a file
-has not been built yet.
+Live preview synthesis made each click wait on a render. Previews are
+rendered ONCE into ~/.sonara/previews/ by a background daemon thread; the page
+then streams the file instantly via GET /api/preview-audio, and only falls back
+to live synthesis while a file has not been built yet.
 """
 from __future__ import annotations
 
@@ -55,20 +54,16 @@ def pad_lead(wav_bytes: bytes, ms: int = 600) -> bytes:
 
 def synth_wav(voice: str, rate: int = 200) -> bytes:
     """Render the sample for *voice* to WAV bytes, routed by engine exactly
-    like live speech (Kokoro / Chatterbox / WinRT). Uses the platform backend's
+    like live speech (Kokoro / WinRT). Uses the platform backend's
     synth internals deliberately: previews must sound identical to the real
     voice path."""
     from sonara.platform import get_platform
-    from sonara import kokoro, chatterbox
+    from sonara import kokoro
     backend = get_platform().tts
     text = sample_text(voice)
     if kokoro.is_kokoro_voice(voice):
         data = backend._get_kokoro().wav_bytes(
             text, voice, kokoro.rate_to_speed(rate))
-    elif chatterbox.is_chatterbox_voice(voice):
-        from sonara.config import load_config
-        cfg = load_config()
-        data = chatterbox.CLIENT.synth_wav(text, voice, cfg)
     else:
         data = backend._synthesize_wav(text, voice, rate)
     return pad_lead(data)

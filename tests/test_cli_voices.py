@@ -3,7 +3,6 @@ import os
 import pytest
 from sonara import cli, paths
 from sonara import kokoro_provision as kp
-from sonara import chatterbox_provision as cbp
 
 
 def test_voices_install_provisions_then_rewires_daemon(monkeypatch, tmp_path):
@@ -61,25 +60,9 @@ def test_voices_install_reverts_on_keyboard_interrupt(monkeypatch, tmp_path):
     assert uninstalled
 
 
-def test_voices_install_chatterbox_reverts_on_keyboard_interrupt(monkeypatch):
-    monkeypatch.setattr(paths, "ensure_sonara_dir", lambda: None)
-    uninstalled = []
-    def boom():
-        raise KeyboardInterrupt()
-    monkeypatch.setattr(cbp, "install_chatterbox", boom)
-    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: uninstalled.append(True))
-
-    class Args:
-        engine = "chatterbox"
-    with pytest.raises(KeyboardInterrupt):
-        cli._cmd_voices_install(Args())
-    assert uninstalled
-
-
 def test_voices_uninstall_stops_daemon_first(monkeypatch):
-    # The venv being removed is the interpreter the daemon runs on (kokoro) or
-    # spawns workers from (chatterbox); deleting it live raised a raw
-    # PermissionError and left a half-deleted venv (audit #23). Stop first.
+    # The venv being removed is the interpreter the daemon runs on; deleting
+    # it live raised a raw PermissionError and left a half-deleted venv (audit #23). Stop first.
     order = []
     monkeypatch.setattr(cli, "stop_sonara",
                         lambda sup=None: order.append("stop") or True)
@@ -87,20 +70,6 @@ def test_voices_uninstall_stops_daemon_first(monkeypatch):
     monkeypatch.setattr(cli, "install", lambda: order.append("install") or 0)
     cli._cmd_voices_uninstall(object())
     assert order.index("stop") < order.index("rm")
-
-
-def test_voices_uninstall_chatterbox_stops_daemon_first(monkeypatch):
-    order = []
-    monkeypatch.setattr(cli, "stop_sonara",
-                        lambda sup=None: order.append("stop") or True)
-    monkeypatch.setattr(cli, "start_sonara", lambda: order.append("start") or 0)
-    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: order.append("rm"))
-
-    class Args:
-        engine = "chatterbox"
-    cli._cmd_voices_uninstall(Args())
-    assert order.index("stop") < order.index("rm")
-    assert "start" in order                               # daemon brought back
 
 
 def test_voices_uninstall_removes_and_reverts(monkeypatch):
@@ -119,15 +88,14 @@ def test_voices_subcommand_registered():
     assert args.engine == "kokoro"
 
 
-def test_voices_subcommand_accepts_chatterbox_engine():
+def test_voices_subcommand_rejects_the_removed_chatterbox_engine():
     parser = cli._build_parser()
-    args = parser.parse_args(["voices", "install", "chatterbox"])
-    assert args.func is cli._cmd_voices_install
-    assert args.engine == "chatterbox"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["voices", "install", "chatterbox"])
 
 
 # ---------------------------------------------------------------------------
-# Task 5: engine dispatch (kokoro default, chatterbox opt-in)
+# Task 5: engine dispatch (kokoro default)
 # ---------------------------------------------------------------------------
 
 def test_voices_install_default_still_kokoro(monkeypatch, tmp_path):
@@ -142,41 +110,6 @@ def test_voices_install_default_still_kokoro(monkeypatch, tmp_path):
     rc = cli.main(["voices", "install"])
     assert rc == 0
     assert called == [os.path.join(str(tmp_path), "src")]
-
-
-def test_voices_install_chatterbox_dispatches(monkeypatch):
-    """cli.main(["voices", "install", "chatterbox"]) calls
-    chatterbox_provision.install_chatterbox, not the kokoro path."""
-    called = []
-    monkeypatch.setattr(cbp, "install_chatterbox", lambda: called.append(True))
-    monkeypatch.setattr(kp, "install_kokoro",
-                        lambda *a, **k: pytest.fail("must not touch kokoro"))
-    monkeypatch.setattr(cli, "install", lambda: pytest.fail("chatterbox must not rewire daemon"))
-    rc = cli.main(["voices", "install", "chatterbox"])
-    assert rc == 0
-    assert called == [True]
-
-
-def test_voices_install_chatterbox_reverts_on_failure(monkeypatch):
-    def boom():
-        raise RuntimeError("uv missing")
-    uninstalled = []
-    monkeypatch.setattr(cbp, "install_chatterbox", boom)
-    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: uninstalled.append(True))
-    rc = cli.main(["voices", "install", "chatterbox"])
-    assert rc == 1
-    assert uninstalled == [True]
-
-
-def test_voices_uninstall_chatterbox_dispatches(monkeypatch):
-    called = []
-    monkeypatch.setattr(cbp, "uninstall_chatterbox", lambda: called.append(True))
-    monkeypatch.setattr(kp, "uninstall_kokoro",
-                        lambda *a, **k: pytest.fail("must not touch kokoro"))
-    monkeypatch.setattr(cli, "install", lambda: pytest.fail("chatterbox must not rewire daemon"))
-    rc = cli.main(["voices", "uninstall", "chatterbox"])
-    assert rc == 0
-    assert called == [True]
 
 
 def test_voices_uninstall_default_still_kokoro(monkeypatch):

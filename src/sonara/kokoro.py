@@ -33,7 +33,7 @@ VOICES = [
 
 DEFAULT_VOICE = "af_heart"
 
-# --- once-per-run fallback notice (#29), mirrors chatterbox's ------------------
+# --- once-per-run fallback notice (#29) -----------------------------------------
 # Armed by the tts backend when Kokoro synthesis fails and the utterance falls
 # back to the native WinRT voice; the daemon speaks it exactly once per run so
 # a dead engine is announced instead of producing unexplained error noise.
@@ -118,11 +118,9 @@ def require_installed() -> None:
 
 def normalize_rms(audio, target=0.08, peak=0.97, frame=480, floor=1e-4):
     """Scale float mono audio so its VOICED RMS lands on *target* (~-22 dBFS),
-    hard-capped so no sample exceeds *peak*. The same target as the Chatterbox
-    worker's _normalize_rms (kept in sync - the worker cannot import sonara),
-    so loudness is consistent across engines and voices (#81). Frames below a
-    tenth of the loudest frame are pauses and do not count; silent/empty audio
-    returns unchanged."""
+    hard-capped so no sample exceeds *peak*, so loudness is consistent across
+    voices (#81). Frames below a tenth of the loudest frame are pauses and do
+    not count; silent/empty audio returns unchanged."""
     import numpy as np
     x = np.asarray(audio, dtype=np.float32)
     if x.size < frame:

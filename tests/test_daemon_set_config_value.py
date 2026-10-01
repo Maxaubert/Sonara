@@ -8,31 +8,18 @@ def test_set_config_value_clamps_and_persists(monkeypatch):
     daemon, *_ = make_daemon()
     assert daemon.set_config_value("summary_settle_ms", 99999) is True
     assert daemon.config["summary_settle_ms"] == 5000          # clamped
-    assert daemon.set_config_value("chatterbox_max_chunk_chars", 10) is True
-    assert daemon.config["chatterbox_max_chunk_chars"] == 80   # clamped
     assert daemon.set_config_value("not_a_key", 1) is False
     assert saved                                               # persisted
 
 
-def test_set_config_value_clamps_exaggeration_as_float(monkeypatch):
+def test_set_config_value_rejects_removed_chatterbox_settings(monkeypatch):
+    # Chatterbox was removed (#134): a stale settings page that still sends
+    # one of its settings is refused, never written back into config.
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
     daemon, *_ = make_daemon()
-    assert daemon.set_config_value("chatterbox_exaggeration", 0.65) is True
-    assert daemon.config["chatterbox_exaggeration"] == 0.65
-    daemon.set_config_value("chatterbox_exaggeration", 5)
-    assert daemon.config["chatterbox_exaggeration"] == 1.0   # clamped
-    daemon.set_config_value("chatterbox_exaggeration", -1)
-    assert daemon.config["chatterbox_exaggeration"] == 0.0
-
-
-def test_set_config_value_validates_variant(monkeypatch):
-    # (#42) the Speech section's Turbo/Original mode toggle
-    import sonara.daemon as daemon_module
-    monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
-    daemon, *_ = make_daemon()
-    assert daemon.set_config_value("chatterbox_variant", "original") is True
-    assert daemon.config["chatterbox_variant"] == "original"
-    assert daemon.set_config_value("chatterbox_variant", "turbo") is True
-    assert daemon.set_config_value("chatterbox_variant", "warp9") is False
-    assert daemon.config["chatterbox_variant"] == "turbo"     # junk rejected
+    for key, value in (("chatterbox_max_chunk_chars", 160),
+                       ("chatterbox_exaggeration", 0.5),
+                       ("chatterbox_variant", "original")):
+        assert daemon.set_config_value(key, value) is False
+        assert key not in daemon.config
