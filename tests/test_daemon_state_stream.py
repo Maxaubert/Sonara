@@ -88,6 +88,18 @@ def test_snapshot_control_cue_has_no_session():
     assert status["now_playing"]["tab"] is None
 
 
+def test_snapshot_hides_a_session_change_announcement():
+    # "Session changed: X." is a cue, not content: a player must not show
+    # it as now playing, whichever path spoke it.
+    daemon, *_ = make_daemon(foreground="fg")
+    daemon._current_item = SpeechItem(id=5, session="s1",
+                                      kind="session_change",
+                                      text="Session changed: s1.",
+                                      is_decision=False)
+    status = daemon.handle_message(_msg(MsgType.STATUS))
+    assert status["now_playing"] is None
+
+
 def test_snapshot_queue_counts_session_items_not_control_cues():
     daemon, *_ = make_daemon(foreground="fg")
     daemon._enqueue("a", "prose", "one", False)

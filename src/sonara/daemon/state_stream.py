@@ -40,7 +40,9 @@ def snapshot(daemon) -> dict:
     d = daemon
     item = d._current_item
     now_playing = None
-    if item is not None:
+    # A "Session changed" announcement is a cue, not content: hide it
+    # whichever path spoke it (manual switch, fast_cues off).
+    if item is not None and item.kind != "session_change":
         sid = item.session if item.session and item.session != CONTROL else None
         now_playing = {
             "session": sid,

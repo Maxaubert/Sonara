@@ -135,6 +135,24 @@ def test_speak_session_ends_like_any_other():
     assert daemon._pending_heard == {}
 
 
+def test_speak_session_end_forgets_its_label():
+    # Host tab ids change on every host run: a SPEAK session's persisted
+    # name must not outlive SESSION_END, or labels pile up on disk.
+    daemon, *_ = make_daemon(foreground="fg")
+    _speak(daemon, "Bye.", label="Build tab")
+    daemon.handle_message({"v": 1, "type": MsgType.SESSION_END,
+                           "session": "prism:tab-1"})
+    assert daemon.session_prefs.get("prism:tab-1") == {}
+
+
+def test_claude_session_end_keeps_its_prefs():
+    daemon, *_ = make_daemon(foreground="fg")
+    daemon.session_prefs.set("abc-123", "name", "Mine")
+    daemon.handle_message({"v": 1, "type": MsgType.SESSION_END,
+                           "session": "abc-123"})
+    assert daemon.session_prefs.name("abc-123") == "Mine"
+
+
 def test_client_speak_sends_the_speak_message(monkeypatch):
     sent = []
     monkeypatch.setattr(client, "send",

@@ -313,6 +313,11 @@ class Ingest:
         d = self._d
         session = msg.get("session", "")
         d.sessions.unregister(session)
+        if ":" in session:
+            # A SPEAK session ("<source>:<tab>"): host tab ids change every
+            # host run, so its label must not pile up on disk. Claude
+            # session ids have no colon and keep their prefs for resume.
+            d.session_prefs.forget(session)
         d._teardown_session(session)
         d.router.drop(session)
         return None

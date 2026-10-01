@@ -53,7 +53,7 @@ Behaviour:
 - Session id is `f"{source}:{tab or 'default'}"`. It is registered on the first SPEAK and gets `host_tab = tab`.
 - **Queue of one:** a SPEAK replaces that session's unread text; it never queues behind it. Text that is already playing finishes unless `interrupt` is true. A SPEAK whose text cleans to nothing just clears the unread text.
 - The text is voiced even though the session is not the foreground Claude session. Global pause and mute still apply: SPEAK never un-pauses or un-mutes.
-- A SPEAK session lives until SESSION_END or FORGET_SESSION with its id.
+- A SPEAK session lives until SESSION_END or FORGET_SESSION with its id. Either one also forgets its label and other session settings, so a host should send `session_end` for a tab it closes.
 
 Python: `client.speak(text, source, tab=None, label=None, interrupt=False)`.
 
@@ -67,7 +67,7 @@ Keep the connection open and receive the daemon's state whenever it changes.
 
 - `events` must contain `"state"` (the only event kind today; default `["state"]`).
 - SUBSCRIBE must be the last message on its connection; later messages on it are ignored. Send commands on separate connections.
-- The first event is the current state; after that a `state` event is pushed only when the state changed. The daemon checks after every handled message and when an utterance starts or ends.
+- The first event is the current state; after that a `state` event is pushed only when the state changed. The daemon checks after every handled message and when an utterance starts or ends. Changes that arrive without a message (a background turn digest joining the queue, a config edit on the settings page) show up at the next of those checks, which can be the end of the current utterance.
 - At most 4 subscribers at once. Subscribers are exempt from the 5 s read timeout and the 32-connection cap.
 - A subscriber that does not read its events falls behind, gets dropped and its connection is closed. Reconnect and subscribe again; the first event brings you up to date. The connection also closes when the daemon shuts down.
 - Refusal (unknown event kind, too many subscribers): one `error` event, then the connection closes.
@@ -85,7 +85,7 @@ Python: `for event in client.subscribe(): ...` (a generator; closing it closes t
 | Field | Type | Meaning |
 |---|---|---|
 | `seq` | int | Increases by one on every change, per daemon run. A restart starts again from 1, so a host should treat a lower seq as a fresh daemon. |
-| `now_playing` | object or null | The utterance playing now; null when silent. |
+| `now_playing` | object or null | The utterance playing now; null when silent and during a "Session changed" announcement. |
 | `now_playing.session` | string or null | Its session; null for a global control cue ("Paused.", "Muted."). |
 | `now_playing.tab` | string or null | The session's host tab, if any. |
 | `now_playing.kind` | string | `prose`, `summary`, `choice`, `plan`, `permission`, `tool_announce`, or another cue kind. |
