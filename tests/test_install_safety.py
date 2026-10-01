@@ -1,4 +1,4 @@
-"""install() / uninstall() / _copy_app failure paths (#139: H3, E6, E8, E19, #127).
+"""install() / uninstall() / copy_app failure paths (#139: H3, E6, E8, E19, #127).
 
 An install that fails after stop_sonara() used to leave the STOPPED sentinel
 behind, so Sonara stayed off with no cue. From the deployed copy it always

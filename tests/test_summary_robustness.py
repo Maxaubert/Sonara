@@ -12,7 +12,7 @@ import pytest
 import sonara.daemon as daemon_module
 from sonara import summarizer
 from sonara.protocol import MsgType, PROTOCOL_VERSION
-from tests.daemon_helpers import make_daemon
+from tests.daemon_helpers import locked_call, make_daemon
 
 _PAD = "This filler sentence carries the turn well past the digest threshold. "
 
@@ -183,10 +183,11 @@ def test_settle_fire_failure_never_loses_the_question(monkeypatch):
 def test_a_raising_release_does_not_strand_later_slots(monkeypatch):
     daemon, speaker = _daemon(monkeypatch)
     ran = []
-    s0, s1, s2 = (daemon._digests.alloc() for _ in range(3))
-    daemon._digests.land(s2, lambda: ran.append(2))
-    daemon._digests.land(s1, lambda: (_ for _ in ()).throw(RuntimeError("x")))
-    daemon._digests.land(s0, lambda: ran.append(0))
+    s0, s1, s2 = (locked_call(daemon, daemon._digests.alloc) for _ in range(3))
+    locked_call(daemon, daemon._digests.land, s2, lambda: ran.append(2))
+    locked_call(daemon, daemon._digests.land, s1,
+                lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    locked_call(daemon, daemon._digests.land, s0, lambda: ran.append(0))
     assert ran == [0, 2]
     assert daemon._digests.parked == {}
 
@@ -207,6 +208,62 @@ def test_stale_settle_fire_after_teardown_and_rearm_is_a_noop(monkeypatch):
     assert calls == []                           # the stale fire did nothing
     _fire_settle(daemon, "a")
     assert len(calls) == 1
+
+
+# --- #161: generations of long-ended sessions are pruned --------------------
+
+def _end_turn_and_session(daemon, session):
+    daemon.handle_message(_prose(session, "Report. " + _PAD * 6))
+    daemon.handle_message(_msg(MsgType.EARCON, session, kind="turn_done"))
+    daemon.handle_message(_msg(MsgType.SESSION_END, session))
+
+
+def test_ended_session_generations_are_pruned_after_the_keep_window(monkeypatch):
+    daemon, speaker = _daemon(monkeypatch)
+    now = [1000.0]
+    daemon._summary._clock = lambda: now[0]
+    _end_turn_and_session(daemon, "a")
+    assert "a" in daemon._summary.settle_gen and "a" in daemon._summary.cancel_gen
+    now[0] += daemon._summary.ended_keep_s() + 1
+    _end_turn_and_session(daemon, "b")          # any later end prunes
+    assert "a" not in daemon._summary.settle_gen
+    assert "a" not in daemon._summary.cancel_gen
+    assert "b" in daemon._summary.settle_gen    # b just ended: kept
+
+
+def test_recently_ended_session_keeps_its_generations(monkeypatch):
+    # A worker or timer from before the end may still be out: its guard must
+    # still see the moved generation.
+    daemon, speaker = _daemon(monkeypatch)
+    now = [1000.0]
+    daemon._summary._clock = lambda: now[0]
+    _end_turn_and_session(daemon, "a")
+    stale = daemon._summary.settle_gen["a"] - 1
+    now[0] += 60
+    _end_turn_and_session(daemon, "b")
+    assert "a" in daemon._summary.settle_gen
+    assert "a" in daemon._summary.cancel_gen
+    calls = _capture_spawn(daemon, monkeypatch)
+    daemon._summary.settle_fire("a", stale)
+    assert calls == []
+
+
+def test_a_resumed_session_is_not_pruned(monkeypatch):
+    daemon, speaker = _daemon(monkeypatch)
+    now = [1000.0]
+    daemon._summary._clock = lambda: now[0]
+    _end_turn_and_session(daemon, "a")
+    daemon.handle_message(_prose("a", "Back again. " + _PAD * 6))
+    daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
+    now[0] += daemon._summary.ended_keep_s() + 1
+    _end_turn_and_session(daemon, "b")
+    assert "a" in daemon._summary.settle_gen    # live again, not ended
+
+
+def test_ended_keep_window_outlasts_any_summary_work(monkeypatch):
+    daemon, speaker = _daemon(monkeypatch)
+    daemon.config["summary_timeout"] = 3000
+    assert daemon._summary.ended_keep_s() > 2 * 3000
 
 
 # --- F7: two decisions inside one settle window ------------------------------
@@ -300,7 +357,8 @@ def test_watchdog_arm_failure_still_reports_the_digest_in_flight(monkeypatch):
 
     monkeypatch.setattr(daemon._summary, "schedule_digest_watchdog", boom)
     daemon.handle_message(_prose("a", "Report alpha. " + _PAD * 6))
-    assert daemon._summary.maybe_summarize("a") is True  # the worker is already out
+    # the worker is already out
+    assert locked_call(daemon, daemon._summary.maybe_summarize, "a") is True
     assert len(calls) == 1
 
 

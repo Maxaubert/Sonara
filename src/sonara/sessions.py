@@ -7,7 +7,7 @@ import time
 
 def _basename(cwd) -> "str | None":
     """Portable last path component of *cwd*, handling both / and \\ separators
-    regardless of host OS (a Windows cwd is named correctly even on a macOS runner).
+    regardless of host OS (a Windows cwd is named correctly on any test runner).
     Empty/None -> None."""
     if not cwd:
         return None

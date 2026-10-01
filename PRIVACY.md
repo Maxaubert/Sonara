@@ -30,10 +30,10 @@ Sonara handles ever leaves your computer, except when summary mode is enabled (s
 Sonara keeps a few small local files under `~/.sonara/` (and an autostart entry registered
 with Windows):
 
-- `config.json` — your preferences (voice, speech rate, verbosity).
-- `keymap.json` and `hotkeyd.resolved.json` — your global-hotkey bindings.
-- `install.json` — local file paths and the install timestamp.
-- `*.log` — operational/diagnostic output (startup and errors). Sonara is **not designed to
+- `config.json`: your preferences (voice, speech rate, verbosity).
+- `keymap.json`: your global-hotkey bindings.
+- `install.json`: local file paths and the install timestamp.
+- `*.log`: operational/diagnostic output (startup and errors). Sonara is **not designed to
   record your session content** in these logs.
 
 None of these files are transmitted off your machine.

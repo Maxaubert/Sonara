@@ -107,7 +107,7 @@ def test_resolve_unknown_action_raises():
 def test_resolve_skips_unbound_entries():
     # An entry with no key is UNBOUND -> skipped (not an error), so an action with
     # a default binding can be explicitly cleared in keymap.json.
-    # 'ctrl' is valid on both macOS and Windows keytables (the modifier is
+    # 'ctrl' is a valid modifier in the keytables (the modifier is
     # incidental here -- the point is that the keyless 'pause' entry is skipped).
     resolved = keymap.resolve_keymap({"pause": {"key": None, "mods": ["ctrl"]},
                                       "mute": {"key": "m", "mods": ["ctrl"]}})

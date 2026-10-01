@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 
 from sonara import config_schema
 
@@ -70,6 +71,13 @@ def _digest_watchdog_s(config) -> float:
     enforces summary_timeout itself, so a worker still out at twice that is
     hung, and its slot would otherwise park every later digest forever."""
     return 2.0 * _summary_timeout_s(config)
+
+
+# How long an ended session keeps its cancel and settle generations (#161).
+# They must outlive any worker, timer or parked digest dispatched before the
+# end, so a late one still finds the generation moved; after that they are
+# pruned, or a long-running daemon keeps an entry for every session it saw.
+_ENDED_KEEP_MIN_S = 3600.0
 
 
 def summary_log(reason) -> None:
@@ -136,6 +144,10 @@ class SummaryPipeline:
         # eviction, audit #21).
         self.voiced_upto: dict = {}
         self.summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
+        # session -> clock time it ended; its generations are pruned once it
+        # has been over for ended_keep_s() (#161).
+        self.ended_at: dict = {}
+        self._clock = time.monotonic  # test seam
 
     # -- entry points from handle_message (caller holds the lock) ----------
 
@@ -188,6 +200,34 @@ class SummaryPipeline:
         self.voiced_upto.pop(session, None)       # new turn: nothing voiced yet
         self.inflight.pop(session, None)
         self.last_dispatch_token.pop(session, None)
+
+    def end_session(self, session: str) -> None:
+        """SESSION_END or FORGET_SESSION: cancel the session's summary work
+        like a FLUSH, remember when it ended, and prune the generations of
+        sessions that ended long ago (#161). The generations are not popped
+        here: a worker or timer dispatched before the end may still land."""
+        self.cancel(session)
+        now = self._clock()
+        self.ended_at[session] = now
+        self.prune_ended(now)
+
+    def ended_keep_s(self) -> float:
+        """How long an ended session's generations are kept: well past the
+        digest watchdog (twice summary_timeout), so no stale work survives
+        its session's pruning."""
+        return max(_ENDED_KEEP_MIN_S, 4.0 * _summary_timeout_s(self._config))
+
+    def prune_ended(self, now: float) -> None:
+        """Drop cancel_gen and settle_gen for sessions ended over
+        ended_keep_s() ago with no summary work left."""
+        keep = self.ended_keep_s()
+        busy = self.busy_sessions() | set(self.settle_timers)
+        for session, ended in list(self.ended_at.items()):
+            if now - ended < keep or session in busy:
+                continue
+            self.cancel_gen.pop(session, None)
+            self.settle_gen.pop(session, None)
+            del self.ended_at[session]
 
     def caught_up(self, session: str) -> bool:
         """The summary-mode half of a caught-up user (#83, #107): drop a
@@ -369,6 +409,7 @@ class SummaryPipeline:
         """Defer the turn-end digest until the session's prose settles. Restart the
         window on every new prose delta; fire once quiet (#14). Caller holds the
         lock (this runs from handle_message)."""
+        self.ended_at.pop(session, None)   # a new turn: the session is live
         gen = self.settle_gen.get(session, 0) + 1
         self.settle_gen[session] = gen
         self.settle_pending.add(session)

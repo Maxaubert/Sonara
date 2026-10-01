@@ -101,6 +101,14 @@ def test_state_shape(server):
     assert isinstance(state["daemon"]["port"], int)
 
 
+def test_state_carries_the_package_version(server):
+    # The page footer shows it (#161): one version source, no copy in the HTML.
+    import sonara
+    d, s = server
+    state = json.loads(_get(s, "/api/state").read())
+    assert state["daemon"]["version"] == sonara.__version__
+
+
 def test_state_shows_schema_defaults_for_unset_keys(server):
     # DC10: a config without summary_settle_ms rendered "null ms" on the page.
     d, s = server

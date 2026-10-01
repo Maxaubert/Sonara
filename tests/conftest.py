@@ -10,7 +10,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 # Install fake Windows modules (winrt/winsound/winreg/msvcrt) into sys.modules so
-# platform/windows/* imports and unit-tests on macOS/Linux. No-op on real Windows.
+# platform/windows/* imports and unit-tests on a non-Windows host. No-op on real Windows.
 import tests._winfakes as _winfakes
 _winfakes.install()
 

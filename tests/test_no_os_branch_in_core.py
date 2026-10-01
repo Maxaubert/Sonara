@@ -14,7 +14,7 @@ SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "sonara"
 CORE = [
     "assembler.py", "cleaner.py", "queue.py", "history.py", "sessions.py",
     "protocol.py", "hooks_entry.py", "speaker.py", "config.py",
-    "webui.py", "cli.py",
+    "webui.py", "cli.py", "summarizer.py",
 ]
 # Whole packages held to the same rule (#142): the daemon, and the installer
 # cli.py hands its install, uninstall and doctor work to.
@@ -46,7 +46,7 @@ def _code(path):
 def test_core_covers_the_daemon_webui_cli_and_installer():
     rel = {p.relative_to(SRC).as_posix() for p in _core_files()}
     for must in ("webui.py", "cli.py", "daemon/__init__.py", "daemon/startup.py",
-                 "daemon/hotkeys.py", "install/installer.py"):
+                 "daemon/hotkeys.py", "install/installer.py", "summarizer.py"):
         assert must in rel
 
 

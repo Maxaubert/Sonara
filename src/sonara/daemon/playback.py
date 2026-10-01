@@ -136,9 +136,11 @@ class SpeakLoop:
                       file=sys.stderr, flush=True)
             elif item is not None and item.kind != "session_change":
                 self._on_change()               # speech starts (#143)
-        # Engine fallback notices: spoken once per daemon run so an eyes-free
-        # user knows WHY the voice changed (the reason is already in the log).
-        self._cues.maybe_announce_kokoro_fallback()
+            # Engine fallback notices: spoken once per daemon run so an
+            # eyes-free user knows WHY the voice changed (the reason is
+            # already in the log). Inside this locked block like every cue:
+            # Cues.speak reslices CONTROL and allocates an item id (#155).
+            self._cues.maybe_announce_kokoro_fallback()
         if item is None:
             self._audio.restore()
             self._wake.wait(self.poll_interval)

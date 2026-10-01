@@ -1,7 +1,7 @@
 """Summary-mode navigation (issue #11).
 
 In summary mode the daemon speaks one digest per turn, not the raw per-message
-prose. Ctrl+Alt+Up (nav 'first') re-reads the last digest. Any other nav target
+prose. Restart (nav 'first', default Ctrl+Alt+Up) re-reads the last digest. Any other nav target
 (the removed prev/next stepping) is a SILENT no-op: no chime, and nothing
 enqueued onto the gated session channel (which otherwise piled up and burst at
 turn end).

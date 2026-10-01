@@ -131,5 +131,32 @@ def make_daemon(verbosity: str = "everything", foreground: "str | None" = "fg"):
     ducker = FakeDucker()
     pauser = FakePauser()
     daemon = SpeechDaemon(speaker, sessions, config, ducker=ducker, pauser=pauser)
+    hold_lock_for_direct_calls(daemon)
     queue = ChannelQueueProxy(daemon)
     return daemon, queue, speaker, sessions, config
+
+
+def locked_call(daemon, fn, *args, **kwargs):
+    """Run fn(*args, **kwargs) under the daemon lock, as the socket server
+    and the hotkey worker do. A caller that already holds it (a handler
+    reaching handle_message, a test inside `with daemon._lock`) runs it
+    directly: threading.Lock is not reentrant.
+
+    threading.Lock does not record its owner, so "held" may also mean another
+    thread holds it, and the call then runs unlocked and races that holder.
+    A test that runs live daemon threads (a speak loop, a webui handler) must
+    take `with daemon._lock` itself around its direct calls."""
+    lock = daemon._lock
+    if lock.locked():
+        return fn(*args, **kwargs)
+    with lock:
+        return fn(*args, **kwargs)
+
+
+def hold_lock_for_direct_calls(daemon) -> None:
+    """Make a test's direct handle_message call take the daemon lock (#161),
+    so the suite passes with SONARA_DEBUG_LOCKS=1. The server and the hotkey
+    worker look handle_message up at call time and already hold the lock,
+    which locked_call honours."""
+    real = daemon.handle_message
+    daemon.handle_message = lambda msg: locked_call(daemon, real, msg)

@@ -366,3 +366,19 @@ def test_altgr_warning_names_shift_for_a_shifted_binding(live, monkeypatch):
         text = warn.text_content()
         browser.close()
     assert "AltGr+Shift+M" in text
+
+
+def test_footer_shows_the_version_from_the_state(live):
+    # #161: the footer reads sonara.__version__ through /api/state instead of
+    # a hard-coded copy that had to be bumped with every release.
+    import sonara
+    d, s = live
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_function(
+            "document.getElementById('app-version').textContent !== ''")
+        text = page.locator("#app-version").text_content()
+        browser.close()
+    assert text == "Version " + sonara.__version__

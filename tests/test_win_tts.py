@@ -32,7 +32,7 @@ def test_list_voices():
 
 
 def test_best_voice_returns_display_name_string():
-    # ABC contract: best_voice() -> str. Holds for both the macOS fake voice
+    # ABC contract: best_voice() -> str. Holds for both the fake voice
     # and a real OneCore voice on Windows (no hard-coded name).
     b = WinTtsBackend()
     v = b.best_voice()
@@ -104,7 +104,7 @@ def test_wpm_maps_to_multiplier():
 
 
 def test_run_falls_back_when_voice_name_unknown():
-    # a stale/foreign voice name (e.g. macOS "Samantha") must not be assigned
+    # a stale/foreign voice name (e.g. "Samantha", not a Windows voice) must not be assigned
     # as-is to synth.voice -- run() resolves it or falls back to best_voice().
     h = WinTtsBackend().run("hi", "Samantha", 200)  # fake has no such voice
     assert h.wait(timeout=2.0) == 0   # did not crash on an unresolved name
@@ -119,7 +119,7 @@ def test_run_raises_actionable_error_when_no_voices(monkeypatch):
     # _best_voice_info goes through) rather than SpeechSynthesizer.all_voices:
     # on a real Windows box that is a projected WinRT type whose attributes are
     # read-only, so the old setattr died with "attribute 'all_voices' ... is not
-    # writable" and this test could only ever pass under the macOS fakes.
+    # writable" and this test could only ever pass under the fakes.
     b = WinTtsBackend()
     monkeypatch.setattr(b, "_all_voice_infos", lambda: [])
     with pytest.raises(RuntimeError, match="No TTS voices installed"):
@@ -127,7 +127,7 @@ def test_run_raises_actionable_error_when_no_voices(monkeypatch):
 
 
 def test_list_voices_returns_display_name_strings():
-    # ABC + macOS return list[str]; Windows must match, not VoiceInformation
+    # The ABC returns list[str]; Windows must match, not VoiceInformation
     # objects (the same object-vs-name slip the PR fixed for best_voice()). (#16)
     voices = WinTtsBackend().list_voices()
     assert isinstance(voices, list) and voices
@@ -142,7 +142,7 @@ def test_terminate_issues_a_real_stop_playsound_call(monkeypatch):
     #
     # Record via a stubbed winsound.PlaySound instead of the fake module's
     # winsound._calls list: the real stdlib winsound has no _calls, so this only
-    # ever ran under the macOS fakes -- and left unstubbed on a real box it would
+    # ever ran under the fakes -- and left unstubbed on a real box it would
     # blare the test utterance out of the speakers. Both call sites
     # (_play_wav_bytes and _TtsHandle.terminate) go through the module
     # attribute, so one patch covers the start AND the stop.
