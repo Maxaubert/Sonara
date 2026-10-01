@@ -291,6 +291,8 @@ class Ingest:
         # the FLUSH gate, and the cooperative drain keeps the paused
         # session's interrupted message first on resume.
         d.sessions.set_foreground(session, cwd=msg.get("cwd"))
+        # The embedding host's tab (#143); absent outside a host.
+        d.sessions.set_host_tab(session, msg.get("host_tab"))
         if t == MsgType.SESSION_START:
             d.sessions.register(session, cwd=msg.get("cwd"))
             self.guide_setup(session, msg.get("plugin_version", ""))
