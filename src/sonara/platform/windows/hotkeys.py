@@ -25,7 +25,7 @@ _VK_LABELS = {
     0x25: "Left", 0x26: "Up", 0x27: "Right", 0x28: "Down",
     0x24: "Home", 0x23: "End", 0x21: "PageUp", 0x22: "PageDown",
 }
-# Win first, as Windows writes its own chords (Win+Alt+Home, Ctrl+Alt+M).
+# Win first, as Windows writes its own chords (Win+Alt+Home, Ctrl+Win+Up).
 _MOD_LABELS = [(0x0008, "Win"), (0x0002, "Ctrl"), (0x0004, "Shift"), (0x0001, "Alt")]
 
 
@@ -264,12 +264,12 @@ class WinHotkeyBackend(HotkeyBackend):
         parts = ", ".join("{0} ({1}) is AltGr typing '{2}'".format(combo, action, ch)
                           for action, combo, ch in found)
         # A warning, not a failure (#160): Sonara works, the user loses a
-        # character until they move off the Ctrl+Alt chord.
+        # character until they rebind that key off the Ctrl+Alt chord.
         return ("AltGr", DOCTOR_WARN,
                 "{0} on this keyboard layout, so the hotkey eats that character. "
-                "Fix: reset to the Win+Alt defaults (sonara keymap --reset, or "
-                "'Reset hotkeys to defaults' on the settings page), or rebind it "
-                "on the settings page (sonara settings) with Win".format(parts))
+                "Fix: rebind it on the settings page (sonara settings) to a chord "
+                "with Win, for example Win+Alt+Home or Ctrl+Win+Up. Resetting "
+                "does not help: the defaults use Ctrl+Alt".format(parts))
 
     def display_combo(self, modifiers: int, key_code: int) -> str:
         parts = [name for mask, name in _MOD_LABELS if modifiers & mask]

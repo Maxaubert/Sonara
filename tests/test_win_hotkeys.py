@@ -36,7 +36,7 @@ def _backend_with_fake_user32(monkeypatch, *, fail_ids=()):
 def test_keytables_and_default_mods():
     hk = WinHotkeyBackend()
     assert hk.key_codes()["s"] == 0x53 and hk.mod_masks()["ctrl"] == 0x0002
-    assert hk.default_mods() == ["win", "alt"]
+    assert hk.default_mods() == ["ctrl", "alt"]
     assert isinstance(hk, HotkeyBackend)
 
 
@@ -226,10 +226,11 @@ def test_doctor_row_names_the_eaten_character_and_the_fix(monkeypatch):
     assert "Ctrl+Alt+M" in detail and "\u00b5" in detail and "settings" in detail
 
 
-def test_altgr_collision_is_a_warning_naming_every_chord_and_both_fixes(monkeypatch):
+def test_altgr_collision_is_a_warning_naming_every_chord_and_the_rebind_fix(monkeypatch):
     """#160: an AltGr clash is a warning, not a failure: Sonara works, the user
-    just loses a character. The row names each chord, its character, and both
-    fixes (reset to the Win+Alt defaults, or rebind)."""
+    just loses a character. The row names each chord, its character, and the
+    fix: rebind with Win. The defaults are Ctrl+Alt, so a reset never helps
+    and must not be offered as a fix."""
     from sonara.platform.base import DOCTOR_WARN
     hk = WinHotkeyBackend()
     monkeypatch.setattr(hk, "altgr_conflicts", lambda resolved, to_char=None: [
@@ -239,8 +240,9 @@ def test_altgr_collision_is_a_warning_naming_every_chord_and_both_fixes(monkeypa
     assert ok == DOCTOR_WARN
     assert "Ctrl+Alt+M" in detail and "\u00b5" in detail
     assert "Ctrl+Alt+P" in detail and "\u03c0" in detail
-    assert "sonara keymap --reset" in detail and "Win+Alt" in detail
-    assert "rebind" in detail.lower()
+    assert "rebind" in detail.lower() and "Win" in detail
+    assert "--reset" not in detail
+    assert "defaults use Ctrl+Alt" in detail
 
 
 def test_doctor_row_ok_without_conflicts(monkeypatch):
