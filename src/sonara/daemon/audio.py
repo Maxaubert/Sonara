@@ -16,7 +16,8 @@ class AudioControl:
     """Owns the ducker and pauser. Given the daemon's shared state
     explicitly: *persist* saves the config, *cues* speaks confirmations,
     *cue_target* names the session a cue is said for, *wake* is the speak
-    loop's wake event."""
+    loop's wake event. These are kept by reference, so the daemon must not
+    rebind config, speaker, ducker or pauser after construction."""
 
     MESSAGES = (MsgType.SET_AUDIO_MODE, MsgType.SET_DUCK_LEVEL,
                 MsgType.SET_VOLUME)
