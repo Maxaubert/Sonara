@@ -54,25 +54,25 @@ def test_preview_rejects_an_empty_voice():
 
 
 def test_preview_queues_its_cue_under_the_daemon_lock():
-    """preview_voice runs on a webui HTTP thread. _speak_cue reslices the
+    """preview_voice runs on a webui HTTP thread. _cues.speak reslices the
     CONTROL channel and allocates an id, which the speak loop also does under
     self._lock, so the preview must take the lock too."""
     daemon, *_ = make_daemon()
     held = []
-    daemon._speak_cue = lambda *a, **k: held.append(daemon._lock.locked())
+    daemon._cues.speak = lambda *a, **k: held.append(daemon._lock.locked())
     daemon.preview_voice("af_bella")
     assert held == [True]
 
 
 def test_hotkey_failure_cue_is_queued_under_the_daemon_lock():
-    """_reload_hotkeys and _start_hotkeys run off the lock, so the failure
+    """HotkeyController.reload and start run off the lock, so the failure
     cue they speak must take it (same race as the preview)."""
     daemon, *_ = make_daemon()
     held = []
-    daemon._speak_cue = lambda *a, **k: held.append(daemon._lock.locked())
+    daemon._cues.speak = lambda *a, **k: held.append(daemon._lock.locked())
     try:
         raise RuntimeError("boom")
     except RuntimeError:
-        daemon._hotkeys_failed("reload")
-    daemon._announce_hotkey_collisions([{"action": "mute"}])
+        daemon._hotkeys.failed("reload")
+    daemon._hotkeys.announce_collisions([{"action": "mute"}])
     assert held == [True, True]

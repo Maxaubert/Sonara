@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import os
-import queue
 import socket
 import sys
 import threading
 
-from sonara.protocol import MsgType, encode, decode
+from sonara.protocol import MsgType
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
+from sonara.daemon.audio import AudioControl
+from sonara.daemon.cues import Cues
+from sonara.daemon.hotkeys import HotkeyController
+from sonara.daemon.server import ConnectionServer
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -33,15 +36,6 @@ RATE_MIN = config_schema.RATE_MIN
 RATE_MAX = config_schema.RATE_MAX
 MINQUEUE_MIN = config_schema.MINQUEUE_MIN
 MINQUEUE_MAX = config_schema.MINQUEUE_MAX
-
-# Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
-# accidental/rapid double-tap doesn't flip pause/mute several times (and pile
-# up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced --
-# repeated presses there are intentional. NEXT_SESSION is directional too: each
-# press is a deliberate ring advance (and now chimes instantly, #111), and
-# MOD_NOREPEAT already guards key-hold auto-repeat, so it is not debounced.
-_HOTKEY_DEBOUNCE_S = 0.30
-_DEBOUNCED_HOTKEYS = (MsgType.PAUSE, MsgType.MUTE)
 
 # Summary mode: a turn whose prose is already shorter than this is spoken
 # as-is instead of being digested (a digest of a short message adds nothing,
@@ -100,11 +94,6 @@ def _summary_log(reason) -> None:
     speechd.log, so a silent recap failure is diagnosable."""
     print("[summary] {0}".format(reason), file=sys.stderr, flush=True)
 
-# Cap on concurrent connection-handler threads. Legitimate clients are short-lived
-# (one request each), so this bound is generous; it just stops a misbehaving or
-# hostile peer from leaking unbounded threads by opening many connections.
-_MAX_CONN_THREADS = 32
-
 # Startup channel rehydration horizon (#118): sessions seen within this window
 # get their persisted last digest re-seeded as a replayable channel, so the
 # manual cycle reaches them across daemon restarts. Matches the settings
@@ -150,8 +139,10 @@ class SpeechDaemon:
         self._running = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
-        self._server = None
-        self._token = None
+        # The loopback socket: accept loop, token check, handler threads.
+        # handle_message is looked up at call time, as for the hotkeys.
+        self._server = ConnectionServer(
+            self._running, self._lock, lambda m: self.handle_message(m))
         self._webui = None
         self._poll_interval = 0.1
         from sonara.history import SessionHistory
@@ -167,21 +158,31 @@ class SpeechDaemon:
         # respawn a dead daemon between two messages, and a memory-only mute
         # was reset to audible by the swap - the "mute is not persistent" bug.
         self._mute_level = config_schema.current(config, "mute_level")
-        self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
         self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
         self._current_item = None                 # item being spoken right now
+        # Control cues on the CONTROL channel, their voice, Kokoro notices.
+        self._cues = Cues(config, self.router, speaker, self.session_prefs,
+                          alloc_id=self._alloc_id,
+                          current_item=lambda: self._current_item,
+                          wake=self._wake)
+        # Ducking / media pause around speech, and the speech volume. persist
+        # resolves save_config here at call time (tests patch it on this module).
+        self._audio = AudioControl(
+            config, self.ducker, self.pauser, speaker,
+            persist=lambda: save_config(self.config), cues=self._cues,
+            cue_target=lambda: self.router.active or self.sessions.foreground(),
+            wake=self._wake)
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
-        self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
-        self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
-        # Hotkey fires are handed to this queue by the Windows pump thread and
-        # applied by a dedicated worker under self._lock -- so the pump NEVER blocks
-        # on the lock and presses can't pile up then burst while the daemon is busy
-        # streaming prose (the mute-hang). Drained by _hotkey_worker.
-        self._hotkey_q: "queue.Queue" = queue.Queue()
+        # Global hotkeys: fires are queued by the pump thread and applied by a
+        # worker under self._lock, like a socket message. handle_message is
+        # looked up at call time so a replaced handler (tests) is honoured.
+        self._hotkeys = HotkeyController(
+            self._lock, self._running, lambda m: self.handle_message(m),
+            self._cues)
         # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
         # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
         # since it was dispatched. A turn merely ending does NOT advance it, so the
@@ -700,20 +701,20 @@ class SpeechDaemon:
                 # it is always heard even if the session is also muted.
                 self._paused.clear()
                 self._wake.set()
-                # target may be None (no session) -> _speak_cue routes to the
+                # target may be None (no session) -> the cue routes to the
                 # CONTROL channel so the confirmation is still heard.
-                self._speak_cue(target, "Resumed.", exempt_mute=True)
+                self._cues.speak(target, "Resumed.", exempt_mute=True)
             else:
                 self._paused.set()
                 # cancel() bumps the speaker's epoch so even an in-progress
                 # utterance aborts. The speak loop re-queues the interrupted item
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
-                self._maybe_restore_audio()
+                self._audio.restore()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
-                self._speak_cue(target, "Paused.", pause_exempt=True)
+                self._cues.speak(target, "Paused.", pause_exempt=True)
             return None
 
         if t == MsgType.MUTE:
@@ -736,11 +737,11 @@ class SpeechDaemon:
                 self.speaker.cancel()           # stop the current utterance now
             cue = {1: "Muted.", 2: "Super muted.", 0: "Unmuted."}[self._mute_level]
             target = self.router.active or self.sessions.foreground()
-            # target may be None -> _speak_cue routes to the CONTROL channel so the
+            # target may be None -> the cue routes to the CONTROL channel so the
             # confirmation is heard even when no session is registered.
             # pause_exempt: a state change made WHILE PAUSED must still be
             # confirmed, or the user cannot tell what they toggled (deep audit #25).
-            self._speak_cue(target, cue, exempt_mute=True, pause_exempt=True)
+            self._cues.speak(target, cue, exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -752,8 +753,8 @@ class SpeechDaemon:
             target, _replay = self.router.next_session()
             self.speaker.cancel()
             if target is None:
-                self._speak_cue(None, "No session.", exempt_mute=True,
-                                pause_exempt=True)
+                self._cues.speak(None, "No session.", exempt_mute=True,
+                                 pause_exempt=True)
             else:
                 # Instant press feedback (#111): fire the switch chime NOW, from
                 # the handler (the earcon player is a non-blocking subprocess).
@@ -768,16 +769,8 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.RELOAD_KEYMAP:
-            # keymap.json changed (e.g. an unbind): re-register hotkeys so it takes
-            # effect without a daemon restart. Run it OFF the daemon lock: this
-            # handler is invoked while holding self._lock, but _reload_hotkeys joins
-            # the Windows hotkey pump thread, which itself needs self._lock to
-            # dispatch a fire. Joining under the lock could stall the daemon up to
-            # the join timeout and, on timeout, leave an orphaned thread that
-            # re-creates the H2 dark-hotkey race. A short-lived thread does the
-            # reload lock-free (and _reload_lock serializes concurrent reloads).
-            threading.Thread(target=self._reload_hotkeys,
-                             name="sonara-keymap-reload", daemon=True).start()
+            # keymap.json changed: re-register off the daemon lock.
+            self._hotkeys.request_reload()
             return None
 
         if t == MsgType.REPEAT:
@@ -786,7 +779,7 @@ class SpeechDaemon:
                 return None
             entries = self.history.last_message(fg)
             if not entries:
-                self._speak_cue(fg, "Nothing to repeat.")
+                self._cues.speak(fg, "Nothing to repeat.")
                 return None
             self._replay(fg, entries)
             return None
@@ -832,9 +825,9 @@ class SpeechDaemon:
             if is_delta:
                 # A control cue (F6): on the session channel it waited behind
                 # minqueue and could wipe the placeholder seed.
-                self._speak_cue(self.sessions.foreground(),
-                                "Rate {0}.".format(rate), exempt_mute=True,
-                                pause_exempt=True, cue_key="rate")
+                self._cues.speak(self.sessions.foreground(),
+                                 "Rate {0}.".format(rate), exempt_mute=True,
+                                 pause_exempt=True, cue_key="rate")
                 self._wake.set()
             return None
 
@@ -888,41 +881,8 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
-        if t == MsgType.SET_AUDIO_MODE:
-            mode = config_schema.clean("audio_mode", msg.get("mode"))
-            if mode is config_schema.INVALID:
-                return None
-            self._apply_audio_mode(mode)
-            return None
-
-        if t == MsgType.SET_DUCK_LEVEL:
-            level = config_schema.clean("duck_level", msg.get("level"))
-            if level is config_schema.INVALID:
-                return None
-            self.config["duck_level"] = level
-            save_config(self.config)
-            if self._audio_duck_on() and self.ducker.is_ducked():  # re-apply at the new level
-                self.ducker.restore()
-                self.ducker.duck(self._duck_exclude_pids(), level)
-            target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target, "Duck level {0} percent.".format(level),
-                            exempt_mute=True, pause_exempt=True,
-                            cue_key="duck_level")
-            self._wake.set()
-            return None
-
-        if t == MsgType.SET_VOLUME:
-            vol = config_schema.clean("volume", msg.get("volume"))
-            if vol is config_schema.INVALID:
-                return None
-            self.config["volume"] = vol
-            save_config(self.config)
-            self._apply_volume(vol)
-            # No spoken confirmation, ever (user decision): the instant
-            # session-volume change is its own feedback, and the slider is
-            # the only surface, so the number is already on screen.
-            self._wake.set()
-            return None
+        if t in AudioControl.MESSAGES:
+            return self._audio.handle(msg)
 
         if t == MsgType.SET_SUMMARY_MODE:
             if "enabled" not in msg:
@@ -931,9 +891,9 @@ class SpeechDaemon:
             self.config["summary_mode"] = enabled
             save_config(self.config)
             target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target,
-                            "Summary mode on." if enabled else "Summary mode off.",
-                            exempt_mute=True, pause_exempt=True)
+            self._cues.speak(target,
+                             "Summary mode on." if enabled else "Summary mode off.",
+                             exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -972,95 +932,12 @@ class SpeechDaemon:
     def stop(self) -> None:
         self._running.clear()
         self._wake.set()
-        self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
-        self._maybe_restore_audio()       # never leave other apps' audio ducked or paused
-        self._stop_hotkeys()
+        self._hotkeys.stop_worker()     # unblock the hotkey worker's get() to exit
+        self._audio.restore()       # never leave other apps' audio ducked or paused
+        self._hotkeys.stop()
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
-        srv = self._server
-        if srv is not None:
-            try:
-                srv.close()
-            except OSError:
-                pass
-
-    def _start_hotkeys(self) -> None:
-        """Start the platform's global-hotkey listener: an in-process
-        RegisterHotKey thread."""
-        # Kill-switch: a ~/.sonara/no_hotkeys file (or SONARA_DISABLE_HOTKEYS=1)
-        # runs speech-only (no in-process hotkey thread). A FILE flag is honoured
-        # by EVERY daemon however it is spawned (hooks inherit their own env, not
-        # ours), so it reliably isolates the hotkey thread when diagnosing crashes.
-        flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
-        if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
-            return
-        from sonara.platform import get_platform
-        try:
-            from sonara import keymap
-            keymap.migrate_default_chord()   # one-time upgrade of the legacy chord
-            backend = get_platform().hotkey
-            backend.start(self._dispatch_hotkey)
-            self._announce_hotkey_collisions(getattr(backend, "collisions", None))
-        except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-            self._hotkeys_failed("start")
-
-    def _hotkeys_failed(self, what: str) -> None:
-        """Log why the hotkeys did not start (traceback to the log) and say so
-        once per run (M4): a bad keymap.json used to leave every hotkey dead
-        with no sign at all. Called from an except block."""
-        import traceback
-        print("[hotkeys] {0} failed:".format(what), file=sys.stderr, flush=True)
-        traceback.print_exc(file=sys.stderr)
-        if getattr(self, "_hotkey_failure_announced", False):
-            return
-        self._hotkey_failure_announced = True
-        # Off-lock caller (start/reload): the cue reslices CONTROL, take the lock.
-        with self._lock:
-            self._speak_cue(None, "Sonara hotkeys could not start. Run sonara "
-                            "doctor to see why.", exempt_mute=True,
-                            pause_exempt=True)
-
-    def _announce_hotkey_collisions(self, collisions) -> None:
-        """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
-        chord to ONE process: in a split-brain (a stray older daemon surviving a
-        restart) the new daemon owns the socket but not the keys, so hotkey
-        presses act on a daemon the user cannot hear about - mute appears
-        broken. Collisions were only recorded for `sonara doctor`; an eyes-free
-        user needs to HEAR that the keys went elsewhere."""
-        if not collisions:
-            return
-        names = ", ".join(sorted(str(c.get("action", "?")) for c in collisions))
-        print("[hotkeys] failed to register: {0}".format(names),
-              file=sys.stderr, flush=True)
-        with self._lock:                   # called off-lock from _start_hotkeys
-            self._speak_cue(None,
-                            "Some Sonara hotkeys are held by another program. "
-                            "Restarting Sonara may fix it.",
-                            exempt_mute=True, pause_exempt=True)
-
-    def _stop_hotkeys(self) -> None:
-        from sonara.platform import get_platform
-        try:
-            get_platform().hotkey.stop()
-        except Exception:  # noqa: BLE001 - shutdown must not raise
-            pass
-
-    def _reload_hotkeys(self) -> None:
-        """Apply a keymap.json change to the live hotkeys. Runs OFF the daemon lock
-        (see the RELOAD_KEYMAP handler) and is serialized by _reload_lock so two
-        rapid reloads can't interleave their stop/start cycles. Honors the
-        no_hotkeys kill switch, then delegates to the platform backend's reload()
-        seam, a (thread-joined) stop+start."""
-        with self._reload_lock:
-            flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
-            if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
-                self._stop_hotkeys()
-                return
-            from sonara.platform import get_platform
-            try:
-                get_platform().hotkey.reload(self._dispatch_hotkey)
-            except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-                self._hotkeys_failed("reload")
+        self._server.close()
 
     def _replay(self, session: str, entries, append: bool = False,
                 suppress_announce: bool = True) -> None:
@@ -1683,7 +1560,7 @@ class SpeechDaemon:
         ids = self.history.message_ids(session)
         if not ids:
             # A control cue (F6): on the session channel it wiped the seed.
-            self._speak_cue(session, "Nothing to navigate yet.")
+            self._cues.speak(session, "Nothing to navigate yet.")
             return False
         self.speaker.cancel()
         # Clear any not-yet-spoken items from the channel so the replay is the
@@ -1745,63 +1622,6 @@ class SpeechDaemon:
         self._wake.set()
         return True
 
-    def _dispatch_hotkey(self, message: dict) -> None:
-        """Called ON the Windows hotkey PUMP thread for each fire. It MUST NOT block:
-        debounce (cheap, pump-thread-only state) then hand the message to the worker
-        queue and return to GetMessage immediately. Running handle_message here
-        (under self._lock) used to stall the pump whenever the daemon held the lock
-        streaming prose, so presses queued at the OS level and burst later -- the
-        mute-hang. The worker (_hotkey_worker) applies the message under the lock."""
-        import time as _t
-        if self._debounce_suppress(message.get("type"), _t.monotonic()):
-            return   # a too-fast repeat of the same toggle -> ignore
-        self._hotkey_q.put(message)
-
-    def _hotkey_worker(self) -> None:
-        """Drain queued hotkey fires and apply each under self._lock -- OFF the pump
-        thread, so a busy daemon can never stall hotkey CAPTURE. Serialized (single
-        worker) like the old synchronous dispatch, and serialized against the socket
-        path via self._lock."""
-        while self._running.is_set():
-            try:
-                message = self._hotkey_q.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            if message is None:        # shutdown sentinel from stop()
-                break
-            self._process_hotkey(message)
-
-    def _process_hotkey(self, message: dict) -> None:
-        """Apply one hotkey message exactly like an inbound socket message.
-
-        MUST hold self._lock around handle_message, identical to the socket path
-        (_handle_conn): it mutates shared state (channels, history, config)
-        concurrently with the speak loop, so without the lock it races -> 'list
-        changed size during iteration' / corruption. handle_message and its callees
-        never acquire self._lock (note_spoken/speak run on the speak thread), so this
-        is deadlock-free. Contained so one bad hotkey can't kill the worker."""
-        try:
-            with self._lock:
-                self.handle_message(message)
-        except Exception:  # noqa: BLE001 - one bad hotkey must not kill the worker
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-
-    def _debounce_suppress(self, mtype, now) -> bool:
-        """True if *mtype* is a repeat of the same TOGGLE hotkey within the debounce
-        window -- collapses an accidental/rapid double-tap into one action. Only the
-        toggles in _DEBOUNCED_HOTKEYS are debounced; nav/repeat/skip pass through so
-        repeated directional presses still register. Runs on the single hotkey pump
-        thread, so the unlocked _hotkey_last access is race-free."""
-        if mtype not in _DEBOUNCED_HOTKEYS:
-            return False
-        last = self._hotkey_last.get(mtype)
-        if last is not None and (now - last) < _HOTKEY_DEBOUNCE_S:
-            return True
-        self._hotkey_last[mtype] = now
-        return False
-
     def _speak_loop(self) -> None:
         self._running.set()
         while self._running.is_set():
@@ -1836,140 +1656,10 @@ class SpeechDaemon:
         except Exception:  # noqa: BLE001 - logging failure must not wedge the loop
             pass
 
-    def _speak_cue(self, session, text: str, exempt_mute: bool = False,
-                   pause_exempt: bool = False, cue_key=None, voice=None) -> None:
-        """Speak a one-off confirmation/feedback cue (pause/mute/repeat/...).
-        These ALWAYS go to the reserved CONTROL channel, which the router serves
-        ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
-        session channel is gated by `ready()` (minqueue items / turn_done), so a cue
-        placed there during a live stream would sit unplayed and then burst out when
-        the turn flushed; CONTROL makes the cue immediate regardless of stream state.
-        The *session* arg is accepted for call-site clarity but no longer routes.
-
-        *cue_key* coalesces slider spam: a keyed cue removes every pending cue
-        with the same key and cuts one mid-speech, so dragging a slider speaks
-        only the final value instead of the whole stacked sweep.
-
-        *voice* speaks this one cue in that voice instead of the cue voice
-        (a settings-page preview, M6)."""
-        from sonara.router import CONTROL
-        ch = self.router.channel(CONTROL)
-        if ch.caught_up():
-            ch.wipe()                      # control cues don't replay; keep it small
-        elif cue_key is not None:
-            ch.remove_pending(lambda it: it.cue_key == cue_key)
-        if cue_key is not None:
-            cur = self._current_item
-            if cur is not None and getattr(cur, "cue_key", None) == cue_key:
-                self.speaker.cancel()      # stale value mid-utterance: cut it
-        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
-                          text=text, is_decision=False, mute_exempt=exempt_mute,
-                          pause_exempt=pause_exempt, cue_key=cue_key,
-                          voice=voice or None)
-        # APPEND, do not cursor-insert: CONTROL is already served ahead of every
-        # session, and inserting at the cursor made STACKED cues play LIFO --
-        # the user heard state confirmations newest-first (deep audit #25).
-        ch.append(item)
-        self._wake.set()
-
-    def _cue_voice(self):
-        """The voice cues speak in (#60): config cue_voice (default af_heart,
-        the warm-Kokoro pick -- ~0.3s per cue once loaded, far nicer than the
-        native David/Zira). Unset maps to None = the platform's native
-        voice."""
-        v = self.config.get("cue_voice")
-        if not v:
-            return None
-        try:
-            from sonara import kokoro
-            if kokoro.is_kokoro_voice(v) and not kokoro.is_installed():
-                # E12: the default af_heart on an install without Kokoro.
-                # Speak cues natively instead of failing over every time.
-                return None
-        except Exception:  # noqa: BLE001 - a cue must never fail on the check
-            pass
-        return v
-
-    def _cue_voice_override(self, item) -> dict:
-        """speaker.speak kwargs for *item* (#60). Control feedback and
-        session-change announcements speak through an always-fast voice
-        (warm Kokoro by default, native Windows as floor) instead of the
-        configured voice, so "Muted." never waits on a slow synthesis.
-        Config fast_cues (default on) disables."""
-        from sonara.router import CONTROL
-        if item.session == CONTROL and getattr(item, "voice", None):
-            return {"voice": item.voice}         # a voice preview (M6)
-        if (config_schema.get(self.config, "fast_cues")
-                and (item.session == CONTROL or item.kind == "session_change")):
-            return {"voice": self._cue_voice()}
-        return {}
-
-    def _voice_override(self, item) -> dict:
-        """speaker.speak kwargs for *item*: the fast-cue voice for control
-        feedback and session-change announcements (#60), else the session's
-        voice pref, else {} (the global default voice)."""
-        kw = self._cue_voice_override(item)
-        if kw:
-            return kw
-        v = self.session_prefs.voice(item.session)
-        return {"voice": v} if v else {}
-
     def _maybe_prewarm_cue_voice(self) -> None:
-        """Pre-load the Kokoro engine when cues route to a Kokoro voice (#60):
-        the first cue after daemon start otherwise pays the ~3s engine load.
-        Best-effort, background, never blocks or breaks the caller."""
-        try:
-            from sonara import kokoro
-            if not (config_schema.get(self.config, "fast_cues")
-                    and kokoro.is_kokoro_voice(self._cue_voice())
-                    and kokoro.is_installed()):
-                return
-        except Exception:  # noqa: BLE001 - optional engine; never break startup
-            return
-
-        def _warm():
-            try:
-                from sonara.platform import get_platform
-                get_platform().tts._kokoro_wav("Ready.", config_schema.get(self.config, "rate"))
-            except Exception:  # noqa: BLE001 - warming is best-effort
-                pass
-        threading.Thread(target=_warm, name="sonara-kokoro-warm", daemon=True).start()
-
-    def _maybe_announce_kokoro_fallback(self) -> None:
-        """Speak the pending Kokoro fallback notice, if any, exactly once per
-        daemon run (#29): a dead engine is announced instead of producing
-        unexplained error noise. The one-time model download (M2/E11, #53)
-        is announced the same way, so the Windows voice standing in meanwhile
-        is explained."""
-        try:
-            from sonara import kokoro
-            downloading = kokoro.pop_download_notice()
-        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
-            downloading = False
-        if downloading and not getattr(self, "_kokoro_download_announced", False):
-            self._kokoro_download_announced = True
-            self._speak_cue(None, "Downloading the neural voice. Using the "
-                            "Windows voice until it is ready.", exempt_mute=True)
-        if getattr(self, "_kokoro_fallback_announced", False):
-            return
-        try:
-            from sonara import kokoro
-            reason = kokoro.pop_fallback_notice()
-        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
-            return
-        if reason:
-            self._kokoro_fallback_announced = True
-            self._speak_cue(None, "Kokoro unavailable, using Windows voice.",
-                            exempt_mute=True)
-
-    def _audio_mode(self) -> str:
-        return config_schema.current(self.config, "audio_mode")
-
-    def _audio_duck_on(self) -> bool:
-        return self._audio_mode() == "duck"
-
-    def _duck_level(self) -> int:
-        return config_schema.current(self.config, "duck_level")
+        """Live-apply hook for the cue voice keys (config_schema apply):
+        warm the Kokoro engine for cues (#60, see Cues.maybe_prewarm)."""
+        self._cues.maybe_prewarm()
 
     def set_config_value(self, key: str, value) -> bool:
         """Set a config-only tuning key (settings page, #34). These have no
@@ -2047,72 +1737,23 @@ class SpeechDaemon:
         if not voice:
             return False
         text = "This is {0} speaking for Sonara.".format(voice)
-        # HTTP requests run on their own threads: _speak_cue reslices CONTROL
+        # HTTP requests run on their own threads: Cues.speak reslices CONTROL
         # and allocates an id, which the speak loop does under the lock too.
         with self._lock:
-            self._speak_cue(None, text, exempt_mute=True, pause_exempt=True,
-                            cue_key="voice_preview", voice=str(voice))
+            self._cues.speak(None, text, exempt_mute=True, pause_exempt=True,
+                             cue_key="voice_preview", voice=str(voice))
         return True
-
-    def _duck_exclude_pids(self) -> "set[int]":
-        pids = {os.getpid()}
-        try:
-            pids.update(self.speaker.earcon_pids())
-        except AttributeError:
-            pass
-        return pids
-
-    def _apply_volume(self, percent) -> None:
-        """Push the speech gain to the platform playback layer. Best-effort:
-        tests and non-Windows runs have no platform backend."""
-        try:
-            from sonara.platform import get_platform
-            get_platform().tts.set_volume(percent)
-        except Exception:  # noqa: BLE001 - volume must never break the daemon
-            pass
-
-    def _maybe_engage_audio(self) -> None:
-        mode = self._audio_mode()
-        if mode == "duck":
-            if not self.ducker.is_ducked():
-                self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
-        elif mode == "pause":
-            if not self.pauser.is_paused():
-                self.pauser.pause()
-
-    def _maybe_restore_audio(self) -> None:
-        # Disengage BOTH backends defensively: a mid-speech mode switch can leave
-        # the other backend engaged, and idle must never leave media ducked OR paused.
-        if self.ducker.is_ducked():
-            self.ducker.restore()
-        if self.pauser.is_paused():
-            self.pauser.resume()
-
-    def _apply_audio_mode(self, mode: str) -> None:
-        """Persist the audio behavior mode, disengage whatever backend was
-        engaged (so a switch never leaves other apps ducked or paused), and
-        speak the mode cue."""
-        if mode not in config_schema.AUDIO_MODES:
-            return
-        self.config["audio_mode"] = mode
-        save_config(self.config)
-        self._maybe_restore_audio()
-        target = self.router.active or self.sessions.foreground()
-        cue = {"off": "Audio off.", "duck": "Audio ducking.",
-               "pause": "Media pause."}[mode]
-        self._speak_cue(target, cue, exempt_mute=True, pause_exempt=True)
-        self._wake.set()
 
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
             # Idempotently restore other apps' audio while paused -- closes the window
             # where a re-duck slipped in during the pause transition. Safe to call
-            # repeatedly: _maybe_restore_audio() is a no-op when not ducked/paused.
-            self._maybe_restore_audio()
+            # repeatedly: AudioControl.restore() is a no-op when not ducked/paused.
+            self._audio.restore()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
-            # pause rewinds the cursor past where _speak_cue inserted the cue, so a
+            # pause rewinds the cursor past where Cues.speak inserted the cue, so a
             # plain peek() at the cursor would miss it.
             with self._lock:
                 item = None
@@ -2125,7 +1766,7 @@ class SpeechDaemon:
             if item is not None:
                 try:
                     completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                                   **self._cue_voice_override(item))
+                                                   **self._cues.cue_voice_override(item))
                 except Exception:  # noqa: BLE001
                     self._signal_speak_failure()
                     completed = False
@@ -2149,9 +1790,9 @@ class SpeechDaemon:
                       file=sys.stderr, flush=True)
         # Engine fallback notices: spoken once per daemon run so an eyes-free
         # user knows WHY the voice changed (the reason is already in the log).
-        self._maybe_announce_kokoro_fallback()
+        self._cues.maybe_announce_kokoro_fallback()
         if item is None:
-            self._maybe_restore_audio()
+            self._audio.restore()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
@@ -2171,7 +1812,7 @@ class SpeechDaemon:
                 try:
                     completed = self.speaker.speak(item.text,
                                                    cancel_epoch=cancel_epoch,
-                                                   **self._cue_voice_override(item))
+                                                   **self._cues.cue_voice_override(item))
                 except Exception:  # noqa: BLE001
                     self._signal_speak_failure()
                     completed = False
@@ -2193,7 +1834,7 @@ class SpeechDaemon:
             try:
                 completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                                on_play=None,
-                                               **self._voice_override(item))
+                                               **self._cues.voice_override(item))
             except Exception:  # noqa: BLE001
                 self._signal_speak_failure()
                 completed = False
@@ -2218,7 +1859,7 @@ class SpeechDaemon:
                 else:
                     self._pending_preamble = None   # stale alert for another session: drop it
         if preamble is not None:
-            cue_voice = self._cue_voice()
+            cue_voice = self._cues.cue_voice()
             rate = config_schema.get(self.config, "rate")
 
             def on_play(_text=preamble, _voice=cue_voice, _rate=rate):
@@ -2234,13 +1875,13 @@ class SpeechDaemon:
                     self.speaker.speak_cue_untracked(_text, _voice, _rate)
                 except Exception:  # noqa: BLE001
                     pass
-                self._maybe_engage_audio()
+                self._audio.engage()
         else:
-            on_play = self._maybe_engage_audio
+            on_play = self._audio.engage
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,
-                                           **self._voice_override(item))
+                                           **self._cues.voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False
@@ -2263,125 +1904,6 @@ class SpeechDaemon:
             if pending is not None and pending[0] == session:
                 self._pending_preamble = None
 
-    def _handle_conn(self, conn) -> None:
-        try:
-            buf = b""
-            with conn:
-                conn.settimeout(5.0)
-                # --- token handshake: the first newline-terminated line must
-                # equal the daemon's session token, or the peer is dropped. ---
-                while b"\n" not in buf:
-                    try:
-                        data = conn.recv(4096)
-                    except (OSError, socket.timeout):
-                        return
-                    if not data:
-                        return
-                    buf += data
-                token_line, buf = buf.split(b"\n", 1)
-                if token_line.decode("utf-8", "replace") != self._token:
-                    return  # reject unauthenticated peer
-                while self._running.is_set():
-                    # Process any complete messages already buffered (e.g. a
-                    # message that arrived in the same packet as the token).
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        if not line.strip():
-                            continue
-                        try:
-                            msg = decode(line)
-                        except (ValueError, UnicodeDecodeError):
-                            continue
-                        reply = self._handle_message_guarded(msg)
-                        if reply is not None:
-                            try:
-                                conn.sendall(encode(reply))
-                            except OSError:
-                                return
-                    try:
-                        data = conn.recv(4096)
-                    except (OSError, socket.timeout):
-                        return
-                    if not data:
-                        return
-                    buf += data
-        except OSError:
-            return
-
-    def _handle_message_guarded(self, msg):
-        """Dispatch one socket message under the lock, contained so a malformed or
-        buggy message logs a traceback instead of silently killing the connection
-        thread (mirrors the _dispatch_hotkey guard). Returns the reply or None."""
-        try:
-            with self._lock:
-                return self.handle_message(msg)
-        except Exception:  # noqa: BLE001 - one bad message must not drop the connection
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-            return None
-
-    def _handle_conn_guarded(self, conn) -> None:
-        """Run _handle_conn, contain any crash (log it, don't die silently), and
-        always release the concurrency permit so capacity recovers."""
-        try:
-            self._handle_conn(conn)
-        except Exception:  # noqa: BLE001 - a handler crash must be logged, not silent
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-        finally:
-            self._conn_sem.release()
-
-    def _spawn_conn_handler(self, conn) -> bool:
-        """Spawn a handler thread for *conn* if under the concurrency cap; else
-        drop (close) the connection. Returns True iff a handler was spawned."""
-        if not self._conn_sem.acquire(blocking=False):
-            try:
-                conn.close()
-            except OSError:
-                pass
-            return False
-        try:
-            th = threading.Thread(target=self._handle_conn_guarded, args=(conn,), daemon=True)
-            th.start()
-        except Exception:  # noqa: BLE001 - thread creation can fail (resource limits)
-            # The handler that would release the permit never ran: release it here
-            # and drop the connection, else this slot leaks forever (M8).
-            self._conn_sem.release()
-            try:
-                conn.close()
-            except OSError:
-                pass
-            return False
-        return True
-
-    def _accept_loop(self) -> None:
-        import time
-        srv = self._server
-        failures = 0
-        while self._running.is_set():
-            try:
-                conn, _ = srv.accept()
-            except OSError:
-                if not self._running.is_set():
-                    return                    # shutdown closed the socket
-                # A transient accept failure (WSAECONNRESET burst etc.) used to
-                # kill the WHOLE daemon, which the hooks then silently respawned
-                # with fresh state - one of the mute-reset triggers (#65). Retry;
-                # a genuinely dead socket exhausts the cap and exits as before.
-                failures += 1
-                if failures > 20:
-                    print("[daemon] accept failing persistently; exiting",
-                          file=sys.stderr, flush=True)
-                    return
-                print("[daemon] transient accept error; retrying",
-                      file=sys.stderr, flush=True)
-                time.sleep(0.2)
-                continue
-            failures = 0
-            self._spawn_conn_handler(conn)
-
     def run(self) -> None:
         ensure_sonara_dir()
         try:
@@ -2397,9 +1919,9 @@ class SpeechDaemon:
         # Restart button and bookmarked page URLs keep working because the
         # respawned daemon accepts the same token. Same-user security boundary
         # is unchanged -- the token still lives 0600 in the user's own home.
-        self._token = tokens.persistent_token()
+        self._server.token = tokens.persistent_token()
         from sonara.webui import SettingsServer
-        self._webui = SettingsServer(self, self._token,
+        self._webui = SettingsServer(self, self._server.token,
                                      int(config_schema.get(self.config, "settings_port")))
         try:
             http_port = self._webui.start()
@@ -2407,20 +1929,20 @@ class SpeechDaemon:
             self._webui, http_port = None, None
         self._start_preview_builder()   # render missing voice previews (#38)
         transport.write_lockfile(
-            LOCK_PATH, transport.HOST, port, self._token, os.getpid(),
+            LOCK_PATH, transport.HOST, port, self._server.token, os.getpid(),
             http_port=http_port)
-        self._server = srv
+        self._server.sock = srv
         self._running.set()
 
         speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
-        accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
-        hotkey_worker = threading.Thread(target=self._hotkey_worker,
+        accept_thread = threading.Thread(target=self._server.accept_loop, daemon=True)
+        hotkey_worker = threading.Thread(target=self._hotkeys.worker,
                                          name="sonara-hotkey-worker", daemon=True)
         self._log_start_marker()
         speak_thread.start()
         accept_thread.start()
         hotkey_worker.start()
-        self._start_hotkeys()
+        self._hotkeys.start()
         self._maybe_prewarm_cue_voice()    # load the Kokoro engine for cues (#60)
 
         try:
@@ -2440,18 +1962,6 @@ class SpeechDaemon:
                 os.unlink(LOCK_PATH)
             except FileNotFoundError:
                 pass
-
-
-def resolve_earcons(bundled: dict, overrides) -> dict:
-    """The earcon map the speaker plays: the bundled set, resolved from the
-    running package on every start, with the user's own wavs (config
-    "earcons") on top. Never stored back into config, so new bundled kinds
-    reach every install (#136, audit M8)."""
-    out = dict(bundled)
-    if isinstance(overrides, dict):
-        out.update({k: v for k, v in overrides.items()
-                    if isinstance(v, str) and v})
-    return out
 
 
 def resolve_earcons(bundled: dict, overrides) -> dict:
@@ -2532,5 +2042,5 @@ def main() -> None:
                           ducker=_backend.ducker, pauser=_backend.pauser,
                           prefs=SessionPrefs(store_path=SESSION_PREFS_PATH),
                           digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
-    daemon._apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
+    daemon._audio.apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
     daemon.run()

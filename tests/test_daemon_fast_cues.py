@@ -14,7 +14,7 @@ def test_control_cue_speaks_with_cue_voice_override(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.config["voice"] = "linus"
     daemon.config["cue_voice"] = "af_heart"
-    daemon._speak_cue("fg", "Muted.", exempt_mute=True)
+    daemon._cues.speak("fg", "Muted.", exempt_mute=True)
     _drain(daemon, 2)
     assert "Muted." in speaker.spoken
     i = speaker.spoken.index("Muted.")
@@ -24,7 +24,7 @@ def test_control_cue_speaks_with_cue_voice_override(monkeypatch):
 def test_cue_voice_unset_falls_back_to_native_windows_voice():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.config["cue_voice"] = None
-    daemon._speak_cue("fg", "Muted.", exempt_mute=True)
+    daemon._cues.speak("fg", "Muted.", exempt_mute=True)
     _drain(daemon, 2)
     i = speaker.spoken.index("Muted.")
     assert speaker.speak_voices[i] is None          # None = best WinRT voice
@@ -54,7 +54,7 @@ def test_session_prose_keeps_configured_voice():
 def test_fast_cues_off_keeps_configured_voice_for_cues():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.config["fast_cues"] = False
-    daemon._speak_cue("fg", "Muted.", exempt_mute=True)
+    daemon._cues.speak("fg", "Muted.", exempt_mute=True)
     _drain(daemon, 2)
     i = speaker.spoken.index("Muted.")
     assert speaker.speak_voices[i] == "__default__"
@@ -69,7 +69,7 @@ def test_session_change_announcement_gets_the_override(monkeypatch):
     from sonara.daemon import SpeechItem
     item = SpeechItem(id=0, session="other", kind="session_change",
                       text="Session changed.", is_decision=False)
-    assert daemon._cue_voice_override(item) == {"voice": "af_heart"}
+    assert daemon._cues.cue_voice_override(item) == {"voice": "af_heart"}
 
 
 def test_set_config_value_accepts_fast_cues():

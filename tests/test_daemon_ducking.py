@@ -43,7 +43,7 @@ def test_set_audio_mode_duck_persists_and_cues(monkeypatch):
 
 
 def test_set_audio_mode_off_while_ducked_restores_now(monkeypatch):
-    # _apply_audio_mode restores whatever backend was engaged.
+    # AudioControl.set_mode restores whatever backend was engaged.
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
     daemon, *_ = make_daemon(foreground="fg")
     daemon.config["audio_mode"] = "duck"

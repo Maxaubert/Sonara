@@ -35,7 +35,7 @@ def test_fast_cues_on_defers_alert_to_content_on_play():
     assert "The digest body." in speaker.spoken
     assert speaker.earcons == ["session_change"]     # chime at synthesis-ready
     assert len(speaker.cue_untracked_calls) == 1     # alert spoken via cue voice
-    assert speaker.cue_untracked_calls[0][1] == daemon._cue_voice()
+    assert speaker.cue_untracked_calls[0][1] == daemon._cues.cue_voice()
     assert daemon._pending_preamble is None
 
 

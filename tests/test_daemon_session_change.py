@@ -82,5 +82,5 @@ def test_next_session_is_not_debounced():
     # key-hold auto-repeat), so rapid presses must all register.
     from sonara.protocol import MsgType
     daemon = make_daemon()[0]
-    assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 1.0) is False
-    assert daemon._debounce_suppress(MsgType.NEXT_SESSION, 1.10) is False
+    assert daemon._hotkeys.debounce_suppress(MsgType.NEXT_SESSION, 1.0) is False
+    assert daemon._hotkeys.debounce_suppress(MsgType.NEXT_SESSION, 1.10) is False

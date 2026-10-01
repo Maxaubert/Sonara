@@ -1,6 +1,6 @@
 """The daemon reads defaults from the config schema, not inline copies (#136).
 
-Audit L-duck-level: _duck_level fell back to 20 while the default is 30.
+Audit L-duck-level: the duck level fell back to 20 while the default is 30.
 Audit L-settle-default / DC10: summary_settle_ms had only an inline default.
 Audit M8: the bundled earcon paths were frozen into config at startup.
 """
@@ -16,9 +16,9 @@ from tests.daemon_helpers import make_daemon
 def test_duck_level_fallback_is_the_schema_default():
     daemon, *_ = make_daemon()
     daemon.config["duck_level"] = "loud"            # hand-edited junk
-    assert daemon._duck_level() == 30
+    assert daemon._audio.duck_level() == 30
     del daemon.config["duck_level"]
-    assert daemon._duck_level() == 30
+    assert daemon._audio.duck_level() == 30
     assert config_schema.default("duck_level") == 30
 
 
