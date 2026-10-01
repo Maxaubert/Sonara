@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 
 from sonara.paths import SONARA_DIR, ensure_sonara_dir
@@ -74,11 +75,17 @@ def _session_name(session) -> str:
 
 
 class AudioDucker:
-    """Lower every other app's audio session to a target level, then restore."""
+    """Lower every other app's audio session to a target level, then restore.
+
+    Every session is handled on its own, so one failing session (e.g. a virtual
+    device invalidated mid-enumeration) never strands the ones already lowered:
+    whatever was lowered is recorded, in memory and in the state file, and a
+    restore that fails keeps its record for a retry (#130)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._saved = []          # list[(session, original_scalar)]
+        self._saved = []          # list[(session, record)] lowered by the current duck
+        self._pending = []        # records whose restore failed; retried on next restore
         self._ducked = False
 
     def is_ducked(self) -> bool:
@@ -89,37 +96,69 @@ class AudioDucker:
         with self._lock:
             if self._ducked:
                 return
+            target = max(0, min(100, int(level))) / 100.0
+            saved, enumerated = [], False
             try:
-                target = max(0, min(100, int(level))) / 100.0
-                saved, record = [], []
-                for s in _all_sessions():
-                    vol = s.SimpleAudioVolume
-                    if (vol is None or s.ProcessId in exclude_pids
-                            or _session_name(s).lower() in _NEVER_DUCK):
-                        continue
-                    original = vol.GetMasterVolume()
-                    vol.SetMasterVolume(target, None)
-                    saved.append((s, original))
-                    record.append({"pid": s.ProcessId, "name": _session_name(s),
-                                   "original": original})
+                sessions = _all_sessions()
+                enumerated = True
+                for s in sessions:
+                    try:
+                        vol = s.SimpleAudioVolume
+                        name = _session_name(s)
+                        if (vol is None or s.ProcessId in exclude_pids
+                                or name.lower() in _NEVER_DUCK):
+                            continue
+                        original = vol.GetMasterVolume()
+                        if original <= target + 0.005:
+                            # Already at or below the duck level: nothing to lower,
+                            # and recording it would save a ducked level as the
+                            # "original" (the stuck-at-30% bug).
+                            continue
+                        vol.SetMasterVolume(target, None)
+                        saved.append((s, {"pid": s.ProcessId, "name": name,
+                                          "original": original}))
+                    except Exception as exc:  # noqa: BLE001 - one bad session must not block the rest
+                        _log(f"session error while ducking: {exc!r}")
+            except Exception as exc:  # noqa: BLE001 - best-effort; never break speech
+                _log(f"cannot enumerate audio sessions: {exc!r}")
+            finally:
                 self._saved = saved
-                self._ducked = True
-                _write_state(record)
-            except Exception:  # noqa: BLE001 - best-effort; never break speech
-                pass
+                # Enumeration failed and nothing was lowered: stay un-ducked so the
+                # next call retries.
+                self._ducked = enumerated or bool(saved)
+                # A pending record superseded by a fresh duck of the same app is
+                # dropped: the fresh "original" reflects any change made since.
+                fresh = {(r["pid"], r["name"]) for _, r in saved}
+                self._pending = [p for p in self._pending
+                                 if (p.get("pid"), p.get("name")) not in fresh]
+                records = self._pending + [r for _, r in saved]
+                if records:
+                    _write_state(records)
+                if saved:
+                    _log("lowered " + _names(r for _, r in saved))
 
     def restore(self) -> None:
         with self._lock:
+            failed = list(self._pending)
             try:
-                for s, original in self._saved:
+                for s, rec in self._saved:
                     try:
-                        s.SimpleAudioVolume.SetMasterVolume(original, None)
-                    except Exception:  # noqa: BLE001 - one bad session must not block the rest
-                        pass
+                        s.SimpleAudioVolume.SetMasterVolume(rec["original"], None)
+                    except Exception:  # noqa: BLE001 - retried below by a fresh lookup
+                        failed.append(rec)
+                if failed:
+                    failed = _restore_records(failed)
+            except Exception as exc:  # noqa: BLE001 - keep `failed` for the next attempt
+                _log(f"cannot enumerate audio sessions for restore: {exc!r}")
             finally:
                 self._saved = []
                 self._ducked = False
-                _clear_state()
+                self._pending = failed
+                if failed:
+                    _write_state(failed)
+                    _log("restore failed for " + _names(failed))
+                else:
+                    _clear_state()
 
 
 class NullDucker:
@@ -152,32 +191,51 @@ def _clear_state() -> None:
         pass
 
 
+def _log(msg: str) -> None:
+    print(f"[duck] {msg}", file=sys.stderr, flush=True)
+
+
+def _names(records) -> str:
+    return ", ".join(r.get("name") or str(r.get("pid")) for r in records)
+
+
+def _restore_records(records):
+    """Restore recorded sessions by a FRESH enumeration, matched by pid, then by
+    process name (the saved session object may be stale, or the app restarted).
+    Returns the records that still could not be restored. A record with no live
+    session is dropped: its process is gone. Raises only if enumeration fails."""
+    by_pid = {r["pid"]: r for r in records if "pid" in r}
+    by_name = {r["name"]: r for r in records if r.get("name")}
+    done, failed = set(), []
+    for s in _all_sessions():
+        rec = by_pid.get(s.ProcessId) or by_name.get(_session_name(s))
+        if rec is None or id(rec) in done:
+            continue
+        try:
+            s.SimpleAudioVolume.SetMasterVolume(rec["original"], None)
+            done.add(id(rec))
+        except Exception:  # noqa: BLE001
+            failed.append(rec)
+    return [r for r in failed if id(r) not in done]
+
+
 def restore_from_state_file() -> None:
-    """Daemon-startup crash sweep: if a prior daemon died mid-duck, restore any
-    live session whose pid or process name matches a recorded entry, then delete
-    the file. Best-effort; never raises."""
+    """Daemon-startup crash sweep: if a prior daemon died mid-duck (or a restore
+    failed), restore any live session whose pid or process name matches a
+    recorded entry. Entries that still fail stay in the file for the next sweep;
+    if enumeration itself fails the file is kept untouched. Never raises."""
     try:
         with open(_DUCK_STATE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            records = json.load(f).get("sessions", [])
     except Exception:  # noqa: BLE001 - no/unreadable state -> nothing to restore
         return
     try:
-        by_pid, by_name = {}, {}
-        for e in data.get("sessions", []):
-            if "pid" in e:
-                by_pid[e["pid"]] = e["original"]
-            if e.get("name"):
-                by_name[e["name"]] = e["original"]
-        for s in _all_sessions():
-            try:
-                original = by_pid.get(s.ProcessId)
-                if original is None:
-                    original = by_name.get(_session_name(s))
-                if original is not None:
-                    s.SimpleAudioVolume.SetMasterVolume(original, None)
-            except Exception:  # noqa: BLE001
-                pass
-    except Exception:  # noqa: BLE001
-        pass
-    finally:
+        remaining = _restore_records(records)
+    except Exception as exc:  # noqa: BLE001
+        _log(f"startup restore could not enumerate sessions: {exc!r}")
+        return
+    if remaining:
+        _write_state(remaining)
+        _log("startup restore failed for " + _names(remaining))
+    else:
         _clear_state()
