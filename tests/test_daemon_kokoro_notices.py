@@ -52,3 +52,24 @@ def test_no_unavailable_notice_on_a_default_install(monkeypatch):
     daemon._cues.speak("fg", "Muted.", exempt_mute=True)
     _drain(daemon)
     assert not any("kokoro" in t.lower() for t in speaker.spoken)
+
+
+def test_kokoro_notices_speak_under_the_daemon_lock(monkeypatch):
+    """#155: Cues.speak reslices CONTROL and allocates an item id, which the
+    speak loop and every other caller do under the daemon lock. The speak
+    loop's fallback and download notices must hold it too."""
+    daemon, _q, _sp, _s, _c = make_daemon(foreground="fg")
+    held = []
+    real_speak = daemon._cues.speak
+
+    def spy(*a, **k):
+        held.append(daemon._lock.locked())
+        return real_speak(*a, **k)
+
+    monkeypatch.setattr(daemon._cues, "speak", spy)
+    kokoro.pop_download_notice()
+    kokoro.pop_fallback_notice()
+    kokoro._set_download_notice()
+    kokoro._set_fallback_notice("engine failed to load")
+    daemon._playback.run_once()
+    assert held == [True, True]

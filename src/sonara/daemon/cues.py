@@ -3,9 +3,8 @@ on the reserved CONTROL channel, the fast cue voice they speak in (#60), the
 Kokoro prewarm, and the once-per-run Kokoro fallback and download notices.
 
 Cues reslice the CONTROL channel and allocate item ids, which the speak loop
-also does under the daemon lock, so callers hold the daemon lock. Known
-exception: the speak loop calls maybe_announce_kokoro_fallback off-lock
-(pre-existing, tracked in #155).
+also does under the daemon lock, so callers hold the daemon lock (the speak
+loop's Kokoro notices included, #155).
 
 Cues keeps the daemon's config, router, speaker and session prefs by
 reference, so the daemon must not rebind those attributes after
