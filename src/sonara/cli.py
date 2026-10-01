@@ -1033,7 +1033,14 @@ def _cmd_voices_install(_args) -> int:
         if isinstance(exc, Exception):
             return 1
         raise
-    rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
+    rc = 1
+    try:
+        rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
+    finally:
+        # install() can fail before its own stop and sentinel-clearing
+        # finally (no Python, no plugin tree): undo the stop above.
+        if rc != 0:
+            restore()
     if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
         print("Neural voices ready. Pick one with: sonara voice af_heart")
     return rc

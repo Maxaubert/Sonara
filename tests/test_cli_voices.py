@@ -204,3 +204,29 @@ def test_voices_install_revert_error_does_not_hide_the_cause(monkeypatch, tmp_pa
     monkeypatch.setattr(kp, "uninstall_kokoro", locked)
     assert cli._cmd_voices_install(object()) == 1
     assert "uv venv failed" in capsys.readouterr().err
+
+
+def test_voices_install_restarts_a_running_daemon_when_install_fails_early(monkeypatch, tmp_path):
+    """install() can return 1 before its own stop and sentinel-clearing
+    finally (no Python, no plugin tree): the stop this command did must be
+    undone, or Sonara stays off."""
+    order = []
+    _voices_env(monkeypatch, tmp_path, order, existed=True, running=True)
+    monkeypatch.setattr(kp, "install_kokoro", lambda pythonpath: order.append("provision"))
+    monkeypatch.setattr(cli, "install", lambda: order.append("install") or 1)
+    assert cli._cmd_voices_install(object()) == 1
+    assert order[-1] == "start"
+
+
+def test_voices_install_early_install_failure_clears_the_stop_sentinel(monkeypatch, tmp_path):
+    order = []
+    _voices_env(monkeypatch, tmp_path, order, existed=False)
+    paths.ensure_sonara_dir()
+
+    def provision(pythonpath):
+        with open(str(paths.STOPPED_SENTINEL_PATH), "w") as fh:
+            fh.write("x")                 # what the real stop_sonara leaves
+    monkeypatch.setattr(kp, "install_kokoro", provision)
+    monkeypatch.setattr(cli, "install", lambda: 1)
+    assert cli._cmd_voices_install(object()) == 1
+    assert not os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
