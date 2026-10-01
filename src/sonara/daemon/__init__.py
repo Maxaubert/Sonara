@@ -2858,8 +2858,3 @@ def main() -> None:
                           digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
     daemon._apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
     daemon.run()
-
-
-if __name__ == "__main__":
-    main()
-
