@@ -55,11 +55,12 @@ def test_register_refuses_duplicate_names_and_non_containers():
 
 def test_the_daemon_registers_every_feature_s_per_session_state():
     daemon, *_ = make_daemon()
+    # An exact set, not a subset: adding or dropping a per-session store
+    # must fail here so the change gets a deliberate review.
     names = set(daemon._session_state.names())
-    assert {"await_choice", "warned_immediate", "assemblers",
-            "last_digest_text"} <= names
-    assert {"pending_heard", "history", "setup_guide", "summary",
-            "digest_store"} <= names
+    assert names == {"await_choice", "warned_immediate", "assemblers",
+                     "last_digest_text", "pending_heard", "history",
+                     "setup_guide", "summary", "digest_store"}
 
 
 @pytest.mark.parametrize("mtype", [MsgType.SESSION_END, MsgType.FORGET_SESSION])

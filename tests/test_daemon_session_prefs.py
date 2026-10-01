@@ -74,7 +74,7 @@ def test_forget_refuses_foreground():
 
 def test_forget_session_clears_await_choice():
     """Forget targets exactly the stale sessions that died WITHOUT SessionEnd
-    (#101): a leftover _await_choice entry suppresses permission chimes
+    (#101): a leftover await_choice (daemon/ingest) entry suppresses permission chimes
     daemon-wide forever (global truthiness check), so it must be cleared too."""
     d = make_daemon()
     d.router.channel("s1")

@@ -577,7 +577,7 @@ def test_recorded_summary_is_not_resummarized(monkeypatch):
 
 def test_session_end_clears_await_choice(monkeypatch):
     # A session ending with an unanswered AskUserQuestion must not leave a stale
-    # _await_choice entry: the permission-chime suppression check is GLOBAL
+    # await_choice (daemon/ingest) entry: the permission-chime suppression check is GLOBAL
     # truthiness, so one stale entry would swallow every future permission chime
     # daemon-wide (audit #19).
     import sonara.daemon as daemon_module
