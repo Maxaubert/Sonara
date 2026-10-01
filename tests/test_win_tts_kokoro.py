@@ -164,3 +164,28 @@ def test_backend_engine_downloads_in_the_background_and_arms_the_notice():
     eng._on_download()
     assert kokoro.pop_download_notice() is True
     assert kokoro.pop_download_notice() is False       # once
+
+
+def test_download_cooldown_logs_the_fallback_once(monkeypatch, capsys):
+    """During the 30-minute cool-down after a failed download every Kokoro
+    utterance raises KokoroUnavailable: log the fallback once, not per cue."""
+    b = _bare_backend()
+    kokoro.pop_fallback_notice()
+
+    class CoolingDown:
+        def wav_bytes(self, *a):
+            raise kokoro.KokoroUnavailable("retries in about 29 min")
+
+    monkeypatch.setattr(wtts, "_COOLDOWN_LOGGED", [False])
+    monkeypatch.setattr(wtts, "_kokoro_was_installed", lambda: True)
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
+    monkeypatch.setattr(b, "_get_kokoro", lambda: CoolingDown())
+    monkeypatch.setattr(wtts, "_require_winrt", lambda: None)
+    monkeypatch.setattr(b, "_synthesize_wav", lambda text, voice, rate: b"WINRT-WAV")
+    played = []
+    monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: played.append(data))
+    for _ in range(3):
+        b.run("hi", "af_heart", 200)
+    assert played == [b"WINRT-WAV"] * 3
+    assert capsys.readouterr().err.count("fallback to Windows voice") == 1
+    assert kokoro.pop_fallback_notice()                  # the spoken notice still arms

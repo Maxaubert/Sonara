@@ -91,6 +91,9 @@ _TMP_PREFIX = "sonara-tts-"
 # until the target lands.
 _VOLUME = [100]
 _SESSION_APPLIED = [None]
+# The download cool-down (KokoroUnavailable) fails every Kokoro utterance for
+# up to 30 minutes: log that fallback once per run, not once per cue.
+_COOLDOWN_LOGGED = [False]
 
 
 def _gain_percent() -> int:
@@ -534,8 +537,12 @@ class WinTtsBackend(TtsBackend):
                 # a default install never had it (E12).
                 if _kokoro_was_installed():
                     import sys
-                    print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
-                          file=sys.stderr, flush=True)
+                    cooling = isinstance(exc, kokoro.KokoroUnavailable)
+                    if not (cooling and _COOLDOWN_LOGGED[0]):
+                        print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
+                              file=sys.stderr, flush=True)
+                    if cooling:
+                        _COOLDOWN_LOGGED[0] = True
                     kokoro._set_fallback_notice(str(exc))
                 _require_winrt()
                 data = self._synthesize_wav(text, None, rate)  # best WinRT voice
