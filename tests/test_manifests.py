@@ -106,20 +106,18 @@ def test_manifest_versions_match_pyproject():
     assert plugins[0].get("version") == version
 
 
-def test_package_and_settings_page_versions_match_pyproject():
-    # sonara.__version__ and the settings page footer are user-visible (the
-    # footer is read by screen readers), so they must move with the release.
+def test_package_version_matches_pyproject():
+    # sonara.__version__ is user-visible (doctor, the settings page footer
+    # renders it from /api/state, #161), so it must move with the release.
     import re
     version = _pyproject_version()
     init = (REPO_ROOT / "src" / "sonara" / "__init__.py").read_text(encoding="utf-8")
     m = re.search(r'^__version__ = "([^"]+)"', init, re.M)
     assert m and m.group(1) == version
-    html = (REPO_ROOT / "src" / "sonara" / "settings.html").read_text(encoding="utf-8")
-    assert f"<span>Version {version}</span>" in html
 
 
-def test_pyproject_version_is_0_8_0():
-    assert _pyproject_version() == "0.8.0"
+def test_pyproject_version_is_0_8_1():
+    assert _pyproject_version() == "0.8.1"
 
 
 def test_manifests_have_no_em_dash():

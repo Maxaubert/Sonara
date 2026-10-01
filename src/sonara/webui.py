@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from sonara import config_schema
+from sonara import __version__
 from sonara.protocol import PROTOCOL_VERSION
 
 # Config keys the page may read and write (verbosity deliberately absent), all
@@ -231,6 +232,7 @@ class SettingsServer:
                 "uptime_s": int(time.monotonic() - self._started),
                 "foreground": self._daemon.sessions.foreground(),
                 "port": self.port,
+                "version": __version__,      # the page footer (#161)
             },
         }
 

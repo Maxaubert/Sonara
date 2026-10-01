@@ -281,7 +281,7 @@
         <div class="inset">
           <div class="engine-row"><div><strong>Kokoro</strong><div class="desc" id="engine-kokoro-hint">Fast local neural speech.</div></div><span class="pill" id="engine-kokoro">&mdash;</span></div>
         </div>
-        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.8.0</span></footer>
+        <footer class="footer"><span>Sonara for Windows</span><span id="app-version"></span></footer>
       </section>
     </main>
   </div>
@@ -492,6 +492,10 @@ function renderSessions(s) {
   for (const sess of stale) older.appendChild(buildSessionRow(sess, s));
 }
 function render(s) {
+  // footer: the running package's version (#161), never a copy in this file
+  const ver = document.getElementById("app-version");
+  const v = (s.daemon && s.daemon.version) ? "Version " + s.daemon.version : "";
+  if (ver.textContent !== v) ver.textContent = v;
   // voice picker: the Kokoro voices; rebuild only on change and never while
   // open (#38). A configured voice outside that list (a native Windows voice
   // set from the CLI) still shows as the selected option, never a silent
