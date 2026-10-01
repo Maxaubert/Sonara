@@ -95,6 +95,13 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon_startup, "SINGLETON_PATH", sonara_dir / "daemon.singleton")
     monkeypatch.setattr(daemon_startup, "_SINGLETON", None)
 
+    # The Claude Code settings.json the hook installer edits lives outside
+    # ~/.sonara (~/.claude/settings.json). A test that reaches install_hooks
+    # without its own patch must never rewrite the developer's real one.
+    import sonara.install.claude_hooks as claude_hooks
+    monkeypatch.setattr(claude_hooks, "claude_settings_path",
+                        lambda: str(tmp_path / ".claude" / "settings.json"))
+
     yield
 
 
