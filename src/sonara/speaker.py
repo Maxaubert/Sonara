@@ -43,7 +43,7 @@ class Speaker:
     def speak(self, text: str, cancel_epoch=None, on_play=None,
               voice=_UNSET) -> bool:
         """Speak text, blocking. Return True iff the utterance COMPLETED
-        (say exited 0). A cancelled/terminated utterance returns False so the
+        (the synthesis process exited 0). A cancelled/terminated utterance returns False so the
         caller can leave it marked unheard (sentence-granular replay).
 
         *cancel_epoch* is the baseline to compare against. The daemon captures it

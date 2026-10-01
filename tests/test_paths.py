@@ -42,15 +42,11 @@ def test_paths_are_nested_under_sonara_dir(monkeypatch, tmp_path):
 def test_phase2_path_constants_names(monkeypatch, tmp_path):
     paths = _fresh_paths(monkeypatch, tmp_path)
     assert paths.KEYMAP_PATH.name == "keymap.json"
-    assert paths.HOTKEYD_RESOLVED_PATH.name == "hotkeyd.resolved.json"
-    assert paths.HOTKEYD_BIN_PATH.name == "sonara-hotkeyd"
 
 
 def test_phase2_paths_nested_under_sonara_dir(monkeypatch, tmp_path):
     paths = _fresh_paths(monkeypatch, tmp_path)
     assert paths.KEYMAP_PATH.parent == paths.SONARA_DIR
-    assert paths.HOTKEYD_RESOLVED_PATH.parent == paths.SONARA_DIR
-    assert paths.HOTKEYD_BIN_PATH.parent == paths.SONARA_DIR
 
 
 def test_sonara_dir_is_under_home(monkeypatch, tmp_path):
@@ -135,27 +131,18 @@ def test_app_dir_lives_under_sonara_dir(monkeypatch, tmp_path):
     assert paths.APP_DIR.parent == paths.SONARA_DIR
 
 
-def test_recorded_python_returns_path_when_file_holds_a_real_file(tmp_path, monkeypatch):
+def test_recorded_pythonw_none_when_missing_file(tmp_path, monkeypatch):
     from sonara import paths
-    rec = tmp_path / "python.path"
-    rec.write_text(str(tmp_path / "py.exe"), encoding="utf-8")
-    (tmp_path / "py.exe").write_text("")          # the recorded path must exist
-    monkeypatch.setattr(paths, "PYTHON_RECORD_PATH", rec)
-    assert paths.recorded_python() == str(tmp_path / "py.exe")
+    monkeypatch.setattr(paths, "PYTHONW_RECORD_PATH", tmp_path / "nope.path")
+    assert paths.recorded_pythonw() is None
 
 
-def test_recorded_python_none_when_missing_file(tmp_path, monkeypatch):
+def test_recorded_pythonw_none_when_recorded_path_does_not_exist(tmp_path, monkeypatch):
     from sonara import paths
-    monkeypatch.setattr(paths, "PYTHON_RECORD_PATH", tmp_path / "nope.path")
-    assert paths.recorded_python() is None
-
-
-def test_recorded_python_none_when_recorded_path_does_not_exist(tmp_path, monkeypatch):
-    from sonara import paths
-    rec = tmp_path / "python.path"
-    rec.write_text(r"C:\does\not\exist\python.exe", encoding="utf-8")
-    monkeypatch.setattr(paths, "PYTHON_RECORD_PATH", rec)
-    assert paths.recorded_python() is None
+    rec = tmp_path / "pythonw.path"
+    rec.write_text(r"C:\does\not\exist\pythonw.exe", encoding="utf-8")
+    monkeypatch.setattr(paths, "PYTHONW_RECORD_PATH", rec)
+    assert paths.recorded_pythonw() is None
 
 
 def test_recorded_pythonw_reads_its_own_file(tmp_path, monkeypatch):

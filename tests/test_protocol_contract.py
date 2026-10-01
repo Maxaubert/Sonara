@@ -1,12 +1,10 @@
 """The daemon must correctly handle every protocol command the system emits --
 whether from a hotkey (keymap.ACTION_MESSAGES) or the CLI. Feeding each command
 straight into handle_message must produce the intended effect, proving the bytes
-the hotkeyd / CLI send are real protocol commands.
+the hotkey listener / CLI send are real protocol commands.
 
-Note: stop/skip/repeat/cycle_verbosity/reread_options/jump_decision/catch_up are no
-longer hotkey actions (removed from ACTION_MESSAGES), but the daemon still handles
-those protocol commands (stop/skip/repeat ship via the CLI), so they are exercised
-here with literal messages."""
+Note: stop/skip/repeat are not hotkey actions, but the CLI sends them, so they
+are exercised here with literal messages."""
 
 from sonara import keymap
 from sonara.protocol import MsgType
@@ -71,32 +69,17 @@ def test_slower_message_drops_rate_by_25():
     assert config["rate"] == 175
 
 
-def test_cycle_verbosity_message_advances():
-    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
-    daemon.handle_message(_msg({"type": "cycle_verbosity"}))
-    assert config["verbosity"] == "medium"
-
-
-def test_reread_options_message_works():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._options["fg"] = "Option 1: A."
-    daemon.handle_message(_msg({"type": "reread_options"}))
-    assert queue.pop_next().text == "Option 1: A."
-
-
-def test_jump_decision_message_cancels():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg({"type": "jump_decision"}))
-    assert speaker.cancels == 1
-
-
-def test_catch_up_message_replays_unheard_backlog():
-    # catch_up now replays unheard history rather than discarding the queue.
-    from sonara.protocol import MsgType, PROTOCOL_VERSION
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.PROSE,
-                           "session": "fg", "delta": "Unheard item. ",
-                           "index": 0, "final": True})
-    daemon.handle_message(_msg({"type": "catch_up"}))
-    texts = [queue.pop_next().text for _ in range(len(queue))]
-    assert "Unheard item." in texts
+def test_removed_dead_feature_messages_are_ignored():
+    # DC1/DC5: jump_decision, catch_up, reread_options, cycle_verbosity and the
+    # pre-#92 set_audio_control had no producer and were deleted. A stale client
+    # sending one gets nothing: no reply, no cut, no config change, nothing queued.
+    daemon, queue, speaker, sessions, config = make_daemon(
+        verbosity="everything", foreground="fg")
+    for t in ("jump_decision", "catch_up", "reread_options", "cycle_verbosity",
+              "set_audio_control"):
+        assert not hasattr(MsgType, t.upper())
+        assert daemon.handle_message(_msg({"type": t, "enabled": True})) is None
+    assert speaker.cancels == 0
+    assert config["verbosity"] == "everything"
+    assert config.get("audio_mode", "off") == "off"
+    assert len(queue) == 0

@@ -13,7 +13,6 @@ DEFAULTS = {
     "background_policy": "earcon_only",
     "history_cap": 200,
     "minqueue": 1,
-    "audio_control": False,   # lower other apps' audio while speaking (opt-in)
     "duck_level": 30,         # target % volume for other apps while ducked (0-100)
     "volume": 100,            # speech gain percent (25-200)
     "audio_mode": "off",      # off | duck | pause -- pause pauses SMTC media (#92)
@@ -72,8 +71,10 @@ def load_config() -> dict:
     merged = _deep_merge(base, persisted)
     # Migrate the pre-#92 boolean into the three-way mode when the persisted file
     # predates audio_mode: audio_control True -> "duck", otherwise the default "off".
+    # The key itself is gone, so drop it and the next save stops persisting it.
     if "audio_mode" not in persisted and persisted.get("audio_control"):
         merged["audio_mode"] = "duck"
+    merged.pop("audio_control", None)
     # Chatterbox was removed (#134): a saved Chatterbox voice speaks as Heart,
     # and its old settings are dropped so the next save stops persisting them.
     from sonara import chatterbox_legacy

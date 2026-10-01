@@ -19,7 +19,7 @@ off.
 - **Ordered narration** - prose, plans, questions, and permissions are spoken in order, never out of sequence.
 - **Per-decision earcons** - a distinct sound the moment a question, plan, permission, or error appears.
 - **Selection by number** - answer prompts with the option's number; no key injection.
-- **Global hotkeys** - navigate the current turn, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
+- **Global hotkeys** - replay the latest response, flush, mute, and cycle between sessions, hands-free (stop, repeat, skip, rate, and more are CLI commands).
 - **Session manager** - a Sessions tab in the settings page: name each Claude Code session, mute it, or give it its own voice.
 - **Speech volume** - a settings slider from 25 to 200 percent, so Sonara can sit quieter or louder than your other apps.
 - **Lightweight** - the daemon runs on Python's standard library; the one-time `sonara install` fetches the Windows speech engine (PyWinRT) for you, and neural voices stay optional.
@@ -108,16 +108,16 @@ registers these as Windows global hotkeys, so no extra accessibility permission 
 
 Only these actions are bound by default (kept minimal so Sonara doesn't hog
 hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** –
-add a key in `~/.sonara/keymap.json` if you want one. Everything else (stop,
-repeat, skip, jump-to-decision, catch-up, re-read) lives in the CLI / slash
-commands below.
+add a key in `~/.sonara/keymap.json` if you want one. Stop, repeat and skip
+live in the CLI below.
+
+Sonara always reads one message, the latest: there is no stepping back through
+paragraphs or older turns. Up simply starts the latest response over.
 
 | Hotkey | Effect |
 |---|---|
-| Ctrl+Alt+Left | Previous item – step back through the current turn |
-| Ctrl+Alt+Right | Next item – step forward through the current turn |
-| Ctrl+Alt+Up | Jump to the start of the current turn and replay from the top |
-| Ctrl+Alt+Down | Flush – skip the rest of this session's queue and go quiet (recoverable via catch-up) |
+| Ctrl+Alt+Up | Replay the latest response from the top (in summary mode, re-read the last summary) |
+| Ctrl+Alt+Down | Flush – silence everything queued, in every session, and go quiet (Up brings the latest response back) |
 | Ctrl+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
 | Ctrl+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
@@ -166,8 +166,7 @@ Three live-switchable levels (earcons fire in **all** of them):
 `sonara summary on` switches Sonara to a recap style: instead of narrating a whole
 response, Sonara waits for the message to finish and reads a 1-2 sentence summary.
 Decisions (questions, plans, permission prompts) are still read in full, every
-earcon still fires, and the full text stays in history, so `sonara repeat` and
-catch-up can still read everything.
+earcon still fires, and Ctrl+Alt+Up re-reads the last summary.
 
 How it works: when a turn finishes, Sonara runs a separate, throwaway
 `claude -p` call (default model: Haiku, tool-disabled) with only that message's
@@ -175,8 +174,8 @@ text and speaks the result. Your main Claude session is untouched, and nothing i
 added to its context. The recap call reuses your existing Claude Code login and its
 tokens count against your plan (one small call per finished message); expect a few
 seconds between the message finishing and the recap being spoken. If the call
-fails (offline, timeout), Sonara plays a brief cue and stays quiet, the full text
-remains available via catch-up. Summary mode is off by default.
+fails (offline, timeout), Sonara plays a brief cue and stays quiet. Summary mode
+is off by default.
 
 ## How ordering works
 

@@ -21,21 +21,19 @@ from sonara.protocol import MsgType, PROTOCOL_VERSION
 from sonara.config import DEFAULTS
 
 
-def test_config_defaults_have_audio_control_off_and_duck_level_30():
+def test_config_defaults_have_audio_mode_off_and_duck_level_30():
     # ad9013d raised the shipped default from 20 to 30 (per user preference);
     # ducking itself still stays opt-in.
-    assert DEFAULTS["audio_control"] is False
+    assert DEFAULTS["audio_mode"] == "off"
     assert DEFAULTS["duck_level"] == 30
 
 
-def test_set_audio_control_on_persists_and_cues(monkeypatch):
-    # #92: SET_AUDIO_CONTROL is now a compat shim that drives audio_mode
-    # (enabled -> "duck") through _apply_audio_mode, not audio_control directly.
+def test_set_audio_mode_duck_persists_and_cues(monkeypatch):
     saved = {}
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: saved.update(c))
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL,
-                           "enabled": True})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_MODE,
+                           "mode": "duck"})
     assert daemon.config["audio_mode"] == "duck"
     assert saved.get("audio_mode") == "duck"
     # a spoken confirmation cue was queued on the CONTROL channel
@@ -44,15 +42,14 @@ def test_set_audio_control_on_persists_and_cues(monkeypatch):
     assert any("Audio ducking." in t for t in texts)
 
 
-def test_set_audio_control_off_while_ducked_restores_now(monkeypatch):
-    # #92: the shim maps disabled -> "off" via _apply_audio_mode, which restores
-    # whatever backend was engaged.
+def test_set_audio_mode_off_while_ducked_restores_now(monkeypatch):
+    # _apply_audio_mode restores whatever backend was engaged.
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
     daemon, *_ = make_daemon(foreground="fg")
     daemon.config["audio_mode"] = "duck"
     daemon.ducker._ducked = True               # pretend currently ducked
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL,
-                           "enabled": False})
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_MODE,
+                           "mode": "off"})
     assert daemon.config["audio_mode"] == "off"
     assert daemon.ducker.restore_calls == 1
 
@@ -71,13 +68,13 @@ def test_set_duck_level_clamps_and_persists(monkeypatch):
     assert saved.get("duck_level") == 0
 
 
-def test_set_audio_control_missing_enabled_is_noop(monkeypatch):
+def test_set_audio_mode_missing_mode_is_noop(monkeypatch):
     saved = {}
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: saved.update(c))
     daemon, *_ = make_daemon(foreground="fg")
-    # malformed message with no "enabled" key must not persist or flip the default
-    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_CONTROL})
-    assert daemon.config["audio_control"] is False   # unchanged from default
+    # malformed message with no "mode" key must not persist or flip the default
+    daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_AUDIO_MODE})
+    assert daemon.config["audio_mode"] == "off"      # unchanged from default
     assert saved == {}                               # save_config never called
 
 
@@ -102,9 +99,9 @@ def _prose_item(session, text):
     return SpeechItem(id=0, session=session, kind="prose", text=text, is_decision=False)
 
 
-def test_no_duck_when_audio_control_off():
+def test_no_duck_when_audio_mode_off():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon.config["audio_control"] = False
+    daemon.config["audio_mode"] = "off"
     queue.enqueue(_prose_item("fg", "Hello."))
     daemon._speak_loop_once()                       # speaks the item
     assert daemon.ducker.duck_calls == []
@@ -160,11 +157,11 @@ def test_paused_branch_restores_if_ducked():
     assert daemon.ducker.restore_calls >= 1
 
 
-def test_set_duck_level_does_not_reduck_when_audio_control_off(monkeypatch):
-    """SET_DUCK_LEVEL must not re-duck when audio_control is off."""
+def test_set_duck_level_does_not_reduck_when_audio_mode_off(monkeypatch):
+    """SET_DUCK_LEVEL must not re-duck when audio_mode is off."""
     monkeypatch.setattr("sonara.daemon.save_config", lambda c: None)
     daemon, *_ = make_daemon(foreground="fg")
-    # audio_control defaults to False; leave it that way
+    # audio_mode defaults to "off"; leave it that way
     daemon.ducker._ducked = True
     daemon.handle_message({"v": 1, "type": MsgType.SET_DUCK_LEVEL, "level": 30})
     # The restore may happen (ducker was ducked), but no NEW duck call

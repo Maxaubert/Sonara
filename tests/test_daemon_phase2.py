@@ -72,124 +72,6 @@ def test_set_rate_delta_no_foreground_still_updates_rate():
 
 
 # ---------------------------------------------------------------------------
-# Task 3: cycle_verbosity
-# ---------------------------------------------------------------------------
-
-def test_cycle_verbosity_everything_to_medium():
-    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
-    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
-    assert config["verbosity"] == "medium"
-    item = queue.pop_next()
-    assert item is not None
-    assert item.text == "Verbosity medium."
-    assert item.session == "fg"
-
-
-def test_cycle_verbosity_medium_to_quiet():
-    daemon, queue, speaker, sessions, config = make_daemon(verbosity="medium", foreground="fg")
-    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
-    assert config["verbosity"] == "quiet"
-    assert queue.pop_next().text == "Verbosity quiet."
-
-
-def test_cycle_verbosity_quiet_wraps_to_everything():
-    daemon, queue, speaker, sessions, config = make_daemon(verbosity="quiet", foreground="fg")
-    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
-    assert config["verbosity"] == "everything"
-    assert queue.pop_next().text == "Verbosity everything."
-
-
-def test_cycle_verbosity_unknown_current_defaults_to_everything_step():
-    # an out-of-range stored value is treated as the start of the cycle
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    config["verbosity"] = "bogus"
-    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY, "fg"))
-    assert config["verbosity"] == "everything"
-
-
-def test_cycle_verbosity_no_foreground_still_persists():
-    daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground=None)
-    daemon.handle_message(_msg(MsgType.CYCLE_VERBOSITY))
-    assert config["verbosity"] == "medium"
-    assert len(queue) == 0
-
-
-# ---------------------------------------------------------------------------
-# Task 4: option caching + reread_options + clearing
-# ---------------------------------------------------------------------------
-
-def test_reread_after_choice_reenqueues_same_text():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
-        {"question": "Pick a color", "options": [{"label": "Red"}, {"label": "Blue"}]},
-    ]))
-    spoken = queue.pop_next().text  # drain the original CHOICE item
-    assert "Option 1: Red." in spoken
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    item = queue.pop_next()
-    assert item is not None
-    assert item.text == spoken
-    # kind is "prose" because _speak_cue always uses kind="prose" for cue items.
-    # The reread cue rides the reserved CONTROL channel so it plays immediately,
-    # bypassing the originating session's minqueue gate (same path as mute/pause cues).
-    from sonara.router import CONTROL
-    assert item.session == CONTROL
-    assert item.is_decision is False
-
-
-def test_reread_with_no_prior_says_nothing_to_repeat():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    assert daemon._options.get("fg") is None
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    item = queue.pop_next()
-    assert item is not None
-    assert item.text == "No options right now."
-    assert item.kind == "prose"
-
-
-def test_reread_no_foreground_is_noop():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground=None)
-    daemon._options["some_session"] = "Option 1: Red."
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS))
-    assert len(queue) == 0
-
-
-def test_plan_and_permission_also_cache_for_reread():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Do the thing."))
-    plan_spoken = queue.pop_next().text
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    assert queue.pop_next().text == plan_spoken
-
-    daemon.handle_message(_msg(MsgType.PERMISSION, "fg", action="run rm -rf"))
-    perm_spoken = queue.pop_next().text
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    assert queue.pop_next().text == perm_spoken
-
-
-def test_flush_clears_option_cache():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
-        {"question": "Q", "options": [{"label": "A"}]},
-    ]))
-    queue.pop_next()  # drain
-    daemon.handle_message(_msg(MsgType.FLUSH, "fg"))
-    assert daemon._options.get("fg") is None
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    assert queue.pop_next().text == "No options right now."
-
-
-def test_session_end_clears_option_cache():
-    daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
-        {"question": "Q", "options": [{"label": "A"}]},
-    ]))
-    queue.pop_next()
-    daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
-    assert daemon._options.get("fg") is None
-
-
-# ---------------------------------------------------------------------------
 # Task 5: selection cue + immediate warning + multiSelect/>9 notes
 # ---------------------------------------------------------------------------
 
@@ -299,7 +181,7 @@ def test_plan_gets_cue_at_everything_but_not_at_quiet():
     assert CUE not in queue.pop_next().text
 
 
-def test_reread_includes_cue_and_notes():
+def test_multiselect_choice_includes_cue_and_notes():
     daemon, queue, speaker, sessions, config = make_daemon(verbosity="everything", foreground="fg")
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
         {"question": "Pick some", "multiSelect": True,
@@ -307,8 +189,6 @@ def test_reread_includes_cue_and_notes():
     ]))
     spoken = queue.pop_next().text
     assert MULTI in spoken and CUE in spoken
-    daemon.handle_message(_msg(MsgType.REREAD_OPTIONS, "fg"))
-    assert queue.pop_next().text == spoken
 
 
 def test_session_end_resets_immediate_warning():

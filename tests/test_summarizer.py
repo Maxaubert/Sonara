@@ -3,6 +3,8 @@ All tests inject a fake runner; nothing here spawns a real process."""
 
 from sonara import summarizer
 
+_NATURAL = summarizer.default_instruction("natural")
+
 
 def _ok_runner(result="A short recap."):
     calls = []
@@ -27,16 +29,16 @@ def test_prompt_carries_instruction_and_delimited_message():
     run, calls = _ok_runner()
     summarizer.summarize("Is this a question for you?", model="haiku", runner=run)
     sent = calls[0]["text"]
-    assert sent.startswith(summarizer.INSTRUCTION)
+    assert sent.startswith(_NATURAL)
     assert "<message>\nIs this a question for you?\n</message>" in sent
 
 
 def test_instruction_has_the_not_addressed_to_you_firewall():
     # The core defense against the model answering the message instead of
     # recapping it (observed live: a question-shaped message got answered).
-    assert "NEVER addressed to you" in summarizer.INSTRUCTION
-    assert "<message>" in summarizer.INSTRUCTION      # names the delimiters
-    assert "Input:" in summarizer.INSTRUCTION         # contains examples
+    assert "NEVER addressed to you" in _NATURAL
+    assert "<message>" in _NATURAL      # names the delimiters
+    assert "Input:" in _NATURAL         # contains examples
 
 
 def test_argv_is_headless_tool_disabled_call():
@@ -48,7 +50,7 @@ def test_argv_is_headless_tool_disabled_call():
     assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
     # The prompt is NOT an argv element (it travels on stdin with the message);
     # a multi-line instruction in argv is fragile under Windows quoting.
-    assert summarizer.INSTRUCTION not in argv
+    assert _NATURAL not in argv
     # --setting-sources "" stops the child loading settings/plugins, so Sonara's
     # own hooks can NEVER fire inside the summarizer session (the recursion that
     # made the daemon summarize its own summarizer in a chime loop).
@@ -120,8 +122,8 @@ def test_skip_sentinel_maps_to_none():
 
 
 def test_instruction_uses_skip_not_output_nothing():
-    assert "SKIP" in summarizer.INSTRUCTION
-    assert "output nothing" not in summarizer.INSTRUCTION.lower()
+    assert "SKIP" in _NATURAL
+    assert "output nothing" not in _NATURAL.lower()
 
 
 def test_debug_log_reports_each_failure_reason():
@@ -179,9 +181,9 @@ def test_every_style_protects_list_items_with_rule_and_example():
             assert text.count(mod) >= 2, (style, mod)   # in the input AND the output
 
 
-def test_natural_style_is_the_legacy_instruction():
-    from sonara.summarizer import INSTRUCTION, INSTRUCTIONS
-    assert INSTRUCTIONS["natural"] == INSTRUCTION   # back-compat alias kept
+def test_default_instruction_is_natural():
+    from sonara.summarizer import INSTRUCTIONS
+    assert summarizer.default_instruction("natural") == INSTRUCTIONS["natural"]
 
 
 def test_default_instruction_falls_back_to_natural():

@@ -31,11 +31,14 @@ def test_install_dispatches_through_platform(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
     monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
-    monkeypatch.setattr("sonara.keymap.write_resolved", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
 
     rc = cli.install()
     assert rc == 0
+    # The macOS hotkeyd's resolved keymap is no longer written (DC2): the
+    # Windows listener resolves the keymap in-process.
+    assert not (cli.paths.SONARA_DIR / "hotkeyd.resolved.json").exists()
+    assert not hasattr(cli.keymap, "write_resolved")
     # Supervisor got install(python, app_dir) then post_install_notes().
     assert ("install", "/PY/pythonw.exe", str(tmp_path / "app")) in sup.calls
     assert ("notes",) in sup.calls
@@ -231,7 +234,6 @@ def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch
     monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
     monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
-    monkeypatch.setattr("sonara.keymap.write_resolved", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")

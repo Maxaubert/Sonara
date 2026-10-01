@@ -26,8 +26,8 @@ class Router:
         self._pending_announce_replay = False
         self._pending_announce_manual = False   # True when armed by NEXT_SESSION
         # Sessions explicitly authorized to bypass the background-policy gate
-        # (set by catch_up / nav cross-session replay so their replayed items
-        # are voiced even when the session is not the current foreground).
+        # (set by an Up / repeat replay and a cooperative hand-off so their
+        # items are voiced even when the session is not the current foreground).
         self._replay_authorized: "set[str]" = set()
         # Sessions you FORCE-switched away from (manual next_session): not
         # auto-resumed until they get NEW content. session -> channel.gen when
@@ -198,7 +198,7 @@ class Router:
             if not self._ready(s):
                 continue
             # Replay-authorized sessions bypass the policy gate AND suppression
-            # (cross-session catch_up / nav replay must be voiced even in
+            # (a cross-session Up / repeat replay must be voiced even in
             # earcon_only mode). Drained authorizations were already evicted
             # by the sweep at the top, so authorized here implies pending > 0.
             if s not in self._replay_authorized:

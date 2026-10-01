@@ -2,32 +2,26 @@
 
 Maps key names -> Windows virtual key codes, modifier names -> RegisterHotKey
 modifier masks, and actions -> speechd protocol messages. Produces the resolved
-JSON array that the daemon's in-process hotkey listener registers and fires on.
+list that the daemon's in-process hotkey listener registers and fires on.
 """
 from __future__ import annotations
 
 import json
 import os
 
-from sonara.paths import (
-    KEYMAP_PATH,
-    HOTKEYD_RESOLVED_PATH,
-    SONARA_DIR,
-    ensure_sonara_dir,
-)
+from sonara.paths import KEYMAP_PATH, ensure_sonara_dir
 
 # Key/modifier tables and the default chord are platform-specific; the resolver
 # pulls them from the active backend via get_platform() at call time (lazy -- no
 # import-time OS dispatch). The ONLY sys.platform branch stays in platform/__init__.
 
 # action -> the speechd protocol message it sends. The hotkey-bindable action set
-# is deliberately small: navigation, play/pause, mute, and speech-rate. (stop /
-# repeat / skip stay reachable via the CLI; they are just not hotkey actions.)
+# is deliberately small: Up (restart the latest turn), flush, play/pause, mute,
+# session cycling and speech-rate. (stop / repeat / skip stay reachable via the
+# CLI; they are just not hotkey actions.) One message, always the last: there is
+# no stepping between paragraphs or older turns.
 ACTION_MESSAGES = {
-    # Message-cursor navigation over the current turn (next/prev item).
-    "nav_next": {"type": "nav", "to": "next"},
-    "nav_prev": {"type": "nav", "to": "prev"},
-    "nav_start": {"type": "nav", "to": "first"},   # jump to start of turn + replay
+    "nav_start": {"type": "nav", "to": "first"},   # restart the latest turn from the top
     "flush": {"type": "flush_session"},            # flush the engaged session to the end
     "pause": {"type": "pause"},     # play/pause toggle (valid action; UNBOUND by default -- mute covers it)
     "mute": {"type": "mute"},       # global mute cycle (unmuted/muted/super muted)
@@ -36,14 +30,12 @@ ACTION_MESSAGES = {
     "slower": {"type": "set_rate", "delta": -25},
 }
 
-# Shared action -> default key. The chord modifiers are platform-defaulted (macOS:
-# Ctrl+Cmd; Windows: Ctrl+Alt) via the active backend's default_mods().
-# Only navigation (incl. nav_start/flush) + mute + next_session are bound out of
-# the box; pause and faster/slower are valid actions but ship UNBOUND (blank by
-# default) so the default keymap stays minimal: users add a key in keymap.json if
-# they want one.
+# Action -> default key. The chord modifiers (Ctrl+Alt) come from the active
+# backend's default_mods(). Only nav_start/flush + mute + next_session are bound
+# out of the box; pause and faster/slower are valid actions but ship UNBOUND
+# (blank by default) so the default keymap stays minimal: users add a key in
+# keymap.json if they want one.
 _DEFAULT_KEYS = {
-    "nav_prev": "left", "nav_next": "right",
     "nav_start": "up", "flush": "down",
     "mute": "m", "next_session": "p",   # next_session owns 'p'. pause unbound ('s' free); mute covers it.
 }
@@ -76,7 +68,7 @@ def _copy_keymap(km: dict) -> dict:
 
 
 def resolve_keymap(keymap=None) -> list:
-    """Resolve an action->binding map into the Swift-facing array.
+    """Resolve an action->binding map into the listener's registration list.
 
     Each output entry: {action, keyCode, modifiers, message}. An entry whose key
     is empty/None is treated as UNBOUND and skipped (no hotkey registered) -- this
@@ -243,18 +235,3 @@ def write_default_keymap_if_absent() -> bool:
         os.fsync(fh.fileno())
     return True
 
-
-def write_resolved(keymap=None) -> str:
-    """Atomically write the resolved array to HOTKEYD_RESOLVED_PATH; return its
-    path. Uses load_keymap() when no explicit keymap is given."""
-    if keymap is None:
-        keymap = load_keymap()
-    data = json.dumps(resolve_keymap(keymap))
-    ensure_sonara_dir()
-    tmp_path = SONARA_DIR / (HOTKEYD_RESOLVED_PATH.name + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp_path, HOTKEYD_RESOLVED_PATH)
-    return str(HOTKEYD_RESOLVED_PATH)

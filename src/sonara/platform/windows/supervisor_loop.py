@@ -1,7 +1,7 @@
 """Thin Python supervisor loop -- Task Scheduler launches this; it restarts the
 sonara.daemon process indefinitely with exponential back-off.
 
-WINDOWS-only behaviour, but the module imports cleanly on macOS/Linux (the
+WINDOWS-only behaviour, but the module imports cleanly off Windows (the
 process-creation flags are hex literals, not subprocess.CREATE_NO_WINDOW which
 is win32-only). "Imports + mock-green" does NOT mean Windows-verified -- the
 DETACHED_PROCESS/CREATE_NO_WINDOW spawn behaviour is a deferred acceptance item
@@ -18,7 +18,7 @@ import sys
 import time
 
 # These constants are defined in subprocess only on win32.
-# Use hex literals so this file imports cleanly on macOS/Linux.
+# Use hex literals so this file imports cleanly off Windows.
 _CREATE_NO_WINDOW = 0x08000000
 _DETACHED_PROCESS = 0x00000008
 _SPAWN_FLAGS      = _CREATE_NO_WINDOW | _DETACHED_PROCESS  # 0x08000008
@@ -63,9 +63,9 @@ def launch_spec(pythonw: str) -> tuple:
     root = _package_root()
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = root + (os.pathsep + existing if existing else "")
-    # Route the daemon's stderr to the daemon log (parity with the macOS plist
-    # StandardErrorPath) so the speak-loop catch-all traceback survives (#20);
-    # DEVNULL made it unrecoverable. Open lazily inside launch_spec.
+    # Route the daemon's stderr to the daemon log so the speak-loop catch-all
+    # traceback survives (#20); DEVNULL made it unrecoverable. Open lazily
+    # inside launch_spec.
     from sonara import paths
     paths.ensure_sonara_dir()
     err = open(paths.LOG_PATH, "a")
@@ -121,8 +121,7 @@ def _main() -> None:
     if sys.platform == "win32":
         # Run the daemon on the interpreter Task Scheduler launched us with (the venv
         # pythonw when neural is enabled -- baked in at install). Re-resolving here
-        # discarded it and forced system python (no kokoro). macOS bakes the python
-        # into the plist; this is the Windows parity.
+        # discarded it and forced system python (no kokoro).
         run_supervisor_loop(sys.executable)
 
 

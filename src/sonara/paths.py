@@ -18,8 +18,6 @@ WEBUI_TOKEN_PATH = SONARA_DIR / "webui.token"
 SINGLETON_PATH = SONARA_DIR / "daemon.singleton"   # held-open flock: single-instance
 LOG_PATH = SONARA_DIR / "speechd.log"
 KEYMAP_PATH = SONARA_DIR / "keymap.json"
-HOTKEYD_RESOLVED_PATH = SONARA_DIR / "hotkeyd.resolved.json"
-HOTKEYD_BIN_PATH = SONARA_DIR / "sonara-hotkeyd"
 INSTALL_RECORD_PATH = SONARA_DIR / "install.json"
 SESSIONS_PATH = SONARA_DIR / "sessions.json"        # durable session id -> folder name map
 SESSION_PREFS_PATH = SONARA_DIR / "session_prefs.json"  # per-session name/mute/voice
@@ -37,11 +35,6 @@ def _read_recorded(record: "Path") -> "str | None":
     except OSError:
         return None
     return path if path and Path(path).is_file() else None
-
-
-def recorded_python() -> "str | None":
-    """The console interpreter the bootstrap recorded (python.exe), or None."""
-    return _read_recorded(PYTHON_RECORD_PATH)
 
 
 def recorded_pythonw() -> "str | None":

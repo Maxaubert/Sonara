@@ -1,10 +1,10 @@
 """Summary-mode navigation (issue #11).
 
 In summary mode the daemon speaks one digest per turn, not the raw per-message
-prose. So message-cursor nav (Ctrl+Alt+Left/Right = nav prev/next) is meaningless
-and must be a SILENT no-op: no chime, and nothing enqueued onto the gated session
-channel (which otherwise piles up and bursts at turn end). Ctrl+Alt+Up (nav
-'first') re-reads the last digest. Non-summary nav is unchanged.
+prose. Ctrl+Alt+Up (nav 'first') re-reads the last digest. Any other nav target
+(the removed prev/next stepping) is a SILENT no-op: no chime, and nothing
+enqueued onto the gated session channel (which otherwise piled up and burst at
+turn end).
 """
 from tests.daemon_helpers import make_daemon
 
@@ -104,15 +104,15 @@ def test_summary_nav_first_edges_when_nothing_to_reread():
     assert daemon.router.channel("fg").pending() == 0
 
 
-def test_nav_prev_unchanged_when_summary_mode_off():
-    # Regression guard: summary OFF -> prev still replays messages and chimes "nav".
+def test_up_replays_messages_when_summary_mode_off():
+    # Regression guard: summary OFF -> Up replays the turn's messages and chimes "nav".
     daemon, _queue, speaker, _sessions, _config = make_daemon(foreground="fg")
     h = daemon.history
     h.record("fg", "prose", "m0")
     h.end_message("fg")
     h.record("fg", "prose", "m1")
     speaker.earcons.clear()
-    daemon.handle_message({"type": "nav", "to": "prev", "session": "fg"})
+    daemon.handle_message({"type": "nav", "to": "first", "session": "fg"})
     played = [it.text for it in _drain(daemon)]
     assert played == ["m0", "m1"]
     assert speaker.earcons == ["nav"]

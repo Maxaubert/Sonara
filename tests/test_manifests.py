@@ -115,8 +115,8 @@ def test_package_and_settings_page_versions_match_pyproject():
     assert f"<span>Version {version}</span>" in html
 
 
-def test_pyproject_version_is_0_6_1():
-    assert _pyproject_version() == "0.6.1"
+def test_pyproject_version_is_0_6_2():
+    assert _pyproject_version() == "0.6.2"
 
 
 def test_manifests_have_no_em_dash():
@@ -126,3 +126,12 @@ def test_manifests_have_no_em_dash():
         raw = (REPO_ROOT / ".claude-plugin" / name).read_text(encoding="utf-8")
         text = json.dumps(json.loads(raw), ensure_ascii=False)
         assert "\u2014" not in text, name
+
+
+def test_hooks_json_has_no_redundant_registrations():
+    # DC9: the '' PreToolUse matcher already routes AskUserQuestion and
+    # ExitPlanMode to the same command, and idle_prompt produced no message, so
+    # neither is registered (each extra entry only spawned a hook process).
+    hooks = _load(HOOKS_JSON)["hooks"]
+    assert [e["matcher"] for e in hooks["PreToolUse"]] == [""]
+    assert [e["matcher"] for e in hooks["Notification"]] == ["permission_prompt"]

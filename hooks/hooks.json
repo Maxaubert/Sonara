@@ -13,24 +13,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook PreToolUse"
-          }
-        ]
-      },
-      {
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook PreToolUse"
-          }
-        ]
-      },
-      {
         "matcher": "",
         "hooks": [
           {
@@ -54,15 +36,6 @@
     "Notification": [
       {
         "matcher": "permission_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook Notification"
-          }
-        ]
-      },
-      {
-        "matcher": "idle_prompt",
         "hooks": [
           {
             "type": "command",

@@ -70,13 +70,10 @@ def test_msgtype_has_every_constant_with_exact_values():
         "MUTE": "mute",
         "NEXT_SESSION": "next_session",
         "REPEAT": "repeat",
-        "JUMP_DECISION": "jump_decision",
-        "CATCH_UP": "catch_up",
         "SET_RATE": "set_rate",
         "SET_VERBOSITY": "set_verbosity",
         "SET_VOICE": "set_voice",
         "SET_MINQUEUE": "set_minqueue",
-        "SET_AUDIO_CONTROL": "set_audio_control",
         "SET_DUCK_LEVEL": "set_duck_level",
         "SET_VOLUME": "set_volume",
         "SET_SUMMARY_MODE": "set_summary_mode",
@@ -86,8 +83,6 @@ def test_msgtype_has_every_constant_with_exact_values():
         "SHUTDOWN": "shutdown",
         "STATUS": "status",
         "PING": "ping",
-        "REREAD_OPTIONS": "reread_options",
-        "CYCLE_VERBOSITY": "cycle_verbosity",
     }
     for name, value in expected.items():
         assert hasattr(MsgType, name), f"MsgType missing {name}"
@@ -120,13 +115,10 @@ def test_msgtype_defines_no_extra_string_constants():
         "MUTE": "mute",
         "NEXT_SESSION": "next_session",
         "REPEAT": "repeat",
-        "JUMP_DECISION": "jump_decision",
-        "CATCH_UP": "catch_up",
         "SET_RATE": "set_rate",
         "SET_VERBOSITY": "set_verbosity",
         "SET_VOICE": "set_voice",
         "SET_MINQUEUE": "set_minqueue",
-        "SET_AUDIO_CONTROL": "set_audio_control",
         "SET_DUCK_LEVEL": "set_duck_level",
         "SET_VOLUME": "set_volume",
         "SET_SUMMARY_MODE": "set_summary_mode",
@@ -136,8 +128,6 @@ def test_msgtype_defines_no_extra_string_constants():
         "SHUTDOWN": "shutdown",
         "STATUS": "status",
         "PING": "ping",
-        "REREAD_OPTIONS": "reread_options",
-        "CYCLE_VERBOSITY": "cycle_verbosity",
         "RELOAD_KEYMAP": "reload_keymap",
     }
     assert actual == expected
@@ -149,11 +139,6 @@ def test_msgtype_values_are_unique():
         if not k.startswith("_") and isinstance(v, str)
     ]
     assert len(values) == len(set(values))
-
-
-def test_reread_options_and_cycle_verbosity_constants():
-    assert MsgType.REREAD_OPTIONS == "reread_options"
-    assert MsgType.CYCLE_VERBOSITY == "cycle_verbosity"
 
 
 def test_set_audio_mode_type_exists():

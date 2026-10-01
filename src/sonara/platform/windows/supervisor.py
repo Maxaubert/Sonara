@@ -3,7 +3,7 @@ resolution (py-launcher + Store-stub avoidance), exec-form hooks, and the
 WinSupervisorBackend ABC implementation.
 
 WINDOWS-only. Every Windows-only stdlib import (winreg, ctypes) is lazy (inside
-a method/function) so this module imports cleanly on macOS/Linux for the mock
+a method/function) so this module imports cleanly off Windows for the mock
 test suite. "Importable + mock-green" here does NOT mean Windows-verified -- the
 real gate is docs/history/M2-WINDOWS-ACCEPTANCE.md.
 
@@ -259,8 +259,8 @@ def resolve_python_windows() -> "str | None":
 # The resolved pythonw.exe path is baked in at install time by
 # WinSupervisorBackend.install(). Claude Code supports separate 'command' +
 # 'args' (exec-form) -- no bash shim required.
-# Event set mirrors hooks/hooks.json (the macOS hooks file), translated to
-# exec-form (command + args array) because there is no bash on Windows.
+# Event set mirrors hooks/hooks.json (the plugin's own hooks file), translated
+# to exec-form (command + args array) so no bash shim is needed.
 HOOKS_JSON_TEMPLATE = '''{{
   "hooks": {{
     "MessageDisplay": [
@@ -280,32 +280,6 @@ HOOKS_JSON_TEMPLATE = '''{{
     ],
     "PreToolUse": [
       {{
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "PreToolUse"
-            ]
-          }}
-        ]
-      }},
-      {{
-        "matcher": "ExitPlanMode",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "PreToolUse"
-            ]
-          }}
-        ]
-      }},
-      {{
         "matcher": "",
         "hooks": [
           {{
@@ -322,19 +296,6 @@ HOOKS_JSON_TEMPLATE = '''{{
     "Notification": [
       {{
         "matcher": "permission_prompt",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "Notification"
-            ]
-          }}
-        ]
-      }},
-      {{
-        "matcher": "idle_prompt",
         "hooks": [
           {{
             "type": "command",

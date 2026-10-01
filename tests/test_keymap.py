@@ -20,13 +20,10 @@ def win(monkeypatch):
 
 def _patch_keymap_paths(monkeypatch, tmp_path):
     km = tmp_path / "keymap.json"
-    resolved = tmp_path / "hotkeyd.resolved.json"
     monkeypatch.setattr(keymap, "KEYMAP_PATH", km)
-    monkeypatch.setattr(keymap, "HOTKEYD_RESOLVED_PATH", resolved)
-    monkeypatch.setattr(keymap, "SONARA_DIR", tmp_path)
     monkeypatch.setattr(keymap, "ensure_sonara_dir",
                         lambda: tmp_path.mkdir(parents=True, exist_ok=True))
-    return km, resolved
+    return km, None
 
 
 # --- keytables come from the active platform backend ------------------------
@@ -46,7 +43,7 @@ def test_action_messages_faster_has_delta_25():
 
 def test_default_keymap_windows_uses_ctrl_alt(win):
     d = keymap.default_keymap()
-    assert d["nav_next"]["mods"] == ["ctrl", "alt"]
+    assert d["nav_start"]["mods"] == ["ctrl", "alt"]
     assert d["mute"]["key"] == "m"
 
 
@@ -61,12 +58,12 @@ def test_resolve_windows_vk_codes(win):
     assert row["action"] == "pause"
 
 
-def test_default_keymap_binds_only_nav_pause_mute():
-    # The default keymap binds nav/mute/next_session. pause/faster/slower are valid
-    # actions but ship UNBOUND (blank by default); every default binding is a real action.
+def test_default_keymap_binds_only_up_flush_mute_next_session():
+    # The default keymap binds Up/flush/mute/next_session. pause/faster/slower are
+    # valid actions but ship UNBOUND (blank by default); every default binding is
+    # a real action.
     km = keymap.default_keymap()
-    assert set(km.keys()) == {"nav_prev", "nav_next", "nav_start", "flush",
-                              "mute", "next_session"}
+    assert set(km.keys()) == {"nav_start", "flush", "mute", "next_session"}
     assert set(km.keys()) <= set(keymap.ACTION_MESSAGES.keys())
     assert "pause" in keymap.ACTION_MESSAGES and "pause" not in km
     assert "faster" in keymap.ACTION_MESSAGES and "faster" not in km
@@ -74,11 +71,11 @@ def test_default_keymap_binds_only_nav_pause_mute():
 
 
 def test_default_keymap_binds_nav_mute():
-    """Regression: nav_next/prev, mute were defined in ACTION_MESSAGES but absent
-    from _DEFAULT_KEYS, so no hotkey was ever registered for them on a default
-    install. (pause is intentionally UNBOUND now.)"""
+    """Regression: actions defined in ACTION_MESSAGES but absent from
+    _DEFAULT_KEYS never got a hotkey on a default install. (pause is
+    intentionally UNBOUND now.)"""
     km = keymap.default_keymap()
-    for action in ("nav_next", "nav_prev", "mute", "next_session"):
+    for action in ("nav_start", "flush", "mute", "next_session"):
         assert action in km, f"{action} has no default binding"
         assert km[action]["key"], f"{action} default binding has no key"
 
@@ -111,11 +108,11 @@ def test_resolve_skips_unbound_entries():
 
 def test_unbind_action_default_writes_unbound_override(monkeypatch, tmp_path):
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
-    keymap.unbind_action("nav_next")             # nav_next HAS a default binding
+    keymap.unbind_action("nav_start")            # nav_start HAS a default binding
     user = json.loads(km.read_text(encoding="utf-8"))
-    assert user["nav_next"]["key"] is None       # explicit unbound override
+    assert user["nav_start"]["key"] is None      # explicit unbound override
     resolved = keymap.resolve_keymap(keymap.load_keymap())
-    assert "nav_next" not in {e["action"] for e in resolved}
+    assert "nav_start" not in {e["action"] for e in resolved}
 
 
 def test_unbind_action_non_default_just_drops(monkeypatch, tmp_path):
@@ -136,8 +133,8 @@ def test_load_keymap_returns_defaults_when_missing(monkeypatch, tmp_path):
     _patch_keymap_paths(monkeypatch, tmp_path)
     loaded = keymap.load_keymap()
     assert loaded == keymap.default_keymap()
-    loaded["nav_prev"]["key"] = "x"  # independent copy
-    assert keymap.default_keymap()["nav_prev"]["key"] == "left"
+    loaded["nav_start"]["key"] = "x"  # independent copy
+    assert keymap.default_keymap()["nav_start"]["key"] == "up"
 
 
 def test_load_keymap_merges_user_override(monkeypatch, tmp_path):
@@ -145,7 +142,7 @@ def test_load_keymap_merges_user_override(monkeypatch, tmp_path):
     km.write_text(json.dumps({"pause": {"key": "x", "mods": ["cmd"]}}), encoding="utf-8")
     loaded = keymap.load_keymap()
     assert loaded["pause"] == {"key": "x", "mods": ["cmd"]}
-    assert loaded["nav_next"] == keymap.default_keymap()["nav_next"]
+    assert loaded["nav_start"] == keymap.default_keymap()["nav_start"]
 
 
 def test_load_keymap_drops_unknown_actions(monkeypatch, tmp_path):
@@ -158,6 +155,47 @@ def test_load_keymap_drops_unknown_actions(monkeypatch, tmp_path):
     assert "stop" not in loaded
     assert loaded["pause"] == {"key": "p", "mods": ["ctrl"]}
     keymap.resolve_keymap(loaded)   # must not raise
+
+
+def test_removed_paragraph_nav_actions_are_gone():
+    # D1: Ctrl+Alt+Left/Right paragraph stepping was removed (one message,
+    # always the last). Up (nav_start) is the only nav action.
+    for action in ("nav_prev", "nav_next"):
+        assert action not in keymap.ACTION_MESSAGES
+        assert action not in keymap.default_keymap()
+    nav_targets = {m.get("to") for m in keymap.ACTION_MESSAGES.values()
+                   if m["type"] == "nav"}
+    assert nav_targets == {"first"}
+
+
+def test_stale_nav_prev_next_in_keymap_json_are_ignored(monkeypatch, tmp_path):
+    # Existing installs have nav_prev/nav_next in ~/.sonara/keymap.json (written
+    # by an older install). Loading must ignore them without error and keep the
+    # remaining bindings.
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "alt"]},
+        "nav_next": {"key": "right", "mods": ["ctrl", "alt"]},
+        "nav_start": {"key": "up", "mods": ["ctrl", "alt"]},
+        "mute": {"key": "j", "mods": ["ctrl", "alt"]},
+    }), encoding="utf-8")
+    loaded = keymap.load_keymap()
+    assert "nav_prev" not in loaded and "nav_next" not in loaded
+    assert loaded["mute"] == {"key": "j", "mods": ["ctrl", "alt"]}
+    resolved = keymap.resolve_keymap(loaded)       # must not raise
+    assert {e["action"] for e in resolved} == {"nav_start", "flush", "mute",
+                                               "next_session"}
+
+
+# --- resolve the default keymap ---------------------------------------------
+
+def test_resolve_default_keymap_emits_one_entry_per_default_binding():
+    data = keymap.resolve_keymap(keymap.load_keymap())
+    assert isinstance(data, list) and len(data) == len(keymap._DEFAULT_KEYS)
+    for entry in data:
+        assert isinstance(entry["keyCode"], int)
+        assert isinstance(entry["modifiers"], int)
+        assert isinstance(entry["message"], str)
 
 
 def test_load_keymap_tolerates_corrupt_file(monkeypatch, tmp_path):
@@ -175,29 +213,10 @@ def test_write_default_keymap_if_absent_writes_once(monkeypatch, tmp_path):
     assert keymap.write_default_keymap_if_absent() is False
 
 
-# --- write_resolved ---------------------------------------------------------
-
-def test_write_resolved_emits_array_of_bindings(monkeypatch, tmp_path):
-    _patch_keymap_paths(monkeypatch, tmp_path)
-    keymap.write_resolved()
-    data = json.loads((tmp_path / "hotkeyd.resolved.json").read_text(encoding="utf-8"))
-    assert isinstance(data, list) and len(data) == len(keymap._DEFAULT_KEYS)
-    for entry in data:
-        assert isinstance(entry["keyCode"], int)
-        assert isinstance(entry["modifiers"], int)
-        assert isinstance(entry["message"], str)
-
-
-def test_write_resolved_no_tmp_leftover(monkeypatch, tmp_path):
-    _patch_keymap_paths(monkeypatch, tmp_path)
-    keymap.write_resolved()
-    assert list(tmp_path.glob("*.tmp")) == []
-
-
 def test_resolve_nav_action_message(win):
-    resolved = keymap.resolve_keymap({"nav_next": {"key": "right", "mods": ["alt"]}})
-    assert resolved[0]["action"] == "nav_next"
-    assert json.loads(resolved[0]["message"]) == {"type": "nav", "to": "next"}
+    resolved = keymap.resolve_keymap({"nav_start": {"key": "up", "mods": ["alt"]}})
+    assert resolved[0]["action"] == "nav_start"
+    assert json.loads(resolved[0]["message"]) == {"type": "nav", "to": "first"}
 
 
 def test_no_two_default_actions_share_a_key():
@@ -233,10 +252,10 @@ def test_nav_start_and_flush_default_to_up_and_down():
     assert km["flush"]["key"] == "down"
 
 
-def test_arrow_cluster_default_keys_are_distinct():
-    km = keymap.default_keymap()
-    arrows = {km[a]["key"] for a in ("nav_prev", "nav_next", "nav_start", "flush")}
-    assert arrows == {"left", "right", "up", "down"}
+def test_left_and_right_are_free_by_default():
+    # Ctrl+Alt+Left/Right no longer belong to Sonara (D1).
+    keys = {b["key"] for b in keymap.default_keymap().values()}
+    assert "left" not in keys and "right" not in keys
 
 
 # --- migrate_default_chord ---------------------------------------------------
@@ -244,31 +263,31 @@ def test_arrow_cluster_default_keys_are_distinct():
 def test_migrate_rewrites_legacy_chord_entries(win, monkeypatch, tmp_path):
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
     km.write_text(json.dumps({
-        "nav_prev": {"key": "left", "mods": ["ctrl", "shift", "alt"]},
+        "nav_start": {"key": "up", "mods": ["ctrl", "shift", "alt"]},
         "mute": {"key": "m", "mods": ["ctrl", "shift", "alt"]},
     }), encoding="utf-8")
     assert keymap.migrate_default_chord() is True
     user = json.loads(km.read_text(encoding="utf-8"))
-    assert user["nav_prev"]["mods"] == ["ctrl", "alt"]
+    assert user["nav_start"]["mods"] == ["ctrl", "alt"]
     assert user["mute"]["mods"] == ["ctrl", "alt"]
-    assert user["nav_prev"]["key"] == "left"      # key preserved
+    assert user["nav_start"]["key"] == "up"       # key preserved
 
 
 def test_migrate_preserves_customized_bindings(win, monkeypatch, tmp_path):
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
     km.write_text(json.dumps({
-        "nav_prev": {"key": "left", "mods": ["ctrl", "shift"]},        # custom mods
+        "nav_start": {"key": "up", "mods": ["ctrl", "shift"]},         # custom mods
         "mute": {"key": "j", "mods": ["ctrl", "shift", "alt"]},         # custom key
     }), encoding="utf-8")
     assert keymap.migrate_default_chord() is False
     user = json.loads(km.read_text(encoding="utf-8"))
-    assert user["nav_prev"]["mods"] == ["ctrl", "shift"]
+    assert user["nav_start"]["mods"] == ["ctrl", "shift"]
     assert user["mute"]["key"] == "j" and user["mute"]["mods"] == ["ctrl", "shift", "alt"]
 
 
 def test_migrate_is_idempotent(win, monkeypatch, tmp_path):
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
-    km.write_text(json.dumps({"nav_prev": {"key": "left", "mods": ["ctrl", "shift", "alt"]}}),
+    km.write_text(json.dumps({"nav_start": {"key": "up", "mods": ["ctrl", "shift", "alt"]}}),
                   encoding="utf-8")
     assert keymap.migrate_default_chord() is True     # first run migrates
     assert keymap.migrate_default_chord() is False    # second run is a no-op
@@ -281,11 +300,11 @@ def test_migrate_missing_file_is_noop(win, monkeypatch, tmp_path):
 
 def test_migrate_then_resolve_uses_ctrl_alt(win, monkeypatch, tmp_path):
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
-    km.write_text(json.dumps({"nav_next": {"key": "right", "mods": ["ctrl", "shift", "alt"]}}),
+    km.write_text(json.dumps({"flush": {"key": "down", "mods": ["ctrl", "shift", "alt"]}}),
                   encoding="utf-8")
     keymap.migrate_default_chord()
     resolved = keymap.resolve_keymap(keymap.load_keymap())
-    row = next(e for e in resolved if e["action"] == "nav_next")
+    row = next(e for e in resolved if e["action"] == "flush")
     assert row["modifiers"] == (0x0002 | 0x0001)       # ctrl|alt, no shift (0x0004)
 
 
