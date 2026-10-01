@@ -88,9 +88,10 @@ def test_accept_loop_exits_on_persistent_failure():
 # --- faulthandler evidence preservation ---------------------------------------
 
 def _arm(tmp_dir, monkeypatch):
-    from sonara import paths, daemon as dmod
+    from sonara import paths
+    from sonara.platform.windows import process as process_mod
     monkeypatch.setattr(paths, "SONARA_DIR", tmp_dir, raising=False)
-    dmod._arm_faulthandler()
+    process_mod.arm_faulthandler()
 
 
 def test_faulthandler_rotates_a_real_dump(tmp_path, monkeypatch):
