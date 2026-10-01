@@ -22,11 +22,13 @@ class SpeakLoop:
     events, *shared* the core.SharedState (the item being spoken),
     *pending_heard* the item id -> history entry map. *muted* and *earcon*
     are the daemon's mute check and earcon path; *note_spoken* and
-    *requeue_or_note* its heard-marker bookkeeping."""
+    *requeue_or_note* its heard-marker bookkeeping. *on_change* publishes
+    the state stream (#143), called with the lock held when an utterance
+    starts and after every loop iteration."""
 
     def __init__(self, config, lock, wake, running, paused, router, speaker,
                  cues, audio, shared, pending_heard, muted, earcon,
-                 note_spoken, requeue_or_note) -> None:
+                 note_spoken, requeue_or_note, on_change=None) -> None:
         self._config = config
         self._lock = lock
         self._wake = wake
@@ -42,6 +44,7 @@ class SpeakLoop:
         self._earcon = earcon
         self._note_spoken = note_spoken
         self._requeue_or_note = requeue_or_note
+        self._on_change = on_change if on_change is not None else (lambda: None)
         self.poll_interval = 0.1
         self.pending_preamble = None   # (session, alert_text) deferred to content on_play (#94)
 
@@ -78,7 +81,16 @@ class SpeakLoop:
             pass
 
     def run_once(self) -> None:
-        """One iteration of the speak loop. May raise; run() contains it."""
+        """One iteration of the speak loop. May raise; run() contains it.
+        Ends by publishing the state: an utterance ended, or a digest
+        landed while the loop was idle."""
+        try:
+            self._run_once()
+        finally:
+            with self._lock:
+                self._on_change()
+
+    def _run_once(self) -> None:
         if self._paused.is_set():
             # Idempotently restore other apps' audio while paused -- closes the window
             # where a re-duck slipped in during the pause transition. Safe to call
@@ -94,6 +106,7 @@ class SpeakLoop:
                     item = ch.take_pause_exempt()
                     if item is not None:
                         self._shared.current_item = item
+                        self._on_change()       # speech starts (#143)
                         break
                 cancel_epoch = self._speaker.cancel_epoch()
             if item is not None:
@@ -121,6 +134,8 @@ class SpeakLoop:
                 self._pending_heard.pop(item.id, None)
                 print("[mute] dropped: {0!r}".format((item.text or "")[:60]),
                       file=sys.stderr, flush=True)
+            elif item is not None and item.kind != "session_change":
+                self._on_change()               # speech starts (#143)
         # Engine fallback notices: spoken once per daemon run so an eyes-free
         # user knows WHY the voice changed (the reason is already in the log).
         self._cues.maybe_announce_kokoro_fallback()

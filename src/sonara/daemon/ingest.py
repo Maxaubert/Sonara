@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from sonara import config_schema
 from sonara.assembler import PARAGRAPH_BREAK, ProseAssembler
+from sonara.cleaner import normalize_for_speech
 from sonara.daemon import core, decision_text
 from sonara.protocol import MsgType
 from sonara.queue import SpeechItem
@@ -50,6 +51,7 @@ class Ingest:
             MsgType.SESSION_END: self.on_session_end,
             MsgType.CHOICE_ANSWERED: self.on_choice_answered,
             MsgType.FORGET_SESSION: self.on_forget_session,
+            MsgType.SPEAK: self.on_speak,
         })
 
     def _verbosity(self):
@@ -321,6 +323,42 @@ class Ingest:
         # any in-flight lead-in digest; whatever the assistant says AFTER the
         # answer flows normally. No earcon: answering is its own feedback.
         self._d._controls.user_caught_up(msg.get("session", ""))
+        return None
+
+    def on_speak(self, msg):
+        """SPEAK from an embedding host (#143): read *text* in the session
+        f"{source}:{tab or 'default'}". Queue of one: the session's unread
+        items are replaced, never queued behind, and the text is spoken as
+        given (cleaned for speech; no assembly, no summary). interrupt=true
+        also cuts the session's current utterance; other sessions are left
+        alone, and the global pause holds (a host must not un-pause the
+        voice, the #69 lesson)."""
+        d = self._d
+        text, source = msg.get("text"), msg.get("source")
+        tab, label = msg.get("tab"), msg.get("label")
+        if not (isinstance(text, str) and isinstance(source, str) and source
+                and (tab is None or isinstance(tab, str))):
+            return None
+        sid = "{0}:{1}".format(source, tab or "default")
+        d.sessions.register(sid, cwd=None)
+        d.sessions.set_host_tab(sid, tab)
+        if isinstance(label, str) and label and label != d.session_prefs.name(sid):
+            d.session_prefs.set(sid, "name", label)   # the router announces it
+        cur = d._current_item
+        if msg.get("interrupt") is True and cur is not None and cur.session == sid:
+            d.speaker.cancel()
+        ch = d.router.channel(sid)
+        for it in ch.truncate_pending():
+            d._pending_heard.pop(it.id, None)
+        spoken = normalize_for_speech(text)
+        if spoken:
+            entry = d.history.record(sid, "summary", spoken)
+            d.history.end_message(sid)
+            d._enqueue(sid, "summary", spoken, False, entry=entry)
+            ch.turn_done = True   # whole text at once: no minqueue wait
+            # Not a foreground Claude session: authorize it past the
+            # background policy until it drains, like a digest delivery.
+            d.router.authorize_replay(sid)
         return None
 
     def on_forget_session(self, msg):

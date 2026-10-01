@@ -117,15 +117,20 @@ class Settings:
         return None
 
     def on_status(self, msg):
+        """The settings plus the state-stream snapshot (#143): the same
+        fields and seq a subscriber gets, without the event "type"."""
         d = self._d
-        return {
+        out = {
             "verbosity": d.config.get("verbosity"),
             "rate": d.config.get("rate"),
             "voice": d.config.get("voice"),
             "foreground": d.sessions.foreground(),
             "minqueue": d.config.get("minqueue"),
-            "summary_mode": bool(d.config.get("summary_mode")),
         }
+        snap = d._state.current()
+        snap.pop("type", None)
+        out.update(snap)
+        return out
 
     def set_config_value(self, key: str, value) -> bool:
         """Set a config-only tuning key (settings page, #34). These have no

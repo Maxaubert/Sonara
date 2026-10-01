@@ -118,8 +118,8 @@ def test_package_and_settings_page_versions_match_pyproject():
     assert f"<span>Version {version}</span>" in html
 
 
-def test_pyproject_version_is_0_7_0():
-    assert _pyproject_version() == "0.7.0"
+def test_pyproject_version_is_0_8_0():
+    assert _pyproject_version() == "0.8.0"
 
 
 def test_manifests_have_no_em_dash():
