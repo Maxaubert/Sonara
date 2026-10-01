@@ -181,6 +181,9 @@ class WinHotkeyBackend(HotkeyBackend):
 
     # --- diagnostics ---
     def doctor_rows(self) -> list:
+        return self._chord_rows() + [self._altgr_row()]
+
+    def _chord_rows(self) -> list:
         state = self._read_state()
         if state is None:
             # No daemon-side state: the chords live in the daemon process, which
@@ -203,6 +206,63 @@ class WinHotkeyBackend(HotkeyBackend):
         else:
             rows.append(("hotkey chords", True, "no collisions (daemon-reported)"))
         return rows
+
+    # --- AltGr (E16) ---
+    def _altgr_char(self, vk: int, shift: bool):
+        """The character AltGr(+Shift)+*vk* types on this thread's keyboard
+        layout, or None. AltGr arrives as LCtrl+RAlt, so RegisterHotKey's
+        Ctrl+Alt chords match it and eat that character. Lazy ctypes."""
+        import ctypes
+        user32 = ctypes.windll.user32
+        hkl = user32.GetKeyboardLayout(0)
+        state = (ctypes.c_ubyte * 256)()
+        for k in (0x11, 0x12, 0xA2, 0xA5):          # CONTROL, MENU, LCONTROL, RMENU
+            state[k] = 0x80
+        if shift:
+            state[0x10] = state[0xA0] = 0x80         # SHIFT, LSHIFT
+        scan = user32.MapVirtualKeyExW(vk, 0, hkl)   # MAPVK_VK_TO_VSC
+        buf = ctypes.create_unicode_buffer(8)
+        # flags 0x4: leave the keyboard's dead-key state untouched.
+        n = user32.ToUnicodeEx(vk, scan, state, buf, 8, 0x4, hkl)
+        if n <= 0:
+            return None
+        ch = buf.value[:n]
+        return ch if ch.strip() and ch.isprintable() else None
+
+    def altgr_conflicts(self, resolved: list, to_char=None) -> list:
+        """[(action, combo label, character)] for each Ctrl+Alt hotkey that is
+        AltGr typing a character on the current layout (German AltGr+M types the micro sign,
+        Polish AltGr letters). A Win chord never matches AltGr."""
+        to_char = to_char or self._altgr_char
+        ctrl_alt = keytables.MOD_MASKS["ctrl"] | keytables.MOD_MASKS["alt"]
+        win = keytables.MOD_MASKS["win"]
+        shift = keytables.MOD_MASKS["shift"]
+        found = []
+        for b in resolved:
+            mods = b["modifiers"]
+            if mods & ctrl_alt != ctrl_alt or mods & win:
+                continue
+            ch = to_char(b["keyCode"], bool(mods & shift))
+            if ch:
+                found.append((b["action"],
+                              self.display_combo(mods, b["keyCode"]), ch))
+        return found
+
+    def _altgr_row(self) -> tuple:
+        try:
+            from sonara import keymap
+            found = self.altgr_conflicts(keymap.resolve_keymap(keymap.load_keymap()))
+        except Exception as exc:  # noqa: BLE001 - doctor must always render
+            return ("AltGr", True, "could not check: {0}".format(exc))
+        if not found:
+            return ("AltGr", True, "no hotkey types a character on this keyboard "
+                                   "layout")
+        parts = ", ".join("{0} ({1}) is AltGr typing '{2}'".format(combo, action, ch)
+                          for action, combo, ch in found)
+        return ("AltGr", False,
+                "{0} on this keyboard layout, so the hotkey eats that character. "
+                "Rebind it on the settings page (sonara settings), for example "
+                "with Win, then re-run sonara doctor".format(parts))
 
     def display_combo(self, modifiers: int, key_code: int) -> str:
         parts = [name for mask, name in _MOD_LABELS if modifiers & mask]

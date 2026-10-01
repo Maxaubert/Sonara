@@ -32,5 +32,8 @@ MOD_MASKS = {
 # MOD_NOREPEAT (0x4000) is OR-ed in at register time, not part of a chord.
 MOD_NOREPEAT = 0x4000
 
-# Default chord: Ctrl+Alt clears AltGr / Win-reserved / terminal / layout collisions.
+# Default chord: Ctrl+Alt avoids Win-reserved and terminal shortcuts. It does
+# NOT avoid AltGr: AltGr arrives as LCtrl+RAlt, so on layouts with AltGr
+# characters (German AltGr+M types the micro sign, Polish letters) a Ctrl+Alt hotkey eats that
+# character. `sonara doctor` checks the active layout (E16); rebind with Win.
 DEFAULT_MODS = ["ctrl", "alt"]

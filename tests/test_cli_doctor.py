@@ -273,3 +273,17 @@ def test_doctor_chatterbox_row_uses_the_bounded_walk(monkeypatch):
     assert "more than 1.0 GB" in detail
     assert "chatterbox-venv (more than 1.0 GB)" in detail
     assert "sonara cleanup" in detail
+
+
+def test_doctor_output_survives_a_narrow_console_encoding(monkeypatch):
+    """The AltGr row names characters like the micro sign; a cp437 pipe
+    must not turn that into a UnicodeEncodeError traceback."""
+    import io
+    import sys
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(cli, "doctor", lambda: [("AltGr", False, "types '\u00b5'")])
+    assert cli._cmd_doctor(None) == 1
+    out.flush()
+    assert b"AltGr" in raw.getvalue()

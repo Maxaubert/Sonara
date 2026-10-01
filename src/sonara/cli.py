@@ -392,7 +392,13 @@ def _cmd_doctor(_args) -> int:
     all_ok = True
     for check, ok, detail in rows:
         mark = "ok " if ok else "FAIL"
-        print(f"[{mark}] {check}: {detail}")
+        line = f"[{mark}] {check}: {detail}"
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            # A row can name a character (the AltGr row) that a cp437 or
+            # redirected console cannot encode: escape it, never crash.
+            print(line.encode("ascii", "backslashreplace").decode("ascii"))
         all_ok = all_ok and ok
     return 0 if all_ok else 1
 
