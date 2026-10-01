@@ -1,10 +1,18 @@
 """Sonara wire protocol: newline-delimited JSON over a loopback TCP socket
-(the port and auth token are in ~/.sonara/daemon.lock)."""
+(the port and auth token are in ~/.sonara/daemon.lock). Each message is a dict
+with a "type" (one of MsgType) plus that type's fields.
+
+The "v" field is ADVISORY: senders stamp PROTOCOL_VERSION, but the daemon
+does not check it, and messages without it (hotkey fires, keymap actions)
+are handled the same. A hook running from one plugin copy can talk to a
+daemon running from another (~/.sonara/app), and rejecting a version
+mismatch would silently drop the latest turn. Changes stay compatible
+instead: new types and fields are added, and an unknown type gets no reply."""
 from __future__ import annotations
 
 import json
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 1   # stamped as "v"; advisory, never validated (see above)
 
 
 class MsgType:
