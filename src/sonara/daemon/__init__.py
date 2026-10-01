@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import queue
-import secrets
 import socket
 import sys
 import threading
@@ -11,7 +10,7 @@ from sonara.protocol import MsgType, encode, decode
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema, install_record
-from sonara.daemon import decision_text
+from sonara.daemon import decision_text, tokens
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
@@ -26,43 +25,6 @@ from sonara.lifecycle import ensure_running  # noqa: F401
 # Holds the single-instance flock for this process's lifetime (see main()).
 _SINGLETON = None
 _MUTEX = None       # process-lifetime handle to the named single-instance mutex
-
-
-def _wellformed_token(tok) -> bool:
-    return (isinstance(tok, str) and len(tok) == 64
-            and all(c in "0123456789abcdef" for c in tok))
-
-
-def _select_token(prior_lock: dict) -> str:
-    """Reuse a well-formed prior lockfile token (settings-page restart
-    reconnect + durable bookmarks, #34); otherwise mint a fresh one."""
-    tok = (prior_lock or {}).get("token")
-    if _wellformed_token(tok):
-        return tok
-    return secrets.token_hex(32)
-
-
-def _persistent_token() -> str:
-    """The daemon token, durable across CLEAN restarts (#34 follow-up): the
-    lockfile is unlinked on exit, so lockfile-based reuse only covered crashes
-    -- live-verified when the page's Restart button reconnected to a 403 wall.
-    Priority: token file, then a stale lockfile (crash case), else mint. The
-    chosen token is (re)written to the file so the NEXT start reuses it."""
-    from sonara import paths as _paths
-    tok = None
-    try:
-        tok = _paths.WEBUI_TOKEN_PATH.read_text(encoding="utf-8").strip()
-    except OSError:
-        pass
-    if not _wellformed_token(tok):
-        tok = _select_token(transport.read_lockfile(LOCK_PATH) or {})
-    try:
-        _paths.ensure_sonara_dir()
-        _paths.WEBUI_TOKEN_PATH.write_text(tok, encoding="utf-8")
-        os.chmod(_paths.WEBUI_TOKEN_PATH, 0o600)
-    except OSError:
-        pass                     # unwritable dir: token still valid this run
-    return tok
 
 
 # Setting bounds live in the config schema (#136); re-exported for callers.
@@ -2531,7 +2493,7 @@ class SpeechDaemon:
         # Restart button and bookmarked page URLs keep working because the
         # respawned daemon accepts the same token. Same-user security boundary
         # is unchanged -- the token still lives 0600 in the user's own home.
-        self._token = _persistent_token()
+        self._token = tokens.persistent_token()
         from sonara.webui import SettingsServer
         self._webui = SettingsServer(self, self._token,
                                      int(config_schema.get(self.config, "settings_port")))
