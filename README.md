@@ -26,7 +26,7 @@ answer by number, and global hotkeys control the voice from any window.
 
 ## Features
 
-- **One message, always the last.** Sonara reads the latest reply. Press **Win+Alt+Home** and it
+- **One message, always the last.** Sonara reads the latest reply. Press **Ctrl+Alt+Up** and it
   starts that reply over; nothing older gets in the way.
 - **Decision earcons.** A short sound the instant a question, permission prompt or error appears,
   in every session, even one that is not speaking.
@@ -83,10 +83,10 @@ Running it refreshes the copy in `~/.sonara/app`.
   plays at once; its spoken text follows the sentences before it.
 - **A new prompt starts fresh.** When you send the next prompt, the previous reply is dropped
   and Sonara follows the new one.
-- **Restart, never rewind.** Win+Alt+Home restarts the latest reply from the top (in summary
+- **Restart, never rewind.** Ctrl+Alt+Up restarts the latest reply from the top (in summary
   mode it re-reads the last summary). There is no stepping back through older replies.
 - **Several sessions.** The session you last prompted owns the voice. Other sessions still play
-  their earcons, and their latest reply waits. Win+Alt+N moves the voice to the next session
+  their earcons, and their latest reply waits. Ctrl+Alt+P moves the voice to the next session
   and says "Session changed: &lt;folder&gt;"; an unread reply resumes, a read one starts over.
 
 ### Answering prompts
@@ -98,35 +98,37 @@ and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
 
 ## Hotkeys
 
-The default chord is **Win+Alt**. Rebind any action on the settings page's Hotkeys tab or in
+The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab or in
 `~/.sonara/keymap.json`. A hotkey must include Ctrl, Alt or Win.
 
 | Hotkey | Action |
 |---|---|
-| Win+Alt+Home | Restart the latest reply from the top (summary mode: re-read the last summary) |
-| Win+Alt+End | Flush: silence everything queued in every session and go quiet. Win+Alt+Home brings the reply back |
-| Win+Alt+S | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
-| Win+Alt+N | Move the voice to the next session |
+| Ctrl+Alt+Up | Restart the latest reply from the top (summary mode: re-read the last summary) |
+| Ctrl+Alt+Down | Flush: silence everything queued in every session and go quiet. Ctrl+Alt+Up brings the reply back |
+| Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
+| Ctrl+Alt+P | Move the voice to the next session |
 
 `pause`, `faster` and `slower` are also actions; they ship unbound. Stop, skip and repeat are
 CLI commands (below).
 
 <details>
-<summary>Why Win+Alt, and which keys to avoid</summary>
+<summary>European keyboards (AltGr), and which keys to avoid</summary>
 
 Windows sends AltGr as Ctrl+Alt, so on keyboard layouts with AltGr characters (German,
 Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character away: Ctrl+Alt+M bound to
-mute stops AltGr+M from typing µ. A Win chord never matches AltGr. If you keep or bind a
-clashing Ctrl+Alt hotkey, `sonara doctor` names it in an **AltGr** warning row, and the settings
-page warns next to the binding.
+mute stops AltGr+M from typing µ. `sonara doctor` names each clashing hotkey in an **AltGr**
+warning row, and the settings page warns next to the binding. The fix is to rebind that key
+with Win, for example to Win+Alt+Home/End or Ctrl+Win+Up/Down; a Win chord never matches
+AltGr. Resetting to the defaults does not help, since they use Ctrl+Alt.
 
-Windows 11 already owns Win+Alt+Up/Down (snap a window), Win+Alt+B (HDR), Win+Alt+D (date and
-time), Win+Alt+H (voice typing), Win+Alt+K (microphone mute), Win+Alt+Enter, and the Game Bar
-chords Win+Alt+G/M/R/T/PrtScn. That is why restart and flush use Home and End and mute uses S.
-If another app holds a chord, `sonara doctor` reports it in its hotkey row.
+Win+Alt is not the default because Windows 11 already owns Win+Alt+Up/Down (snap a window),
+Win+Alt+M and Win+Alt+P, plus Win+Alt+B (HDR), Win+Alt+D (date and time), Win+Alt+H (voice
+typing), Win+Alt+K (microphone mute), Win+Alt+Enter and the Game Bar chords
+Win+Alt+G/R/T/PrtScn. If another app holds a chord, `sonara doctor` reports it in its hotkey
+row.
 
-Installs from before 0.7.0 keep their Ctrl+Alt bindings. Press **Reset hotkeys to defaults** on
-the Hotkeys tab, or run `sonara keymap --reset`, to switch.
+The defaults are unchanged from 0.6.x. **Reset hotkeys to defaults** on the Hotkeys tab, or
+`sonara keymap --reset`, puts every binding back on them.
 
 </details>
 

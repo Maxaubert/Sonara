@@ -305,7 +305,7 @@ def test_keymap_state_flags_altgr_collisions(tmp_path, monkeypatch):
     finally:
         platform._CACHE = None
     assert rows["mute"]["altgr"] == "\u00b5"
-    assert rows["nav_start"]["altgr"] is None    # Win+Alt default: never AltGr
+    assert rows["nav_start"]["altgr"] is None    # AltGr+Up types nothing here
 
 
 def test_keymap_bad_action_is_400(server, monkeypatch):

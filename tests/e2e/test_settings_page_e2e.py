@@ -287,8 +287,8 @@ def test_win_key_is_captured_as_the_win_modifier(live, monkeypatch):
 
 
 def test_reset_hotkeys_to_defaults_posts_reset_after_confirm(live, monkeypatch):
-    """#160: existing installs keep their Ctrl+Alt keymap.json; the page's
-    'Reset hotkeys to defaults' moves them to the Win+Alt defaults."""
+    """#160: the page's 'Reset hotkeys to defaults' asks first, then puts
+    every hotkey back on the Ctrl+Alt defaults."""
     resets = []
     monkeypatch.setattr(webui, "_reset_keymap", lambda: resets.append(True))
     d, s = live
@@ -304,7 +304,7 @@ def test_reset_hotkeys_to_defaults_posts_reset_after_confirm(live, monkeypatch):
         page.wait_for_timeout(400)
         browser.close()
     assert resets == [True]
-    assert dialogs and "Win+Alt" in dialogs[0]
+    assert dialogs and "Ctrl+Alt" in dialogs[0] and "Win+Alt" not in dialogs[0]
     assert d.messages[-1]["type"] == "reload_keymap"
 
 
@@ -343,7 +343,8 @@ def test_altgr_collision_warning_shows_next_to_the_binding(live, monkeypatch):
         text = mute_warn.text_content()
         flush_visible = page.locator("[data-action='flush'] .altgr-warn").is_visible()
         browser.close()
-    assert "\u00b5" in text and "Reset hotkeys to defaults" in text
+    assert "\u00b5" in text and "Rebind" in text and "Win" in text
+    assert "Reset hotkeys to defaults" not in text   # defaults are Ctrl+Alt
     assert flush_visible is False
 
 
