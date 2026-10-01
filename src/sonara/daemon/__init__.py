@@ -8,7 +8,7 @@ import threading
 from sonara.protocol import MsgType
 from sonara.queue import SpeechItem
 from sonara import config_schema
-from sonara.daemon import setup_health, tokens
+from sonara.daemon import previews, rehydrate, setup_health, tokens
 from sonara.daemon.audio import AudioControl
 from sonara.daemon.controls import Controls
 from sonara.daemon import core
@@ -34,12 +34,6 @@ RATE_MIN = config_schema.RATE_MIN
 RATE_MAX = config_schema.RATE_MAX
 MINQUEUE_MIN = config_schema.MINQUEUE_MIN
 MINQUEUE_MAX = config_schema.MINQUEUE_MAX
-
-# Startup channel rehydration horizon (#118): sessions seen within this window
-# get their persisted last digest re-seeded as a replayable channel, so the
-# manual cycle reaches them across daemon restarts. Matches the settings
-# page's "recent sessions" threshold.
-_REHYDRATE_WINDOW_S = 3 * 3600
 
 
 class SpeechDaemon:
@@ -249,29 +243,6 @@ class SpeechDaemon:
             for it in ch.items:
                 self._pending_heard.pop(it.id, None)
 
-    def _rehydrate_channels(self) -> None:
-        """Re-seed each recently-seen session's channel with its persisted last
-        digest as an already-heard item (#118). Channels are in-memory, so a
-        restart emptied every queue and the manual cycle could only reach
-        sessions that spoke SINCE the restart - everyone else's last message
-        was lost. Rehydrated channels are caught up (pending 0): never
-        auto-spoken, but landing on them replays the digest like any read
-        session, and Up re-reads it."""
-        import time
-        now = time.time()
-        with self._lock:
-            for sid, text in self.digest_store.items():
-                if not text or sid in self.router.channels:
-                    continue
-                seen = self.sessions.last_seen(sid)
-                if seen is None or (now - seen) > _REHYDRATE_WINDOW_S:
-                    continue
-                # Heard, replay-only (no auto-speak); real content replaces it.
-                self.router.channel(sid).seed(SpeechItem(
-                    id=self._alloc_id(), session=sid, kind="summary",
-                    text=text, is_decision=False))
-                self._last_digest_text[sid] = text   # Up re-read parity
-
     def _teardown_session(self, session: str) -> None:
         """Per-session cleanup shared by SESSION_END and FORGET_SESSION (#101):
         both retire a session's live state; FORGET_SESSION targets exactly the
@@ -462,50 +433,14 @@ class SpeechDaemon:
         (daemon/settings)."""
         return self._settings.set_summary_prompt(style, text)
 
-    def _start_preview_builder(self, delay_s: float = 15.0):
-        """Render missing voice-preview files in the background (#38). Delayed
-        so daemon startup (prewarm, first speech) is never contended; every
-        failure is contained -- previews are a convenience, not a duty.
-        Returns the thread (tests join it)."""
-        def _run():
-            try:
-                import time
-                time.sleep(delay_s)
-                from sonara import previews
-                from sonara.webui import _installed_voices
-                made = previews.ensure_all(
-                    _installed_voices(),
-                    log=lambda m: print("[previews] " + m, flush=True))
-                if made:
-                    print("[previews] rendered {0} preview file(s)".format(made),
-                          flush=True)
-            except Exception:  # noqa: BLE001 - preview building must never bite
-                pass
-        t = threading.Thread(target=_run, name="sonara-previews", daemon=True)
-        t.start()
-        return t
-
     def preview_voice(self, voice: str) -> bool:
-        """Speak a short sample in *voice* WITHOUT changing config (settings
-        page, #34). It queues on the CONTROL channel like any cue (M6): it
-        plays after the utterance in progress, never over it. Playing it on
-        its own thread cut live speech (winsound has one channel) and the cut
-        utterance was still marked heard. A newer preview replaces a pending
-        or playing one; mute and pause do not swallow it, the user asked."""
-        if not voice:
-            return False
-        text = "This is {0} speaking for Sonara.".format(voice)
-        # HTTP requests run on their own threads: Cues.speak reslices CONTROL
-        # and allocates an id, which the speak loop does under the lock too.
-        with self._lock:
-            self._cues.speak(None, text, exempt_mute=True, pause_exempt=True,
-                             cue_key="voice_preview", voice=str(voice))
-        return True
+        """Settings page voice preview, queued as a cue (daemon/previews)."""
+        return previews.preview_voice(self._lock, self._cues, voice)
 
     def run(self) -> None:
         ensure_sonara_dir()
         try:
-            self._rehydrate_channels()      # restarts keep the cycle populated (#118)
+            rehydrate.rehydrate_channels(self)  # restarts keep the cycle populated (#118)
         except Exception:  # noqa: BLE001 - rehydration must never block startup
             pass
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -525,7 +460,7 @@ class SpeechDaemon:
             http_port = self._webui.start()
         except Exception:  # noqa: BLE001 - the page must never block speech
             self._webui, http_port = None, None
-        self._start_preview_builder()   # render missing voice previews (#38)
+        previews.start_preview_builder()   # render missing voice previews (#38)
         transport.write_lockfile(
             LOCK_PATH, transport.HOST, port, self._server.token, os.getpid(),
             http_port=http_port)

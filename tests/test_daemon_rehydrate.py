@@ -4,6 +4,7 @@ SINCE the restart. Recently-seen sessions are re-seeded from the persisted
 digest store as caught-up (replay-only) channels."""
 import time
 
+from sonara.daemon.rehydrate import rehydrate_channels
 from tests.daemon_helpers import make_daemon
 from sonara.protocol import MsgType, PROTOCOL_VERSION
 
@@ -18,7 +19,7 @@ def test_rehydrated_session_is_cycle_reachable_and_replays():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground=None)
     daemon.digest_store.set("A", "Alpha's last digest.")
     sessions.touch("A")
-    daemon._rehydrate_channels()
+    rehydrate_channels(daemon)
     assert _spoken(daemon, speaker, 4) == []       # heard item: never auto-spoken
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
     out = _spoken(daemon, speaker)
@@ -31,7 +32,7 @@ def test_rehydrate_skips_stale_and_unknown_sessions():
     daemon.digest_store.set("old", "stale digest")
     daemon.digest_store.set("ghost", "never seen digest")
     sessions._last_seen["old"] = time.time() - 4 * 3600   # beyond the 3h window
-    daemon._rehydrate_channels()
+    rehydrate_channels(daemon)
     assert "old" not in daemon.router.channels
     assert "ghost" not in daemon.router.channels
 
@@ -43,7 +44,7 @@ def test_rehydrate_never_overwrites_a_live_channel():
                            "final": True})
     daemon.digest_store.set("A", "stale persisted digest")
     before = list(daemon.router.channel("A").items)
-    daemon._rehydrate_channels()
+    rehydrate_channels(daemon)
     assert daemon.router.channel("A").items == before
 
 
