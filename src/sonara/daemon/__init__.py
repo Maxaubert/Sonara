@@ -10,6 +10,7 @@ from sonara.queue import SpeechItem
 from sonara import config_schema
 from sonara.daemon import setup_health, tokens
 from sonara.daemon.audio import AudioControl
+from sonara.daemon.controls import Controls
 from sonara.daemon.core import SessionRegistry, SharedState
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
@@ -109,11 +110,11 @@ class SpeechDaemon:
                           alloc_id=self._alloc_id,
                           current_item=lambda: self._current_item,
                           wake=self._wake)
-        # Ducking / media pause around speech, and the speech volume. persist
-        # resolves save_config here at call time (tests patch it on this module).
+        # Ducking / media pause around speech, and the speech volume
+        # (_persist saves through this module's save_config).
         self._audio = AudioControl(
             config, self.ducker, self.pauser, speaker,
-            persist=lambda: save_config(self.config), cues=self._cues,
+            persist=self._persist, cues=self._cues,
             cue_target=lambda: self.router.active or self.sessions.foreground(),
             wake=self._wake)
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
@@ -164,6 +165,10 @@ class SpeechDaemon:
         # it owns; handle_message looks the handler up by type.
         self._handlers: dict = {}
         self._ingest.register(self._handlers)
+        # Pause, mute, skip, stop, session switch, flush to end, Up, repeat
+        # (daemon/controls).
+        self._controls = Controls(self)
+        self._controls.register(self._handlers)
 
     @property
     def _current_item(self):
@@ -178,6 +183,11 @@ class SpeechDaemon:
     def _last_digest_text(self) -> dict:
         """session -> exact spoken digest text (core.SharedState)."""
         return self._shared.last_digest_text
+
+    def _persist(self) -> None:
+        """Save the config. save_config resolves on this module at call time
+        (tests patch sonara.daemon.save_config)."""
+        save_config(self.config)
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -313,162 +323,9 @@ class SpeechDaemon:
         if handler is not None:
             return handler(msg)
 
-        if t == MsgType.STOP:
-            # Silence everything (M3/F8): flush-to-end first cancels settle
-            # windows, in-flight and parked digests and held questions, so
-            # nothing cooking speaks after the stop; then clear the queues.
-            self._flush_all()
-            for s in list(self.router.channels):
-                self._drop_channel_pending(s)
-            for ch in self.router.channels.values():
-                ch.wipe()
-            self.speaker.cancel()
-            return None
-
-        if t == MsgType.SKIP:
-            cur = self._current_item
-            if cur is not None:
-                entry = self._pending_heard.get(cur.id)
-                if entry is not None:
-                    entry.heard = True
-            self.speaker.cancel()
-            return None
-
-        if t == MsgType.NAV:
-            # One message, always the last: the only nav target is 'first' (Up),
-            # which restarts the latest turn from the top. Any other target (the
-            # removed prev/next/last stepping) is a SILENT no-op, so a stale
-            # client cannot pile items onto a channel.
-            if msg.get("to", "first") != "first":
-                return None
-            fg = self._engaged_session()
-            if self.config.get("summary_mode"):
-                # Summary mode speaks ONE digest per turn: Up re-reads it. Flush
-                # ('go to end', Ctrl+Alt+Down) is a separate handler.
-                moved = self._reread_last(fg) if fg is not None else False
-                self._earcon("nav" if moved else "nav_edge")
-                return None
-            # The "nav" earcon when the turn restarts, "nav_edge" when there is
-            # nothing to restart.
-            if fg is None:
-                self._earcon("nav_edge")
-                return None
-            self._earcon("nav" if self._restart_turn(fg) else "nav_edge")
-            return None
-
-        if t == MsgType.PAUSE:
-            # Temporary play/pause. Pause stops the current utterance and holds the
-            # loop; resume re-speaks the interrupted item so it picks back up. Also
-            # auto-cleared by a new prompt (see the FLUSH handler).
-            target = self.router.active or self.sessions.foreground()
-            if self._paused.is_set():
-                # Resuming: clear flag, wake loop, then insert "Resumed." cue at
-                # the active channel's cursor so it plays ahead of the interrupted
-                # utterance (which was re-queued there on pause). mute_exempt so
-                # it is always heard even if the session is also muted.
-                self._paused.clear()
-                self._wake.set()
-                # target may be None (no session) -> the cue routes to the
-                # CONTROL channel so the confirmation is still heard.
-                self._cues.speak(target, "Resumed.", exempt_mute=True)
-            else:
-                self._paused.set()
-                # cancel() bumps the speaker's epoch so even an in-progress
-                # utterance aborts. The speak loop re-queues the interrupted item
-                # (sees completed=False while paused), so we don't capture it here.
-                self.speaker.cancel()
-                self._audio.restore()
-                # "Paused." is pause_exempt so the paused branch of the speak loop
-                # scans for and voices it while holding everything else. target may
-                # be None -> CONTROL channel (still scanned by take_pause_exempt).
-                self._cues.speak(target, "Paused.", pause_exempt=True)
-            return None
-
-        if t == MsgType.MUTE:
-            # Global mute CYCLE: Unmuted -> Muted -> Super Muted -> Unmuted.
-            #   1 Muted:       prose silenced, beeps (earcons) still fire.
-            #   2 Super Muted: prose AND beeps silenced (full mute).
-            # The spoken state confirmation is mute_exempt (always heard via TTS, not
-            # an earcon) so the user can tell the state and toggle out.
-            self._mute_level = (self._mute_level + 1) % 3
-            # Persist (#65): a respawned daemon restores the level, so mute
-            # survives the silent hook-lazy-start replacement.
-            self.config["mute_level"] = self._mute_level
-            save_config(self.config)
-            # Observability (#63): mute transitions and drops are logged so a
-            # "mute did not stick" report is diagnosable from speechd.log
-            # (state resets from a daemon respawn become visible too).
-            print("[mute] level -> {0}".format(self._mute_level),
-                  file=sys.stderr, flush=True)
-            if self._mute_level >= 1:
-                self.speaker.cancel()           # stop the current utterance now
-            cue = {1: "Muted.", 2: "Super muted.", 0: "Unmuted."}[self._mute_level]
-            target = self.router.active or self.sessions.foreground()
-            # target may be None -> the cue routes to the CONTROL channel so the
-            # confirmation is heard even when no session is registered.
-            # pause_exempt: a state change made WHILE PAUSED must still be
-            # confirmed, or the user cannot tell what they toggled (deep audit #25).
-            self._cues.speak(target, cue, exempt_mute=True, pause_exempt=True)
-            self._wake.set()
-            return None
-
-        if t == MsgType.NEXT_SESSION:
-            # Manual session-change: switch the active reader to another session and
-            # confirm immediately (cancel the current item, like pause/mute). The
-            # router arms the "Session changed" announcement; on no other session we
-            # speak a soft cue.
-            target, _replay = self.router.next_session()
-            self.speaker.cancel()
-            if target is None:
-                self._cues.speak(None, "No session.", exempt_mute=True,
-                                 pause_exempt=True)
-            else:
-                # Instant press feedback (#111): fire the switch chime NOW, from
-                # the handler (the earcon player is a non-blocking subprocess).
-                # The deferred #94 alert only sounded at the target content's
-                # synthesis-ready callback, leaving a manual press with ZERO
-                # audio for the whole first-chunk synthesis - it felt dead.
-                try:
-                    self._earcon("session_change")
-                except Exception:  # noqa: BLE001 - feedback must not break the switch
-                    pass
-            self._wake.set()
-            return None
-
         if t == MsgType.RELOAD_KEYMAP:
             # keymap.json changed: re-register off the daemon lock.
             self._hotkeys.request_reload()
-            return None
-
-        if t == MsgType.REPEAT:
-            fg = self._engaged_session()
-            if fg is None:
-                return None
-            entries = self.history.last_message(fg)
-            if not entries:
-                self._cues.speak(fg, "Nothing to repeat.")
-                return None
-            self._replay(fg, entries)
-            return None
-
-        if t == MsgType.FLUSH_SESSION:
-            # Flush to end: silence EVERYTHING queued or in flight across ALL
-            # sessions and go idle (#107). The old per-engaged-session flush
-            # left other sessions' landed or reorder-parked digests holding
-            # the floor: the key chimed success, a handoff started reading
-            # seconds later anyway, and a re-press in the silent gap found an
-            # "empty" queue (the flush soft-lock). Non-destructive: skipped
-            # items keep their history entries, so REPEAT / Up can bring them
-            # back.
-            self._earcon("nav" if self._flush_all() else "nav_edge")
-            return None
-
-        if t == MsgType.CHOICE_ANSWERED:
-            # The user ANSWERED the blocking question (#83): they have heard (or
-            # read) everything they need up to it. Silence the stale backlog and
-            # any in-flight lead-in digest; whatever the assistant says AFTER the
-            # answer flows normally. No earcon: answering is its own feedback.
-            self._user_caught_up(session)
             return None
 
         if t == MsgType.SET_RATE:
@@ -661,70 +518,6 @@ class SpeechDaemon:
                 self.router.authorize_replay(session)
         self._wake.set()
 
-    def _user_caught_up(self, session: str) -> bool:
-        """The user declared everything queued for *session* stale - they
-        answered the question, or pressed flush-to-end (#83). Skip the channel
-        backlog non-destructively (history entries stay for repeat / Up),
-        cut the in-progress utterance if it is this session's, drop a
-        settle-deferred or digest-held question, and advance the digest cancel
-        epoch so an in-flight lead-in digest lands dead instead of speaking
-        into the post-answer flow. The turn CONTINUES (unlike FLUSH/new
-        prompt): history and assemblers stay, but the voiced marker advances past
-        everything already said - the eventual turn-end digest covers only
-        post-answer prose ("I want to hear what comes after", #83).
-        Caller holds the lock. Returns True when anything was skipped/cut."""
-        ch = self.router.channel(session)
-        skipped = ch.skip_to_end()         # any pending decision is skipped too
-        for it in skipped:
-            self._pending_heard.pop(it.id, None)
-        cur = self._current_item
-        cutting = cur is not None and cur.session == session
-        if cutting:
-            self.speaker.cancel()          # cut the in-progress utterance
-            # Clear now so a rapid SECOND press (before the speak loop's
-            # note_spoken runs) sees nothing left to cut and gives the edge
-            # chime -- "go to end" is top/bottom, it should only move once
-            # (issue #11). note_spoken also nulls this later; idempotent.
-            self._current_item = None
-        # Deferred and held questions, the settle window, in-flight digests
-        # and the voiced marker (summary/pipeline).
-        dropped = self._summary.caught_up(session)
-        self._ingest.await_choice.discard(session)
-        self._wake.set()
-        return bool(skipped) or cutting or dropped
-
-    def _flush_all(self) -> bool:
-        """Flush-to-end (#107): silence everything queued or in flight across
-        ALL sessions. Per-session state goes through _user_caught_up
-        (non-destructive skip, current-utterance cut, in-flight digest kill,
-        settle cancel); completed digests PARKED in the reorder buffer are
-        landed dead in place (they already left the in-flight count, so the
-        per-session kill cannot see them); a stale deferred handoff alert and
-        an armed-but-unemitted switch announcement are dropped. Caller holds
-        the lock. Returns True when anything was skipped, cut, or killed."""
-        from sonara.router import CONTROL
-        sessions = set(self.router.channels) | self._summary.busy_sessions()
-        cur = self._current_item
-        if cur is not None:
-            sessions.add(cur.session)      # cut audio even for an untracked session
-        sessions.discard(CONTROL)          # control cues are sub-second; let them be
-        dropped = False
-        for sid in sessions:
-            dropped = self._user_caught_up(sid) or dropped
-        dropped = self._digests.kill_parked() or dropped
-        self._playback.pending_preamble = None
-        self.router.clear_pending_announce()
-        return dropped
-
-    def _engaged_session(self):
-        """The session the user is currently engaged with: the one being read
-        (router.active), else the one that most recently read (persists across idle
-        gaps), else the foreground. After a session-change the active reader differs
-        from the foreground, so Up/repeat must operate on what the user
-        HEARS, not the last session to submit a prompt."""
-        return (self.router.active or self.router.last_active
-                or self.sessions.foreground())
-
     def _log_start_marker(self) -> None:
         """Startup marker (#63): volatile state (mute level, pause) dies with the
         process, so an unexplained "setting reset itself" is diagnosable only if
@@ -738,81 +531,6 @@ class SpeechDaemon:
         """
         print("[daemon] started pid={0} root={1}".format(
             os.getpid(), package_root()), file=sys.stderr, flush=True)
-
-    def _restart_turn(self, session: str) -> bool:
-        """Up: restart the current turn from its first message and read it to the
-        end. Returns True when there was a turn to restart (the NAV handler
-        chimes "nav"), False when nothing is recorded yet ("nav_edge").
-
-        The turn is the history since the last prompt (history resets on FLUSH).
-        A restart always plays, even when pressed repeatedly (#128): it cuts
-        current speech, drops the channel's not-yet-spoken items and replays
-        every message of the turn at the channel cursor. Newly streamed prose
-        enqueues after these and continues seamlessly."""
-        ids = self.history.message_ids(session)
-        if not ids:
-            # A control cue (F6): on the session channel it wiped the seed.
-            self._cues.speak(session, "Nothing to navigate yet.")
-            return False
-        self.speaker.cancel()
-        # Clear any not-yet-spoken items from the channel so the replay is the
-        # sole pending work.
-        for it in self.router.channel(session).truncate_pending():
-            self._pending_heard.pop(it.id, None)
-        entries = []
-        for mid in ids:
-            entries.extend(self.history.entries_for_message(session, mid))
-        self._replay(session, entries)
-        return True
-
-    def _reread_last(self, session: str) -> bool:
-        """Re-read the last digest immediately (summary-mode Up, issue #11). Speaks
-        the EXACT text that was spoken (stored verbatim, prefix and all) so the
-        rendered audio is a cache hit and replays byte-identically instead of
-        regenerating (~2s + drifting intonation each time). Cuts the current read
-        and restarts from the top so the press takes effect AT ONCE. Returns True if
-        there was a digest to re-read (caller chimes "nav"), else False (edge)."""
-        text = self._last_digest_text.get(session)
-        # A DECISION being spoken RIGHT NOW is not in the record yet (it joins
-        # on completion) -- cancelling it without re-queueing ANNIHILATED the
-        # question: edge chime, gone forever (live report 2026-07-14). Up during
-        # a speaking question restarts it instead. A non-decision current item
-        # (a digest) is already the record's text, so re-queueing it would
-        # double-speak; the record re-read IS its restart.
-        cur = self._current_item
-        if cur is not None and (cur.session != session or not cur.is_decision):
-            cur = None
-        if not text and cur is None:
-            return False
-        self.speaker.cancel()                    # restart now, don't wait out the read
-        ch = self.router.channel(session)
-        if ch.seeded:
-            ch.wipe()    # the re-read replaces the placeholder seed (#118)
-        # Drop pending prose so the re-read is next -- but PRESERVE queued
-        # decision items (a blocking question deleted here was gone forever,
-        # nothing replayed it; audit #21). They re-queue after the digest,
-        # keeping the context-first order.
-        preserved = []
-        for it in ch.truncate_pending():
-            if it.is_decision:
-                preserved.append(it)             # keeps its _pending_heard marker
-            else:
-                self._pending_heard.pop(it.id, None)
-        if cur is not None:
-            # un-consume the interrupted question so history keeps ONE copy
-            ch.unconsume(cur)
-        tail = []
-        if text:
-            tail.append(SpeechItem(
-                id=self._alloc_id(), session=session, kind="summary",
-                text=text, is_decision=False))
-        if cur is not None:
-            tail.append(cur)                     # the interrupted question, from the top
-        tail.extend(preserved)                   # then any still-queued question(s)
-        ch.insert_at(ch.cursor, tail)            # sets has_decision for a question
-        ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
-        self._wake.set()
-        return True
 
     def _maybe_prewarm_cue_voice(self) -> None:
         """Live-apply hook for the cue voice keys (config_schema apply):

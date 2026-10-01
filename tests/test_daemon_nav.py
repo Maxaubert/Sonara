@@ -161,12 +161,12 @@ def test_engaged_session_is_the_active_reader_not_the_foreground():
     # session the user is ENGAGED with (and restarts with Up) is what they HEAR.
     daemon, *_ = make_daemon(foreground="B")
     daemon.router.active = "A"
-    assert daemon._engaged_session() == "A"           # active reader wins
+    assert daemon._controls.engaged_session() == "A"           # active reader wins
     daemon.router.active = None
     daemon.router._last_active = "A"
-    assert daemon._engaged_session() == "A"           # last reader persists across idle
+    assert daemon._controls.engaged_session() == "A"           # last reader persists across idle
     daemon.router._last_active = None
-    assert daemon._engaged_session() == "B"           # falls back to foreground
+    assert daemon._controls.engaged_session() == "B"           # falls back to foreground
 
 
 def test_up_restarts_the_engaged_reader_not_the_foreground():

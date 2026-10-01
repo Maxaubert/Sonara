@@ -273,7 +273,7 @@ class Ingest:
         # the session the user hears (upstream #69): a background
         # session's /loop tick or agent completion also sends FLUSH, and
         # used to un-pause the voice the user deliberately held.
-        if d._engaged_session() == session:
+        if d._controls.engaged_session() == session:
             d._paused.clear()
         d._wake.set()
         return None
@@ -318,7 +318,7 @@ class Ingest:
         # read) everything they need up to it. Silence the stale backlog and
         # any in-flight lead-in digest; whatever the assistant says AFTER the
         # answer flows normally. No earcon: answering is its own feedback.
-        self._d._user_caught_up(msg.get("session", ""))
+        self._d._controls.user_caught_up(msg.get("session", ""))
         return None
 
     def on_forget_session(self, msg):
