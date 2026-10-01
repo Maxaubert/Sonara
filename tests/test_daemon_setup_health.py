@@ -12,7 +12,7 @@ def _write_install_json(tmp_path, plugin_version="0.4.0"):
 def test_setup_health_not_installed_when_no_record(tmp_path, monkeypatch):
     daemon, *_ = make_daemon()
     missing = tmp_path / "install.json"  # never created
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(missing))
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(missing))
     monkeypatch.setattr(daemon, "_launcher_present", lambda: True)
     state, cue = daemon._setup_health("0.4.0")
     assert state == "not_installed"
@@ -22,7 +22,7 @@ def test_setup_health_not_installed_when_no_record(tmp_path, monkeypatch):
 def test_setup_health_not_installed_when_launcher_missing(tmp_path, monkeypatch):
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path)
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(rec))
     monkeypatch.setattr(daemon, "_launcher_present", lambda: False)
     state, cue = daemon._setup_health("0.4.0")
     assert state == "not_installed"
@@ -33,7 +33,7 @@ def test_setup_health_ok_speech_only_hotkeys_not_started(tmp_path, monkeypatch):
     # install.json + launcher present, hotkeys not yet started, versions match.
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path, plugin_version="0.4.0")
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(rec))
     monkeypatch.setattr(daemon, "_launcher_present", lambda: True)
     state, cue = daemon._setup_health("0.4.0")
     assert state == "ok"
@@ -43,7 +43,7 @@ def test_setup_health_ok_speech_only_hotkeys_not_started(tmp_path, monkeypatch):
 def test_setup_health_ok_when_versions_match(tmp_path, monkeypatch):
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path, plugin_version="0.4.0")
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(rec))
     monkeypatch.setattr(daemon, "_launcher_present", lambda: True)
     state, cue = daemon._setup_health("0.4.0")
     assert state == "ok"
@@ -53,7 +53,7 @@ def test_setup_health_ok_when_versions_match(tmp_path, monkeypatch):
 def test_setup_health_version_drift(tmp_path, monkeypatch):
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path, plugin_version="0.3.0")
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(rec))
     monkeypatch.setattr(daemon, "_launcher_present", lambda: True)
     state, cue = daemon._setup_health("0.4.0")
     assert state == "version_drift"
@@ -64,7 +64,7 @@ def test_setup_health_version_drift(tmp_path, monkeypatch):
 def test_setup_health_no_drift_when_session_version_empty(tmp_path, monkeypatch):
     daemon, *_ = make_daemon()
     rec = _write_install_json(tmp_path, plugin_version="0.3.0")
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(rec))
     monkeypatch.setattr(daemon, "_launcher_present", lambda: True)
     state, cue = daemon._setup_health("")  # unknown session version
     assert state == "ok"
@@ -72,11 +72,11 @@ def test_setup_health_no_drift_when_session_version_empty(tmp_path, monkeypatch)
 
 
 def test_read_install_record_returns_none_on_corrupt(tmp_path, monkeypatch):
-    daemon, *_ = make_daemon()
     rec = tmp_path / "install.json"
     rec.write_text("{ not json")
-    monkeypatch.setattr("sonara.daemon.INSTALL_RECORD_PATH", str(rec))
-    assert daemon._read_install_record() is None
+    monkeypatch.setattr("sonara.paths.INSTALL_RECORD_PATH", str(rec))
+    from sonara import install_record
+    assert install_record.read() is None
 
 
 from sonara.protocol import MsgType, PROTOCOL_VERSION

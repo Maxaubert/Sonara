@@ -22,6 +22,7 @@ from typing import Optional
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import config_schema
 from . import paths
+from . import install_record
 from . import keymap
 from sonara.platform import get_platform
 
@@ -349,7 +350,7 @@ def doctor() -> list:
 
     # plugin path resolved (install.json -> src contains sonara/__init__.py).
     try:
-        rec = _read_install_record()
+        rec = install_record.read()
         app = rec.get("app_path") if rec else None
         init = os.path.join(app, "sonara", "__init__.py") if app else None
         ok = bool(init) and os.path.exists(init)
@@ -375,7 +376,7 @@ def _neural_voices_row() -> tuple:
                     "re-run: sonara voices install")
         where = paths.kokoro_venv_python()
     else:
-        rec = _read_install_record() or {}
+        rec = install_record.read() or {}
         where = rec.get("python")
         if not where or not kp.kokoro_importable(where):
             return ("neural voices", True,
@@ -422,35 +423,6 @@ def _daemon_python(sup):
     venv interpreter without a separate flag."""
     from sonara import kokoro_provision as kp
     return kp.usable_venv_python(sup._probe_python_version) or sup.resolve_python()
-
-
-def _write_install_record(python: str, python_version: str,
-                          plugin_root: str, app_path: str,
-                          plugin_version: str) -> None:
-    """Persist the durable install record used by doctor + session-start health."""
-    from datetime import datetime, timezone
-    record = {
-        "python": python,
-        "python_version": python_version,
-        "app_path": app_path,
-        "plugin_root": plugin_root,
-        "plugin_version": plugin_version,
-        "installed_at": datetime.now(timezone.utc).isoformat(),
-    }
-    os.makedirs(os.path.dirname(str(paths.INSTALL_RECORD_PATH)), exist_ok=True)
-    with open(str(paths.INSTALL_RECORD_PATH), "w", encoding="utf-8") as f:
-        json.dump(record, f, indent=2)
-        f.write("\n")
-
-
-def _read_install_record():
-    """Return the install.json record dict, or None if unreadable/absent."""
-    try:
-        with open(str(paths.INSTALL_RECORD_PATH), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else None
-    except Exception:  # noqa: BLE001 - doctor must never raise
-        return None
 
 
 def _read_plugin_version(plugin_root: str) -> str:
@@ -552,7 +524,7 @@ def _resolve_plugin_root() -> Optional[str]:
     ~/.sonara, which has no src/ and no bin/ (H3), so fall back to the plugin
     Claude Code names (CLAUDE_PLUGIN_ROOT), then to the one the last install
     recorded."""
-    record = _read_install_record() or {}
+    record = install_record.read() or {}
     for cand in (paths.repo_root(), os.environ.get("CLAUDE_PLUGIN_ROOT"),
                  record.get("plugin_root")):
         if isinstance(cand, str) and _is_plugin_root(cand):
@@ -784,9 +756,9 @@ def _install_runtime(sup, python: str, py_ver: str, plugin_root: str):
 
         # 4. Durable install record.
         plugin_version = _read_plugin_version(plugin_root)
-        _write_install_record(python=python, python_version=py_ver,
-                              plugin_root=plugin_root, app_path=app_dir,
-                              plugin_version=plugin_version)
+        install_record.write(python=python, python_version=py_ver,
+                             plugin_root=plugin_root, app_path=app_dir,
+                             plugin_version=plugin_version)
 
         # 5. OS-specific autostart + hooks + launcher (the platform backend
         #    owns it). ValueError here is an unparseable ~/.claude/settings.json.

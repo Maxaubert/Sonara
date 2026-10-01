@@ -11,12 +11,12 @@ import threading
 from sonara.protocol import MsgType, encode, decode
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
-from sonara import config_schema
+from sonara import config_schema, install_record
 from sonara.daemon import decision_text
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
-    INSTALL_RECORD_PATH, SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
+    SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
     SESSION_DIGESTS_PATH, package_root,
 )
 from sonara.platform import transport
@@ -446,17 +446,6 @@ class SpeechDaemon:
         return cue
 
     @staticmethod
-    def _read_install_record():
-        """Return the install.json dict, or None if unreadable/absent. Never raises."""
-        import json
-        try:
-            with open(str(INSTALL_RECORD_PATH), "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else None
-        except Exception:  # noqa: BLE001 - health check must never raise
-            return None
-
-    @staticmethod
     def _launcher_present() -> bool:
         """Delegating shim -- logic lives in the platform supervisor backend."""
         from sonara.platform import get_platform
@@ -473,7 +462,7 @@ class SpeechDaemon:
         Hotkey availability is deliberately NOT part of this check so a deliberate
         speech-only user is never nagged.
         """
-        rec = self._read_install_record()
+        rec = install_record.read()
         installed = (rec is not None and self._launcher_present())
         if not installed:
             return ("not_installed",
