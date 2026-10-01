@@ -7,6 +7,7 @@ Product rule: never leave other apps ducked or paused."""
 from __future__ import annotations
 
 import os
+import threading
 
 from sonara import config_schema
 from sonara.daemon import core
@@ -33,6 +34,11 @@ class AudioControl:
         self._cues = cues
         self._cue_target = cue_target
         self._wake = wake
+        # Engage and restore run on different threads (the synth thread's
+        # on_play, the speak loop, the PAUSE handler). One lock makes each
+        # check-then-act atomic, so a restore can never land between an
+        # engage's condition check and its duck/pause (F3).
+        self._engage_lock = threading.Lock()
 
     def mode(self) -> str:
         return config_schema.current(self._config, "audio_mode")
@@ -60,22 +66,30 @@ class AudioControl:
         except Exception:  # noqa: BLE001 - volume must never break the daemon
             pass
 
-    def engage(self) -> None:
-        mode = self.mode()
-        if mode == "duck":
-            if not self.ducker.is_ducked():
-                self.ducker.duck(self.duck_exclude_pids(), self.duck_level())
-        elif mode == "pause":
-            if not self.pauser.is_paused():
-                self.pauser.pause()
+    def engage(self, still_wanted=None) -> None:
+        """Duck or pause other apps' audio per the mode. *still_wanted*, when
+        given, is checked under the engage lock first: the caller's utterance
+        may have been cancelled (and the audio restored) since it decided to
+        engage (F3)."""
+        with self._engage_lock:
+            if still_wanted is not None and not still_wanted():
+                return
+            mode = self.mode()
+            if mode == "duck":
+                if not self.ducker.is_ducked():
+                    self.ducker.duck(self.duck_exclude_pids(), self.duck_level())
+            elif mode == "pause":
+                if not self.pauser.is_paused():
+                    self.pauser.pause()
 
     def restore(self) -> None:
         # Disengage BOTH backends defensively: a mid-speech mode switch can leave
         # the other backend engaged, and idle must never leave media ducked OR paused.
-        if self.ducker.is_ducked():
-            self.ducker.restore()
-        if self.pauser.is_paused():
-            self.pauser.resume()
+        with self._engage_lock:
+            if self.ducker.is_ducked():
+                self.ducker.restore()
+            if self.pauser.is_paused():
+                self.pauser.resume()
 
     def set_mode(self, mode: str) -> None:
         """Persist the audio behavior mode, disengage whatever backend was
@@ -112,9 +126,10 @@ class AudioControl:
                 return None
             self._config["duck_level"] = level
             self._persist()
-            if self.duck_on() and self.ducker.is_ducked():  # re-apply at the new level
-                self.ducker.restore()
-                self.ducker.duck(self.duck_exclude_pids(), level)
+            with self._engage_lock:
+                if self.duck_on() and self.ducker.is_ducked():  # re-apply at the new level
+                    self.ducker.restore()
+                    self.ducker.duck(self.duck_exclude_pids(), level)
             target = self._cue_target()
             self._cues.speak(target, "Duck level {0} percent.".format(level),
                              exempt_mute=True, pause_exempt=True,

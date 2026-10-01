@@ -208,6 +208,12 @@ class SpeakLoop:
                     preamble = pending[1]
                 else:
                     self.pending_preamble = None   # stale alert for another session: drop it
+        def engage(_epoch=cancel_epoch):
+            # Re-checked under the audio lock (F3): a PAUSE or cancel since
+            # this utterance claimed its epoch already restored the audio.
+            self._audio.engage(
+                still_wanted=lambda: self._speaker.cancel_epoch() == _epoch)
+
         if preamble is not None:
             cue_voice = self._cues.cue_voice()
             rate = config_schema.get(self._config, "rate")
@@ -225,9 +231,11 @@ class SpeakLoop:
                     self._speaker.speak_cue_untracked(_text, _voice, _rate)
                 except Exception:  # noqa: BLE001
                     pass
-                self._audio.engage()
+                # The alert blocked this thread while it played; a PAUSE in
+                # that window is caught by engage's epoch re-check (F3).
+                engage()
         else:
-            on_play = self._audio.engage
+            on_play = engage
         try:
             completed = self._speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                             on_play=on_play,

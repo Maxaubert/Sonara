@@ -81,6 +81,9 @@ Rules:
   require that the daemon never rebinds those attributes. Mutate in place.
 - `_publish_state()` runs after every handled message and around every utterance, with the
   lock held; it only queues events.
+- `AudioControl` (`daemon/audio.py`) has one inner lock of its own around engage and restore,
+  so a PAUSE's restore cannot land between an engage's cancel-epoch check and its duck or
+  pause (F3). Order: daemon lock, then the audio lock; never the reverse.
 
 ## The daemon package
 
