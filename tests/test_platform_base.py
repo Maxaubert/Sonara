@@ -56,3 +56,35 @@ def test_base_hotkey_lifecycle_defaults_are_noops():
     hk.start(lambda msg: None)   # base default -> no-op
     hk.stop()
     assert hk.doctor_rows() == []
+
+
+def test_recover_audio_sweeps_the_ducker_and_the_pauser():
+    calls = []
+
+    class _Part:
+        def __init__(self, name):
+            self.name = name
+
+        def recover(self):
+            calls.append(self.name)
+
+    pb = base.PlatformBackend(tts=None, earcon=None, hotkey=None, supervisor=None,
+                              ducker=_Part("duck"), pauser=_Part("pause"))
+    pb.recover_audio()
+    assert calls == ["duck", "pause"]
+
+
+def test_recover_audio_tolerates_missing_parts():
+    base.PlatformBackend(tts=None, earcon=None, hotkey=None,
+                         supervisor=None).recover_audio()     # no ducker/pauser
+    base.PlatformBackend(tts=None, earcon=None, hotkey=None, supervisor=None,
+                         ducker=base.NullDucker(),
+                         pauser=base.NullPauser()).recover_audio()
+
+
+def test_tts_prewarm_defaults_to_a_noop():
+    class _Tts(base.TtsBackend):
+        def run(self, text, voice, rate, on_play=None): return None
+        def best_voice(self): return "x"
+        def list_voices(self): return []
+    assert _Tts().prewarm(200) is None

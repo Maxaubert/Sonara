@@ -48,11 +48,11 @@ class SpeechDaemon:
         self.sessions = sessions
         self.config = config
         if ducker is None:
-            from sonara.platform.windows.ducking import NullDucker
+            from sonara.platform.base import NullDucker
             ducker = NullDucker()
         self.ducker = ducker
         if pauser is None:
-            from sonara.platform.windows.pausing import NullPauser
+            from sonara.platform.base import NullPauser
             pauser = NullPauser()
         self.pauser = pauser
         if prefs is None:

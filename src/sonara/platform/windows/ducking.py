@@ -92,6 +92,10 @@ class AudioDucker:
         with self._lock:
             return self._ducked
 
+    def recover(self) -> None:
+        """Startup crash sweep (PlatformBackend.recover_audio)."""
+        restore_from_state_file()
+
     def duck(self, exclude_pids, level: int) -> None:
         with self._lock:
             if self._ducked:
@@ -159,20 +163,6 @@ class AudioDucker:
                     _log("restore failed for " + _names(failed))
                 else:
                     _clear_state()
-
-
-class NullDucker:
-    """No-op ducker: used on non-Windows, when pycaw is missing, or as the daemon
-    default until the real backend ducker is injected."""
-
-    def is_ducked(self) -> bool:
-        return False
-
-    def duck(self, exclude_pids, level: int) -> None:
-        pass
-
-    def restore(self) -> None:
-        pass
 
 
 def _write_state(record) -> None:

@@ -129,7 +129,7 @@ class Cues:
         def _warm():
             try:
                 from sonara.platform import get_platform
-                get_platform().tts._kokoro_wav("Ready.", config_schema.get(self._config, "rate"))
+                get_platform().tts.prewarm(config_schema.get(self._config, "rate"))
             except Exception:  # noqa: BLE001 - warming is best-effort
                 pass
         threading.Thread(target=_warm, name="sonara-kokoro-warm", daemon=True).start()

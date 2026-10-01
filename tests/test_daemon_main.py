@@ -45,6 +45,18 @@ def test_main_builds_components_and_runs():
     assert built.config is fake_cfg
 
 
+def test_main_recovers_stranded_audio_through_the_platform_backend():
+    # The startup crash sweep goes through get_platform() (audit section 2),
+    # not straight into platform.windows.ducking / pausing.
+    fake_cfg = {"voice": None, "rate": 200, "verbosity": "everything",
+                "background_policy": "earcon_only", "earcons": {}}
+    plat = mock.MagicMock()
+    plat.earcon.default_earcons.return_value = {}
+    with mock.patch("sonara.daemon.startup.load_config", return_value=fake_cfg),          mock.patch("sonara.platform.get_platform", return_value=plat),          mock.patch("sonara.daemon.startup.socket_connectable", return_value=False),          mock.patch("sonara.daemon.startup.transport.acquire_singleton_mutex", return_value=object()),          mock.patch("sonara.daemon.startup.transport.acquire_singleton", return_value=object()),          mock.patch("sonara.daemon.SpeechDaemon.run", autospec=True):
+        daemon_mod.main()
+    plat.recover_audio.assert_called_once_with()
+
+
 class _FakeK32:
     """Records the Win32 process calls harden_process makes."""
     def __init__(self):

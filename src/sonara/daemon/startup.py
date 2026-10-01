@@ -77,10 +77,8 @@ def main() -> None:
     from sonara.platform import get_platform
 
     _backend = get_platform()
-    from sonara.platform.windows.ducking import restore_from_state_file
-    restore_from_state_file()   # un-duck anything a crashed prior daemon left down
-    from sonara.platform.windows.pausing import resume_from_state_file as _resume_paused
-    _resume_paused()   # resume anything a crashed prior daemon left paused
+    # Un-duck and resume anything a crashed prior daemon left down or paused.
+    _backend.recover_audio()
     cfg = load_config()
     speaker = Speaker(
         voice=cfg.get("voice"),

@@ -67,3 +67,27 @@ def test_kokoro_fallback_notice_is_spoken_once(monkeypatch):
     cues.maybe_announce_kokoro_fallback()
     said = [it.text for it in router.channel(CONTROL).items]
     assert said == ["Kokoro unavailable, using Windows voice."]
+
+
+def test_prewarm_loads_the_engine_through_the_public_tts_seam(monkeypatch):
+    # Core never reaches into a backend's private methods (audit section 2):
+    # the Kokoro warm-up goes through TtsBackend.prewarm.
+    from sonara import kokoro
+    warmed = threading.Event()
+    rates = []
+
+    class _Tts:
+        def prewarm(self, rate):
+            rates.append(rate)
+            warmed.set()
+
+    class _Plat:
+        tts = _Tts()
+
+    monkeypatch.setattr(kokoro, "is_kokoro_voice", lambda v: True)
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: _Plat())
+    cues, _router, _speaker, _wake = _cues({"fast_cues": True, "rate": 230})
+    cues.maybe_prewarm()
+    assert warmed.wait(2.0)
+    assert rates == [230]

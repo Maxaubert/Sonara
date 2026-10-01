@@ -6,7 +6,7 @@ from tests.daemon_helpers import make_daemon, FakePauser
 
 
 def test_daemon_defaults_to_null_pauser():
-    from sonara.platform.windows.pausing import NullPauser
+    from sonara.platform.base import NullPauser
     cfg = {k: v for k, v in DEFAULTS.items()}
     d = SpeechDaemon(object(), SessionManager(), cfg)   # no pauser passed
     assert isinstance(d.pauser, NullPauser)

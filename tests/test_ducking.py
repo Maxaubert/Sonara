@@ -1,7 +1,8 @@
 # tests/test_ducking.py
 import json
 import sonara.platform.windows.ducking as ducking
-from sonara.platform.windows.ducking import AudioDucker, NullDucker
+from sonara.platform.base import NullDucker
+from sonara.platform.windows.ducking import AudioDucker
 
 
 class _FakeVol:
@@ -270,3 +271,10 @@ def test_crash_restore_still_matches_a_pid_with_no_recorded_name(monkeypatch, tm
     _sessions(monkeypatch, [live])
     ducking.restore_from_state_file()
     assert live.SimpleAudioVolume.v == 0.9
+
+
+def test_recover_runs_the_startup_state_file_sweep(monkeypatch):
+    called = []
+    monkeypatch.setattr(ducking, "restore_from_state_file", lambda: called.append(1))
+    AudioDucker().recover()
+    assert called == [1]

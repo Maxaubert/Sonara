@@ -65,8 +65,6 @@ def test_main_resolves_earcons_at_runtime_without_touching_config():
          mock.patch("sonara.daemon.startup.socket_connectable", return_value=False), \
          mock.patch("sonara.daemon.startup.transport.acquire_singleton_mutex", return_value=object()), \
          mock.patch("sonara.daemon.startup.transport.acquire_singleton", return_value=object()), \
-         mock.patch("sonara.platform.windows.ducking.restore_from_state_file"), \
-         mock.patch("sonara.platform.windows.pausing.resume_from_state_file"), \
          mock.patch("sonara.daemon.SpeechDaemon.run", autospec=True) as run:
         daemon_mod.main()
     built = run.call_args[0][0]
