@@ -279,7 +279,7 @@
         <div class="inset">
           <div class="engine-row"><div><strong>Kokoro</strong><div class="desc" id="engine-kokoro-hint">Fast local neural speech.</div></div><span class="pill" id="engine-kokoro">&mdash;</span></div>
         </div>
-        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.6.6</span></footer>
+        <footer class="footer"><span>Sonara for Windows</span><span>Version 0.6.7</span></footer>
       </section>
     </main>
   </div>
@@ -765,6 +765,13 @@ function armCapture(row, action) {
     if (e.ctrlKey) mods.push("ctrl");
     if (e.altKey) mods.push("alt");
     if (e.shiftKey) mods.push("shift");
+    if (e.metaKey) mods.push("win");            // Win+X used to capture as bare x (E13)
+    if (!mods.some(m => m === "ctrl" || m === "alt" || m === "win")) {
+      // E13: without Ctrl, Alt or Win a global hotkey takes the key away
+      // from every app (a bare "m" stops typing m anywhere). Refuse it.
+      flashError("Add Ctrl, Alt or Win: a hotkey without one would block that key in every app");
+      return;
+    }
     let key = e.key.toLowerCase();
     key = KEY_ALIASES[key] || key;
     const valid = state && state.keys && state.keys.keys;

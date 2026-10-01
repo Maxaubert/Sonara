@@ -81,9 +81,12 @@ def requirements_path() -> str:
 def provision(uv: str, run=subprocess.check_call) -> None:
     """Create the uv-managed venv (downloading CPython 3.12 if absent) and install
     the pinned Kokoro stack into it. Raises subprocess.CalledProcessError on failure
-    (the caller aborts without rewiring the daemon)."""
+    (the caller aborts without rewiring the daemon). An existing venv is
+    reused and its packages upgraded in place: recreating it would first
+    delete a working one (E10)."""
     venv_dir = str(paths.KOKORO_VENV)
-    run([uv, "venv", venv_dir, "--python", "3.12"])
+    if not os.path.exists(paths.kokoro_venv_python()):
+        run([uv, "venv", venv_dir, "--python", "3.12"])
     run([uv, "pip", "install", "--python", paths.kokoro_venv_python(),
          "-r", requirements_path()])
 
@@ -92,9 +95,12 @@ def provision(uv: str, run=subprocess.check_call) -> None:
 # Task 5: predownload_model + neural_healthy
 # ---------------------------------------------------------------------------
 
+# force=True: an explicit install retries even inside the cool-down a failed
+# background download left behind (E11).
 _PREDOWNLOAD = (
     "from sonara import kokoro, paths as p; "
-    "kokoro.KokoroEngine(p.SONARA_DIR / 'kokoro')._ensure_loaded()")
+    "e = kokoro.KokoroEngine(p.SONARA_DIR / 'kokoro'); "
+    "e.download_models(force=True); e._ensure_loaded()")
 
 _HEALTH = "from sonara import kokoro; print(kokoro.is_installed())"
 
@@ -104,6 +110,23 @@ def predownload_model(pythonpath: str, run=subprocess.check_call) -> None:
     first real utterance does not stall for minutes."""
     env = dict(os.environ, PYTHONPATH=pythonpath)
     run([paths.kokoro_venv_python(), "-c", _PREDOWNLOAD], env=env)
+
+
+_IMPORTABLE = ("import importlib.util as u; "
+               "print(all(u.find_spec(m) is not None for m in ('numpy', 'kokoro_onnx')))")
+
+
+def kokoro_importable(python: str, run=subprocess.check_output) -> bool:
+    """True if *python* (the daemon's interpreter) can import the Kokoro
+    extra. Kokoro may live in that Python's own site-packages, not in the
+    neural venv; doctor must report what the daemon will really use."""
+    try:
+        out = run([python, "-c", _IMPORTABLE], text=True, timeout=20,
+                  stderr=subprocess.DEVNULL,
+                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:  # noqa: BLE001 - any failure means "not importable"
+        return False
+    return out.strip() == "True"
 
 
 def neural_healthy(app_dir: str, run=subprocess.check_output) -> bool:

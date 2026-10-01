@@ -153,6 +153,10 @@ def _write_user_keymap(user: dict) -> None:
     os.replace(tmp, str(KEYMAP_PATH))
 
 
+# A hotkey must hold at least one of these (E13); Shift alone still types.
+_COMMAND_MODS = ("ctrl", "alt", "win")
+
+
 def bind_action(action: str, key: str, mods: list) -> None:
     """Bind *action* to key+mods in the user's keymap.json (settings page, #34).
     The override fully replaces the default binding, exactly like a hand-edit."""
@@ -170,6 +174,12 @@ def bind_action(action: str, key: str, mods: list) -> None:
     for m in (mods or []):
         if str(m).lower() not in mod_masks:
             raise ValueError(f"unsupported modifier {m!r}")
+    # E13: a global hotkey without Ctrl, Alt or Win swallows that key in every
+    # app (a bare 'm', or Shift+M, stops typing it anywhere). Refuse it.
+    held = {mod_masks[str(m).lower()] for m in (mods or [])}
+    if not held & {mod_masks[m] for m in _COMMAND_MODS if m in mod_masks}:
+        raise ValueError("a hotkey needs Ctrl, Alt or Win: without one it "
+                         "would take that key away from every app")
     user = _read_user_keymap()
     user[action] = {"key": key, "mods": [str(m).lower() for m in (mods or [])]}
     _write_user_keymap(user)

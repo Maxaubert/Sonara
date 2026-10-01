@@ -26,7 +26,7 @@ A stable, well-structured, documented Sonara before any embedding work (PrismTer
 | D4 | Chatterbox leftovers on disk (8.7 GB venv + model cache) | `sonara doctor` reports them and `sonara cleanup` removes them on request. `voices/chatterbox/` clips are never touched. |
 | D5 | Git remotes | Rename locally: `origin` (upstream nimkimi/sonari) to `upstream`, `sonara` (your fork) to `origin`; `gh repo set-default Maxaubert/Sonara`. Nothing is pushed upstream. |
 | D6 | Versioning | Bump to 0.6.0 in the CI PR (manifests in sync), then patch/minor per PR from then on. `release.yml` publishes `v<version>` on push to main. |
-| D7 | Native Windows voices fail to synthesise on this PC (`FileNotFoundError`, all OneCore voices) | Investigate in the runtime-edges PR; if it is machine-only, document it in doctor output. |
+| D7 | Native Windows voices fail to synthesise on this PC (`FileNotFoundError`, all OneCore voices) | Investigate in the runtime-edges PR; if it is machine-only, document it in doctor output. **Diagnosed 2026-10-01 (#140): machine-only.** WinRT lists David, Zira and Mark, but synthesis fails even with no voice set: `%WINDIR%\Speech_OneCore\Engines\TTS\en-US` holds only `MSTTSLocEnUS.dat`, the voice data files are missing, and `HKLM\...\Speech_OneCore\Voices` has no `Tokens`. Doctor's "Windows voice" row now synthesises for real and names the repair (re-add English (United States) under Settings > Speech, or elevated `DISM /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0`). Repro: `python -m pytest -m live_windows tests/test_win_tts_live.py`. Also found: this PC's layout is Norwegian, so Ctrl+Alt+M (mute) is AltGr+M and eats µ (doctor's AltGr row, E16). |
 
 ## Delivery model
 

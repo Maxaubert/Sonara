@@ -1,3 +1,4 @@
+import pytest
 from unittest import mock
 
 from sonara import cli
@@ -7,8 +8,8 @@ from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
 def _patches(rows=None, hooks_row=None, send=None, install_record=None):
     sup = FakeSupervisor(
-        rows=rows if rows is not None else [("say", True, "/usr/bin/say"),
-                                            ("afplay", True, "/usr/bin/afplay")],
+        rows=rows if rows is not None else [("schtasks", True, r"C:\Windows\System32\schtasks.exe"),
+                                            ("Windows voice", True, "Microsoft David")],
         hooks_row=hooks_row or ("hooks installed", True, "/plug/hooks/hooks.json"),
     )
     return sup, [
@@ -52,7 +53,7 @@ def test_doctor_includes_os_rows_and_neutral_rows():
     _, patches = _patches()
     d = _as_dict(_run(patches))
     # OS rows came from the platform supervisor.
-    assert d["say"][0] is True and d["afplay"][0] is True
+    assert d["schtasks"][0] is True and d["Windows voice"][0] is True
     # Neutral rows added by cli.
     for key in ("SONARA_DIR writable", "daemon socket", "hooks installed",
                 "keymap resolves", "python3", "plugin path resolved"):
@@ -74,19 +75,19 @@ def test_doctor_hooks_row_comes_from_backend():
 
 def test_doctor_subcommand_prints_and_returns(capsys):
     with mock.patch("sonara.cli.doctor",
-                    return_value=[("say", True, "/usr/bin/say"),
-                                  ("afplay", False, "not found")]):
+                    return_value=[("schtasks", True, "schtasks.exe"),
+                                  ("Windows voice", False, "voice data missing")]):
         rc = cli.main(["doctor"])
     out = capsys.readouterr().out
-    assert "say" in out and "afplay" in out
+    assert "schtasks" in out and "Windows voice" in out
     assert rc == 1  # any failing check -> non-zero
 
 
 def test_doctor_subcommand_all_ok_returns_zero(capsys):
-    with mock.patch("sonara.cli.doctor", return_value=[("say", True, "ok")]):
+    with mock.patch("sonara.cli.doctor", return_value=[("schtasks", True, "ok")]):
         rc = cli.main(["doctor"])
     assert rc == 0
-    assert "say" in capsys.readouterr().out
+    assert "schtasks" in capsys.readouterr().out
 
 
 def test_doctor_includes_hotkey_rows(monkeypatch):
@@ -167,7 +168,7 @@ def test_doctor_summary_row_fails_when_command_missing(monkeypatch, tmp_path):
 
 def test_doctor_reports_no_chatterbox_leftovers_on_a_clean_install(monkeypatch):
     from sonara import chatterbox_legacy as cl
-    monkeypatch.setattr(cl, "leftovers", lambda: [])
+    monkeypatch.setattr(cl, "leftovers_estimate", lambda **k: [])
     rows = _doctor_rows(monkeypatch)
     ok, detail = rows["chatterbox leftovers"]
     assert ok is True and detail == "none"
@@ -176,10 +177,10 @@ def test_doctor_reports_no_chatterbox_leftovers_on_a_clean_install(monkeypatch):
 def test_doctor_reports_chatterbox_leftovers_with_sizes_and_the_fix(monkeypatch):
     from pathlib import Path
     from sonara import chatterbox_legacy as cl
-    monkeypatch.setattr(cl, "leftovers", lambda: [
-        (Path("/s/chatterbox-venv"), 5 * 1024 ** 3),
-        (Path("/s/chatterbox"), 4 * 1024 ** 3),
-        (Path("/s/cb-client-ok.wav"), 1024 * 1024),
+    monkeypatch.setattr(cl, "leftovers_estimate", lambda **k: [
+        (Path("/s/chatterbox-venv"), 5 * 1024 ** 3, True),
+        (Path("/s/chatterbox"), 4 * 1024 ** 3, True),
+        (Path("/s/cb-client-ok.wav"), 1024 * 1024, True),
     ])
     rows = _doctor_rows(monkeypatch)
     ok, detail = rows["chatterbox leftovers"]
@@ -187,3 +188,102 @@ def test_doctor_reports_chatterbox_leftovers_with_sizes_and_the_fix(monkeypatch)
     assert "9.0 GB" in detail
     assert "chatterbox-venv (5.0 GB)" in detail
     assert "sonara cleanup" in detail
+
+
+# ---------------------------------------------------------------------------
+# Neural voices: report what the DAEMON's interpreter can use (found live: the
+# system Python had Kokoro in its user site while doctor said 'not installed')
+# ---------------------------------------------------------------------------
+
+def _daemon_on(monkeypatch, python=r"C:\Py\python.exe"):
+    monkeypatch.setattr(cli, "_read_install_record",
+                        lambda: {"python": python, "app_path": "/app"})
+
+
+def test_doctor_neural_row_ready_when_the_daemon_python_imports_kokoro(monkeypatch):
+    from sonara import kokoro
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    _daemon_on(monkeypatch)
+    monkeypatch.setattr(kp, "kokoro_importable", lambda python: True)
+    monkeypatch.setattr(kokoro, "models_present", lambda d: True)
+    rows = _doctor_rows(monkeypatch)
+    ok, detail = rows["neural voices"]
+    assert ok is True and "ready" in detail and r"C:\Py\python.exe" in detail
+    assert "not installed" not in detail
+
+
+def test_doctor_neural_row_says_the_model_downloads_on_first_use(monkeypatch):
+    from sonara import kokoro
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    _daemon_on(monkeypatch)
+    monkeypatch.setattr(kp, "kokoro_importable", lambda python: True)
+    monkeypatch.setattr(kokoro, "models_present", lambda d: False)
+    monkeypatch.setattr(kokoro, "download_failed_at", lambda d: None)
+    ok, detail = _doctor_rows(monkeypatch)["neural voices"]
+    assert ok is True and "first use" in detail
+
+
+def test_doctor_neural_row_fails_after_a_failed_model_download(monkeypatch):
+    import time
+    from sonara import kokoro
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    _daemon_on(monkeypatch)
+    monkeypatch.setattr(kp, "kokoro_importable", lambda python: True)
+    monkeypatch.setattr(kokoro, "models_present", lambda d: False)
+    monkeypatch.setattr(kokoro, "download_failed_at", lambda d: time.time() - 60)
+    ok, detail = _doctor_rows(monkeypatch)["neural voices"]
+    assert ok is False and "voices install" in detail
+
+
+def test_doctor_neural_row_not_installed_when_the_daemon_python_lacks_it(monkeypatch):
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    _daemon_on(monkeypatch)
+    monkeypatch.setattr(kp, "kokoro_importable", lambda python: False)
+    ok, detail = _doctor_rows(monkeypatch)["neural voices"]
+    assert ok is True and "not installed" in detail
+
+
+def test_kokoro_importable_probes_the_given_interpreter():
+    seen = {}
+
+    def run(cmd, **k):
+        seen["cmd"] = cmd
+        return "True\n"
+    assert kp.kokoro_importable(r"C:\Py\pythonw.exe", run=run) is True
+    assert seen["cmd"][0] == r"C:\Py\pythonw.exe"
+    assert kp.kokoro_importable("x", run=lambda *a, **k: "False\n") is False
+
+    def boom(*a, **k):
+        raise OSError("gone")
+    assert kp.kokoro_importable("x", run=boom) is False
+
+
+def test_doctor_chatterbox_row_uses_the_bounded_walk(monkeypatch):
+    """An 8 GB venv must not be walked file by file on every doctor run."""
+    from pathlib import Path
+    from sonara import chatterbox_legacy as cl
+    monkeypatch.setattr(cl, "leftovers",
+                        lambda: pytest.fail("doctor walked the full tree"))
+    monkeypatch.setattr(cl, "leftovers_estimate", lambda **k: [
+        (Path("/s/chatterbox-venv"), 1024 ** 3, False),
+        (Path("/s/cb-client-ok.wav"), 1024, True),
+    ])
+    ok, detail = _doctor_rows(monkeypatch)["chatterbox leftovers"]
+    assert ok is True
+    assert "more than 1.0 GB" in detail
+    assert "chatterbox-venv (more than 1.0 GB)" in detail
+    assert "sonara cleanup" in detail
+
+
+def test_doctor_output_survives_a_narrow_console_encoding(monkeypatch):
+    """The AltGr row names characters like the micro sign; a cp437 pipe
+    must not turn that into a UnicodeEncodeError traceback."""
+    import io
+    import sys
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(cli, "doctor", lambda: [("AltGr", False, "types '\u00b5'")])
+    assert cli._cmd_doctor(None) == 1
+    out.flush()
+    assert b"AltGr" in raw.getvalue()

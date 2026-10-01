@@ -203,3 +203,38 @@ def test_turn_done_earcon_wakes_loop_to_flush_subthreshold_batch():
     daemon._wake.clear()
     daemon.handle_message({"type": "earcon", "kind": "turn_done", "session": "fg"})
     assert daemon._wake.is_set()                           # turn end wakes the loop
+
+
+class _BrokenHotkey(_FakeHotkey):
+    def start(self, dispatch):
+        raise ValueError("keymap.json: unknown key 'Ctrl+Alt+Banana'")
+
+    def reload(self, dispatch):
+        raise ValueError("keymap.json: unknown key 'Ctrl+Alt+Banana'")
+
+
+def _cues(daemon):
+    from sonara.router import CONTROL
+    return [it.text for it in daemon.router.channel(CONTROL).items]
+
+
+def test_hotkey_start_failure_is_logged_and_spoken_once(monkeypatch, capsys):
+    """M4: a bad keymap.json left the user with dead hotkeys and no clue."""
+    pb = _FakePlatform()
+    pb.hotkey = _BrokenHotkey()
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    daemon = make_daemon()[0]
+    daemon._start_hotkeys()
+    daemon._reload_hotkeys()
+    assert "Ctrl+Alt+Banana" in capsys.readouterr().err
+    said = [t for t in _cues(daemon) if "hotkeys" in t.lower()]
+    assert len(said) == 1
+    assert "doctor" in said[0].lower()
+
+
+def test_hotkey_start_success_speaks_nothing(monkeypatch):
+    pb = _FakePlatform()
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    daemon = make_daemon()[0]
+    daemon._start_hotkeys()
+    assert not any("hotkeys" in t.lower() for t in _cues(daemon))

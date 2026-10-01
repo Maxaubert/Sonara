@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import threading
+import time
 import urllib.request
 import wave
 from pathlib import Path
@@ -47,6 +49,33 @@ def _set_fallback_notice(reason) -> None:
 def pop_fallback_notice():
     """The pending fallback reason, or None. Clears it (once-per-read)."""
     return _FALLBACK.pop() if _FALLBACK else None
+
+
+# --- once-per-run 'downloading' notice (M2/E11, upstream #53) --------------------
+# Armed when the one-time model download starts; the daemon speaks it once so
+# the Windows voice standing in meanwhile is explained, not a silent mystery.
+_DOWNLOADING: list = []
+
+
+def _set_download_notice() -> None:
+    _DOWNLOADING[:] = [True]
+
+
+def pop_download_notice() -> bool:
+    """True once after a model download started. Clears it."""
+    return bool(_DOWNLOADING.pop()) if _DOWNLOADING else False
+
+
+class KokoroUnavailable(RuntimeError):
+    """Kokoro cannot synthesize right now (a recent download failed). The
+    caller falls back to the native voice."""
+
+
+class KokoroDownloading(KokoroUnavailable):
+    """The model download is running in the background. The caller speaks
+    with the native voice meanwhile; the 'downloading' notice explains it."""
+
+
 _SAMPLE_RATE = 24000     # Kokoro outputs 24 kHz
 
 _MODEL_URL = (
@@ -59,6 +88,16 @@ _VOICES_URL = (
 )
 _MIN_MODEL_BYTES = 100_000_000   # ~310 MB real; floor well below
 _MIN_VOICES_BYTES = 1_000_000    # ~6 MB real
+
+# A stalled connection gives up after this many seconds without data, instead
+# of hanging forever (urlretrieve had no timeout at all, M2).
+DOWNLOAD_TIMEOUT_S = 30
+# After a failed download, Kokoro is skipped (native voice) for this long
+# rather than re-fetching 316 MB on every utterance (E11). The memo is a file
+# in the model dir, so a daemon restart honours it too.
+DOWNLOAD_RETRY_S = 30 * 60
+_FAILED_MEMO = ".download_failed"
+_CHUNK = 1024 * 1024
 
 
 def normalize_voice(name) -> str:
@@ -153,16 +192,64 @@ def to_wav_bytes(audio, sample_rate: int = _SAMPLE_RATE) -> bytes:
     return buf.getvalue()
 
 
-def _download(url: str, dest: Path) -> None:
-    """Download to a .tmp then atomic-rename (never leaves a half-written dest)."""
+def _download(url: str, dest: Path, timeout: float = DOWNLOAD_TIMEOUT_S) -> None:
+    """Download to a .tmp then atomic-rename (never leaves a half-written dest).
+    Chunked, with a socket timeout, so a stalled transfer raises instead of
+    hanging the caller forever."""
     tmp = dest.with_name(dest.name + ".tmp")
     try:
-        urllib.request.urlretrieve(url, tmp)
+        with urllib.request.urlopen(url, timeout=timeout) as resp, \
+                open(str(tmp), "wb") as out:
+            while True:
+                chunk = resp.read(_CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
         tmp.replace(dest)
     except Exception:
         if tmp.exists():
             tmp.unlink(missing_ok=True)
         raise
+
+
+def _memo_path(model_dir) -> Path:
+    return Path(model_dir) / _FAILED_MEMO
+
+
+def download_failed_at(model_dir):
+    """Epoch seconds of the last failed model download, or None."""
+    try:
+        return float(_memo_path(model_dir).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _remember_failure(model_dir, when: float) -> None:
+    try:
+        Path(model_dir).mkdir(parents=True, exist_ok=True)
+        _memo_path(model_dir).write_text(str(when), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def clear_download_failure(model_dir) -> None:
+    try:
+        _memo_path(model_dir).unlink()
+    except OSError:
+        pass
+
+
+def models_present(model_dir) -> bool:
+    """True when both model files are on disk at a plausible size."""
+    d = Path(model_dir)
+    for name, floor in (("kokoro-v1.0.onnx", _MIN_MODEL_BYTES),
+                        ("voices-v1.0.bin", _MIN_VOICES_BYTES)):
+        try:
+            if (d / name).stat().st_size < floor:
+                return False
+        except OSError:
+            return False
+    return True
 
 
 def _ensure_file(dest: Path, url: str, min_bytes: int) -> None:
@@ -189,28 +276,99 @@ class KokoroEngine:
 
     *factory* builds the underlying engine from (model_path, voices_path) -- the
     default uses kokoro_onnx; tests inject a fake. *ensure* makes the model files
-    present (default: download); tests pass a no-op.
+    present (default: download); tests pass a no-op. *present* reports whether
+    they already are (default: both files on disk).
+
+    The download never runs under ``_lock`` (M2): a stalled fetch must not hold
+    up every synth. With *background* (the daemon's backend), a missing model
+    is fetched on a worker thread and synth raises KokoroDownloading at once,
+    so the caller speaks with the native voice meanwhile. *on_download* fires
+    once when a fetch starts. A failed fetch is remembered on disk and not
+    retried for DOWNLOAD_RETRY_S (KokoroUnavailable), unless forced.
     """
 
-    def __init__(self, model_dir, factory=None, ensure=None) -> None:
+    def __init__(self, model_dir, factory=None, ensure=None, *,
+                 present=None, background=False, on_download=None,
+                 clock=time.time) -> None:
         self._dir = Path(model_dir)
         self._model_path = self._dir / "kokoro-v1.0.onnx"
         self._voices_path = self._dir / "voices-v1.0.bin"
         self._factory = factory or _default_factory
         self._ensure = ensure if ensure is not None else self._download_models
+        self._present = present if present is not None else (
+            lambda: models_present(self._dir))
+        self._background = background
+        self._on_download = on_download
+        self._clock = clock
         self._k = None
-        self._lock = Lock()
+        self._lock = Lock()           # engine load only, never the download
+        self._dl_lock = Lock()        # one download at a time
+        self._download_thread = None
 
     def _download_models(self) -> None:
         _ensure_file(self._model_path, _MODEL_URL, _MIN_MODEL_BYTES)
         _ensure_file(self._voices_path, _VOICES_URL, _MIN_VOICES_BYTES)
 
+    def _check_cooldown(self) -> None:
+        failed = download_failed_at(self._dir)
+        if failed is None:
+            return
+        left = DOWNLOAD_RETRY_S - (self._clock() - failed)
+        if left > 0:
+            raise KokoroUnavailable(
+                "The neural voice download failed recently; Sonara retries in "
+                "about {0} min. To retry now: sonara voices install".format(
+                    max(1, int(left // 60))))
+
+    def download_models(self, force: bool = False) -> None:
+        """Fetch the model files now, on this thread. *force* ignores (and on
+        success clears) a recent failure, for an explicit `voices install`."""
+        with self._dl_lock:
+            if self._present():
+                clear_download_failure(self._dir)
+                return
+            if not force:
+                self._check_cooldown()
+            if self._on_download is not None:
+                try:
+                    self._on_download()
+                except Exception:  # noqa: BLE001 - a status cue must never stop it
+                    pass
+            try:
+                self._ensure()
+            except BaseException:
+                _remember_failure(self._dir, self._clock())
+                raise
+            clear_download_failure(self._dir)
+
+    def _start_background_download(self) -> None:
+        if self._dl_lock.locked() or (
+                self._download_thread is not None and self._download_thread.is_alive()):
+            raise KokoroDownloading("The neural voice is still downloading.")
+        self._check_cooldown()
+
+        def _run():
+            try:
+                self.download_models()
+            except Exception as exc:  # noqa: BLE001 - memo written; log only
+                import sys
+                print("[kokoro] model download failed: {0!r}".format(exc)[:300],
+                      file=sys.stderr, flush=True)
+        t = threading.Thread(target=_run, name="sonara-kokoro-download", daemon=True)
+        self._download_thread = t
+        t.start()
+        raise KokoroDownloading("The neural voice is downloading.")
+
     def _ensure_loaded(self):
         if self._k is not None:
             return self._k
+        if not self._present():
+            if self._background:
+                self._start_background_download()
+            else:
+                self.download_models()
         with self._lock:
             if self._k is None:
-                self._ensure()
                 self._k = self._factory(str(self._model_path), str(self._voices_path))
         return self._k
 

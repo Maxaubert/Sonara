@@ -186,3 +186,57 @@ def test_reload_cycle_re_registers_cleanly_without_collision(monkeypatch):
         time.sleep(0.005)
     assert registered == [1]            # re-registered cleanly after the join
     hk.stop()
+
+
+# ---------------------------------------------------------------------------
+# E16: Ctrl+Alt is AltGr on European layouts (AltGr arrives as LCtrl+RAlt)
+# ---------------------------------------------------------------------------
+
+_MUTE = {"action": "mute", "keyCode": 0x4D, "modifiers": 0x0002 | 0x0001,
+         "message": '{"type": "mute"}'}
+_UP = {"action": "repeat", "keyCode": 0x26, "modifiers": 0x0002 | 0x0001,
+       "message": '{"type": "repeat"}'}
+
+
+def test_altgr_conflict_found_for_a_character_key():
+    hk = WinHotkeyBackend()
+    german = {(0x4D, False): "\u00b5"}               # AltGr+M types the micro sign
+    found = hk.altgr_conflicts([_MUTE, _UP],
+                               to_char=lambda vk, shift: german.get((vk, shift)))
+    assert found == [("mute", "Ctrl+Alt+M", "\u00b5")]
+
+
+def test_no_altgr_conflict_on_a_us_layout():
+    hk = WinHotkeyBackend()
+    assert hk.altgr_conflicts([_MUTE, _UP], to_char=lambda vk, shift: None) == []
+
+
+def test_win_chords_never_conflict_with_altgr():
+    hk = WinHotkeyBackend()
+    win = dict(_MUTE, modifiers=0x0002 | 0x0001 | 0x0008)
+    assert hk.altgr_conflicts([win], to_char=lambda vk, shift: "x") == []
+
+
+def test_doctor_row_names_the_eaten_character_and_the_fix(monkeypatch):
+    hk = WinHotkeyBackend()
+    monkeypatch.setattr(hk, "altgr_conflicts",
+                        lambda resolved, to_char=None: [("mute", "Ctrl+Alt+M", "\u00b5")])
+    rows = {r[0]: r for r in hk.doctor_rows()}
+    ok, detail = rows["AltGr"][1:]
+    assert ok is False
+    assert "Ctrl+Alt+M" in detail and "\u00b5" in detail and "settings" in detail
+
+
+def test_doctor_row_ok_without_conflicts(monkeypatch):
+    hk = WinHotkeyBackend()
+    monkeypatch.setattr(hk, "altgr_conflicts", lambda resolved, to_char=None: [])
+    rows = {r[0]: r for r in hk.doctor_rows()}
+    assert rows["AltGr"][1] is True
+
+
+def test_display_combo_labels_every_letter_and_digit():
+    """E21c: `sonara keymap` printed Ctrl+Alt+key65 for most letters."""
+    hk = WinHotkeyBackend()
+    assert hk.display_combo(0x0002 | 0x0001, 0x41) == "Ctrl+Alt+A"
+    assert hk.display_combo(0x0002 | 0x0001, 0x5A) == "Ctrl+Alt+Z"
+    assert hk.display_combo(0x0001, 0x37) == "Alt+7"

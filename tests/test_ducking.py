@@ -244,3 +244,29 @@ def test_restore_from_state_file_keeps_entries_that_failed(monkeypatch, tmp_path
     assert vlc.SimpleAudioVolume.v == 0.8
     recs = json.loads(state.read_text(encoding="utf-8"))["sessions"]
     assert [e["name"] for e in recs] == ["zen.exe"]
+
+
+# --- L-duck-pid: a reused pid must not get another app's volume ------------
+
+def test_crash_restore_ignores_a_reused_pid_of_another_app(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    state.write_text(json.dumps({"sessions": [
+        {"pid": 100, "name": "vlc.exe", "original": 0.9}]}), encoding="utf-8")
+    stranger = _FakeSession(100, 0.5, "game.exe")    # pid 100 reused
+    vlc = _FakeSession(300, 0.2, "vlc.exe")          # vlc restarted on a new pid
+    _sessions(monkeypatch, [stranger, vlc])
+    ducking.restore_from_state_file()
+    assert stranger.SimpleAudioVolume.v == 0.5        # untouched
+    assert vlc.SimpleAudioVolume.v == 0.9
+
+
+def test_crash_restore_still_matches_a_pid_with_no_recorded_name(monkeypatch, tmp_path):
+    state = tmp_path / "duck_state.json"
+    monkeypatch.setattr(ducking, "_DUCK_STATE", state)
+    state.write_text(json.dumps({"sessions": [{"pid": 100, "original": 0.9}]}),
+                     encoding="utf-8")
+    live = _FakeSession(100, 0.2, "vlc.exe")
+    _sessions(monkeypatch, [live])
+    ducking.restore_from_state_file()
+    assert live.SimpleAudioVolume.v == 0.9

@@ -220,8 +220,6 @@ class SpeechDaemon:
         # on the lock and presses can't pile up then burst while the daemon is busy
         # streaming prose (the mute-hang). Drained by _hotkey_worker.
         self._hotkey_q: "queue.Queue" = queue.Queue()
-        self._preview_busy = False                  # preview_voice coalescing flag
-        self._preview_runner = None                 # injected by tests; runtime uses platform tts.run
         # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
         # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
         # since it was dispatched. A turn merely ending does NOT advance it, so the
@@ -1160,7 +1158,23 @@ class SpeechDaemon:
             backend.start(self._dispatch_hotkey)
             self._announce_hotkey_collisions(getattr(backend, "collisions", None))
         except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-            pass
+            self._hotkeys_failed("start")
+
+    def _hotkeys_failed(self, what: str) -> None:
+        """Log why the hotkeys did not start (traceback to the log) and say so
+        once per run (M4): a bad keymap.json used to leave every hotkey dead
+        with no sign at all. Called from an except block."""
+        import traceback
+        print("[hotkeys] {0} failed:".format(what), file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        if getattr(self, "_hotkey_failure_announced", False):
+            return
+        self._hotkey_failure_announced = True
+        # Off-lock caller (start/reload): the cue reslices CONTROL, take the lock.
+        with self._lock:
+            self._speak_cue(None, "Sonara hotkeys could not start. Run sonara "
+                            "doctor to see why.", exempt_mute=True,
+                            pause_exempt=True)
 
     def _announce_hotkey_collisions(self, collisions) -> None:
         """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
@@ -1174,10 +1188,11 @@ class SpeechDaemon:
         names = ", ".join(sorted(str(c.get("action", "?")) for c in collisions))
         print("[hotkeys] failed to register: {0}".format(names),
               file=sys.stderr, flush=True)
-        self._speak_cue(None,
-                        "Some Sonara hotkeys are held by another program. "
-                        "Restarting Sonara may fix it.",
-                        exempt_mute=True, pause_exempt=True)
+        with self._lock:                   # called off-lock from _start_hotkeys
+            self._speak_cue(None,
+                            "Some Sonara hotkeys are held by another program. "
+                            "Restarting Sonara may fix it.",
+                            exempt_mute=True, pause_exempt=True)
 
     def _stop_hotkeys(self) -> None:
         from sonara.platform import get_platform
@@ -1201,7 +1216,7 @@ class SpeechDaemon:
             try:
                 get_platform().hotkey.reload(self._dispatch_hotkey)
             except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-                pass
+                self._hotkeys_failed("reload")
 
     def _replay(self, session: str, entries, append: bool = False,
                 suppress_announce: bool = True) -> None:
@@ -2031,7 +2046,7 @@ class SpeechDaemon:
             pass
 
     def _speak_cue(self, session, text: str, exempt_mute: bool = False,
-                   pause_exempt: bool = False, cue_key=None) -> None:
+                   pause_exempt: bool = False, cue_key=None, voice=None) -> None:
         """Speak a one-off confirmation/feedback cue (pause/mute/repeat/...).
         These ALWAYS go to the reserved CONTROL channel, which the router serves
         ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
@@ -2042,7 +2057,10 @@ class SpeechDaemon:
 
         *cue_key* coalesces slider spam: a keyed cue removes every pending cue
         with the same key and cuts one mid-speech, so dragging a slider speaks
-        only the final value instead of the whole stacked sweep."""
+        only the final value instead of the whole stacked sweep.
+
+        *voice* speaks this one cue in that voice instead of the cue voice
+        (a settings-page preview, M6)."""
         from sonara.router import CONTROL
         ch = self.router.channel(CONTROL)
         if ch.caught_up():
@@ -2055,7 +2073,8 @@ class SpeechDaemon:
                 self.speaker.cancel()      # stale value mid-utterance: cut it
         item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
                           text=text, is_decision=False, mute_exempt=exempt_mute,
-                          pause_exempt=pause_exempt, cue_key=cue_key)
+                          pause_exempt=pause_exempt, cue_key=cue_key,
+                          voice=voice or None)
         # APPEND, do not cursor-insert: CONTROL is already served ahead of every
         # session, and inserting at the cursor made STACKED cues play LIFO --
         # the user heard state confirmations newest-first (deep audit #25).
@@ -2070,6 +2089,14 @@ class SpeechDaemon:
         v = self.config.get("cue_voice")
         if not v:
             return None
+        try:
+            from sonara import kokoro
+            if kokoro.is_kokoro_voice(v) and not kokoro.is_installed():
+                # E12: the default af_heart on an install without Kokoro.
+                # Speak cues natively instead of failing over every time.
+                return None
+        except Exception:  # noqa: BLE001 - a cue must never fail on the check
+            pass
         return v
 
     def _cue_voice_override(self, item) -> dict:
@@ -2079,6 +2106,8 @@ class SpeechDaemon:
         configured voice, so "Muted." never waits on a slow synthesis.
         Config fast_cues (default on) disables."""
         from sonara.router import CONTROL
+        if item.session == CONTROL and getattr(item, "voice", None):
+            return {"voice": item.voice}         # a voice preview (M6)
         if (config_schema.get(self.config, "fast_cues")
                 and (item.session == CONTROL or item.kind == "session_change")):
             return {"voice": self._cue_voice()}
@@ -2118,7 +2147,18 @@ class SpeechDaemon:
     def _maybe_announce_kokoro_fallback(self) -> None:
         """Speak the pending Kokoro fallback notice, if any, exactly once per
         daemon run (#29): a dead engine is announced instead of producing
-        unexplained error noise."""
+        unexplained error noise. The one-time model download (M2/E11, #53)
+        is announced the same way, so the Windows voice standing in meanwhile
+        is explained."""
+        try:
+            from sonara import kokoro
+            downloading = kokoro.pop_download_notice()
+        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
+            downloading = False
+        if downloading and not getattr(self, "_kokoro_download_announced", False):
+            self._kokoro_download_announced = True
+            self._speak_cue(None, "Downloading the neural voice. Using the "
+                            "Windows voice until it is ready.", exempt_mute=True)
         if getattr(self, "_kokoro_fallback_announced", False):
             return
         try:
@@ -2208,35 +2248,20 @@ class SpeechDaemon:
 
     def preview_voice(self, voice: str) -> bool:
         """Speak a short sample in *voice* WITHOUT changing config (settings
-        page, #34). Runs on its own thread via the platform tts runner (same
-        say_runner contract the Speaker uses); coalesced to one at a time.
-        The busy check-and-set is under self._lock: HTTP requests run on
-        their own threads, and a bare check-then-act let two previews race."""
-        with self._lock:
-            if getattr(self, "_preview_busy", False):
-                return False
-            self._preview_busy = True
-        try:
-            runner = getattr(self, "_preview_runner", None)
-            if runner is None:
-                from sonara.platform import get_platform
-                runner = get_platform().tts.run
-            text = "This is {0} speaking for Sonara.".format(voice)
-            rate = config_schema.get(self.config, "rate")
-
-            def _run():
-                try:
-                    handle = runner(text, voice, rate)
-                    handle.wait(30)
-                except Exception:  # noqa: BLE001 - preview must never crash anything
-                    pass
-                finally:
-                    self._preview_busy = False
-            threading.Thread(target=_run, name="sonara-preview", daemon=True).start()
-            return True
-        except Exception:  # noqa: BLE001 - a failed spawn must not wedge the flag
-            self._preview_busy = False
+        page, #34). It queues on the CONTROL channel like any cue (M6): it
+        plays after the utterance in progress, never over it. Playing it on
+        its own thread cut live speech (winsound has one channel) and the cut
+        utterance was still marked heard. A newer preview replaces a pending
+        or playing one; mute and pause do not swallow it, the user asked."""
+        if not voice:
             return False
+        text = "This is {0} speaking for Sonara.".format(voice)
+        # HTTP requests run on their own threads: _speak_cue reslices CONTROL
+        # and allocates an id, which the speak loop does under the lock too.
+        with self._lock:
+            self._speak_cue(None, text, exempt_mute=True, pause_exempt=True,
+                            cue_key="voice_preview", voice=str(voice))
+        return True
 
     def _duck_exclude_pids(self) -> "set[int]":
         pids = {os.getpid()}
@@ -2783,10 +2808,23 @@ def main() -> None:
     # below is tied to the lock FILE's inode, so a deleted/recreated file or two
     # daemons racing to create it stop excluding -> a daemon explosion (observed
     # live). The mutex is keyed by name, immune to that, and frees on death.
-    _MUTEX = transport.acquire_singleton_mutex()
+    try:
+        _MUTEX = transport.acquire_singleton_mutex()
+    except OSError as exc:
+        # M11: a mutex that cannot be created is not "another daemon owns
+        # it". Log it and let the lock-file byte-lock below decide.
+        print("[singleton] {0}; using the lock file instead".format(exc),
+              file=sys.stderr, flush=True)
+        _MUTEX = False
     if _MUTEX is None:
-        return  # another daemon already owns the single-instance mutex
+        print("[singleton] another Sonara daemon is already running for this "
+              "user; exiting", file=sys.stderr, flush=True)
+        return
     _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
+    if _MUTEX is False and _SINGLETON is None:
+        print("[singleton] the lock file is held by another daemon; exiting",
+              file=sys.stderr, flush=True)
+        return
 
     _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
                         # global hotkeys stay responsive after long idle

@@ -84,3 +84,18 @@ def test_session_target_caps_at_100():
     assert tts._session_target() == 100
     tts.set_volume(100)
     assert tts._session_target() == 100
+
+
+# --- E21a: a boost above 100 must not cost a second of dead air -------------
+
+def test_scale_matches_the_plain_loop_with_and_without_numpy(monkeypatch):
+    import random
+    rnd = random.Random(7)
+    samples = [rnd.randint(-32768, 32767) for _ in range(5000)] + [32767, -32768]
+    data = _wav16(samples)
+    fast = _samples(tts._scale_wav(data, 170))
+    monkeypatch.setattr(tts, "_numpy", lambda: None)       # force the fallback
+    slow = _samples(tts._scale_wav(data, 170))
+    assert fast == slow
+    assert max(fast) == 32767 and min(fast) == -32768
+

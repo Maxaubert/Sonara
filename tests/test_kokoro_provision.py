@@ -109,6 +109,27 @@ def test_predownload_invokes_venv_python_with_pythonpath(monkeypatch, tmp_path):
     assert "KokoroEngine" in seen["cmd"][-1]   # the -c body builds the engine
 
 
+def test_predownload_retries_even_inside_the_failure_cooldown(monkeypatch):
+    """An explicit `voices install` is the user asking to retry now: the
+    predownload forces the fetch past a remembered failure (E11)."""
+    from sonara import kokoro
+    calls = []
+
+    class FakeEngine:
+        def __init__(self, model_dir, *a, **k):
+            pass
+
+        def download_models(self, force=False):
+            calls.append(("download", force))
+
+        def _ensure_loaded(self):
+            calls.append(("load",))
+
+    monkeypatch.setattr(kokoro, "KokoroEngine", FakeEngine)
+    exec(kp._PREDOWNLOAD, {})
+    assert calls == [("download", True), ("load",)]
+
+
 def test_neural_healthy_true_when_venv_reports_installed(monkeypatch):
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
     assert kp.neural_healthy("/app", run=lambda *a, **k: "True\n") is True
@@ -153,3 +174,17 @@ def test_uninstall_kokoro_removes_venv_idempotently(monkeypatch, tmp_path):
     kp.uninstall_kokoro()
     assert not venv.exists()
     kp.uninstall_kokoro()  # second call must not raise
+
+
+def test_provision_reuses_an_existing_venv(monkeypatch, tmp_path):
+    """E10: re-running `voices install` upgrades the packages in place; it
+    never recreates (and so first deletes) a venv that already works."""
+    py = tmp_path / "venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(paths, "KOKORO_VENV", tmp_path / "venv")
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: str(py))
+    cmds = []
+    kp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd))
+    assert not any(c[1] == "venv" for c in cmds)
+    assert any(c[1:3] == ["pip", "install"] for c in cmds)

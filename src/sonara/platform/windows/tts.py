@@ -59,6 +59,17 @@ def _require_winrt() -> None:
         raise RuntimeError(_WINRT_INSTALL_HINT)
 
 
+def _kokoro_was_installed() -> bool:
+    """True when this machine has Kokoro: importable here or provisioned in
+    the neural venv. A failure of an engine that was never installed is not
+    news to announce (E12)."""
+    try:
+        from sonara import kokoro, kokoro_provision
+        return kokoro.is_installed() or kokoro_provision.neural_enabled()
+    except Exception:  # noqa: BLE001 - the check must never break speech
+        return False
+
+
 def wpm_to_speaking_rate(wpm: float) -> float:
     """Map Sonara [100-400] wpm to a SpeakingRate multiplier [0.5-6.0].
 
@@ -80,6 +91,9 @@ _TMP_PREFIX = "sonara-tts-"
 # until the target lands.
 _VOLUME = [100]
 _SESSION_APPLIED = [None]
+# The download cool-down (KokoroUnavailable) fails every Kokoro utterance for
+# up to 30 minutes: log that fallback once per run, not once per cue.
+_COOLDOWN_LOGGED = [False]
 
 
 def _gain_percent() -> int:
@@ -126,6 +140,15 @@ def get_volume() -> int:
     return _VOLUME[0]
 
 
+def _numpy():
+    """numpy when importable (it ships with Kokoro), else None."""
+    try:
+        import numpy
+        return numpy
+    except Exception:  # noqa: BLE001 - optional speed-up only
+        return None
+
+
 def _scale_wav(data: bytes, percent: int):
     """Gain a 16-bit PCM WAV by percent/100, hard-clamped to int16. Non-16-bit
     or malformed data returns unchanged: playback must never break for want of
@@ -141,21 +164,29 @@ def _scale_wav(data: bytes, percent: int):
                 return data
             params = r.getparams()
             frames = r.readframes(r.getnframes())
-        samples = array.array("h")
-        samples.frombytes(frames)
         gain = percent / 100.0
-        out = array.array("h", bytes(len(frames)))
-        for i, s in enumerate(samples):
-            v = int(s * gain)
-            if v > 32767:
-                v = 32767
-            elif v < -32768:
-                v = -32768
-            out[i] = v
+        np = _numpy()
+        if np is not None:
+            # E21a: a 30 s Kokoro clip is ~720k samples; the per-sample loop
+            # below cost up to a second of dead air before playback.
+            x = np.frombuffer(frames, dtype="<i2").astype(np.float64) * gain
+            scaled = np.clip(np.trunc(x), -32768, 32767).astype("<i2").tobytes()
+        else:
+            samples = array.array("h")
+            samples.frombytes(frames)
+            out = array.array("h", bytes(len(frames)))
+            for i, s in enumerate(samples):
+                v = int(s * gain)
+                if v > 32767:
+                    v = 32767
+                elif v < -32768:
+                    v = -32768
+                out[i] = v
+            scaled = out.tobytes()
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
             w.setparams(params)
-            w.writeframes(out.tobytes())
+            w.writeframes(scaled)
         return buf.getvalue()
     except Exception:  # noqa: BLE001 - never break playback for a volume tweak
         return data
@@ -264,7 +295,10 @@ def _play_wav_bytes(data: bytes):
         os.close(fd)
     duration = _wav_duration(data)
     try:
-        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+        # SND_NODEFAULT (E21b): a missing or locked temp WAV must fail, not
+        # play the Windows default 'ding' in place of speech.
+        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
+                           | winsound.SND_NODEFAULT)
     except Exception:
         try:
             os.unlink(path)
@@ -284,16 +318,34 @@ class WinTtsBackend(TtsBackend):
     The SpeechSynthesizer is created ONCE and reused (synthesis is stable). All
     winrt.*/winsound imports are lazy (inside methods)."""
 
+    # M9: one SpeechSynthesizer is shared by the speak loop, the preview
+    # builder and settings previews, each on its own thread. Its voice and
+    # rate are set per call, so set-voice/rate/synthesize/read run under this
+    # lock or one thread's voice lands on another's text. (Class-level too, so
+    # a backend built without __init__ still has one.)
+    _synth_lock = threading.Lock()
+
     def __init__(self) -> None:
         self._synth = None         # reused SpeechSynthesizer (lazy)
+        self._synth_lock = threading.Lock()
         self._kokoro = None        # lazy KokoroEngine (only if a Kokoro voice is used)
         _sweep_stale_wavs()        # clear temp WAVs leaked by a prior crash (#26)
 
     def _get_kokoro(self):
-        """Lazy KokoroEngine -- downloads the ~316 MB model on first Kokoro voice."""
+        """Lazy KokoroEngine. A missing ~316 MB model downloads in the
+        background on first use (M2/E11): Kokoro voices speak with the Windows
+        voice until it lands, and the daemon announces the download once."""
         if self._kokoro is None:
             from sonara import kokoro, paths
-            self._kokoro = kokoro.KokoroEngine(paths.SONARA_DIR / "kokoro")
+
+            def _downloading():
+                import sys
+                print("[kokoro] downloading the neural voice model",
+                      file=sys.stderr, flush=True)
+                kokoro._set_download_notice()
+            self._kokoro = kokoro.KokoroEngine(
+                paths.SONARA_DIR / "kokoro", background=True,
+                on_download=_downloading)
         return self._kokoro
 
     def _get_synth(self):
@@ -410,6 +462,12 @@ class WinTtsBackend(TtsBackend):
 
         speaking_rate = wpm_to_speaking_rate(rate)
         resolved_voice = self._resolve_voice(voice)   # raises if no voices
+        with self._synth_lock:
+            return self._synthesize_locked(text, resolved_voice, speaking_rate,
+                                           DataReader)
+
+    def _synthesize_locked(self, text, resolved_voice, speaking_rate,
+                           DataReader) -> bytes:
         synth = self._get_synth()
         synth.voice = resolved_voice
         opts = synth.options
@@ -466,15 +524,26 @@ class WinTtsBackend(TtsBackend):
                 kokoro.require_installed()   # actionable error, not a raw ImportError
                 data = self._get_kokoro().wav_bytes(
                     text, voice, kokoro.rate_to_speed(rate))
+            except kokoro.KokoroDownloading:
+                # The model is still downloading (M2/E11): the Windows voice
+                # stands in, and the once-per-run 'downloading' notice says why.
+                _require_winrt()
+                data = self._synthesize_wav(text, None, rate)
             except Exception as exc:  # noqa: BLE001 - a dead engine must never
                 # leave the user with unexplained error noise (#29: winrt's
                 # bundled MSVCP140 poisons onnxruntime when winrt loads first).
                 # Fall back to the native WinRT voice and arm the once-per-run
-                # spoken notice.
-                import sys
-                print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
-                      file=sys.stderr, flush=True)
-                kokoro._set_fallback_notice(str(exc))
+                # spoken notice, but only when Kokoro was actually installed:
+                # a default install never had it (E12).
+                if _kokoro_was_installed():
+                    import sys
+                    cooling = isinstance(exc, kokoro.KokoroUnavailable)
+                    if not (cooling and _COOLDOWN_LOGGED[0]):
+                        print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
+                              file=sys.stderr, flush=True)
+                    if cooling:
+                        _COOLDOWN_LOGGED[0] = True
+                    kokoro._set_fallback_notice(str(exc))
                 _require_winrt()
                 data = self._synthesize_wav(text, None, rate)  # best WinRT voice
         else:
@@ -494,3 +563,43 @@ class WinTtsBackend(TtsBackend):
         this same-named method can never be mistaken for recursing into
         itself."""
         _module_set_volume(percent)
+
+
+# D7 (found on a real PC): OneCore lists David, Zira and Mark, yet every
+# synthesis raises FileNotFoundError because their voice data files under
+# %WINDIR%\Speech_OneCore\Engines\TTS are gone (only the shared lexicon is
+# left). Not a Sonara bug, so doctor names the cause and the repair.
+_MISSING_VOICE_DATA_FIX = (
+    "Fix: Settings > Time & language > Speech > Manage voices, remove and add "
+    "English (United States) again, or in an elevated prompt run: "
+    "DISM /Online /Add-Capability "
+    "/CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0")
+
+
+def probe_windows_voice(backend=None):
+    """(ok, detail) for doctor: synthesize a short phrase with the best
+    Windows voice, for real. Listing voices is not enough: a voice can be
+    listed while its data is missing (D7). Never raises."""
+    try:
+        if backend is None:
+            if not _winrt_available():
+                return False, "needs PyWinRT (see the TTS runtime row)"
+            backend = WinTtsBackend()
+        names = [v.display_name for v in backend._all_voice_infos()]
+    except Exception as exc:  # noqa: BLE001 - doctor must always render
+        return False, "could not list voices: {0}".format(exc)
+    if not names:
+        return False, ("no Windows voices installed. Add one: Settings > Time & "
+                       "language > Speech > Add voices")
+    try:
+        backend._synthesize_wav("Sonara voice check.", None, 200)
+    except FileNotFoundError:
+        return False, (
+            "{0} {1} listed but cannot speak: their voice data is missing from "
+            "this PC (synthesis fails with 'file not found'). Kokoro voices are "
+            "unaffected. {2}".format(", ".join(names),
+                                     "is" if len(names) == 1 else "are",
+                                     _MISSING_VOICE_DATA_FIX))
+    except Exception as exc:  # noqa: BLE001 - doctor must always render
+        return False, "synthesis failed: {0}".format(exc)
+    return True, "{0} (synthesis ok)".format(names[0])

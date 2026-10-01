@@ -67,8 +67,15 @@ def _cmd_settings(_args) -> int:
     """Open the browser settings page at its tokenized URL (#34)."""
     from sonara.platform import transport
     info = transport.read_lockfile(paths.LOCK_PATH)
-    if not info or not info.get("http_port"):
+    if not info or (not info.get("http_port") and not paths.socket_connectable()):
         print(_daemon_not_running_message())
+        return 1
+    if not info.get("http_port"):
+        # E18: the daemon runs, but its settings page failed to start (for
+        # example the port was taken). "Not running" sent users the wrong way.
+        print("Sonara is running, but its settings page did not start. See "
+              "~/.sonara/speechd.log, then restart: sonara shutdown, then "
+              "sonara start")
         return 1
     url = "http://127.0.0.1:{0}/settings?token={1}".format(
         info["http_port"], info.get("token", ""))
@@ -303,34 +310,32 @@ def doctor() -> list:
         results.append(("summary command", False, f"error: {exc}"))
 
     try:
-        from sonara import kokoro_provision as kp
-        if not kp.neural_enabled():
-            results.append(("neural voices", True, "not installed (optional)"))
-        elif kp.neural_healthy(str(paths.APP_DIR)):
-            results.append(("neural voices", True,
-                            f"ready ({paths.kokoro_venv_python()})"))
-        else:
-            results.append(("neural voices", False,
-                            "venv present but Kokoro import failed - "
-                            "re-run: sonara voices install"))
+        results.append(_neural_voices_row())
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("neural voices", False, f"error: {exc}"))
 
     # Leftovers of the removed Chatterbox engine (#134): several GB that only
     # `sonara cleanup` deletes. Informational, so never a failing row.
     try:
+        # Bounded walk: the old venv alone is ~8 GB of small files, too slow
+        # to count on every doctor run, so past a cap it says "more than".
         from sonara import chatterbox_legacy as cl
-        found = cl.leftovers()
+        found = cl.leftovers_estimate()
         if not found:
             results.append(("chatterbox leftovers", True, "none"))
         else:
-            total = sum(size for _p, size in found)
-            parts = ", ".join("{0} ({1})".format(p.name, cl.format_size(size))
-                              for p, size in found)
+            def _fmt(size, exact):
+                if exact:
+                    return cl.format_size(size)
+                return "more than " + cl.format_size(size) if size else "large"
+            total = sum(size for _p, size, _e in found)
+            parts = ", ".join("{0} ({1})".format(p.name, _fmt(size, exact))
+                              for p, size, exact in found)
             results.append(("chatterbox leftovers", True,
                             "{0} reclaimable: {1}. Remove with: sonara cleanup "
                             "(your voice clips are kept)".format(
-                                cl.format_size(total), parts)))
+                                _fmt(total, all(e for _p, _s, e in found)),
+                                parts)))
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("chatterbox leftovers", True, f"could not check: {exc}"))
 
@@ -357,12 +362,50 @@ def doctor() -> list:
     return results
 
 
+def _neural_voices_row() -> tuple:
+    """Kokoro as the DAEMON sees it: the neural venv when provisioned, else
+    the daemon's own interpreter (install.json), which may have Kokoro in its
+    site-packages. Plus where the model stands (downloaded, pending, or a
+    recent failed download)."""
+    from sonara import kokoro_provision as kp
+    if kp.neural_enabled():
+        if not kp.neural_healthy(str(paths.APP_DIR)):
+            return ("neural voices", False,
+                    "venv present but Kokoro import failed - "
+                    "re-run: sonara voices install")
+        where = paths.kokoro_venv_python()
+    else:
+        rec = _read_install_record() or {}
+        where = rec.get("python")
+        if not where or not kp.kokoro_importable(where):
+            return ("neural voices", True,
+                    "not installed (optional): sonara voices install")
+    from sonara import kokoro
+    model_dir = paths.SONARA_DIR / "kokoro"
+    if kokoro.models_present(model_dir):
+        return ("neural voices", True, "ready ({0})".format(where))
+    failed = kokoro.download_failed_at(model_dir)
+    if failed is not None and time.time() - failed < kokoro.DOWNLOAD_RETRY_S:
+        return ("neural voices", False,
+                "Kokoro is installed ({0}) but the model download failed at {1}; "
+                "Windows voices stand in. Retry now: sonara voices install".format(
+                    where, time.strftime("%H:%M", time.localtime(failed))))
+    return ("neural voices", True,
+            "ready ({0}); the ~316 MB model downloads on first use".format(where))
+
+
 def _cmd_doctor(_args) -> int:
     rows = doctor()
     all_ok = True
     for check, ok, detail in rows:
         mark = "ok " if ok else "FAIL"
-        print(f"[{mark}] {check}: {detail}")
+        line = f"[{mark}] {check}: {detail}"
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            # A row can name a character (the AltGr row) that a cp437 or
+            # redirected console cannot encode: escape it, never crash.
+            print(line.encode("ascii", "backslashreplace").decode("ascii"))
         all_ok = all_ok and ok
     return 0 if all_ok else 1
 
@@ -929,6 +972,25 @@ def _cmd_uninstall(_args) -> int:
     return uninstall()
 
 
+def _stopped_state_restorer():
+    """Snapshot whether Sonara runs now, for a command that stops it and may
+    then fail: the returned callable starts it again if it was running, or
+    removes the stop sentinel the command's own stop_sonara wrote, so a
+    failure never leaves Sonara off. An earlier explicit shutdown stays."""
+    was_running = paths.socket_connectable()
+    was_shut_down = os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
+
+    def restore():
+        if was_running:
+            start_sonara()
+        elif not was_shut_down:
+            try:
+                os.remove(str(paths.STOPPED_SENTINEL_PATH))
+            except OSError:
+                pass
+    return restore
+
+
 def _cmd_voices_install(_args) -> int:
     """Provision the Kokoro venv and re-wire the daemon onto it."""
     from sonara import kokoro_provision as kp
@@ -938,6 +1000,12 @@ def _cmd_voices_install(_args) -> int:
         _print_no_plugin_root()
         return 1
     paths.ensure_sonara_dir()
+    # E10: the daemon may be running on this very venv's pythonw, whose files
+    # are then locked. Stop it first, and only ever remove a venv this run
+    # created: a failed re-run or upgrade keeps the one that worked.
+    existed = kp.neural_enabled()
+    restore = _stopped_state_restorer()
+    stop_sonara()
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
         # Pass the running package's root as PYTHONPATH so predownload_model can
@@ -945,16 +1013,34 @@ def _cmd_voices_install(_args) -> int:
         # machine APP_DIR is empty). repo_root()/src was ~/.sonara/src, which
         # does not exist, when this ran from the deployed copy (E6).
         kp.install_kokoro(paths.package_root())
-    except Exception as exc:  # noqa: BLE001 - report, do not half-wire
-        print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
-        kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
-        return 1
-    except BaseException:
-        # Ctrl+C / kill mid-download: still revert so neural_enabled() cannot be
-        # left True over a half-built venv (audit #21).
-        kp.uninstall_kokoro()
+    except BaseException as exc:
+        # Ctrl+C / kill mid-download too: a venv this run created is reverted
+        # so neural_enabled() cannot be left True over a half-built one
+        # (audit #21).
+        if isinstance(exc, Exception):
+            print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
+        if existed:
+            if isinstance(exc, Exception):
+                print("Kept your existing neural voices in {0}.".format(
+                    paths.KOKORO_VENV), file=sys.stderr)
+        else:
+            try:
+                kp.uninstall_kokoro()
+            except Exception as rm_exc:  # noqa: BLE001 - never mask the cause
+                print("Could not remove the half-built {0}: {1}".format(
+                    paths.KOKORO_VENV, rm_exc), file=sys.stderr)
+        restore()
+        if isinstance(exc, Exception):
+            return 1
         raise
-    rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
+    rc = 1
+    try:
+        rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
+    finally:
+        # install() can fail before its own stop and sentinel-clearing
+        # finally (no Python, no plugin tree): undo the stop above.
+        if rc != 0:
+            restore()
     if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
         print("Neural voices ready. Pick one with: sonara voice af_heart")
     return rc
@@ -1003,18 +1089,7 @@ def _cmd_cleanup(_args) -> int:
             paths.SONARA_DIR))
         return 0
     total = sum(size for _p, size in found)
-    was_running = paths.socket_connectable()
-    was_shut_down = os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
-
-    def restore():
-        if was_running:
-            start_sonara()
-        elif not was_shut_down:
-            try:   # stop_sonara wrote it; leave hook lazy-start working as before
-                os.remove(str(paths.STOPPED_SENTINEL_PATH))
-            except OSError:
-                pass
-
+    restore = _stopped_state_restorer()
     if not stop_sonara():
         # stop_sonara already wrote the sentinel and ended the task: undo
         # that, or a daemon that later exits would never come back.
@@ -1097,9 +1172,15 @@ def main(argv: Optional[list] = None) -> int:
     try:
         return args.func(args)
     except OSError as exc:
-        from .client import DaemonNotRunning  # local import; client may not be loaded
+        from .client import DaemonNotRunning, DaemonUnresponsive  # client may not be loaded
         if isinstance(exc, DaemonNotRunning):
             print(_daemon_not_running_message(), file=sys.stderr)
+            return 1
+        if isinstance(exc, DaemonUnresponsive):
+            # E18: a daemon stuck under its lock used to print a traceback.
+            print("Sonara daemon is not responding (busy or stuck). Try again in "
+                  "a moment, or restart it: sonara shutdown, then sonara start",
+                  file=sys.stderr)
             return 1
         raise
 

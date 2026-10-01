@@ -243,16 +243,17 @@ def test_schtasks_spawns_windowless(monkeypatch):
     assert flags & 0x08000000, "CREATE_NO_WINDOW must be set"
 
 
-def test_doctor_rows_include_task_and_neural_voice(monkeypatch):
+def test_doctor_rows_include_task_and_windows_voice(monkeypatch):
     sup = WinSupervisorBackend()
     monkeypatch.setattr(sup, "_schtasks", lambda args: 0)
     monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Python311\pythonw.exe")
-    monkeypatch.setattr(sup, "_list_neural_voices", lambda: ["Microsoft Aria Online"])
+    monkeypatch.setattr("sonara.platform.windows.tts.probe_windows_voice",
+                        lambda backend=None: (True, "Microsoft Aria (synthesis ok)"))
     monkeypatch.setattr("sonara.paths.socket_connectable", lambda: True)
     names = [r[0] for r in sup.doctor_rows()]
     assert "Task Scheduler task" in names
     assert "pythonw.exe" in names
-    assert "neural voice" in names
+    assert "Windows voice" in names
     assert "daemon running" in names
 
 
@@ -261,7 +262,8 @@ def test_doctor_row_flags_missing_winrt(monkeypatch):
     sup = WinSupervisorBackend()
     monkeypatch.setattr(sup, "_schtasks", lambda args: 0)
     monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Py\pythonw.exe")
-    monkeypatch.setattr(sup, "_list_neural_voices", lambda: ["X"])
+    monkeypatch.setattr("sonara.platform.windows.tts.probe_windows_voice",
+                        lambda backend=None: (True, "X"))
     monkeypatch.setattr("sonara.paths.socket_connectable", lambda: True)
     import sonara.platform.windows.tts as tts
     monkeypatch.setattr(tts, "_winrt_available", lambda: False, raising=False)
