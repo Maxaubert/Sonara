@@ -50,4 +50,4 @@ Map, threads, lock contract, module owners and how to add a setting/message/hotk
 - Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
 - No em-dashes anywhere (code, comments, docs, commit messages).
-- Current work plan: `docs/plans/phase0-plan.md`; PrismTerminal embedding research: `docs/plans/embedding-research.md`. Historical specs, plans and audits: `docs/history/`.
+- Current work: the Rust reader runtime, spec `docs/plans/2026-10-02-sonara-runtime-spec.md`, plan `docs/plans/2026-10-02-sonara-runtime-plan.md` (Phase 0 is done: `docs/plans/phase0-plan.md`). Research: `docs/plans/2026-10-02-distribution-research.md`, `docs/plans/embedding-research.md`. Historical specs, plans and audits: `docs/history/`.
