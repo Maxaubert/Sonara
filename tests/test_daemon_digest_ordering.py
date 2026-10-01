@@ -17,11 +17,11 @@ def _prose(session, text, idx=0, final=True):
 def _turn_done(daemon, session):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
                            "kind": "turn_done", "session": session})
-    gen = daemon._settle_gen.get(session)
-    t = daemon._settle_timers.pop(session, None)
+    gen = daemon._summary.settle_gen.get(session)
+    t = daemon._summary.settle_timers.pop(session, None)
     if t is not None:
         t.cancel()
-    daemon._settle_fire(session, gen)
+    daemon._summary.settle_fire(session, gen)
 
 
 def _ordering_daemon(monkeypatch):
@@ -31,7 +31,7 @@ def _ordering_daemon(monkeypatch):
     daemon.config["summary_mode"] = True
     calls = []
     monkeypatch.setattr(
-        daemon, "_start_summary_thread",
+        daemon._summary, "start_thread",
         lambda session, gen, text, token=0, leadin=False, seq=None:
             calls.append({"session": session, "gen": gen, "text": text,
                           "token": token, "leadin": leadin, "seq": seq}))
@@ -41,7 +41,7 @@ def _ordering_daemon(monkeypatch):
 
 
 def _run_worker(daemon, d):
-    daemon._summary_worker(d["session"], d["gen"], d["text"], d["token"],
+    daemon._summary.worker(d["session"], d["gen"], d["text"], d["token"],
                            leadin=d["leadin"], seq=d["seq"])
 
 
@@ -70,7 +70,7 @@ def test_digests_heard_in_turn_finish_order_not_completion_order(monkeypatch):
     for s in ("b", "c", "a"):
         _finish_turn(daemon, s)
     assert [d["session"] for d in calls] == ["b", "c", "a"]
-    daemon._summarize_fn = (
+    daemon._summary.summarize_fn = (
         lambda text, **kw: "Recap " + text.split("Report from ")[1][0])
     # the summarizer completes in a THIRD order: a, c, b
     by = {d["session"]: d for d in calls}
@@ -89,7 +89,7 @@ def test_every_cross_session_digest_is_announced(monkeypatch):
     daemon.router._last_active = "user"
     for s in ("b", "c", "a"):
         _finish_turn(daemon, s)
-    daemon._summarize_fn = (
+    daemon._summary.summarize_fn = (
         lambda text, **kw: "Recap " + text.split("Report from ")[1][0])
     by = {d["session"]: d for d in calls}
     for s in ("c", "a", "b"):
@@ -113,12 +113,12 @@ def test_cancelled_digest_releases_the_ordering_slot(monkeypatch):
     for s in ("b", "c"):
         _finish_turn(daemon, s)
     by = {d["session"]: d for d in calls}
-    daemon._summarize_fn = (
+    daemon._summary.summarize_fn = (
         lambda text, **kw: "Recap " + text.split("Report from ")[1][0])
     _run_worker(daemon, by["c"])                       # c completes FIRST, parks
     heard = [t for t in _drain(daemon, speaker, n=6) if t.startswith("Recap ")]
     assert heard == []                                 # parked behind b
-    daemon._summary_gen["b"] = daemon._summary_gen.get("b", 0) + 1  # b cancelled
+    daemon._summary.cancel_gen["b"] = daemon._summary.cancel_gen.get("b", 0) + 1  # b cancelled
     _run_worker(daemon, by["b"])                       # lands dead, frees the slot
     heard = [t for t in _drain(daemon, speaker) if t.startswith("Recap ")]
     assert heard == ["Recap c"]                        # c released, b never speaks
@@ -133,7 +133,7 @@ def test_short_background_turn_joins_the_sequence(monkeypatch):
     _turn_done(daemon, "c")                            # short: synchronous path
     heard = [t for t in _drain(daemon, speaker, n=6) if "Quick note" in t]
     assert heard == []                                 # parked behind b's digest
-    daemon._summarize_fn = (
+    daemon._summary.summarize_fn = (
         lambda text, **kw: "Recap " + text.split("Report from ")[1][0])
     by = {d["session"]: d for d in calls}
     _run_worker(daemon, by["b"])
@@ -152,14 +152,14 @@ def test_leadin_digests_bypass_the_sequencer(monkeypatch):
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.CHOICE,
                            "session": "user",
                            "questions": [{"question": "Go?", "options": ["y"]}]})
-    gen = daemon._settle_gen.get("user")
-    t = daemon._settle_timers.pop("user", None)
+    gen = daemon._summary.settle_gen.get("user")
+    t = daemon._summary.settle_timers.pop("user", None)
     if t is not None:
         t.cancel()
-    daemon._settle_fire("user", gen)
+    daemon._summary.settle_fire("user", gen)
     leadin = next(d for d in calls if d["leadin"])
     assert leadin["seq"] is None                       # bypasses the reorder buffer
-    daemon._summarize_fn = lambda text, **kw: "Question context recap."
+    daemon._summary.summarize_fn = lambda text, **kw: "Question context recap."
     _run_worker(daemon, leadin)
     heard = _drain(daemon, speaker)
     assert any("Question context recap." in t for t in heard)  # spoke despite b pending

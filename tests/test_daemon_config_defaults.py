@@ -39,7 +39,7 @@ def test_settle_delay_defaults_from_the_schema(monkeypatch):
             pass
 
     monkeypatch.setattr(daemon_mod.threading, "Timer", _Timer)
-    daemon._settle_schedule("s1", 1)
+    daemon._summary.schedule_settle("s1", 1)
     assert started == [0.6]
 
 

@@ -37,7 +37,7 @@ def _daemon(monkeypatch, foreground="user"):
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
     daemon, queue, speaker, sessions, config = make_daemon(foreground=foreground)
     config["summary_mode"] = True
-    monkeypatch.setattr(daemon, "_settle_schedule", lambda session, gen: None)
+    monkeypatch.setattr(daemon._summary, "schedule_settle", lambda session, gen: None)
     for s in ("user", "a", "b", "fg"):
         sessions.register(s, cwd="/w/" + s)
     return daemon, speaker
@@ -50,19 +50,19 @@ def _capture_spawn(daemon, monkeypatch):
         calls.append({"session": session, "gen": gen, "text": text,
                       "token": token, "leadin": leadin, "seq": seq})
 
-    monkeypatch.setattr(daemon, "_start_summary_thread", fake)
+    monkeypatch.setattr(daemon._summary, "start_thread", fake)
     return calls
 
 
 def _capture_watchdogs(daemon, monkeypatch):
     armed = []
-    monkeypatch.setattr(daemon, "_schedule_digest_watchdog",
+    monkeypatch.setattr(daemon._summary, "schedule_digest_watchdog",
                         lambda seq, apply: armed.append((seq, apply)))
     return armed
 
 
 def _fire_settle(daemon, session):
-    daemon._settle_fire(session, daemon._settle_gen.get(session))
+    daemon._summary.settle_fire(session, daemon._summary.settle_gen.get(session))
 
 
 def _finish_turn(daemon, session, label):
@@ -79,8 +79,8 @@ def _drain(daemon, speaker, n=30):
 
 
 def _run_worker(daemon, call, digest):
-    daemon._summarize_fn = lambda text, **kw: digest
-    daemon._summary_worker(call["session"], call["gen"], call["text"],
+    daemon._summary.summarize_fn = lambda text, **kw: digest
+    daemon._summary.worker(call["session"], call["gen"], call["text"],
                            call["token"], call["leadin"], call["seq"])
 
 
@@ -95,7 +95,7 @@ def test_hung_digest_slot_is_landed_by_the_watchdog(monkeypatch):
     assert [seq for seq, _ in armed] == [0, 1]   # one watchdog per dispatched seq
     _run_worker(daemon, calls[1], "Recap bravo")
     assert not [t for t in _drain(daemon, speaker, n=6) if "bravo" in t.lower()]
-    daemon._digest_watchdog_fire(*armed[0])      # a's worker never came back
+    daemon._summary.digest_watchdog_fire(*armed[0])      # a's worker never came back
     heard = _drain(daemon, speaker)
     # The hung turn still speaks (raw fallback: never skip the last message)
     # and the digest parked behind it is released, in dispatch order.
@@ -109,7 +109,7 @@ def test_late_worker_after_the_watchdog_is_ignored(monkeypatch):
     calls = _capture_spawn(daemon, monkeypatch)
     armed = _capture_watchdogs(daemon, monkeypatch)
     _finish_turn(daemon, "a", "alpha")
-    daemon._digest_watchdog_fire(*armed[0])
+    daemon._summary.digest_watchdog_fire(*armed[0])
     _drain(daemon, speaker)
     _run_worker(daemon, calls[0], "Recap alpha")  # the hung worker finally returns
     heard = _drain(daemon, speaker)
@@ -124,7 +124,7 @@ def test_watchdog_is_a_noop_once_the_worker_landed(monkeypatch):
     armed = _capture_watchdogs(daemon, monkeypatch)
     _finish_turn(daemon, "a", "alpha")
     _run_worker(daemon, calls[0], "Recap alpha")
-    daemon._digest_watchdog_fire(*armed[0])
+    daemon._summary.digest_watchdog_fire(*armed[0])
     heard = _drain(daemon, speaker)
     assert heard.count("Recap alpha") == 1
     assert not any("Report alpha" in t for t in heard)
@@ -147,7 +147,7 @@ def test_watchdog_waits_twice_the_summary_timeout(monkeypatch):
             pass
 
     monkeypatch.setattr(daemon_module.threading, "Timer", _Timer)
-    daemon._schedule_digest_watchdog(0, None)
+    daemon._summary.schedule_digest_watchdog(0, None)
     assert timers == [90.0]
 
 
@@ -160,11 +160,11 @@ def test_settle_fire_failure_still_lands_its_slot(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("cannot start thread")
 
-    monkeypatch.setattr(daemon, "_start_summary_thread", boom)
+    monkeypatch.setattr(daemon._summary, "start_thread", boom)
     _finish_turn(daemon, "a", "alpha")           # must not raise
     assert daemon._digests.serve_seq == daemon._digests.next_seq
     assert daemon._digests.parked == {}
-    assert not daemon._inflight_digests.get("a")
+    assert not daemon._summary.inflight.get("a")
     heard = _drain(daemon, speaker)
     assert any("Report alpha" in t for t in heard)   # the turn still speaks
 
@@ -172,7 +172,7 @@ def test_settle_fire_failure_still_lands_its_slot(monkeypatch):
 def test_settle_fire_failure_never_loses_the_question(monkeypatch):
     daemon, speaker = _daemon(monkeypatch, foreground="fg")
     _capture_watchdogs(daemon, monkeypatch)
-    monkeypatch.setattr(daemon, "_maybe_summarize",
+    monkeypatch.setattr(daemon._summary, "maybe_summarize",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("Deploy now?")))
     _fire_settle(daemon, "fg")                   # must not raise
@@ -199,11 +199,11 @@ def test_stale_settle_fire_after_teardown_and_rearm_is_a_noop(monkeypatch):
     _capture_watchdogs(daemon, monkeypatch)
     daemon.handle_message(_prose("a", "Report alpha. " + _PAD * 6))
     daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
-    stale = daemon._settle_gen["a"]              # a fire blocked on the lock
+    stale = daemon._summary.settle_gen["a"]              # a fire blocked on the lock
     daemon.handle_message(_msg(MsgType.SESSION_END, "a"))
     daemon.handle_message(_prose("a", "Report again. " + _PAD * 6))
     daemon.handle_message(_msg(MsgType.EARCON, "a", kind="turn_done"))
-    daemon._settle_fire("a", stale)
+    daemon._summary.settle_fire("a", stale)
     assert calls == []                           # the stale fire did nothing
     _fire_settle(daemon, "a")
     assert len(calls) == 1
@@ -214,7 +214,7 @@ def test_stale_settle_fire_after_teardown_and_rearm_is_a_noop(monkeypatch):
 def test_second_decision_in_settle_window_does_not_drop_the_first(monkeypatch):
     daemon, speaker = _daemon(monkeypatch, foreground="fg")
     calls = _capture_spawn(daemon, monkeypatch)
-    monkeypatch.setattr(daemon, "_schedule_hold_release", lambda *a: None)
+    monkeypatch.setattr(daemon._summary, "schedule_hold_release", lambda *a: None)
     daemon.handle_message(_prose("fg", "Let me look at this first."))
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("First question?")))
     daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Second plan."))
@@ -239,11 +239,11 @@ def test_flush_drops_pending_decision_bookkeeping(monkeypatch):
 def test_session_end_drops_held_decision_bookkeeping(monkeypatch):
     daemon, speaker = _daemon(monkeypatch, foreground="fg")
     _capture_spawn(daemon, monkeypatch)
-    monkeypatch.setattr(daemon, "_schedule_hold_release", lambda *a: None)
+    monkeypatch.setattr(daemon._summary, "schedule_hold_release", lambda *a: None)
     daemon.handle_message(_prose("fg", "Context. " * 40))
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("Deploy now?")))
     _fire_settle(daemon, "fg")
-    assert daemon._held_decision.get("fg") is not None
+    assert daemon._summary.held_decision.get("fg") is not None
     daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
     assert daemon._pending_heard == {}
 
@@ -255,7 +255,7 @@ def test_joined_hold_is_released_by_the_earliest_cap(monkeypatch):
     daemon, speaker = _daemon(monkeypatch, foreground="fg")
     _capture_spawn(daemon, monkeypatch)
     timers = []
-    monkeypatch.setattr(daemon, "_schedule_hold_release",
+    monkeypatch.setattr(daemon._summary, "schedule_hold_release",
                         lambda s, o, i: timers.append((s, o, i)))
     daemon.handle_message(_prose("fg", "Let me look at this first."))
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("First question?")))
@@ -264,11 +264,11 @@ def test_joined_hold_is_released_by_the_earliest_cap(monkeypatch):
     daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Second plan."))
     _fire_settle(daemon, "fg")
     assert len(timers) == 2 and timers[0][1] != timers[1][1]
-    daemon._release_held_decision(*timers[0])    # the first cap elapses
+    daemon._summary.release_held_decision(*timers[0])    # the first cap elapses
     texts = [it.text for it in daemon.router.channel("fg").items]
     assert any("First question?" in t for t in texts)
     assert any("Second plan." in t for t in texts)
-    assert "fg" not in daemon._held_decision
+    assert "fg" not in daemon._summary.held_decision
 
 
 def test_settle_fire_failure_after_hold_does_not_speak_twice(monkeypatch):
@@ -280,7 +280,7 @@ def test_settle_fire_failure_after_hold_does_not_speak_twice(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("cannot start thread")
 
-    monkeypatch.setattr(daemon, "_schedule_hold_release", boom)
+    monkeypatch.setattr(daemon._summary, "schedule_hold_release", boom)
     daemon.handle_message(_prose("fg", "Let me look at this first."))
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("Deploy now?")))
     _fire_settle(daemon, "fg")                   # must not raise
@@ -288,7 +288,7 @@ def test_settle_fire_failure_after_hold_does_not_speak_twice(monkeypatch):
     ch = daemon.router.channel("fg")
     asked = [it for it in ch.items if it.is_decision and "Deploy now?" in it.text]
     assert len(asked) == 1
-    assert "fg" not in daemon._held_decision
+    assert "fg" not in daemon._summary.held_decision
 
 
 def test_watchdog_arm_failure_still_reports_the_digest_in_flight(monkeypatch):
@@ -298,9 +298,9 @@ def test_watchdog_arm_failure_still_reports_the_digest_in_flight(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("cannot start thread")
 
-    monkeypatch.setattr(daemon, "_schedule_digest_watchdog", boom)
+    monkeypatch.setattr(daemon._summary, "schedule_digest_watchdog", boom)
     daemon.handle_message(_prose("a", "Report alpha. " + _PAD * 6))
-    assert daemon._maybe_summarize("a") is True  # the worker is already out
+    assert daemon._summary.maybe_summarize("a") is True  # the worker is already out
     assert len(calls) == 1
 
 

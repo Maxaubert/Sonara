@@ -20,7 +20,7 @@ def _summary_daemon(monkeypatch):
                         "token": token, "leadin": leadin})
         daemon._digests.land(seq, None)   # free the ordering slot (#88)
 
-    monkeypatch.setattr(daemon, "_start_summary_thread", fake)
+    monkeypatch.setattr(daemon._summary, "start_thread", fake)
     return daemon, speaker, spawned
 
 
@@ -38,8 +38,8 @@ def _question(daemon, session="fg"):
 
 
 def _fire_settle(daemon, session="fg"):
-    gen = daemon._settle_gen.get(session)
-    daemon._settle_fire(session, gen)
+    gen = daemon._summary.settle_gen.get(session)
+    daemon._summary.settle_fire(session, gen)
 
 
 # --- A: lead-ins before questions are digested, never raw --------------------
@@ -57,7 +57,7 @@ def test_short_leadin_before_question_is_digested_not_raw(monkeypatch):
     texts = [i.text for i in ch.items]
     assert not any("check out this repo" in t for t in texts)
     # the question is HELD behind the digest, not enqueued yet
-    assert "fg" in daemon._held_decision
+    assert "fg" in daemon._summary.held_decision
 
 
 def test_short_turn_end_without_question_still_replays_raw(monkeypatch):
@@ -73,24 +73,24 @@ def test_short_turn_end_without_question_still_replays_raw(monkeypatch):
 
 def test_leadin_skip_digest_drops_silently_and_releases_question(monkeypatch):
     daemon, speaker, spawned = _summary_daemon(monkeypatch)
-    daemon._summarize_fn = lambda text, **kw: None      # SKIP/failed
+    daemon._summary.summarize_fn = lambda text, **kw: None      # SKIP/failed
     _prose(daemon, "Let me verify this. ")
     _question(daemon)
     _fire_settle(daemon)
     d = spawned[0]
     # run the real worker with the SKIP summarizer
-    daemon._summary_worker(d["session"], d["gen"], d["text"], d["token"],
+    daemon._summary.worker(d["session"], d["gen"], d["text"], d["token"],
                            leadin=d["leadin"])
     ch = daemon.router.channel("fg")
     texts = [i.text for i in ch.items]
     assert not any("Let me verify" in t for t in texts)  # noise dropped, no raw fallback
     assert any(i.is_decision for i in ch.items)          # question still released
-    assert "fg" not in daemon._held_decision
+    assert "fg" not in daemon._summary.held_decision
 
 
 def test_turn_end_skip_digest_keeps_raw_fallback(monkeypatch):
     daemon, speaker, spawned = _summary_daemon(monkeypatch)
-    daemon._summarize_fn = lambda text, **kw: None
+    daemon._summary.summarize_fn = lambda text, **kw: None
     long_text = "This is substantive content the user must hear. " * 8
     _prose(daemon, long_text)
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.EARCON,
@@ -98,7 +98,7 @@ def test_turn_end_skip_digest_keeps_raw_fallback(monkeypatch):
     _fire_settle(daemon)
     d = spawned[0]
     assert d["leadin"] is False
-    daemon._summary_worker(d["session"], d["gen"], d["text"], d["token"],
+    daemon._summary.worker(d["session"], d["gen"], d["text"], d["token"],
                            leadin=d["leadin"])
     ch = daemon.router.channel("fg")
     assert any("substantive content" in i.text for i in ch.items)  # raw fallback
@@ -109,21 +109,21 @@ def test_turn_end_skip_digest_keeps_raw_fallback(monkeypatch):
 def test_hold_release_speaks_question_when_digest_is_slow(monkeypatch):
     daemon, speaker, spawned = _summary_daemon(monkeypatch)
     timers = []
-    monkeypatch.setattr(daemon, "_schedule_hold_release",
+    monkeypatch.setattr(daemon._summary, "schedule_hold_release",
                         lambda s, o, i: timers.append((s, o, i)))
     _prose(daemon, "Let me check something first before asking. ")
     _question(daemon)
     _fire_settle(daemon)
-    assert "fg" in daemon._held_decision
+    assert "fg" in daemon._summary.held_decision
     assert len(timers) == 1
-    daemon._release_held_decision(*timers[0])           # the wedge-guard cap fires
+    daemon._summary.release_held_decision(*timers[0])           # the wedge-guard cap fires
     ch = daemon.router.channel("fg")
     assert any(i.is_decision for i in ch.items)          # question speaks NOW
-    assert "fg" not in daemon._held_decision
+    assert "fg" not in daemon._summary.held_decision
     # the digest worker landing later must not re-release anything
     d = spawned[0]
-    daemon._summarize_fn = lambda text, **kw: "The digest."
-    daemon._summary_worker(d["session"], d["gen"], d["text"], d["token"],
+    daemon._summary.summarize_fn = lambda text, **kw: "The digest."
+    daemon._summary.worker(d["session"], d["gen"], d["text"], d["token"],
                            leadin=d["leadin"])
     decisions = [i for i in ch.items if i.is_decision]
     assert len(decisions) == 1                           # not duplicated
@@ -133,18 +133,18 @@ def test_hold_release_speaks_question_when_digest_is_slow(monkeypatch):
 def test_hold_release_is_noop_after_digest_landed(monkeypatch):
     daemon, speaker, spawned = _summary_daemon(monkeypatch)
     timers = []
-    monkeypatch.setattr(daemon, "_schedule_hold_release",
+    monkeypatch.setattr(daemon._summary, "schedule_hold_release",
                         lambda s, o, i: timers.append((s, o, i)))
     _prose(daemon, "Some context before the question arrives here. ")
     _question(daemon)
     _fire_settle(daemon)
     d = spawned[0]
-    daemon._summarize_fn = lambda text, **kw: "The digest."
-    daemon._summary_worker(d["session"], d["gen"], d["text"], d["token"],
+    daemon._summary.summarize_fn = lambda text, **kw: "The digest."
+    daemon._summary.worker(d["session"], d["gen"], d["text"], d["token"],
                            leadin=d["leadin"])           # digest lands first
     ch = daemon.router.channel("fg")
     before = len(ch.items)
-    daemon._release_held_decision(*timers[0])            # late timer fire
+    daemon._summary.release_held_decision(*timers[0])            # late timer fire
     assert len(ch.items) == before                       # idempotent no-op
 
 
@@ -171,14 +171,14 @@ def test_choice_answered_kills_inflight_leadin_digest(monkeypatch):
     _question(daemon)
     _fire_settle(daemon)
     d = spawned[0]
-    assert daemon._inflight_digests.get("fg")            # digest in flight
+    assert daemon._summary.inflight.get("fg")            # digest in flight
     daemon.handle_message({"v": PROTOCOL_VERSION,
                            "type": MsgType.CHOICE_ANSWERED, "session": "fg"})
-    assert "fg" not in daemon._held_decision             # held question dropped
-    assert not daemon._inflight_digests.get("fg")
+    assert "fg" not in daemon._summary.held_decision             # held question dropped
+    assert not daemon._summary.inflight.get("fg")
     # the worker lands AFTER the answer: its gen is stale -> nothing speaks
-    daemon._summarize_fn = lambda text, **kw: "Too late digest."
-    daemon._summary_worker(d["session"], d["gen"], d["text"], d["token"],
+    daemon._summary.summarize_fn = lambda text, **kw: "Too late digest."
+    daemon._summary.worker(d["session"], d["gen"], d["text"], d["token"],
                            leadin=d["leadin"])
     ch = daemon.router.channel("fg")
     texts = [i.text for i in ch.items[ch.cursor:]]
@@ -189,10 +189,10 @@ def test_choice_answered_drops_pending_settle_decision(monkeypatch):
     daemon, speaker, spawned = _summary_daemon(monkeypatch)
     _prose(daemon, "Some lead-in. ")
     _question(daemon)                                    # deferred via settle
-    assert "fg" in daemon._pending_decision
+    assert "fg" in daemon._summary.pending_decision
     daemon.handle_message({"v": PROTOCOL_VERSION,
                            "type": MsgType.CHOICE_ANSWERED, "session": "fg"})
-    assert "fg" not in daemon._pending_decision
+    assert "fg" not in daemon._summary.pending_decision
     assert "fg" not in daemon._await_choice
 
 
@@ -201,10 +201,10 @@ def test_flush_session_gets_the_same_summary_semantics(monkeypatch):
     _prose(daemon, "A long enough lead-in before the question. " * 10)
     _question(daemon)
     _fire_settle(daemon)
-    assert daemon._inflight_digests.get("fg")
+    assert daemon._summary.inflight.get("fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.FLUSH_SESSION})
-    assert "fg" not in daemon._held_decision
-    assert not daemon._inflight_digests.get("fg")
+    assert "fg" not in daemon._summary.held_decision
+    assert not daemon._summary.inflight.get("fg")
     assert "nav" in speaker.earcons                      # acknowledged with a chime
 
 
@@ -235,7 +235,7 @@ def test_hold_cap_outlives_any_digest_the_summarizer_can_still_return():
     # engine got slower than the latency it was tuned against (#121): live
     # logs went from median 8.1s / 1% over cap on codex to median 24.6s /
     # 25% over cap on claude+haiku, with summary_timeout unchanged at 60.
-    from sonara.daemon import _decision_hold_max_s
+    from sonara.daemon.summary.pipeline import _decision_hold_max_s
     from sonara.config import DEFAULTS
 
     # every summary_timeout the setter will accept (daemon.py clamps 15..300)
@@ -254,24 +254,24 @@ def test_hold_cap_survives_a_corrupt_summary_timeout():
     # A hand-edited config.json can hold a non-numeric summary_timeout. The
     # cap must fall back to the default rather than raise inside the hold
     # path, which runs while a blocking question is already parked.
-    from sonara.daemon import _decision_hold_max_s
+    from sonara.daemon.summary.pipeline import _decision_hold_max_s
     from sonara.config import DEFAULTS
     for bad in ("soon", None, [], {}):
         assert _decision_hold_max_s({"summary_timeout": bad}) > DEFAULTS["summary_timeout"]
 
 
 def test_schedule_hold_release_arms_the_config_derived_cap(monkeypatch):
-    # The seam that matters: _schedule_hold_release must read the CAP from the
+    # The seam that matters: schedule_hold_release must read the CAP from the
     # daemon's live config, so raising summary_timeout in the settings page
     # widens the hold too instead of leaving a stale 30s guard behind.
-    import sonara.daemon as dmod
+    import sonara.daemon.summary.pipeline as pmod
     daemon, speaker, spawned = _summary_daemon(monkeypatch)
     armed = []
-    monkeypatch.setattr(dmod.threading, "Timer",
+    monkeypatch.setattr(pmod.threading, "Timer",
                         lambda delay, fn, args=(): armed.append(delay) or _NullTimer())
     daemon.config["summary_timeout"] = 120
-    daemon._schedule_hold_release("fg", 1, object())
-    assert armed == [dmod._decision_hold_max_s({"summary_timeout": 120})]
+    daemon._summary.schedule_hold_release("fg", 1, object())
+    assert armed == [pmod._decision_hold_max_s({"summary_timeout": 120})]
     assert armed[0] > 120
 
 
