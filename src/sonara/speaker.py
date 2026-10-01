@@ -115,12 +115,23 @@ class Speaker:
                     pass
 
         threading.Thread(target=_synth, name="sonara-synth", daemon=True).start()
+        orphan = None
         while not done.wait(0.05):
             with self._current_lock:
                 if self._cancel_epoch != epoch:
                     state["abandoned"] = True   # helper terminates its proc on arrival
+                    # ...unless it already registered the proc and read
+                    # abandoned=False just before done.set(): then it never
+                    # will, so this side must (F4). Both reads happen under
+                    # the lock, so exactly one side terminates.
+                    orphan = state["proc"]
                     break
         if state["abandoned"]:
+            if orphan is not None:
+                try:
+                    orphan.terminate()
+                except Exception:  # noqa: BLE001 - orphan cleanup must not mask the cancel
+                    pass
             return False
         if state["exc"] is not None:
             raise state["exc"]

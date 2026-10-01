@@ -252,7 +252,7 @@ class SpeechDaemon:
 
     def _enqueue(self, session: str, kind: str, text: str, is_decision: bool,
                  entry=None, mute_exempt: bool = False,
-                 pause_exempt: bool = False, at_front: bool = False) -> None:
+                 pause_exempt: bool = False) -> None:
         item = SpeechItem(
             id=self._alloc_id(),
             session=session,
@@ -264,21 +264,9 @@ class SpeechDaemon:
         )
         if entry is not None:
             self._pending_heard[item.id] = entry
-        ch = self.router.channel(session)
-        if ch.seeded:
-            # Real content replaces the placeholder seed (#118): the seed only
-            # kept the session cycle-reachable while its turn cooked.
-            ch.wipe()
-        if at_front:
-            ch.items.insert(ch.cursor, item)
-        else:
-            ch.items.append(item)
-        # Any-new-content signals, kept in sync for BOTH insert paths (the
-        # direct items.append above bypasses channel.append): the suppression
-        # lift (#115) keys on gen, and new content ends a replay-in-progress
-        # so the next manual landing resumes instead of restarting (#118).
-        ch.gen += 1
-        ch.replaying = False
+        # append() replaces a placeholder seed (#118), bumps gen (the #115
+        # suppression lift) and ends a replay-in-progress (#118).
+        self.router.channel(session).append(item)
         self._wake.set()
 
     def _minqueue(self) -> int:
@@ -326,13 +314,10 @@ class SpeechDaemon:
                 seen = self.sessions.last_seen(sid)
                 if seen is None or (now - seen) > _REHYDRATE_WINDOW_S:
                     continue
-                ch = self.router.channel(sid)
-                ch.append(SpeechItem(id=self._alloc_id(), session=sid,
-                                     kind="summary", text=text,
-                                     is_decision=False))
-                ch.cursor = len(ch.items)       # heard: replay-only, no auto-speak
-                ch.turn_done = True
-                ch.seeded = True                # real content replaces the seed
+                # Heard, replay-only (no auto-speak); real content replaces it.
+                self.router.channel(sid).seed(SpeechItem(
+                    id=self._alloc_id(), session=sid, kind="summary",
+                    text=text, is_decision=False))
                 self._last_digest_text[sid] = text   # Up re-read parity
 
     def _teardown_session(self, session: str) -> None:
@@ -399,12 +384,14 @@ class SpeechDaemon:
             if not (not completed and self._paused.is_set()):
                 return False
             if item.kind == "session_change":
-                self.router._pending_announce = item.session
-                self.router._pending_announce_replay = False
+                # Re-arm all three announce fields (M13): dropping manual
+                # sent a paused manual switch down the deferred auto path.
+                self.router.rearm_announce(item.session, replay=item.replay,
+                                           manual=item.manual)
             else:
                 ch = self.router.channels.get(item.session)
-                if ch is not None and ch.cursor > 0:
-                    ch.cursor -= 1
+                if ch is not None:
+                    ch.rewind()
             self._current_item = None
             return True
 
@@ -714,13 +701,10 @@ class SpeechDaemon:
                 # (#118): a bare-wiped channel fell out of the manual ring
                 # (empty channels are skipped, #117) for the WHOLE turn. The
                 # persisted last digest re-seeds it as an already-heard,
-                # replay-only item; real content replaces it (see _enqueue).
-                ch.append(SpeechItem(id=self._alloc_id(), session=session,
-                                     kind="summary", text=seed,
-                                     is_decision=False))
-                ch.cursor = len(ch.items)
-                ch.turn_done = True
-                ch.seeded = True
+                # replay-only item; real content replaces it.
+                ch.seed(SpeechItem(id=self._alloc_id(), session=session,
+                                   kind="summary", text=seed,
+                                   is_decision=False))
             self._assemblers.pop(session, None)
             self.history.reset(session)
             # A new prompt is the user cancelling this session: advance the cancel
@@ -739,12 +723,23 @@ class SpeechDaemon:
             # finally skips its decrement when its gen is stale (see there).
             self._inflight_digests.pop(session, None)
             self._last_dispatch_token.pop(session, None)
-            self._paused.clear()
+            # A new prompt auto-resumes a paused voice only when it comes from
+            # the session the user hears (upstream #69): a background
+            # session's /loop tick or agent completion also sends FLUSH, and
+            # used to un-pause the voice the user deliberately held.
+            if self._engaged_session() == session:
+                self._paused.clear()
             self._wake.set()
             return None
 
         if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
             old_fg = self.sessions.foreground()
+            # Deliberately NOT gated on a paused voice (upstream #69 / #65):
+            # under the default earcon_only policy a non-foreground session's
+            # live prose is never voiced, so refusing a genuine prompt here
+            # would silently drop its turn. A held voice stays held through
+            # the FLUSH gate, and the cooperative drain keeps the paused
+            # session's interrupted message first on resume.
             self.sessions.set_foreground(session, cwd=msg.get("cwd"))
             if t == MsgType.SESSION_START:
                 self.sessions.register(session, cwd=msg.get("cwd"))
@@ -757,7 +752,7 @@ class SpeechDaemon:
             if old_fg is not None and old_fg != session:
                 old_ch = self.router.channels.get(old_fg)
                 if old_ch is not None and old_ch.pending() > 0:
-                    self.router._replay_authorized.add(old_fg)
+                    self.router.authorize_replay(old_fg)
             return None
 
         if t == MsgType.SESSION_END:
@@ -767,6 +762,10 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.STOP:
+            # Silence everything (M3/F8): flush-to-end first cancels settle
+            # windows, in-flight and parked digests and held questions, so
+            # nothing cooking speaks after the stop; then clear the queues.
+            self._flush_all()
             for s in list(self.router.channels):
                 self._drop_channel_pending(s)
             for ch in self.router.channels.values():
@@ -947,9 +946,12 @@ class SpeechDaemon:
             self.speaker.set_rate(rate)
             save_config(self.config)
             if is_delta:
-                fg = self.sessions.foreground()
-                if fg is not None:
-                    self._enqueue(fg, "prose", "Rate {0}.".format(rate), False)
+                # A control cue (F6): on the session channel it waited behind
+                # minqueue and could wipe the placeholder seed.
+                self._speak_cue(self.sessions.foreground(),
+                                "Rate {0}.".format(rate), exempt_mute=True,
+                                pause_exempt=True, cue_key="rate")
+                self._wake.set()
             return None
 
         if t == MsgType.SET_VOICE:
@@ -1181,7 +1183,7 @@ class SpeechDaemon:
         # (#17). append=False keeps cursor-insert for explicit user replay
         # (Up / repeat), which should read next.
         at = len(ch.items) if append else ch.cursor
-        n = 0
+        items = []
         for e in entries:
             item = SpeechItem(
                 id=self._alloc_id(),
@@ -1191,10 +1193,11 @@ class SpeechDaemon:
                 is_decision=e.kind in ("choice", "plan", "permission"),
             )
             self._pending_heard[item.id] = e
-            ch.items.insert(at, item)
-            at += 1
-            n += 1
-        if n > 0:  # only if we actually inserted items
+            items.append(item)
+        # insert_at replaces a placeholder seed, bumps gen and sets
+        # has_decision for a replayed decision (#137, L-replay-decision).
+        ch.insert_at(at, items)
+        if items:  # only if we actually inserted items
             # Mark channel ready: replayed items should be spoken without
             # waiting for minqueue threshold.
             ch.turn_done = True
@@ -1204,13 +1207,13 @@ class SpeechDaemon:
             # there the handoff IS user-visible, and suppressing it played
             # content unattributed after another session read (audit #21).
             if suppress_announce:
-                self.router._last_active = session
+                self.router.set_last_active(session)
             # Authorize cross-session reading: replay targets that are not the
             # current fg bypass the background-policy gate so their replayed
             # items are voiced (Up / repeat on a non-foreground reader).
             fg = self.sessions.foreground()
             if session != fg:
-                self.router._replay_authorized.add(session)
+                self.router.authorize_replay(session)
         self._wake.set()
 
     def _user_caught_up(self, session: str) -> bool:
@@ -1226,12 +1229,9 @@ class SpeechDaemon:
         post-answer prose ("I want to hear what comes after", #83).
         Caller holds the lock. Returns True when anything was skipped/cut."""
         ch = self.router.channel(session)
-        skipped = 0
-        while ch.cursor < len(ch.items):
-            self._pending_heard.pop(ch.items[ch.cursor].id, None)
-            ch.cursor += 1
-            skipped += 1
-        ch.has_decision = False            # any pending decision was skipped
+        skipped = ch.skip_to_end()         # any pending decision is skipped too
+        for it in skipped:
+            self._pending_heard.pop(it.id, None)
         cur = self._current_item
         cutting = cur is not None and cur.session == session
         if cutting:
@@ -1264,7 +1264,7 @@ class SpeechDaemon:
         if entries:
             self._voiced_upto[session] = entries[-1]
         self._wake.set()
-        return bool(skipped or cutting or dropped)
+        return bool(skipped) or cutting or dropped
 
     def _flush_all(self) -> bool:
         """Flush-to-end (#107): silence everything queued or in flight across
@@ -1290,11 +1290,8 @@ class SpeechDaemon:
             if fn is not None:
                 self._digest_parked[seq] = None    # land the slot dead
                 dropped = True
-        if self._pending_preamble is not None:
-            self._pending_preamble = None
-        if self.router._pending_announce is not None:
-            self.router._pending_announce = None
-            self.router._pending_announce_replay = False
+        self._pending_preamble = None
+        self.router.clear_pending_announce()
         return dropped
 
     def _engaged_session(self):
@@ -1303,7 +1300,7 @@ class SpeechDaemon:
         gaps), else the foreground. After a session-change the active reader differs
         from the foreground, so Up/repeat must operate on what the user
         HEARS, not the last session to submit a prompt."""
-        return (self.router.active or self.router._last_active
+        return (self.router.active or self.router.last_active
                 or self.sessions.foreground())
 
     def _maybe_summarize(self, session: str,
@@ -1372,8 +1369,18 @@ class SpeechDaemon:
                 # speak the short turn via the session channel. It joins the
                 # digest SEQUENCE (#88): a short turn finishing after a long
                 # one must not jump ahead of the long turn's cooking digest.
-                self._land_digest(self._alloc_digest_seq(),
-                                  lambda: self._enqueue_background_digest(session, text))
+                gen = self._summary_gen.get(session, 0)
+
+                def _deliver():
+                    # Runs at RELEASE time, possibly after waiting parked
+                    # behind an earlier digest (F2): the same cancel guard as
+                    # the worker's apply(), so a new prompt or a session end
+                    # in the meantime drops it instead of speaking stale text
+                    # or resurrecting the ended session.
+                    if self._summary_gen.get(session, 0) == gen:
+                        self._enqueue_background_digest(session, text)
+
+                self._land_digest(self._alloc_digest_seq(), _deliver)
             return False                 # spoken synchronously; no need to hold
         # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
         # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
@@ -1648,7 +1655,7 @@ class SpeechDaemon:
                 if not fg:
                     # Let it be voiced + announced regardless of background policy
                     # (earcon_only would otherwise mute a non-foreground session).
-                    self.router._replay_authorized.add(session)
+                    self.router.authorize_replay(session)
                 self._wake.set()
 
             landed = False
@@ -1691,7 +1698,7 @@ class SpeechDaemon:
         ch.turn_done = True
         ch.release_order = self._digest_release_counter   # heard in release order (#88)
         self._digest_release_counter += 1
-        self.router._replay_authorized.add(session)
+        self.router.authorize_replay(session)
         self._wake.set()
 
     def _restart_turn(self, session: str) -> bool:
@@ -1706,15 +1713,14 @@ class SpeechDaemon:
         enqueues after these and continues seamlessly."""
         ids = self.history.message_ids(session)
         if not ids:
-            self._enqueue(session, "prose", "Nothing to navigate yet.", False)
+            # A control cue (F6): on the session channel it wiped the seed.
+            self._speak_cue(session, "Nothing to navigate yet.")
             return False
         self.speaker.cancel()
         # Clear any not-yet-spoken items from the channel so the replay is the
         # sole pending work.
-        ch = self.router.channel(session)
-        for it in ch.items[ch.cursor:]:
+        for it in self.router.channel(session).truncate_pending():
             self._pending_heard.pop(it.id, None)
-        del ch.items[ch.cursor:]
         entries = []
         for mid in ids:
             entries.extend(self.history.entries_for_message(session, mid))
@@ -1749,16 +1755,14 @@ class SpeechDaemon:
         # nothing replayed it; audit #21). They re-queue after the digest,
         # keeping the context-first order.
         preserved = []
-        for it in ch.items[ch.cursor:]:
+        for it in ch.truncate_pending():
             if it.is_decision:
                 preserved.append(it)             # keeps its _pending_heard marker
             else:
                 self._pending_heard.pop(it.id, None)
-        del ch.items[ch.cursor:]
-        if cur is not None and ch.cursor > 0 and ch.items[ch.cursor - 1] is cur:
+        if cur is not None:
             # un-consume the interrupted question so history keeps ONE copy
-            del ch.items[ch.cursor - 1]
-            ch.cursor -= 1
+            ch.unconsume(cur)
         tail = []
         if text:
             tail.append(SpeechItem(
@@ -1767,8 +1771,7 @@ class SpeechDaemon:
         if cur is not None:
             tail.append(cur)                     # the interrupted question, from the top
         tail.extend(preserved)                   # then any still-queued question(s)
-        ch.items[ch.cursor:ch.cursor] = tail
-        ch.has_decision = any(it.is_decision for it in ch.items[ch.cursor:])
+        ch.insert_at(ch.cursor, tail)            # sets has_decision for a question
         ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
         self._wake.set()
         return True
@@ -1882,10 +1885,7 @@ class SpeechDaemon:
         if ch.caught_up():
             ch.wipe()                      # control cues don't replay; keep it small
         elif cue_key is not None:
-            stale = [i for i in range(ch.cursor, len(ch.items))
-                     if ch.items[i].cue_key == cue_key]
-            for i in reversed(stale):
-                ch.items.pop(i)
+            ch.remove_pending(lambda it: it.cue_key == cue_key)
         if cue_key is not None:
             cur = self._current_item
             if cur is not None and getattr(cur, "cue_key", None) == cue_key:
@@ -2179,9 +2179,7 @@ class SpeechDaemon:
         if muted:
             # A dropped item also drops a pending alert for its session: mute
             # silences handoffs, so the deferred chime + announcement go too.
-            if (self._pending_preamble is not None
-                    and self._pending_preamble[0] == item.session):
-                self._pending_preamble = None
+            self._drop_preamble_for(item.session)
             return
         if item.kind == "session_change":
             if item.manual:
@@ -2229,12 +2227,17 @@ class SpeechDaemon:
         # then the normal duck/pause engage. #90's "announcement never ducks" is
         # preserved: the alert cue itself is played WITHOUT on_play, and the duck/
         # pause engage happens for the CONTENT, after the alert.
+        # Read the alert ONCE under the lock (L-preamble): on_play and
+        # _flush_all clear it from other threads, and a None landing between
+        # a check and the subscript raised TypeError in the speak loop.
         preamble = None
-        if self._pending_preamble is not None:
-            if self._pending_preamble[0] == item.session:
-                preamble = self._pending_preamble[1]
-            else:
-                self._pending_preamble = None   # stale alert for another session: drop it
+        with self._lock:
+            pending = self._pending_preamble
+            if pending is not None:
+                if pending[0] == item.session:
+                    preamble = pending[1]
+                else:
+                    self._pending_preamble = None   # stale alert for another session: drop it
         if preamble is not None:
             cue_voice = self._cue_voice()
             rate = config_schema.get(self.config, "rate")
@@ -2271,8 +2274,14 @@ class SpeechDaemon:
             # otherwise it would resurface on a later utterance for the same session
             # (#94). If on_play already played the alert, _pending_preamble is None
             # and this is a no-op.
-            if (self._pending_preamble is not None
-                    and self._pending_preamble[0] == item.session):
+            self._drop_preamble_for(item.session)
+
+    def _drop_preamble_for(self, session) -> None:
+        """Drop a deferred handoff alert armed for *session*. Check-then-act
+        under the lock (L-preamble): on_play clears it from the synth thread."""
+        with self._lock:
+            pending = self._pending_preamble
+            if pending is not None and pending[0] == session:
                 self._pending_preamble = None
 
     def _handle_conn(self, conn) -> None:

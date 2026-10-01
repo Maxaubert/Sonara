@@ -87,6 +87,23 @@ def main() -> None:
         client.ensure_daemon()
     except Exception:
         pass
+    # One event's messages travel on ONE connection, in order: the daemon
+    # serves each connection on its own thread, so separate connections let
+    # it apply FLUSH before SET_FOREGROUND, or CHOICE before its EARCON.
+    send_many = getattr(client, "send_many", None)
+    if send_many is not None:
+        try:
+            send_many(msgs)
+            return
+        except getattr(client, "DaemonNotRunning", ()):
+            pass        # nothing was sent: the per-message path retries
+        except Exception:
+            # Part of the batch may already be applied (a FLUSH, a CHOICE):
+            # resending it one by one would apply it twice.
+            return
+    # Fallback (an older client module, or the daemon was not reachable): one
+    # connection per message, each failure contained so later messages are
+    # still attempted.
     for m in msgs:
         try:
             client.send(m)

@@ -13,12 +13,24 @@ Environment variables:
   SONARA_FAKE_RAISE_ON      -- integer N; raise only on send call with exact
                                index N (0-indexed); all other calls succeed.
   SONARA_FAKE_SENT_LOG      -- path to append sent messages as newline-delimited JSON.
+  SONARA_FAKE_BATCH_RAISE   -- send_many raises DaemonNotRunning (nothing was
+                               sent, so the hook falls back to one send per
+                               message).
+  SONARA_FAKE_BATCH_PARTIAL -- send_many logs the FIRST message, then raises
+                               OSError: a partial write the hook must not resend.
+  SONARA_FAKE_NO_BATCH      -- no send_many at all (an older client module).
+  SONARA_FAKE_BATCH_LOG     -- path to append one JSON list of message types
+                               per send_many call.
 """
 import json
 import os
 
 # Module-level call counter so the subprocess-level state resets for each run.
 _send_call_count = 0
+
+
+class DaemonNotRunning(OSError):
+    pass
 
 
 def ensure_daemon(timeout: float = 3.0) -> None:
@@ -57,3 +69,29 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
         with open(log, "a") as f:
             f.write(json.dumps(msg) + "\n")
     return None
+
+
+def send_many(msgs, timeout: float = 2.0) -> None:
+    if os.environ.get("SONARA_FAKE_RAISE"):
+        raise RuntimeError("forced send_many failure")
+    if os.environ.get("SONARA_FAKE_BATCH_RAISE"):
+        raise DaemonNotRunning("forced send_many failure")
+    if os.environ.get("SONARA_FAKE_BATCH_PARTIAL"):
+        log = os.environ.get("SONARA_FAKE_SENT_LOG")
+        if log and msgs:
+            with open(log, "a") as f:
+                f.write(json.dumps(msgs[0]) + "\n")
+        raise OSError("forced partial send_many write")
+    batch_log = os.environ.get("SONARA_FAKE_BATCH_LOG")
+    if batch_log:
+        with open(batch_log, "a") as f:
+            f.write(json.dumps([m.get("type") for m in msgs]) + "\n")
+    log = os.environ.get("SONARA_FAKE_SENT_LOG")
+    if log:
+        with open(log, "a") as f:
+            for m in msgs:
+                f.write(json.dumps(m) + "\n")
+
+
+if os.environ.get("SONARA_FAKE_NO_BATCH"):
+    del send_many

@@ -14,3 +14,4 @@ class SpeechItem:
     pause_exempt: bool = False  # spoken even while the loop is paused (e.g. "Paused.")
     cue_key: "str | None" = None  # coalescing key: a new cue supersedes pending/speaking cues with the same key (slider spam)
     manual: bool = False  # session_change only: armed by a manual NEXT_SESSION press -> spoken immediately in the cue voice, not deferred to content on_play (#111)
+    replay: bool = False  # session_change only: announces a replay ("reading again"); a pause re-arms it as-is (M13)

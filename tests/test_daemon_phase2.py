@@ -20,12 +20,15 @@ def test_set_rate_delta_increments_and_announces():
     daemon.handle_message(_msg(MsgType.SET_RATE, "fg", delta=25))
     assert config["rate"] == 225
     assert speaker.rates[-1] == 225
-    # the confirmation is enqueued for the foreground session
+    # the confirmation is a control cue (F6, #137): it never lands on the
+    # session channel, where it waited behind minqueue and wiped the seed
+    from sonara.router import CONTROL
     item = queue.pop_next()
     assert item is not None
     assert item.text == "Rate 225."
-    assert item.session == "fg"
+    assert item.session == CONTROL
     assert item.is_decision is False
+    assert daemon.router.channel("fg").items == []
 
 
 def test_set_rate_delta_negative_decrements():
@@ -67,8 +70,8 @@ def test_set_rate_delta_no_foreground_still_updates_rate():
     daemon.handle_message(_msg(MsgType.SET_RATE, delta=25))
     assert config["rate"] == 225
     assert speaker.rates[-1] == 225
-    # no foreground => nothing enqueued
-    assert len(queue) == 0
+    # no foreground: the control cue still confirms the change
+    assert queue.pop_next().text == "Rate 225."
 
 
 # ---------------------------------------------------------------------------

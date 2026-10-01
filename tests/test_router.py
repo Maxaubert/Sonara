@@ -340,3 +340,68 @@ def test_manual_return_clears_suppression_and_resumes_from_cursor():
     assert target == "A" and replay is False       # unread tail -> resume, not replay
     assert not r._is_suppressed("A")               # manual return clears suppression
     assert r.channels["A"].cursor == 1             # resumes where it left off
+
+
+# --- public mutation methods (M13, #137): the daemon never writes the
+# router's private fields directly ---
+
+def test_rearm_announce_restores_all_three_fields():
+    r, s = _router()
+    s._folders = {"A": "alpha"}
+    r.channel("A").append(_item("A", "a1"))
+    r.active = "A"
+    r.rearm_announce("A", replay=True, manual=True)
+    ann = r.next_item()
+    assert ann.kind == "session_change"
+    assert ann.text == "Session changed: alpha, reading again."
+    assert ann.manual is True and ann.replay is True
+
+
+def test_announce_item_carries_its_replay_flag():
+    r, s = _router()
+    s._folders = {"A": "alpha", "B": "beta"}
+    r.channel("A").append(_item("A", "a1"))
+    r.channel("B").append(_item("B", "b1"))
+    r.channel("A").turn_done = True
+    r.channel("B").turn_done = True
+    target, replay = r.next_session()
+    ann = r.next_item()
+    assert ann.kind == "session_change" and ann.replay == replay
+    assert ann.manual is True
+
+
+def test_clear_pending_announce_drops_an_armed_switch():
+    r, s = _router()
+    r.channel("A").append(_item("A", "a1"))
+    r.channel("A").turn_done = True
+    s._fg = "A"
+    r.rearm_announce("A", replay=True, manual=True)
+    r.clear_pending_announce()
+    assert r.next_item().text == "a1"         # no announcement left
+    r.rearm_announce("A")
+    r.clear_pending_announce()
+    assert r._pending_announce is None
+    assert r._pending_announce_replay is False
+    assert r._pending_announce_manual is False
+
+
+def test_authorize_replay_bypasses_the_background_gate():
+    r, s = _router()
+    s._fg = "A"
+    s.should_speak = lambda sid: sid == "A"
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    assert r.next_item() is None
+    r.authorize_replay("B")
+    assert r.next_item().text == "b1"
+
+
+def test_set_last_active_suppresses_the_handoff_announcement():
+    r, s = _router()
+    s._fg = "A"
+    a = r.channel("A"); a.append(_item("A", "a1")); a.turn_done = True
+    assert r.next_item().text == "a1"
+    b = r.channel("B"); b.append(_item("B", "b1")); b.turn_done = True
+    r.authorize_replay("B")
+    r.set_last_active("B")
+    assert r.last_active == "B"
+    assert r.next_item().text == "b1"         # no "Session changed" first

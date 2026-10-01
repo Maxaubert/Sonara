@@ -74,7 +74,7 @@ class ChannelQueueProxy:
         # any session and read them back via pop_next() (unit-test infrastructure).
         fg = self._daemon.sessions.foreground()
         if item.session != fg:
-            self._daemon.router._replay_authorized.add(item.session)
+            self._daemon.router.authorize_replay(item.session)
         self._daemon._wake.set()
 
     def pop_next(self):
