@@ -174,3 +174,17 @@ def test_uninstall_kokoro_removes_venv_idempotently(monkeypatch, tmp_path):
     kp.uninstall_kokoro()
     assert not venv.exists()
     kp.uninstall_kokoro()  # second call must not raise
+
+
+def test_provision_reuses_an_existing_venv(monkeypatch, tmp_path):
+    """E10: re-running `voices install` upgrades the packages in place; it
+    never recreates (and so first deletes) a venv that already works."""
+    py = tmp_path / "venv" / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(paths, "KOKORO_VENV", tmp_path / "venv")
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: str(py))
+    cmds = []
+    kp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd))
+    assert not any(c[1] == "venv" for c in cmds)
+    assert any(c[1:3] == ["pip", "install"] for c in cmds)

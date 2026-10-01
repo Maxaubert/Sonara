@@ -81,9 +81,12 @@ def requirements_path() -> str:
 def provision(uv: str, run=subprocess.check_call) -> None:
     """Create the uv-managed venv (downloading CPython 3.12 if absent) and install
     the pinned Kokoro stack into it. Raises subprocess.CalledProcessError on failure
-    (the caller aborts without rewiring the daemon)."""
+    (the caller aborts without rewiring the daemon). An existing venv is
+    reused and its packages upgraded in place: recreating it would first
+    delete a working one (E10)."""
     venv_dir = str(paths.KOKORO_VENV)
-    run([uv, "venv", venv_dir, "--python", "3.12"])
+    if not os.path.exists(paths.kokoro_venv_python()):
+        run([uv, "venv", venv_dir, "--python", "3.12"])
     run([uv, "pip", "install", "--python", paths.kokoro_venv_python(),
          "-r", requirements_path()])
 

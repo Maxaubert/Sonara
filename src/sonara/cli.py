@@ -929,6 +929,25 @@ def _cmd_uninstall(_args) -> int:
     return uninstall()
 
 
+def _stopped_state_restorer():
+    """Snapshot whether Sonara runs now, for a command that stops it and may
+    then fail: the returned callable starts it again if it was running, or
+    removes the stop sentinel the command's own stop_sonara wrote, so a
+    failure never leaves Sonara off. An earlier explicit shutdown stays."""
+    was_running = paths.socket_connectable()
+    was_shut_down = os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
+
+    def restore():
+        if was_running:
+            start_sonara()
+        elif not was_shut_down:
+            try:
+                os.remove(str(paths.STOPPED_SENTINEL_PATH))
+            except OSError:
+                pass
+    return restore
+
+
 def _cmd_voices_install(_args) -> int:
     """Provision the Kokoro venv and re-wire the daemon onto it."""
     from sonara import kokoro_provision as kp
@@ -938,6 +957,12 @@ def _cmd_voices_install(_args) -> int:
         _print_no_plugin_root()
         return 1
     paths.ensure_sonara_dir()
+    # E10: the daemon may be running on this very venv's pythonw, whose files
+    # are then locked. Stop it first, and only ever remove a venv this run
+    # created: a failed re-run or upgrade keeps the one that worked.
+    existed = kp.neural_enabled()
+    restore = _stopped_state_restorer()
+    stop_sonara()
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
         # Pass the running package's root as PYTHONPATH so predownload_model can
@@ -945,14 +970,25 @@ def _cmd_voices_install(_args) -> int:
         # machine APP_DIR is empty). repo_root()/src was ~/.sonara/src, which
         # does not exist, when this ran from the deployed copy (E6).
         kp.install_kokoro(paths.package_root())
-    except Exception as exc:  # noqa: BLE001 - report, do not half-wire
-        print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
-        kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
-        return 1
-    except BaseException:
-        # Ctrl+C / kill mid-download: still revert so neural_enabled() cannot be
-        # left True over a half-built venv (audit #21).
-        kp.uninstall_kokoro()
+    except BaseException as exc:
+        # Ctrl+C / kill mid-download too: a venv this run created is reverted
+        # so neural_enabled() cannot be left True over a half-built one
+        # (audit #21).
+        if isinstance(exc, Exception):
+            print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
+        if existed:
+            if isinstance(exc, Exception):
+                print("Kept your existing neural voices in {0}.".format(
+                    paths.KOKORO_VENV), file=sys.stderr)
+        else:
+            try:
+                kp.uninstall_kokoro()
+            except Exception as rm_exc:  # noqa: BLE001 - never mask the cause
+                print("Could not remove the half-built {0}: {1}".format(
+                    paths.KOKORO_VENV, rm_exc), file=sys.stderr)
+        restore()
+        if isinstance(exc, Exception):
+            return 1
         raise
     rc = install()  # re-wires the daemon onto the venv python (neural_enabled() now True)
     if rc == 0 and kp.neural_healthy(str(paths.APP_DIR)):
@@ -1003,18 +1039,7 @@ def _cmd_cleanup(_args) -> int:
             paths.SONARA_DIR))
         return 0
     total = sum(size for _p, size in found)
-    was_running = paths.socket_connectable()
-    was_shut_down = os.path.exists(str(paths.STOPPED_SENTINEL_PATH))
-
-    def restore():
-        if was_running:
-            start_sonara()
-        elif not was_shut_down:
-            try:   # stop_sonara wrote it; leave hook lazy-start working as before
-                os.remove(str(paths.STOPPED_SENTINEL_PATH))
-            except OSError:
-                pass
-
+    restore = _stopped_state_restorer()
     if not stop_sonara():
         # stop_sonara already wrote the sentinel and ended the task: undo
         # that, or a daemon that later exits would never come back.
