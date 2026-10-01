@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import pytest
 from sonara import paths, kokoro_provision as kp
@@ -47,6 +48,7 @@ def test_ensure_uv_bootstraps_via_pip_when_absent(tmp_path):
         run=fake_run,
         base_python="python.exe",
         user_scripts=lambda py: str(scripts_dir),
+        py_env=lambda py: {},                        # a plain system Python
     )
     assert got == str(scripts_dir / "uv.exe")
     assert any("pip" in c and "uv" in c for c in calls)  # bootstrap ran
@@ -56,7 +58,8 @@ def test_ensure_uv_raises_actionable_when_unfindable(tmp_path):
     with pytest.raises(RuntimeError) as ei:
         kp.ensure_uv(which=lambda name: None, run=lambda *a, **k: None,
                      base_python="/usr/bin/python3",
-                     user_scripts=lambda py: str(tmp_path))  # no uv ever appears
+                     user_scripts=lambda py: str(tmp_path),  # no uv ever appears
+                     py_env=lambda py: {})
     assert "uv" in str(ei.value).lower()
 
 
@@ -68,8 +71,32 @@ def test_ensure_uv_windows_uses_scripts_uv_exe(monkeypatch, tmp_path):
         run=lambda *a, **k: None,
         base_python="py",
         user_scripts=lambda py: str(tmp_path),
+        py_env=lambda py: {},
     )
     assert got == str(tmp_path / "uv.exe")
+
+
+def test_ensure_uv_uses_the_bootstrap_uv_in_sonara_tools():
+    # E2-uv: the zero-Python bootstrap downloads uv to ~/.sonara/tools and
+    # never puts it on PATH; voices install must find it there.
+    tools = paths.SONARA_DIR / "tools"
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "uv.exe").write_text("")
+    got = kp.ensure_uv(which=lambda name: None,
+                       run=lambda *a, **k: pytest.fail("must not pip-install uv"),
+                       py_env=lambda py: pytest.fail("must not probe"))
+    assert got == str(tools / "uv.exe")
+
+
+def test_ensure_uv_never_pip_user_installs_on_an_externally_managed_python():
+    # A uv-managed (PEP 668) Python refuses `pip install --user` (E1): say
+    # what to do instead of running it.
+    with pytest.raises(RuntimeError) as ei:
+        kp.ensure_uv(which=lambda name: None,
+                     run=lambda *a, **k: pytest.fail("must not run pip"),
+                     base_python="managed-python.exe",
+                     py_env=lambda py: {"managed": True})
+    assert "uv" in str(ei.value).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +119,33 @@ def test_provision_runs_uv_venv_then_pip_install(monkeypatch, tmp_path):
     assert cmds[0] == ["/bin/uv", "venv", str(tmp_path / "venv"), "--python", "3.12"]
     assert cmds[1][:4] == ["/bin/uv", "pip", "install", "--python"]
     assert "-r" in cmds[1] and kp.requirements_path() in cmds[1]
+
+
+def _existing_venv(monkeypatch, tmp_path):
+    venv = tmp_path / "venv"
+    py = venv / "Scripts" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(paths, "KOKORO_VENV", venv)
+    monkeypatch.setattr(paths, "kokoro_venv_python", lambda: str(py))
+    return venv
+
+
+def test_provision_rebuilds_a_venv_whose_python_cannot_start(monkeypatch, tmp_path):
+    # E10: the base interpreter is gone (uv python uninstall, moved
+    # %APPDATA%): the python.exe stub stays but cannot start, so reusing the
+    # venv failed forever and doctor's advice looped.
+    venv = _existing_venv(monkeypatch, tmp_path)
+    removed, cmds = [], []
+
+    def rmtree(p):
+        removed.append(p)
+        shutil.rmtree(p)
+    kp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd),
+                 starts=lambda py: False, rmtree=rmtree)
+    assert removed == [str(venv)]
+    assert cmds[0] == ["/bin/uv", "venv", str(venv), "--python", "3.12"]
+    assert cmds[1][:3] == ["/bin/uv", "pip", "install"]
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +239,8 @@ def test_provision_reuses_an_existing_venv(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "KOKORO_VENV", tmp_path / "venv")
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: str(py))
     cmds = []
-    kp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd))
+    kp.provision("/bin/uv", run=lambda cmd, **k: cmds.append(cmd),
+                 starts=lambda p: True,
+                 rmtree=lambda p: pytest.fail("must not delete a working venv"))
     assert not any(c[1] == "venv" for c in cmds)
     assert any(c[1:3] == ["pip", "install"] for c in cmds)
