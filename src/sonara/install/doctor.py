@@ -9,6 +9,7 @@ import time
 from sonara import config_schema, install_record, keymap, paths
 from sonara import platform as sonara_platform
 from sonara.install import deps
+from sonara.platform.base import DOCTOR_WARN  # noqa: F401 - the CLI reads it here
 from sonara.protocol import MsgType, PROTOCOL_VERSION
 
 

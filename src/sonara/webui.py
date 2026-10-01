@@ -69,6 +69,11 @@ def _unbind_action(action):
     keymap.unbind_action(action)
 
 
+def _reset_keymap():
+    from sonara import keymap
+    keymap.reset_keymap()
+
+
 def _installed_voices() -> dict:
     """Voices grouped by engine. Lazy imports; each group degrades to []."""
     from sonara import kokoro
@@ -125,14 +130,30 @@ def _key_names() -> dict:
         return {"keys": [], "mods": []}
 
 
+def _altgr_chars(km: dict) -> dict:
+    """action -> the character its hotkey takes away as AltGr on the current
+    keyboard layout (E16, #160), for the page's per-row warning. Empty when
+    the platform has no AltGr or the check fails: never breaks the page."""
+    try:
+        from sonara import keymap
+        from sonara.platform import get_platform
+        resolved = keymap.resolve_keymap(km)
+        found = get_platform().hotkey.altgr_conflicts(resolved)
+        return {action: ch for action, _combo, ch in found}
+    except Exception:  # noqa: BLE001 - diagnostics only
+        return {}
+
+
 def _keymap_state() -> list:
     from sonara import keymap
     km = keymap.load_keymap()
+    altgr = _altgr_chars(km)
     out = []
     for action in keymap.ACTION_MESSAGES:
         b = km.get(action) or {}
         out.append({"action": action, "key": b.get("key"),
-                    "mods": list(b.get("mods", []))})
+                    "mods": list(b.get("mods", [])),
+                    "altgr": altgr.get(action)})
     return out
 
 
@@ -335,7 +356,9 @@ def _make_handler(server: SettingsServer):
         def _handle_keymap(self, payload):
             action = payload.get("action")
             try:
-                if payload.get("unbind"):
+                if payload.get("reset"):
+                    _reset_keymap()
+                elif payload.get("unbind"):
                     _unbind_action(action)
                 else:
                     _bind_action(action, payload.get("key"),

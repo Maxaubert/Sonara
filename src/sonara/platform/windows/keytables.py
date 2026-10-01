@@ -13,6 +13,8 @@ KEY_CODES = {
     "up": 0x26, "uparrow": 0x26,
     "right": 0x27, "rightarrow": 0x27,
     "down": 0x28, "downarrow": 0x28,
+    # Navigation block: Home/End are the default restart/flush keys (#160).
+    "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
 }
 # Every letter and digit (#38): the table used to cover only 9 letters, so a
 # hotkey captured on the settings page with any other letter persisted a name
@@ -32,8 +34,12 @@ MOD_MASKS = {
 # MOD_NOREPEAT (0x4000) is OR-ed in at register time, not part of a chord.
 MOD_NOREPEAT = 0x4000
 
-# Default chord: Ctrl+Alt avoids Win-reserved and terminal shortcuts. It does
-# NOT avoid AltGr: AltGr arrives as LCtrl+RAlt, so on layouts with AltGr
-# characters (German AltGr+M types the micro sign, Polish letters) a Ctrl+Alt hotkey eats that
-# character. `sonara doctor` checks the active layout (E16); rebind with Win.
-DEFAULT_MODS = ["ctrl", "alt"]
+# Default chord: Win+Alt (#160). Ctrl+Alt was the default until 0.7.0, but
+# AltGr arrives as LCtrl+RAlt, so on layouts with AltGr characters (Norwegian
+# and German AltGr+M type the micro sign, Polish letters) a Ctrl+Alt hotkey
+# eats that character (E16). A Win chord never matches AltGr. Windows 11 owns
+# several Win+Alt chords (arrows snap windows, M/R/G/T/B/PrtScn belong to Game
+# Bar and HDR, D/K/H/digits to the shell), so the default KEYS in keymap.py
+# avoid them. RegisterHotKey suppresses the Start menu on the Win key-up of a
+# chord it delivered, so no extra handling is needed.
+DEFAULT_MODS = ["win", "alt"]

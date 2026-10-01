@@ -266,6 +266,40 @@ def test_keymap_unbind(server, monkeypatch):
     assert d.messages[-1]["type"] == "reload_keymap"
 
 
+def test_keymap_reset_restores_defaults_and_reloads(server, monkeypatch):
+    """#160: the settings page's 'Reset hotkeys to defaults' action."""
+    d, s = server
+    resets = []
+    monkeypatch.setattr(webui, "_reset_keymap", lambda: resets.append(True))
+    r = _post(s, "/api/keymap", {"reset": True})
+    assert r.status == 200
+    assert resets == [True]
+    assert d.messages[-1]["type"] == "reload_keymap"
+
+
+def test_keymap_state_flags_altgr_collisions(tmp_path, monkeypatch):
+    """#160: the hotkey editor shows the AltGr warning next to the binding
+    that eats a character, and nothing next to the others."""
+    import sonara.platform as platform
+    from sonara import keymap
+    from sonara.platform.windows.hotkeys import WinHotkeyBackend
+    monkeypatch.setattr(platform.sys, "platform", "win32")
+    platform._CACHE = None
+    km = tmp_path / "keymap.json"
+    km.write_text(json.dumps({"mute": {"key": "m", "mods": ["ctrl", "alt"]}}),
+                  encoding="utf-8")
+    monkeypatch.setattr(keymap, "KEYMAP_PATH", km)
+    norwegian = {0x4D: "\u00b5"}                 # AltGr+M types the micro sign
+    monkeypatch.setattr(WinHotkeyBackend, "_altgr_char",
+                        lambda self, vk, shift: norwegian.get(vk))
+    try:
+        rows = {row["action"]: row for row in webui._keymap_state()}
+    finally:
+        platform._CACHE = None
+    assert rows["mute"]["altgr"] == "\u00b5"
+    assert rows["nav_start"]["altgr"] is None    # Win+Alt default: never AltGr
+
+
 def test_keymap_bad_action_is_400(server, monkeypatch):
     d, s = server
     def boom(a, k, m):

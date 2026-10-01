@@ -13,8 +13,15 @@ def test_mod_masks_are_registerhotkey_fsmodifiers():
     assert wk.MOD_MASKS["shift"] == 0x0004 and wk.MOD_MASKS["win"] == 0x0008
 
 
-def test_default_mods_is_ctrl_alt():
-    assert wk.DEFAULT_MODS == ["ctrl", "alt"]
+def test_default_mods_is_win_alt():
+    # #160: Ctrl+Alt is AltGr on European layouts (it ate the micro sign on
+    # AltGr+M); a Win chord never matches AltGr.
+    assert wk.DEFAULT_MODS == ["win", "alt"]
+
+
+def test_home_end_and_page_keys_are_bindable():
+    assert wk.KEY_CODES["home"] == 0x24 and wk.KEY_CODES["end"] == 0x23
+    assert wk.KEY_CODES["pageup"] == 0x21 and wk.KEY_CODES["pagedown"] == 0x22
 
 
 def test_arrow_key_vk_codes():

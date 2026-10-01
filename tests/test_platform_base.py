@@ -58,6 +58,10 @@ def test_base_hotkey_lifecycle_defaults_are_noops():
     assert hk.doctor_rows() == []
 
 
+def test_base_hotkey_reports_no_altgr_conflicts():
+    assert _BareHotkey().altgr_conflicts([{"action": "mute"}]) == []
+
+
 def test_recover_audio_sweeps_the_ducker_and_the_pauser():
     calls = []
 

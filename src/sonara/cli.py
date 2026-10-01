@@ -171,6 +171,18 @@ def _combo_label(modifiers: int, key_code: int) -> str:
 def _cmd_keymap(args) -> int:
     action = getattr(args, "action", None)
     value = getattr(args, "value", None)
+    # `keymap --reset` -> every binding back to the current defaults (#160).
+    if getattr(args, "reset", False):
+        if action or value:
+            print("sonara: usage: sonara keymap --reset", file=sys.stderr)
+            return 2
+        keymap.reset_keymap()
+        try:                                  # apply live; harmless if daemon is down
+            _send({"v": PROTOCOL_VERSION, "type": MsgType.RELOAD_KEYMAP})
+        except Exception:  # noqa: BLE001 - the keymap.json write is what matters
+            pass
+        print("Hotkeys reset to the defaults.")
+        return _cmd_keymap(argparse.Namespace(action=None, value=None, reset=False))
     # `keymap <action> clear|none` -> unbind that action.
     if action:
         if value not in ("clear", "none"):
@@ -256,7 +268,11 @@ def _cmd_doctor(_args) -> int:
     rows = doctor.doctor()
     all_ok = True
     for check, ok, detail in rows:
-        mark = "ok " if ok else "FAIL"
+        if ok == doctor.DOCTOR_WARN:
+            mark = "warn"               # shown, but never fails the exit code
+            ok = True
+        else:
+            mark = "ok " if ok else "FAIL"
         line = f"[{mark}] {check}: {detail}"
         try:
             print(line)
@@ -340,9 +356,12 @@ def _register_local(sub) -> None:
         func=_cmd_daemon)
     sp = sub.add_parser(
         "keymap",
-        help="list hotkey bindings (incl. unbound); '<action> clear' to unbind")
+        help="list hotkey bindings (incl. unbound); '<action> clear' to unbind; "
+             "--reset for the defaults")
     sp.add_argument("action", nargs="?", help="action to unbind")
     sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
+    sp.add_argument("--reset", action="store_true",
+                    help="replace every binding with the defaults (Win+Alt)")
     sp.set_defaults(func=_cmd_keymap)
     sub.add_parser(
         "cleanup",

@@ -284,3 +284,64 @@ def test_win_key_is_captured_as_the_win_modifier(live, monkeypatch):
     d, s = live
     _capture(s, "Meta+Alt+x")
     assert binds == [("mute", "x", ("alt", "win"))]
+
+
+def test_reset_hotkeys_to_defaults_posts_reset_after_confirm(live, monkeypatch):
+    """#160: existing installs keep their Ctrl+Alt keymap.json; the page's
+    'Reset hotkeys to defaults' moves them to the Win+Alt defaults."""
+    resets = []
+    monkeypatch.setattr(webui, "_reset_keymap", lambda: resets.append(True))
+    d, s = live
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        dialogs = []
+        page.on("dialog", lambda dlg: (dialogs.append(dlg.message), dlg.accept()))
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='hotkeys']")
+        page.click("#keymap-reset")
+        page.wait_for_timeout(400)
+        browser.close()
+    assert resets == [True]
+    assert dialogs and "Win+Alt" in dialogs[0]
+    assert d.messages[-1]["type"] == "reload_keymap"
+
+
+def test_reset_hotkeys_cancelled_changes_nothing(live, monkeypatch):
+    resets = []
+    monkeypatch.setattr(webui, "_reset_keymap", lambda: resets.append(True))
+    d, s = live
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.on("dialog", lambda dlg: dlg.dismiss())
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='hotkeys']")
+        page.click("#keymap-reset")
+        page.wait_for_timeout(400)
+        browser.close()
+    assert resets == []
+
+
+def test_altgr_collision_warning_shows_next_to_the_binding(live, monkeypatch):
+    """#160: the page names the character a Ctrl+Alt hotkey eats, next to
+    that binding only."""
+    monkeypatch.setattr(webui, "_keymap_state", lambda: [
+        {"action": "mute", "key": "m", "mods": ["ctrl", "alt"], "altgr": "\u00b5"},
+        {"action": "flush", "key": "end", "mods": ["win", "alt"], "altgr": None}])
+    d, s = live
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.goto(f"http://127.0.0.1:{s.port}/settings?token=tok123")
+        page.wait_for_selector("#voice-select option", state="attached")
+        page.click("button[data-page='hotkeys']")
+        mute_warn = page.locator("[data-action='mute'] .altgr-warn")
+        mute_warn.wait_for(state="visible")
+        text = mute_warn.text_content()
+        flush_visible = page.locator("[data-action='flush'] .altgr-warn").is_visible()
+        browser.close()
+    assert "\u00b5" in text and "Reset hotkeys to defaults" in text
+    assert flush_visible is False
