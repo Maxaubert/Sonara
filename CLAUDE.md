@@ -24,11 +24,11 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
   2. `PYTHONPATH=src python -c "from sonara.cli import _copy_app; _copy_app(r'<repo>')"`
   3. If only `sonara.old` / `sonara.new` remain (#127), rename `sonara.new` to `sonara`.
   4. `PYTHONPATH=~/.sonara/app python -m sonara.cli start` (starting with `PYTHONPATH=src` runs the REPO copy).
-- Hooks run through Git Bash: `bin/sonara-hook` under console `python.exe`. `bin/sonara-hook.cmd` is not used by `hooks/hooks.json`.
+- Hooks run through Git Bash: `bin/sonara-hook-run` picks the interpreter (`~/.sonara/python.path`, then a non-Store PATH python, then `py -3`) and runs `bin/sonara-hook` on it. `bin/sonara-hook.cmd` is not used by `hooks/hooks.json`. settings.json installs get exec-form hooks generated from `hooks/hooks.json`.
 - Logs: `~/.sonara/speechd.log`, `~/.sonara/faulthandler.log`. Config: `~/.sonara/config.json`; change keys live with POST `http://127.0.0.1:27431/api/set` and the token in `~/.sonara/webui.token`.
 
 ## Architecture map
-- `hooks/hooks.json` -> `bin/sonara-hook` -> `hooks_entry.py` (pure event translation) -> `client.py` -> TCP (token in `~/.sonara/daemon.lock`) -> `daemon.py`.
+- `hooks/hooks.json` -> `bin/sonara-hook-run` -> `bin/sonara-hook` -> `hooks_entry.py` (pure event translation) -> `client.py` -> TCP (token in `~/.sonara/daemon.lock`) -> `daemon.py`.
 - `daemon.py`: message handling, speak loop, summary pipeline, hotkeys, audio. `router.py` + `channel.py`: per-session channels. `speaker.py`: playback and cancel epochs.
 - `assembler.py`, `cleaner.py`: text to spoken items. `summarizer.py`: `claude -p` / `codex exec` digests.
 - Persisted state under `~/.sonara`, every path via `paths.py`: history, sessions, session prefs, digests.

@@ -12,6 +12,7 @@ import types
 class FakeSupervisor:
     def __init__(self, python="PYEXE", rows=None, hooks_row=None):
         self.calls = []
+        self.plugin_roots = []
         self._py = python
         self._rows = rows if rows is not None else [("os-row", True, "ok")]
         self._hooks_row = hooks_row or ("hooks installed", True, "ok")
@@ -22,8 +23,9 @@ class FakeSupervisor:
     def _probe_python_version(self, p):
         return (3, 12)
 
-    def install(self, py, app):
+    def install(self, py, app, plugin_root=None):
         self.calls.append(("install", py, app))
+        self.plugin_roots.append(plugin_root)
 
     def uninstall(self):
         self.calls.append(("uninstall",))

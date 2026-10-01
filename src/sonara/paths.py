@@ -31,8 +31,9 @@ PYTHONW_RECORD_PATH = SONARA_DIR / "pythonw.path"   # recorded windowless python
 def _read_recorded(record: "Path") -> "str | None":
     """The interpreter path written in *record*, iff it still exists as a file."""
     try:
-        path = record.read_text(encoding="utf-8").strip()
-    except OSError:
+        # utf-8-sig: records written by Windows PowerShell 5.1 carry a BOM (M14).
+        path = record.read_text(encoding="utf-8-sig").strip()
+    except (OSError, ValueError):
         return None
     return path if path and Path(path).is_file() else None
 

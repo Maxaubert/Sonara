@@ -8,7 +8,7 @@ from sonara import kokoro_provision as kp
 def test_voices_install_provisions_then_rewires_daemon(monkeypatch, tmp_path):
     order = []
     monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
-    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "package_root", lambda: os.path.join(str(tmp_path), "src"))
     monkeypatch.setattr(kp, "install_kokoro", lambda pythonpath: order.append(("provision", pythonpath)))
     monkeypatch.setattr(kp, "neural_healthy", lambda app_dir: True)
     monkeypatch.setattr(cli, "install", lambda: order.append("install") or 0)
@@ -17,12 +17,13 @@ def test_voices_install_provisions_then_rewires_daemon(monkeypatch, tmp_path):
     assert order == [("provision", str(tmp_path / "src")), "install"]
 
 
-def test_voices_install_passes_repo_src_not_app_dir_to_install_kokoro(monkeypatch, tmp_path):
-    """install_kokoro must receive repo_root()/src so predownload can import
-    sonara even before install() populates APP_DIR."""
+def test_voices_install_passes_package_root_not_app_dir_to_install_kokoro(monkeypatch, tmp_path):
+    """install_kokoro must receive the running package root (repo src/ in a
+    checkout) so predownload can import sonara even before install()
+    populates APP_DIR."""
     received = []
     monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
-    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "package_root", lambda: os.path.join(str(tmp_path), "src"))
     monkeypatch.setattr(kp, "install_kokoro", lambda pythonpath: received.append(pythonpath))
     monkeypatch.setattr(kp, "neural_healthy", lambda app_dir: True)
     monkeypatch.setattr(cli, "install", lambda: 0)
@@ -32,7 +33,7 @@ def test_voices_install_passes_repo_src_not_app_dir_to_install_kokoro(monkeypatc
 
 def test_voices_install_reports_failure_without_rewiring(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
-    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "package_root", lambda: os.path.join(str(tmp_path), "src"))
     uninstall_called = []
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: uninstall_called.append(True))
     def boom(pythonpath): raise RuntimeError("uv missing")
@@ -48,7 +49,7 @@ def test_voices_install_reverts_on_keyboard_interrupt(monkeypatch, tmp_path):
     # would otherwise read as fully provisioned forever (venv python exists after
     # step 1 of a multi-GB install) -- `except Exception` missed it (audit #21).
     monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
-    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "package_root", lambda: os.path.join(str(tmp_path), "src"))
     uninstalled = []
     def boom(pythonpath):
         raise KeyboardInterrupt()
@@ -102,7 +103,7 @@ def test_voices_install_default_still_kokoro(monkeypatch, tmp_path):
     """cli.main(["voices", "install"]) with no engine arg keeps calling
     kokoro_provision.install_kokoro (backward compatible)."""
     monkeypatch.setattr(paths, "APP_DIR", tmp_path / "app")
-    monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path))
+    monkeypatch.setattr(paths, "package_root", lambda: os.path.join(str(tmp_path), "src"))
     called = []
     monkeypatch.setattr(kp, "install_kokoro", lambda pythonpath: called.append(pythonpath))
     monkeypatch.setattr(kp, "neural_healthy", lambda app_dir: True)

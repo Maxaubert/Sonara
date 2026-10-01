@@ -30,3 +30,17 @@ def test_ensure_daemon_spawns_then_polls_until_connectable():
     run.assert_called_once()
     # slept once before the successful 2nd poll
     assert slept.call_count == 1
+
+
+def test_ensure_daemon_returns_at_once_after_a_shutdown(tmp_path):
+    # E7: after `sonara shutdown` every hook event spun the full 3 s timeout
+    # waiting for a daemon the sentinel forbids, delaying every tool call.
+    from sonara import paths
+    paths.ensure_sonara_dir()
+    paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")
+    with mock.patch("sonara.client._connectable", return_value=False), \
+         mock.patch("sonara.client.ensure_running") as run, \
+         mock.patch("sonara.client.time.sleep") as slept:
+        client_mod.ensure_daemon(timeout=3.0)
+    run.assert_not_called()
+    slept.assert_not_called()

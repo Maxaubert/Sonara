@@ -11,6 +11,7 @@ ElementTree.fromstring() with the full namespace string, which is more robust th
 string-contains checks. The sys.modules.setdefault call is idempotent -- running on
 real Windows leaves the genuine winreg intact.
 """
+import os
 import sys
 import types
 import xml.etree.ElementTree as ET
@@ -343,6 +344,16 @@ def test_settings_has_sonara_plugin(tmp_path):
     assert not sup.settings_has_sonara_plugin(str(sp))
 
 
+def _plugin_with_hooks(root):
+    """A plugin dir holding the real hooks/hooks.json: the settings.json hooks
+    are generated from it (H4)."""
+    import shutil
+    (root / "hooks").mkdir(parents=True, exist_ok=True)
+    shutil.copy(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "hooks", "hooks.json"), str(root / "hooks" / "hooks.json"))
+    return str(root)
+
+
 def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monkeypatch):
     from sonara.platform.windows import supervisor as sup
     calls = []
@@ -350,7 +361,7 @@ def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monke
     monkeypatch.setattr(sup, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
     s = sup.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
@@ -370,12 +381,12 @@ def test_install_wires_task_and_hooks_with_pythonw(tmp_path, monkeypatch):
     monkeypatch.setattr(sup_mod, "task_install",
                         lambda pw, spy: task_calls.append(pw) or 0)
     monkeypatch.setattr(sup_mod, "merge_hooks_into_settings",
-                        lambda sp, pw, hp: hook_calls.append(pw))
+                        lambda sp, pw, hp, **k: hook_calls.append(pw))
     monkeypatch.setattr(sup_mod, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup_mod, "settings_has_sonara_plugin", lambda sp: False)
     monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
     launcher_calls = []
     s = sup_mod.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks /end call
@@ -395,7 +406,7 @@ def test_uninstall_removes_task_hooks_and_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(sup, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
     s = sup.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
@@ -413,12 +424,12 @@ def test_install_ends_task_before_reregister(tmp_path, monkeypatch):
     monkeypatch.setattr(sup_mod, "task_install",
                         lambda pw, spy: schtasks_calls.append(("/create", pw)) or 0)
     monkeypatch.setattr(sup_mod, "merge_hooks_into_settings",
-                        lambda sp, pw, hp: None)
+                        lambda sp, pw, hp, **k: None)
     monkeypatch.setattr(sup_mod, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup_mod, "settings_has_sonara_plugin", lambda sp: False)
     monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
-    monkeypatch.setattr("sonara.paths.repo_root", lambda: str(tmp_path / "plug"))
+    monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
     s = sup_mod.WinSupervisorBackend()
     monkeypatch.setattr(s, "_schtasks", lambda args: schtasks_calls.append(tuple(args)) or 0)
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))

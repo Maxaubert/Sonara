@@ -18,7 +18,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
 from typing import Optional
 
 from sonara import paths
@@ -94,12 +93,19 @@ def _current_user_id() -> str:
 
 def task_install(pythonw: str, supervisor_py: str) -> int:
     """Register the Task Scheduler task. Returns schtasks exit code (0 = success)."""
+    from xml.sax.saxutils import escape
     user_id = _current_user_id()
+    paths.ensure_sonara_dir()
     xml_content = TASK_XML_TEMPLATE.format(
-        user_id=user_id,
-        pythonw=pythonw,
-        supervisor_py=supervisor_py,
-        work_dir=str(Path(supervisor_py).parent),
+        # Escaped: an '&' or '<' in a user or folder name broke the XML (L-xml).
+        user_id=escape(user_id),
+        pythonw=escape(pythonw),
+        supervisor_py=escape(supervisor_py),
+        # ~/.sonara, not the script's folder: that sat inside app/sonara, the
+        # tree install renames and uninstall deletes, and a lingering
+        # supervisor pinned it (E14). The script path is absolute, and
+        # supervisor_loop derives its imports from __file__.
+        work_dir=escape(str(paths.SONARA_DIR)),
     )
     # Write UTF-16 LE with BOM -- required by schtasks /xml
     with tempfile.NamedTemporaryFile(
@@ -133,6 +139,11 @@ def task_uninstall() -> int:
 # Windows Python resolution -- py -3 launcher, PATH probe, Store-stub detection
 # ---------------------------------------------------------------------------
 
+# Every probe below can run under a consoleless parent (a pythonw hook, the
+# settings-page respawner, the daemon's lazy start). A console child of such a
+# parent pops a visible console window unless spawned windowless (E9, #125).
+_NO_WINDOW = 0x08000000   # CREATE_NO_WINDOW (hex: imports on POSIX)
+
 def _is_store_stub(path: str) -> bool:
     """Return True if *path* is the Windows Store Python stub.
 
@@ -145,7 +156,7 @@ def _is_store_stub(path: str) -> bool:
     try:
         result = subprocess.run(
             [path, "-c", "import sys; print(sys.executable)"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, creationflags=_NO_WINDOW,
         )
         return result.returncode == 9009 or not result.stdout.strip()
     except Exception:
@@ -165,12 +176,14 @@ def _find_pythonw(python_real: str) -> "str | None":
 
 
 def _probe_python_version(candidate: str):
-    """Return (major, minor) or None."""
+    """Return (major, minor) or None. The one version probe: the backend
+    method delegates here (L-interp-dup)."""
     try:
         out = subprocess.check_output(
             [candidate, "-c",
              "import sys; print('%d.%d' % sys.version_info[:2])"],
             stderr=subprocess.DEVNULL, text=True, timeout=5,
+            creationflags=_NO_WINDOW,
         ).strip()
         major, minor = out.split(".")
         return (int(major), int(minor))
@@ -184,6 +197,7 @@ def _probe_version_via_launcher(py_exe: str) -> "str | None":
         real = subprocess.check_output(
             [py_exe, "-3", "-c", "import sys; print(sys.executable)"],
             stderr=subprocess.DEVNULL, text=True, timeout=5,
+            creationflags=_NO_WINDOW,
         ).strip()
         return real if real else None
     except Exception:
@@ -193,13 +207,12 @@ def _probe_version_via_launcher(py_exe: str) -> "str | None":
 def daemon_pythonw() -> "str | None":
     """The pythonw.exe the daemon should run on: the neural venv's when neural is
     enabled AND it probes >=3.10, else the system pythonw. Windows analog of
-    cli._daemon_python, yielding the windowless interpreter for the background daemon."""
-    from sonara import kokoro_provision as kp, paths
-    if kp.neural_enabled():
-        venv_py = paths.kokoro_venv_python()
-        ver = _probe_python_version(venv_py)
-        if ver is not None and ver >= (3, 10):
-            return _find_pythonw(venv_py) or venv_py
+    cli._daemon_python (both pick the venv through kp.usable_venv_python),
+    yielding the windowless interpreter for the background daemon."""
+    from sonara import kokoro_provision as kp
+    venv_py = kp.usable_venv_python(_probe_python_version)
+    if venv_py:
+        return _find_pythonw(venv_py) or venv_py
     return resolve_python_windows()
 
 
@@ -230,6 +243,7 @@ def resolve_python_windows() -> "str | None":
                 real = subprocess.check_output(
                     [found, "-c", "import sys; print(sys.executable)"],
                     stderr=subprocess.DEVNULL, text=True, timeout=5,
+                    creationflags=_NO_WINDOW,
                 ).strip()
             except Exception:
                 continue
@@ -256,128 +270,70 @@ def resolve_python_windows() -> "str | None":
 # exec-form hooks.json for Windows (no bash shim) + .gitattributes LF line
 # ---------------------------------------------------------------------------
 
-# The resolved pythonw.exe path is baked in at install time by
-# WinSupervisorBackend.install(). Claude Code supports separate 'command' +
-# 'args' (exec-form) -- no bash shim required.
-# Event set mirrors hooks/hooks.json (the plugin's own hooks file), translated
-# to exec-form (command + args array) so no bash shim is needed.
-HOOKS_JSON_TEMPLATE = '''{{
-  "hooks": {{
-    "MessageDisplay": [
-      {{
-        "matcher": "",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "MessageDisplay"
-            ]
-          }}
-        ]
-      }}
-    ],
-    "PreToolUse": [
-      {{
-        "matcher": "",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "PreToolUse"
-            ]
-          }}
-        ]
-      }}
-    ],
-    "Notification": [
-      {{
-        "matcher": "permission_prompt",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "Notification"
-            ]
-          }}
-        ]
-      }}
-    ],
-    "Stop": [
-      {{
-        "matcher": "",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "Stop"
-            ]
-          }}
-        ]
-      }}
-    ],
-    "UserPromptSubmit": [
-      {{
-        "matcher": "",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "UserPromptSubmit"
-            ]
-          }}
-        ]
-      }}
-    ],
-    "SessionStart": [
-      {{
-        "matcher": "",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "SessionStart"
-            ]
-          }}
-        ]
-      }}
-    ],
-    "SessionEnd": [
-      {{
-        "matcher": "",
-        "hooks": [
-          {{
-            "type": "command",
-            "command": "{pythonw}",
-            "args": [
-              "{hook_py}",
-              "SessionEnd"
-            ]
-          }}
-        ]
-      }}
-    ]
-  }}
-}}'''
+# The settings.json hooks are GENERATED from the plugin's own hooks/hooks.json,
+# the single source of the event set (H4/E17): a hand-kept copy here had
+# already lost PostToolUse, so CHOICE_ANSWERED never fired for settings.json
+# installs. Each plugin entry ("<launcher> <Event>", run by Claude Code's
+# shell) becomes exec-form, the resolved pythonw.exe baked in at install time
+# by WinSupervisorBackend.install(): command = pythonw, args = [hook, Event].
+
+def _plugin_hooks_path(hook_py: str, plugin_root: "str | None" = None) -> str:
+    """hooks/hooks.json of *plugin_root*, else of the plugin *hook_py* lives in
+    (<root>/bin/sonara-hook), else of the tree this code runs from."""
+    if plugin_root:
+        return os.path.join(plugin_root, "hooks", "hooks.json")
+    beside = os.path.join(os.path.dirname(os.path.dirname(hook_py)),
+                          "hooks", "hooks.json")
+    if os.path.isfile(beside):
+        return beside
+    return os.path.join(paths.repo_root(), "hooks", "hooks.json")
 
 
-def build_hooks_json(pythonw: str, hook_py: str) -> str:
-    """Return hooks.json content with backslashes doubled for JSON."""
-    return HOOKS_JSON_TEMPLATE.format(
-        pythonw=pythonw.replace("\\", "\\\\"),
-        hook_py=hook_py.replace("\\", "\\\\"),
-    )
+def load_plugin_hooks(hooks_json: str) -> dict:
+    """The {event: [entry, ...]} map of a plugin hooks.json. Raises ValueError
+    (with the path) when it is missing or malformed."""
+    import json
+    try:
+        with open(hooks_json, "r", encoding="utf-8") as fh:
+            hooks = json.load(fh).get("hooks")
+    except (OSError, ValueError, AttributeError) as exc:
+        raise ValueError("cannot read the plugin hooks file {0}: {1}".format(
+            hooks_json, exc)) from exc
+    if not isinstance(hooks, dict):
+        raise ValueError("{0} has no 'hooks' object".format(hooks_json))
+    return hooks
+
+
+def _hook_event_arg(command: str) -> str:
+    """The event argument of a plugin hook command: its last word."""
+    words = str(command).split()
+    return words[-1].strip("'\"") if words else ""
+
+
+def _exec_form_hooks(pythonw: str, hook_py: str,
+                     plugin_root: "str | None" = None) -> dict:
+    """{event: [entry, ...]} in exec form, one entry per plugin entry."""
+    plugin = load_plugin_hooks(_plugin_hooks_path(hook_py, plugin_root))
+    out = {}
+    for event, entries in plugin.items():
+        converted = []
+        for entry in entries:
+            hooks = [{"type": "command", "command": pythonw,
+                      "args": [hook_py, _hook_event_arg(h.get("command", ""))]}
+                     for h in entry.get("hooks", []) if h.get("type") == "command"]
+            if hooks:
+                converted.append({"matcher": entry.get("matcher", ""), "hooks": hooks})
+        if converted:
+            out[event] = converted
+    return out
+
+
+def build_hooks_json(pythonw: str, hook_py: str,
+                     plugin_root: "str | None" = None) -> str:
+    """Return the exec-form hooks JSON ({"hooks": {...}}) for settings.json."""
+    import json
+    return json.dumps({"hooks": _exec_form_hooks(pythonw, hook_py, plugin_root)},
+                      indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -489,11 +445,12 @@ def _sonara_hook_paths(settings_path: str) -> list:
     return out
 
 
-def _build_hooks_dict(pythonw: str, hook_py: str) -> dict:
-    """Return {event: [entry, ...]} for Sonara's exec-form hooks (from
-    build_hooks_json), each hook stamped with the SONARA_HOOK_MARKER sentinel."""
-    import json
-    hooks = json.loads(build_hooks_json(pythonw, hook_py))["hooks"]
+def _build_hooks_dict(pythonw: str, hook_py: str,
+                      plugin_root: "str | None" = None) -> dict:
+    """Return {event: [entry, ...]} for Sonara's exec-form hooks (generated
+    from the plugin's hooks/hooks.json), each hook stamped with the
+    SONARA_HOOK_MARKER sentinel."""
+    hooks = _exec_form_hooks(pythonw, hook_py, plugin_root)
     for entries in hooks.values():
         for entry in entries:
             for h in entry.get("hooks", []):
@@ -595,15 +552,17 @@ def _validate_hooks_shape(data: dict, settings_path: str) -> None:
                     settings_path, event))
 
 
-def merge_hooks_into_settings(settings_path: str, pythonw: str, hook_py: str) -> None:
+def merge_hooks_into_settings(settings_path: str, pythonw: str, hook_py: str,
+                              plugin_root: "str | None" = None) -> None:
     """Idempotently add Sonara's exec-form hooks to settings.json: drop any prior
     Sonara entries (self-heal across path changes), then append the current ones.
     Preserves all other keys and all non-Sonara hook entries."""
     data = _load_settings(settings_path)
     _validate_hooks_shape(data, settings_path)
+    new_hooks = _build_hooks_dict(pythonw, hook_py, plugin_root)  # before any change
     remove_hooks_from_settings(settings_path, hook_py, _data=data)  # in-place prune
     hooks = data.setdefault("hooks", {})
-    for event, entries in _build_hooks_dict(pythonw, hook_py).items():
+    for event, entries in new_hooks.items():
         hooks.setdefault(event, []).extend(entries)
     _write_settings(settings_path, data)
 
@@ -622,10 +581,10 @@ def _console_python(pythonw: str) -> str:
     return cand if os.path.isfile(cand) else pythonw
 
 
-def _hook_py() -> str:
-    """Absolute path to the plugin's bin/sonara-hook (pure-Python hook entry)."""
-    from sonara import paths
-    return os.path.join(paths.repo_root(), "bin", "sonara-hook")
+def _hook_py(plugin_root: "str | None" = None) -> str:
+    """Absolute path to the plugin's bin/sonara-hook (pure-Python hook entry):
+    under *plugin_root* when given, else under the tree this code runs from."""
+    return os.path.join(plugin_root or paths.repo_root(), "bin", "sonara-hook")
 
 
 # ---------------------------------------------------------------------------
@@ -651,16 +610,7 @@ class WinSupervisorBackend(SupervisorBackend):
 
     def _probe_python_version(self, candidate: str):
         """Return (major, minor) or None. Monkeypatched in tests."""
-        try:
-            out = subprocess.check_output(
-                [candidate, "-c",
-                 "import sys; print('%d.%d' % sys.version_info[:2])"],
-                stderr=subprocess.DEVNULL, text=True, timeout=5,
-            ).strip()
-            major, minor = out.split(".")
-            return (int(major), int(minor))
-        except Exception:
-            return None
+        return _probe_python_version(candidate)
 
     def _list_neural_voices(self) -> list:
         """Return list of neural voice token names. Monkeypatched in tests.
@@ -773,7 +723,8 @@ class WinSupervisorBackend(SupervisorBackend):
 
         return rows
 
-    def install(self, python: str, app_dir: str) -> None:
+    def install(self, python: str, app_dir: str,
+                plugin_root: "str | None" = None) -> None:
         pythonw = _find_pythonw(python) or python  # background daemon/hooks: no console window
         # 1. Exec-form hooks FIRST. This is the step that can fail on a malformed
         #    user settings.json (it raises ValueError); doing it before the Task
@@ -795,7 +746,8 @@ class WinSupervisorBackend(SupervisorBackend):
                 print("Sonara plugin enabled; hooks come from the plugin "
                       "(nothing written to {0}).".format(settings))
         else:
-            merge_hooks_into_settings(settings, pythonw, _hook_py())
+            merge_hooks_into_settings(settings, pythonw, _hook_py(plugin_root),
+                                      plugin_root=plugin_root)
             print("Wrote Sonara hooks to: {0}".format(settings))
         # 2. Task Scheduler autostart (pythonw runs the supervisor loop).
         supervisor_py = os.path.join(app_dir, "sonara", "platform",
@@ -838,8 +790,14 @@ class WinSupervisorBackend(SupervisorBackend):
         rc = task_uninstall()
         print("Removed Task Scheduler task: {0}".format(TASK_NAME) if rc == 0
               else "No Task Scheduler task to remove.")
-        remove_hooks_from_settings(claude_settings_path(), _hook_py())
-        print("Removed Sonara hooks from: {0}".format(claude_settings_path()))
+        try:
+            remove_hooks_from_settings(claude_settings_path(), _hook_py())
+            print("Removed Sonara hooks from: {0}".format(claude_settings_path()))
+        except ValueError as exc:
+            # E19: an unparseable settings.json is never rewritten; finish the
+            # rest of the uninstall instead of stopping half-way on a traceback.
+            print("Could not remove Sonara hooks from settings.json: {0} "
+                  "Remove the Sonara entries by hand.".format(exc))
         launcher = os.path.join(_local_bin_dir(), "sonara.cmd")
         if os.path.exists(launcher):
             try:

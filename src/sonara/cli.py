@@ -378,12 +378,7 @@ def _daemon_python(sup):
     Deriving neural-state from the venv keeps re-runs of `sonara install` on the
     venv interpreter without a separate flag."""
     from sonara import kokoro_provision as kp
-    if kp.neural_enabled():
-        venv_py = paths.kokoro_venv_python()
-        ver = sup._probe_python_version(venv_py)
-        if ver is not None and ver >= (3, 10):
-            return venv_py
-    return sup.resolve_python()
+    return kp.usable_venv_python(sup._probe_python_version) or sup.resolve_python()
 
 
 def _write_install_record(python: str, python_version: str,
@@ -459,15 +454,65 @@ def _copy_app(plugin_root: str) -> str:
     shutil.copytree(src_pkg, new_pkg,
                     ignore=shutil.ignore_patterns("__pycache__"))
     if os.path.isdir(dst_pkg):
-        os.rename(dst_pkg, old_pkg)
-    os.rename(new_pkg, dst_pkg)
+        _rename_retrying(dst_pkg, old_pkg)
+    try:
+        _rename_retrying(new_pkg, dst_pkg)
+    except OSError:
+        # #127: the old package is already aside. Put it back so a live
+        # 'sonara' package always exists; the fresh copy stays as residue
+        # that the next install sweeps.
+        if os.path.isdir(old_pkg) and not os.path.isdir(dst_pkg):
+            _rename_retrying(old_pkg, dst_pkg)
+        raise
     if os.path.isdir(old_pkg):
         shutil.rmtree(old_pkg, ignore_errors=True)  # best-effort; retried next install
     return app_dir
 
 
+def _rename_retrying(src: str, dst: str, attempts: int = 10,
+                     delay: float = 0.3) -> None:
+    """os.rename that retries a PermissionError. On Windows a just-written tree
+    (antivirus, indexer) or one a just-exited daemon still pins is often denied
+    for a moment, and a retry a little later succeeds (#127)."""
+    for attempt in range(attempts):
+        try:
+            os.rename(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
+def _is_plugin_root(path) -> bool:
+    """True if *path* is a plugin checkout install() can deploy from: it has the
+    package source, the hook entry the hooks point at, and the hooks file."""
+    if not path:
+        return False
+    return (os.path.isfile(os.path.join(path, "src", "sonara", "__init__.py"))
+            and os.path.isfile(os.path.join(path, "bin", "sonara-hook"))
+            and os.path.isfile(os.path.join(path, "hooks", "hooks.json")))
+
+
+def _resolve_plugin_root() -> Optional[str]:
+    """The plugin tree install() deploys from, or None.
+
+    repo_root() is right when the CLI runs from a checkout or the plugin
+    cache. From the deployed copy (the ~/.local/bin launcher) it resolves to
+    ~/.sonara, which has no src/ and no bin/ (H3), so fall back to the plugin
+    Claude Code names (CLAUDE_PLUGIN_ROOT), then to the one the last install
+    recorded."""
+    record = _read_install_record() or {}
+    for cand in (paths.repo_root(), os.environ.get("CLAUDE_PLUGIN_ROOT"),
+                 record.get("plugin_root")):
+        if isinstance(cand, str) and _is_plugin_root(cand):
+            return os.path.realpath(cand)
+    return None
+
+
 # The Windows speech engine (PyWinRT / OneCore). Kept in sync with the
-# [windows] extra in pyproject.toml and the hint in platform/windows/tts.py.
+# [windows] extra in pyproject.toml, requirements-kokoro.txt (the neural venv)
+# and the hint in platform/windows/tts.py.
 _WINRT_PACKAGES = (
     "winrt-runtime",
     "winrt-Windows.Media.SpeechSynthesis",
@@ -499,17 +544,79 @@ def _ensure_speech_deps(python: str) -> bool:
         print("Speech engine (PyWinRT): already installed.")
         return True
     print("Installing the Windows speech engine (PyWinRT)...")
+    console = _console_sibling(python)
+    cmd = _speech_install_cmd(console, _python_env(console), _find_uv())
     try:
-        subprocess.run([python, "-m", "pip", "install", "--user", *_WINRT_PACKAGES],
-                       timeout=300)
+        subprocess.run(cmd, timeout=300)
     except Exception as exc:  # noqa: BLE001 - fall through to the verify + hint
-        print(f"  pip could not run: {exc}")
+        print(f"  the installer could not run: {exc}")
     if _winrt_importable(python):
         print("Speech engine (PyWinRT): installed.")
         return True
     print("  Could not install PyWinRT automatically. Install it manually:\n    "
-          + python + " -m pip install " + " ".join(_WINRT_PACKAGES))
+          + " ".join(cmd))
     return False
+
+
+def _console_sibling(python: str) -> str:
+    """python.exe next to a pythonw.exe (installers and uv want the console
+    interpreter); *python* itself otherwise."""
+    head, tail = os.path.split(python)
+    if tail.lower() == "pythonw.exe":
+        cand = os.path.join(head, "python.exe")
+        if os.path.isfile(cand):
+            return cand
+    return python
+
+
+_PY_ENV_PROBE = (
+    "import importlib.util, json, os, sys, sysconfig; print(json.dumps({"
+    "'venv': sys.prefix != sys.base_prefix, "
+    "'managed': os.path.isfile(os.path.join("
+    "sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED')), "
+    "'pip': importlib.util.find_spec('pip') is not None}))")
+
+
+def _python_env(python: str) -> dict:
+    """What kind of interpreter *python* is: {'venv', 'managed', 'pip'} as
+    booleans ({} when the probe fails, which reads as a plain system Python).
+    'managed' is a PEP 668 EXTERNALLY-MANAGED marker, as uv's own Pythons carry."""
+    try:
+        r = subprocess.run([python, "-c", _PY_ENV_PROBE], capture_output=True,
+                           text=True, timeout=20)
+        data = json.loads(r.stdout)
+        return data if isinstance(data, dict) else {}
+    except Exception:  # noqa: BLE001 - an unknown interpreter keeps the old path
+        return {}
+
+
+def _find_uv() -> Optional[str]:
+    """uv on PATH, else the copy the bootstrap downloaded to ~/.sonara/tools."""
+    found = shutil.which("uv")
+    if found:
+        return found
+    local = os.path.join(str(paths.SONARA_DIR), "tools", "uv.exe")
+    return local if os.path.isfile(local) else None
+
+
+def _speech_install_cmd(python: str, env: dict, uv: Optional[str]) -> list:
+    """The command that installs _WINRT_PACKAGES into *python*.
+
+    `pip install --user` only fits a plain system Python. A uv-managed Python
+    is externally managed (PEP 668) and refuses it (E1); a venv rejects
+    --user, and a uv venv has no pip at all (E2). uv installs into either."""
+    pkgs = list(_WINRT_PACKAGES)
+    if env.get("venv"):
+        if env.get("pip") or not uv:
+            return [python, "-m", "pip", "install", *pkgs]
+        return [uv, "pip", "install", "--python", python, *pkgs]
+    if env.get("managed"):
+        if uv:
+            return [uv, "pip", "install", "--python", python,
+                    "--break-system-packages", *pkgs]
+        return [python, "-m", "pip", "install", "--user",
+                "--break-system-packages", *pkgs]
+    return [python, "-m", "pip", "install", "--user", *pkgs]
 
 
 def stop_sonara(sup=None) -> bool:
@@ -606,6 +713,40 @@ def _cmd_start(_args) -> int:
     return start_sonara()
 
 
+def _install_runtime(sup, python: str, py_ver: str, plugin_root: str):
+    """install() steps 2-5, run while Sonara is stopped: copy the runtime,
+    keymap, install record, then the OS autostart + hooks + launcher. Returns
+    APP_DIR, or None after printing why it failed. Never raises an ordinary
+    error: install() must get the chance to clear the stop sentinel."""
+    # 2. Copy the package into the stable APP_DIR (decouples the long-lived
+    #    daemon from the version-pinned marketplace cache; see spec §3.B).
+    try:
+        app_dir = _copy_app(plugin_root)
+    except OSError as exc:
+        print(f"Could not copy the runtime to ~/.sonara/app: {exc}. "
+              f"Check that ~/.sonara is writable, then re-run: sonara install")
+        return None
+    print(f"Copied runtime to: {app_dir}")
+    try:
+        # 3. Keymap setup.
+        keymap.migrate_default_chord()
+        keymap.write_default_keymap_if_absent()
+
+        # 4. Durable install record.
+        plugin_version = _read_plugin_version(plugin_root)
+        _write_install_record(python=python, python_version=py_ver,
+                              plugin_root=plugin_root, app_path=app_dir,
+                              plugin_version=plugin_version)
+
+        # 5. OS-specific autostart + hooks + launcher (the platform backend
+        #    owns it). ValueError here is an unparseable ~/.claude/settings.json.
+        sup.install(python, app_dir, plugin_root=plugin_root)
+    except Exception as exc:  # noqa: BLE001 - report, never a traceback mid-install
+        print(f"Install did not finish: {exc}\nFix that, then re-run: sonara install")
+        return None
+    return app_dir
+
+
 def install() -> int:
     """Install Sonara: resolve python, ensure the speech engine, copy the runtime,
     write the install record, then delegate OS-specific autostart + hooks +
@@ -624,50 +765,38 @@ def install() -> int:
     py_ver = "{0}.{1}".format(*ver) if ver else "3.9"
     print(f"Using interpreter: {python} (Python {py_ver})")
 
+    # 1a. Find the plugin tree BEFORE changing anything: from the deployed
+    #     copy there may be none, and stopping first left Sonara off (H3).
+    plugin_root = _resolve_plugin_root()
+    if plugin_root is None:
+        print("Cannot find the Sonara plugin files (src/sonara, bin/sonara-hook, "
+              "hooks/hooks.json) next to this copy of Sonara, which looks like "
+              "the deployed runtime in ~/.sonara. Nothing was changed. Run "
+              "/sonara:install in Claude Code, or <plugin folder>/bin/sonara install.")
+        return 1
+
     # 1b. Ensure the Windows speech engine (PyWinRT) is installed in that Python.
     #     Claude Code does NOT install a plugin's optional Python deps, so without
     #     this a fresh install is silently voiceless. install() owns it.
     speech_ok = _ensure_speech_deps(python)
 
-    plugin_root = os.path.realpath(paths.repo_root())
-
     # 1c. STOP Sonara before touching APP_DIR (#23): the scheduled task's
     #     working directory sits INSIDE the tree being replaced, so mutating it
     #     under a running daemon/supervisor half-deleted the app (the documented
     #     'gutted app' failure). The sentinel also blocks a hook event from
-    #     lazily respawning the daemon mid-install; cleared after step 5.
+    #     lazily respawning the daemon mid-install. It is cleared whether the
+    #     steps below succeed or fail (E6): a failed install that left it in
+    #     place kept Sonara off with no cue.
     stop_sonara(sup)
-
-    # 2. Copy the package into the stable APP_DIR (decouples the long-lived
-    #    daemon from the version-pinned marketplace cache; see spec §3.B).
     try:
-        app_dir = _copy_app(plugin_root)
-    except OSError as exc:
-        print(f"Could not copy the runtime to ~/.sonara/app: {exc}. "
-              f"Check that ~/.sonara is writable.")
+        app_dir = _install_runtime(sup, python, py_ver, plugin_root)
+    finally:
+        try:
+            os.remove(str(paths.STOPPED_SENTINEL_PATH))
+        except OSError:
+            pass
+    if app_dir is None:
         return 1
-    print(f"Copied runtime to: {app_dir}")
-
-    # 3. Keymap setup.
-    keymap.migrate_default_chord()
-    keymap.write_default_keymap_if_absent()
-
-    # 4. Durable install record.
-    plugin_version = _read_plugin_version(plugin_root)
-    _write_install_record(python=python, python_version=py_ver,
-                          plugin_root=plugin_root, app_path=app_dir,
-                          plugin_version=plugin_version)
-
-    # 5. OS-specific autostart + hooks + launcher (the platform backend owns it).
-    sup.install(python, app_dir)
-
-    # 5b. Install complete enough to run: clear the stop sentinel so the next
-    #     hook event / logon / 'sonara start' brings the daemon up on the
-    #     FRESH code (#23).
-    try:
-        os.remove(str(paths.STOPPED_SENTINEL_PATH))
-    except OSError:
-        pass
 
     # 6. Global hotkeys. Windows hotkeys run in-process and are started by the
     #    daemon (deferred to M3, announced in post_install_notes).
@@ -723,7 +852,7 @@ def uninstall() -> int:
         paths.LOCK_PATH,
         paths.LOG_PATH,
         paths.INSTALL_RECORD_PATH,
-        paths.STOPPED_SENTINEL_PATH,   # clean slate: a reinstall starts fresh (#23)
+        sonara_dir / "speechd.old.log",   # the rotated log (L-log)
         # Legacy files from the removed macOS hotkeyd; older installs still
         # wrote hotkeyd.resolved.json, so uninstall keeps sweeping them.
         sonara_dir / "hotkeyd.resolved.json",
@@ -753,11 +882,43 @@ def uninstall() -> int:
         preserved.append("config.json")
     if preserved:
         print(f"Preserved your settings: {', '.join(preserved)}")
-    print(f"Removed Sonara runtime files from {sonara_dir} "
+    print(f"Removed Sonara's runtime files from {sonara_dir} "
           f"(keymap.json and config.json left in place).")
+    _print_uninstall_leftovers()
 
-    print("Done. Disable the 'sonara' plugin via /plugin in Claude Code if enabled.")
+    # E8: keep Sonara STOPPED. With the plugin still enabled, the very next
+    # hook event would otherwise lazily start a daemon from the plugin's code
+    # right after this uninstall. install() and 'sonara start' clear it.
+    try:
+        paths.ensure_sonara_dir()
+        with open(str(paths.STOPPED_SENTINEL_PATH), "w", encoding="utf-8") as fh:
+            fh.write("sonara uninstall")
+    except OSError:
+        pass
+
+    print("Done. Sonara stays off. Now disable the 'sonara' plugin via /plugin in "
+          "Claude Code (if it is enabled), or its hooks keep running.")
     return 0
+
+
+def _print_uninstall_leftovers() -> None:
+    """Say what uninstall deliberately keeps in ~/.sonara and how to remove it
+    (E19). Never raises."""
+    try:
+        neural = [os.path.join(str(paths.SONARA_DIR), d) for d in ("venv", "kokoro")]
+        neural = [d for d in neural if os.path.isdir(d)]
+        if neural:
+            print("Neural voices are kept in {0}; delete those folders to free "
+                  "the space.".format(" and ".join(neural)))
+        from sonara import chatterbox_legacy as cl
+        found = cl.leftovers()
+        if found:
+            print("Old Chatterbox files remain ({0}); 'sonara cleanup' removes "
+                  "them.".format(cl.format_size(sum(s for _p, s in found))))
+        print("Anything else left in {0} (logs, caches, voice clips) can be "
+              "deleted by hand once Sonara is off.".format(paths.SONARA_DIR))
+    except Exception:  # noqa: BLE001 - an advisory note must never fail uninstall
+        pass
 
 
 def _cmd_uninstall(_args) -> int:
@@ -770,9 +931,11 @@ def _cmd_voices_install(_args) -> int:
     paths.ensure_sonara_dir()
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
-        # Pass repo src as PYTHONPATH so predownload_model can import sonara even
-        # before install() populates APP_DIR (on a fresh machine APP_DIR is empty).
-        kp.install_kokoro(os.path.join(paths.repo_root(), "src"))
+        # Pass the running package's root as PYTHONPATH so predownload_model can
+        # import sonara even before install() populates APP_DIR (on a fresh
+        # machine APP_DIR is empty). repo_root()/src was ~/.sonara/src, which
+        # does not exist, when this ran from the deployed copy (E6).
+        kp.install_kokoro(paths.package_root())
     except Exception as exc:  # noqa: BLE001 - report, do not half-wire
         print(f"Neural-voice setup failed: {exc}", file=sys.stderr)
         kp.uninstall_kokoro()  # revert any half-built venv so neural_enabled() stays False
@@ -796,8 +959,16 @@ def _cmd_voices_uninstall(_args) -> int:
     left a half-deleted venv that still read as provisioned."""
     from sonara import kokoro_provision as kp
     stop_sonara()
-    kp.uninstall_kokoro()
-    rc = install()  # neural_enabled() now False -> reverts to resolve_python()
+    try:
+        kp.uninstall_kokoro()
+        rc = install()  # neural_enabled() now False -> reverts to resolve_python()
+    finally:
+        # The stop above is this command's own: never leave Sonara off because
+        # install() returned before it reached its own sentinel cleanup (E6).
+        try:
+            os.remove(str(paths.STOPPED_SENTINEL_PATH))
+        except OSError:
+            pass
     print("Neural voices removed; reverted to the system voice.")
     return rc
 

@@ -1,5 +1,6 @@
 src/sonara/**/*.py text eol=lf
 bin/sonara text eol=lf
 bin/sonara-hook text eol=lf
+bin/sonara-hook-run text eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import time
 
+from sonara import paths
 from sonara.protocol import encode, decode
 from sonara.paths import LOCK_PATH, socket_connectable
 from sonara.platform import transport
@@ -68,6 +70,11 @@ def send_many(msgs, timeout: float = 2.0) -> None:
 
 def ensure_daemon(timeout: float = 3.0) -> None:
     if _connectable():
+        return
+    if os.path.exists(str(paths.STOPPED_SENTINEL_PATH)):
+        # Shut down (or uninstalled): nothing will start, so do not wait for
+        # it. Spinning the full timeout here delayed every hook event, and so
+        # every tool call, by about 3 s after `sonara shutdown` (E7).
         return
     ensure_running()
     deadline = time.time() + timeout

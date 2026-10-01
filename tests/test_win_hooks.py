@@ -10,6 +10,7 @@ from sonara.platform.windows.supervisor import build_hooks_json
 EXPECTED_EVENTS = {
     "MessageDisplay",
     "PreToolUse",
+    "PostToolUse",
     "Notification",
     "Stop",
     "UserPromptSubmit",
@@ -28,8 +29,9 @@ def test_hooks_json_is_exec_form_with_escaped_paths():
 
 
 def test_hooks_json_contains_all_expected_events():
-    """All seven hook event types must be present; a silent omission would
-    break Windows installs without failing the JSON-validity check."""
+    """All eight hook event types must be present; a silent omission would
+    break Windows installs without failing the JSON-validity check (H4: the
+    hand-kept template had lost PostToolUse)."""
     s = build_hooks_json(r"C:\u\.sonara\pythonw.exe", r"C:\plug\hook.py")
     data = json.loads(s)
     assert set(data["hooks"]) == EXPECTED_EVENTS
