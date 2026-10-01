@@ -81,6 +81,15 @@ class Speaker:
             epoch = self._cancel_epoch if cancel_epoch is None else cancel_epoch
         state = {"proc": None, "exc": None, "abandoned": False}
         done = threading.Event()
+        if on_play is not None:
+            # An abandoned synthesis still finishes on its helper thread and fires
+            # on_play; once cancelled it must not duck/pause other audio after the
+            # cancel already restored it (#130).
+            _on_play = on_play
+
+            def on_play():
+                if self._cancel_epoch == epoch:
+                    _on_play()
 
         def _synth():
             try:
