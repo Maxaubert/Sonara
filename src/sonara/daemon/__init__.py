@@ -11,6 +11,7 @@ from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
+from sonara.daemon.cues import Cues
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -172,6 +173,11 @@ class SpeechDaemon:
         # dispatch (turn-finish) order, not summarizer-completion order.
         self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
         self._current_item = None                 # item being spoken right now
+        # Control cues on the CONTROL channel, their voice, Kokoro notices.
+        self._cues = Cues(config, self.router, speaker, self.session_prefs,
+                          alloc_id=self._alloc_id,
+                          current_item=lambda: self._current_item,
+                          wake=self._wake)
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
@@ -700,9 +706,9 @@ class SpeechDaemon:
                 # it is always heard even if the session is also muted.
                 self._paused.clear()
                 self._wake.set()
-                # target may be None (no session) -> _speak_cue routes to the
+                # target may be None (no session) -> the cue routes to the
                 # CONTROL channel so the confirmation is still heard.
-                self._speak_cue(target, "Resumed.", exempt_mute=True)
+                self._cues.speak(target, "Resumed.", exempt_mute=True)
             else:
                 self._paused.set()
                 # cancel() bumps the speaker's epoch so even an in-progress
@@ -713,7 +719,7 @@ class SpeechDaemon:
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
-                self._speak_cue(target, "Paused.", pause_exempt=True)
+                self._cues.speak(target, "Paused.", pause_exempt=True)
             return None
 
         if t == MsgType.MUTE:
@@ -736,11 +742,11 @@ class SpeechDaemon:
                 self.speaker.cancel()           # stop the current utterance now
             cue = {1: "Muted.", 2: "Super muted.", 0: "Unmuted."}[self._mute_level]
             target = self.router.active or self.sessions.foreground()
-            # target may be None -> _speak_cue routes to the CONTROL channel so the
+            # target may be None -> the cue routes to the CONTROL channel so the
             # confirmation is heard even when no session is registered.
             # pause_exempt: a state change made WHILE PAUSED must still be
             # confirmed, or the user cannot tell what they toggled (deep audit #25).
-            self._speak_cue(target, cue, exempt_mute=True, pause_exempt=True)
+            self._cues.speak(target, cue, exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -752,8 +758,8 @@ class SpeechDaemon:
             target, _replay = self.router.next_session()
             self.speaker.cancel()
             if target is None:
-                self._speak_cue(None, "No session.", exempt_mute=True,
-                                pause_exempt=True)
+                self._cues.speak(None, "No session.", exempt_mute=True,
+                                 pause_exempt=True)
             else:
                 # Instant press feedback (#111): fire the switch chime NOW, from
                 # the handler (the earcon player is a non-blocking subprocess).
@@ -786,7 +792,7 @@ class SpeechDaemon:
                 return None
             entries = self.history.last_message(fg)
             if not entries:
-                self._speak_cue(fg, "Nothing to repeat.")
+                self._cues.speak(fg, "Nothing to repeat.")
                 return None
             self._replay(fg, entries)
             return None
@@ -832,9 +838,9 @@ class SpeechDaemon:
             if is_delta:
                 # A control cue (F6): on the session channel it waited behind
                 # minqueue and could wipe the placeholder seed.
-                self._speak_cue(self.sessions.foreground(),
-                                "Rate {0}.".format(rate), exempt_mute=True,
-                                pause_exempt=True, cue_key="rate")
+                self._cues.speak(self.sessions.foreground(),
+                                 "Rate {0}.".format(rate), exempt_mute=True,
+                                 pause_exempt=True, cue_key="rate")
                 self._wake.set()
             return None
 
@@ -905,9 +911,9 @@ class SpeechDaemon:
                 self.ducker.restore()
                 self.ducker.duck(self._duck_exclude_pids(), level)
             target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target, "Duck level {0} percent.".format(level),
-                            exempt_mute=True, pause_exempt=True,
-                            cue_key="duck_level")
+            self._cues.speak(target, "Duck level {0} percent.".format(level),
+                             exempt_mute=True, pause_exempt=True,
+                             cue_key="duck_level")
             self._wake.set()
             return None
 
@@ -931,9 +937,9 @@ class SpeechDaemon:
             self.config["summary_mode"] = enabled
             save_config(self.config)
             target = self.router.active or self.sessions.foreground()
-            self._speak_cue(target,
-                            "Summary mode on." if enabled else "Summary mode off.",
-                            exempt_mute=True, pause_exempt=True)
+            self._cues.speak(target,
+                             "Summary mode on." if enabled else "Summary mode off.",
+                             exempt_mute=True, pause_exempt=True)
             self._wake.set()
             return None
 
@@ -1016,9 +1022,9 @@ class SpeechDaemon:
         self._hotkey_failure_announced = True
         # Off-lock caller (start/reload): the cue reslices CONTROL, take the lock.
         with self._lock:
-            self._speak_cue(None, "Sonara hotkeys could not start. Run sonara "
-                            "doctor to see why.", exempt_mute=True,
-                            pause_exempt=True)
+            self._cues.speak(None, "Sonara hotkeys could not start. Run sonara "
+                             "doctor to see why.", exempt_mute=True,
+                             pause_exempt=True)
 
     def _announce_hotkey_collisions(self, collisions) -> None:
         """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
@@ -1033,10 +1039,10 @@ class SpeechDaemon:
         print("[hotkeys] failed to register: {0}".format(names),
               file=sys.stderr, flush=True)
         with self._lock:                   # called off-lock from _start_hotkeys
-            self._speak_cue(None,
-                            "Some Sonara hotkeys are held by another program. "
-                            "Restarting Sonara may fix it.",
-                            exempt_mute=True, pause_exempt=True)
+            self._cues.speak(None,
+                             "Some Sonara hotkeys are held by another program. "
+                             "Restarting Sonara may fix it.",
+                             exempt_mute=True, pause_exempt=True)
 
     def _stop_hotkeys(self) -> None:
         from sonara.platform import get_platform
@@ -1683,7 +1689,7 @@ class SpeechDaemon:
         ids = self.history.message_ids(session)
         if not ids:
             # A control cue (F6): on the session channel it wiped the seed.
-            self._speak_cue(session, "Nothing to navigate yet.")
+            self._cues.speak(session, "Nothing to navigate yet.")
             return False
         self.speaker.cancel()
         # Clear any not-yet-spoken items from the channel so the replay is the
@@ -1836,131 +1842,10 @@ class SpeechDaemon:
         except Exception:  # noqa: BLE001 - logging failure must not wedge the loop
             pass
 
-    def _speak_cue(self, session, text: str, exempt_mute: bool = False,
-                   pause_exempt: bool = False, cue_key=None, voice=None) -> None:
-        """Speak a one-off confirmation/feedback cue (pause/mute/repeat/...).
-        These ALWAYS go to the reserved CONTROL channel, which the router serves
-        ahead of every session on `pending() > 0` -- bypassing the minqueue gate. A
-        session channel is gated by `ready()` (minqueue items / turn_done), so a cue
-        placed there during a live stream would sit unplayed and then burst out when
-        the turn flushed; CONTROL makes the cue immediate regardless of stream state.
-        The *session* arg is accepted for call-site clarity but no longer routes.
-
-        *cue_key* coalesces slider spam: a keyed cue removes every pending cue
-        with the same key and cuts one mid-speech, so dragging a slider speaks
-        only the final value instead of the whole stacked sweep.
-
-        *voice* speaks this one cue in that voice instead of the cue voice
-        (a settings-page preview, M6)."""
-        from sonara.router import CONTROL
-        ch = self.router.channel(CONTROL)
-        if ch.caught_up():
-            ch.wipe()                      # control cues don't replay; keep it small
-        elif cue_key is not None:
-            ch.remove_pending(lambda it: it.cue_key == cue_key)
-        if cue_key is not None:
-            cur = self._current_item
-            if cur is not None and getattr(cur, "cue_key", None) == cue_key:
-                self.speaker.cancel()      # stale value mid-utterance: cut it
-        item = SpeechItem(id=self._alloc_id(), session=CONTROL, kind="prose",
-                          text=text, is_decision=False, mute_exempt=exempt_mute,
-                          pause_exempt=pause_exempt, cue_key=cue_key,
-                          voice=voice or None)
-        # APPEND, do not cursor-insert: CONTROL is already served ahead of every
-        # session, and inserting at the cursor made STACKED cues play LIFO --
-        # the user heard state confirmations newest-first (deep audit #25).
-        ch.append(item)
-        self._wake.set()
-
-    def _cue_voice(self):
-        """The voice cues speak in (#60): config cue_voice (default af_heart,
-        the warm-Kokoro pick -- ~0.3s per cue once loaded, far nicer than the
-        native David/Zira). Unset maps to None = the platform's native
-        voice."""
-        v = self.config.get("cue_voice")
-        if not v:
-            return None
-        try:
-            from sonara import kokoro
-            if kokoro.is_kokoro_voice(v) and not kokoro.is_installed():
-                # E12: the default af_heart on an install without Kokoro.
-                # Speak cues natively instead of failing over every time.
-                return None
-        except Exception:  # noqa: BLE001 - a cue must never fail on the check
-            pass
-        return v
-
-    def _cue_voice_override(self, item) -> dict:
-        """speaker.speak kwargs for *item* (#60). Control feedback and
-        session-change announcements speak through an always-fast voice
-        (warm Kokoro by default, native Windows as floor) instead of the
-        configured voice, so "Muted." never waits on a slow synthesis.
-        Config fast_cues (default on) disables."""
-        from sonara.router import CONTROL
-        if item.session == CONTROL and getattr(item, "voice", None):
-            return {"voice": item.voice}         # a voice preview (M6)
-        if (config_schema.get(self.config, "fast_cues")
-                and (item.session == CONTROL or item.kind == "session_change")):
-            return {"voice": self._cue_voice()}
-        return {}
-
-    def _voice_override(self, item) -> dict:
-        """speaker.speak kwargs for *item*: the fast-cue voice for control
-        feedback and session-change announcements (#60), else the session's
-        voice pref, else {} (the global default voice)."""
-        kw = self._cue_voice_override(item)
-        if kw:
-            return kw
-        v = self.session_prefs.voice(item.session)
-        return {"voice": v} if v else {}
-
     def _maybe_prewarm_cue_voice(self) -> None:
-        """Pre-load the Kokoro engine when cues route to a Kokoro voice (#60):
-        the first cue after daemon start otherwise pays the ~3s engine load.
-        Best-effort, background, never blocks or breaks the caller."""
-        try:
-            from sonara import kokoro
-            if not (config_schema.get(self.config, "fast_cues")
-                    and kokoro.is_kokoro_voice(self._cue_voice())
-                    and kokoro.is_installed()):
-                return
-        except Exception:  # noqa: BLE001 - optional engine; never break startup
-            return
-
-        def _warm():
-            try:
-                from sonara.platform import get_platform
-                get_platform().tts._kokoro_wav("Ready.", config_schema.get(self.config, "rate"))
-            except Exception:  # noqa: BLE001 - warming is best-effort
-                pass
-        threading.Thread(target=_warm, name="sonara-kokoro-warm", daemon=True).start()
-
-    def _maybe_announce_kokoro_fallback(self) -> None:
-        """Speak the pending Kokoro fallback notice, if any, exactly once per
-        daemon run (#29): a dead engine is announced instead of producing
-        unexplained error noise. The one-time model download (M2/E11, #53)
-        is announced the same way, so the Windows voice standing in meanwhile
-        is explained."""
-        try:
-            from sonara import kokoro
-            downloading = kokoro.pop_download_notice()
-        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
-            downloading = False
-        if downloading and not getattr(self, "_kokoro_download_announced", False):
-            self._kokoro_download_announced = True
-            self._speak_cue(None, "Downloading the neural voice. Using the "
-                            "Windows voice until it is ready.", exempt_mute=True)
-        if getattr(self, "_kokoro_fallback_announced", False):
-            return
-        try:
-            from sonara import kokoro
-            reason = kokoro.pop_fallback_notice()
-        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
-            return
-        if reason:
-            self._kokoro_fallback_announced = True
-            self._speak_cue(None, "Kokoro unavailable, using Windows voice.",
-                            exempt_mute=True)
+        """Live-apply hook for the cue voice keys (config_schema apply):
+        warm the Kokoro engine for cues (#60, see Cues.maybe_prewarm)."""
+        self._cues.maybe_prewarm()
 
     def _audio_mode(self) -> str:
         return config_schema.current(self.config, "audio_mode")
@@ -2047,11 +1932,11 @@ class SpeechDaemon:
         if not voice:
             return False
         text = "This is {0} speaking for Sonara.".format(voice)
-        # HTTP requests run on their own threads: _speak_cue reslices CONTROL
+        # HTTP requests run on their own threads: Cues.speak reslices CONTROL
         # and allocates an id, which the speak loop does under the lock too.
         with self._lock:
-            self._speak_cue(None, text, exempt_mute=True, pause_exempt=True,
-                            cue_key="voice_preview", voice=str(voice))
+            self._cues.speak(None, text, exempt_mute=True, pause_exempt=True,
+                             cue_key="voice_preview", voice=str(voice))
         return True
 
     def _duck_exclude_pids(self) -> "set[int]":
@@ -2100,7 +1985,7 @@ class SpeechDaemon:
         target = self.router.active or self.sessions.foreground()
         cue = {"off": "Audio off.", "duck": "Audio ducking.",
                "pause": "Media pause."}[mode]
-        self._speak_cue(target, cue, exempt_mute=True, pause_exempt=True)
+        self._cues.speak(target, cue, exempt_mute=True, pause_exempt=True)
         self._wake.set()
 
     def _speak_loop_once(self) -> None:
@@ -2112,7 +1997,7 @@ class SpeechDaemon:
             self._maybe_restore_audio()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
-            # pause rewinds the cursor past where _speak_cue inserted the cue, so a
+            # pause rewinds the cursor past where Cues.speak inserted the cue, so a
             # plain peek() at the cursor would miss it.
             with self._lock:
                 item = None
@@ -2125,7 +2010,7 @@ class SpeechDaemon:
             if item is not None:
                 try:
                     completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                                   **self._cue_voice_override(item))
+                                                   **self._cues.cue_voice_override(item))
                 except Exception:  # noqa: BLE001
                     self._signal_speak_failure()
                     completed = False
@@ -2149,7 +2034,7 @@ class SpeechDaemon:
                       file=sys.stderr, flush=True)
         # Engine fallback notices: spoken once per daemon run so an eyes-free
         # user knows WHY the voice changed (the reason is already in the log).
-        self._maybe_announce_kokoro_fallback()
+        self._cues.maybe_announce_kokoro_fallback()
         if item is None:
             self._maybe_restore_audio()
             self._wake.wait(self._poll_interval)
@@ -2171,7 +2056,7 @@ class SpeechDaemon:
                 try:
                     completed = self.speaker.speak(item.text,
                                                    cancel_epoch=cancel_epoch,
-                                                   **self._cue_voice_override(item))
+                                                   **self._cues.cue_voice_override(item))
                 except Exception:  # noqa: BLE001
                     self._signal_speak_failure()
                     completed = False
@@ -2193,7 +2078,7 @@ class SpeechDaemon:
             try:
                 completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                                on_play=None,
-                                               **self._voice_override(item))
+                                               **self._cues.voice_override(item))
             except Exception:  # noqa: BLE001
                 self._signal_speak_failure()
                 completed = False
@@ -2218,7 +2103,7 @@ class SpeechDaemon:
                 else:
                     self._pending_preamble = None   # stale alert for another session: drop it
         if preamble is not None:
-            cue_voice = self._cue_voice()
+            cue_voice = self._cues.cue_voice()
             rate = config_schema.get(self.config, "rate")
 
             def on_play(_text=preamble, _voice=cue_voice, _rate=rate):
@@ -2240,7 +2125,7 @@ class SpeechDaemon:
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,
-                                           **self._voice_override(item))
+                                           **self._cues.voice_override(item))
         except Exception:  # noqa: BLE001
             self._signal_speak_failure()
             completed = False

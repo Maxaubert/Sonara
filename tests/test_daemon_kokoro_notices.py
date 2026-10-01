@@ -15,21 +15,21 @@ def test_cue_voice_is_native_when_kokoro_is_not_installed(monkeypatch):
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
     daemon, _q, _sp, _s, _c = make_daemon(foreground="fg")
     daemon.config["cue_voice"] = "af_heart"
-    assert daemon._cue_voice() is None
+    assert daemon._cues.cue_voice() is None
 
 
 def test_cue_voice_is_kept_when_kokoro_is_installed(monkeypatch):
     monkeypatch.setattr(kokoro, "is_installed", lambda: True)
     daemon, _q, _sp, _s, _c = make_daemon(foreground="fg")
     daemon.config["cue_voice"] = "af_heart"
-    assert daemon._cue_voice() == "af_heart"
+    assert daemon._cues.cue_voice() == "af_heart"
 
 
 def test_native_cue_voice_is_kept_without_kokoro(monkeypatch):
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
     daemon, _q, _sp, _s, _c = make_daemon(foreground="fg")
     daemon.config["cue_voice"] = "Microsoft Zira"
-    assert daemon._cue_voice() == "Microsoft Zira"
+    assert daemon._cues.cue_voice() == "Microsoft Zira"
 
 
 def test_download_notice_is_spoken_once(monkeypatch):
@@ -49,6 +49,6 @@ def test_no_unavailable_notice_on_a_default_install(monkeypatch):
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
     kokoro.pop_fallback_notice()
     daemon, _q, speaker, _s, _c = make_daemon(foreground="fg")
-    daemon._speak_cue("fg", "Muted.", exempt_mute=True)
+    daemon._cues.speak("fg", "Muted.", exempt_mute=True)
     _drain(daemon)
     assert not any("kokoro" in t.lower() for t in speaker.spoken)

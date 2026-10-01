@@ -13,11 +13,11 @@ def _prose(s, d, i, f):
 # ---------------------------------------------------------------------------
 
 def test_stacked_control_cues_play_in_order():
-    # _speak_cue used to insert at the CONTROL cursor, so stacked cues played
+    # _cues.speak used to insert at the CONTROL cursor, so stacked cues played
     # LIFO (newest state confirmation first) -- misleading for an eyes-free user.
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
-    daemon._speak_cue(None, "First cue.")
-    daemon._speak_cue(None, "Second cue.")
+    daemon._cues.speak(None, "First cue.")
+    daemon._cues.speak(None, "Second cue.")
     daemon._speak_loop_once()
     daemon._speak_loop_once()
     assert speaker.spoken == ["First cue.", "Second cue."]   # FIFO
