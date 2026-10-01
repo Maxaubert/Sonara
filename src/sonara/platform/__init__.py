@@ -32,3 +32,12 @@ def daemon_process():
     _require_windows()
     from sonara.platform.windows import process
     return process
+
+
+def child_processes():
+    """The OS module for spawning and ending a background child process
+    (the summarizer engine): popen_kwargs, command_names, kill_tree. Light
+    like daemon_process(): it loads no backend (#161)."""
+    _require_windows()
+    from sonara.platform.windows import child_process
+    return child_process

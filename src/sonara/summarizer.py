@@ -160,12 +160,8 @@ def _resolve_command(name):
     npm .cmd shim). A name with a directory part is taken as given."""
     if os.path.dirname(name):
         return name if os.path.isfile(name) else None
-    names = [name]
-    if os.name == "nt":
-        exts = [e for e in os.environ.get(
-            "PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep) if e]
-        if not any(name.lower().endswith(e.lower()) for e in exts):
-            names = [name + e for e in exts]
+    from sonara.platform import child_processes
+    names = child_processes().command_names(name)
     for d in os.environ.get("PATH", "").split(os.pathsep):
         d = d.strip('"')
         if not d or not os.path.isabs(d):
@@ -182,15 +178,11 @@ def _kill_tree(proc) -> None:
     as cmd.exe -> node: killing cmd.exe alone leaves node holding the pipes,
     and the summarizer then waits for node instead of its timeout (#138, audit
     F5). Never raises."""
-    if os.name == "nt":
-        try:
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=10,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except (OSError, subprocess.SubprocessError):
-            pass
+    try:
+        from sonara.platform import child_processes
+        child_processes().kill_tree(proc)
+    except Exception:  # noqa: BLE001 - the direct kill below still runs
+        pass
     try:
         proc.kill()
     except OSError:
@@ -217,9 +209,8 @@ def _default_runner(argv, text: str, timeout):
             "summarizer command not found on PATH: {0}".format(argv[0]))
     env = dict(os.environ)
     env["SONARA_SUMMARIZER"] = "1"
-    kwargs = {}
-    if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    from sonara.platform import child_processes
+    kwargs = child_processes().popen_kwargs()
     proc = subprocess.Popen(
         [exe] + list(argv[1:]),
         stdin=subprocess.PIPE,

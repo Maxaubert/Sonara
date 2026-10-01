@@ -34,7 +34,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - `assembler.py`, `cleaner.py`: text to spoken items. `summarizer.py`: `claude -p` / `codex exec` digests.
 - Persisted state under `~/.sonara`, every path via `paths.py`: history, sessions, session prefs, digests.
 - Settings: one table in `config_schema.py` (default, validator, page path, live-apply hook) feeds config DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys (pre-#136 full dumps: values equal to a current or past default count as unset). Bundled earcons resolve at runtime, never stored.
-- `platform/`: OS seam. `get_platform()` gives the backends (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = autostart task, launcher, stray-daemon sweep); `daemon_process()` gives `windows/process.py` (faulthandler, priority, VC preload, single-instance guard from `windows/singleton.py`) before any backend loads. `transport.py` is OS-free TCP + lockfile.
+- `platform/`: OS seam. `get_platform()` gives the backends (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = autostart task, launcher, stray-daemon sweep); `daemon_process()` gives `windows/process.py` (faulthandler, priority, VC preload, single-instance guard from `windows/singleton.py`) before any backend loads. `child_processes()` gives `windows/child_process.py` (summarizer engine spawn, PATHEXT, tree kill). `transport.py` is OS-free TCP + lockfile.
 - `install/` (#142): `installer` (install, uninstall), `app_copy` (plugin root, runtime copy), `deps` (daemon interpreter, PyWinRT), `service` (stop/start around file changes), `voices`, `cleanup`, `doctor`, `claude_hooks` (settings.json hooks generated from `hooks/hooks.json`; the Windows supervisor calls it). Modules call each other via module attributes: tests patch the owning module, and the platform via `sonara.platform.get_platform`.
 - `webui.py` + `settings.html`: token-protected settings page. `cli.py`: argparse + thin command functions only. `install_record.py`: install.json. `kokoro*.py`: neural voices.
 
@@ -44,7 +44,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - Never leave other apps ducked or paused.
 
 ## Conventions
-- `daemon/`, `install/`, `webui.py` and `cli.py` stay OS-free: no `sys.platform`/`os.name` branch, win32 import or `platform.windows` import (`test_no_os_branch_in_core.py` enforces it). `summarizer.py` still branches on `os.name` for its process flags; that is a known gap, not a pattern to copy.
+- `daemon/`, `install/`, `webui.py`, `cli.py` and `summarizer.py` stay OS-free: no `sys.platform`/`os.name` branch, win32 import or `platform.windows` import (`test_no_os_branch_in_core.py` enforces it). The summarizer's child-process flags, PATHEXT lookup and tree kill come from `platform.child_processes()`.
 - Python 3.9 syntax (`test_py39_compat.py`), `from __future__ import annotations`.
 - Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
