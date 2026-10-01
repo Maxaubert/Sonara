@@ -11,6 +11,7 @@ from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
+from sonara.daemon.audio import AudioControl
 from sonara.daemon.cues import Cues
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
@@ -178,6 +179,13 @@ class SpeechDaemon:
                           alloc_id=self._alloc_id,
                           current_item=lambda: self._current_item,
                           wake=self._wake)
+        # Ducking / media pause around speech, and the speech volume. persist
+        # resolves save_config here at call time (tests patch it on this module).
+        self._audio = AudioControl(
+            config, self.ducker, self.pauser, speaker,
+            persist=lambda: save_config(self.config), cues=self._cues,
+            cue_target=lambda: self.router.active or self.sessions.foreground(),
+            wake=self._wake)
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
@@ -715,7 +723,7 @@ class SpeechDaemon:
                 # utterance aborts. The speak loop re-queues the interrupted item
                 # (sees completed=False while paused), so we don't capture it here.
                 self.speaker.cancel()
-                self._maybe_restore_audio()
+                self._audio.restore()
                 # "Paused." is pause_exempt so the paused branch of the speak loop
                 # scans for and voices it while holding everything else. target may
                 # be None -> CONTROL channel (still scanned by take_pause_exempt).
@@ -894,41 +902,8 @@ class SpeechDaemon:
             save_config(self.config)
             return None
 
-        if t == MsgType.SET_AUDIO_MODE:
-            mode = config_schema.clean("audio_mode", msg.get("mode"))
-            if mode is config_schema.INVALID:
-                return None
-            self._apply_audio_mode(mode)
-            return None
-
-        if t == MsgType.SET_DUCK_LEVEL:
-            level = config_schema.clean("duck_level", msg.get("level"))
-            if level is config_schema.INVALID:
-                return None
-            self.config["duck_level"] = level
-            save_config(self.config)
-            if self._audio_duck_on() and self.ducker.is_ducked():  # re-apply at the new level
-                self.ducker.restore()
-                self.ducker.duck(self._duck_exclude_pids(), level)
-            target = self.router.active or self.sessions.foreground()
-            self._cues.speak(target, "Duck level {0} percent.".format(level),
-                             exempt_mute=True, pause_exempt=True,
-                             cue_key="duck_level")
-            self._wake.set()
-            return None
-
-        if t == MsgType.SET_VOLUME:
-            vol = config_schema.clean("volume", msg.get("volume"))
-            if vol is config_schema.INVALID:
-                return None
-            self.config["volume"] = vol
-            save_config(self.config)
-            self._apply_volume(vol)
-            # No spoken confirmation, ever (user decision): the instant
-            # session-volume change is its own feedback, and the slider is
-            # the only surface, so the number is already on screen.
-            self._wake.set()
-            return None
+        if t in AudioControl.MESSAGES:
+            return self._audio.handle(msg)
 
         if t == MsgType.SET_SUMMARY_MODE:
             if "enabled" not in msg:
@@ -979,7 +954,7 @@ class SpeechDaemon:
         self._running.clear()
         self._wake.set()
         self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
-        self._maybe_restore_audio()       # never leave other apps' audio ducked or paused
+        self._audio.restore()       # never leave other apps' audio ducked or paused
         self._stop_hotkeys()
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
@@ -1847,15 +1822,6 @@ class SpeechDaemon:
         warm the Kokoro engine for cues (#60, see Cues.maybe_prewarm)."""
         self._cues.maybe_prewarm()
 
-    def _audio_mode(self) -> str:
-        return config_schema.current(self.config, "audio_mode")
-
-    def _audio_duck_on(self) -> bool:
-        return self._audio_mode() == "duck"
-
-    def _duck_level(self) -> int:
-        return config_schema.current(self.config, "duck_level")
-
     def set_config_value(self, key: str, value) -> bool:
         """Set a config-only tuning key (settings page, #34). These have no
         protocol message; config_schema validates them (#136). Clean, set
@@ -1939,62 +1905,13 @@ class SpeechDaemon:
                              cue_key="voice_preview", voice=str(voice))
         return True
 
-    def _duck_exclude_pids(self) -> "set[int]":
-        pids = {os.getpid()}
-        try:
-            pids.update(self.speaker.earcon_pids())
-        except AttributeError:
-            pass
-        return pids
-
-    def _apply_volume(self, percent) -> None:
-        """Push the speech gain to the platform playback layer. Best-effort:
-        tests and non-Windows runs have no platform backend."""
-        try:
-            from sonara.platform import get_platform
-            get_platform().tts.set_volume(percent)
-        except Exception:  # noqa: BLE001 - volume must never break the daemon
-            pass
-
-    def _maybe_engage_audio(self) -> None:
-        mode = self._audio_mode()
-        if mode == "duck":
-            if not self.ducker.is_ducked():
-                self.ducker.duck(self._duck_exclude_pids(), self._duck_level())
-        elif mode == "pause":
-            if not self.pauser.is_paused():
-                self.pauser.pause()
-
-    def _maybe_restore_audio(self) -> None:
-        # Disengage BOTH backends defensively: a mid-speech mode switch can leave
-        # the other backend engaged, and idle must never leave media ducked OR paused.
-        if self.ducker.is_ducked():
-            self.ducker.restore()
-        if self.pauser.is_paused():
-            self.pauser.resume()
-
-    def _apply_audio_mode(self, mode: str) -> None:
-        """Persist the audio behavior mode, disengage whatever backend was
-        engaged (so a switch never leaves other apps ducked or paused), and
-        speak the mode cue."""
-        if mode not in config_schema.AUDIO_MODES:
-            return
-        self.config["audio_mode"] = mode
-        save_config(self.config)
-        self._maybe_restore_audio()
-        target = self.router.active or self.sessions.foreground()
-        cue = {"off": "Audio off.", "duck": "Audio ducking.",
-               "pause": "Media pause."}[mode]
-        self._cues.speak(target, cue, exempt_mute=True, pause_exempt=True)
-        self._wake.set()
-
     def _speak_loop_once(self) -> None:
         """One iteration of the speak loop. May raise; _speak_loop contains it."""
         if self._paused.is_set():
             # Idempotently restore other apps' audio while paused -- closes the window
             # where a re-duck slipped in during the pause transition. Safe to call
-            # repeatedly: _maybe_restore_audio() is a no-op when not ducked/paused.
-            self._maybe_restore_audio()
+            # repeatedly: AudioControl.restore() is a no-op when not ducked/paused.
+            self._audio.restore()
             # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
             # before holding. Scan ALL channels at/after their cursor: a mid-utterance
             # pause rewinds the cursor past where Cues.speak inserted the cue, so a
@@ -2036,7 +1953,7 @@ class SpeechDaemon:
         # user knows WHY the voice changed (the reason is already in the log).
         self._cues.maybe_announce_kokoro_fallback()
         if item is None:
-            self._maybe_restore_audio()
+            self._audio.restore()
             self._wake.wait(self._poll_interval)
             self._wake.clear()
             return
@@ -2119,9 +2036,9 @@ class SpeechDaemon:
                     self.speaker.speak_cue_untracked(_text, _voice, _rate)
                 except Exception:  # noqa: BLE001
                     pass
-                self._maybe_engage_audio()
+                self._audio.engage()
         else:
-            on_play = self._maybe_engage_audio
+            on_play = self._audio.engage
         try:
             completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
                                            on_play=on_play,
@@ -2405,5 +2322,5 @@ def main() -> None:
                           ducker=_backend.ducker, pauser=_backend.pauser,
                           prefs=SessionPrefs(store_path=SESSION_PREFS_PATH),
                           digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
-    daemon._apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
+    daemon._audio.apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
     daemon.run()

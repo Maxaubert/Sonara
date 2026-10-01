@@ -11,7 +11,7 @@ def _msg(daemon, **kw):
 def test_set_volume_clamps_persists_and_applies(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     applied = []
-    monkeypatch.setattr(daemon, "_apply_volume", lambda v: applied.append(v))
+    monkeypatch.setattr(daemon._audio, "apply_volume", lambda v: applied.append(v))
     _msg(daemon, type=MsgType.SET_VOLUME, volume=150)
     assert config["volume"] == 150
     assert applied == [150]
@@ -23,11 +23,11 @@ def test_set_volume_clamps_persists_and_applies(monkeypatch):
 
 
 def test_set_volume_reaches_platform_gain(monkeypatch):
-    # The whole-branch review found _apply_volume calling a nonexistent
+    # The whole-branch review found the volume apply calling a nonexistent
     # method on the backend instance - swallowed by its except, so the
     # feature was a silent no-op live. This test crosses the real seam:
     # daemon -> get_platform().tts.set_volume -> module gain state. It does
-    # NOT monkeypatch _apply_volume, unlike the tests above.
+    # NOT monkeypatch apply_volume, unlike the tests above.
     import sonara.platform as platform_mod
     from sonara.platform.windows.tts import WinTtsBackend
     from sonara.platform.windows import tts as tts_mod
@@ -65,7 +65,7 @@ def test_set_volume_never_speaks_a_cue(monkeypatch):
     from sonara.queue import SpeechItem
     from sonara.router import CONTROL
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    monkeypatch.setattr(daemon, "_apply_volume", lambda v: None)
+    monkeypatch.setattr(daemon._audio, "apply_volume", lambda v: None)
     _msg(daemon, type=MsgType.SET_VOLUME, volume=50)          # idle
     daemon._current_item = SpeechItem(id=1, session="fg", kind="summary",
                                       text="a digest being spoken",
