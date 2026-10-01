@@ -155,7 +155,7 @@ class SpeechDaemon:
         # and deferred questions). A late worker must find no held question
         # to append (zombie channel), and nothing here may outlive the
         # session (audit #21).
-        reg.register_hook("summary", self._summary.cancel)
+        reg.register_hook("summary", self._summary.end_session)
         reg.register("last_digest_text", self._last_digest_text)
         # Ended sessions don't rehydrate (#118).
         reg.register_hook("digest_store", self.digest_store.forget)
