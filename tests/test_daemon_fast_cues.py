@@ -60,7 +60,11 @@ def test_fast_cues_off_keeps_configured_voice_for_cues():
     assert speaker.speak_voices[i] == "__default__"
 
 
-def test_session_change_announcement_gets_the_override():
+def test_session_change_announcement_gets_the_override(monkeypatch):
+    # Hermetic: the af_heart cue voice only applies when Kokoro is installed
+    # (E12); CI has no Kokoro, this PC does.
+    from sonara import kokoro
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     from sonara.daemon import SpeechItem
     item = SpeechItem(id=0, session="other", kind="session_change",
