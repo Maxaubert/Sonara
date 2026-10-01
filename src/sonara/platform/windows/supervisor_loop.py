@@ -5,9 +5,9 @@ WINDOWS-only behaviour, but the module imports cleanly on macOS/Linux (the
 process-creation flags are hex literals, not subprocess.CREATE_NO_WINDOW which
 is win32-only). "Imports + mock-green" does NOT mean Windows-verified -- the
 DETACHED_PROCESS/CREATE_NO_WINDOW spawn behaviour is a deferred acceptance item
-(docs/superpowers/M2-WINDOWS-ACCEPTANCE.md).
+(docs/history/M2-WINDOWS-ACCEPTANCE.md).
 
-Body copied verbatim from docs/superpowers/m2-windows-api-reference.md
+Body copied verbatim from docs/history/m2-windows-api-reference.md
 (§Thin Python supervisor loop), adapting only the import location.
 """
 from __future__ import annotations

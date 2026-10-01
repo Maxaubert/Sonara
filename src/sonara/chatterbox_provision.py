@@ -8,7 +8,7 @@ goes through injected callables so the logic is unit-testable (mirrors
 kokoro_provision).
 
 Deviation from the original design brief, per the real-GPU smoke test
-(docs/superpowers/specs/2026-07-12-chatterbox-smoke.md): installing
+(docs/history/specs/2026-07-12-chatterbox-smoke.md): installing
 chatterbox-tts SILENTLY DOWNGRADES a cu128 torch/torchaudio install to
 generic CPU builds (the import still succeeds; only
 `torch.cuda.is_available()` reveals the downgrade). The verified working
@@ -39,7 +39,7 @@ def chatterbox_requirements_path() -> str:
 def provision(uv: str, run=subprocess.check_call) -> None:
     """Create the uv-managed venv (downloading CPython 3.12 if absent), then run
     the four-step install sequence verified in
-    docs/superpowers/specs/2026-07-12-chatterbox-smoke.md: torch cu128, then
+    docs/history/specs/2026-07-12-chatterbox-smoke.md: torch cu128, then
     chatterbox-tts (which downgrades torch/torchaudio to CPU builds), then
     torch cu128 --reinstall, then torchaudio cu128 --reinstall to undo the
     downgrade and restore ABI compatibility between the two. Raises

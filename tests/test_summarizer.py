@@ -199,7 +199,7 @@ def test_build_argv_claude_unchanged():
 
 
 def test_build_argv_codex_pinned_by_smoke_doc():
-    # docs/superpowers/specs/2026-07-15-codex-summarizer-smoke.md
+    # docs/history/specs/2026-07-15-codex-summarizer-smoke.md
     from sonara.summarizer import build_argv
     assert build_argv("codex", "gpt-5.6-sol") == [
         "codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check",

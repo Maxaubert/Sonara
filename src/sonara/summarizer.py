@@ -137,7 +137,7 @@ def build_argv(command: str, model: str) -> list:
     spawns a new claude process every few seconds (verified live).
 
     codex: `codex exec` pinned by the live smoke test
-    (docs/superpowers/specs/2026-07-15-codex-summarizer-smoke.md): read-only
+    (docs/history/specs/2026-07-15-codex-summarizer-smoke.md): read-only
     sandbox, no repo access, the user's MCP servers/plugins/memories overridden
     OFF for the throwaway call, low reasoning effort for latency, prompt on
     stdin (the trailing "-"), digest alone on stdout.
