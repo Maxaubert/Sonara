@@ -105,9 +105,9 @@ def test_owner_keeps_voice_across_interchunk_drain_when_other_session_flips_fore
     daemon.handle_message(_prose("A", "First sentence here. ", 0, False))
     assert daemon.router.channel("A").pending() == 1
     # The speak loop drains A's only item: channel hits 0 mid-message.
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert daemon.router.channel("A").pending() == 0
-    # router.active is set to "A" by next_item() called in _speak_loop_once
+    # router.active is set to "A" by next_item() called in SpeakLoop.run_once
     assert daemon.router.active == "A"
     # Now a SECOND session flips foreground (new tab / other window submits).
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SET_FOREGROUND, "session": "B"})
@@ -123,11 +123,11 @@ def test_open_message_released_at_turn_boundary():
     foreground session can then acquire the voice."""
     daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "Hello there. ", 0, False))
-    daemon._speak_loop_once()                      # drain; A keeps voice (open msg)
+    daemon._playback.run_once()                      # drain; A keeps voice (open msg)
     assert daemon.router.active == "A"
     # Turn ends via the Stop turn_done earcon (carries the session).
     daemon.handle_message(_earcon("A", "turn_done"))
-    daemon._speak_loop_once()                       # empty branch now: active -> None
+    daemon._playback.run_once()                       # empty branch now: active -> None
     assert daemon.router.active is None
 
 

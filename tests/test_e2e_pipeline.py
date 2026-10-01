@@ -57,7 +57,7 @@ def drain_queue(daemon, speaker):
     """Run the speak-loop logic to exhaustion via the router.
 
     Calls router.next_item() in a loop and speaks each item until the router
-    has no more ready items.  This mirrors what SpeechDaemon._speak_loop does
+    has no more ready items.  This mirrors what the daemon's SpeakLoop.run does
     per iteration, minus the blocking wait, so the test is deterministic.
     """
     while True:

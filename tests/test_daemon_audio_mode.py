@@ -29,7 +29,7 @@ def test_off_mode_engages_neither_backend():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "off"
     _seed_item(daemon)
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert daemon.ducker.duck_calls == []
     assert daemon.pauser.pause_calls == 0
 
@@ -38,7 +38,7 @@ def test_duck_mode_ducks_at_playback():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "duck"
     _seed_item(daemon)
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert daemon.ducker.duck_calls
     assert daemon.pauser.pause_calls == 0
 
@@ -47,7 +47,7 @@ def test_pause_mode_pauses_at_playback():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "pause"
     _seed_item(daemon)
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert daemon.pauser.pause_calls == 1
     assert daemon.ducker.duck_calls == []
 
@@ -56,9 +56,9 @@ def test_pause_mode_resumes_at_global_idle():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "pause"
     _seed_item(daemon)
-    daemon._speak_loop_once()                     # speaks -> paused
+    daemon._playback.run_once()                     # speaks -> paused
     assert daemon.pauser.is_paused() is True
-    daemon._speak_loop_once()                     # nothing left -> idle restore
+    daemon._playback.run_once()                     # nothing left -> idle restore
     assert daemon.pauser.resume_calls == 1
     assert daemon.pauser.is_paused() is False
 
@@ -69,10 +69,10 @@ def test_session_change_announcement_engages_neither():
     daemon.router._last_active = "a"
     _seed_item(daemon, text="The digest body.", session="b")
     daemon.router._replay_authorized.add("b")
-    daemon._speak_loop_once()                     # the announcement
+    daemon._playback.run_once()                     # the announcement
     assert daemon.pauser.pause_calls == 0
     assert daemon.ducker.duck_calls == []
-    daemon._speak_loop_once()                     # the content
+    daemon._playback.run_once()                     # the content
     assert daemon.pauser.pause_calls == 1
 
 
@@ -98,7 +98,7 @@ def test_set_audio_mode_disengages_previous_backend():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     config["audio_mode"] = "duck"
     _seed_item(daemon)
-    daemon._speak_loop_once()                     # ducked now
+    daemon._playback.run_once()                     # ducked now
     assert daemon.ducker.is_ducked() is True
     _msg(daemon, type=MsgType.SET_AUDIO_MODE, mode="pause")
     assert daemon.ducker.is_ducked() is False     # old backend released on switch

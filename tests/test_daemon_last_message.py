@@ -36,14 +36,14 @@ def _summary_daemon(monkeypatch, foreground="fg"):
     daemon, queue, speaker, sessions, config = make_daemon(foreground=foreground)
     config["summary_mode"] = True
     # Deterministic settle: record the window instead of starting a timer.
-    monkeypatch.setattr(daemon, "_settle_schedule", lambda session, gen: None)
+    monkeypatch.setattr(daemon._summary, "schedule_settle", lambda session, gen: None)
     return daemon, speaker, sessions, config
 
 
 def _fire_settle(daemon, session):
-    gen = daemon._settle_gen.get(session)
+    gen = daemon._summary.settle_gen.get(session)
     if gen is not None:
-        daemon._settle_fire(session, gen)
+        daemon._summary.settle_fire(session, gen)
 
 
 def _capture_spawn(daemon, monkeypatch):
@@ -54,13 +54,13 @@ def _capture_spawn(daemon, monkeypatch):
         calls.append({"session": session, "gen": gen, "text": text,
                       "token": token, "leadin": leadin, "seq": seq})
 
-    monkeypatch.setattr(daemon, "_start_summary_thread", fake)
+    monkeypatch.setattr(daemon._summary, "start_thread", fake)
     return calls
 
 
 def _run_worker(daemon, call, digest="The digest."):
-    daemon._summarize_fn = lambda text, **kw: digest
-    daemon._summary_worker(call["session"], call["gen"], call["text"],
+    daemon._summary.summarize_fn = lambda text, **kw: digest
+    daemon._summary.worker(call["session"], call["gen"], call["text"],
                            call["token"], call["leadin"], call["seq"])
 
 
@@ -143,7 +143,7 @@ def _paused_while_reading_a(daemon):
     ch.append(SpeechItem(id=99, session="A", kind="prose", text="a1",
                          is_decision=False))
     ch.turn_done = True
-    daemon._speak_loop_once()                    # A reads: engaged session
+    daemon._playback.run_once()                    # A reads: engaged session
     daemon.handle_message(_msg(MsgType.PAUSE))
     assert daemon._paused.is_set()
 
@@ -220,9 +220,9 @@ def test_stop_cancels_an_armed_settle_window(monkeypatch):
     calls = _capture_spawn(daemon, monkeypatch)
     daemon.handle_message(_prose("fg", "Long turn. " + _PAD * 6))
     _turn_done(daemon, "fg")
-    gen = daemon._settle_gen["fg"]
+    gen = daemon._summary.settle_gen["fg"]
     daemon.handle_message(_msg(MsgType.STOP))
-    daemon._settle_fire("fg", gen)                # the timer fires anyway
+    daemon._summary.settle_fire("fg", gen)                # the timer fires anyway
     assert calls == []
 
 
@@ -253,9 +253,9 @@ def test_stop_drops_a_held_question(monkeypatch):
     daemon.handle_message(_msg(MsgType.CHOICE, "fg", questions=[
         {"question": "Pick one?", "options": ["a", "b"]}]))
     _fire_settle(daemon, "fg")
-    assert daemon._held_decision.get("fg") is not None
+    assert daemon._summary.held_decision.get("fg") is not None
     daemon.handle_message(_msg(MsgType.STOP))
-    assert daemon._held_decision.get("fg") is None
+    assert daemon._summary.held_decision.get("fg") is None
     _run_worker(daemon, calls[0])
     assert _pending_texts(daemon, "fg") == []
 
@@ -296,32 +296,34 @@ def test_replayed_decision_marks_the_channel(monkeypatch):
     assert daemon.router.channel("fg").has_decision is True
 
 
-# --- L-preamble: check-then-act on _pending_preamble -----------------------
+# --- L-preamble: check-then-act on pending_preamble ------------------------
 
 def test_preamble_cleared_between_check_and_use_does_not_crash():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
 
-    class _Racy(type(daemon)):
+    playback = daemon._playback
+
+    class _Racy(type(playback)):
         # Every read hands out the value, then "on_play on the synth thread"
         # clears it - the window between the old double read.
         @property
-        def _pending_preamble(self):
+        def pending_preamble(self):
             v = self.__dict__.get("_pp")
             self.__dict__["_pp"] = None
             return v
 
-        @_pending_preamble.setter
-        def _pending_preamble(self, v):
+        @pending_preamble.setter
+        def pending_preamble(self, v):
             self.__dict__["_pp"] = v
 
-    daemon.__dict__.pop("_pending_preamble", None)
-    daemon.__class__ = _Racy
+    playback.__dict__.pop("pending_preamble", None)
+    playback.__class__ = _Racy
     ch = daemon.router.channel("fg")
     ch.append(SpeechItem(id=7, session="fg", kind="prose", text="content",
                          is_decision=False))
     ch.turn_done = True
-    daemon._pending_preamble = ("fg", "Session changed: fg.")
-    daemon._speak_loop_once()
+    daemon._playback.pending_preamble = ("fg", "Session changed: fg.")
+    daemon._playback.run_once()
     assert "content" in speaker.spoken
     assert [t for t, _v in speaker.cue_untracked_calls] == ["Session changed: fg."]
 

@@ -43,8 +43,8 @@ def test_summary_worker_passes_style_and_custom_instruction():
     def fake_summarize(text, **kw):
         seen.update(kw)
         return "digest"
-    daemon._summarize_fn = fake_summarize
-    daemon._summary_worker("fg", daemon._summary_gen.get("fg", 0), "turn text")
+    daemon._summary.summarize_fn = fake_summarize
+    daemon._summary.worker("fg", daemon._summary.cancel_gen.get("fg", 0), "turn text")
     assert seen["style"] == "brief"
     assert seen["instruction"] == "MY RULES"
 
@@ -57,7 +57,7 @@ def test_summary_worker_passes_none_instruction_when_not_customized():
     def fake_summarize(text, **kw):
         seen.update(kw)
         return "digest"
-    daemon._summarize_fn = fake_summarize
-    daemon._summary_worker("fg", daemon._summary_gen.get("fg", 0), "turn text")
+    daemon._summary.summarize_fn = fake_summarize
+    daemon._summary.worker("fg", daemon._summary.cancel_gen.get("fg", 0), "turn text")
     assert seen["style"] == "tidy"
     assert seen["instruction"] is None

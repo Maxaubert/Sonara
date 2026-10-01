@@ -11,9 +11,12 @@ from sonara.assembler import ProseAssembler
 from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
 from sonara.daemon.audio import AudioControl
+from sonara.daemon.core import SharedState
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
+from sonara.daemon.playback import SpeakLoop
 from sonara.daemon.server import ConnectionServer
+from sonara.daemon.summary.pipeline import SummaryPipeline, summary_log
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -36,63 +39,6 @@ RATE_MIN = config_schema.RATE_MIN
 RATE_MAX = config_schema.RATE_MAX
 MINQUEUE_MIN = config_schema.MINQUEUE_MIN
 MINQUEUE_MAX = config_schema.MINQUEUE_MAX
-
-# Summary mode: a turn whose prose is already shorter than this is spoken
-# as-is instead of being digested (a digest of a short message adds nothing,
-# costs a model call, and risks spoken meta-text on borderline input).
-# EXCEPTION (#83): a lead-in before a pending QUESTION is digested even when
-# short - short mid-turn lead-ins are precisely the "let me check the repo"
-# process narration the digest exists to cut.
-_SUMMARY_MIN_CHARS = 280
-
-# Seconds added to summary_timeout to get the hold cap below. Covers the gap
-# between the summarizer subprocess timing out and the worker's finally
-# actually running (process teardown, post-processing).
-_DECISION_HOLD_GRACE_S = 5.0
-
-
-def _decision_hold_max_s(config) -> float:
-    """Max seconds a blocking question is HELD behind its in-flight lead-in
-    digest (#83). This is the WEDGE guard for a summarizer that never returns
-    AT ALL, not a bound on slow ones: the digest worker's finally releases the
-    question the instant the digest lands OR fails OR SKIPs, and the question's
-    attention earcon fires immediately regardless.
-
-    So the cap must outlive any digest the summarizer can still come back from,
-    which is exactly summary_timeout. A hardcoded value cannot: #103 raised it
-    5s -> 30s against codex latency (median 8.7s / p90 17.7s), and switching the
-    engine to claude+haiku tripled that (median 24.6s, 25% of digests past 30s)
-    with summary_timeout untouched at 60. The guard then fired on healthy work
-    and made the "bounded inversion" (question before its context) common again
-    (#121). Deriving it means any engine or timeout change carries the cap along.
-
-    Past the cap the question speaks and the digest follows."""
-    return _summary_timeout_s(config) + _DECISION_HOLD_GRACE_S
-
-
-def _summary_timeout_s(config) -> float:
-    """summary_timeout from the live config as a finite, non-negative float."""
-    try:
-        timeout = float(config_schema.get(config, "summary_timeout"))
-    except (AttributeError, TypeError, ValueError):
-        timeout = 60.0
-    if timeout != timeout or timeout in (float("inf"), float("-inf")):
-        timeout = 60.0                      # NaN / inf from a hand-edited config
-    return max(timeout, 0.0)
-
-
-def _digest_watchdog_s(config) -> float:
-    """Seconds after dispatch at which a turn-end digest slot that has still
-    not landed is landed by the watchdog (#138, audit M1). The summarizer
-    enforces summary_timeout itself, so a worker still out at twice that is
-    hung, and its slot would otherwise park every later digest forever."""
-    return 2.0 * _summary_timeout_s(config)
-
-
-def _summary_log(reason) -> None:
-    """One summary-pipeline line on stderr, which the supervisor redirects to
-    speechd.log, so a silent recap failure is diagnosable."""
-    print("[summary] {0}".format(reason), file=sys.stderr, flush=True)
 
 # Startup channel rehydration horizon (#118): sessions seen within this window
 # get their persisted last digest re-seeded as a replayable channel, so the
@@ -144,14 +90,13 @@ class SpeechDaemon:
         self._server = ConnectionServer(
             self._running, self._lock, lambda m: self.handle_message(m))
         self._webui = None
-        self._poll_interval = 0.1
         from sonara.history import SessionHistory
         self.history = SessionHistory(cap=int(config_schema.get(config, "history_cap")))
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
-        self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
-        self._voiced_upto: dict = {}       # session -> last HistoryEntry voiced this turn (summary mode: a blocking question and turn-end must not double-voice; identity survives history-cap eviction, audit #21)
+        # Shared by several features (#141): the item being spoken and the
+        # per-session text summary-mode Up re-reads verbatim.
+        self._shared = SharedState()
         self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
-        self._held_decision: dict = {}            # session -> (owner token, [decision items]) held until the lead-in digest lands (context-first ordering)
         self._paused = threading.Event()          # play/pause: set == speech halted
         # Mute cycle: 0=unmuted, 1=muted (prose off, beeps on), 2=super muted
         # (prose AND beeps off). RESTORED from config (#65): hooks silently
@@ -160,8 +105,7 @@ class SpeechDaemon:
         self._mute_level = config_schema.current(config, "mute_level")
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
-        self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
-        self._current_item = None                 # item being spoken right now
+        self._digests = DigestReorderBuffer(lock=self._lock, log=summary_log)
         # Control cues on the CONTROL channel, their voice, Kokoro notices.
         self._cues = Cues(config, self.router, speaker, self.session_prefs,
                           alloc_id=self._alloc_id,
@@ -174,7 +118,6 @@ class SpeechDaemon:
             persist=lambda: save_config(self.config), cues=self._cues,
             cue_target=lambda: self.router.active or self.sessions.foreground(),
             wake=self._wake)
-        self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
         # Global hotkeys: fires are queued by the pump thread and applied by a
@@ -183,33 +126,38 @@ class SpeechDaemon:
         self._hotkeys = HotkeyController(
             self._lock, self._running, lambda m: self.handle_message(m),
             self._cues)
-        # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
-        # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
-        # since it was dispatched. A turn merely ending does NOT advance it, so the
-        # system never drops a finished message -- only the user cancels (#13).
-        self._summary_gen: dict = {}
-        # Summary mode: per-session turn-end SETTLE window (#14). turn_done can
-        # reach the daemon before a turn's final prose (separate hook processes
-        # race under multi-session load), so digesting immediately summarizes an
-        # incomplete/empty turn. Arm a short window on turn_done, reset it on each
-        # new prose delta, and digest only once the session is quiet.
-        self._settle_timers: dict = {}     # session -> threading.Timer
-        self._settle_gen: dict = {}        # session -> int (stale-fire guard)
-        self._settle_pending: set = set()  # sessions with a window armed
-        # session -> decision items awaiting their lead-in (#16), in arrival
-        # order: a second decision inside the settle window used to overwrite
-        # the first, which was then never spoken (#138, audit F7).
-        self._pending_decision: dict = {}
-        # Digest dispatch bookkeeping (#21): each dispatch gets a token, and a
-        # held decision is OWNED by the dispatch it waits behind -- only that
-        # worker may pop and append it. Without ownership, whichever same-gen
-        # worker landed first stole the question and played it before its own
-        # lead-in context. _inflight_digests lets a decision with no NEW prose
-        # of its own still hold behind an earlier digest that is mid-flight.
-        self._summary_token = 0            # monotonically increasing dispatch id
-        self._last_dispatch_token: dict = {}   # session -> newest dispatch token
-        self._inflight_digests: dict = {}      # session -> workers in flight
-        self._summarize_fn = None      # test seam; None -> sonara.summarizer.summarize
+        # Summary mode: settle window, lead-in and turn-end digests, the
+        # question hold and the summarizer worker (daemon/summary/pipeline).
+        self._summary = SummaryPipeline(
+            config, self._lock, self._wake, self.router, sessions,
+            self.history, self.digest_store, self._digests, self._shared,
+            self._pending_heard, enqueue=self._enqueue, replay=self._replay,
+            earcon=self._earcon)
+        # The speak loop and the deferred handoff alert (daemon/playback).
+        # note_spoken and _requeue_or_note are looked up at call time
+        # (tests replace them on the daemon).
+        self._playback = SpeakLoop(
+            config, self._lock, self._wake, self._running, self._paused,
+            self.router, speaker, self._cues, self._audio, self._shared,
+            self._pending_heard, muted=lambda: self._muted,
+            earcon=self._earcon,
+            note_spoken=lambda item, completed: self.note_spoken(item, completed),
+            requeue_or_note=lambda item, completed: self._requeue_or_note(
+                item, completed))
+
+    @property
+    def _current_item(self):
+        """The item being spoken right now (core.SharedState)."""
+        return self._shared.current_item
+
+    @_current_item.setter
+    def _current_item(self, item) -> None:
+        self._shared.current_item = item
+
+    @property
+    def _last_digest_text(self) -> dict:
+        """session -> exact spoken digest text (core.SharedState)."""
+        return self._shared.last_digest_text
 
     def _alloc_id(self) -> int:
         self._next_id += 1
@@ -271,22 +219,6 @@ class SpeechDaemon:
             for it in ch.items:
                 self._pending_heard.pop(it.id, None)
 
-    def _drop_decisions(self, items) -> None:
-        """Forget the heard-markers of decision items that will never reach a
-        channel (pending or held ones dropped by FLUSH, teardown or a
-        catch-up), so _pending_heard can't leak (#138, audit F7)."""
-        for it in items or ():
-            self._pending_heard.pop(it.id, None)
-
-    def _drop_held_decisions(self, session: str) -> bool:
-        """Drop a session's held decisions with their bookkeeping. Returns True
-        when anything was held."""
-        held = self._held_decision.pop(session, None)
-        if held is None:
-            return False
-        self._drop_decisions(held[1])
-        return True
-
     def _rehydrate_channels(self) -> None:
         """Re-seed each recently-seen session's channel with its persisted last
         digest as an already-heard item (#118). Channels are in-memory, so a
@@ -320,28 +252,15 @@ class SpeechDaemon:
         self.history.reset(session)
         self._warned_immediate.discard(session)
         self._setup_guide.forget(session)
-        # Ending the session is a user action like FLUSH: BUMP the cancel
-        # epoch so an in-flight digest is dropped when it lands. Popping it
-        # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
-        # dispatched gen 0), letting a dead session's digest resurrect its
-        # history and channel (audit #21).
-        self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
-        # _cancel_settle BUMPS the settle generation; it must not be popped
-        # afterwards. Popping restarted the next arm at gen 1, so a fire from
-        # before the teardown, blocked on the lock, passed the stale guard
-        # (#138, audit L-settle-pop).
-        self._cancel_settle(session)
-        self._drop_decisions(self._pending_decision.pop(session, None))
-        # Clear the rest of the per-session state; a late _summary_worker
-        # must find no held question to append (zombie channel), and nothing
-        # here may outlive the session (audit #21).
-        self._drop_held_decisions(session)
+        # Ending the session is a user action like FLUSH: cancel its summary
+        # work (bumps the cancel epoch and the settle generation, drops held
+        # and deferred questions). A late worker must find no held question
+        # to append (zombie channel), and nothing here may outlive the
+        # session (audit #21).
+        self._summary.cancel(session)
         self._last_digest_text.pop(session, None)
         self.digest_store.forget(session)         # ended sessions don't rehydrate (#118)
-        self._voiced_upto.pop(session, None)
         self._assemblers.pop(session, None)
-        self._last_dispatch_token.pop(session, None)
-        self._inflight_digests.pop(session, None)
         # A stale _await_choice entry from a dead session would suppress
         # permission chimes DAEMON-WIDE forever: the chime carries no session,
         # so the suppression check is global truthiness (audit #19).
@@ -441,8 +360,7 @@ class SpeechDaemon:
             # speak loop's poll_interval is the safety net if a wake is ever missed.
             # Late prose after turn_done: reset the settle window so the turn-end
             # digest waits for the full turn to land (#14). Only when armed.
-            if session in self._settle_pending:
-                self._arm_settle(session)
+            self._summary.on_prose(session)
             if ch.ready(self._minqueue()):
                 self._wake.set()
             return None
@@ -478,11 +396,7 @@ class SpeechDaemon:
             # Summary mode: defer the lead-in digest + question through the settle
             # window so late lead-in prose is included, heard before the question.
             # Non-summary speaks prose live, so enqueue the question immediately.
-            if self.config.get("summary_mode"):
-                self._pending_decision.setdefault(session, []).append(item)
-                self._arm_settle(session)
-            else:
-                self._enqueue_or_hold_decision(session, item, False)
+            self._summary.on_decision(session, item)
             return None
 
         if t == MsgType.PLAN:
@@ -498,11 +412,7 @@ class SpeechDaemon:
             # Same hook race as CHOICE (#16): the PLAN can beat its lead-in prose,
             # so defer the lead-in gather + hold through the settle window in
             # summary mode; the context is then heard before the plan (audit #21).
-            if self.config.get("summary_mode"):
-                self._pending_decision.setdefault(session, []).append(item)
-                self._arm_settle(session)
-            else:
-                self._enqueue_or_hold_decision(session, item, False)
+            self._summary.on_decision(session, item)
             return None
 
         if t == MsgType.PERMISSION:
@@ -526,11 +436,7 @@ class SpeechDaemon:
             self._pending_heard[item.id] = entry
             # Same hook race as CHOICE (#16): defer through the settle window in
             # summary mode so a late lead-in is digested and heard first (audit #21).
-            if self.config.get("summary_mode"):
-                self._pending_decision.setdefault(session, []).append(item)
-                self._arm_settle(session)
-            else:
-                self._enqueue_or_hold_decision(session, item, False)
+            self._summary.on_decision(session, item)
             return None
 
         if t == MsgType.TOOL:
@@ -566,11 +472,8 @@ class SpeechDaemon:
                 self.router.channel(session).turn_done = True
                 self._wake.set()
                 # Do NOT digest yet: the turn's final prose can arrive after this
-                # signal (separate hook processes race). Arm a settle window and
-                # digest once the session is quiet (#14). Non-summary mode has no
-                # digest, so nothing to defer there.
-                if self.config.get("summary_mode"):
-                    self._arm_settle(session)
+                # signal, so summary mode arms a settle window first (#14).
+                self._summary.on_turn_done(session)
             return None
 
         if t == MsgType.FLUSH:
@@ -594,20 +497,11 @@ class SpeechDaemon:
             self.history.reset(session)
             # A new prompt is the user cancelling this session: advance the cancel
             # epoch so any digest dispatched before now is dropped when it lands,
-            # rather than spoken into the new turn (#13).
-            self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
-            self._cancel_settle(session)      # new prompt abandons any settling turn (#14)
+            # rather than spoken into the new turn (#13); abandon any settling
+            # turn (#14) and drop held or deferred questions (#16).
+            self._summary.cancel(session)
             self._last_digest_text.pop(session, None)   # no re-reading a stale digest
-            self._voiced_upto.pop(session, None)         # new turn: nothing voiced yet
             self._await_choice.discard(session)          # new prompt: no question pending
-            self._drop_held_decisions(session)           # new prompt: drop any held question
-            self._drop_decisions(self._pending_decision.pop(session, None))  # questions awaiting their lead-in (#16)
-            # Cancelled digests no longer count as in flight: a stale count held
-            # the NEW turn's question hostage behind a dead worker (silent up to
-            # summary_timeout, probe-confirmed; deep audit #25). The worker's
-            # finally skips its decrement when its gen is stale (see there).
-            self._inflight_digests.pop(session, None)
-            self._last_dispatch_token.pop(session, None)
             # A new prompt auto-resumes a paused voice only when it comes from
             # the session the user hears (upstream #69): a background
             # session's /loop tick or agent completion also sends FLUSH, and
@@ -1002,7 +896,7 @@ class SpeechDaemon:
         settle-deferred or digest-held question, and advance the digest cancel
         epoch so an in-flight lead-in digest lands dead instead of speaking
         into the post-answer flow. The turn CONTINUES (unlike FLUSH/new
-        prompt): history and assemblers stay, but _voiced_upto advances past
+        prompt): history and assemblers stay, but the voiced marker advances past
         everything already said - the eventual turn-end digest covers only
         post-answer prose ("I want to hear what comes after", #83).
         Caller holds the lock. Returns True when anything was skipped/cut."""
@@ -1019,30 +913,10 @@ class SpeechDaemon:
             # chime -- "go to end" is top/bottom, it should only move once
             # (issue #11). note_spoken also nulls this later; idempotent.
             self._current_item = None
-        pending = self._pending_decision.pop(session, None)
-        self._drop_decisions(pending)
-        dropped = bool(pending)
-        # A live settle window means a digest was ABOUT to dispatch: killing
-        # it is a user-visible silencing, so it counts as dropped (#107).
-        dropped = (session in self._settle_pending) or dropped
-        self._cancel_settle(session)
-        dropped = self._drop_held_decisions(session) or dropped
+        # Deferred and held questions, the settle window, in-flight digests
+        # and the voiced marker (summary/pipeline).
+        dropped = self._summary.caught_up(session)
         self._await_choice.discard(session)
-        if self._inflight_digests.get(session):
-            # Kill in-flight digests: the worker's gen guard drops the result
-            # ("user answered") exactly like a new prompt's FLUSH does (#13).
-            self._summary_gen[session] = self._summary_gen.get(session, 0) + 1
-            self._inflight_digests.pop(session, None)
-            self._last_dispatch_token.pop(session, None)
-            dropped = True
-        # Everything said BEFORE this point is dealt with: advance the voiced
-        # marker so the post-answer turn-end digest never re-includes the
-        # pre-question lead-in (it was skipped, not merely delayed).
-        entries = [e for mid in self.history.message_ids(session)
-                   for e in self.history.entries_for_message(session, mid)
-                   if e.kind == "prose"]
-        if entries:
-            self._voiced_upto[session] = entries[-1]
         self._wake.set()
         return bool(skipped) or cutting or dropped
 
@@ -1056,9 +930,7 @@ class SpeechDaemon:
         an armed-but-unemitted switch announcement are dropped. Caller holds
         the lock. Returns True when anything was skipped, cut, or killed."""
         from sonara.router import CONTROL
-        sessions = (set(self.router.channels) | set(self._inflight_digests)
-                    | set(self._pending_decision) | set(self._held_decision)
-                    | set(self._settle_pending))
+        sessions = set(self.router.channels) | self._summary.busy_sessions()
         cur = self._current_item
         if cur is not None:
             sessions.add(cur.session)      # cut audio even for an untracked session
@@ -1067,7 +939,7 @@ class SpeechDaemon:
         for sid in sessions:
             dropped = self._user_caught_up(sid) or dropped
         dropped = self._digests.kill_parked() or dropped
-        self._pending_preamble = None
+        self._playback.pending_preamble = None
         self.router.clear_pending_announce()
         return dropped
 
@@ -1079,238 +951,6 @@ class SpeechDaemon:
         HEARS, not the last session to submit a prompt."""
         return (self.router.active or self.router.last_active
                 or self.sessions.foreground())
-
-    def _maybe_summarize(self, session: str,
-                         leadin_for_decision: bool = False) -> bool:
-        """Summary mode: recap the session's prose not yet voiced this turn via a
-        throwaway claude -p call (see summarizer.py), or speak it raw when short.
-        Runs under the daemon lock, so it only gathers text and spawns the worker
-        thread; the subprocess itself runs OFF-lock in _summary_worker.
-
-        Called at turn end AND when a blocking decision arrives: a question never
-        reaches turn_done, so its lead-in prose would otherwise be silently dropped.
-        Only prose recorded SINCE the last call this turn is voiced (tracked by
-        _voiced_upto), so the two triggers never double-voice the same text.
-
-        *leadin_for_decision* (#83): the gathered text precedes a pending
-        QUESTION. Short lead-ins are then DIGESTED instead of replayed raw
-        (mid-turn narration like "let me check the repo" is exactly the noise
-        the digest cuts), and a SKIP/failed lead-in digest drops silently
-        instead of falling back to the raw text.
-
-        Returns True iff an ASYNC digest was dispatched (long lead-in) -- the
-        decision handlers use this to HOLD the question until the digest lands, so
-        the context is heard before the question rather than ~6s after it."""
-        if not self.config.get("summary_mode"):
-            return False
-        leadin = bool(leadin_for_decision)
-        entries = []
-        for mid in self.history.message_ids(session):
-            for e in self.history.entries_for_message(session, mid):
-                if e.kind == "prose":
-                    entries.append(e)
-        # Skip everything up to and including the last entry voiced this turn,
-        # located by IDENTITY. An absolute count desynced from the CAPPED history
-        # deque once eviction shifted it, over-skipping unvoiced prose -- worst
-        # case gathering nothing and silently dropping the turn-end digest
-        # (audit #21). A marker that was itself evicted means every surviving
-        # entry is unvoiced: keep them all.
-        marker = self._voiced_upto.get(session)
-        if marker is not None:
-            for i in range(len(entries) - 1, -1, -1):
-                if entries[i] is marker:
-                    entries = entries[i + 1:]
-                    break
-        text = " ".join(e.text for e in entries).strip()
-        if not text:
-            return False                 # decision-only / empty / already-voiced
-        self._voiced_upto[session] = entries[-1]
-        if len(text) < _SUMMARY_MIN_CHARS and not leadin:
-            # An already-short turn needs no digest: speak the original prose
-            # instead. Digesting borderline-trivial input made the model
-            # verbalize meta-text ("no content to be spoken") that was then
-            # read aloud; speaking the original is faster and free.
-            if self.sessions.is_foreground(session):
-                # Append (not cursor-insert) so a short turn never overtakes a
-                # queued question -- consistent with the long digest path (#17).
-                # A turn delivery must ANNOUNCE on a real reader switch (#21).
-                self._replay(session, entries, append=True,
-                             suppress_announce=False)
-                # Up re-reads the joined text -- parity with the background
-                # short-turn and digest paths; without this, Up after a short
-                # foreground turn gave a dead edge chime (deep audit #25).
-                self._last_digest_text[session] = text
-                self.digest_store.set(session, text)
-            else:
-                # Background sessions are not voiced from their own channel;
-                # speak the short turn via the session channel. It joins the
-                # digest SEQUENCE (#88): a short turn finishing after a long
-                # one must not jump ahead of the long turn's cooking digest.
-                gen = self._summary_gen.get(session, 0)
-
-                def _deliver():
-                    # Runs at RELEASE time, possibly after waiting parked
-                    # behind an earlier digest (F2): the same cancel guard as
-                    # the worker's apply(), so a new prompt or a session end
-                    # in the meantime drops it instead of speaking stale text
-                    # or resurrecting the ended session.
-                    if self._summary_gen.get(session, 0) == gen:
-                        self._enqueue_background_digest(session, text)
-
-                self._digests.land(self._digests.alloc(), _deliver)
-            return False                 # spoken synchronously; no need to hold
-        # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
-        # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
-        # must never invalidate a previously-dispatched digest. So several
-        # turn-ends with no user action between them each keep their digest (they
-        # queue and play) -- the system never drops a finished message (#13).
-        gen = self._summary_gen.get(session, 0)
-        self._summary_token += 1
-        token = self._summary_token
-        self._last_dispatch_token[session] = token
-        self._inflight_digests[session] = self._inflight_digests.get(session, 0) + 1
-        # Turn-end digests get an ordering slot (#88); lead-in digests bypass
-        # (latency-critical, #83) and stay seq=None.
-        seq = None if leadin else self._digests.alloc()
-        try:
-            self._start_summary_thread(session, gen, text, token, leadin=leadin,
-                                       seq=seq)
-        except Exception:
-            # No worker will ever land this slot (#138, audit L-settle-fire):
-            # undo the in-flight count and land it now with the raw-text
-            # fallback, so the turn still speaks and later digests don't park.
-            n = self._inflight_digests.get(session, 0) - 1
-            if n > 0:
-                self._inflight_digests[session] = n
-            else:
-                self._inflight_digests.pop(session, None)
-            self._digests.land(seq, None if leadin else
-                               self._digest_apply(session, gen, text, False, None))
-            raise
-        if seq is not None:
-            # A worker that never returns would park every later digest
-            # (#138, audit M1): bound the slot at twice summary_timeout.
-            # The worker is already out, so a failure to arm the watchdog is
-            # logged and the digest still counts as in flight.
-            try:
-                self._schedule_digest_watchdog(
-                    seq, self._digest_apply(session, gen, text, False, None))
-            except Exception:  # noqa: BLE001 - the worker still lands its slot
-                import traceback
-                _summary_log("digest watchdog arm failed for seq {0}:\n{1}".format(
-                    seq, traceback.format_exc()))
-        return True                      # async digest in flight -> caller holds
-
-    def _arm_settle(self, session: str) -> None:
-        """Defer the turn-end digest until the session's prose settles. Restart the
-        window on every new prose delta; fire once quiet (#14). Caller holds the
-        lock (this runs from handle_message)."""
-        gen = self._settle_gen.get(session, 0) + 1
-        self._settle_gen[session] = gen
-        self._settle_pending.add(session)
-        old = self._settle_timers.pop(session, None)
-        if old is not None:
-            old.cancel()
-        self._settle_schedule(session, gen)
-
-    def _settle_schedule(self, session: str, gen: int) -> None:
-        """Start the real settle timer. Test seam: tests replace this to drive
-        _settle_fire deterministically instead of waiting on the clock."""
-        settle_s = config_schema.get(self.config, "summary_settle_ms") / 1000.0
-        t = threading.Timer(settle_s, self._settle_fire, args=(session, gen))
-        t.daemon = True
-        self._settle_timers[session] = t
-        t.start()
-
-    def _settle_fire(self, session: str, gen: int) -> None:
-        """The settle window elapsed with no new prose: dispatch the turn-end
-        digest now that the full turn has landed. Runs on the Timer thread, so it
-        takes the lock. A stale fire (re-armed by later prose, or cancelled by
-        FLUSH) is a no-op via the generation guard.
-
-        Never raises (#138, audit L-settle-fire): an exception used to kill the
-        Timer thread and lose the turn silently. _maybe_summarize lands any
-        digest slot it allocated before re-raising, and a decision this fire
-        took over is still enqueued, so the blocking question is never lost."""
-        with self._lock:
-            if self._settle_gen.get(session) != gen:
-                return
-            self._settle_pending.discard(session)
-            self._settle_timers.pop(session, None)
-            items = self._pending_decision.pop(session, None) or []
-            placed = 0
-            try:
-                if items:
-                    # Questions were waiting on their lead-in: gather it now
-                    # (present after the settle) and hold them after the
-                    # context (#16), in arrival order. Lead-in mode (#83):
-                    # short lead-ins are digested (not read raw) and a SKIP
-                    # result drops instead of raw-falling-back.
-                    digesting = self._maybe_summarize(session,
-                                                      leadin_for_decision=True)
-                    for item in items:
-                        self._enqueue_or_hold_decision(session, item, digesting)
-                        placed += 1
-                else:
-                    self._maybe_summarize(session)
-            except Exception:  # noqa: BLE001 - a Timer thread must not die silently
-                import traceback
-                _summary_log("settle fire failed for {0}:\n{1}".format(
-                    session, traceback.format_exc()))
-                rest = items[placed:]
-                # A failed hold may already have stored the item (its cap
-                # timer failed to arm): take it back out so it is spoken once,
-                # now, and not again when the group is released.
-                held = self._held_decision.get(session)
-                if held is not None:
-                    kept = [it for it in held[1]
-                            if not any(it is r for r in rest)]
-                    if kept:
-                        self._held_decision[session] = (held[0], kept)
-                    else:
-                        self._held_decision.pop(session, None)
-                ch = self.router.channel(session)
-                for item in rest:
-                    ch.append(item)
-                self._wake.set()
-
-    def _cancel_settle(self, session: str) -> None:
-        """Drop any pending settle window: a new prompt abandons the turn. Bumps
-        the generation so an already-scheduled fire becomes a no-op."""
-        self._settle_pending.discard(session)
-        self._settle_gen[session] = self._settle_gen.get(session, 0) + 1
-        t = self._settle_timers.pop(session, None)
-        if t is not None:
-            t.cancel()
-
-    def _enqueue_or_hold_decision(self, session: str, item, digesting: bool) -> None:
-        """Enqueue a decision item now, OR hold it until the lead-in digest lands
-        (context-first ordering). Held items are appended by the OWNING
-        _summary_worker after its digest; if the digest fails or is superseded the
-        owner still enqueues the held item, so a blocking question is never lost.
-
-        Holds not only when THIS call dispatched a digest, but also when an
-        earlier digest of the same turn is still in flight -- otherwise a decision
-        whose own lead-in gather found nothing new was enqueued immediately and
-        played BEFORE its context (audit #21)."""
-        if digesting or self._inflight_digests.get(session, 0) > 0:
-            owner = self._last_dispatch_token.get(session, 0)
-            # Join any decision already held (#138, audit F7): overwriting the
-            # slot dropped the earlier question. The newest dispatch owns the
-            # whole group, which then speaks in arrival order.
-            prev = self._held_decision.get(session)
-            items = (list(prev[1]) if prev is not None else []) + [item]
-            self._held_decision[session] = (owner, items)
-            # Cap the hold (#83, retuned #103, derived from summary_timeout in
-            # #121): the wedge guard for a hung summarizer. The normal release
-            # is the digest worker's finally, which frees the question the
-            # moment its context lands or fails.
-            # Past the cap the question speaks and the digest follows
-            # (bounded inversion; a caught-up user drops it).
-            self._schedule_hold_release(session, owner, item)
-        else:
-            self.router.channel(session).append(item)
-        self._wake.set()
 
     def _log_start_marker(self) -> None:
         """Startup marker (#63): volatile state (mute level, pause) dies with the
@@ -1325,227 +965,6 @@ class SpeechDaemon:
         """
         print("[daemon] started pid={0} root={1}".format(
             os.getpid(), package_root()), file=sys.stderr, flush=True)
-
-    def _schedule_hold_release(self, session: str, owner: int, item) -> None:
-        """Arm the held-question release timer. Test seam: tests call
-        _release_held_decision directly instead of waiting on the clock.
-
-        Reads the cap from the LIVE config so a summary_timeout change from the
-        settings page widens the hold with it (#121)."""
-        t = threading.Timer(_decision_hold_max_s(self.config),
-                            self._release_held_decision,
-                            args=(session, owner, item))
-        t.daemon = True
-        t.start()
-
-    def _release_held_decision(self, session: str, owner: int, item) -> None:
-        """The hold cap elapsed: if the digest still has not landed, speak the
-        question NOW (#83). Idempotent vs the digest worker: whichever runs
-        first pops the hold; the other finds it gone and does nothing.
-
-        Matches on the item, not the owner token: a later decision joining the
-        hold (F7) moves ownership to the newer dispatch, and the first
-        question's cap must still free the group at the EARLIEST deadline
-        rather than wait out a fresh cap from the second arrival."""
-        with self._lock:
-            held = self._held_decision.get(session)
-            if held is None or not any(it is item for it in held[1]):
-                return                     # already released (digest landed / caught up)
-            self._held_decision.pop(session, None)
-            ch = self.router.channel(session)
-            for it in held[1]:
-                ch.append(it)
-            self._wake.set()
-
-    def _schedule_digest_watchdog(self, seq: int, apply) -> None:
-        """Arm the hung-worker watchdog for a dispatched turn-end digest slot
-        (#138, audit M1). Test seam: tests call _digest_watchdog_fire directly
-        instead of waiting on the clock. Caller holds the lock."""
-        t = threading.Timer(_digest_watchdog_s(self.config),
-                            self._digest_watchdog_fire, args=(seq, apply))
-        t.daemon = True
-        self._digests.watch(seq, t)
-        t.start()
-
-    def _digest_watchdog_fire(self, seq: int, apply) -> None:
-        """The worker for *seq* is still out at twice summary_timeout: land its
-        slot with *apply*, the raw-text fallback of a failed digest, so the turn
-        is still spoken (never skip the last message) and every later digest
-        parked behind it is released. A no-op once the worker has landed; the
-        worker's own landing after this is ignored by DigestReorderBuffer.land."""
-        with self._lock:
-            self._digests.unwatch(seq)
-            if self._digests.landed(seq):
-                return
-            _summary_log("digest seq {0} hung past the watchdog: "
-                         "speaking the raw text".format(seq))
-            self._digests.land(seq, apply)
-
-    def _start_summary_thread(self, session: str, gen: int, text: str,
-                              token: int = 0, leadin: bool = False,
-                              seq=None) -> None:
-        threading.Thread(target=self._summary_worker,
-                         args=(session, gen, text, token, leadin, seq),
-                         name="sonara-summary", daemon=True).start()
-
-    def _digest_apply(self, session: str, gen: int, text: str, leadin: bool,
-                      summary):
-        """The release closure for one finished digest: speak *summary*, or on
-        a SKIP/empty/failed one fall back to the raw *text*. Built by the
-        worker when the summarizer returns, and up front with summary=None as
-        the watchdog's fallback for a worker that never returns (#138)."""
-        _log = _summary_log
-
-        def apply():
-            # Runs at RELEASE time (#88): possibly later than completion,
-            # after earlier-dispatched digests landed. State checks (gen,
-            # foreground) therefore happen HERE, not at completion.
-            if self._summary_gen.get(session, 0) != gen:
-                _log("digest dropped: user prompted this session since dispatch")
-                return               # the user moved on -> this reading is cancelled
-            out = summary
-            if not out:
-                if leadin:
-                    # A lead-in digest that came back SKIP/empty/failed is
-                    # pure process narration (#83): drop it silently. The
-                    # question it contextualized still speaks via the
-                    # held-release in the worker's finally - only the noise
-                    # dies, never the blocking prompt.
-                    _log("lead-in digest empty/SKIP: dropped")
-                    return
-                # SKIP / empty / failed digest. A session's LATEST message must
-                # ALWAYS be read (user spec: never skip the last message --
-                # digested or not). This digest is the latest (it was not
-                # superseded above), so fall back to the RAW text rather than
-                # dropping it. Only a genuinely empty turn stays silent.
-                if not (text or "").strip():
-                    self._earcon("summary_failed")
-                    return
-                out = text
-            # A held question's context goes via the SESSION channel even when
-            # the session is not foreground: it is a real handoff, so the router
-            # must announce "Session changed" BEFORE the context (not at the
-            # question). Route EVERY digest via its own session channel so a
-            # reader switch announces the handoff ("Session changed: folder" +
-            # chime) BEFORE the digest. A foreground digest does NOT switch the
-            # reader (no announcement) and never carries a "Session X:" prefix:
-            # the router announcement is the sole session identifier (#15).
-            fg = self.sessions.is_foreground(session)
-            # TTS-normalize (#27): digests bypass the assembler cleaner, so
-            # markdown residue / snake_case reached the voice raw and was
-            # mispronounced. Normalize BEFORE recording so Up's cache-hit
-            # re-read speaks the identical string.
-            from sonara.cleaner import normalize_for_speech
-            out = normalize_for_speech(out)
-            entry = self.history.record(session, "summary", out)
-            self._enqueue(session, "summary", out, False, entry=entry)
-            self._last_digest_text[session] = out   # Up re-reads this verbatim
-            self.digest_store.set(session, out)     # survives restarts (#118)
-            ch = self.router.channel(session)
-            ch.turn_done = True
-            # Stamp the channel with the release index (#88): the router
-            # serves waiting digest channels lowest-stamp-first, so the
-            # heard order matches the turn-finish order just released.
-            ch.release_order = self._digests.next_release_stamp()
-            if not fg:
-                # Let it be voiced + announced regardless of background policy
-                # (earcon_only would otherwise mute a non-foreground session).
-                self.router.authorize_replay(session)
-            self._wake.set()
-
-        return apply
-
-    def _summary_worker(self, session: str, gen: int, text: str,
-                        token: int = 0, leadin: bool = False,
-                        seq=None) -> None:
-        """Run the summarizer subprocess OFF-lock, then apply the result under the
-        lock: enqueue the spoken summary, or fire the failure cue. A result whose
-        generation was superseded by a newer turn end is dropped silently.
-        Turn-end results release through the reorder buffer (#88, *seq*), so
-        digests are heard in turn-finish order regardless of model latency."""
-        from sonara import summarizer
-
-        _log = _summary_log
-        import time as _time
-        fn = self._summarize_fn or summarizer.summarize
-        t0 = _time.monotonic()
-        style = config_schema.get(self.config, "summary_style")
-        prompts = self.config.get("summary_prompts") or {}
-        try:
-            summary = fn(text,
-                         model=config_schema.get(self.config, "summary_model"),
-                         command=config_schema.get(self.config, "summary_command"),
-                         timeout=config_schema.get(self.config, "summary_timeout"),
-                         style=style,
-                         instruction=prompts.get(style),
-                         debug_log=_log)
-        except Exception:  # noqa: BLE001 - a summary failure must never crash the daemon
-            summary = None
-        if summary:
-            # Success trail: when a digest sounds wrong (truncated, odd), the
-            # log shows exactly what the model returned vs what was spoken; the
-            # duration makes latency complaints diagnosable from the log (#27).
-            _log("digest ok in {0:.1f}s: {1} chars in, {2} chars out: {3!r}".format(
-                _time.monotonic() - t0, len(text), len(summary), summary[:120]))
-        with self._lock:
-            # Questions whose lead-in this digest recaps were HELD for
-            # context-first ordering; append them AFTER the digest below. Only
-            # the OWNING worker (the dispatch the hold was placed behind) may
-            # take them -- an earlier same-gen worker landing first must leave
-            # them for their owner, or a question plays before its own context
-            # (audit #21). The finally guarantees the owner plays them even on
-            # a dropped/failed digest -- a blocking prompt is never lost (FLUSH
-            # clears a stale one).
-            held = []
-            held_entry = self._held_decision.get(session)
-            if held_entry is not None and held_entry[0] == token:
-                self._held_decision.pop(session, None)
-                held = held_entry[1]
-
-            apply = self._digest_apply(session, gen, text, leadin, summary)
-            landed = False
-            try:
-                self._digests.land(seq, apply)
-                landed = True
-            finally:
-                if not landed:
-                    # Landing raised: the ordering slot must still release or
-                    # every later digest parks forever (#88).
-                    self._digests.land(seq, None)
-                # This worker is done: it no longer counts as in flight (a later
-                # decision must not hold behind a digest that already landed).
-                # ONLY when this worker's gen is still current: FLUSH/SESSION_END
-                # already dropped a cancelled worker's count, so a stale worker
-                # must not steal a POST-flush dispatch's count (deep audit #25).
-                if self._summary_gen.get(session, 0) == gen:
-                    n = self._inflight_digests.get(session, 0) - 1
-                    if n > 0:
-                        self._inflight_digests[session] = n
-                    else:
-                        self._inflight_digests.pop(session, None)
-                if held:
-                    ch = self.router.channel(session)
-                    for it in held:
-                        ch.append(it)            # questions after context
-                    self._wake.set()
-
-    def _enqueue_background_digest(self, session: str, text: str) -> None:
-        """Speak a background session's short-turn content via ITS OWN channel, so
-        the router announces the handoff ("Session changed: folder" + chime) before
-        it -- matching the digest path. Was on the CONTROL lane, which is silent
-        (no chime), plays out of order, and survives a new prompt's FLUSH (so stale
-        content lingered and replayed). Unprefixed (the announcement names it) and
-        replay-authorized so the background policy does not mute it. Caller holds
-        self._lock."""
-        entry = self.history.record(session, "summary", text)
-        self._enqueue(session, "summary", text, False, entry=entry)
-        self._last_digest_text[session] = text   # Up re-reads this verbatim
-        self.digest_store.set(session, text)     # survives restarts (#118)
-        ch = self.router.channel(session)
-        ch.turn_done = True
-        ch.release_order = self._digests.next_release_stamp()   # heard in release order (#88)
-        self.router.authorize_replay(session)
-        self._wake.set()
 
     def _restart_turn(self, session: str) -> bool:
         """Up: restart the current turn from its first message and read it to the
@@ -1621,40 +1040,6 @@ class SpeechDaemon:
         ch.turn_done = True                      # ready() -> plays now (minqueue-exempt)
         self._wake.set()
         return True
-
-    def _speak_loop(self) -> None:
-        self._running.set()
-        while self._running.is_set():
-            try:
-                self._speak_loop_once()
-            except Exception:  # noqa: BLE001 - NOTHING may permanently kill the
-                # speak thread. A crash in next_item/note_spoken/etc. used to leave
-                # the daemon alive (earcons kept firing) but mute forever until a
-                # restart. Log the traceback (captured by the daemon log) and keep
-                # going; a short wait avoids a tight error-spin.
-                import sys
-                import traceback
-                traceback.print_exc(file=sys.stderr)
-                self._wake.wait(0.1)
-
-    def _signal_speak_failure(self) -> None:
-        """An utterance raised (missing TTS extra, synth/playback failure, ...).
-        The inner speak-loop handlers swallow it so one bad item can't wedge the
-        loop -- but for an eyes-free user a swallowed exception is a SILENT no-op,
-        the worst outcome (#41). Signal it audibly (error earcon) and log the
-        traceback. Never raises -- error signaling must not itself re-break the
-        loop. Call only from within an active `except` block (print_exc reads the
-        handled exception)."""
-        try:
-            self._earcon("error")
-        except Exception:  # noqa: BLE001 - signaling failure must not wedge the loop
-            pass
-        try:
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-        except Exception:  # noqa: BLE001 - logging failure must not wedge the loop
-            pass
 
     def _maybe_prewarm_cue_voice(self) -> None:
         """Live-apply hook for the cue voice keys (config_schema apply):
@@ -1744,166 +1129,6 @@ class SpeechDaemon:
                              cue_key="voice_preview", voice=str(voice))
         return True
 
-    def _speak_loop_once(self) -> None:
-        """One iteration of the speak loop. May raise; _speak_loop contains it."""
-        if self._paused.is_set():
-            # Idempotently restore other apps' audio while paused -- closes the window
-            # where a re-duck slipped in during the pause transition. Safe to call
-            # repeatedly: AudioControl.restore() is a no-op when not ducked/paused.
-            self._audio.restore()
-            # While paused, still drain a single pause_exempt cue (e.g. "Paused.")
-            # before holding. Scan ALL channels at/after their cursor: a mid-utterance
-            # pause rewinds the cursor past where Cues.speak inserted the cue, so a
-            # plain peek() at the cursor would miss it.
-            with self._lock:
-                item = None
-                for ch in self.router.channels.values():
-                    item = ch.take_pause_exempt()
-                    if item is not None:
-                        self._current_item = item
-                        break
-                cancel_epoch = self.speaker.cancel_epoch()
-            if item is not None:
-                try:
-                    completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                                   **self._cues.cue_voice_override(item))
-                except Exception:  # noqa: BLE001
-                    self._signal_speak_failure()
-                    completed = False
-                self.note_spoken(item, completed)
-                return
-            self._wake.wait(self._poll_interval)
-            self._wake.clear()
-            return
-        with self._lock:
-            item = self.router.next_item()
-            self._current_item = item
-            cancel_epoch = self.speaker.cancel_epoch()
-            # Global mute: drop every non-exempt item (the "Muted."/"Unmuted." cue
-            # is mute_exempt so it is still heard). The router already advanced the
-            # cursor, so a dropped item is consumed, not replayed.
-            muted = (item is not None and self._muted and not item.mute_exempt)
-            if muted:
-                self._current_item = None
-                self._pending_heard.pop(item.id, None)
-                print("[mute] dropped: {0!r}".format((item.text or "")[:60]),
-                      file=sys.stderr, flush=True)
-        # Engine fallback notices: spoken once per daemon run so an eyes-free
-        # user knows WHY the voice changed (the reason is already in the log).
-        self._cues.maybe_announce_kokoro_fallback()
-        if item is None:
-            self._audio.restore()
-            self._wake.wait(self._poll_interval)
-            self._wake.clear()
-            return
-        if muted:
-            # A dropped item also drops a pending alert for its session: mute
-            # silences handoffs, so the deferred chime + announcement go too.
-            self._drop_preamble_for(item.session)
-            return
-        if item.kind == "session_change":
-            if item.manual:
-                # Manual switch (#111): the press already chimed from the hotkey
-                # handler; speak the announcement NOW in the fast cue voice
-                # instead of deferring to the target content's synthesis-ready
-                # callback. Deferral (#94) exists so an AUTO handoff's alert
-                # doesn't play seconds before slow-engine audio; a manual press
-                # needs immediate confirmation, and the cue voice is warm.
-                try:
-                    completed = self.speaker.speak(item.text,
-                                                   cancel_epoch=cancel_epoch,
-                                                   **self._cues.cue_voice_override(item))
-                except Exception:  # noqa: BLE001
-                    self._signal_speak_failure()
-                    completed = False
-                if not self._requeue_or_note(item, completed):
-                    self.note_spoken(item, completed)
-                return
-            if config_schema.get(self.config, "fast_cues"):
-                # Defer the alert (#94): stash it and play the chime + spoken
-                # announcement from the CONTENT utterance's on_play, so a slow
-                # engine no longer plays the alert seconds before the audio.
-                self._pending_preamble = (item.session, item.text)
-                self._current_item = None
-                return
-            # fast_cues off: legacy immediate announcement in the content voice.
-            try:
-                self._earcon("session_change")
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                               on_play=None,
-                                               **self._cues.voice_override(item))
-            except Exception:  # noqa: BLE001
-                self._signal_speak_failure()
-                completed = False
-            if not self._requeue_or_note(item, completed):
-                self.note_spoken(item, completed)
-            return
-        # Content item. A stashed alert for THIS session plays as a preamble at
-        # synthesis-ready (on_play): chime, then the spoken alert via the fast cue
-        # voice (non-tracked so it never clobbers this utterance's cancellation),
-        # then the normal duck/pause engage. #90's "announcement never ducks" is
-        # preserved: the alert cue itself is played WITHOUT on_play, and the duck/
-        # pause engage happens for the CONTENT, after the alert.
-        # Read the alert ONCE under the lock (L-preamble): on_play and
-        # _flush_all clear it from other threads, and a None landing between
-        # a check and the subscript raised TypeError in the speak loop.
-        preamble = None
-        with self._lock:
-            pending = self._pending_preamble
-            if pending is not None:
-                if pending[0] == item.session:
-                    preamble = pending[1]
-                else:
-                    self._pending_preamble = None   # stale alert for another session: drop it
-        if preamble is not None:
-            cue_voice = self._cues.cue_voice()
-            rate = config_schema.get(self.config, "rate")
-
-            def on_play(_text=preamble, _voice=cue_voice, _rate=rate):
-                # Consume the alert only when it actually plays. If content synthesis
-                # is interrupted (e.g. paused) BEFORE on_play fires, the preamble stays
-                # armed so the replayed content still announces the handoff (#94).
-                self._pending_preamble = None
-                try:
-                    self._earcon("session_change")
-                except Exception:  # noqa: BLE001
-                    pass
-                try:
-                    self.speaker.speak_cue_untracked(_text, _voice, _rate)
-                except Exception:  # noqa: BLE001
-                    pass
-                self._audio.engage()
-        else:
-            on_play = self._audio.engage
-        try:
-            completed = self.speaker.speak(item.text, cancel_epoch=cancel_epoch,
-                                           on_play=on_play,
-                                           **self._cues.voice_override(item))
-        except Exception:  # noqa: BLE001
-            self._signal_speak_failure()
-            completed = False
-        if not self._requeue_or_note(item, completed):
-            self.note_spoken(item, completed)
-            # A deferred alert that never played is kept armed only when the content
-            # was requeued for replay (a pause, handled by _requeue_or_note above).
-            # Here the content was noted, not requeued (completed, or a non-pause
-            # cancel dropped it), so drop any still-armed alert for this session -
-            # otherwise it would resurface on a later utterance for the same session
-            # (#94). If on_play already played the alert, _pending_preamble is None
-            # and this is a no-op.
-            self._drop_preamble_for(item.session)
-
-    def _drop_preamble_for(self, session) -> None:
-        """Drop a deferred handoff alert armed for *session*. Check-then-act
-        under the lock (L-preamble): on_play clears it from the synth thread."""
-        with self._lock:
-            pending = self._pending_preamble
-            if pending is not None and pending[0] == session:
-                self._pending_preamble = None
-
     def run(self) -> None:
         ensure_sonara_dir()
         try:
@@ -1934,7 +1159,7 @@ class SpeechDaemon:
         self._server.sock = srv
         self._running.set()
 
-        speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
+        speak_thread = threading.Thread(target=self._playback.run, daemon=True)
         accept_thread = threading.Thread(target=self._server.accept_loop, daemon=True)
         hotkey_worker = threading.Thread(target=self._hotkeys.worker,
                                          name="sonara-hotkey-worker", daemon=True)

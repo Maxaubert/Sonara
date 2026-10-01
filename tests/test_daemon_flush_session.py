@@ -132,10 +132,10 @@ def test_flush_lands_parked_reorder_digests_dead():
 
 def test_flush_drops_stale_handoff_alert_and_armed_announce():
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
-    daemon._pending_preamble = ("b", "Session changed: b.")
+    daemon._playback.pending_preamble = ("b", "Session changed: b.")
     daemon.router._pending_announce = "b"
     _flush(daemon)
-    assert daemon._pending_preamble is None
+    assert daemon._playback.pending_preamble is None
     assert daemon.router._pending_announce is None
 
 
@@ -145,8 +145,8 @@ def test_flush_during_settle_window_kills_the_upcoming_digest_with_success():
     # the digest that was about to generate and speak.
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     daemon.config["summary_mode"] = True
-    daemon._arm_settle("fg")
-    assert "fg" in daemon._settle_pending
+    daemon._summary.arm_settle("fg")
+    assert "fg" in daemon._summary.settle_pending
     _flush(daemon)
-    assert "fg" not in daemon._settle_pending
+    assert "fg" not in daemon._summary.settle_pending
     assert speaker.earcons[-1] == "nav"

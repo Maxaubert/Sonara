@@ -8,7 +8,7 @@ def _prose(s, d, i, f):
 
 def _spoken(daemon, speaker, n=12):
     for _ in range(n):
-        daemon._speak_loop_once()
+        daemon._playback.run_once()
     return speaker.spoken
 
 
@@ -16,7 +16,7 @@ def test_next_session_switches_to_other_unread_and_announces():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "A one. ", 0, True))
     daemon.handle_message(_prose("B", "B one. ", 0, True))
-    daemon._speak_loop_once()                    # start reading (A or B)
+    daemon._playback.run_once()                    # start reading (A or B)
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
     out = _spoken(daemon, speaker)
     # #111: a MANUAL switch speaks its announcement immediately (tracked speak,
@@ -41,7 +41,7 @@ def test_next_session_announcement_uses_cue_voice():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "A one. ", 0, True))
     daemon.handle_message(_prose("B", "B one. ", 0, True))
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.NEXT_SESSION})
     out = _spoken(daemon, speaker)
     idx = next(i for i, t in enumerate(out) if t.startswith("Session changed:"))

@@ -30,10 +30,10 @@ def test_new_prompt_wipes_only_its_own_channel():
 def test_speak_loop_reads_active_channel_then_idles():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "One. Two. ", 0, True))
-    daemon._speak_loop_once()
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
+    daemon._playback.run_once()
     assert speaker.spoken == ["One.", "Two."]
-    daemon._speak_loop_once()                 # nothing left -> idle, no error
+    daemon._playback.run_once()                 # nothing left -> idle, no error
     assert speaker.spoken == ["One.", "Two."]
 
 

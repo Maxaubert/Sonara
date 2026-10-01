@@ -12,7 +12,7 @@ def test_speak_loop_speaks_queued_item_then_stops():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="hello world", is_decision=False))
 
-    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t = threading.Thread(target=daemon._playback.run, daemon=True)
     t.start()
     try:
         deadline = time.time() + 2.0
@@ -41,7 +41,7 @@ def test_speak_loop_survives_a_speaker_exception():
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="bad", is_decision=False))
     queue.enqueue(SpeechItem(id=2, session="fg", kind="prose", text="good", is_decision=False))
 
-    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t = threading.Thread(target=daemon._playback.run, daemon=True)
     t.start()
     try:
         deadline = time.time() + 2.0
@@ -56,7 +56,7 @@ def test_speak_loop_survives_a_speaker_exception():
 
 def test_speak_loop_idles_when_queue_empty_then_stops():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t = threading.Thread(target=daemon._playback.run, daemon=True)
     t.start()
     time.sleep(0.05)
     assert speaker.spoken == []
@@ -75,7 +75,7 @@ def test_speak_loop_fifo_order_including_items_added_after_start():
     queue.enqueue(SpeechItem(id=1, session="fg", kind="prose", text="first", is_decision=False))
     queue.enqueue(SpeechItem(id=2, session="fg", kind="prose", text="second", is_decision=False))
 
-    t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    t = threading.Thread(target=daemon._playback.run, daemon=True)
     t.start()
 
     # Wait for the two pre-loaded items to be spoken.
@@ -117,7 +117,7 @@ def _make_inet_daemon(tmp_path):
     daemon._server.token = "testtoken"          # daemon checks this as the first line
     daemon._running.set()
 
-    speak_t = threading.Thread(target=daemon._speak_loop, daemon=True)
+    speak_t = threading.Thread(target=daemon._playback.run, daemon=True)
     accept_t = threading.Thread(target=daemon._server.accept_loop, daemon=True)
     speak_t.start()
     accept_t.start()

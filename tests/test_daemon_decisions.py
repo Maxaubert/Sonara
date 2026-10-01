@@ -122,7 +122,7 @@ def test_tool_announce_lands_in_background_channel_not_spoken_until_active():
     assert "run tests" in items[0].text
     # Drive the speak loop: "fg" is the active reader, so only fg's prose is spoken.
     # The bg tool text must NOT be spoken while fg holds the voice.
-    daemon._speak_loop_once()
+    daemon._playback.run_once()
     assert any("Foreground prose" in t for t in speaker.spoken)
     assert "run tests" not in speaker.spoken
 
