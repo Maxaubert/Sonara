@@ -11,12 +11,14 @@ from sonara import config_schema
 from sonara.daemon import setup_health, tokens
 from sonara.daemon.audio import AudioControl
 from sonara.daemon.controls import Controls
+from sonara.daemon import core
 from sonara.daemon.core import SessionRegistry, SharedState
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
 from sonara.daemon.ingest import Ingest
 from sonara.daemon.playback import SpeakLoop
 from sonara.daemon.server import ConnectionServer
+from sonara.daemon.settings import Settings
 from sonara.daemon.summary.pipeline import SummaryPipeline, summary_log
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
@@ -169,6 +171,16 @@ class SpeechDaemon:
         # (daemon/controls).
         self._controls = Controls(self)
         self._controls.register(self._handlers)
+        # Rate, voice, verbosity, minqueue, summary mode, session prefs,
+        # STATUS and the settings page setters (daemon/settings).
+        self._settings = Settings(self)
+        self._settings.register(self._handlers)
+        self._audio.register(self._handlers)
+        self._hotkeys.register(self._handlers)
+        core.add_handlers(self._handlers, {
+            MsgType.SHUTDOWN: self._on_shutdown,
+            MsgType.PING: lambda msg: {"ok": True},
+        })
 
     @property
     def _current_item(self):
@@ -318,140 +330,27 @@ class SpeechDaemon:
         if (isinstance(session, str) and session
                 and t not in (MsgType.SET_SESSION_PREF, MsgType.FORGET_SESSION)):
             self.sessions.touch(session)
-        # A malformed (unhashable) type is unknown, not a crash.
+        # Table dispatch (#141): unknown types get no reply. A malformed
+        # (unhashable) type is unknown, not a crash.
         handler = self._handlers.get(t) if isinstance(t, str) else None
-        if handler is not None:
-            return handler(msg)
+        return handler(msg) if handler is not None else None
 
-        if t == MsgType.RELOAD_KEYMAP:
-            # keymap.json changed: re-register off the daemon lock.
-            self._hotkeys.request_reload()
-            return None
-
-        if t == MsgType.SET_RATE:
-            is_delta = "delta" in msg
-            if is_delta:
-                try:
-                    target = (int(config_schema.get(self.config, "rate"))
-                              + int(msg.get("delta", 0)))
-                except (ValueError, TypeError):
-                    return None
-            else:
-                target = msg.get("rate")
-            # Validate/clamp the rate in both branches -- an unvalidated value
-            # here is persisted to disk and breaks synthesis.
-            rate = config_schema.clean("rate", target)
-            if rate is config_schema.INVALID:
-                return None
-            self.config["rate"] = rate
-            self.speaker.set_rate(rate)
-            save_config(self.config)
-            if is_delta:
-                # A control cue (F6): on the session channel it waited behind
-                # minqueue and could wipe the placeholder seed.
-                self._cues.speak(self.sessions.foreground(),
-                                 "Rate {0}.".format(rate), exempt_mute=True,
-                                 pause_exempt=True, cue_key="rate")
-                self._wake.set()
-            return None
-
-        if t == MsgType.SET_VOICE:
-            voice = msg.get("voice")
-            self.config["voice"] = voice
-            self.speaker.set_voice(voice)
-            save_config(self.config)
-            return None
-
-        if t == MsgType.SET_SESSION_PREF:
-            sid = msg.get("session")
-            key = msg.get("key")
-            if not isinstance(sid, str) or not self.session_prefs.set(sid, key, msg.get("value")):
-                return None
-            if key == "muted":
-                val = bool(msg.get("value"))
-                ch = self.router.channels.get(sid)
-                if ch is not None:
-                    ch.muted = val
-                cur = self._current_item
-                if val and cur is not None and getattr(cur, "session", None) == sid:
-                    self.speaker.cancel()
-                self._wake.set()
-            return None
-
-        if t == MsgType.FORGET_SESSION:
-            sid = msg.get("session")
-            if not isinstance(sid, str) or self.sessions.is_foreground(sid):
-                return None
-            self.sessions.unregister(sid)
-            self.session_prefs.forget(sid)
-            # Forget targets exactly the stale sessions that died WITHOUT
-            # SessionEnd, so it needs the same per-session teardown (#101).
-            self._teardown_session(sid)
-            self.router.drop(sid)
-            return None
-
-        if t == MsgType.SET_VERBOSITY:
-            self.config["verbosity"] = msg.get("verbosity")
-            save_config(self.config)
-            return None
-
-        if t == MsgType.SET_MINQUEUE:
-            # Validate/clamp before persisting -- a bad value reaches disk and would
-            # wedge prose buffering on every turn (mirrors the SET_RATE guard).
-            n = config_schema.clean("minqueue", msg.get("minqueue"))
-            if n is config_schema.INVALID:
-                return None
-            self.config["minqueue"] = n
-            save_config(self.config)
-            return None
-
-        if t in AudioControl.MESSAGES:
-            return self._audio.handle(msg)
-
-        if t == MsgType.SET_SUMMARY_MODE:
-            if "enabled" not in msg:
-                return None
-            enabled = config_schema.clean("summary_mode", msg.get("enabled"))
-            self.config["summary_mode"] = enabled
-            save_config(self.config)
-            target = self.router.active or self.sessions.foreground()
-            self._cues.speak(target,
-                             "Summary mode on." if enabled else "Summary mode off.",
-                             exempt_mute=True, pause_exempt=True)
-            self._wake.set()
-            return None
-
-        if t == MsgType.STATUS:
-            return {
-                "verbosity": self.config.get("verbosity"),
-                "rate": self.config.get("rate"),
-                "voice": self.config.get("voice"),
-                "foreground": self.sessions.foreground(),
-                "minqueue": self.config.get("minqueue"),
-                "summary_mode": bool(self.config.get("summary_mode")),
-            }
-
-        if t == MsgType.SHUTDOWN:
-            if msg.get("stay_down"):
-                # Page 'Shut down' (#34): gate both respawn paths, exactly like
-                # `sonara shutdown` (the CLI writes the sentinel client-side).
-                try:
-                    from sonara import paths
-                    paths.STOPPED_SENTINEL_PATH.write_text("via settings page")
-                except OSError:
-                    pass
-            # Reply FIRST (the socket write happens after this handler returns),
-            # then tear down via a short timer: run() unlinks the lockfile and
-            # the OS releases the singleton mutex at process death (#23).
-            timer = threading.Timer(0.2, self.stop)
-            timer.daemon = True
-            timer.start()
-            return {"ok": True}
-
-        if t == MsgType.PING:
-            return {"ok": True}
-
-        return None
+    def _on_shutdown(self, msg):
+        if msg.get("stay_down"):
+            # Page 'Shut down' (#34): gate both respawn paths, exactly like
+            # `sonara shutdown` (the CLI writes the sentinel client-side).
+            try:
+                from sonara import paths
+                paths.STOPPED_SENTINEL_PATH.write_text("via settings page")
+            except OSError:
+                pass
+        # Reply FIRST (the socket write happens after this handler returns),
+        # then tear down via a short timer: run() unlinks the lockfile and
+        # the OS releases the singleton mutex at process death (#23).
+        timer = threading.Timer(0.2, self.stop)
+        timer.daemon = True
+        timer.start()
+        return {"ok": True}
 
     def stop(self) -> None:
         self._running.clear()
@@ -538,47 +437,13 @@ class SpeechDaemon:
         self._cues.maybe_prewarm()
 
     def set_config_value(self, key: str, value) -> bool:
-        """Set a config-only tuning key (settings page, #34). These have no
-        protocol message; config_schema validates them (#136). Clean, set
-        under the lock, persist, then run the key's live-apply hook (switching
-        TO a Kokoro cue voice warms it, #60). Returns False for unknown
-        keys/bad values."""
-        if key not in config_schema.config_only_keys():
-            return False
-        cleaned = config_schema.clean(key, value)
-        if cleaned is config_schema.INVALID:
-            return False
-        with self._lock:
-            self.config[key] = cleaned
-            save_config(self.config)
-        hook = config_schema.SCHEMA[key].apply
-        if hook:
-            getattr(self, hook)()
-        return True
+        """Settings page setter for config-only keys (daemon/settings)."""
+        return self._settings.set_config_value(key, value)
 
     def set_summary_prompt(self, style, text) -> bool:
-        """Store or reset a per-style custom summarizer instruction (#58).
-        text=None (or text equal to the built-in default) resets to default;
-        empty/whitespace text is rejected (an empty instruction would strip
-        the never-addressed-to-you firewall from the call)."""
-        if style not in ("tidy", "natural", "brief"):
-            return False
-        from sonara.summarizer import default_instruction
-        if text is not None:
-            text = str(text)
-            if not text.strip():
-                return False
-            if text == default_instruction(style):
-                text = None                     # storing the default = reset
-        with self._lock:
-            prompts = dict(self.config.get("summary_prompts") or {})
-            if text is None:
-                prompts.pop(style, None)
-            else:
-                prompts[style] = text
-            self.config["summary_prompts"] = prompts
-            save_config(self.config)
-        return True
+        """Settings page setter for a custom summarizer instruction
+        (daemon/settings)."""
+        return self._settings.set_summary_prompt(style, text)
 
     def _start_preview_builder(self, delay_s: float = 15.0):
         """Render missing voice-preview files in the background (#38). Delayed

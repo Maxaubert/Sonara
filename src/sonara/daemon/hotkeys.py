@@ -10,6 +10,7 @@ import queue
 import sys
 import threading
 
+from sonara.daemon import core
 from sonara.protocol import MsgType
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
@@ -41,6 +42,14 @@ class HotkeyController:
         self._last: dict = {}                     # toggle type -> last fire (debounce)
         self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
         self._failure_announced = False
+
+    def register(self, table: dict) -> None:
+        core.add_handlers(table, {MsgType.RELOAD_KEYMAP: self.on_reload_keymap})
+
+    def on_reload_keymap(self, msg):
+        # keymap.json changed: re-register off the daemon lock.
+        self.request_reload()
+        return None
 
     def dispatch(self, message: dict) -> None:
         """Called ON the Windows hotkey PUMP thread for each fire. It MUST NOT block:
