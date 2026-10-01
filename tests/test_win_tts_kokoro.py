@@ -105,6 +105,7 @@ def test_run_kokoro_voice_without_extra_falls_back_to_winrt(monkeypatch):
     # RuntimeError from require_installed still lands in the notice/log.
     b = _bare_backend()
     monkeypatch.setattr(kokoro, "is_installed", lambda: False)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: True)   # provisioned, not importable
     monkeypatch.setattr(b, "_get_kokoro",
                         lambda: pytest.fail("must not build the engine without the extra"))
     monkeypatch.setattr(wtts, "_require_winrt", lambda: None)
@@ -117,3 +118,49 @@ def test_run_kokoro_voice_without_extra_falls_back_to_winrt(monkeypatch):
     assert played == [b"WINRT-WAV"]
     notice = kokoro.pop_fallback_notice()
     assert notice and "kokoro" in notice.lower()          # actionable reason kept
+
+
+def test_run_kokoro_voice_never_installed_falls_back_without_a_notice(monkeypatch):
+    """E12: on a default install Kokoro was never provisioned, so a Kokoro
+    voice quietly uses the Windows voice; 'Kokoro unavailable' would announce
+    a failure of something the user never installed."""
+    b = _bare_backend()
+    kokoro.pop_fallback_notice()
+    monkeypatch.setattr(kokoro, "is_installed", lambda: False)
+    monkeypatch.setattr(kp, "neural_enabled", lambda: False)
+    monkeypatch.setattr(wtts, "_require_winrt", lambda: None)
+    monkeypatch.setattr(b, "_synthesize_wav", lambda text, voice, rate: b"WINRT-WAV")
+    monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: "handle")
+    assert b.run("hi", "af_heart", 200) == "handle"
+    assert kokoro.pop_fallback_notice() is None
+
+
+def test_run_falls_back_quietly_while_the_model_downloads(monkeypatch):
+    """M2/E11: while the model downloads, Kokoro voices speak with the Windows
+    voice at once; the 'downloading' notice explains it, not a failure notice."""
+    b = _bare_backend()
+    kokoro.pop_fallback_notice()
+
+    class Downloading:
+        def wav_bytes(self, *a):
+            raise kokoro.KokoroDownloading("downloading")
+
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)
+    monkeypatch.setattr(b, "_get_kokoro", lambda: Downloading())
+    monkeypatch.setattr(wtts, "_require_winrt", lambda: None)
+    monkeypatch.setattr(b, "_synthesize_wav", lambda text, voice, rate: b"WINRT-WAV")
+    played = []
+    monkeypatch.setattr(wtts, "_play_wav_bytes", lambda data: played.append(data))
+    b.run("hi", "af_heart", 200)
+    assert played == [b"WINRT-WAV"]
+    assert kokoro.pop_fallback_notice() is None
+
+
+def test_backend_engine_downloads_in_the_background_and_arms_the_notice():
+    b = _bare_backend()
+    eng = b._get_kokoro()
+    assert eng._background is True
+    kokoro.pop_download_notice()
+    eng._on_download()
+    assert kokoro.pop_download_notice() is True
+    assert kokoro.pop_download_notice() is False       # once

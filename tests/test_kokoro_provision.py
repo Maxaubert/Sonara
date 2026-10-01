@@ -109,6 +109,27 @@ def test_predownload_invokes_venv_python_with_pythonpath(monkeypatch, tmp_path):
     assert "KokoroEngine" in seen["cmd"][-1]   # the -c body builds the engine
 
 
+def test_predownload_retries_even_inside_the_failure_cooldown(monkeypatch):
+    """An explicit `voices install` is the user asking to retry now: the
+    predownload forces the fetch past a remembered failure (E11)."""
+    from sonara import kokoro
+    calls = []
+
+    class FakeEngine:
+        def __init__(self, model_dir, *a, **k):
+            pass
+
+        def download_models(self, force=False):
+            calls.append(("download", force))
+
+        def _ensure_loaded(self):
+            calls.append(("load",))
+
+    monkeypatch.setattr(kokoro, "KokoroEngine", FakeEngine)
+    exec(kp._PREDOWNLOAD, {})
+    assert calls == [("download", True), ("load",)]
+
+
 def test_neural_healthy_true_when_venv_reports_installed(monkeypatch):
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
     assert kp.neural_healthy("/app", run=lambda *a, **k: "True\n") is True

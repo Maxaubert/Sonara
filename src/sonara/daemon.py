@@ -2070,6 +2070,14 @@ class SpeechDaemon:
         v = self.config.get("cue_voice")
         if not v:
             return None
+        try:
+            from sonara import kokoro
+            if kokoro.is_kokoro_voice(v) and not kokoro.is_installed():
+                # E12: the default af_heart on an install without Kokoro.
+                # Speak cues natively instead of failing over every time.
+                return None
+        except Exception:  # noqa: BLE001 - a cue must never fail on the check
+            pass
         return v
 
     def _cue_voice_override(self, item) -> dict:
@@ -2118,7 +2126,18 @@ class SpeechDaemon:
     def _maybe_announce_kokoro_fallback(self) -> None:
         """Speak the pending Kokoro fallback notice, if any, exactly once per
         daemon run (#29): a dead engine is announced instead of producing
-        unexplained error noise."""
+        unexplained error noise. The one-time model download (M2/E11, #53)
+        is announced the same way, so the Windows voice standing in meanwhile
+        is explained."""
+        try:
+            from sonara import kokoro
+            downloading = kokoro.pop_download_notice()
+        except Exception:  # noqa: BLE001 - never let the notice check wedge the loop
+            downloading = False
+        if downloading and not getattr(self, "_kokoro_download_announced", False):
+            self._kokoro_download_announced = True
+            self._speak_cue(None, "Downloading the neural voice. Using the "
+                            "Windows voice until it is ready.", exempt_mute=True)
         if getattr(self, "_kokoro_fallback_announced", False):
             return
         try:

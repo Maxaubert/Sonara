@@ -59,6 +59,17 @@ def _require_winrt() -> None:
         raise RuntimeError(_WINRT_INSTALL_HINT)
 
 
+def _kokoro_was_installed() -> bool:
+    """True when this machine has Kokoro: importable here or provisioned in
+    the neural venv. A failure of an engine that was never installed is not
+    news to announce (E12)."""
+    try:
+        from sonara import kokoro, kokoro_provision
+        return kokoro.is_installed() or kokoro_provision.neural_enabled()
+    except Exception:  # noqa: BLE001 - the check must never break speech
+        return False
+
+
 def wpm_to_speaking_rate(wpm: float) -> float:
     """Map Sonara [100-400] wpm to a SpeakingRate multiplier [0.5-6.0].
 
@@ -290,10 +301,20 @@ class WinTtsBackend(TtsBackend):
         _sweep_stale_wavs()        # clear temp WAVs leaked by a prior crash (#26)
 
     def _get_kokoro(self):
-        """Lazy KokoroEngine -- downloads the ~316 MB model on first Kokoro voice."""
+        """Lazy KokoroEngine. A missing ~316 MB model downloads in the
+        background on first use (M2/E11): Kokoro voices speak with the Windows
+        voice until it lands, and the daemon announces the download once."""
         if self._kokoro is None:
             from sonara import kokoro, paths
-            self._kokoro = kokoro.KokoroEngine(paths.SONARA_DIR / "kokoro")
+
+            def _downloading():
+                import sys
+                print("[kokoro] downloading the neural voice model",
+                      file=sys.stderr, flush=True)
+                kokoro._set_download_notice()
+            self._kokoro = kokoro.KokoroEngine(
+                paths.SONARA_DIR / "kokoro", background=True,
+                on_download=_downloading)
         return self._kokoro
 
     def _get_synth(self):
@@ -466,15 +487,22 @@ class WinTtsBackend(TtsBackend):
                 kokoro.require_installed()   # actionable error, not a raw ImportError
                 data = self._get_kokoro().wav_bytes(
                     text, voice, kokoro.rate_to_speed(rate))
+            except kokoro.KokoroDownloading:
+                # The model is still downloading (M2/E11): the Windows voice
+                # stands in, and the once-per-run 'downloading' notice says why.
+                _require_winrt()
+                data = self._synthesize_wav(text, None, rate)
             except Exception as exc:  # noqa: BLE001 - a dead engine must never
                 # leave the user with unexplained error noise (#29: winrt's
                 # bundled MSVCP140 poisons onnxruntime when winrt loads first).
                 # Fall back to the native WinRT voice and arm the once-per-run
-                # spoken notice.
-                import sys
-                print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
-                      file=sys.stderr, flush=True)
-                kokoro._set_fallback_notice(str(exc))
+                # spoken notice, but only when Kokoro was actually installed:
+                # a default install never had it (E12).
+                if _kokoro_was_installed():
+                    import sys
+                    print("[kokoro] fallback to Windows voice: {0!r}".format(exc)[:300],
+                          file=sys.stderr, flush=True)
+                    kokoro._set_fallback_notice(str(exc))
                 _require_winrt()
                 data = self._synthesize_wav(text, None, rate)  # best WinRT voice
         else:

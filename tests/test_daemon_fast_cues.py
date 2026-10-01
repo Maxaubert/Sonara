@@ -8,7 +8,9 @@ def _drain(daemon, n=4):
         daemon._speak_loop_once()
 
 
-def test_control_cue_speaks_with_cue_voice_override():
+def test_control_cue_speaks_with_cue_voice_override(monkeypatch):
+    from sonara import kokoro
+    monkeypatch.setattr(kokoro, "is_installed", lambda: True)   # E12 gate
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon.config["voice"] = "linus"
     daemon.config["cue_voice"] = "af_heart"

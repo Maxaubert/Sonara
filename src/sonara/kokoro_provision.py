@@ -92,9 +92,12 @@ def provision(uv: str, run=subprocess.check_call) -> None:
 # Task 5: predownload_model + neural_healthy
 # ---------------------------------------------------------------------------
 
+# force=True: an explicit install retries even inside the cool-down a failed
+# background download left behind (E11).
 _PREDOWNLOAD = (
     "from sonara import kokoro, paths as p; "
-    "kokoro.KokoroEngine(p.SONARA_DIR / 'kokoro')._ensure_loaded()")
+    "e = kokoro.KokoroEngine(p.SONARA_DIR / 'kokoro'); "
+    "e.download_models(force=True); e._ensure_loaded()")
 
 _HEALTH = "from sonara import kokoro; print(kokoro.is_installed())"
 
