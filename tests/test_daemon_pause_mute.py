@@ -376,7 +376,7 @@ def test_pause_replay_preserves_heard_marker():
     daemon, queue, speaker, *_ = make_daemon(foreground="A")
     daemon.handle_message(_prose("A", "Marked. ", 0, True))
 
-    ch = daemon.router.channel("A")
+    daemon.router.channel("A")
     # Confirm a pending_heard entry exists for the item before it's spoken
     assert len(daemon._pending_heard) == 1
     item_id = list(daemon._pending_heard.keys())[0]

@@ -2,12 +2,9 @@
 restarts -- the lockfile is unlinked on exit, so reuse needs its own file;
 (2) page Restart must respawn the daemon even when no supervisor loop is
 running (daemon started via `sonara start`), via a detached respawner."""
-import json
 import re
 import subprocess
-import urllib.request
 
-import pytest
 
 from sonara import webui
 from tests.test_webui import FakeDaemon, server, _post, _get  # noqa: F401 (fixture reuse)

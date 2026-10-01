@@ -1,6 +1,5 @@
 """Daemon lifecycle (#23): SHUTDOWN message + the stop sentinel that gates
 every respawn path (supervisor loop, lazy start)."""
-import os
 
 from sonara.protocol import MsgType, PROTOCOL_VERSION
 from tests.daemon_helpers import make_daemon

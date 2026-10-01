@@ -3,7 +3,6 @@ The worker runs inside the chatterbox venv in production; these tests import
 the module on the repo venv, which must work because torch imports happen
 lazily inside the loader."""
 import base64
-import json
 
 from sonara import chatterbox_worker as w
 

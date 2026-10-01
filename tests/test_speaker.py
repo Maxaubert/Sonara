@@ -210,7 +210,7 @@ def test_earcon_procs_do_not_accumulate_unbounded():
     sp = Speaker(say_runner=RecordingRunner(), earcon_player=player, earcons=earcons)
 
     N = 20
-    for i in range(N):
+    for _ in range(N):
         # Immediately mark the previous proc as done before firing the next one.
         if player.procs:
             player.procs[-1].finish()

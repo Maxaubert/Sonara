@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import importlib.util
 import io
-import os
 import urllib.request
 import wave
 from pathlib import Path

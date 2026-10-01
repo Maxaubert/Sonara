@@ -102,7 +102,7 @@ def test_flush_drains_every_sessions_backlog_in_one_press():
     # already landed on B's channel. One flush must silence BOTH, or B takes
     # the floor seconds later and a re-press in the gap hits an "empty" queue.
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="a")
-    cha = daemon.router.channel("a")
+    daemon.router.channel("a")
     chb = daemon.router.channel("b")
     daemon._current_item = SpeechItem(id=1, session="a", kind="summary",
                                       text="reading now", is_decision=False)

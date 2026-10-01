@@ -201,7 +201,7 @@ def test_short_lead_in_question_held_with_capped_release(monkeypatch):
     # (#83) short lead-ins are digested now, so the question holds - but the
     # hold is CAPPED: the release timer speaks it even if the digest stalls.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    calls = _capture_spawn(daemon, monkeypatch)
+    _capture_spawn(daemon, monkeypatch)
     timers = []
     monkeypatch.setattr(daemon, "_schedule_hold_release",
                         lambda s, o, i: timers.append((s, o, i)))
@@ -338,7 +338,7 @@ def test_normal_turn_end_digest_is_unprefixed(monkeypatch):
 
 def test_new_prompt_clears_held_question(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    calls = _capture_spawn(daemon, monkeypatch)
+    _capture_spawn(daemon, monkeypatch)
     _enable_and_feed(daemon, monkeypatch)
     _choice(daemon)
     assert daemon._held_decision.get("fg") is not None
@@ -895,7 +895,7 @@ def test_flush_cancels_pending_question_settle(monkeypatch):
     # A new prompt during a question's settle window drops the pending question;
     # a late fire is a no-op (#16, consistent with #13/#14).
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    calls = _capture_spawn(daemon, monkeypatch)
+    _capture_spawn(daemon, monkeypatch)
     scheduled = []
     monkeypatch.setattr(daemon, "_settle_schedule",
                         lambda session, gen: scheduled.append((session, gen)))
@@ -1038,7 +1038,7 @@ def test_digest_dispatch_prewarms_chatterbox(monkeypatch):
     # (#27) the GPU model loads WHILE haiku digests, hiding the ~40s post-idle
     # cold reload inside the digest latency instead of stalling speech after it.
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    calls = _capture_spawn(daemon, monkeypatch)
+    _capture_spawn(daemon, monkeypatch)
     warms = []
     monkeypatch.setattr(daemon, "_warm_chatterbox_async",
                         lambda: warms.append(True))

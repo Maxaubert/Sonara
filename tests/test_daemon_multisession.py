@@ -295,7 +295,6 @@ def test_background_decision_preempts_current_reader():
     from sonara.daemon import SpeechDaemon
     from sonara.config import DEFAULTS
 
-    speaker_obj = speaker_class = None
     # Inline FakeSpeaker to avoid import cycle
     class FS:
         def __init__(self): self.spoken = []; self._epoch = 0
@@ -386,7 +385,6 @@ def test_idle_gap_handoff_announces():
     then B becomes ready/foreground -> next_item emits 'Session changed: beta.'
     before B's item. This is the C1 bug fix verification.
     """
-    r_sessions_map = {}
 
     class FakeSessions:
         def __init__(self): self._fg = "A"; self._folders = {"A": "alpha", "B": "beta"}

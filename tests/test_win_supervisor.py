@@ -109,7 +109,6 @@ def test_both_launch_spec_entry_points_are_the_same_implementation(monkeypatch):
     # depended on who started it, with nothing in the log to distinguish them.
     # supervisor_loop's docstring already promised it served both paths; this
     # asserts the promise instead of restating it in a comment.
-    import os
     from sonara.platform.windows import supervisor_loop as sl
 
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")

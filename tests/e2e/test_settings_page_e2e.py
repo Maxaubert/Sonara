@@ -2,7 +2,6 @@
 SettingsServer + FakeDaemon. Skipped unless playwright + chromium installed:
     pip install playwright && playwright install chromium
 """
-import json
 
 import pytest
 
@@ -213,7 +212,6 @@ def test_engine_toggle_filters_voices_and_switches(live, monkeypatch):
     # (#42) Kokoro view lists only kokoro voices; switching engines auto-picks
     # a voice of that engine
     d, s = live
-    sets = []
     monkeypatch.setattr(webui, "_installed_voices", lambda: {
         "windows": ["Microsoft Zira"], "kokoro": ["af_heart", "af_bella"],
         "chatterbox": ["cb_default", "poki"]})

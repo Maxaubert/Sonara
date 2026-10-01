@@ -561,7 +561,7 @@ def _load_settings(settings_path: str) -> dict:
         with open(settings_path, "r", encoding="utf-8") as fh:
             text = fh.read().strip()
     except OSError as exc:
-        raise ValueError("cannot read {0}: {1}".format(settings_path, exc))
+        raise ValueError("cannot read {0}: {1}".format(settings_path, exc)) from exc
     if not text:
         return {}
     try:
@@ -569,7 +569,7 @@ def _load_settings(settings_path: str) -> dict:
     except ValueError as exc:
         raise ValueError(
             "{0} is not valid JSON ({1}); refusing to overwrite. Fix or remove it, "
-            "then re-run 'sonara install'.".format(settings_path, exc))
+            "then re-run 'sonara install'.".format(settings_path, exc)) from exc
     return data if isinstance(data, dict) else {}
 
 

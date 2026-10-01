@@ -295,7 +295,7 @@ def test_settings_page_served_and_self_contained(server):
     d, s = server
     html = _get(s, "/settings").read().decode("utf-8")
     assert "Sonara" in html and "offline-banner" in html
-    assert "http://" not in html.replace(f"http://127.0.0.1", "")  # no external refs
+    assert "http://" not in html.replace("http://127.0.0.1", "")  # no external refs
     assert "https://" not in html
     # / redirects or serves too
     assert _get(s, "/").status == 200
@@ -313,7 +313,7 @@ def test_preview_audio_served_from_file(server, tmp_path, monkeypatch):
     from sonara import previews
     monkeypatch.setattr(previews, "preview_dir", lambda: tmp_path)
     (tmp_path / "af_heart.wav").write_bytes(b"RIFFfakewav")
-    r = _get(s := server[1], "/api/preview-audio?voice=af_heart")
+    r = _get(server[1], "/api/preview-audio?voice=af_heart")
     assert r.status == 200
     assert r.headers["Content-Type"] == "audio/wav"
     assert r.read() == b"RIFFfakewav"
