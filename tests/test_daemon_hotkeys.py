@@ -37,7 +37,7 @@ def test_start_hotkeys_passes_a_dispatch_callback(monkeypatch):
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
-    daemon._start_hotkeys()
+    daemon._hotkeys.start()
     assert callable(pb.hotkey.started)
 
 
@@ -45,13 +45,13 @@ def test_dispatch_routes_through_handle_message(monkeypatch):
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
-    daemon._start_hotkeys()
+    daemon._hotkeys.start()
     handled = []
     monkeypatch.setattr(daemon, "handle_message", lambda m: handled.append(m))
     pb.hotkey.started({"type": "skip"})       # simulate a hotkey fire (enqueues)
     # The fire is handed to the worker queue, not handled on the pump thread; drain
     # it the way the worker would.
-    daemon._process_hotkey(daemon._hotkey_q.get_nowait())
+    daemon._hotkeys.process(daemon._hotkeys.queue.get_nowait())
     assert handled == [{"type": "skip"}]
 
 
@@ -66,10 +66,10 @@ def test_hotkey_dispatch_never_blocks_on_the_lock(monkeypatch):
     daemon = make_daemon(foreground="fg")[0]
     handled = []
     monkeypatch.setattr(daemon, "handle_message", lambda m: handled.append(m))
-    daemon._dispatch_hotkey({"type": MsgType.MUTE})
+    daemon._hotkeys.dispatch({"type": MsgType.MUTE})
     assert handled == []                          # NOT processed on the pump thread
-    assert not daemon._hotkey_q.empty()           # enqueued for the worker
-    daemon._process_hotkey(daemon._hotkey_q.get_nowait())
+    assert not daemon._hotkeys.queue.empty()           # enqueued for the worker
+    daemon._hotkeys.process(daemon._hotkeys.queue.get_nowait())
     assert handled == [{"type": MsgType.MUTE}]     # worker applies it
 
 
@@ -77,14 +77,14 @@ def test_stop_stops_the_hotkey_listener(monkeypatch):
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
-    daemon._stop_hotkeys()
+    daemon._hotkeys.stop()
     assert pb.hotkey.stopped is True
 
 
 def test_process_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
     """A hotkey fire mutates shared daemon state (queue/history/config) via
     handle_message; the WORKER that applies it MUST hold self._lock the way the
-    socket path (_handle_conn) does, or it races the speak loop -> 'list changed
+    socket path (server.handle_conn) does, or it races the speak loop -> 'list changed
     size' crash / corruption. The dispatch moved off the pump thread to the worker,
     but this lock invariant is preserved (regression for #5)."""
     pb = _FakePlatform()
@@ -98,7 +98,7 @@ def test_process_hotkey_holds_the_lock_like_the_socket_path(monkeypatch):
         return real(msg)
 
     monkeypatch.setattr(daemon, "handle_message", spy)
-    daemon._process_hotkey({"type": "skip"})
+    daemon._hotkeys.process({"type": "skip"})
     assert locked_during_call == [True]
 
 
@@ -106,29 +106,29 @@ def test_debounce_suppresses_rapid_repeat_of_same_toggle():
     """A second pause/mute within the debounce window is ignored; one after the
     window passes is honored."""
     from sonara.protocol import MsgType
-    from sonara.daemon import _HOTKEY_DEBOUNCE_S
+    from sonara.daemon.hotkeys import DEBOUNCE_S
     daemon = make_daemon()[0]
-    assert daemon._debounce_suppress(MsgType.MUTE, 100.0) is False   # first fires
-    assert daemon._debounce_suppress(MsgType.MUTE, 100.10) is True   # +100ms: dropped
-    assert daemon._debounce_suppress(MsgType.MUTE, 100.0 + _HOTKEY_DEBOUNCE_S + 0.01) is False  # window passed
+    assert daemon._hotkeys.debounce_suppress(MsgType.MUTE, 100.0) is False   # first fires
+    assert daemon._hotkeys.debounce_suppress(MsgType.MUTE, 100.10) is True   # +100ms: dropped
+    assert daemon._hotkeys.debounce_suppress(MsgType.MUTE, 100.0 + DEBOUNCE_S + 0.01) is False  # window passed
 
 
 def test_debounce_is_per_action_not_global():
     """Debouncing pause must not suppress a different toggle pressed right after."""
     from sonara.protocol import MsgType
     daemon = make_daemon()[0]
-    assert daemon._debounce_suppress(MsgType.PAUSE, 50.0) is False
-    assert daemon._debounce_suppress(MsgType.MUTE, 50.05) is False   # different action: not debounced
+    assert daemon._hotkeys.debounce_suppress(MsgType.PAUSE, 50.0) is False
+    assert daemon._hotkeys.debounce_suppress(MsgType.MUTE, 50.05) is False   # different action: not debounced
 
 
 def test_nav_and_repeat_are_not_debounced():
     """Directional/idempotent keys pass through every time (rapid nav is intentional)."""
     from sonara.protocol import MsgType
     daemon = make_daemon()[0]
-    assert daemon._debounce_suppress(MsgType.NAV, 10.0) is False
-    assert daemon._debounce_suppress(MsgType.NAV, 10.01) is False   # not suppressed
-    assert daemon._debounce_suppress(MsgType.REPEAT, 10.0) is False
-    assert daemon._debounce_suppress(MsgType.REPEAT, 10.01) is False
+    assert daemon._hotkeys.debounce_suppress(MsgType.NAV, 10.0) is False
+    assert daemon._hotkeys.debounce_suppress(MsgType.NAV, 10.01) is False   # not suppressed
+    assert daemon._hotkeys.debounce_suppress(MsgType.REPEAT, 10.0) is False
+    assert daemon._hotkeys.debounce_suppress(MsgType.REPEAT, 10.01) is False
 
 
 def test_one_bad_hotkey_does_not_kill_the_worker(monkeypatch):
@@ -137,7 +137,7 @@ def test_one_bad_hotkey_does_not_kill_the_worker(monkeypatch):
     daemon = make_daemon()[0]
     monkeypatch.setattr(daemon, "handle_message",
                         lambda m: (_ for _ in ()).throw(RuntimeError("boom")))
-    daemon._process_hotkey({"type": "stop"})    # swallowed, no raise
+    daemon._hotkeys.process({"type": "stop"})    # swallowed, no raise
 
 
 def test_reload_keymap_delegates_to_backend_reload(monkeypatch):
@@ -224,8 +224,8 @@ def test_hotkey_start_failure_is_logged_and_spoken_once(monkeypatch, capsys):
     pb.hotkey = _BrokenHotkey()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
-    daemon._start_hotkeys()
-    daemon._reload_hotkeys()
+    daemon._hotkeys.start()
+    daemon._hotkeys.reload()
     assert "Ctrl+Alt+Banana" in capsys.readouterr().err
     said = [t for t in _cues(daemon) if "hotkeys" in t.lower()]
     assert len(said) == 1
@@ -236,5 +236,25 @@ def test_hotkey_start_success_speaks_nothing(monkeypatch):
     pb = _FakePlatform()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     daemon = make_daemon()[0]
-    daemon._start_hotkeys()
+    daemon._hotkeys.start()
     assert not any("hotkeys" in t.lower() for t in _cues(daemon))
+
+
+def test_controller_runs_without_a_daemon():
+    """daemon/hotkeys.py on its own (#141): the worker applies queued fires
+    under the lock it was given and exits on the stop sentinel."""
+    import threading
+    from sonara.daemon.hotkeys import HotkeyController
+    lock, running = threading.Lock(), threading.Event()
+    running.set()
+    applied = []
+    ctl = HotkeyController(lock, running,
+                           lambda m: applied.append((m["type"], lock.locked())),
+                           cues=None)
+    ctl.dispatch({"type": "skip"})
+    ctl.stop_worker()
+    worker = threading.Thread(target=ctl.worker, daemon=True)
+    worker.start()
+    worker.join(timeout=2.0)
+    assert not worker.is_alive()
+    assert applied == [("skip", True)]

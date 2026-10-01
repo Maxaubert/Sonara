@@ -65,7 +65,7 @@ def test_preview_queues_its_cue_under_the_daemon_lock():
 
 
 def test_hotkey_failure_cue_is_queued_under_the_daemon_lock():
-    """_reload_hotkeys and _start_hotkeys run off the lock, so the failure
+    """HotkeyController.reload and start run off the lock, so the failure
     cue they speak must take it (same race as the preview)."""
     daemon, *_ = make_daemon()
     held = []
@@ -73,6 +73,6 @@ def test_hotkey_failure_cue_is_queued_under_the_daemon_lock():
     try:
         raise RuntimeError("boom")
     except RuntimeError:
-        daemon._hotkeys_failed("reload")
-    daemon._announce_hotkey_collisions([{"action": "mute"}])
+        daemon._hotkeys.failed("reload")
+    daemon._hotkeys.announce_collisions([{"action": "mute"}])
     assert held == [True, True]

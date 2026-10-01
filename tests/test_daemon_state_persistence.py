@@ -116,7 +116,7 @@ def test_faulthandler_header_only_file_is_not_rotated(tmp_path, monkeypatch):
 
 def test_hotkey_collisions_are_announced_audibly():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._announce_hotkey_collisions([{"action": "mute", "error": 1409}])
+    daemon._hotkeys.announce_collisions([{"action": "mute", "error": 1409}])
     for _ in range(2):
         daemon._speak_loop_once()
     assert any("hotkeys" in t.lower() for t in speaker.spoken)
@@ -124,8 +124,8 @@ def test_hotkey_collisions_are_announced_audibly():
 
 def test_no_collisions_stays_silent():
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._announce_hotkey_collisions([])
-    daemon._announce_hotkey_collisions(None)
+    daemon._hotkeys.announce_collisions([])
+    daemon._hotkeys.announce_collisions(None)
     for _ in range(2):
         daemon._speak_loop_once()
     assert speaker.spoken == []

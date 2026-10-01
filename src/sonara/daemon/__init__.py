@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import queue
 import socket
 import sys
 import threading
@@ -13,6 +12,7 @@ from sonara import config_schema
 from sonara.daemon import decision_text, setup_health, tokens
 from sonara.daemon.audio import AudioControl
 from sonara.daemon.cues import Cues
+from sonara.daemon.hotkeys import HotkeyController
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -35,15 +35,6 @@ RATE_MIN = config_schema.RATE_MIN
 RATE_MAX = config_schema.RATE_MAX
 MINQUEUE_MIN = config_schema.MINQUEUE_MIN
 MINQUEUE_MAX = config_schema.MINQUEUE_MAX
-
-# Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
-# accidental/rapid double-tap doesn't flip pause/mute several times (and pile
-# up confirmation cues). Directional keys (nav/repeat/skip) are NOT debounced --
-# repeated presses there are intentional. NEXT_SESSION is directional too: each
-# press is a deliberate ring advance (and now chimes instantly, #111), and
-# MOD_NOREPEAT already guards key-hold auto-repeat, so it is not debounced.
-_HOTKEY_DEBOUNCE_S = 0.30
-_DEBOUNCED_HOTKEYS = (MsgType.PAUSE, MsgType.MUTE)
 
 # Summary mode: a turn whose prose is already shorter than this is spoken
 # as-is instead of being digested (a digest of a short message adds nothing,
@@ -169,7 +160,6 @@ class SpeechDaemon:
         # respawn a dead daemon between two messages, and a memory-only mute
         # was reset to audible by the swap - the "mute is not persistent" bug.
         self._mute_level = config_schema.current(config, "mute_level")
-        self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
         self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
@@ -190,12 +180,12 @@ class SpeechDaemon:
         self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
-        self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
-        # Hotkey fires are handed to this queue by the Windows pump thread and
-        # applied by a dedicated worker under self._lock -- so the pump NEVER blocks
-        # on the lock and presses can't pile up then burst while the daemon is busy
-        # streaming prose (the mute-hang). Drained by _hotkey_worker.
-        self._hotkey_q: "queue.Queue" = queue.Queue()
+        # Global hotkeys: fires are queued by the pump thread and applied by a
+        # worker under self._lock, like a socket message. handle_message is
+        # looked up at call time so a replaced handler (tests) is honoured.
+        self._hotkeys = HotkeyController(
+            self._lock, self._running, lambda m: self.handle_message(m),
+            self._cues)
         # Summary mode: per-session CANCEL epoch. Only a user action (a new prompt
         # -> FLUSH) advances it; a finished digest is dropped iff the epoch moved
         # since it was dispatched. A turn merely ending does NOT advance it, so the
@@ -782,16 +772,8 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.RELOAD_KEYMAP:
-            # keymap.json changed (e.g. an unbind): re-register hotkeys so it takes
-            # effect without a daemon restart. Run it OFF the daemon lock: this
-            # handler is invoked while holding self._lock, but _reload_hotkeys joins
-            # the Windows hotkey pump thread, which itself needs self._lock to
-            # dispatch a fire. Joining under the lock could stall the daemon up to
-            # the join timeout and, on timeout, leave an orphaned thread that
-            # re-creates the H2 dark-hotkey race. A short-lived thread does the
-            # reload lock-free (and _reload_lock serializes concurrent reloads).
-            threading.Thread(target=self._reload_hotkeys,
-                             name="sonara-keymap-reload", daemon=True).start()
+            # keymap.json changed: re-register off the daemon lock.
+            self._hotkeys.request_reload()
             return None
 
         if t == MsgType.REPEAT:
@@ -953,9 +935,9 @@ class SpeechDaemon:
     def stop(self) -> None:
         self._running.clear()
         self._wake.set()
-        self._hotkey_q.put(None)        # unblock the hotkey worker's get() to exit
+        self._hotkeys.stop_worker()     # unblock the hotkey worker's get() to exit
         self._audio.restore()       # never leave other apps' audio ducked or paused
-        self._stop_hotkeys()
+        self._hotkeys.stop()
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
         srv = self._server
@@ -964,84 +946,6 @@ class SpeechDaemon:
                 srv.close()
             except OSError:
                 pass
-
-    def _start_hotkeys(self) -> None:
-        """Start the platform's global-hotkey listener: an in-process
-        RegisterHotKey thread."""
-        # Kill-switch: a ~/.sonara/no_hotkeys file (or SONARA_DISABLE_HOTKEYS=1)
-        # runs speech-only (no in-process hotkey thread). A FILE flag is honoured
-        # by EVERY daemon however it is spawned (hooks inherit their own env, not
-        # ours), so it reliably isolates the hotkey thread when diagnosing crashes.
-        flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
-        if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
-            return
-        from sonara.platform import get_platform
-        try:
-            from sonara import keymap
-            keymap.migrate_default_chord()   # one-time upgrade of the legacy chord
-            backend = get_platform().hotkey
-            backend.start(self._dispatch_hotkey)
-            self._announce_hotkey_collisions(getattr(backend, "collisions", None))
-        except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-            self._hotkeys_failed("start")
-
-    def _hotkeys_failed(self, what: str) -> None:
-        """Log why the hotkeys did not start (traceback to the log) and say so
-        once per run (M4): a bad keymap.json used to leave every hotkey dead
-        with no sign at all. Called from an except block."""
-        import traceback
-        print("[hotkeys] {0} failed:".format(what), file=sys.stderr, flush=True)
-        traceback.print_exc(file=sys.stderr)
-        if getattr(self, "_hotkey_failure_announced", False):
-            return
-        self._hotkey_failure_announced = True
-        # Off-lock caller (start/reload): the cue reslices CONTROL, take the lock.
-        with self._lock:
-            self._cues.speak(None, "Sonara hotkeys could not start. Run sonara "
-                             "doctor to see why.", exempt_mute=True,
-                             pause_exempt=True)
-
-    def _announce_hotkey_collisions(self, collisions) -> None:
-        """Surface failed RegisterHotKey chords AUDIBLY (#65). Windows grants a
-        chord to ONE process: in a split-brain (a stray older daemon surviving a
-        restart) the new daemon owns the socket but not the keys, so hotkey
-        presses act on a daemon the user cannot hear about - mute appears
-        broken. Collisions were only recorded for `sonara doctor`; an eyes-free
-        user needs to HEAR that the keys went elsewhere."""
-        if not collisions:
-            return
-        names = ", ".join(sorted(str(c.get("action", "?")) for c in collisions))
-        print("[hotkeys] failed to register: {0}".format(names),
-              file=sys.stderr, flush=True)
-        with self._lock:                   # called off-lock from _start_hotkeys
-            self._cues.speak(None,
-                             "Some Sonara hotkeys are held by another program. "
-                             "Restarting Sonara may fix it.",
-                             exempt_mute=True, pause_exempt=True)
-
-    def _stop_hotkeys(self) -> None:
-        from sonara.platform import get_platform
-        try:
-            get_platform().hotkey.stop()
-        except Exception:  # noqa: BLE001 - shutdown must not raise
-            pass
-
-    def _reload_hotkeys(self) -> None:
-        """Apply a keymap.json change to the live hotkeys. Runs OFF the daemon lock
-        (see the RELOAD_KEYMAP handler) and is serialized by _reload_lock so two
-        rapid reloads can't interleave their stop/start cycles. Honors the
-        no_hotkeys kill switch, then delegates to the platform backend's reload()
-        seam, a (thread-joined) stop+start."""
-        with self._reload_lock:
-            flag = os.path.join(os.path.expanduser("~"), ".sonara", "no_hotkeys")
-            if os.environ.get("SONARA_DISABLE_HOTKEYS") or os.path.exists(flag):
-                self._stop_hotkeys()
-                return
-            from sonara.platform import get_platform
-            try:
-                get_platform().hotkey.reload(self._dispatch_hotkey)
-            except Exception:  # noqa: BLE001 - hotkeys are non-essential; speech must run
-                self._hotkeys_failed("reload")
 
     def _replay(self, session: str, entries, append: bool = False,
                 suppress_announce: bool = True) -> None:
@@ -1726,63 +1630,6 @@ class SpeechDaemon:
         self._wake.set()
         return True
 
-    def _dispatch_hotkey(self, message: dict) -> None:
-        """Called ON the Windows hotkey PUMP thread for each fire. It MUST NOT block:
-        debounce (cheap, pump-thread-only state) then hand the message to the worker
-        queue and return to GetMessage immediately. Running handle_message here
-        (under self._lock) used to stall the pump whenever the daemon held the lock
-        streaming prose, so presses queued at the OS level and burst later -- the
-        mute-hang. The worker (_hotkey_worker) applies the message under the lock."""
-        import time as _t
-        if self._debounce_suppress(message.get("type"), _t.monotonic()):
-            return   # a too-fast repeat of the same toggle -> ignore
-        self._hotkey_q.put(message)
-
-    def _hotkey_worker(self) -> None:
-        """Drain queued hotkey fires and apply each under self._lock -- OFF the pump
-        thread, so a busy daemon can never stall hotkey CAPTURE. Serialized (single
-        worker) like the old synchronous dispatch, and serialized against the socket
-        path via self._lock."""
-        while self._running.is_set():
-            try:
-                message = self._hotkey_q.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            if message is None:        # shutdown sentinel from stop()
-                break
-            self._process_hotkey(message)
-
-    def _process_hotkey(self, message: dict) -> None:
-        """Apply one hotkey message exactly like an inbound socket message.
-
-        MUST hold self._lock around handle_message, identical to the socket path
-        (_handle_conn): it mutates shared state (channels, history, config)
-        concurrently with the speak loop, so without the lock it races -> 'list
-        changed size during iteration' / corruption. handle_message and its callees
-        never acquire self._lock (note_spoken/speak run on the speak thread), so this
-        is deadlock-free. Contained so one bad hotkey can't kill the worker."""
-        try:
-            with self._lock:
-                self.handle_message(message)
-        except Exception:  # noqa: BLE001 - one bad hotkey must not kill the worker
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-
-    def _debounce_suppress(self, mtype, now) -> bool:
-        """True if *mtype* is a repeat of the same TOGGLE hotkey within the debounce
-        window -- collapses an accidental/rapid double-tap into one action. Only the
-        toggles in _DEBOUNCED_HOTKEYS are debounced; nav/repeat/skip pass through so
-        repeated directional presses still register. Runs on the single hotkey pump
-        thread, so the unlocked _hotkey_last access is race-free."""
-        if mtype not in _DEBOUNCED_HOTKEYS:
-            return False
-        last = self._hotkey_last.get(mtype)
-        if last is not None and (now - last) < _HOTKEY_DEBOUNCE_S:
-            return True
-        self._hotkey_last[mtype] = now
-        return False
-
     def _speak_loop(self) -> None:
         self._running.set()
         while self._running.is_set():
@@ -2113,7 +1960,7 @@ class SpeechDaemon:
     def _handle_message_guarded(self, msg):
         """Dispatch one socket message under the lock, contained so a malformed or
         buggy message logs a traceback instead of silently killing the connection
-        thread (mirrors the _dispatch_hotkey guard). Returns the reply or None."""
+        thread (mirrors the hotkey worker's guard). Returns the reply or None."""
         try:
             with self._lock:
                 return self.handle_message(msg)
@@ -2216,13 +2063,13 @@ class SpeechDaemon:
 
         speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
         accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
-        hotkey_worker = threading.Thread(target=self._hotkey_worker,
+        hotkey_worker = threading.Thread(target=self._hotkeys.worker,
                                          name="sonara-hotkey-worker", daemon=True)
         self._log_start_marker()
         speak_thread.start()
         accept_thread.start()
         hotkey_worker.start()
-        self._start_hotkeys()
+        self._hotkeys.start()
         self._maybe_prewarm_cue_voice()    # load the Kokoro engine for cues (#60)
 
         try:
