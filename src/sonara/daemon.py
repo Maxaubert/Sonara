@@ -1903,9 +1903,9 @@ class SpeechDaemon:
 
     def _nav(self, session: str, to: str) -> str:
         """Move the per-session message cursor and play from there to the end.
-        Returns "moved" if the cursor actually moved, else "edge" (already at the
-        boundary, or nothing to navigate) -- the NAV handler uses this to pick the
-        nav vs nav-edge chime.
+        Returns "moved" if the cursor actually moved (or for 'first', which always
+        restarts), else "edge" (already at the boundary, or nothing to navigate) --
+        the NAV handler uses this to pick the nav vs nav-edge chime.
 
         The cursor indexes the current turn's messages (history resets each
         prompt), oldest..newest; absent == the latest. 'next'/'prev' step one
@@ -1941,7 +1941,9 @@ class SpeechDaemon:
             new = n - 1
         else:
             return "edge"
-        moved = new != cur                       # did the cursor actually move?
+        # 'first' (Up) is a restart of the turn, never an edge: there is always
+        # a message to read here, even when the cursor is already parked at it (#128).
+        moved = new != cur or to == "first"
         if new >= n - 1:
             # Reached the latest message: clear the cursor so it tracks the live
             # edge again (absent == latest), and so a following 'prev' steps back

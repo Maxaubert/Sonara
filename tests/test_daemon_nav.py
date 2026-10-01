@@ -133,6 +133,25 @@ def test_nav_move_fires_nav_chime(speakerless=None):
     assert speaker.earcons[-1] == "nav"
 
 
+def test_repeated_first_always_chimes_nav_and_replays():
+    # Up is a restart, not a step: every press re-reads the turn from the top
+    # and chimes "nav", even when the cursor is already parked at the start (#128).
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    _seed(daemon)
+    for _ in range(3):
+        _nav(daemon, "first")
+    assert speaker.earcons == ["nav", "nav", "nav"]
+    assert [it.text for it in _drain_channel(daemon)] == ["m0a", "m0b", "m1", "m2"]
+
+
+def test_first_on_single_message_turn_chimes_nav():
+    daemon, queue, speaker, *_ = make_daemon(foreground="fg")
+    daemon.history.record("fg", "prose", "only")
+    _nav(daemon, "first")
+    assert speaker.earcons == ["nav"]
+    assert [it.text for it in _drain_channel(daemon)] == ["only"]
+
+
 def test_nav_at_edge_fires_nav_edge_chime():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")
     _seed(daemon)
