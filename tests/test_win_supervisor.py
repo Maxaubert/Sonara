@@ -25,10 +25,10 @@ if sys.platform != "win32":
     _fake_winreg.QueryValueEx = lambda *a, **kw: (_ for _ in ()).throw(OSError())
     sys.modules.setdefault("winreg", _fake_winreg)
 
+from sonara.install import claude_hooks
 from sonara.platform.windows import supervisor as sup_mod
 from sonara.platform.windows.supervisor import (
-    WinSupervisorBackend, TASK_NAME, TASK_XML_TEMPLATE,
-    daemon_pythonw,
+    WinSupervisorBackend, TASK_NAME, TASK_XML_TEMPLATE, daemon_pythonw,
 )
 
 _NS = "http://schemas.microsoft.com/windows/2004/02/mit/task"
@@ -314,7 +314,7 @@ def test_post_install_notes_runs(capsys):
 
 def test_hooks_doctor_row_windows_absent(monkeypatch, tmp_path):
     from sonara.platform.windows import supervisor as sup
-    monkeypatch.setattr(sup, "claude_settings_path",
+    monkeypatch.setattr(claude_hooks, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     name, ok, _ = sup.WinSupervisorBackend().hooks_doctor_row()
     assert name == "hooks installed" and ok is False   # no settings, no plugin
@@ -327,7 +327,7 @@ def test_hooks_doctor_row_ok_when_plugin_enabled(monkeypatch, tmp_path):
     from sonara.platform.windows import supervisor as sup
     sp = tmp_path / "settings.json"
     sp.write_text(json.dumps({"enabledPlugins": {"sonara@sonara": True}}), encoding="utf-8")
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: str(sp))
     name, ok, detail = sup.WinSupervisorBackend().hooks_doctor_row()
     assert name == "hooks installed" and ok is True
     assert "plugin" in detail
@@ -335,15 +335,24 @@ def test_hooks_doctor_row_ok_when_plugin_enabled(monkeypatch, tmp_path):
 
 def test_settings_has_sonara_plugin(tmp_path):
     import json
-    from sonara.platform.windows import supervisor as sup
     sp = tmp_path / "settings.json"
     sp.write_text(json.dumps({"enabledPlugins": {"x@mkt": True, "sonara@sonara": True}}),
                   encoding="utf-8")
-    assert sup.settings_has_sonara_plugin(str(sp))
+    assert claude_hooks.settings_has_sonara_plugin(str(sp))
     sp.write_text(json.dumps({"enabledPlugins": {"sonara@sonara": False}}), encoding="utf-8")
-    assert not sup.settings_has_sonara_plugin(str(sp))   # disabled doesn't count
+    assert not claude_hooks.settings_has_sonara_plugin(str(sp))   # disabled doesn't count
     sp.write_text(json.dumps({"enabledPlugins": {}}), encoding="utf-8")
-    assert not sup.settings_has_sonara_plugin(str(sp))
+    assert not claude_hooks.settings_has_sonara_plugin(str(sp))
+
+
+def _plugin_with_hooks(root):
+    """A plugin dir holding the real hooks/hooks.json: the settings.json hooks
+    are generated from it (H4)."""
+    import shutil
+    (root / "hooks").mkdir(parents=True, exist_ok=True)
+    shutil.copy(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "hooks", "hooks.json"), str(root / "hooks" / "hooks.json"))
+    return str(root)
 
 
 def _plugin_with_hooks(root):
@@ -360,7 +369,7 @@ def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monke
     from sonara.platform.windows import supervisor as sup
     calls = []
     monkeypatch.setattr(sup, "task_install", lambda pw, spy: calls.append(("task", pw)) or 0)
-    monkeypatch.setattr(sup, "claude_settings_path",
+    monkeypatch.setattr(claude_hooks, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
@@ -368,7 +377,7 @@ def test_install_registers_task_merges_hooks_and_places_launcher(tmp_path, monke
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
     assert ("task", r"C:\Py\pythonw.exe") in calls
-    assert sup.settings_has_sonara_hooks(str(tmp_path / "settings.json"))
+    assert claude_hooks.settings_has_sonara_hooks(str(tmp_path / "settings.json"))
     assert (tmp_path / "bin" / "sonara.cmd").exists()
 
 
@@ -382,11 +391,11 @@ def test_install_wires_task_and_hooks_with_pythonw(tmp_path, monkeypatch):
     monkeypatch.setattr(sup_mod, "_find_pythonw", lambda p: "/v/Scripts/pythonw.exe")
     monkeypatch.setattr(sup_mod, "task_install",
                         lambda pw, spy: task_calls.append(pw) or 0)
-    monkeypatch.setattr(sup_mod, "merge_hooks_into_settings",
+    monkeypatch.setattr(claude_hooks, "merge_hooks_into_settings",
                         lambda sp, pw, hp, **k: hook_calls.append(pw))
-    monkeypatch.setattr(sup_mod, "claude_settings_path",
+    monkeypatch.setattr(claude_hooks, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
-    monkeypatch.setattr(sup_mod, "settings_has_sonara_plugin", lambda sp: False)
+    monkeypatch.setattr(claude_hooks, "settings_has_sonara_plugin", lambda sp: False)
     monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
     launcher_calls = []
@@ -405,7 +414,7 @@ def test_uninstall_removes_task_hooks_and_launcher(tmp_path, monkeypatch):
     from sonara.platform.windows import supervisor as sup
     monkeypatch.setattr(sup, "task_install", lambda pw, spy: 0)
     monkeypatch.setattr(sup, "task_uninstall", lambda: 0)
-    monkeypatch.setattr(sup, "claude_settings_path",
+    monkeypatch.setattr(claude_hooks, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
@@ -413,7 +422,7 @@ def test_uninstall_removes_task_hooks_and_launcher(tmp_path, monkeypatch):
     monkeypatch.setattr(s, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks call
     s.install(r"C:\Py\pythonw.exe", str(tmp_path / "app"))
     s.uninstall()
-    assert not sup.settings_has_sonara_hooks(str(tmp_path / "settings.json"))
+    assert not claude_hooks.settings_has_sonara_hooks(str(tmp_path / "settings.json"))
     assert not (tmp_path / "bin" / "sonara.cmd").exists()
 
 
@@ -425,11 +434,11 @@ def test_install_ends_task_before_reregister(tmp_path, monkeypatch):
     schtasks_calls = []
     monkeypatch.setattr(sup_mod, "task_install",
                         lambda pw, spy: schtasks_calls.append(("/create", pw)) or 0)
-    monkeypatch.setattr(sup_mod, "merge_hooks_into_settings",
+    monkeypatch.setattr(claude_hooks, "merge_hooks_into_settings",
                         lambda sp, pw, hp, **k: None)
-    monkeypatch.setattr(sup_mod, "claude_settings_path",
+    monkeypatch.setattr(claude_hooks, "claude_settings_path",
                         lambda: str(tmp_path / "settings.json"))
-    monkeypatch.setattr(sup_mod, "settings_has_sonara_plugin", lambda sp: False)
+    monkeypatch.setattr(claude_hooks, "settings_has_sonara_plugin", lambda sp: False)
     monkeypatch.setattr(sup_mod, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     monkeypatch.setattr("sonara.paths.repo_root", lambda: _plugin_with_hooks(tmp_path / "plug"))
     s = sup_mod.WinSupervisorBackend()

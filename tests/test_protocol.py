@@ -144,3 +144,14 @@ def test_msgtype_values_are_unique():
 def test_set_audio_mode_type_exists():
     from sonara.protocol import MsgType
     assert MsgType.SET_AUDIO_MODE == "set_audio_mode"
+
+
+def test_the_v_field_is_advisory_and_never_validated():
+    # protocol.py documents "v" as advisory (audit section 2): a message with
+    # another version, or none (hotkey and keymap actions), is handled alike.
+    from tests.daemon_helpers import make_daemon
+    daemon = make_daemon()[0]
+    for msg in ({"v": PROTOCOL_VERSION, "type": MsgType.PING},
+                {"v": PROTOCOL_VERSION + 1, "type": MsgType.PING},
+                {"type": MsgType.PING}):
+        assert daemon.handle_message(msg) == {"ok": True}

@@ -1,7 +1,6 @@
 """Platform backend interfaces. The portable core depends ONLY on these
 abstractions; the concrete Windows implementation lives in a sibling package
-and is wired in by get_platform() (the only sys.platform guard for backend
-SELECTION; transport.py branches separately for its stdlib lock primitive)."""
+and is wired in by get_platform() (the only sys.platform guard in Sonara)."""
 from __future__ import annotations
 
 import abc
@@ -28,6 +27,12 @@ class TtsBackend(abc.ABC):
 
     def set_volume(self, percent) -> None:
         """Speech gain percent (25-200). Default: no-op (backend has no gain)."""
+        return None
+
+    def prewarm(self, rate: int) -> None:
+        """Load the neural engine ahead of the first cue (#60), so that cue
+        does not pay the engine load. Blocking; the daemon calls it on a
+        background thread. Default: no-op (nothing to load)."""
         return None
 
 
@@ -118,6 +123,15 @@ class SupervisorBackend(abc.ABC):
 
     # Concrete defaults (overridden per platform) so existing subclasses and test
     # doubles keep working without implementing them.
+    def end_task(self) -> None:
+        """End the autostart-launched supervisor tree. Default: nothing."""
+        return None
+
+    def kill_stray_daemons(self) -> int:
+        """After a stop, end any daemon process the SHUTDOWN message could not
+        reach (#65). Returns how many were ended. Default: none."""
+        return 0
+
     def post_install_notes(self) -> None:
         """Print OS-specific post-install next steps. Default: nothing."""
         return None
@@ -128,11 +142,55 @@ class SupervisorBackend(abc.ABC):
         return ("hooks installed", False, "unknown")
 
 
+class NullDucker:
+    """No-op ducker: the daemon default until the platform's ducker is
+    injected (tests, a backend without ducking)."""
+
+    def is_ducked(self) -> bool:
+        return False
+
+    def duck(self, exclude_pids, level: int) -> None:
+        pass
+
+    def restore(self) -> None:
+        pass
+
+    def recover(self) -> None:
+        pass
+
+
+class NullPauser:
+    """No-op pauser: the daemon default until the platform's pauser is
+    injected. Mirrors NullDucker."""
+
+    def is_paused(self) -> bool:
+        return False
+
+    def pause(self) -> None:
+        pass
+
+    def resume(self) -> None:
+        pass
+
+    def recover(self) -> None:
+        pass
+
+
 @dataclass
 class PlatformBackend:
     tts: TtsBackend
     earcon: EarconBackend
     hotkey: HotkeyBackend
     supervisor: SupervisorBackend
-    ducker: object = None     # AudioDucker/NullDucker; duck-typed (duck/restore/is_ducked)
-    pauser: object = None     # MediaPauser/NullPauser; duck-typed (pause/resume/is_paused)
+    # Duck-typed like NullDucker / NullPauser: duck/restore/is_ducked and
+    # pause/resume/is_paused, plus recover() for the startup crash sweep.
+    ducker: object = None
+    pauser: object = None
+
+    def recover_audio(self) -> None:
+        """Daemon startup: undo any ducking or media pause a crashed earlier
+        daemon left behind (never leave other apps ducked or paused)."""
+        for part in (self.ducker, self.pauser):
+            recover = getattr(part, "recover", None)
+            if recover is not None:
+                recover()

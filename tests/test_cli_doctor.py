@@ -2,6 +2,8 @@ import pytest
 from unittest import mock
 
 from sonara import cli
+from sonara.install import doctor as install_doctor
+from sonara import install_record
 from sonara import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey
 
@@ -13,13 +15,13 @@ def _patches(rows=None, hooks_row=None, send=None, install_record=None):
         hooks_row=hooks_row or ("hooks installed", True, "/plug/hooks/hooks.json"),
     )
     return sup, [
-        mock.patch.object(cli, "_platform", lambda: fake_platform(supervisor=sup)),
+        mock.patch("sonara.platform.get_platform", lambda: fake_platform(supervisor=sup)),
         mock.patch("os.access", return_value=True),
         mock.patch("sonara.paths.ensure_sonara_dir"),
         mock.patch("sonara.client.send",
                    return_value=(send if send is not None else {"ok": True})),
-        mock.patch.object(
-            cli.install_record, "read",
+        mock.patch(
+            "sonara.install_record.read",
             return_value=install_record or {"app_path": "/home/u/.sonara/app"}),
         mock.patch("os.path.exists", return_value=True),
     ]
@@ -29,7 +31,7 @@ def _run(patches):
     for p in patches:
         p.start()
     try:
-        return cli.doctor()
+        return install_doctor.doctor()
     finally:
         for p in reversed(patches):
             p.stop()
@@ -74,7 +76,7 @@ def test_doctor_hooks_row_comes_from_backend():
 
 
 def test_doctor_subcommand_prints_and_returns(capsys):
-    with mock.patch("sonara.cli.doctor",
+    with mock.patch("sonara.install.doctor.doctor",
                     return_value=[("schtasks", True, "schtasks.exe"),
                                   ("Windows voice", False, "voice data missing")]):
         rc = cli.main(["doctor"])
@@ -84,7 +86,7 @@ def test_doctor_subcommand_prints_and_returns(capsys):
 
 
 def test_doctor_subcommand_all_ok_returns_zero(capsys):
-    with mock.patch("sonara.cli.doctor", return_value=[("schtasks", True, "ok")]):
+    with mock.patch("sonara.install.doctor.doctor", return_value=[("schtasks", True, "ok")]):
         rc = cli.main(["doctor"])
     assert rc == 0
     assert "schtasks" in capsys.readouterr().out
@@ -99,20 +101,20 @@ def test_doctor_includes_hotkey_rows(monkeypatch):
 
     pb = fake_platform(supervisor=FakeSupervisor())
     pb.hotkey = HK()
-    monkeypatch.setattr(cli, "_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
     monkeypatch.setattr("os.access", lambda *a, **k: True)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
     monkeypatch.setattr("sonara.client.send", lambda *a, **k: {"ok": True})
-    monkeypatch.setattr(cli.install_record, "read", lambda: {"app_path": "/a"})
+    monkeypatch.setattr(install_record, "read", lambda: {"app_path": "/a"})
     monkeypatch.setattr("os.path.exists", lambda p: True)
-    names = {r[0] for r in cli.doctor()}
+    names = {r[0] for r in install_doctor.doctor()}
     assert "hotkey chords" in names
 
 
 def _doctor_rows(monkeypatch):
     pb = fake_platform(supervisor=FakeSupervisor(), hotkey=FakeHotkey(ok=True, detail="ok"))
-    monkeypatch.setattr(cli, "_platform", lambda: pb)
-    return {name: (ok, detail) for name, ok, detail in cli.doctor()}
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    return {name: (ok, detail) for name, ok, detail in install_doctor.doctor()}
 
 
 def test_doctor_neural_row_ok_and_green_when_absent(monkeypatch):
@@ -196,7 +198,7 @@ def test_doctor_reports_chatterbox_leftovers_with_sizes_and_the_fix(monkeypatch)
 # ---------------------------------------------------------------------------
 
 def _daemon_on(monkeypatch, python=r"C:\Py\python.exe"):
-    monkeypatch.setattr(cli.install_record, "read",
+    monkeypatch.setattr(install_record, "read",
                         lambda: {"python": python, "app_path": "/app"})
 
 
@@ -283,7 +285,7 @@ def test_doctor_output_survives_a_narrow_console_encoding(monkeypatch):
     raw = io.BytesIO()
     out = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
     monkeypatch.setattr(sys, "stdout", out)
-    monkeypatch.setattr(cli, "doctor", lambda: [("AltGr", False, "types '\u00b5'")])
+    monkeypatch.setattr(install_doctor, "doctor", lambda: [("AltGr", False, "types '\u00b5'")])
     assert cli._cmd_doctor(None) == 1
     out.flush()
     assert b"AltGr" in raw.getvalue()

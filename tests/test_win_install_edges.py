@@ -7,6 +7,8 @@ import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from sonara.install import claude_hooks
+from sonara.install import deps
 from sonara import paths
 from sonara.platform.windows import supervisor as sup
 
@@ -22,20 +24,20 @@ def _pairs(hooks):
 # --- H4 / E17: one source for the hook set ------------------------------------
 
 def test_settings_hooks_have_the_plugin_hooks_events_and_matchers():
-    built = sup._build_hooks_dict(r"C:\py\pythonw.exe", r"C:\plug\bin\sonara-hook")
+    built = claude_hooks._build_hooks_dict(r"C:\py\pythonw.exe", r"C:\plug\bin\sonara-hook")
     assert set(built) == set(PLUGIN_HOOKS)
     assert _pairs(built) == _pairs(PLUGIN_HOOKS)
     assert "PostToolUse" in built         # CHOICE_ANSWERED needs it (H4)
 
 
 def test_settings_hooks_are_exec_form_with_the_event_as_last_arg():
-    built = sup._build_hooks_dict(r"C:\py\pythonw.exe", r"C:\plug\bin\sonara-hook")
+    built = claude_hooks._build_hooks_dict(r"C:\py\pythonw.exe", r"C:\plug\bin\sonara-hook")
     for event, entries in built.items():
         for entry in entries:
             for h in entry["hooks"]:
                 assert h["command"] == r"C:\py\pythonw.exe"
                 assert h["args"] == [r"C:\plug\bin\sonara-hook", event]
-                assert h[sup.SONARA_HOOK_MARKER] is True
+                assert h[claude_hooks.SONARA_HOOK_MARKER] is True
 
 
 def test_settings_hooks_follow_the_given_plugin_roots_hooks_file(tmp_path):
@@ -44,7 +46,7 @@ def test_settings_hooks_follow_the_given_plugin_roots_hooks_file(tmp_path):
         {"matcher": "", "hooks": [{"type": "command",
                                     "command": '"${CLAUDE_PLUGIN_ROOT}/bin/x" Stop'}]}]}}),
         encoding="utf-8")
-    built = sup._build_hooks_dict("pw", str(tmp_path / "bin" / "sonara-hook"),
+    built = claude_hooks._build_hooks_dict("pw", str(tmp_path / "bin" / "sonara-hook"),
                                   plugin_root=str(tmp_path))
     assert list(built) == ["Stop"]
 
@@ -53,7 +55,7 @@ def test_install_bakes_the_hook_of_the_plugin_root_it_was_given(tmp_path, monkey
     b = sup.WinSupervisorBackend()
     sp = tmp_path / "settings.json"
     sp.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: str(sp))
     monkeypatch.setattr(sup, "task_install", lambda *a, **k: 0)
     monkeypatch.setattr(b, "_place_launcher", lambda *a, **k: "x")
     monkeypatch.setattr(b, "_schtasks", lambda args: 0)
@@ -68,7 +70,7 @@ def test_install_bakes_the_hook_of_the_plugin_root_it_was_given(tmp_path, monkey
 def test_uninstall_survives_a_malformed_settings_json(tmp_path, monkeypatch, capsys):
     sp = tmp_path / "settings.json"
     sp.write_text("{ not json", encoding="utf-8")
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: str(sp))
     monkeypatch.setattr(sup, "task_uninstall", lambda: 0)
     monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
     sup.WinSupervisorBackend().uninstall()          # must not raise
@@ -152,7 +154,6 @@ def test_backend_probe_is_the_module_probe(monkeypatch):
 
 
 def test_cli_and_backend_share_the_venv_choice(monkeypatch):
-    from sonara import cli
     from sonara import kokoro_provision as kp
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: r"C:\v\Scripts\python.exe")
@@ -169,5 +170,28 @@ def test_cli_and_backend_share_the_venv_choice(monkeypatch):
         def _probe_python_version(self, p):
             return (3, 12)
 
-    assert cli._daemon_python(_Sup()) == r"C:\v\Scripts\python.exe"
+    assert deps.daemon_python(_Sup()) == r"C:\v\Scripts\python.exe"
     assert len(picked) == 2
+
+
+def test_supervisor_delegates_the_claude_code_hooks_to_claude_hooks(tmp_path, monkeypatch):
+    # The settings.json writer moved to sonara.install.claude_hooks (audit
+    # section 2): the supervisor only calls its install, uninstall and doctor
+    # steps, hooks first so a bad settings.json leaves no orphaned task.
+    calls = []
+    monkeypatch.setattr(claude_hooks, "install_hooks",
+                        lambda pw, root: calls.append(("hooks", pw, root)))
+    monkeypatch.setattr(claude_hooks, "uninstall_hooks",
+                        lambda: calls.append(("unhooks",)))
+    monkeypatch.setattr(claude_hooks, "doctor_row", lambda: ("hooks installed", True, "x"))
+    monkeypatch.setattr(sup, "_find_pythonw", lambda p: r"C:\py\pythonw.exe")
+    monkeypatch.setattr(sup, "task_install", lambda *a, **k: calls.append(("task",)) or 0)
+    monkeypatch.setattr(sup, "task_uninstall", lambda: 0)
+    monkeypatch.setattr(sup, "_local_bin_dir", lambda: str(tmp_path / "bin"))
+    b = sup.WinSupervisorBackend()
+    monkeypatch.setattr(b, "_schtasks", lambda args: 0)
+    b.install(r"C:\py\python.exe", str(tmp_path / "app"), plugin_root="/plug")
+    assert calls[:2] == [("hooks", r"C:\py\pythonw.exe", "/plug"), ("task",)]
+    b.uninstall()
+    assert calls[-1] == ("unhooks",)
+    assert b.hooks_doctor_row() == ("hooks installed", True, "x")

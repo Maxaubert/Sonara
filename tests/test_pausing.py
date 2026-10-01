@@ -1,6 +1,7 @@
 import json
 import sonara.platform.windows.pausing as pausing
-from sonara.platform.windows.pausing import MediaPauser, NullPauser
+from sonara.platform.base import NullPauser
+from sonara.platform.windows.pausing import MediaPauser
 
 
 class _FakeSession:
@@ -128,3 +129,10 @@ def test_resume_from_state_file_keeps_only_the_apps_that_failed(monkeypatch, tmp
     pausing.resume_from_state_file()
     assert spotify.played is True
     assert json.loads(state.read_text(encoding="utf-8")) == {"apps": ["vlc"]}
+
+
+def test_recover_runs_the_startup_state_file_sweep(monkeypatch):
+    called = []
+    monkeypatch.setattr(pausing, "resume_from_state_file", lambda: called.append(1))
+    MediaPauser().recover()
+    assert called == [1]

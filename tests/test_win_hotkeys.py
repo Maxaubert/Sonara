@@ -72,7 +72,7 @@ def test_dispatch_on_hotkey_id_calls_back():
 
 
 def test_doctor_rows_unknown_when_daemon_not_running():
-    # cli.doctor() builds a FRESH backend that never start()ed; it must NOT assert
+    # install.doctor() builds a FRESH backend that never start()ed; it must NOT assert
     # a green "no collisions" it cannot see -- the chords are registered in the
     # daemon process. With no daemon-side state file, report unknown. (#9)
     rows = WinHotkeyBackend().doctor_rows()

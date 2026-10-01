@@ -1,8 +1,8 @@
-"""A fake PlatformBackend for cli dispatch tests.
+"""A fake PlatformBackend for install dispatch tests.
 
-After the seam refactor, cli.install/uninstall/doctor delegate every OS-specific
-step to get_platform(). These fakes let the cli tests assert the *dispatch
-contract* (what cli calls, in what order) independently of any real OS backend.
+sonara.install (install/uninstall/doctor) delegates every OS-specific step to
+get_platform(). These fakes let the tests assert the *dispatch contract* (what
+the installer calls, in what order) independently of any real OS backend.
 The OS mechanics themselves are tested against the real backends in
 test_win_supervisor / test_win_hotkeys.
 """
@@ -29,6 +29,12 @@ class FakeSupervisor:
 
     def uninstall(self):
         self.calls.append(("uninstall",))
+
+    def end_task(self):
+        pass
+
+    def kill_stray_daemons(self):
+        return 0
 
     def post_install_notes(self):
         self.calls.append(("notes",))

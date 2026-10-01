@@ -20,7 +20,7 @@ CMD_SHIM = os.path.join(REPO, "bin", "sonara.cmd")
 _WINDOWS = os.name == "nt"
 NATIVE_SHIM = CMD_SHIM if _WINDOWS else BASH_SHIM
 
-# A row doctor() always emits, on every platform (cli.doctor appends it inline).
+# A row doctor() always emits, on every platform (install.doctor appends it inline).
 # The old assertion looked for "say", which only ever appeared in the macOS rows.
 _PORTABLE_DOCTOR_ROW = "SONARA_DIR writable"
 

@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from sonara import config_schema
+from sonara.protocol import PROTOCOL_VERSION
 
 # Config keys the page may read and write (verbosity deliberately absent), all
 # from the schema (#136): message keys dispatch the same protocol message the
@@ -48,14 +49,12 @@ def _spawn_respawner() -> None:
     import sys
     code = ("import time; time.sleep(2.0); "
             "from sonara.lifecycle import ensure_running; ensure_running()")
-    kwargs = {}
-    if os.name == "nt":
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent
-        kwargs["creationflags"] = 0x00000008 | 0x00000200
     try:
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent.
         subprocess.Popen([sys.executable, "-c", code],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, close_fds=True, **kwargs)
+                         stderr=subprocess.DEVNULL, close_fds=True,
+                         creationflags=0x00000008 | 0x00000200)
     except Exception:  # noqa: BLE001 - a failed respawner must not break the reply
         pass
 
@@ -306,13 +305,13 @@ def _make_handler(server: SettingsServer):
                 if server._daemon.sessions.is_foreground(sid):
                     return self._json(400, {"error": "cannot forget the active session"})
                 _dispatch(server._daemon,
-                          {"v": 1, "type": "forget_session", "session": sid})
+                          {"v": PROTOCOL_VERSION, "type": "forget_session", "session": sid})
                 return self._json(200, server.state())
             key = payload.get("key")
             if key not in ("name", "muted", "voice"):
                 return self._json(400, {"error": f"unknown key {key!r}"})
             _dispatch(server._daemon,
-                      {"v": 1, "type": "set_session_pref", "session": sid,
+                      {"v": PROTOCOL_VERSION, "type": "set_session_pref", "session": sid,
                        "key": key, "value": payload.get("value")})
             return self._json(200, server.state())
 
@@ -321,7 +320,7 @@ def _make_handler(server: SettingsServer):
             value = payload.get("value")
             if key in _MSG_KEYS:
                 try:
-                    msg = dict(_MSG_KEYS[key](value), v=1)
+                    msg = dict(_MSG_KEYS[key](value), v=PROTOCOL_VERSION)
                 except (TypeError, ValueError):
                     return self._json(400, {"error": f"bad value for {key}"})
                 _dispatch(server._daemon, msg)
@@ -343,18 +342,18 @@ def _make_handler(server: SettingsServer):
                                  payload.get("mods") or [])
             except Exception as exc:  # noqa: BLE001 - junk input is a 400, not a dead reply
                 return self._json(400, {"error": str(exc)})
-            _dispatch(server._daemon, {"v": 1, "type": "reload_keymap"})
+            _dispatch(server._daemon, {"v": PROTOCOL_VERSION, "type": "reload_keymap"})
             return self._json(200, server.state())
 
         def _handle_daemon(self, payload):
             op = payload.get("op")
             if op == "restart":
-                _dispatch(server._daemon, {"v": 1, "type": "shutdown"})
+                _dispatch(server._daemon, {"v": PROTOCOL_VERSION, "type": "shutdown"})
                 _spawn_respawner()   # no supervisor may be alive (#34 follow-up)
                 return self._json(202, {"ok": True})
             if op == "shutdown":
                 _dispatch(server._daemon,
-                          {"v": 1, "type": "shutdown", "stay_down": True})
+                          {"v": PROTOCOL_VERSION, "type": "shutdown", "stay_down": True})
                 return self._json(202, {"ok": True})
             return self._json(400, {"error": "unknown op"})
     return Handler

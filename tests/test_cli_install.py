@@ -3,6 +3,11 @@ from unittest import mock
 import pytest
 
 from sonara import cli, paths
+from sonara.install import app_copy
+from sonara.install import deps
+from sonara import install_record
+from sonara.install import installer
+from sonara import keymap
 from sonara import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey, FakeTts
 
@@ -17,7 +22,7 @@ def _no_neural_venv(monkeypatch):
     # install() now probes/installs PyWinRT via subprocess; treat it as already
     # present so install() tests never shell out. _ensure_speech_deps itself is
     # tested directly below (those tests re-stub _winrt_importable).
-    monkeypatch.setattr(cli, "_winrt_importable", lambda python: True)
+    monkeypatch.setattr(deps, "winrt_importable", lambda python: True)
 
 
 # --- install() dispatch contract (OS mechanics live in the backend tests) ---
@@ -26,19 +31,19 @@ def test_install_dispatches_through_platform(tmp_path, monkeypatch, capsys):
     sup = FakeSupervisor(python="/PY/pythonw.exe")
     hk = FakeHotkey(ok=False, detail="M3")
     pb = fake_platform(supervisor=sup, hotkey=hk, tts=FakeTts("Aria"))
-    monkeypatch.setattr(cli, "_platform", lambda: pb)
-    monkeypatch.setattr(cli, "_copy_app", lambda root: str(tmp_path / "app"))
-    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
-    monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    monkeypatch.setattr(app_copy, "copy_app", lambda root: str(tmp_path / "app"))
+    monkeypatch.setattr(install_record, "write", lambda **k: None)
+    monkeypatch.setattr(app_copy, "read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
 
-    rc = cli.install()
+    rc = installer.install()
     assert rc == 0
     # The macOS hotkeyd's resolved keymap is no longer written (DC2): the
     # Windows listener resolves the keymap in-process.
-    assert not (cli.paths.SONARA_DIR / "hotkeyd.resolved.json").exists()
-    assert not hasattr(cli.keymap, "write_resolved")
+    assert not (paths.SONARA_DIR / "hotkeyd.resolved.json").exists()
+    assert not hasattr(keymap, "write_resolved")
     # Supervisor got install(python, app_dir) then post_install_notes().
     assert ("install", "/PY/pythonw.exe", str(tmp_path / "app")) in sup.calls
     assert ("notes",) in sup.calls
@@ -52,9 +57,9 @@ def test_install_dispatches_through_platform(tmp_path, monkeypatch, capsys):
 
 def test_install_fatal_when_no_python_found(monkeypatch, capsys):
     sup = FakeSupervisor(python=None)
-    monkeypatch.setattr(cli, "_platform", lambda: fake_platform(supervisor=sup))
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: fake_platform(supervisor=sup))
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
-    rc = cli.install()
+    rc = installer.install()
     assert rc == 1
     out = capsys.readouterr().out.lower()
     assert "python" in out and "3.9" in out
@@ -63,10 +68,10 @@ def test_install_fatal_when_no_python_found(monkeypatch, capsys):
 
 def test_install_copy_failure_is_fatal(monkeypatch, capsys):
     sup = FakeSupervisor(python="/PY/pythonw.exe")
-    monkeypatch.setattr(cli, "_platform", lambda: fake_platform(supervisor=sup))
-    monkeypatch.setattr(cli, "_copy_app", mock.Mock(side_effect=OSError("read-only")))
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: fake_platform(supervisor=sup))
+    monkeypatch.setattr(app_copy, "copy_app", mock.Mock(side_effect=OSError("read-only")))
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
-    rc = cli.install()
+    rc = installer.install()
     assert rc == 1
     assert sup.calls == []  # backend install never reached
     out = capsys.readouterr().out.lower()
@@ -74,7 +79,7 @@ def test_install_copy_failure_is_fatal(monkeypatch, capsys):
 
 
 def test_install_subcommand_invokes_install():
-    with mock.patch("sonara.cli.install", return_value=0) as inst:
+    with mock.patch("sonara.install.installer.install", return_value=0) as inst:
         rc = cli.main(["install"])
     inst.assert_called_once()
     assert rc == 0
@@ -84,8 +89,8 @@ def test_install_subcommand_invokes_install():
 
 def test_write_install_record_writes_expected_keys(tmp_path):
     rec = tmp_path / "install.json"
-    with mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", rec):
-        cli.install_record.write(
+    with mock.patch.object(paths, "INSTALL_RECORD_PATH", rec):
+        install_record.write(
             python="/usr/bin/python3",
             python_version="3.9",
             plugin_root="/plug",
@@ -108,12 +113,12 @@ def test_read_plugin_version_reads_version_from_plugin_json(tmp_path, monkeypatc
     pdir = tmp_path / ".claude-plugin"
     pdir.mkdir()
     (pdir / "plugin.json").write_text('{"name": "sonara", "version": "0.4.0"}')
-    assert cli._read_plugin_version(str(tmp_path)) == "0.4.0"
+    assert app_copy.read_plugin_version(str(tmp_path)) == "0.4.0"
 
 
 def test_read_plugin_version_missing_file_returns_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("CLAUDE_PLUGIN_VERSION", raising=False)
-    assert cli._read_plugin_version(str(tmp_path)) == ""
+    assert app_copy.read_plugin_version(str(tmp_path)) == ""
 
 
 def test_read_plugin_version_corrupt_file_returns_empty(tmp_path, monkeypatch):
@@ -121,12 +126,12 @@ def test_read_plugin_version_corrupt_file_returns_empty(tmp_path, monkeypatch):
     pdir = tmp_path / ".claude-plugin"
     pdir.mkdir()
     (pdir / "plugin.json").write_text("{ not json")
-    assert cli._read_plugin_version(str(tmp_path)) == ""
+    assert app_copy.read_plugin_version(str(tmp_path)) == ""
 
 
 def test_read_plugin_version_falls_back_to_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_PLUGIN_VERSION", "9.9.9")
-    assert cli._read_plugin_version(str(tmp_path)) == "9.9.9"
+    assert app_copy.read_plugin_version(str(tmp_path)) == "9.9.9"
 
 
 def test_copy_app_copies_package_into_app_dir(tmp_path):
@@ -136,8 +141,8 @@ def test_copy_app_copies_package_into_app_dir(tmp_path):
     (src_pkg / "__init__.py").write_text("# sonara\n")
     (src_pkg / "daemon.py").write_text("# daemon\n")
     app_dir = tmp_path / "home" / ".sonara" / "app"
-    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
-        returned = cli._copy_app(str(plugin_root))
+    with mock.patch.object(paths, "APP_DIR", app_dir):
+        returned = app_copy.copy_app(str(plugin_root))
     assert returned == str(app_dir)
     assert (app_dir / "sonara" / "__init__.py").exists()
     assert (app_dir / "sonara" / "daemon.py").exists()
@@ -155,8 +160,8 @@ def test_copy_app_skips_pycache_dirs(tmp_path):
     (src_pkg / "platform" / "__init__.py").write_text("# platform\n")
     (src_pkg / "platform" / "__pycache__" / "base.cpython-312.pyc").write_bytes(b"x")
     app_dir = tmp_path / "home" / ".sonara" / "app"
-    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
-        cli._copy_app(str(plugin_root))
+    with mock.patch.object(paths, "APP_DIR", app_dir):
+        app_copy.copy_app(str(plugin_root))
     assert (app_dir / "sonara" / "platform" / "__init__.py").exists()
     assert not list(app_dir.rglob("__pycache__"))
 
@@ -175,10 +180,10 @@ def test_copy_app_is_remove_then_copy_so_stale_modules_vanish(tmp_path):
 
     first = _root_with(["old_only.py", "daemon.py"])
     second = _root_with(["daemon.py"])
-    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
-        cli._copy_app(str(first))
+    with mock.patch.object(paths, "APP_DIR", app_dir):
+        app_copy.copy_app(str(first))
         assert (app_dir / "sonara" / "old_only.py").exists()
-        cli._copy_app(str(second))
+        app_copy.copy_app(str(second))
     assert not (app_dir / "sonara" / "old_only.py").exists()
     assert (app_dir / "sonara" / "daemon.py").exists()
 
@@ -186,9 +191,9 @@ def test_copy_app_is_remove_then_copy_so_stale_modules_vanish(tmp_path):
 def test_copy_app_raises_oserror_when_source_missing(tmp_path):
     plugin_root = tmp_path / "plugin"  # no src/sonara beneath it
     app_dir = tmp_path / "home" / ".sonara" / "app"
-    with mock.patch.object(cli.paths, "APP_DIR", app_dir):
+    with mock.patch.object(paths, "APP_DIR", app_dir):
         try:
-            cli._copy_app(str(plugin_root))
+            app_copy.copy_app(str(plugin_root))
             raised = False
         except OSError:
             raised = True
@@ -203,7 +208,7 @@ def test_daemon_python_prefers_venv_when_neural_enabled(monkeypatch):
         def _probe_python_version(self, p): return (3, 12)
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
-    assert cli._daemon_python(_Sup()) == "/venv/bin/python"
+    assert deps.daemon_python(_Sup()) == "/venv/bin/python"
 
 
 def test_daemon_python_falls_back_when_venv_too_old(monkeypatch):
@@ -213,7 +218,7 @@ def test_daemon_python_falls_back_when_venv_too_old(monkeypatch):
         def _probe_python_version(self, p): return (3, 9)
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
-    assert cli._daemon_python(_Sup()) == "/usr/bin/python3"
+    assert deps.daemon_python(_Sup()) == "/usr/bin/python3"
 
 
 def test_daemon_python_uses_system_when_no_neural(monkeypatch):
@@ -221,7 +226,7 @@ def test_daemon_python_uses_system_when_no_neural(monkeypatch):
         def resolve_python(self): return "/usr/bin/python3"
         def _probe_python_version(self, p): return (3, 12)
     monkeypatch.setattr(kp, "neural_enabled", lambda: False)
-    assert cli._daemon_python(_Sup()) == "/usr/bin/python3"
+    assert deps.daemon_python(_Sup()) == "/usr/bin/python3"
 
 
 def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch):
@@ -229,39 +234,39 @@ def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch
     sup = FakeSupervisor(python="/usr/bin/python3")
     pb = fake_platform(supervisor=sup, hotkey=FakeHotkey(ok=True, detail="ok"),
                        tts=FakeTts("Samantha"))
-    monkeypatch.setattr(cli, "_platform", lambda: pb)
-    monkeypatch.setattr(cli, "_copy_app", lambda root: str(tmp_path / "app"))
-    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
-    monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    monkeypatch.setattr(app_copy, "copy_app", lambda root: str(tmp_path / "app"))
+    monkeypatch.setattr(install_record, "write", lambda **k: None)
+    monkeypatch.setattr(app_copy, "read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
     monkeypatch.setattr(kp, "neural_enabled", lambda: True)
     monkeypatch.setattr(paths, "kokoro_venv_python", lambda: "/venv/bin/python")
-    cli.install()
+    installer.install()
     assert ("install", "/venv/bin/python", str(tmp_path / "app")) in sup.calls
 
 
 # --- speech-engine (PyWinRT) auto-install -----------------------------------
 
 def test_ensure_speech_deps_skips_pip_when_winrt_present(monkeypatch):
-    monkeypatch.setattr(cli, "_winrt_importable", lambda python: True)
+    monkeypatch.setattr(deps, "winrt_importable", lambda python: True)
     calls = []
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: calls.append(a))
-    assert cli._ensure_speech_deps("PY") is True
+    monkeypatch.setattr(deps.subprocess, "run", lambda *a, **k: calls.append(a))
+    assert deps.ensure_speech_deps("PY") is True
     assert calls == []   # already importable -> no pip
 
 
 def test_ensure_speech_deps_pip_installs_then_verifies(monkeypatch):
     states = iter([False, True])   # missing, then present after the pip install
-    monkeypatch.setattr(cli, "_winrt_importable", lambda python: next(states))
+    monkeypatch.setattr(deps, "winrt_importable", lambda python: next(states))
     ran = {}
-    monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **k: ran.update(cmd=cmd))
-    assert cli._ensure_speech_deps("PYX") is True
+    monkeypatch.setattr(deps.subprocess, "run", lambda cmd, **k: ran.update(cmd=cmd))
+    assert deps.ensure_speech_deps("PYX") is True
     assert ran["cmd"][:4] == ["PYX", "-m", "pip", "install"]
     assert "winrt-runtime" in ran["cmd"]
 
 
 def test_ensure_speech_deps_false_when_still_missing(monkeypatch):
-    monkeypatch.setattr(cli, "_winrt_importable", lambda python: False)
-    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: None)
-    assert cli._ensure_speech_deps("PY") is False   # pip ran but winrt still absent
+    monkeypatch.setattr(deps, "winrt_importable", lambda python: False)
+    monkeypatch.setattr(deps.subprocess, "run", lambda *a, **k: None)
+    assert deps.ensure_speech_deps("PY") is False   # pip ran but winrt still absent

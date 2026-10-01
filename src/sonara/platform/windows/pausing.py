@@ -81,6 +81,10 @@ class MediaPauser:
         with self._lock:
             return self._paused
 
+    def recover(self) -> None:
+        """Startup crash sweep (PlatformBackend.recover_audio)."""
+        resume_from_state_file()
+
     def pause(self) -> None:
         with self._lock:
             if self._paused:
@@ -120,20 +124,6 @@ class MediaPauser:
                 self._paused_ids = []
                 self._paused = False
                 _clear_state()
-
-
-class NullPauser:
-    """No-op pauser: non-Windows, missing winrt, or the daemon default until the
-    real backend is injected. Mirrors NullDucker."""
-
-    def is_paused(self) -> bool:
-        return False
-
-    def pause(self) -> None:
-        pass
-
-    def resume(self) -> None:
-        pass
 
 
 def _write_state(ids) -> None:

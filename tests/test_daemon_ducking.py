@@ -1,5 +1,5 @@
 from tests.daemon_helpers import make_daemon
-from sonara.platform.windows.ducking import NullDucker
+from sonara.platform.base import NullDucker
 
 
 def test_daemon_defaults_to_null_ducker_when_none_passed():

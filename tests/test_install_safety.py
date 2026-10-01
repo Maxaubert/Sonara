@@ -10,6 +10,11 @@ import os
 import pytest
 
 from sonara import cli, paths
+from sonara.install import app_copy
+from sonara.install import deps
+from sonara import install_record
+from sonara.install import installer
+from sonara.install import service
 from sonara import kokoro_provision as kp
 from tests._fakeplatform import fake_platform, FakeSupervisor, FakeHotkey, FakeTts
 
@@ -29,12 +34,12 @@ def _make_plugin(root):
 def env(tmp_path, monkeypatch):
     """install() with every OS step faked; records stop/copy calls."""
     monkeypatch.setattr(kp, "neural_enabled", lambda: False)
-    monkeypatch.setattr(cli, "_winrt_importable", lambda python: True)
+    monkeypatch.setattr(deps, "winrt_importable", lambda python: True)
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
     calls = []
     sup = FakeSupervisor(python="/PY/pythonw.exe")
     pb = fake_platform(supervisor=sup, hotkey=FakeHotkey(), tts=FakeTts("Aria"))
-    monkeypatch.setattr(cli, "_platform", lambda: pb)
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
 
     def fake_stop(s=None):
         calls.append(("stop",))
@@ -42,10 +47,10 @@ def env(tmp_path, monkeypatch):
         paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")
         return True
 
-    monkeypatch.setattr(cli, "stop_sonara", fake_stop)
-    monkeypatch.setattr(cli, "_copy_app",
+    monkeypatch.setattr(service, "stop_sonara", fake_stop)
+    monkeypatch.setattr(app_copy, "copy_app",
                         lambda root: calls.append(("copy", root)) or str(tmp_path / "app"))
-    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
+    monkeypatch.setattr(install_record, "write", lambda **k: None)
     monkeypatch.setattr("sonara.keymap.migrate_default_chord", lambda: None)
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
     return {"calls": calls, "sup": sup, "tmp": tmp_path}
@@ -57,7 +62,7 @@ def test_install_from_deployed_copy_refuses_before_stopping(env, monkeypatch, ca
     deployed = env["tmp"] / "deployed-sonara-dir"      # ~/.sonara: no src/, no bin/
     deployed.mkdir()
     monkeypatch.setattr(paths, "repo_root", lambda: str(deployed))
-    rc = cli.install()
+    rc = installer.install()
     assert rc == 1
     assert ("stop",) not in env["calls"]                # nothing was stopped
     assert not paths.STOPPED_SENTINEL_PATH.exists()
@@ -71,7 +76,7 @@ def test_install_from_deployed_copy_uses_claude_plugin_root(env, monkeypatch):
     plugin = _make_plugin(env["tmp"] / "plugin")
     monkeypatch.setattr(paths, "repo_root", lambda: str(deployed))
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
-    assert cli.install() == 0
+    assert installer.install() == 0
     assert ("copy", os.path.realpath(str(plugin))) in env["calls"]
 
 
@@ -83,7 +88,7 @@ def test_install_from_deployed_copy_uses_install_record(env, monkeypatch):
     paths.ensure_sonara_dir()
     paths.INSTALL_RECORD_PATH.write_text(
         json.dumps({"plugin_root": str(plugin)}), encoding="utf-8")
-    assert cli.install() == 0
+    assert installer.install() == 0
     assert ("copy", os.path.realpath(str(plugin))) in env["calls"]
 
 
@@ -95,7 +100,7 @@ def test_install_passes_the_resolved_plugin_root_to_the_backend(env, monkeypatch
     plugin = _make_plugin(env["tmp"] / "plugin")
     monkeypatch.setattr(paths, "repo_root", lambda: str(deployed))
     monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin))
-    assert cli.install() == 0
+    assert installer.install() == 0
     assert env["sup"].plugin_roots == [os.path.realpath(str(plugin))]
 
 
@@ -104,8 +109,8 @@ def test_install_passes_the_resolved_plugin_root_to_the_backend(env, monkeypatch
 def test_install_copy_failure_clears_the_sentinel(env, monkeypatch, capsys):
     def boom(root):
         raise OSError("access denied")
-    monkeypatch.setattr(cli, "_copy_app", boom)
-    assert cli.install() == 1
+    monkeypatch.setattr(app_copy, "copy_app", boom)
+    assert installer.install() == 1
     assert not paths.STOPPED_SENTINEL_PATH.exists()
     assert "access denied" in capsys.readouterr().out
 
@@ -115,7 +120,7 @@ def test_install_backend_failure_clears_the_sentinel(env, monkeypatch, capsys):
     def bad_install(py, app, plugin_root=None):
         raise ValueError("settings.json is not valid JSON")
     monkeypatch.setattr(env["sup"], "install", bad_install)
-    assert cli.install() == 1                       # no traceback
+    assert installer.install() == 1                       # no traceback
     assert not paths.STOPPED_SENTINEL_PATH.exists()
     out = capsys.readouterr().out
     assert "settings.json is not valid JSON" in out
@@ -125,7 +130,7 @@ def test_install_keymap_failure_clears_the_sentinel(env, monkeypatch):
     def boom():
         raise ValueError("bad keymap.json")
     monkeypatch.setattr("sonara.keymap.migrate_default_chord", boom)
-    assert cli.install() == 1
+    assert installer.install() == 1
     assert not paths.STOPPED_SENTINEL_PATH.exists()
 
 
@@ -139,7 +144,7 @@ def _app_with_live(tmp_path, monkeypatch, content="OLD"):
     plugin = tmp_path / "plugin"
     (plugin / "src" / "sonara").mkdir(parents=True)
     (plugin / "src" / "sonara" / "daemon.py").write_text("NEW")
-    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    monkeypatch.setattr(app_copy.time, "sleep", lambda s: None)
     return app, plugin
 
 
@@ -154,8 +159,8 @@ def test_copy_app_retries_a_transient_rename_denial(tmp_path, monkeypatch):
             raise PermissionError(5, "Access is denied")
         return real_rename(src, dst)
 
-    monkeypatch.setattr(cli.os, "rename", flaky)
-    cli._copy_app(str(plugin))
+    monkeypatch.setattr(app_copy.os, "rename", flaky)
+    app_copy.copy_app(str(plugin))
     assert (app / "sonara" / "daemon.py").read_text() == "NEW"
     assert denied["n"] == 2
     assert not (app / "sonara.new").exists() and not (app / "sonara.old").exists()
@@ -170,9 +175,9 @@ def test_copy_app_rolls_back_when_the_new_tree_cannot_be_renamed_in(tmp_path, mo
             raise PermissionError(5, "Access is denied")
         return real_rename(src, dst)
 
-    monkeypatch.setattr(cli.os, "rename", stuck)
+    monkeypatch.setattr(app_copy.os, "rename", stuck)
     with pytest.raises(OSError):
-        cli._copy_app(str(plugin))
+        app_copy.copy_app(str(plugin))
     # A live package always exists: the old one was renamed back.
     assert (app / "sonara" / "daemon.py").read_text() == "OLD"
 
@@ -181,10 +186,10 @@ def test_copy_app_rolls_back_when_the_new_tree_cannot_be_renamed_in(tmp_path, mo
 
 def _uninstall(monkeypatch, sup=None):
     sup = sup or FakeSupervisor()
-    monkeypatch.setattr(cli, "_platform",
+    monkeypatch.setattr("sonara.platform.get_platform",
                         lambda: fake_platform(supervisor=sup, hotkey=FakeHotkey()))
-    monkeypatch.setattr(cli, "stop_sonara", lambda s=None: True)
-    return cli.uninstall()
+    monkeypatch.setattr(service, "stop_sonara", lambda s=None: True)
+    return installer.uninstall()
 
 
 def test_uninstall_leaves_sonara_stopped_so_the_next_hook_cannot_restart_it(
@@ -213,7 +218,7 @@ def test_uninstall_mentions_cleanup_for_leftovers(monkeypatch, capsys):
 def test_install_clears_the_uninstall_sentinel(env):
     paths.ensure_sonara_dir()
     paths.STOPPED_SENTINEL_PATH.write_text("uninstalled")
-    assert cli.install() == 0
+    assert installer.install() == 0
     assert not paths.STOPPED_SENTINEL_PATH.exists()
 
 
@@ -221,10 +226,10 @@ def test_voices_install_gives_predownload_the_running_package(monkeypatch, tmp_p
     # E6: from the deployed copy repo_root()/src is the nonexistent
     # ~/.sonara/src, so the model predownload could never import sonara.
     monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path / "deployed"))
-    monkeypatch.setattr(cli, "_resolve_plugin_root", lambda: str(tmp_path / "plugin"))
+    monkeypatch.setattr(app_copy, "resolve_plugin_root", lambda: str(tmp_path / "plugin"))
     seen = {}
     monkeypatch.setattr(kp, "install_kokoro", lambda pp: seen.update(pp=pp))
-    monkeypatch.setattr(cli, "install", lambda: 1)
+    monkeypatch.setattr(installer, "install", lambda: 1)
     cli._cmd_voices_install(None)
     assert seen["pp"] == paths.package_root()
 
@@ -237,9 +242,9 @@ def test_voices_uninstall_never_leaves_sonara_stopped_when_install_fails(monkeyp
         paths.ensure_sonara_dir()
         paths.STOPPED_SENTINEL_PATH.write_text("sonara shutdown")
         return True
-    monkeypatch.setattr(cli, "stop_sonara", fake_stop)
+    monkeypatch.setattr(service, "stop_sonara", fake_stop)
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: None)
-    monkeypatch.setattr(cli, "install", lambda: 1)
+    monkeypatch.setattr(installer, "install", lambda: 1)
     assert cli._cmd_voices_uninstall(None) == 1
     assert not paths.STOPPED_SENTINEL_PATH.exists()
 
@@ -247,9 +252,9 @@ def test_voices_uninstall_never_leaves_sonara_stopped_when_install_fails(monkeyp
 def test_voices_install_refuses_before_the_download_without_a_plugin_tree(monkeypatch, capsys):
     # H3: install() refuses without a plugin tree; voices install used to
     # download ~316 MB first and only then get refused.
-    monkeypatch.setattr(cli, "_resolve_plugin_root", lambda: None)
+    monkeypatch.setattr(app_copy, "resolve_plugin_root", lambda: None)
     monkeypatch.setattr(kp, "install_kokoro", lambda pp: pytest.fail("must not download"))
-    monkeypatch.setattr(cli, "install", lambda: pytest.fail("must not install"))
+    monkeypatch.setattr(installer, "install", lambda: pytest.fail("must not install"))
     assert cli._cmd_voices_install(None) == 1
     assert "Cannot find the Sonara plugin files" in capsys.readouterr().out
 
@@ -257,10 +262,10 @@ def test_voices_install_refuses_before_the_download_without_a_plugin_tree(monkey
 def test_voices_uninstall_refuses_before_deleting_the_venv_without_a_plugin_tree(monkeypatch, capsys):
     # Deleting the venv and then having install() refuse left the scheduled
     # task pointing at the deleted venv pythonw, so logon autostart failed.
-    monkeypatch.setattr(cli, "_resolve_plugin_root", lambda: None)
-    monkeypatch.setattr(cli, "stop_sonara", lambda sup=None: pytest.fail("must not stop"))
+    monkeypatch.setattr(app_copy, "resolve_plugin_root", lambda: None)
+    monkeypatch.setattr(service, "stop_sonara", lambda sup=None: pytest.fail("must not stop"))
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: pytest.fail("must not delete the venv"))
-    monkeypatch.setattr(cli, "install", lambda: pytest.fail("must not install"))
+    monkeypatch.setattr(installer, "install", lambda: pytest.fail("must not install"))
     assert cli._cmd_voices_uninstall(None) == 1
     out = capsys.readouterr().out
     assert "Cannot find the Sonara plugin files" in out
@@ -268,8 +273,8 @@ def test_voices_uninstall_refuses_before_deleting_the_venv_without_a_plugin_tree
 
 
 def test_voices_uninstall_does_not_claim_a_revert_when_install_fails(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "stop_sonara", lambda sup=None: True)
+    monkeypatch.setattr(service, "stop_sonara", lambda sup=None: True)
     monkeypatch.setattr(kp, "uninstall_kokoro", lambda: None)
-    monkeypatch.setattr(cli, "install", lambda: 1)
+    monkeypatch.setattr(installer, "install", lambda: 1)
     assert cli._cmd_voices_uninstall(None) == 1
     assert "reverted to the system voice" not in capsys.readouterr().out

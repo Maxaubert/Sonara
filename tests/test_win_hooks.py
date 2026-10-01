@@ -5,7 +5,7 @@ correctly escaped, in exec-form (command + args) for all Sonara events.
 """
 import json
 import pytest
-from sonara.platform.windows.supervisor import build_hooks_json
+from sonara.install.claude_hooks import build_hooks_json
 
 EXPECTED_EVENTS = {
     "MessageDisplay",

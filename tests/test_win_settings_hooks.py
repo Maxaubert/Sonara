@@ -1,15 +1,16 @@
-"""~/.claude/settings.json hook merge/remove (Windows install glue).
+"""~/.claude/settings.json hook merge/remove (sonara.install.claude_hooks).
 
-Pure stdlib + tmp files -- no winrt fakes needed. Runs identically on macOS and
-Windows: the merge logic is OS-independent JSON manipulation.
+Pure stdlib + tmp files -- no winrt fakes needed: the merge logic is
+OS-independent JSON manipulation.
 """
 import json
 import os
 
 import pytest
 
+from sonara.install import claude_hooks
 from sonara.platform.windows import supervisor as sup
-from sonara.platform.windows.supervisor import (
+from sonara.install.claude_hooks import (
     merge_hooks_into_settings,
     remove_hooks_from_settings,
     settings_has_sonara_hooks,
@@ -115,7 +116,7 @@ def test_write_settings_failure_preserves_original(tmp_path, monkeypatch):
     monkeypatch.setattr(
         json, "dump", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     with pytest.raises(RuntimeError):
-        sup._write_settings(str(p), {"new": 2})
+        claude_hooks._write_settings(str(p), {"new": 2})
     assert p.read_text(encoding="utf-8") == '{"keep": 1}\n'  # not truncated
     leftovers = [f for f in os.listdir(tmp_path) if f != "settings.json"]
     assert leftovers == [], leftovers  # temp cleaned up
@@ -148,7 +149,7 @@ def test_hooks_doctor_row_red_when_baked_hook_path_missing(tmp_path, monkeypatch
     sp = tmp_path / "settings.json"
     missing = str(tmp_path / "gone" / "sonara-hook")
     merge_hooks_into_settings(str(sp), PW, missing)
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: str(sp))
     name, ok, detail = sup.WinSupervisorBackend().hooks_doctor_row()
     assert ok is False, (name, detail)
 
@@ -165,11 +166,11 @@ def test_install_merges_hooks_before_registering_the_task(tmp_path, monkeypatch)
     b = sup.WinSupervisorBackend()
     sp = tmp_path / "settings.json"   # no plugin enabled -> the merge path runs
     sp.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: str(sp))
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: str(sp))
     calls = []
     monkeypatch.setattr(sup, "task_install",
                         lambda *a, **k: (calls.append("task"), 0)[1])
-    monkeypatch.setattr(sup, "merge_hooks_into_settings",
+    monkeypatch.setattr(claude_hooks, "merge_hooks_into_settings",
                         lambda *a, **k: calls.append("hooks"))
     monkeypatch.setattr(b, "_place_launcher",
                         lambda *a, **k: (calls.append("launcher"), "x")[1])
@@ -192,7 +193,7 @@ def _enable_plugin(sp_path):
 
 def _install_with_settings(monkeypatch, sp_path, app_dir):
     b = sup.WinSupervisorBackend()
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: sp_path)
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: sp_path)
     monkeypatch.setattr(sup, "task_install", lambda *a, **k: 0)
     monkeypatch.setattr(b, "_place_launcher", lambda *a, **k: "x")
     monkeypatch.setattr(b, "_schtasks", lambda args: 0)  # FIX E adds a _schtasks /end call
@@ -234,6 +235,6 @@ def test_hooks_doctor_row_red_when_plugin_and_settings_hooks_both_present(
     hook.write_text("#!/usr/bin/env python\n", encoding="utf-8")  # path must exist
     merge_hooks_into_settings(sp, PW, str(hook))
     _enable_plugin(sp)
-    monkeypatch.setattr(sup, "claude_settings_path", lambda: sp)
+    monkeypatch.setattr(claude_hooks, "claude_settings_path", lambda: sp)
     name, ok, detail = sup.WinSupervisorBackend().hooks_doctor_row()
     assert ok is False, (name, detail)                   # double-fire flagged red

@@ -258,3 +258,31 @@ def test_controller_runs_without_a_daemon():
     worker.join(timeout=2.0)
     assert not worker.is_alive()
     assert applied == [("skip", True)]
+
+
+def test_no_hotkeys_flag_in_the_sonara_dir_keeps_hotkeys_off(monkeypatch):
+    """The kill switch is ~/.sonara/no_hotkeys resolved through paths.SONARA_DIR
+    (audit section 2), so it follows the isolated test dir and a relocated
+    Sonara dir, not a hand-built expanduser path."""
+    from sonara import paths
+    pb = _FakePlatform()
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    monkeypatch.delenv("SONARA_DISABLE_HOTKEYS", raising=False)
+    paths.ensure_sonara_dir()
+    (paths.SONARA_DIR / "no_hotkeys").write_text("", encoding="utf-8")
+    daemon = make_daemon()[0]
+    daemon._hotkeys.start()
+    assert pb.hotkey.started is None
+
+
+def test_no_hotkeys_flag_in_the_sonara_dir_stops_hotkeys_on_reload(monkeypatch):
+    from sonara import paths
+    pb = _FakePlatform()
+    monkeypatch.setattr("sonara.platform.get_platform", lambda: pb)
+    monkeypatch.delenv("SONARA_DISABLE_HOTKEYS", raising=False)
+    paths.ensure_sonara_dir()
+    (paths.SONARA_DIR / "no_hotkeys").write_text("", encoding="utf-8")
+    daemon = make_daemon()[0]
+    daemon._hotkeys.reload()
+    assert pb.hotkey.reloaded is None
+    assert pb.hotkey.stopped is True

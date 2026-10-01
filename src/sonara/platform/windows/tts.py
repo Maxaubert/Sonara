@@ -497,13 +497,13 @@ class WinTtsBackend(TtsBackend):
         reader.read_bytes(buf)
         return bytes(buf)
 
-    def _kokoro_wav(self, text, rate):
-        """Kokoro-default WAV bytes. The daemon calls this to load the engine
-        ahead of the first cue (#60)."""
+    def prewarm(self, rate: int) -> None:
+        """Load the Kokoro engine ahead of the first cue (#60) by synthesizing
+        a throwaway word in the default Kokoro voice."""
         from sonara import kokoro
         kokoro.require_installed()
-        return self._get_kokoro().wav_bytes(
-            text, kokoro.DEFAULT_VOICE, kokoro.rate_to_speed(rate))
+        self._get_kokoro().wav_bytes(
+            "Ready.", kokoro.DEFAULT_VOICE, kokoro.rate_to_speed(rate))
 
     def run(self, text: str, voice, rate: int, on_play=None):
         """Synthesize *text* and start async winsound playback, returning a
