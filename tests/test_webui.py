@@ -101,6 +101,15 @@ def test_state_shape(server):
     assert isinstance(state["daemon"]["port"], int)
 
 
+def test_state_shows_schema_defaults_for_unset_keys(server):
+    # DC10: a config without summary_settle_ms rendered "null ms" on the page.
+    d, s = server
+    del d.config["summary_settle_ms"]
+    state = json.loads(_get(s, "/api/state").read())
+    assert state["config"]["summary_settle_ms"] == 600
+    assert state["config"]["cue_voice"] == "af_heart"
+
+
 def _post(s, path, obj, token="tok123"):
     body = json.dumps(obj).encode()
     req = urllib.request.Request(f"http://127.0.0.1:{s.port}{path}", data=body,

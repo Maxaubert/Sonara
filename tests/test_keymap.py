@@ -323,3 +323,18 @@ def test_bind_action_rejects_unknown_action(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         keymap.bind_action("warp_drive", "w", ["ctrl"])
+
+
+def test_rewriting_keymap_json_prunes_unknown_actions(monkeypatch, tmp_path):
+    # A stale keymap.json still carries nav_prev/nav_next (removed in #135).
+    # Loading ignores them; the next rewrite must drop them from the file too.
+    km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
+    km.write_text(json.dumps({
+        "nav_prev": {"key": "left", "mods": ["ctrl", "alt"]},
+        "nav_next": {"key": "right", "mods": ["ctrl", "alt"]},
+        "mute": {"key": "j", "mods": ["ctrl", "alt"]},
+    }), encoding="utf-8")
+    keymap.unbind_action("next_session")
+    on_disk = json.loads(km.read_text(encoding="utf-8"))
+    assert set(on_disk) == {"mute", "next_session"}
+    assert on_disk["mute"] == {"key": "j", "mods": ["ctrl", "alt"]}

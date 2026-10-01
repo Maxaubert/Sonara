@@ -103,21 +103,25 @@ def generate_earcon(
 
 
 # ---------------------------------------------------------------------------
-# The 6 canonical Sonara earcons
+# The canonical Sonara earcons: exactly the kinds the daemon plays
+# (tests/test_win_earcons_assets.py checks the set against the source)
 # ---------------------------------------------------------------------------
 _EARCON_SPECS: "dict[str, tuple]" = {
-    # name         freq   dur   wave_type  freq2
-    "permission": (440.0, 0.12, "sine",    None ),  # A4 -- clean, neutral ask
-    "choice":     (660.0, 0.15, "dual",    880.0),  # E5+A5 -- bright two-tone
-    "plan":       (528.0, 0.20, "chirp",   660.0),  # C5→E5 rising sweep
-    "error":      (220.0, 0.25, "dual",    185.0),  # low dissonant pair
-    "turn_done":  (880.0, 0.10, "sine",    None ),  # A5 -- short, high
-    "ready":      (523.0, 0.18, "chirp",   784.0),  # C5→G5 ascending
+    # name             freq    dur   wave_type  freq2
+    "permission":     (440.0, 0.12, "sine",    None ),  # A4 -- clean, neutral ask
+    "choice":         (660.0, 0.15, "dual",    880.0),  # E5+A5 -- bright two-tone
+    "error":          (220.0, 0.25, "dual",    185.0),  # low dissonant pair
+    "turn_done":      (880.0, 0.10, "sine",    None ),  # A5 -- short, high
+    # Up/Down on every press: a tiny high tick, kept the shortest of the set
+    "nav":            (1046.5, 0.05, "sine",   None ),  # C6 tick
+    "nav_edge":       (330.0, 0.09, "dual",    311.1),  # E4+Eb4 -- dull bump, nothing to move to
+    "session_change": (659.3, 0.14, "chirp",   880.0),  # E5->A5 rising swap
+    "summary_failed": (587.3, 0.20, "chirp",   493.9),  # D5->B4 gentle fall: no recap
 }
 
 
 def generate_all_earcons(output_dir: "str | pathlib.Path") -> None:
-    """Write all 6 earcon .wav files into *output_dir*.
+    """Write every earcon .wav file into *output_dir*.
 
     Idempotent -- safe to call multiple times; overwrites existing files.
     Typical use: run once from the repo root to regenerate assets::

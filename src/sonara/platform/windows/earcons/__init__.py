@@ -7,10 +7,12 @@ Package layout::
         generate.py        <- stdlib WAV generator
         permission.wav
         choice.wav
-        plan.wav
         error.wav
         turn_done.wav
-        ready.wav
+        nav.wav
+        nav_edge.wav
+        session_change.wav
+        summary_failed.wav
 
 pyproject.toml declares these as package data::
 

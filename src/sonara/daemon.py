@@ -11,6 +11,7 @@ import threading
 from sonara.protocol import MsgType, encode, decode
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
+from sonara import config_schema
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
@@ -61,13 +62,11 @@ def _persistent_token() -> str:
     return tok
 
 
-RATE_MIN = 100
-RATE_MAX = 400
-
-# Min-queue batching: how many prose items must accumulate before they are read.
-# 1 == read each item as it arrives (the default, unchanged behaviour).
-MINQUEUE_MIN = 0     # 0 = start reading immediately, no batching (#60 follow-up)
-MINQUEUE_MAX = 10
+# Setting bounds live in the config schema (#136); re-exported for callers.
+RATE_MIN = config_schema.RATE_MIN
+RATE_MAX = config_schema.RATE_MAX
+MINQUEUE_MIN = config_schema.MINQUEUE_MIN
+MINQUEUE_MAX = config_schema.MINQUEUE_MAX
 
 # Hotkey debounce: ignore a repeat of the SAME toggle within this window so an
 # accidental/rapid double-tap doesn't flip pause/mute several times (and pile
@@ -109,7 +108,7 @@ def _decision_hold_max_s(config) -> float:
 
     Past the cap the question speaks and the digest follows."""
     try:
-        timeout = float(config.get("summary_timeout", 60))
+        timeout = float(config_schema.get(config, "summary_timeout"))
     except (AttributeError, TypeError, ValueError):
         timeout = 60.0
     if timeout != timeout or timeout in (float("inf"), float("-inf")):
@@ -171,7 +170,7 @@ class SpeechDaemon:
         self._webui = None
         self._poll_interval = 0.1
         from sonara.history import SessionHistory
-        self.history = SessionHistory(cap=int(config.get("history_cap", 200)))
+        self.history = SessionHistory(cap=int(config_schema.get(config, "history_cap")))
         self._pending_heard: dict = {}            # SpeechItem.id -> HistoryEntry
         self._last_digest_text: dict = {}         # session -> exact spoken digest text (summary-mode Up re-reads it verbatim so cached audio replays)
         self._voiced_upto: dict = {}       # session -> last HistoryEntry voiced this turn (summary mode: a blocking question and turn-end must not double-voice; identity survives history-cap eviction, audit #21)
@@ -182,10 +181,7 @@ class SpeechDaemon:
         # (prose AND beeps off). RESTORED from config (#65): hooks silently
         # respawn a dead daemon between two messages, and a memory-only mute
         # was reset to audible by the swap - the "mute is not persistent" bug.
-        try:
-            self._mute_level = max(0, min(2, int(config.get("mute_level", 0))))
-        except (TypeError, ValueError):
-            self._mute_level = 0
+        self._mute_level = config_schema.current(config, "mute_level")
         self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
@@ -286,10 +282,7 @@ class SpeechDaemon:
         self._wake.set()
 
     def _minqueue(self) -> int:
-        try:
-            return max(MINQUEUE_MIN, min(MINQUEUE_MAX, int(self.config.get("minqueue", 1))))
-        except (TypeError, ValueError):
-            return 1
+        return config_schema.current(self.config, "minqueue")
 
     def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
         """Speak ONE setup-guidance cue for this session, only when degraded.
@@ -535,7 +528,7 @@ class SpeechDaemon:
     def handle_message(self, msg):
         t = msg.get("type")
         session = msg.get("session", "")
-        verbosity = self.config.get("verbosity", "everything")
+        verbosity = config_schema.get(self.config, "verbosity")
         # Liveness for the Sessions tab: any session-bearing hook traffic
         # counts as activity. Settings-page mutations are excluded, or naming
         # a stale row would bump it back into the recent list.
@@ -939,17 +932,17 @@ class SpeechDaemon:
             is_delta = "delta" in msg
             if is_delta:
                 try:
-                    cur = int(self.config.get("rate", 200))
-                    rate = max(RATE_MIN, min(RATE_MAX, cur + int(msg.get("delta", 0))))
+                    target = (int(config_schema.get(self.config, "rate"))
+                              + int(msg.get("delta", 0)))
                 except (ValueError, TypeError):
                     return None
             else:
-                # Validate/clamp the absolute rate just like the delta branch -- an
-                # unvalidated value here is persisted to disk and breaks synthesis.
-                try:
-                    rate = max(RATE_MIN, min(RATE_MAX, int(msg.get("rate"))))
-                except (TypeError, ValueError):
-                    return None
+                target = msg.get("rate")
+            # Validate/clamp the rate in both branches -- an unvalidated value
+            # here is persisted to disk and breaks synthesis.
+            rate = config_schema.clean("rate", target)
+            if rate is config_schema.INVALID:
+                return None
             self.config["rate"] = rate
             self.speaker.set_rate(rate)
             save_config(self.config)
@@ -1002,25 +995,23 @@ class SpeechDaemon:
         if t == MsgType.SET_MINQUEUE:
             # Validate/clamp before persisting -- a bad value reaches disk and would
             # wedge prose buffering on every turn (mirrors the SET_RATE guard).
-            try:
-                n = max(MINQUEUE_MIN, min(MINQUEUE_MAX, int(msg.get("minqueue"))))
-            except (TypeError, ValueError):
+            n = config_schema.clean("minqueue", msg.get("minqueue"))
+            if n is config_schema.INVALID:
                 return None
             self.config["minqueue"] = n
             save_config(self.config)
             return None
 
         if t == MsgType.SET_AUDIO_MODE:
-            mode = msg.get("mode")
-            if mode not in ("off", "duck", "pause"):
+            mode = config_schema.clean("audio_mode", msg.get("mode"))
+            if mode is config_schema.INVALID:
                 return None
             self._apply_audio_mode(mode)
             return None
 
         if t == MsgType.SET_DUCK_LEVEL:
-            try:
-                level = max(0, min(100, int(msg.get("level"))))
-            except (TypeError, ValueError):
+            level = config_schema.clean("duck_level", msg.get("level"))
+            if level is config_schema.INVALID:
                 return None
             self.config["duck_level"] = level
             save_config(self.config)
@@ -1035,9 +1026,8 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.SET_VOLUME:
-            try:
-                vol = max(25, min(200, int(msg.get("volume"))))
-            except (TypeError, ValueError):
+            vol = config_schema.clean("volume", msg.get("volume"))
+            if vol is config_schema.INVALID:
                 return None
             self.config["volume"] = vol
             save_config(self.config)
@@ -1051,7 +1041,7 @@ class SpeechDaemon:
         if t == MsgType.SET_SUMMARY_MODE:
             if "enabled" not in msg:
                 return None
-            enabled = bool(msg.get("enabled"))
+            enabled = config_schema.clean("summary_mode", msg.get("enabled"))
             self.config["summary_mode"] = enabled
             save_config(self.config)
             target = self.router.active or self.sessions.foreground()
@@ -1417,7 +1407,7 @@ class SpeechDaemon:
     def _settle_schedule(self, session: str, gen: int) -> None:
         """Start the real settle timer. Test seam: tests replace this to drive
         _settle_fire deterministically instead of waiting on the clock."""
-        settle_s = self.config.get("summary_settle_ms", 600) / 1000.0
+        settle_s = config_schema.get(self.config, "summary_settle_ms") / 1000.0
         t = threading.Timer(settle_s, self._settle_fire, args=(session, gen))
         t.daemon = True
         self._settle_timers[session] = t
@@ -1571,13 +1561,13 @@ class SpeechDaemon:
         import time as _time
         fn = self._summarize_fn or summarizer.summarize
         t0 = _time.monotonic()
-        style = self.config.get("summary_style", "natural")
+        style = config_schema.get(self.config, "summary_style")
         prompts = self.config.get("summary_prompts") or {}
         try:
             summary = fn(text,
-                         model=self.config.get("summary_model", "haiku"),
-                         command=self.config.get("summary_command", "claude"),
-                         timeout=self.config.get("summary_timeout", 60),
+                         model=config_schema.get(self.config, "summary_model"),
+                         command=config_schema.get(self.config, "summary_command"),
+                         timeout=config_schema.get(self.config, "summary_timeout"),
                          style=style,
                          instruction=prompts.get(style),
                          debug_log=_log)
@@ -1926,7 +1916,7 @@ class SpeechDaemon:
         configured voice, so "Muted." never waits on a slow synthesis.
         Config fast_cues (default on) disables."""
         from sonara.router import CONTROL
-        if (self.config.get("fast_cues", True)
+        if (config_schema.get(self.config, "fast_cues")
                 and (item.session == CONTROL or item.kind == "session_change")):
             return {"voice": self._cue_voice()}
         return {}
@@ -1947,7 +1937,7 @@ class SpeechDaemon:
         Best-effort, background, never blocks or breaks the caller."""
         try:
             from sonara import kokoro
-            if not (self.config.get("fast_cues", True)
+            if not (config_schema.get(self.config, "fast_cues")
                     and kokoro.is_kokoro_voice(self._cue_voice())
                     and kokoro.is_installed()):
                 return
@@ -1957,7 +1947,7 @@ class SpeechDaemon:
         def _warm():
             try:
                 from sonara.platform import get_platform
-                get_platform().tts._kokoro_wav("Ready.", self.config.get("rate", 200))
+                get_platform().tts._kokoro_wav("Ready.", config_schema.get(self.config, "rate"))
             except Exception:  # noqa: BLE001 - warming is best-effort
                 pass
         threading.Thread(target=_warm, name="sonara-kokoro-warm", daemon=True).start()
@@ -1979,47 +1969,31 @@ class SpeechDaemon:
                             exempt_mute=True)
 
     def _audio_mode(self) -> str:
-        mode = self.config.get("audio_mode", "off")
-        return mode if mode in ("off", "duck", "pause") else "off"
+        return config_schema.current(self.config, "audio_mode")
 
     def _audio_duck_on(self) -> bool:
         return self._audio_mode() == "duck"
 
     def _duck_level(self) -> int:
-        try:
-            return max(0, min(100, int(self.config.get("duck_level", 20))))
-        except (TypeError, ValueError):
-            return 20
+        return config_schema.current(self.config, "duck_level")
 
     def set_config_value(self, key: str, value) -> bool:
         """Set a config-only tuning key (settings page, #34). These have no
-        protocol message (the CLI edits config.json directly); clamp, set under
-        the lock, persist. Returns False for unknown keys/bad values."""
-        clamps = {
-            "summary_model":   lambda v: str(v).strip() or None,
-            "summary_timeout": lambda v: max(15, min(300, int(v))),
-            "summary_settle_ms": lambda v: max(0, min(5000, int(v))),
-            "summary_style": lambda v: (str(v)
-                if str(v) in ("tidy", "natural", "brief") else None),
-            "summary_command": lambda v: (str(v)
-                if str(v) in ("claude", "codex") else None),
-            "fast_cues": lambda v: bool(v),
-            "cue_voice": lambda v: str(v).strip() or None,
-        }
-        fn = clamps.get(key)
-        if fn is None:
+        protocol message; config_schema validates them (#136). Clean, set
+        under the lock, persist, then run the key's live-apply hook (switching
+        TO a Kokoro cue voice warms it, #60). Returns False for unknown
+        keys/bad values."""
+        if key not in config_schema.config_only_keys():
             return False
-        try:
-            cleaned = fn(value)
-        except (TypeError, ValueError):
-            return False
-        if cleaned is None:
+        cleaned = config_schema.clean(key, value)
+        if cleaned is config_schema.INVALID:
             return False
         with self._lock:
             self.config[key] = cleaned
             save_config(self.config)
-        if key in ("cue_voice", "fast_cues"):
-            self._maybe_prewarm_cue_voice()   # switching TO a Kokoro cue voice warms it (#60)
+        hook = config_schema.SCHEMA[key].apply
+        if hook:
+            getattr(self, hook)()
         return True
 
     def set_summary_prompt(self, style, text) -> bool:
@@ -2085,7 +2059,7 @@ class SpeechDaemon:
                 from sonara.platform import get_platform
                 runner = get_platform().tts.run
             text = "This is {0} speaking for Sonara.".format(voice)
-            rate = self.config.get("rate", 200)
+            rate = config_schema.get(self.config, "rate")
 
             def _run():
                 try:
@@ -2139,7 +2113,7 @@ class SpeechDaemon:
         """Persist the audio behavior mode, disengage whatever backend was
         engaged (so a switch never leaves other apps ducked or paused), and
         speak the mode cue."""
-        if mode not in ("off", "duck", "pause"):
+        if mode not in config_schema.AUDIO_MODES:
             return
         self.config["audio_mode"] = mode
         save_config(self.config)
@@ -2227,7 +2201,7 @@ class SpeechDaemon:
                 if not self._requeue_or_note(item, completed):
                     self.note_spoken(item, completed)
                 return
-            if self.config.get("fast_cues", True):
+            if config_schema.get(self.config, "fast_cues"):
                 # Defer the alert (#94): stash it and play the chime + spoken
                 # announcement from the CONTENT utterance's on_play, so a slow
                 # engine no longer plays the alert seconds before the audio.
@@ -2263,7 +2237,7 @@ class SpeechDaemon:
                 self._pending_preamble = None   # stale alert for another session: drop it
         if preamble is not None:
             cue_voice = self._cue_voice()
-            rate = self.config.get("rate", 200)
+            rate = config_schema.get(self.config, "rate")
 
             def on_play(_text=preamble, _voice=cue_voice, _rate=rate):
                 # Consume the alert only when it actually plays. If content synthesis
@@ -2438,7 +2412,7 @@ class SpeechDaemon:
         self._token = _persistent_token()
         from sonara.webui import SettingsServer
         self._webui = SettingsServer(self, self._token,
-                                     int(self.config.get("settings_port", 27431)))
+                                     int(config_schema.get(self.config, "settings_port")))
         try:
             http_port = self._webui.start()
         except Exception:  # noqa: BLE001 - the page must never block speech
@@ -2599,6 +2573,18 @@ def _harden_process(k32=None) -> None:
         pass
 
 
+def resolve_earcons(bundled: dict, overrides) -> dict:
+    """The earcon map the speaker plays: the bundled set, resolved from the
+    running package on every start, with the user's own wavs (config
+    "earcons") on top. Never stored back into config, so new bundled kinds
+    reach every install (#136, audit M8)."""
+    out = dict(bundled)
+    if isinstance(overrides, dict):
+        out.update({k: v for k, v in overrides.items()
+                    if isinstance(v, str) and v})
+    return out
+
+
 def main() -> None:
     _arm_faulthandler()
     # Single-instance guard. The fast path avoids work when a daemon is clearly
@@ -2634,16 +2620,15 @@ def main() -> None:
     from sonara.platform.windows.pausing import resume_from_state_file as _resume_paused
     _resume_paused()   # resume anything a crashed prior daemon left paused
     cfg = load_config()
-    if "earcons" not in cfg:
-        cfg["earcons"] = _backend.earcon.default_earcons()
     speaker = Speaker(
         voice=cfg.get("voice"),
-        rate=cfg.get("rate", 200),
+        rate=config_schema.get(cfg, "rate"),
         say_runner=_backend.tts.run,
         earcon_player=_backend.earcon.play,
-        earcons=cfg.get("earcons"),
+        earcons=resolve_earcons(_backend.earcon.default_earcons(),
+                                cfg.get("earcons")),
     )
-    sessions = SessionManager(background_policy=cfg.get("background_policy", "earcon_only"),
+    sessions = SessionManager(background_policy=config_schema.get(cfg, "background_policy"),
                               store_path=SESSIONS_PATH, seen_path=SESSION_SEEN_PATH)
     from sonara.session_prefs import SessionPrefs
     from sonara.digest_store import DigestStore
@@ -2651,7 +2636,7 @@ def main() -> None:
                           ducker=_backend.ducker, pauser=_backend.pauser,
                           prefs=SessionPrefs(store_path=SESSION_PREFS_PATH),
                           digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
-    daemon._apply_volume(cfg.get("volume", 100))   # restore persisted speech gain
+    daemon._apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
     daemon.run()
 
 

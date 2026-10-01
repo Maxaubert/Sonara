@@ -20,6 +20,7 @@ import webbrowser
 from typing import Optional
 
 from .protocol import MsgType, PROTOCOL_VERSION
+from . import config_schema
 from . import paths
 from . import keymap
 from sonara.platform import get_platform
@@ -35,7 +36,7 @@ def _platform():
     return _PLATFORM
 
 
-VERBOSITY_CHOICES = ("everything", "medium", "quiet")
+VERBOSITY_CHOICES = config_schema.VERBOSITY_CHOICES
 
 
 def _send(msg: dict, expect_reply: bool = False):
@@ -225,7 +226,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dp.set_defaults(func=_cmd_duck_level)
 
     am = sub.add_parser("audio-mode", help="off | duck | pause (pause media while speaking)")
-    am.add_argument("mode", choices=["off", "duck", "pause"])
+    am.add_argument("mode", choices=list(config_schema.AUDIO_MODES))
     am.set_defaults(func=_cmd_audio_mode)
 
     sp = sub.add_parser(
@@ -294,7 +295,7 @@ def doctor() -> list:
             results.append(("summary command", True, "summary mode off"))
         else:
             import shutil as _shutil
-            _cmd = _cfg.get("summary_command", "claude")
+            _cmd = config_schema.get(_cfg, "summary_command")
             _found = _shutil.which(_cmd)
             results.append(("summary command", bool(_found),
                             _found or "'{0}' not found on PATH".format(_cmd)))
