@@ -248,6 +248,62 @@ def test_session_end_drops_held_decision_bookkeeping(monkeypatch):
     assert daemon._pending_heard == {}
 
 
+def test_joined_hold_is_released_by_the_earliest_cap(monkeypatch):
+    # A second decision joining a held one moves ownership to the newer
+    # dispatch. The first question's cap must still free the group on time,
+    # not wait out a whole new cap from the second arrival.
+    daemon, speaker = _daemon(monkeypatch, foreground="fg")
+    _capture_spawn(daemon, monkeypatch)
+    timers = []
+    monkeypatch.setattr(daemon, "_schedule_hold_release",
+                        lambda s, o, i: timers.append((s, o, i)))
+    daemon.handle_message(_prose("fg", "Let me look at this first."))
+    daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("First question?")))
+    _fire_settle(daemon, "fg")
+    daemon.handle_message(_prose("fg", "Now some more context."))
+    daemon.handle_message(_msg(MsgType.PLAN, "fg", text="Second plan."))
+    _fire_settle(daemon, "fg")
+    assert len(timers) == 2 and timers[0][1] != timers[1][1]
+    daemon._release_held_decision(*timers[0])    # the first cap elapses
+    texts = [it.text for it in daemon.router.channel("fg").items]
+    assert any("First question?" in t for t in texts)
+    assert any("Second plan." in t for t in texts)
+    assert "fg" not in daemon._held_decision
+
+
+def test_settle_fire_failure_after_hold_does_not_speak_twice(monkeypatch):
+    # The hold is stored before its cap timer is armed. If arming raises, the
+    # fallback must not ALSO leave the question held for a later release.
+    daemon, speaker = _daemon(monkeypatch, foreground="fg")
+    calls = _capture_spawn(daemon, monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("cannot start thread")
+
+    monkeypatch.setattr(daemon, "_schedule_hold_release", boom)
+    daemon.handle_message(_prose("fg", "Let me look at this first."))
+    daemon.handle_message(_msg(MsgType.CHOICE, "fg", **_choice("Deploy now?")))
+    _fire_settle(daemon, "fg")                   # must not raise
+    _run_worker(daemon, calls[0], "Context first.")
+    ch = daemon.router.channel("fg")
+    asked = [it for it in ch.items if it.is_decision and "Deploy now?" in it.text]
+    assert len(asked) == 1
+    assert "fg" not in daemon._held_decision
+
+
+def test_watchdog_arm_failure_still_reports_the_digest_in_flight(monkeypatch):
+    daemon, speaker = _daemon(monkeypatch)
+    calls = _capture_spawn(daemon, monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError("cannot start thread")
+
+    monkeypatch.setattr(daemon, "_schedule_digest_watchdog", boom)
+    daemon.handle_message(_prose("a", "Report alpha. " + _PAD * 6))
+    assert daemon._maybe_summarize("a") is True  # the worker is already out
+    assert len(calls) == 1
+
+
 # --- F5: the summarizer timeout is enforced for .cmd engines -----------------
 
 class _HangingProc:

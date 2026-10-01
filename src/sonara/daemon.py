@@ -1457,8 +1457,15 @@ class SpeechDaemon:
         if seq is not None:
             # A worker that never returns would park every later digest
             # (#138, audit M1): bound the slot at twice summary_timeout.
-            self._schedule_digest_watchdog(
-                seq, self._digest_apply(session, gen, text, False, None))
+            # The worker is already out, so a failure to arm the watchdog is
+            # logged and the digest still counts as in flight.
+            try:
+                self._schedule_digest_watchdog(
+                    seq, self._digest_apply(session, gen, text, False, None))
+            except Exception:  # noqa: BLE001 - the worker still lands its slot
+                import traceback
+                _summary_log("digest watchdog arm failed for seq {0}:\n{1}".format(
+                    seq, traceback.format_exc()))
         return True                      # async digest in flight -> caller holds
 
     def _arm_settle(self, session: str) -> None:
@@ -1517,8 +1524,20 @@ class SpeechDaemon:
                 import traceback
                 _summary_log("settle fire failed for {0}:\n{1}".format(
                     session, traceback.format_exc()))
+                rest = items[placed:]
+                # A failed hold may already have stored the item (its cap
+                # timer failed to arm): take it back out so it is spoken once,
+                # now, and not again when the group is released.
+                held = self._held_decision.get(session)
+                if held is not None:
+                    kept = [it for it in held[1]
+                            if not any(it is r for r in rest)]
+                    if kept:
+                        self._held_decision[session] = (held[0], kept)
+                    else:
+                        self._held_decision.pop(session, None)
                 ch = self.router.channel(session)
-                for item in items[placed:]:
+                for item in rest:
                     ch.append(item)
                 self._wake.set()
 
@@ -1589,11 +1608,15 @@ class SpeechDaemon:
     def _release_held_decision(self, session: str, owner: int, item) -> None:
         """The hold cap elapsed: if the digest still has not landed, speak the
         question NOW (#83). Idempotent vs the digest worker: whichever runs
-        first pops the hold; the other finds it gone and does nothing."""
+        first pops the hold; the other finds it gone and does nothing.
+
+        Matches on the item, not the owner token: a later decision joining the
+        hold (F7) moves ownership to the newer dispatch, and the first
+        question's cap must still free the group at the EARLIEST deadline
+        rather than wait out a fresh cap from the second arrival."""
         with self._lock:
             held = self._held_decision.get(session)
-            if (held is None or held[0] != owner
-                    or not any(it is item for it in held[1])):
+            if held is None or not any(it is item for it in held[1]):
                 return                     # already released (digest landed / caught up)
             self._held_decision.pop(session, None)
             ch = self.router.channel(session)
