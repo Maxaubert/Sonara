@@ -20,6 +20,7 @@ from typing import Optional
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import config_schema
 from . import paths
+from . import install_record
 from . import keymap
 from sonara.platform import get_platform
 
@@ -288,6 +289,26 @@ def _cmd_install(_args) -> int:
     return installer.install()
 
 
+def _print_uninstall_leftovers() -> None:
+    """Say what uninstall deliberately keeps in ~/.sonara and how to remove it
+    (E19). Never raises."""
+    try:
+        neural = [os.path.join(str(paths.SONARA_DIR), d) for d in ("venv", "kokoro")]
+        neural = [d for d in neural if os.path.isdir(d)]
+        if neural:
+            print("Neural voices are kept in {0}; delete those folders to free "
+                  "the space.".format(" and ".join(neural)))
+        from sonara import chatterbox_legacy as cl
+        found = cl.leftovers()
+        if found:
+            print("Old Chatterbox files remain ({0}); 'sonara cleanup' removes "
+                  "them.".format(cl.format_size(sum(s for _p, s in found))))
+        print("Anything else left in {0} (logs, caches, voice clips) can be "
+              "deleted by hand once Sonara is off.".format(paths.SONARA_DIR))
+    except Exception:  # noqa: BLE001 - an advisory note must never fail uninstall
+        pass
+
+
 def _cmd_uninstall(_args) -> int:
     from sonara.install import installer
     return installer.uninstall()
@@ -309,6 +330,43 @@ def _cmd_cleanup(_args) -> int:
     """Remove the removed Chatterbox engine's leftovers (#134)."""
     from sonara.install import cleanup
     return cleanup.cleanup()
+
+
+def _cmd_cleanup(_args) -> int:
+    """Remove the removed Chatterbox engine's leftovers (#134): its venv, model
+    cache and smoke-test files. voices/chatterbox, the user's own recorded
+    clips, is never touched.
+
+    The daemon is stopped first: a still-running Chatterbox worker locks files
+    in the venv, and deleting it live failed partway. It is started again only
+    if it was running, and an earlier explicit shutdown stays in place."""
+    from sonara import chatterbox_legacy as cl
+    found = cl.leftovers()
+    if not found:
+        print("Nothing to clean up: no Chatterbox leftovers in {0}.".format(
+            paths.SONARA_DIR))
+        return 0
+    total = sum(size for _p, size in found)
+    restore = _stopped_state_restorer()
+    if not stop_sonara():
+        # stop_sonara already wrote the sentinel and ended the task: undo
+        # that, or a daemon that later exits would never come back.
+        restore()
+        print("Sonara did not stop, so nothing was removed (a running worker "
+              "would lock the files). Run 'sonara shutdown', then try again.",
+              file=sys.stderr)
+        return 1
+    removed, failed = cl.remove_leftovers()
+    for p in removed:
+        print("Removed {0}".format(p))
+    for p, exc in failed:
+        print("Could not remove {0}: {1}".format(p, exc), file=sys.stderr)
+    restore()
+    if failed:
+        return 1
+    print("Freed {0}. Your voice clips in {1} were kept.".format(
+        cl.format_size(total), paths.CHATTERBOX_VOICES_DIR))
+    return 0
 
 
 def _cmd_daemon(_args) -> int:
