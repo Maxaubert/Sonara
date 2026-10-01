@@ -221,6 +221,7 @@ def test_voices_install_gives_predownload_the_running_package(monkeypatch, tmp_p
     # E6: from the deployed copy repo_root()/src is the nonexistent
     # ~/.sonara/src, so the model predownload could never import sonara.
     monkeypatch.setattr(paths, "repo_root", lambda: str(tmp_path / "deployed"))
+    monkeypatch.setattr(cli, "_resolve_plugin_root", lambda: str(tmp_path / "plugin"))
     seen = {}
     monkeypatch.setattr(kp, "install_kokoro", lambda pp: seen.update(pp=pp))
     monkeypatch.setattr(cli, "install", lambda: 1)
@@ -241,3 +242,34 @@ def test_voices_uninstall_never_leaves_sonara_stopped_when_install_fails(monkeyp
     monkeypatch.setattr(cli, "install", lambda: 1)
     assert cli._cmd_voices_uninstall(None) == 1
     assert not paths.STOPPED_SENTINEL_PATH.exists()
+
+
+def test_voices_install_refuses_before_the_download_without_a_plugin_tree(monkeypatch, capsys):
+    # H3: install() refuses without a plugin tree; voices install used to
+    # download ~316 MB first and only then get refused.
+    monkeypatch.setattr(cli, "_resolve_plugin_root", lambda: None)
+    monkeypatch.setattr(kp, "install_kokoro", lambda pp: pytest.fail("must not download"))
+    monkeypatch.setattr(cli, "install", lambda: pytest.fail("must not install"))
+    assert cli._cmd_voices_install(None) == 1
+    assert "Cannot find the Sonara plugin files" in capsys.readouterr().out
+
+
+def test_voices_uninstall_refuses_before_deleting_the_venv_without_a_plugin_tree(monkeypatch, capsys):
+    # Deleting the venv and then having install() refuse left the scheduled
+    # task pointing at the deleted venv pythonw, so logon autostart failed.
+    monkeypatch.setattr(cli, "_resolve_plugin_root", lambda: None)
+    monkeypatch.setattr(cli, "stop_sonara", lambda sup=None: pytest.fail("must not stop"))
+    monkeypatch.setattr(kp, "uninstall_kokoro", lambda: pytest.fail("must not delete the venv"))
+    monkeypatch.setattr(cli, "install", lambda: pytest.fail("must not install"))
+    assert cli._cmd_voices_uninstall(None) == 1
+    out = capsys.readouterr().out
+    assert "Cannot find the Sonara plugin files" in out
+    assert "reverted to the system voice" not in out
+
+
+def test_voices_uninstall_does_not_claim_a_revert_when_install_fails(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "stop_sonara", lambda sup=None: True)
+    monkeypatch.setattr(kp, "uninstall_kokoro", lambda: None)
+    monkeypatch.setattr(cli, "install", lambda: 1)
+    assert cli._cmd_voices_uninstall(None) == 1
+    assert "reverted to the system voice" not in capsys.readouterr().out

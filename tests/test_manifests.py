@@ -1,5 +1,5 @@
 """Validate the shipped plugin manifests as real JSON and assert every
-hooks.json command points at an existing bin/sonara-hook under the repo root."""
+hooks.json command points at the bin/sonara-hook-run launcher under the repo root."""
 import json
 from pathlib import Path
 
@@ -46,13 +46,13 @@ def _iter_hook_commands(data: dict):
     yield from walk(data)
 
 
-def test_hooks_json_commands_point_at_existing_sonara_hook():
+def test_hooks_json_commands_point_at_the_hook_launcher():
     data = _load(HOOKS_JSON)
     commands = list(_iter_hook_commands(data))
     assert commands, "hooks.json declares no commands"
 
     for cmd in commands:
-        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook <Event>.
+        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run <Event>.
         assert "${CLAUDE_PLUGIN_ROOT}" in cmd, (
             f"command must use ${{CLAUDE_PLUGIN_ROOT}}: {cmd!r}"
         )

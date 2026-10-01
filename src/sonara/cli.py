@@ -494,6 +494,13 @@ def _is_plugin_root(path) -> bool:
             and os.path.isfile(os.path.join(path, "hooks", "hooks.json")))
 
 
+def _print_no_plugin_root() -> None:
+    print("Cannot find the Sonara plugin files (src/sonara, bin/sonara-hook, "
+          "hooks/hooks.json) next to this copy of Sonara, which looks like "
+          "the deployed runtime in ~/.sonara. Nothing was changed. Run "
+          "/sonara:install in Claude Code, or <plugin folder>/bin/sonara install.")
+
+
 def _resolve_plugin_root() -> Optional[str]:
     """The plugin tree install() deploys from, or None.
 
@@ -769,10 +776,7 @@ def install() -> int:
     #     copy there may be none, and stopping first left Sonara off (H3).
     plugin_root = _resolve_plugin_root()
     if plugin_root is None:
-        print("Cannot find the Sonara plugin files (src/sonara, bin/sonara-hook, "
-              "hooks/hooks.json) next to this copy of Sonara, which looks like "
-              "the deployed runtime in ~/.sonara. Nothing was changed. Run "
-              "/sonara:install in Claude Code, or <plugin folder>/bin/sonara install.")
+        _print_no_plugin_root()
         return 1
 
     # 1b. Ensure the Windows speech engine (PyWinRT) is installed in that Python.
@@ -928,6 +932,11 @@ def _cmd_uninstall(_args) -> int:
 def _cmd_voices_install(_args) -> int:
     """Provision the Kokoro venv and re-wire the daemon onto it."""
     from sonara import kokoro_provision as kp
+    # install() below refuses without a plugin tree (H3): check before the
+    # ~316 MB download, not after it.
+    if _resolve_plugin_root() is None:
+        _print_no_plugin_root()
+        return 1
     paths.ensure_sonara_dir()
     print("Provisioning neural voices (uv + Kokoro, one-time ~316 MB download)…")
     try:
@@ -958,6 +967,11 @@ def _cmd_voices_uninstall(_args) -> int:
     (pythonw locks Scripts/); deleting it live raised a raw PermissionError and
     left a half-deleted venv that still read as provisioned."""
     from sonara import kokoro_provision as kp
+    # Check before deleting the venv: if install() then refused (H3), the
+    # scheduled task kept pointing at the deleted venv's pythonw.
+    if _resolve_plugin_root() is None:
+        _print_no_plugin_root()
+        return 1
     stop_sonara()
     try:
         kp.uninstall_kokoro()
@@ -969,7 +983,8 @@ def _cmd_voices_uninstall(_args) -> int:
             os.remove(str(paths.STOPPED_SENTINEL_PATH))
         except OSError:
             pass
-    print("Neural voices removed; reverted to the system voice.")
+    if rc == 0:
+        print("Neural voices removed; reverted to the system voice.")
     return rc
 
 
