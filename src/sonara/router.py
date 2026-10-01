@@ -53,9 +53,7 @@ class Router:
         if self._last_active == session:
             self._last_active = None
         if self._pending_announce == session:
-            self._pending_announce = None
-            self._pending_announce_replay = False
-            self._pending_announce_manual = False
+            self.clear_pending_announce()
         self._replay_authorized.discard(session)
         self._suppressed.pop(session, None)
 
@@ -135,9 +133,42 @@ class Router:
     def _arm_switch(self, target: str, replay: bool, manual: bool = False) -> None:
         self.active = target
         self._last_active = target                 # auto won't re-announce after
-        self._pending_announce = target
-        self._pending_announce_replay = replay
-        self._pending_announce_manual = manual
+        self.rearm_announce(target, replay, manual)
+
+    # --- public mutation methods (M13): the daemon never writes the private
+    # fields below directly. The three announce fields always move together;
+    # re-arming only two of them turned a paused manual switch into a deferred
+    # auto announcement on resume.
+
+    def rearm_announce(self, session: str, replay: bool = False,
+                       manual: bool = False) -> None:
+        """Arm (or re-arm, after a pause cut it) the session-change
+        announcement for *session*, emitted before the next item."""
+        self._pending_announce = session
+        self._pending_announce_replay = bool(replay)
+        self._pending_announce_manual = bool(manual)
+
+    def clear_pending_announce(self) -> None:
+        """Drop an armed-but-unemitted session-change announcement."""
+        self._pending_announce = None
+        self._pending_announce_replay = False
+        self._pending_announce_manual = False
+
+    def authorize_replay(self, session: str) -> None:
+        """Let *session*'s pending items bypass the background-policy gate and
+        suppression until they drain (Up / repeat replay, a digest delivery,
+        a cooperative hand-off drain)."""
+        self._replay_authorized.add(session)
+
+    def set_last_active(self, session: str) -> None:
+        """Record *session* as the last reader, so reading it next does not
+        announce a hand-off (programmatic Up / repeat replays)."""
+        self._last_active = session
+
+    @property
+    def last_active(self) -> "str | None":
+        """The last session that actually read (persists across idle gaps)."""
+        return self._last_active
 
     def _ready(self, session: str) -> bool:
         ch = self.channels.get(session)
@@ -220,11 +251,10 @@ class Router:
                 label = self._display_name(self._pending_announce)
             folder = (label or self.sessions.folder(self._pending_announce)
                       or "another session")
-            text = self._announce_text(folder, self._pending_announce_replay)
+            replay = self._pending_announce_replay
+            text = self._announce_text(folder, replay)
             manual = self._pending_announce_manual
-            self._pending_announce = None
-            self._pending_announce_replay = False
-            self._pending_announce_manual = False
+            self.clear_pending_announce()
             # kind "session_change" lets the speak loop fire the session-switch
             # earcon (chime) just before voicing the announcement. NOT mute_exempt:
             # global mute silences hand-offs too (both the chime and the spoken
@@ -233,7 +263,7 @@ class Router:
             # of deferring to the target content's synthesis-ready callback (#111).
             return SpeechItem(id=0, session=self.active or "", kind="session_change",
                               text=text, is_decision=False, mute_exempt=False,
-                              manual=manual)
+                              manual=manual, replay=replay)
         # Global control cues (pause/mute/rate confirmations) are served ahead of
         # every session and never announce or change _last_active -- so they are
         # heard even when no session is registered/foreground.
@@ -252,9 +282,7 @@ class Router:
             # returning to the same session after an idle gap does not announce.
             if (self._last_active is not None
                     and target != self._last_active):
-                self._pending_announce = target
-                self._pending_announce_replay = False
-                self._pending_announce_manual = False
+                self.rearm_announce(target)
                 self._last_active = target
                 return self.next_item()
             self._last_active = target

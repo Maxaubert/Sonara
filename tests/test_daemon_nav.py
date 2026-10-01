@@ -102,8 +102,10 @@ def test_up_with_no_history_fires_nav_edge_and_announces():
     daemon, queue, speaker, *_ = make_daemon(foreground="fg")   # nothing recorded
     _nav(daemon, "first")
     assert speaker.earcons == ["nav_edge"]
-    ch = daemon.router.channel("fg")
+    from sonara.router import CONTROL                # a control cue (F6, #137)
+    ch = daemon.router.channel(CONTROL)
     assert any("Nothing to navigate" in it.text for it in ch.items)
+    assert daemon.router.channel("fg").items == []
 
 
 def test_up_with_no_foreground_fires_nav_edge():
