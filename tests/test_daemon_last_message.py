@@ -320,3 +320,34 @@ def test_preamble_cleared_between_check_and_use_does_not_crash():
     daemon._speak_loop_once()
     assert "content" in speaker.spoken
     assert [t for t, _v in speaker.cue_untracked_calls] == ["Session changed: fg."]
+
+
+# --- replay through insert_at: new content lifts the #115 suppression -------
+
+def _force_switched_away_from_a(daemon):
+    daemon.handle_message(_prose("A", "A one. "))
+    daemon.handle_message(_prose("B", "B one. "))
+    daemon.router.active = "A"
+    daemon.router.next_session()                 # away from A -> suppressed
+    assert daemon.router._is_suppressed("A") is True
+
+
+def test_short_turn_replay_lifts_a_force_switch_suppression():
+    # A short turn delivered with _replay(append=True) is new content, so it
+    # lifts the suppression like any other new content (#115 rule, #137).
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="A")
+    _force_switched_away_from_a(daemon)
+    entry = daemon.history.record("A", "prose", "Short answer here.")
+    daemon._replay("A", [entry], append=True, suppress_announce=False)
+    assert daemon.router._is_suppressed("A") is False
+
+
+def test_explicit_replay_of_a_suppressed_background_session_is_authorized():
+    # Up / repeat on a session that is not the foreground keeps its own
+    # authorised path past the policy gate and suppression.
+    daemon, queue, speaker, sessions, config = make_daemon(foreground="B")
+    _force_switched_away_from_a(daemon)
+    entry = daemon.history.record("A", "prose", "A one.")
+    daemon._replay("A", [entry])
+    assert "A" in daemon.router._replay_authorized
+    assert daemon.router.channel("A").pending_items()[0].text == "A one."
