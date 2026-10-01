@@ -42,7 +42,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - Never leave other apps ducked or paused.
 
 ## Conventions
-- Core stays OS-free: no `sys.platform`/`os.name` branch, win32 import or `platform.windows` import outside `platform/` (`test_no_os_branch_in_core.py` covers `daemon/`, `install/`, `webui.py`, `cli.py`).
+- `daemon/`, `install/`, `webui.py` and `cli.py` stay OS-free: no `sys.platform`/`os.name` branch, win32 import or `platform.windows` import (`test_no_os_branch_in_core.py` enforces it). `summarizer.py` still branches on `os.name` for its process flags; that is a known gap, not a pattern to copy.
 - Python 3.9 syntax (`test_py39_compat.py`), `from __future__ import annotations`.
 - Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
