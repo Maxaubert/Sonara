@@ -67,6 +67,7 @@ def test_spawn_respawner_launches_detached_lazy_start(monkeypatch):
     webui._spawn_respawner()
     argv, kw = calls[0]
     assert "ensure_running" in argv[-1]                  # standard lazy-start path
+    assert "sonara.lifecycle" in argv[-1]                # not the whole daemon (#141)
     assert "time.sleep" in argv[-1]                      # waits out the dying daemon
     import os
     if os.name == "nt":

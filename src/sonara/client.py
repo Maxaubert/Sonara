@@ -8,7 +8,7 @@ from sonara import paths
 from sonara.protocol import encode, decode
 from sonara.paths import LOCK_PATH, socket_connectable
 from sonara.platform import transport
-from sonara.daemon import ensure_running
+from sonara.lifecycle import ensure_running
 
 
 class DaemonNotRunning(OSError):

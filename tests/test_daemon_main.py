@@ -2,13 +2,14 @@ import sys
 from unittest import mock
 
 import sonara.daemon as daemon_mod
+from sonara import lifecycle
 from sonara.platform.windows import process as process_mod
 
 
 def test_ensure_running_noop_when_socket_connectable():
-    with mock.patch("sonara.daemon.socket_connectable", return_value=True) as conn, \
-         mock.patch("sonara.daemon.subprocess.Popen") as popen:
-        daemon_mod.ensure_running()
+    with mock.patch("sonara.lifecycle.socket_connectable", return_value=True) as conn, \
+         mock.patch("sonara.lifecycle.subprocess.Popen") as popen:
+        lifecycle.ensure_running()
     conn.assert_called_once()
     popen.assert_not_called()
 
@@ -22,10 +23,10 @@ def test_ensure_running_spawns_via_platform_launch_spec_when_socket_absent():
     sup = mock.Mock()
     sup.launch_spec.return_value = (fake_argv, dict(fake_kwargs))
     plat = mock.Mock(supervisor=sup)
-    with mock.patch("sonara.daemon.socket_connectable", return_value=False), \
+    with mock.patch("sonara.lifecycle.socket_connectable", return_value=False), \
          mock.patch("sonara.platform.get_platform", return_value=plat), \
-         mock.patch("sonara.daemon.subprocess.Popen") as popen:
-        daemon_mod.ensure_running()
+         mock.patch("sonara.lifecycle.subprocess.Popen") as popen:
+        lifecycle.ensure_running()
     popen.assert_called_once_with(fake_argv, **fake_kwargs)
 
 

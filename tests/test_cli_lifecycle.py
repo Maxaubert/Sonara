@@ -65,8 +65,8 @@ def test_start_sonara_clears_sentinel_and_spawns(monkeypatch, tmp_path):
     sentinel, _ = _wire(monkeypatch, tmp_path, connectable=True)
     sentinel.write_text("")
     spawned = []
-    import sonara.daemon as daemon_module
-    monkeypatch.setattr(daemon_module, "ensure_running",
+    from sonara import lifecycle
+    monkeypatch.setattr(lifecycle, "ensure_running",
                         lambda: spawned.append(True))
     rc = cli.start_sonara()
     assert rc == 0

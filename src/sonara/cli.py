@@ -709,8 +709,8 @@ def start_sonara() -> int:
         os.remove(str(paths.STOPPED_SENTINEL_PATH))
     except OSError:
         pass
-    from sonara import daemon as daemon_module
-    daemon_module.ensure_running()
+    from sonara import lifecycle
+    lifecycle.ensure_running()
     deadline = time.time() + 5.0
     while time.time() < deadline:
         if paths.socket_connectable():

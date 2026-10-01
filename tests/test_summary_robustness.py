@@ -366,17 +366,18 @@ def test_launch_spec_runs_the_daemon_in_the_sonara_dir():
 def test_lazy_start_spawns_in_the_sonara_dir(monkeypatch):
     from sonara import paths
     from sonara.platform.windows import supervisor as sup_mod
-    monkeypatch.setattr(daemon_module, "socket_connectable", lambda: False)
+    from sonara import lifecycle
+    monkeypatch.setattr(lifecycle, "socket_connectable", lambda: False)
     monkeypatch.setattr(sup_mod, "daemon_pythonw", lambda: r"C:\Python311\pythonw.exe")
     spawned = []
-    monkeypatch.setattr(daemon_module.subprocess, "Popen",
+    monkeypatch.setattr(lifecycle.subprocess, "Popen",
                         lambda argv, **k: spawned.append(k))
 
     class _Plat:
         supervisor = sup_mod.WinSupervisorBackend()
 
     monkeypatch.setattr("sonara.platform.get_platform", lambda: _Plat())
-    daemon_module.ensure_running()
+    lifecycle.ensure_running()
     try:
         assert spawned[0]["cwd"] == str(paths.SONARA_DIR)
     finally:

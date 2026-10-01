@@ -27,26 +27,26 @@ def test_shutdown_replies_ok_then_arms_deferred_stop(monkeypatch):
 def test_stop_sentinel_blocks_lazy_start(monkeypatch, tmp_path):
     # ensure_running fires on EVERY hook event; without the sentinel gate a
     # shutdown was resurrected within seconds (#23).
-    import sonara.daemon as daemon_module
+    from sonara import lifecycle
     from sonara import paths
     sentinel = tmp_path / "stopped"
     sentinel.write_text("")
     monkeypatch.setattr(paths, "STOPPED_SENTINEL_PATH", sentinel)
-    monkeypatch.setattr(daemon_module, "socket_connectable", lambda: False)
+    monkeypatch.setattr(lifecycle, "socket_connectable", lambda: False)
     spawned = []
-    monkeypatch.setattr(daemon_module.subprocess, "Popen",
+    monkeypatch.setattr(lifecycle.subprocess, "Popen",
                         lambda *a, **k: spawned.append(a))
-    daemon_module.ensure_running()
+    lifecycle.ensure_running()
     assert spawned == []                            # sentinel: no lazy spawn
 
 
 def test_lazy_start_spawns_without_sentinel(monkeypatch, tmp_path):
-    import sonara.daemon as daemon_module
+    from sonara import lifecycle
     from sonara import paths
     monkeypatch.setattr(paths, "STOPPED_SENTINEL_PATH", tmp_path / "stopped")
-    monkeypatch.setattr(daemon_module, "socket_connectable", lambda: False)
+    monkeypatch.setattr(lifecycle, "socket_connectable", lambda: False)
     spawned = []
-    monkeypatch.setattr(daemon_module.subprocess, "Popen",
+    monkeypatch.setattr(lifecycle.subprocess, "Popen",
                         lambda *a, **k: spawned.append(a) or None)
 
     class FakeSup:
@@ -56,7 +56,7 @@ def test_lazy_start_spawns_without_sentinel(monkeypatch, tmp_path):
     class FakePlat:
         supervisor = FakeSup()
     monkeypatch.setattr("sonara.platform.get_platform", lambda: FakePlat())
-    daemon_module.ensure_running()
+    lifecycle.ensure_running()
     assert spawned                                   # no sentinel: spawns as before
 
 

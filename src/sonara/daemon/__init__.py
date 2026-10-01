@@ -4,7 +4,6 @@ import os
 import queue
 import secrets
 import socket
-import subprocess
 import sys
 import threading
 
@@ -20,6 +19,9 @@ from sonara.paths import (
     SESSION_DIGESTS_PATH, package_root,
 )
 from sonara.platform import transport
+# Re-exported: ensure_running moved to sonara.lifecycle (#141) so clients
+# start the daemon without importing it.
+from sonara.lifecycle import ensure_running  # noqa: F401
 
 # Holds the single-instance flock for this process's lifetime (see main()).
 _SINGLETON = None
@@ -2571,27 +2573,6 @@ class SpeechDaemon:
             try:
                 os.unlink(LOCK_PATH)
             except FileNotFoundError:
-                pass
-
-
-def ensure_running() -> None:
-    from sonara import paths as _paths
-    if os.path.exists(str(_paths.STOPPED_SENTINEL_PATH)):
-        return   # explicitly shut down: hook events must not resurrect it (#23)
-    if socket_connectable():
-        return
-    from sonara.platform import get_platform
-    argv, kwargs = get_platform().supervisor.launch_spec()
-    try:
-        subprocess.Popen(argv, **kwargs)
-    finally:
-        # The child has its own copy of the log handle; the parent's is closed
-        # here instead of leaking until this process exits (L-log).
-        err = kwargs.get("stderr")
-        if hasattr(err, "close"):
-            try:
-                err.close()
-            except OSError:
                 pass
 
 

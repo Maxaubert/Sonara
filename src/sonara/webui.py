@@ -47,7 +47,7 @@ def _spawn_respawner() -> None:
     import subprocess
     import sys
     code = ("import time; time.sleep(2.0); "
-            "from sonara.daemon import ensure_running; ensure_running()")
+            "from sonara.lifecycle import ensure_running; ensure_running()")
     kwargs = {}
     if os.name == "nt":
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent
