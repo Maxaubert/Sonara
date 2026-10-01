@@ -172,12 +172,12 @@ def test_supervisor_loop_closes_its_log_handle_after_each_spawn(tmp_path, monkey
 
 def test_lazy_start_closes_its_log_handle(tmp_path, monkeypatch):
     import types
-    from sonara import daemon
+    from sonara import lifecycle
     fh = open(str(tmp_path / "speechd.log"), "a")
     plat = types.SimpleNamespace(supervisor=types.SimpleNamespace(
         launch_spec=lambda: (["pythonw.exe"], {"stderr": fh})))
     monkeypatch.setattr("sonara.platform.get_platform", lambda: plat)
-    monkeypatch.setattr(daemon, "socket_connectable", lambda: False)
-    monkeypatch.setattr(daemon.subprocess, "Popen", lambda argv, **kw: None)
-    daemon.ensure_running()
+    monkeypatch.setattr(lifecycle, "socket_connectable", lambda: False)
+    monkeypatch.setattr(lifecycle.subprocess, "Popen", lambda argv, **kw: None)
+    lifecycle.ensure_running()
     assert fh.closed

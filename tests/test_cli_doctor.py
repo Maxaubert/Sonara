@@ -19,7 +19,7 @@ def _patches(rows=None, hooks_row=None, send=None, install_record=None):
         mock.patch("sonara.client.send",
                    return_value=(send if send is not None else {"ok": True})),
         mock.patch.object(
-            cli, "_read_install_record",
+            cli.install_record, "read",
             return_value=install_record or {"app_path": "/home/u/.sonara/app"}),
         mock.patch("os.path.exists", return_value=True),
     ]
@@ -103,7 +103,7 @@ def test_doctor_includes_hotkey_rows(monkeypatch):
     monkeypatch.setattr("os.access", lambda *a, **k: True)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
     monkeypatch.setattr("sonara.client.send", lambda *a, **k: {"ok": True})
-    monkeypatch.setattr(cli, "_read_install_record", lambda: {"app_path": "/a"})
+    monkeypatch.setattr(cli.install_record, "read", lambda: {"app_path": "/a"})
     monkeypatch.setattr("os.path.exists", lambda p: True)
     names = {r[0] for r in cli.doctor()}
     assert "hotkey chords" in names
@@ -196,7 +196,7 @@ def test_doctor_reports_chatterbox_leftovers_with_sizes_and_the_fix(monkeypatch)
 # ---------------------------------------------------------------------------
 
 def _daemon_on(monkeypatch, python=r"C:\Py\python.exe"):
-    monkeypatch.setattr(cli, "_read_install_record",
+    monkeypatch.setattr(cli.install_record, "read",
                         lambda: {"python": python, "app_path": "/app"})
 
 

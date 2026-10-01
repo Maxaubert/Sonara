@@ -8,7 +8,7 @@ from sonara import paths
 from sonara.protocol import encode, decode
 from sonara.paths import LOCK_PATH, socket_connectable
 from sonara.platform import transport
-from sonara.daemon import ensure_running
+from sonara.lifecycle import ensure_running
 
 
 class DaemonNotRunning(OSError):
@@ -43,32 +43,6 @@ def send(msg: dict, expect_reply: bool = False, timeout: float = 2.0):
         return decode(line)
     except (socket.timeout, TimeoutError) as exc:
         raise DaemonUnresponsive("Sonara daemon is not responding") from exc
-    finally:
-        try:
-            s.close()
-        except OSError:
-            pass
-
-
-def send_many(msgs, timeout: float = 2.0) -> None:
-    """Send every message of ONE hook event over ONE connection, in order.
-
-    The daemon serves each connection on its own thread, so one connection
-    per message let SET_FOREGROUND/FLUSH (or EARCON/CHOICE) of a single event
-    be applied in either order (architecture review 0.5). On one connection
-    the daemon applies them sequentially, as sent. No reply is read.
-    Raises DaemonNotRunning when the daemon cannot be reached (nothing sent)."""
-    payload = b"".join(encode(m) for m in msgs)
-    if not payload:
-        return
-    try:
-        s = transport.connect(LOCK_PATH, timeout=timeout)
-    except OSError as exc:
-        raise DaemonNotRunning(
-            "Sonara daemon is not running. Run: sonara start"
-        ) from exc
-    try:
-        s.sendall(payload)
     finally:
         try:
             s.close()

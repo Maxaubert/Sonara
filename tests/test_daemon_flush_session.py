@@ -121,12 +121,12 @@ def test_flush_lands_parked_reorder_digests_dead():
     # land the parked slot dead or it speaks when the earlier slot releases.
     daemon, queue, speaker, sessions, _ = make_daemon(foreground="fg")
     ran = []
-    daemon._digest_seq_next = 2
-    daemon._digest_seq_serve = 0
-    daemon._digest_parked[1] = lambda: ran.append(1)   # completed, waiting on seq 0
+    daemon._digests.next_seq = 2
+    daemon._digests.serve_seq = 0
+    daemon._digests.parked[1] = lambda: ran.append(1)   # completed, waiting on seq 0
     _flush(daemon)
     assert speaker.earcons[-1] == "nav"      # killing it counts as success
-    daemon._land_digest(0, None)             # the earlier slot finally releases
+    daemon._digests.land(0, None)             # the earlier slot finally releases
     assert ran == []                         # the parked digest never speaks
 
 

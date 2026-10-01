@@ -28,7 +28,7 @@ def test_install_dispatches_through_platform(tmp_path, monkeypatch, capsys):
     pb = fake_platform(supervisor=sup, hotkey=hk, tts=FakeTts("Aria"))
     monkeypatch.setattr(cli, "_platform", lambda: pb)
     monkeypatch.setattr(cli, "_copy_app", lambda root: str(tmp_path / "app"))
-    monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
+    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
     monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)
@@ -85,7 +85,7 @@ def test_install_subcommand_invokes_install():
 def test_write_install_record_writes_expected_keys(tmp_path):
     rec = tmp_path / "install.json"
     with mock.patch.object(cli.paths, "INSTALL_RECORD_PATH", rec):
-        cli._write_install_record(
+        cli.install_record.write(
             python="/usr/bin/python3",
             python_version="3.9",
             plugin_root="/plug",
@@ -231,7 +231,7 @@ def test_install_uses_venv_interpreter_when_neural_enabled(tmp_path, monkeypatch
                        tts=FakeTts("Samantha"))
     monkeypatch.setattr(cli, "_platform", lambda: pb)
     monkeypatch.setattr(cli, "_copy_app", lambda root: str(tmp_path / "app"))
-    monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
+    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
     monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
     monkeypatch.setattr("sonara.paths.ensure_sonara_dir", lambda: None)

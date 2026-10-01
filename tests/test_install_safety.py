@@ -45,7 +45,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "stop_sonara", fake_stop)
     monkeypatch.setattr(cli, "_copy_app",
                         lambda root: calls.append(("copy", root)) or str(tmp_path / "app"))
-    monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
+    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
     monkeypatch.setattr("sonara.keymap.migrate_default_chord", lambda: None)
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)
     return {"calls": calls, "sup": sup, "tmp": tmp_path}

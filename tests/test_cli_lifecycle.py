@@ -65,8 +65,8 @@ def test_start_sonara_clears_sentinel_and_spawns(monkeypatch, tmp_path):
     sentinel, _ = _wire(monkeypatch, tmp_path, connectable=True)
     sentinel.write_text("")
     spawned = []
-    import sonara.daemon as daemon_module
-    monkeypatch.setattr(daemon_module, "ensure_running",
+    from sonara import lifecycle
+    monkeypatch.setattr(lifecycle, "ensure_running",
                         lambda: spawned.append(True))
     rc = cli.start_sonara()
     assert rc == 0
@@ -144,7 +144,7 @@ def test_install_stops_before_copying_and_clears_sentinel(monkeypatch, tmp_path)
                         lambda s=None: order.append("stop") or True)
     monkeypatch.setattr(cli, "_copy_app",
                         lambda root: order.append("copy") or str(tmp_path / "app"))
-    monkeypatch.setattr(cli, "_write_install_record", lambda **k: None)
+    monkeypatch.setattr(cli.install_record, "write", lambda **k: None)
     monkeypatch.setattr(cli, "_read_plugin_version", lambda root: "0.5.0")
     monkeypatch.setattr("sonara.keymap.migrate_default_chord", lambda: None)
     monkeypatch.setattr("sonara.keymap.write_default_keymap_if_absent", lambda: None)

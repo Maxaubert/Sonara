@@ -13,31 +13,34 @@ from tests.test_webui import FakeDaemon, server, _post, _get  # noqa: F401 (fixt
 # --- durable token (daemon side) -------------------------------------------
 
 def test_persistent_token_minted_then_reused(tmp_path, monkeypatch):
-    from sonara import daemon, paths
+    from sonara import paths
+    from sonara.daemon import tokens
     monkeypatch.setattr(paths, "WEBUI_TOKEN_PATH", tmp_path / "webui.token")
-    t1 = daemon._persistent_token()
+    t1 = tokens.persistent_token()
     assert re.fullmatch(r"[0-9a-f]{64}", t1)
     assert (tmp_path / "webui.token").read_text().strip() == t1
-    t2 = daemon._persistent_token()                     # clean restart
+    t2 = tokens.persistent_token()                     # clean restart
     assert t2 == t1                                     # page/bookmarks keep working
 
 
 def test_persistent_token_replaces_malformed_file(tmp_path, monkeypatch):
-    from sonara import daemon, paths
+    from sonara import paths
+    from sonara.daemon import tokens
     p = tmp_path / "webui.token"
     p.write_text("not-a-token")
     monkeypatch.setattr(paths, "WEBUI_TOKEN_PATH", p)
-    t = daemon._persistent_token()
+    t = tokens.persistent_token()
     assert re.fullmatch(r"[0-9a-f]{64}", t)
     assert p.read_text().strip() == t
 
 
 def test_persistent_token_survives_unwritable_dir(tmp_path, monkeypatch):
-    from sonara import daemon, paths
+    from sonara import paths
+    from sonara.daemon import tokens
     monkeypatch.setattr(paths, "WEBUI_TOKEN_PATH",
                         tmp_path / "no-such-dir" / "webui.token")
     monkeypatch.setattr(paths, "ensure_sonara_dir", lambda: None)
-    t = daemon._persistent_token()                      # write fails, token still valid
+    t = tokens.persistent_token()                      # write fails, token still valid
     assert re.fullmatch(r"[0-9a-f]{64}", t)
 
 
@@ -67,6 +70,7 @@ def test_spawn_respawner_launches_detached_lazy_start(monkeypatch):
     webui._spawn_respawner()
     argv, kw = calls[0]
     assert "ensure_running" in argv[-1]                  # standard lazy-start path
+    assert "sonara.lifecycle" in argv[-1]                # not the whole daemon (#141)
     assert "time.sleep" in argv[-1]                      # waits out the dying daemon
     import os
     if os.name == "nt":

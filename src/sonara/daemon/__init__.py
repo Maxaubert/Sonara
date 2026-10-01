@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import os
 import queue
-import secrets
 import socket
-import subprocess
 import sys
 import threading
 
@@ -12,54 +10,22 @@ from sonara.protocol import MsgType, encode, decode
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema
+from sonara.daemon import decision_text, setup_health, tokens
+from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
-    INSTALL_RECORD_PATH, SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
+    SESSIONS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH,
     SESSION_DIGESTS_PATH, package_root,
 )
 from sonara.platform import transport
+# Re-exported: ensure_running moved to sonara.lifecycle (#141) so clients
+# start the daemon without importing it.
+from sonara.lifecycle import ensure_running  # noqa: F401
 
 # Holds the single-instance flock for this process's lifetime (see main()).
 _SINGLETON = None
 _MUTEX = None       # process-lifetime handle to the named single-instance mutex
-
-
-def _wellformed_token(tok) -> bool:
-    return (isinstance(tok, str) and len(tok) == 64
-            and all(c in "0123456789abcdef" for c in tok))
-
-
-def _select_token(prior_lock: dict) -> str:
-    """Reuse a well-formed prior lockfile token (settings-page restart
-    reconnect + durable bookmarks, #34); otherwise mint a fresh one."""
-    tok = (prior_lock or {}).get("token")
-    if _wellformed_token(tok):
-        return tok
-    return secrets.token_hex(32)
-
-
-def _persistent_token() -> str:
-    """The daemon token, durable across CLEAN restarts (#34 follow-up): the
-    lockfile is unlinked on exit, so lockfile-based reuse only covered crashes
-    -- live-verified when the page's Restart button reconnected to a 403 wall.
-    Priority: token file, then a stale lockfile (crash case), else mint. The
-    chosen token is (re)written to the file so the NEXT start reuses it."""
-    from sonara import paths as _paths
-    tok = None
-    try:
-        tok = _paths.WEBUI_TOKEN_PATH.read_text(encoding="utf-8").strip()
-    except OSError:
-        pass
-    if not _wellformed_token(tok):
-        tok = _select_token(transport.read_lockfile(LOCK_PATH) or {})
-    try:
-        _paths.ensure_sonara_dir()
-        _paths.WEBUI_TOKEN_PATH.write_text(tok, encoding="utf-8")
-        os.chmod(_paths.WEBUI_TOKEN_PATH, 0o600)
-    except OSError:
-        pass                     # unwritable dir: token still valid this run
-    return tok
 
 
 # Setting bounds live in the config schema (#136); re-exported for callers.
@@ -204,15 +170,11 @@ class SpeechDaemon:
         self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
-        self._digest_seq_next = 0                 # next sequence number to hand out
-        self._digest_seq_serve = 0                # next sequence number to release
-        self._digest_parked: dict = {}            # seq -> apply closure (None = dropped)
-        self._digest_watchdogs: dict = {}         # seq -> Timer landing a hung slot (#138)
-        self._digest_release_counter = 0          # channel stamp source (#88)
+        self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
         self._current_item = None                 # item being spoken right now
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
-        self._guided_sessions: set = set()
+        self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
         self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
         # Hotkey fires are handed to this queue by the Windows pump thread and
@@ -294,20 +256,10 @@ class SpeechDaemon:
         return config_schema.current(self.config, "minqueue")
 
     def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
-        """Speak ONE setup-guidance cue for this session, only when degraded.
-
-        Throttle: at most once per session (recorded whether or not a cue fires).
-        Silent when healthy. The check is a few file stats + a version compare
-        (plus a windowless `schtasks /query` on Windows) and never raises.
-        """
-        if session in self._guided_sessions:
-            return
-        try:
-            state, cue = self._setup_health(plugin_version or "")
-        except Exception:  # noqa: BLE001 - guidance must never break a session
-            return
-        self._guided_sessions.add(session)
-        if state != "ok" and cue:
+        """Speak ONE setup-guidance cue for this session, only when degraded
+        (see setup_health.SetupGuide.cue_for)."""
+        cue = self._setup_guide.cue_for(session, plugin_version)
+        if cue:
             self._enqueue(session, "prose", cue, False)
 
     def _drop_channel_pending(self, session: str) -> None:
@@ -366,7 +318,7 @@ class SpeechDaemon:
         self._drop_channel_pending(session)
         self.history.reset(session)
         self._warned_immediate.discard(session)
-        self._guided_sessions.discard(session)
+        self._setup_guide.forget(session)
         # Ending the session is a user action like FLUSH: BUMP the cancel
         # epoch so an in-flight digest is dropped when it lands. Popping it
         # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
@@ -435,57 +387,6 @@ class SpeechDaemon:
             self._current_item = None
             return True
 
-    @staticmethod
-    def _choice_text(msg) -> str:
-        parts = []
-        for q in msg.get("questions", []) or []:
-            qtext = q.get("question", "") if isinstance(q, dict) else str(q)
-            multi = bool(isinstance(q, dict) and q.get("multiSelect"))
-            opts = q.get("options", []) if isinstance(q, dict) else []
-            segs = []
-            for i, o in enumerate(opts, 1):
-                if isinstance(o, dict):
-                    label = o.get("label", "")
-                    desc = (o.get("description") or "").strip()
-                else:
-                    label, desc = str(o), ""
-                if not label:
-                    continue   # keep numbering aligned with the TUI's digits
-                seg = "Option {0}: {1}.".format(i, label)
-                if desc:
-                    seg += " {0}{1}".format(
-                        desc, "" if desc.endswith((".", "!", "?")) else ".")
-                segs.append(seg)
-            head = qtext
-            if multi:
-                head = "{0}{1}".format(
-                    (qtext + " ") if qtext else "",
-                    "This is a multi-select; you can pick more than one.")
-            if head and segs:
-                parts.append("{0} {1}".format(head, " ".join(segs)))
-            elif segs:
-                parts.append(" ".join(segs))
-            elif head:
-                parts.append(head)
-        return " ".join(parts) if parts else "A question needs your answer."
-
-    @staticmethod
-    def _plan_text(msg) -> str:
-        text = (msg.get("text") or "").strip()
-        if text:
-            return "Plan ready. {0}".format(text)
-        return "A plan is ready for your review."
-
-    @staticmethod
-    def _permission_text(msg) -> str:
-        # The 'permission' earcon already signals approval is needed; speak the
-        # pending action, else the human-readable message, else a generic cue.
-        action = (msg.get("action") or "").strip()
-        if action:
-            return action
-        message = (msg.get("message") or "").strip()
-        return message if message else "Permission needed."
-
     def _selection_cue(self, session: str, verbosity: str) -> str:
         if verbosity != "everything":
             return ""
@@ -494,63 +395,6 @@ class SpeechDaemon:
             self._warned_immediate.add(session)
             cue += " Selecting is immediate."
         return cue
-
-    @staticmethod
-    def _choice_notes(msg) -> str:
-        notes = []
-        questions = msg.get("questions", []) or []
-        if any(isinstance(q, dict) and q.get("multiSelect") for q in questions):
-            notes.append(
-                "Select multiple: press each number, or Space on the "
-                "highlighted item, then Enter to confirm."
-            )
-        if any(
-            isinstance(q, dict) and len(q.get("options", []) or []) > 9
-            for q in questions
-        ):
-            notes.append("More than nine options; use arrow keys for ten and up.")
-        return " ".join(notes)
-
-    @staticmethod
-    def _read_install_record():
-        """Return the install.json dict, or None if unreadable/absent. Never raises."""
-        import json
-        try:
-            with open(str(INSTALL_RECORD_PATH), "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else None
-        except Exception:  # noqa: BLE001 - health check must never raise
-            return None
-
-    @staticmethod
-    def _launcher_present() -> bool:
-        """Delegating shim -- logic lives in the platform supervisor backend."""
-        from sonara.platform import get_platform
-        return get_platform().supervisor.is_installed()
-
-    def _setup_health(self, plugin_version: str):
-        """Return (state, cue) where state is one of:
-        "ok"            -> fully installed, no version drift   -> cue None
-        "not_installed" -> no install.json or launcher (never ran `sonara install`)
-        "version_drift" -> installed but plugin_version differs from this session's
-
-        Cheap: a few file stats, a string compare, and on Windows one windowless
-        `schtasks /query` (via the platform supervisor). Never raises.
-        Hotkey availability is deliberately NOT part of this check so a deliberate
-        speech-only user is never nagged.
-        """
-        rec = self._read_install_record()
-        installed = (rec is not None and self._launcher_present())
-        if not installed:
-            return ("not_installed",
-                    "Sonara is reading aloud. To enable hotkeys and autostart, "
-                    "run, slash sonara install.")
-        recorded = (rec.get("plugin_version") or "")
-        # Only flag drift when BOTH sides are known and differ.
-        if plugin_version and recorded and plugin_version != recorded:
-            return ("version_drift",
-                    "Sonara was updated. Run, slash sonara install, to apply.")
-        return ("ok", None)
 
     def handle_message(self, msg):
         t = msg.get("type")
@@ -614,8 +458,8 @@ class SpeechDaemon:
             # race), so gathering the lead-in now would find nothing and speak the
             # question alone. Build the question item now, then DEFER the lead-in
             # gather + hold/enqueue through the settle window (#16).
-            text = self._choice_text(msg)
-            extras = [e for e in (self._choice_notes(msg),
+            text = decision_text.choice_text(msg)
+            extras = [e for e in (decision_text.choice_notes(msg),
                                   self._selection_cue(session, verbosity)) if e]
             if extras:
                 text = "{0} {1}".format(text, " ".join(extras))
@@ -641,7 +485,7 @@ class SpeechDaemon:
             return None
 
         if t == MsgType.PLAN:
-            text = self._plan_text(msg)
+            text = decision_text.plan_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
                 text = "{0} {1}".format(text, cue)
@@ -670,7 +514,7 @@ class SpeechDaemon:
             if session in self._await_choice or (not session and self._await_choice):
                 self._await_choice.discard(session)
                 return None
-            text = self._permission_text(msg)
+            text = decision_text.permission_text(msg)
             cue = self._selection_cue(session, verbosity)
             if cue:
                 text = "{0} {1}".format(text, cue)
@@ -1345,10 +1189,7 @@ class SpeechDaemon:
         dropped = False
         for sid in sessions:
             dropped = self._user_caught_up(sid) or dropped
-        for seq, fn in list(self._digest_parked.items()):
-            if fn is not None:
-                self._digest_parked[seq] = None    # land the slot dead
-                dropped = True
+        dropped = self._digests.kill_parked() or dropped
         self._pending_preamble = None
         self.router.clear_pending_announce()
         return dropped
@@ -1439,7 +1280,7 @@ class SpeechDaemon:
                     if self._summary_gen.get(session, 0) == gen:
                         self._enqueue_background_digest(session, text)
 
-                self._land_digest(self._alloc_digest_seq(), _deliver)
+                self._digests.land(self._digests.alloc(), _deliver)
             return False                 # spoken synchronously; no need to hold
         # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
         # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
@@ -1453,7 +1294,7 @@ class SpeechDaemon:
         self._inflight_digests[session] = self._inflight_digests.get(session, 0) + 1
         # Turn-end digests get an ordering slot (#88); lead-in digests bypass
         # (latency-critical, #83) and stay seq=None.
-        seq = None if leadin else self._alloc_digest_seq()
+        seq = None if leadin else self._digests.alloc()
         try:
             self._start_summary_thread(session, gen, text, token, leadin=leadin,
                                        seq=seq)
@@ -1466,8 +1307,8 @@ class SpeechDaemon:
                 self._inflight_digests[session] = n
             else:
                 self._inflight_digests.pop(session, None)
-            self._land_digest(seq, None if leadin else
-                              self._digest_apply(session, gen, text, False, None))
+            self._digests.land(seq, None if leadin else
+                               self._digest_apply(session, gen, text, False, None))
             raise
         if seq is not None:
             # A worker that never returns would park every later digest
@@ -1639,54 +1480,6 @@ class SpeechDaemon:
                 ch.append(it)
             self._wake.set()
 
-    def _alloc_digest_seq(self) -> int:
-        """Hand out the next digest sequence number (#88). Caller holds the
-        lock. Sequence order == dispatch order == turn-finish order."""
-        seq = self._digest_seq_next
-        self._digest_seq_next += 1
-        return seq
-
-    def _land_digest(self, seq, apply) -> None:
-        """Reorder buffer release (#88): park *apply* under *seq* and flush every
-        consecutive ready slot from the serve pointer. Digests thus become
-        audible strictly in dispatch order regardless of summarizer latency;
-        a dropped/cancelled digest lands with apply=None and just frees its
-        slot. seq=None bypasses (lead-in digests, #83: latency-critical and
-        session-ordered by the question hold). Caller holds the lock. Every
-        dispatched seq MUST eventually land exactly once - the workers land in
-        their finally, and a hung worker's slot is landed by its watchdog
-        (#138) - or later digests would park forever. A slot that was already
-        served ignores a second landing (a worker returning after its
-        watchdog fired).
-
-        A release that raises is logged and the flush continues (#138, audit
-        L-settle-fire): the serve pointer had already moved past it, so the
-        slots parked behind it were stranded until some unrelated landing."""
-        if seq is None:
-            if apply is not None:
-                self._run_release(apply)
-            return
-        if seq < self._digest_seq_serve:
-            return                       # already served (exceptional re-land)
-        t = self._digest_watchdogs.pop(seq, None)
-        if t is not None:
-            t.cancel()
-        self._digest_parked[seq] = apply
-        while self._digest_seq_serve in self._digest_parked:
-            fn = self._digest_parked.pop(self._digest_seq_serve)
-            self._digest_seq_serve += 1
-            if fn is not None:
-                self._run_release(fn)
-
-    @staticmethod
-    def _run_release(fn) -> None:
-        try:
-            fn()
-        except Exception:  # noqa: BLE001 - one bad release must not strand the rest
-            import traceback
-            _summary_log("digest release failed:\n{0}".format(
-                traceback.format_exc()))
-
     def _schedule_digest_watchdog(self, seq: int, apply) -> None:
         """Arm the hung-worker watchdog for a dispatched turn-end digest slot
         (#138, audit M1). Test seam: tests call _digest_watchdog_fire directly
@@ -1694,7 +1487,7 @@ class SpeechDaemon:
         t = threading.Timer(_digest_watchdog_s(self.config),
                             self._digest_watchdog_fire, args=(seq, apply))
         t.daemon = True
-        self._digest_watchdogs[seq] = t
+        self._digests.watch(seq, t)
         t.start()
 
     def _digest_watchdog_fire(self, seq: int, apply) -> None:
@@ -1702,14 +1495,14 @@ class SpeechDaemon:
         slot with *apply*, the raw-text fallback of a failed digest, so the turn
         is still spoken (never skip the last message) and every later digest
         parked behind it is released. A no-op once the worker has landed; the
-        worker's own landing after this is ignored by _land_digest."""
+        worker's own landing after this is ignored by DigestReorderBuffer.land."""
         with self._lock:
-            self._digest_watchdogs.pop(seq, None)
-            if seq < self._digest_seq_serve or seq in self._digest_parked:
+            self._digests.unwatch(seq)
+            if self._digests.landed(seq):
                 return
             _summary_log("digest seq {0} hung past the watchdog: "
                          "speaking the raw text".format(seq))
-            self._land_digest(seq, apply)
+            self._digests.land(seq, apply)
 
     def _start_summary_thread(self, session: str, gen: int, text: str,
                               token: int = 0, leadin: bool = False,
@@ -1776,8 +1569,7 @@ class SpeechDaemon:
             # Stamp the channel with the release index (#88): the router
             # serves waiting digest channels lowest-stamp-first, so the
             # heard order matches the turn-finish order just released.
-            ch.release_order = self._digest_release_counter
-            self._digest_release_counter += 1
+            ch.release_order = self._digests.next_release_stamp()
             if not fg:
                 # Let it be voiced + announced regardless of background policy
                 # (earcon_only would otherwise mute a non-foreground session).
@@ -1836,13 +1628,13 @@ class SpeechDaemon:
             apply = self._digest_apply(session, gen, text, leadin, summary)
             landed = False
             try:
-                self._land_digest(seq, apply)
+                self._digests.land(seq, apply)
                 landed = True
             finally:
                 if not landed:
                     # Landing raised: the ordering slot must still release or
                     # every later digest parks forever (#88).
-                    self._land_digest(seq, None)
+                    self._digests.land(seq, None)
                 # This worker is done: it no longer counts as in flight (a later
                 # decision must not hold behind a digest that already landed).
                 # ONLY when this worker's gen is still current: FLUSH/SESSION_END
@@ -1874,8 +1666,7 @@ class SpeechDaemon:
         self.digest_store.set(session, text)     # survives restarts (#118)
         ch = self.router.channel(session)
         ch.turn_done = True
-        ch.release_order = self._digest_release_counter   # heard in release order (#88)
-        self._digest_release_counter += 1
+        ch.release_order = self._digests.next_release_stamp()   # heard in release order (#88)
         self.router.authorize_replay(session)
         self._wake.set()
 
@@ -2606,7 +2397,7 @@ class SpeechDaemon:
         # Restart button and bookmarked page URLs keep working because the
         # respawned daemon accepts the same token. Same-user security boundary
         # is unchanged -- the token still lives 0600 in the user's own home.
-        self._token = _persistent_token()
+        self._token = tokens.persistent_token()
         from sonara.webui import SettingsServer
         self._webui = SettingsServer(self, self._token,
                                      int(config_schema.get(self.config, "settings_port")))
@@ -2651,133 +2442,16 @@ class SpeechDaemon:
                 pass
 
 
-def ensure_running() -> None:
-    from sonara import paths as _paths
-    if os.path.exists(str(_paths.STOPPED_SENTINEL_PATH)):
-        return   # explicitly shut down: hook events must not resurrect it (#23)
-    if socket_connectable():
-        return
-    from sonara.platform import get_platform
-    argv, kwargs = get_platform().supervisor.launch_spec()
-    try:
-        subprocess.Popen(argv, **kwargs)
-    finally:
-        # The child has its own copy of the log handle; the parent's is closed
-        # here instead of leaking until this process exits (L-log).
-        err = kwargs.get("stderr")
-        if hasattr(err, "close"):
-            try:
-                err.close()
-            except OSError:
-                pass
-
-
-_FAULT_FILE = None
-
-
-def _arm_faulthandler() -> None:
-    """Dump every thread's Python stack to SONARA_DIR/faulthandler.log on a NATIVE
-    crash (access violation / segfault in WinRT, ctypes, or winsound) -- the only
-    way to see otherwise-silent C-level daemon deaths. Never raises."""
-    global _FAULT_FILE
-    try:
-        import faulthandler
-        # Import SONARA_DIR LIVE (not at module top) so the conftest monkeypatch /
-        # any SONARA_DIR redirection takes effect; a top-level import would freeze
-        # the value before tests patch it and leak into the real ~/.sonara.
-        from sonara.paths import SONARA_DIR
-        path = str(SONARA_DIR / "faulthandler.log")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Preserve a REAL crash dump before truncating (#65): every spawn
-        # attempt (including instantly-exiting singleton losers) re-arms and
-        # rewrote the file, so the silent-respawn flow destroyed the evidence
-        # of the very crash it was healing seconds earlier. A file with more
-        # than the one-line armed header is a dump: rotate it aside. A
-        # header-only file is safe to truncate, so raced losers cannot rotate
-        # the preserved dump away either.
-        try:
-            with open(path, encoding="utf-8") as fh:
-                prior = fh.read(65536)
-            if prior.count("\n") > 1:
-                os.replace(path, str(SONARA_DIR / "faulthandler.prev.log"))
-        except OSError:
-            pass
-        # mode 'w': only the latest run's crash matters; never grow unbounded.
-        _FAULT_FILE = open(path, "w", encoding="utf-8")
-        _FAULT_FILE.write("=== faulthandler armed: pid {0} ===\n".format(os.getpid()))
-        _FAULT_FILE.flush()
-        faulthandler.enable(file=_FAULT_FILE, all_threads=True)
-    except Exception:  # noqa: BLE001 - diagnostics must never break startup
-        pass
-
-
-def _preload_vc_runtime() -> None:
-    """win32: preload the SYSTEM VC++ runtime before any speech engine import
-    (#29). PyWinRT bundles an old MSVCP140.dll inside its package; whichever
-    engine imports first binds its copy process-wide, and onnxruntime (Kokoro)
-    crashes inside the old one ('DLL initialization routine failed') whenever a
-    WinRT voice spoke first in this daemon's lifetime. The System32
-    runtime is newer and serves BOTH engines, so loading it first makes engine
-    import order irrelevant. Missing DLLs are tolerated: engines then fall back
-    to their bundled copies exactly as before."""
-    import sys
-    if sys.platform != "win32":
-        return
-    import ctypes
-    root = os.environ.get("SystemRoot", r"C:\Windows")
-    for dll in ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
-        try:
-            ctypes.WinDLL(os.path.join(root, "System32", dll))
-        except OSError:
-            pass
-
-
-def _harden_process(k32=None) -> None:
-    """Keep the daemon responsive to global hotkeys even after long idle.
-
-    Windows 11 puts idle, window-less background processes into EcoQoS / power
-    throttling, and the Task Scheduler launches us at BelowNormal priority. A
-    throttled hotkey-pump thread drops/delays the first WM_HOTKEY presses after a
-    long idle (the "press 3-4 times before it registers" bug), and the timing skew
-    occasionally double-fires a toggle. So at startup we (1) opt the process out of
-    power throttling (ControlMask=EXECUTION_SPEED, StateMask=0 => "never throttle
-    me") and (2) raise the priority class to Normal. Best-effort; never raises.
-    *k32* is injectable for tests."""
-    import sys
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-        if k32 is None:
-            # Fresh WinDLL so the argtypes/restype we set here never mutate the
-            # shared ctypes.windll.kernel32 used elsewhere. Proper HANDLE typing is
-            # REQUIRED: GetCurrentProcess()'s pseudo-handle is -1, and without a
-            # 64-bit HANDLE restype/argtype ctypes truncates it to a 32-bit value,
-            # so both calls fail with ERROR_INVALID_HANDLE (6) and silently no-op.
-            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            k32.GetCurrentProcess.restype = wintypes.HANDLE
-            k32.SetProcessInformation.argtypes = [
-                wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
-            k32.SetProcessInformation.restype = wintypes.BOOL
-            k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-            k32.SetPriorityClass.restype = wintypes.BOOL
-
-        class _PPTS(ctypes.Structure):
-            _fields_ = [("Version", wintypes.DWORD),
-                        ("ControlMask", wintypes.DWORD),
-                        ("StateMask", wintypes.DWORD)]
-
-        _PROCESS_POWER_THROTTLING = 4            # ProcessPowerThrottling info class
-        _EXECUTION_SPEED = 0x1                   # PROCESS_POWER_THROTTLING_EXECUTION_SPEED
-        _NORMAL_PRIORITY_CLASS = 0x00000020
-        h = k32.GetCurrentProcess()
-        st = _PPTS(1, _EXECUTION_SPEED, 0)       # Version=1, control speed, state OFF
-        k32.SetProcessInformation(h, _PROCESS_POWER_THROTTLING,
-                                  ctypes.byref(st), ctypes.sizeof(st))
-        k32.SetPriorityClass(h, _NORMAL_PRIORITY_CLASS)
-    except Exception:  # noqa: BLE001 - hardening must never break startup
-        pass
+def resolve_earcons(bundled: dict, overrides) -> dict:
+    """The earcon map the speaker plays: the bundled set, resolved from the
+    running package on every start, with the user's own wavs (config
+    "earcons") on top. Never stored back into config, so new bundled kinds
+    reach every install (#136, audit M8)."""
+    out = dict(bundled)
+    if isinstance(overrides, dict):
+        out.update({k: v for k, v in overrides.items()
+                    if isinstance(v, str) and v})
+    return out
 
 
 def resolve_earcons(bundled: dict, overrides) -> dict:
@@ -2793,7 +2467,8 @@ def resolve_earcons(bundled: dict, overrides) -> dict:
 
 
 def main() -> None:
-    _arm_faulthandler()
+    from sonara.platform.windows import process as _process
+    _process.arm_faulthandler()
     # Single-instance guard. The fast path avoids work when a daemon is clearly
     # already serving. The AUTHORITATIVE guard is the exclusive flock below:
     # with an ephemeral TCP port, bind() never collides (unlike the old fixed
@@ -2826,9 +2501,10 @@ def main() -> None:
               file=sys.stderr, flush=True)
         return
 
-    _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
-                        # global hotkeys stay responsive after long idle
-    _preload_vc_runtime()   # win32: system VC runtime first, before any engine (#29)
+    _process.harden_process()   # win32: opt out of EcoQoS throttling + raise
+                                # priority so global hotkeys stay responsive
+                                # after long idle
+    _process.preload_vc_runtime()   # win32: system VC runtime first, before any engine (#29)
 
     from sonara.speaker import Speaker
     from sonara.sessions import SessionManager
@@ -2858,8 +2534,3 @@ def main() -> None:
                           digests=DigestStore(store_path=SESSION_DIGESTS_PATH))
     daemon._apply_volume(config_schema.get(cfg, "volume"))   # restore persisted speech gain
     daemon.run()
-
-
-if __name__ == "__main__":
-    main()
-

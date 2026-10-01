@@ -83,7 +83,7 @@ def _isolate_sonara_dir(tmp_path, monkeypatch):
 
     monkeypatch.setattr(keymap, "KEYMAP_PATH", sonara_dir / "keymap.json", raising=False)
 
-    # daemon.py binds LOCK_PATH + SINGLETON_PATH by value at import; main() takes
+    # sonara.daemon binds LOCK_PATH + SINGLETON_PATH by value at import; main() takes
     # an exclusive flock on SINGLETON_PATH for single-instance. Repoint per-test
     # (each test has a unique sonara_dir) and reset the process-wide held-flock
     # global so a main()-calling test never blocks a later one.
