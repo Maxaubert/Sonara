@@ -20,6 +20,7 @@ from typing import Optional
 from .protocol import MsgType, PROTOCOL_VERSION
 from . import config_schema
 from . import paths
+from . import install_record
 from . import keymap
 from sonara.platform import get_platform
 
