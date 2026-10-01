@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from pathlib import Path
 
 from sonara import paths
@@ -81,9 +82,47 @@ def _size(path: Path) -> int:
     return total
 
 
+def _bounded_size(path: Path, max_bytes, deadline, clock):
+    """(bytes counted, exact). Stops once *max_bytes* is reached or the
+    *deadline* passes, then the count is a lower bound (exact False)."""
+    if path.is_file():
+        return _size(path), True
+    total = 0
+    for root, _dirs, files in os.walk(str(path)):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+        if max_bytes is not None and total >= max_bytes:
+            return total, False
+        if deadline is not None and clock() >= deadline:
+            return total, False
+    return total, True
+
+
+# Doctor runs often and the old venv alone is ~8 GB of small files: past this
+# much (or this long) it reports "more than" instead of walking the rest.
+ESTIMATE_MAX_BYTES = 1024 ** 3
+ESTIMATE_MAX_SECONDS = 1.0
+
+
+def leftovers_estimate(max_bytes=ESTIMATE_MAX_BYTES,
+                       max_seconds=ESTIMATE_MAX_SECONDS, clock=time.monotonic):
+    """Like leftovers(), but bounded for doctor: (path, bytes, exact) where
+    exact is False when the walk stopped early and bytes is a lower bound."""
+    deadline = None if max_seconds is None else clock() + max_seconds
+    return [(p,) + _bounded_size(p, max_bytes, deadline, clock)
+            for p in _leftover_paths()]
+
+
 def leftovers() -> "list[tuple[Path, int]]":
     """(path, size in bytes) for every leftover that exists: the venv, the
     model cache and the smoke-test files. Never the voices folder."""
+    return [(p, _size(p)) for p in _leftover_paths()]
+
+
+def _leftover_paths() -> "list[Path]":
     found = []
     for p in (Path(paths.CHATTERBOX_VENV), Path(paths.CHATTERBOX_MODEL_CACHE)):
         if p.is_dir():
@@ -96,7 +135,7 @@ def leftovers() -> "list[tuple[Path, int]]":
         except OSError:
             pass
     found.extend(sorted(smoke))
-    return [(p, _size(p)) for p in found]
+    return found
 
 
 def remove_leftovers(rmtree=shutil.rmtree, unlink=os.unlink):

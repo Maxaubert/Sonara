@@ -187,3 +187,31 @@ def test_format_size_is_human_readable():
     assert cl.format_size(512) == "512 B"
     assert cl.format_size(3 * 1024 * 1024) == "3.0 MB"
     assert cl.format_size(int(8.7 * 1024 ** 3)) == "8.7 GB"
+
+
+# --- doctor's bounded size walk: never walk 8 GB on every run ---------------
+
+def test_estimate_stops_at_the_byte_cap_and_says_so():
+    from sonara import chatterbox_legacy as cl
+    _make_leftovers()
+    found = {p.name: (size, exact) for p, size, exact in
+             cl.leftovers_estimate(max_bytes=1500)}
+    assert found["chatterbox-venv"] == (1000, True)
+    size, exact = found["chatterbox"]
+    assert exact is False and size >= 1500
+
+
+def test_estimate_stops_when_the_time_budget_runs_out():
+    from sonara import chatterbox_legacy as cl
+    _make_leftovers()
+    clock = iter([0.0] + [10.0] * 100)
+    found = cl.leftovers_estimate(max_seconds=1.0, clock=lambda: next(clock))
+    dirs = [(p.name, exact) for p, _s, exact in found if p.is_dir()]
+    assert dirs and all(exact is False for _n, exact in dirs)
+
+
+def test_estimate_is_exact_for_small_leftovers():
+    from sonara import chatterbox_legacy as cl
+    _make_leftovers()
+    exact = {p.name: (s, e) for p, s, e in cl.leftovers_estimate()}
+    assert exact["chatterbox"] == (2000, True)

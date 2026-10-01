@@ -16,7 +16,8 @@ def test_windows_supervisor_doctor_rows_via_seam(monkeypatch):
     sup = platform.supervisor
     monkeypatch.setattr(sup, "_schtasks", lambda args: 0)
     monkeypatch.setattr(sup, "resolve_python", lambda: r"C:\Py\pythonw.exe")
-    monkeypatch.setattr(sup, "_list_neural_voices", lambda: ["Microsoft Aria"])
+    monkeypatch.setattr("sonara.platform.windows.tts.probe_windows_voice",
+                        lambda backend=None: (True, "Microsoft Aria (synthesis ok)"))
     monkeypatch.setattr("sonara.paths.socket_connectable", lambda: True)
     names = [r[0] for r in sup.doctor_rows()]
-    assert {"Task Scheduler task", "pythonw.exe", "neural voice", "daemon running"} <= set(names)
+    assert {"Task Scheduler task", "pythonw.exe", "Windows voice", "daemon running"} <= set(names)

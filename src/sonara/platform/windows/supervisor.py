@@ -612,29 +612,6 @@ class WinSupervisorBackend(SupervisorBackend):
         """Return (major, minor) or None. Monkeypatched in tests."""
         return _probe_python_version(candidate)
 
-    def _list_neural_voices(self) -> list:
-        """Return list of neural voice token names. Monkeypatched in tests.
-
-        Registry path: HKLM\\SOFTWARE\\Microsoft\\Speech_OneCore\\Voices\\Tokens
-        NOT the legacy Speech\\Voices\\Tokens key (Narrator/OneCore voices only).
-        winreg is Windows-only stdlib -- imported lazily inside the method.
-        """
-        import winreg
-        key_path = r"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens"
-        voices = []
-        try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path)
-            i = 0
-            while True:
-                try:
-                    voices.append(winreg.EnumKey(key, i))
-                    i += 1
-                except OSError:
-                    break
-        except OSError:
-            pass
-        return voices
-
     # --- SupervisorBackend ABC ---
 
     def is_installed(self) -> bool:
@@ -672,7 +649,7 @@ class WinSupervisorBackend(SupervisorBackend):
         """Return Windows-specific [(name, ok, detail), ...] rows.
 
         Never raises -- wrap every external call in try/except so 'sonara doctor'
-        always renders (mirrors MacSupervisorBackend).
+        always renders.
         """
         rows = []
 
@@ -692,15 +669,15 @@ class WinSupervisorBackend(SupervisorBackend):
         rows.append(("pythonw.exe", pw is not None,
                      pw or "no Python >= 3.9 found; install from python.org"))
 
-        # Neural voices (Speech_OneCore)
+        # The Windows (OneCore) voice, checked by synthesizing for real: the
+        # old registry read reported 'none' where WinRT lists voices, and a
+        # listed voice can still lack its data files (D7).
         try:
-            voices = self._list_neural_voices()
-            ok = bool(voices)
-            detail = voices[0] if ok else (
-                "none; install from Settings > Time & language > Speech")
-            rows.append(("neural voice", ok, detail))
-        except Exception as exc:
-            rows.append(("neural voice", False, "error: {0}".format(exc)))
+            from sonara.platform.windows import tts as _tts
+            ok, detail = _tts.probe_windows_voice()
+            rows.append(("Windows voice", ok, detail))
+        except Exception as exc:  # noqa: BLE001 - doctor must always render
+            rows.append(("Windows voice", False, "error: {0}".format(exc)))
 
         # PyWinRT (the OneCore TTS engine). Absent -> total no-speech, so a
         # doctor green everywhere else would be dangerously misleading. (#7)

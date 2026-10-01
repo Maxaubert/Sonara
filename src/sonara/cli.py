@@ -303,34 +303,32 @@ def doctor() -> list:
         results.append(("summary command", False, f"error: {exc}"))
 
     try:
-        from sonara import kokoro_provision as kp
-        if not kp.neural_enabled():
-            results.append(("neural voices", True, "not installed (optional)"))
-        elif kp.neural_healthy(str(paths.APP_DIR)):
-            results.append(("neural voices", True,
-                            f"ready ({paths.kokoro_venv_python()})"))
-        else:
-            results.append(("neural voices", False,
-                            "venv present but Kokoro import failed - "
-                            "re-run: sonara voices install"))
+        results.append(_neural_voices_row())
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("neural voices", False, f"error: {exc}"))
 
     # Leftovers of the removed Chatterbox engine (#134): several GB that only
     # `sonara cleanup` deletes. Informational, so never a failing row.
     try:
+        # Bounded walk: the old venv alone is ~8 GB of small files, too slow
+        # to count on every doctor run, so past a cap it says "more than".
         from sonara import chatterbox_legacy as cl
-        found = cl.leftovers()
+        found = cl.leftovers_estimate()
         if not found:
             results.append(("chatterbox leftovers", True, "none"))
         else:
-            total = sum(size for _p, size in found)
-            parts = ", ".join("{0} ({1})".format(p.name, cl.format_size(size))
-                              for p, size in found)
+            def _fmt(size, exact):
+                if exact:
+                    return cl.format_size(size)
+                return "more than " + cl.format_size(size) if size else "large"
+            total = sum(size for _p, size, _e in found)
+            parts = ", ".join("{0} ({1})".format(p.name, _fmt(size, exact))
+                              for p, size, exact in found)
             results.append(("chatterbox leftovers", True,
                             "{0} reclaimable: {1}. Remove with: sonara cleanup "
                             "(your voice clips are kept)".format(
-                                cl.format_size(total), parts)))
+                                _fmt(total, all(e for _p, _s, e in found)),
+                                parts)))
     except Exception as exc:  # noqa: BLE001 - doctor must never raise
         results.append(("chatterbox leftovers", True, f"could not check: {exc}"))
 
@@ -355,6 +353,38 @@ def doctor() -> list:
         results.append(("plugin path resolved", False, f"error: {exc}"))
 
     return results
+
+
+def _neural_voices_row() -> tuple:
+    """Kokoro as the DAEMON sees it: the neural venv when provisioned, else
+    the daemon's own interpreter (install.json), which may have Kokoro in its
+    site-packages. Plus where the model stands (downloaded, pending, or a
+    recent failed download)."""
+    from sonara import kokoro_provision as kp
+    if kp.neural_enabled():
+        if not kp.neural_healthy(str(paths.APP_DIR)):
+            return ("neural voices", False,
+                    "venv present but Kokoro import failed - "
+                    "re-run: sonara voices install")
+        where = paths.kokoro_venv_python()
+    else:
+        rec = _read_install_record() or {}
+        where = rec.get("python")
+        if not where or not kp.kokoro_importable(where):
+            return ("neural voices", True,
+                    "not installed (optional): sonara voices install")
+    from sonara import kokoro
+    model_dir = paths.SONARA_DIR / "kokoro"
+    if kokoro.models_present(model_dir):
+        return ("neural voices", True, "ready ({0})".format(where))
+    failed = kokoro.download_failed_at(model_dir)
+    if failed is not None and time.time() - failed < kokoro.DOWNLOAD_RETRY_S:
+        return ("neural voices", False,
+                "Kokoro is installed ({0}) but the model download failed at {1}; "
+                "Windows voices stand in. Retry now: sonara voices install".format(
+                    where, time.strftime("%H:%M", time.localtime(failed))))
+    return ("neural voices", True,
+            "ready ({0}); the ~316 MB model downloads on first use".format(where))
 
 
 def _cmd_doctor(_args) -> int:

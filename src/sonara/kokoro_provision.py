@@ -112,6 +112,23 @@ def predownload_model(pythonpath: str, run=subprocess.check_call) -> None:
     run([paths.kokoro_venv_python(), "-c", _PREDOWNLOAD], env=env)
 
 
+_IMPORTABLE = ("import importlib.util as u; "
+               "print(all(u.find_spec(m) is not None for m in ('numpy', 'kokoro_onnx')))")
+
+
+def kokoro_importable(python: str, run=subprocess.check_output) -> bool:
+    """True if *python* (the daemon's interpreter) can import the Kokoro
+    extra. Kokoro may live in that Python's own site-packages, not in the
+    neural venv; doctor must report what the daemon will really use."""
+    try:
+        out = run([python, "-c", _IMPORTABLE], text=True, timeout=20,
+                  stderr=subprocess.DEVNULL,
+                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:  # noqa: BLE001 - any failure means "not importable"
+        return False
+    return out.strip() == "True"
+
+
 def neural_healthy(app_dir: str, run=subprocess.check_output) -> bool:
     """True if the venv python can import the Kokoro extra (kokoro.is_installed())."""
     env = dict(os.environ, PYTHONPATH=app_dir)

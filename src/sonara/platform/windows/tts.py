@@ -522,3 +522,43 @@ class WinTtsBackend(TtsBackend):
         this same-named method can never be mistaken for recursing into
         itself."""
         _module_set_volume(percent)
+
+
+# D7 (found on a real PC): OneCore lists David, Zira and Mark, yet every
+# synthesis raises FileNotFoundError because their voice data files under
+# %WINDIR%\Speech_OneCore\Engines\TTS are gone (only the shared lexicon is
+# left). Not a Sonara bug, so doctor names the cause and the repair.
+_MISSING_VOICE_DATA_FIX = (
+    "Fix: Settings > Time & language > Speech > Manage voices, remove and add "
+    "English (United States) again, or in an elevated prompt run: "
+    "DISM /Online /Add-Capability "
+    "/CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0")
+
+
+def probe_windows_voice(backend=None):
+    """(ok, detail) for doctor: synthesize a short phrase with the best
+    Windows voice, for real. Listing voices is not enough: a voice can be
+    listed while its data is missing (D7). Never raises."""
+    try:
+        if backend is None:
+            if not _winrt_available():
+                return False, "needs PyWinRT (see the TTS runtime row)"
+            backend = WinTtsBackend()
+        names = [v.display_name for v in backend._all_voice_infos()]
+    except Exception as exc:  # noqa: BLE001 - doctor must always render
+        return False, "could not list voices: {0}".format(exc)
+    if not names:
+        return False, ("no Windows voices installed. Add one: Settings > Time & "
+                       "language > Speech > Add voices")
+    try:
+        backend._synthesize_wav("Sonara voice check.", None, 200)
+    except FileNotFoundError:
+        return False, (
+            "{0} {1} listed but cannot speak: their voice data is missing from "
+            "this PC (synthesis fails with 'file not found'). Kokoro voices are "
+            "unaffected. {2}".format(", ".join(names),
+                                     "is" if len(names) == 1 else "are",
+                                     _MISSING_VOICE_DATA_FIX))
+    except Exception as exc:  # noqa: BLE001 - doctor must always render
+        return False, "synthesis failed: {0}".format(exc)
+    return True, "{0} (synthesis ok)".format(names[0])
