@@ -49,11 +49,27 @@ def _run(argv):
 def _bash_argv(args):
     """Drive the bash shim through `bash`, with a POSIX-looking path so Git Bash
     does not mangle the backslashes."""
-    return ["bash", BASH_SHIM.replace("\\", "/")] + list(args)
+    return [_BASH, BASH_SHIM.replace("\\", "/")] + list(args)
 
 
-_needs_bash = pytest.mark.skipif(shutil.which("bash") is None,
-                                 reason="no bash on PATH")
+def _find_bash():
+    """Git Bash, not the WSL launcher: on Windows `bash` on PATH can be
+    the System32 bash.exe, which fails when no WSL distro is installed (the
+    GitHub windows runner). Prefer Git for Windows' bash, as Claude Code does."""
+    if os.name == "nt":
+        for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
+            cand = os.path.join(root, "Git", "bin", "bash.exe")
+            if os.path.isfile(cand):
+                return cand
+    found = shutil.which("bash")
+    if found and "system32" in found.lower():
+        return None
+    return found
+
+
+_BASH = _find_bash()
+_needs_bash = pytest.mark.skipif(_BASH is None, reason="no Git Bash available")
 
 
 # ---------------------------------------------------------------------------
