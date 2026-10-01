@@ -119,7 +119,7 @@ def test_package_and_settings_page_versions_match_pyproject():
 
 
 def test_pyproject_version_is_0_6_6():
-    assert _pyproject_version() == "0.6.6"
+    assert _pyproject_version() == "0.6.7"
 
 
 def test_manifests_have_no_em_dash():
