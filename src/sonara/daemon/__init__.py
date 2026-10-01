@@ -9,8 +9,8 @@ import threading
 from sonara.protocol import MsgType, encode, decode
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
-from sonara import config_schema, install_record
-from sonara.daemon import decision_text, tokens
+from sonara import config_schema
+from sonara.daemon import decision_text, setup_health, tokens
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -174,7 +174,7 @@ class SpeechDaemon:
         self._current_item = None                 # item being spoken right now
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
-        self._guided_sessions: set = set()
+        self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
         self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
         self._reload_lock = threading.Lock()      # serializes off-lock hotkey reloads
         # Hotkey fires are handed to this queue by the Windows pump thread and
@@ -256,20 +256,10 @@ class SpeechDaemon:
         return config_schema.current(self.config, "minqueue")
 
     def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
-        """Speak ONE setup-guidance cue for this session, only when degraded.
-
-        Throttle: at most once per session (recorded whether or not a cue fires).
-        Silent when healthy. The check is a few file stats + a version compare
-        (plus a windowless `schtasks /query` on Windows) and never raises.
-        """
-        if session in self._guided_sessions:
-            return
-        try:
-            state, cue = self._setup_health(plugin_version or "")
-        except Exception:  # noqa: BLE001 - guidance must never break a session
-            return
-        self._guided_sessions.add(session)
-        if state != "ok" and cue:
+        """Speak ONE setup-guidance cue for this session, only when degraded
+        (see setup_health.SetupGuide.cue_for)."""
+        cue = self._setup_guide.cue_for(session, plugin_version)
+        if cue:
             self._enqueue(session, "prose", cue, False)
 
     def _drop_channel_pending(self, session: str) -> None:
@@ -328,7 +318,7 @@ class SpeechDaemon:
         self._drop_channel_pending(session)
         self.history.reset(session)
         self._warned_immediate.discard(session)
-        self._guided_sessions.discard(session)
+        self._setup_guide.forget(session)
         # Ending the session is a user action like FLUSH: BUMP the cancel
         # epoch so an in-flight digest is dropped when it lands. Popping it
         # reset never-FLUSHed sessions to a PASSING guard (get()==0 == the
@@ -405,36 +395,6 @@ class SpeechDaemon:
             self._warned_immediate.add(session)
             cue += " Selecting is immediate."
         return cue
-
-    @staticmethod
-    def _launcher_present() -> bool:
-        """Delegating shim -- logic lives in the platform supervisor backend."""
-        from sonara.platform import get_platform
-        return get_platform().supervisor.is_installed()
-
-    def _setup_health(self, plugin_version: str):
-        """Return (state, cue) where state is one of:
-        "ok"            -> fully installed, no version drift   -> cue None
-        "not_installed" -> no install.json or launcher (never ran `sonara install`)
-        "version_drift" -> installed but plugin_version differs from this session's
-
-        Cheap: a few file stats, a string compare, and on Windows one windowless
-        `schtasks /query` (via the platform supervisor). Never raises.
-        Hotkey availability is deliberately NOT part of this check so a deliberate
-        speech-only user is never nagged.
-        """
-        rec = install_record.read()
-        installed = (rec is not None and self._launcher_present())
-        if not installed:
-            return ("not_installed",
-                    "Sonara is reading aloud. To enable hotkeys and autostart, "
-                    "run, slash sonara install.")
-        recorded = (rec.get("plugin_version") or "")
-        # Only flag drift when BOTH sides are known and differ.
-        if plugin_version and recorded and plugin_version != recorded:
-            return ("version_drift",
-                    "Sonara was updated. Run, slash sonara install, to apply.")
-        return ("ok", None)
 
     def handle_message(self, msg):
         t = msg.get("type")

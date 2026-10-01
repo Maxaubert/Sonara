@@ -227,7 +227,7 @@ def test_is_installed_calls_schtasks_query(monkeypatch):
 
 def test_schtasks_spawns_windowless(monkeypatch):
     # The daemon runs under pythonw (no console). is_installed() runs at every
-    # SESSION_START via _setup_health; a console child spawned without
+    # SESSION_START via setup_health.health; a console child spawned without
     # CREATE_NO_WINDOW allocates a brand-new VISIBLE console window each time.
     captured = {}
 
