@@ -215,6 +215,28 @@ def test_uninstall_mentions_cleanup_for_leftovers(monkeypatch, capsys):
     assert "sonara cleanup" in capsys.readouterr().out
 
 
+def test_uninstall_sizes_leftovers_with_the_bounded_walk(monkeypatch, capsys):
+    # The full walk over the ~8.7 GB Chatterbox venv stalled uninstall just
+    # to print a size; doctor already uses the bounded estimate.
+    from sonara import chatterbox_legacy as cl
+    monkeypatch.setattr(cl, "leftovers",
+                        lambda: pytest.fail("unbounded walk in uninstall"))
+    monkeypatch.setattr(cl, "leftovers_estimate",
+                        lambda: [(paths.CHATTERBOX_VENV, 2 * 1024 ** 3, False)])
+    assert _uninstall(monkeypatch) == 0
+    out = capsys.readouterr().out
+    assert "sonara cleanup" in out and "more than" in out
+
+
+def test_uninstall_removes_the_hotkey_state_file(monkeypatch):
+    # DC2: hotkeys.state.json is Sonara's runtime state, not a user setting.
+    paths.ensure_sonara_dir()
+    state = paths.SONARA_DIR / "hotkeys.state.json"
+    state.write_text("{}")
+    assert _uninstall(monkeypatch) == 0
+    assert not state.exists()
+
+
 def test_install_clears_the_uninstall_sentinel(env):
     paths.ensure_sonara_dir()
     paths.STOPPED_SENTINEL_PATH.write_text("uninstalled")

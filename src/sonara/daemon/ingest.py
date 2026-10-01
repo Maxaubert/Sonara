@@ -79,7 +79,9 @@ class Ingest:
         d = self._d
         cue = d._setup_guide.cue_for(session, plugin_version)
         if cue:
-            d._enqueue(session, "prose", cue, False)
+            # A control cue (F6): on the session channel the prompt that
+            # usually follows SESSION_START at once (FLUSH) wiped it unheard.
+            d._cues.speak(session, cue)
 
     def on_prose(self, msg):
         d = self._d

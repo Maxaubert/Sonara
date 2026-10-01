@@ -158,6 +158,9 @@ def uninstall() -> int:
         sonara_dir / "hotkeyd.resolved.json",
         sonara_dir / "hotkeyd.log",
         sonara_dir / "faulthandler.log",
+        # The hotkey backend's state for doctor (DC2): runtime state, not a
+        # user setting.
+        sonara_dir / "hotkeys.state.json",
     ]
     for artifact in artifacts:
         if os.path.exists(str(artifact)):
@@ -211,10 +214,15 @@ def _print_uninstall_leftovers() -> None:
             print("Neural voices are kept in {0}; delete those folders to free "
                   "the space.".format(" and ".join(neural)))
         from sonara import chatterbox_legacy as cl
-        found = cl.leftovers()
+        # Bounded like doctor: the full walk over the ~8 GB venv stalled
+        # uninstall just to print a size.
+        found = cl.leftovers_estimate()
         if found:
+            total = cl.format_size(sum(s for _p, s, _e in found))
+            if not all(exact for _p, _s, exact in found):
+                total = "more than " + total
             print("Old Chatterbox files remain ({0}); 'sonara cleanup' removes "
-                  "them.".format(cl.format_size(sum(s for _p, s in found))))
+                  "them.".format(total))
         print("Anything else left in {0} (logs, caches, voice clips) can be "
               "deleted by hand once Sonara is off.".format(paths.SONARA_DIR))
     except Exception:  # noqa: BLE001 - an advisory note must never fail uninstall
