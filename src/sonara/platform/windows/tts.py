@@ -137,6 +137,15 @@ def get_volume() -> int:
     return _VOLUME[0]
 
 
+def _numpy():
+    """numpy when importable (it ships with Kokoro), else None."""
+    try:
+        import numpy
+        return numpy
+    except Exception:  # noqa: BLE001 - optional speed-up only
+        return None
+
+
 def _scale_wav(data: bytes, percent: int):
     """Gain a 16-bit PCM WAV by percent/100, hard-clamped to int16. Non-16-bit
     or malformed data returns unchanged: playback must never break for want of
@@ -152,21 +161,29 @@ def _scale_wav(data: bytes, percent: int):
                 return data
             params = r.getparams()
             frames = r.readframes(r.getnframes())
-        samples = array.array("h")
-        samples.frombytes(frames)
         gain = percent / 100.0
-        out = array.array("h", bytes(len(frames)))
-        for i, s in enumerate(samples):
-            v = int(s * gain)
-            if v > 32767:
-                v = 32767
-            elif v < -32768:
-                v = -32768
-            out[i] = v
+        np = _numpy()
+        if np is not None:
+            # E21a: a 30 s Kokoro clip is ~720k samples; the per-sample loop
+            # below cost up to a second of dead air before playback.
+            x = np.frombuffer(frames, dtype="<i2").astype(np.float64) * gain
+            scaled = np.clip(np.trunc(x), -32768, 32767).astype("<i2").tobytes()
+        else:
+            samples = array.array("h")
+            samples.frombytes(frames)
+            out = array.array("h", bytes(len(frames)))
+            for i, s in enumerate(samples):
+                v = int(s * gain)
+                if v > 32767:
+                    v = 32767
+                elif v < -32768:
+                    v = -32768
+                out[i] = v
+            scaled = out.tobytes()
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
             w.setparams(params)
-            w.writeframes(out.tobytes())
+            w.writeframes(scaled)
         return buf.getvalue()
     except Exception:  # noqa: BLE001 - never break playback for a volume tweak
         return data
@@ -275,7 +292,10 @@ def _play_wav_bytes(data: bytes):
         os.close(fd)
     duration = _wav_duration(data)
     try:
-        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+        # SND_NODEFAULT (E21b): a missing or locked temp WAV must fail, not
+        # play the Windows default 'ding' in place of speech.
+        winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC
+                           | winsound.SND_NODEFAULT)
     except Exception:
         try:
             os.unlink(path)

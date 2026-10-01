@@ -232,3 +232,11 @@ def test_doctor_row_ok_without_conflicts(monkeypatch):
     monkeypatch.setattr(hk, "altgr_conflicts", lambda resolved, to_char=None: [])
     rows = {r[0]: r for r in hk.doctor_rows()}
     assert rows["AltGr"][1] is True
+
+
+def test_display_combo_labels_every_letter_and_digit():
+    """E21c: `sonara keymap` printed Ctrl+Alt+key65 for most letters."""
+    hk = WinHotkeyBackend()
+    assert hk.display_combo(0x0002 | 0x0001, 0x41) == "Ctrl+Alt+A"
+    assert hk.display_combo(0x0002 | 0x0001, 0x5A) == "Ctrl+Alt+Z"
+    assert hk.display_combo(0x0001, 0x37) == "Alt+7"

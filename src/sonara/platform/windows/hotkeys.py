@@ -266,7 +266,10 @@ class WinHotkeyBackend(HotkeyBackend):
 
     def display_combo(self, modifiers: int, key_code: int) -> str:
         parts = [name for mask, name in _MOD_LABELS if modifiers & mask]
-        parts.append(_VK_LABELS.get(key_code, "key{0}".format(key_code)))
+        label = _VK_LABELS.get(key_code)
+        if label is None and (0x41 <= key_code <= 0x5A or 0x30 <= key_code <= 0x39):
+            label = chr(key_code)   # A-Z and 0-9 are their ASCII codes (E21c)
+        parts.append(label or "key{0}".format(key_code))
         return "+".join(parts)
 
     def uninstall(self) -> None:

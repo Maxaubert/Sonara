@@ -197,3 +197,15 @@ def test_pyproject_declares_windows_winrt_extra():
     extras = data["project"]["optional-dependencies"]
     assert "windows" in extras, extras
     assert any("winrt" in d.lower() for d in extras["windows"]), extras["windows"]
+
+
+def test_playback_never_falls_back_to_the_default_ding(monkeypatch):
+    """E21b: without SND_NODEFAULT a missing or locked temp WAV played the
+    Windows default sound instead of failing."""
+    import winsound
+    calls = []
+    monkeypatch.setattr(winsound, "PlaySound",
+                        lambda sound, flags: calls.append((sound, flags)))
+    WinTtsBackend().run("hello", None, 200).terminate()
+    started = [f for s, f in calls if s is not None]
+    assert started and started[0] & winsound.SND_NODEFAULT
