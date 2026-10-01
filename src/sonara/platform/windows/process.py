@@ -1,11 +1,18 @@
 """Process-level startup hardening for the daemon on Windows: the native-crash
 stack dump, the system VC++ runtime preload and the opt-out from power
 throttling. main() runs all three before it builds any speech engine. Each is
-best-effort and never raises."""
+best-effort and never raises. The daemon reaches this module through
+sonara.platform.daemon_process(), which also hands it the single-instance
+guard re-exported below."""
 from __future__ import annotations
 
 import os
 import sys
+
+# The single-instance guard, part of the daemon_process() seam.
+from sonara.platform.windows.singleton import (  # noqa: F401
+    acquire_singleton, acquire_singleton_mutex,
+)
 
 _FAULT_FILE = None
 

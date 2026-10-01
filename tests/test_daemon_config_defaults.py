@@ -63,8 +63,8 @@ def test_main_resolves_earcons_at_runtime_without_touching_config():
     with mock.patch("sonara.daemon.startup.load_config", return_value=fake_cfg), \
          mock.patch("sonara.platform.get_platform", return_value=plat), \
          mock.patch("sonara.daemon.startup.socket_connectable", return_value=False), \
-         mock.patch("sonara.daemon.startup.transport.acquire_singleton_mutex", return_value=object()), \
-         mock.patch("sonara.daemon.startup.transport.acquire_singleton", return_value=object()), \
+         mock.patch("sonara.platform.windows.process.acquire_singleton_mutex", return_value=object()), \
+         mock.patch("sonara.platform.windows.process.acquire_singleton", return_value=object()), \
          mock.patch("sonara.daemon.SpeechDaemon.run", autospec=True) as run:
         daemon_mod.main()
     built = run.call_args[0][0]

@@ -48,14 +48,12 @@ def _spawn_respawner() -> None:
     import sys
     code = ("import time; time.sleep(2.0); "
             "from sonara.lifecycle import ensure_running; ensure_running()")
-    kwargs = {}
-    if os.name == "nt":
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent
-        kwargs["creationflags"] = 0x00000008 | 0x00000200
     try:
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: survives the parent.
         subprocess.Popen([sys.executable, "-c", code],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, close_fds=True, **kwargs)
+                         stderr=subprocess.DEVNULL, close_fds=True,
+                         creationflags=0x00000008 | 0x00000200)
     except Exception:  # noqa: BLE001 - a failed respawner must not break the reply
         pass
 

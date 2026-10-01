@@ -60,30 +60,6 @@ def test_connectable_false_when_lockfile_absent(tmp_path):
     assert transport.connectable(tmp_path / "absent.lock") is False
 
 
-def test_acquire_singleton_is_exclusive(tmp_path):
-    # Restores the single-instance guarantee AF_UNIX's fixed-path bind gave us:
-    # only one holder at a time; releasing lets the next acquire succeed.
-    lock = tmp_path / "daemon.singleton"
-    f1 = transport.acquire_singleton(lock)
-    assert f1 is not None, "first acquire should win"
-    assert transport.acquire_singleton(lock) is None, "second acquire must fail while held"
-    f1.close()  # releases the flock
-    f2 = transport.acquire_singleton(lock)
-    assert f2 is not None, "after release, acquire should win again"
-    f2.close()
-
-
-def test_acquire_singleton_windows_branch(tmp_path):
-    # acquire_singleton is now unconditionally the Windows msvcrt path (the POSIX
-    # fcntl branch was removed with macOS support), so no platform forcing needed.
-    import sonara.platform.transport as tr
-    lock = tmp_path / "daemon.singleton"
-    f1 = tr.acquire_singleton(lock)
-    assert f1 is not None
-    assert tr.acquire_singleton(lock) is None   # msvcrt fake: 2nd lock on same fd-id fails
-    f1.close()
-
-
 def test_write_lockfile_optional_http_port(tmp_path):
     from sonara.platform import transport
     p = tmp_path / "lock"

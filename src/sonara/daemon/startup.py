@@ -13,7 +13,6 @@ from sonara.paths import (
     SESSION_DIGESTS_PATH, SESSION_PREFS_PATH, SESSION_SEEN_PATH, SESSIONS_PATH,
     SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
 )
-from sonara.platform import transport
 
 # Holds the single-instance flock for this process's lifetime (see main()).
 _SINGLETON = None
@@ -33,7 +32,8 @@ def resolve_earcons(bundled: dict, overrides) -> dict:
 
 
 def main() -> None:
-    from sonara.platform.windows import process as _process
+    from sonara.platform import daemon_process
+    _process = daemon_process()
     _process.arm_faulthandler()
     # Single-instance guard. The fast path avoids work when a daemon is clearly
     # already serving. The AUTHORITATIVE guard is the exclusive flock below:
@@ -50,7 +50,7 @@ def main() -> None:
     # daemons racing to create it stop excluding -> a daemon explosion (observed
     # live). The mutex is keyed by name, immune to that, and frees on death.
     try:
-        _MUTEX = transport.acquire_singleton_mutex()
+        _MUTEX = _process.acquire_singleton_mutex()
     except OSError as exc:
         # M11: a mutex that cannot be created is not "another daemon owns
         # it". Log it and let the lock-file byte-lock below decide.
@@ -61,7 +61,7 @@ def main() -> None:
         print("[singleton] another Sonara daemon is already running for this "
               "user; exiting", file=sys.stderr, flush=True)
         return
-    _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
+    _SINGLETON = _process.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
     if _MUTEX is False and _SINGLETON is None:
         print("[singleton] the lock file is held by another daemon; exiting",
               file=sys.stderr, flush=True)
