@@ -1,6 +1,6 @@
 # Sonara architecture
 
-How Sonara is put together, for contributors. Current as of 0.8.2 (2026-10-01). User-facing
+How Sonara is put together, for contributors. Current as of 0.8.3 (2026-10-02). User-facing
 behaviour is in the [README](../README.md); the wire contract for embedding hosts is
 [protocol.md](protocol.md).
 

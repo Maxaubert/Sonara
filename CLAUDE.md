@@ -9,11 +9,11 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 ## Build, test, release
 - Typecheck/lint: `ruff check src tests` (no typechecker)
 - Unit: `python -m pytest -q` (system Python with `.[dev,windows]`; conftest adds `src/` to `sys.path`). Live OneCore checks: `-m live_windows` (opt-in)
-- E2E (headless): `python -m pytest tests/e2e -q` (needs `playwright install chromium`)   Run when: `src/sonara/settings.html`, `src/sonara/webui.py`
+- E2E (headless): `python -m pytest tests/e2e -q` (needs `pip install -e ".[e2e]"` and `playwright install chromium`)   Run when: `src/sonara/settings.html`, `src/sonara/webui.py`
 - Build / package: none (plugin, no build step)   Artifact: n/a
 - Known failures to tolerate: none
 - Version source: `pyproject.toml` + `src/sonara/__init__.py` + `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` (keep equal, `test_manifests.py`)   Release: release.yml on push to main (CI: ci.yml, Python 3.9 + 3.12)
-- Install locally after merge: safe redeploy below   Confirm version: `sonara doctor`
+- Install locally after merge: safe redeploy below   Confirm version: `sonara doctor` (its `version` row)
 - Deploy: plugin marketplace
 - Signing: unsigned
 
@@ -27,17 +27,17 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - Hooks run through Git Bash: `bin/sonara-hook-run` picks the interpreter (`~/.sonara/python.path`, then a non-Store PATH python, then `py -3`) and runs `bin/sonara-hook` on it. `bin/sonara-hook.cmd` is not used by `hooks/hooks.json`. settings.json installs get exec-form hooks generated from `hooks/hooks.json`.
 - Logs: `~/.sonara/speechd.log`, `~/.sonara/faulthandler.log`. Config: `~/.sonara/config.json`; change keys live with POST `http://127.0.0.1:27431/api/set` and the token in `~/.sonara/webui.token`.
 
-## Architecture map
-Full write-up (threads, lock contract, how to add a setting/message/hotkey): `docs/architecture.md`.
-- `hooks/hooks.json` -> `bin/sonara-hook-run` -> `bin/sonara-hook` -> `hooks_entry.py` (pure event translation) -> `client.py` -> TCP (token in `~/.sonara/daemon.lock`) -> `daemon/`. Hooks never import the daemon: `client.py` starts it via `lifecycle.py`.
-- Wire protocol: `docs/protocol.md` is the contract for embedding hosts (SPEAK, SUBSCRIBE, host tab via `SONARA_HOST_TAB`/`PRISM_TAB_ID`). Changes stay additive; update the doc with any message change. Text-rule golden cases for ports: `tests/fixtures/text_rules/`.
-- `daemon/` package (#141): `__init__.py` is the facade (`SpeechDaemon`: wiring, core state such as lock, wake, paused, mute level, ids and heard-markers, `_enqueue`/`_replay`/`note_spoken`, `handle_message`, `run`/`stop`). `handle_message` is a table dispatch: each feature registers its `MsgType`s via `core.add_handlers` (one owner per type, unknown types return None). Handlers: `ingest` (prose, decisions, earcons, FLUSH, session lifecycle; owns assemblers, `await_choice`), `controls` (pause, mute, skip, stop, session switch, flush to end, Up, repeat), `settings` (SET_*, STATUS, `set_config_value`, `set_summary_prompt`), `audio`, `hotkeys`. `core`: `SessionRegistry` (every per-session dict/set or hook is registered there; `_teardown_session` = `forget_session(sid)`, so new per-session state MUST be registered), `SharedState` (current item, Up re-read text), `add_handlers`, debug lock check (`SONARA_DEBUG_LOCKS=1`). Also: `startup` (`main`, single-instance guard), `decision_text`, `tokens`, `setup_health`, `summary/reorder`, `summary/pipeline`, `playback` (speak loop), `cues`, `previews` (settings-page voice preview, preview-file builder), `rehydrate` (startup channel re-seed), `server`, `state_stream` (SUBSCRIBE events and the STATUS snapshot, published after every message and utterance; socket writes off-lock). Handler modules (`ingest`, `controls`, `settings`) get the daemon and read its state at call time; the other feature modules get shared state passed in and keep it by reference: never rebind it on the daemon. Persist via `daemon._persist()`. Tests patch names on the module that now owns them. `router.py` + `channel.py`: per-session channels. `speaker.py`: playback and cancel epochs.
-- `assembler.py`, `cleaner.py`: text to spoken items. `summarizer.py`: `claude -p` / `codex exec` digests.
-- Persisted state under `~/.sonara`, every path via `paths.py`: sessions, session prefs, last digests (history is memory-only). PRIVACY.md lists every file; update it when adding one.
-- Settings: one table in `config_schema.py` (default, validator, page path, live-apply hook) feeds config DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys (pre-#136 full dumps: values equal to a current or past default count as unset). Bundled earcons resolve at runtime, never stored.
-- `platform/`: OS seam. `get_platform()` gives the backends (`base.py` + `windows/`: tts, hotkeys, earcons, ducking, pausing, supervisor = autostart task, launcher, stray-daemon sweep); `daemon_process()` gives `windows/process.py` (faulthandler, priority, VC preload, single-instance guard from `windows/singleton.py`) before any backend loads. `child_processes()` gives `windows/child_process.py` (summarizer engine spawn, PATHEXT, tree kill). `transport.py` is OS-free TCP + lockfile.
-- `install/` (#142): `installer` (install, uninstall), `app_copy` (plugin root, runtime copy), `deps` (daemon interpreter, PyWinRT), `service` (stop/start around file changes), `voices`, `cleanup`, `doctor`, `claude_hooks` (settings.json hooks generated from `hooks/hooks.json`; the Windows supervisor calls it). Modules call each other via module attributes: tests patch the owning module, and the platform via `sonara.platform.get_platform`.
-- `webui.py` + `settings.html`: token-protected settings page. `cli.py`: argparse + thin command functions only. `install_record.py`: install.json. `kokoro*.py`: neural voices.
+## Architecture
+Map, threads, lock contract, module owners and how to add a setting/message/hotkey: `docs/architecture.md`. Rules that prevent mistakes:
+- Hooks never import the daemon: `hooks_entry.py` -> `client.py` -> TCP (token in `~/.sonara/daemon.lock`); `client.py` starts the daemon via `lifecycle.py`.
+- Wire protocol: `docs/protocol.md` is the contract for embedding hosts. Changes stay additive; update the doc with any message change. Text-rule golden cases for ports: `tests/fixtures/text_rules/`.
+- `handle_message` is table dispatch: each `MsgType` has one owner module, registered via `core.add_handlers` (owners are listed in `docs/architecture.md`; SET_AUDIO_MODE/SET_DUCK_LEVEL/SET_VOLUME belong to `audio`, not `settings`).
+- New per-session state MUST be registered in `core.SessionRegistry`: session teardown is `forget_session(sid)` and nothing is hand-listed.
+- Feature modules keep daemon state by reference: never rebind it on the daemon, mutate in place. Persist via `daemon._persist()`. Never block under the daemon lock.
+- Tests patch names on the module that owns them (`install/` modules call each other via module attributes; the platform via `sonara.platform.get_platform`).
+- Settings: one table in `config_schema.py` feeds DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys; bundled earcons resolve at runtime, never stored.
+- PRIVACY.md lists every `~/.sonara` file: update it when adding one.
+- `cli.py`: argparse + thin command functions only.
 
 ## Product rules
 - One message, always the last: Sonara reads the latest turn; restart ("Up", nav_start, default Win+Alt+Home) restarts it. Nothing may silently drop it.
@@ -49,5 +49,5 @@ Full write-up (threads, lock contract, how to add a setting/message/hotkey): `do
 - Python 3.9 syntax (`test_py39_compat.py`), `from __future__ import annotations`.
 - Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
-- No em-dashes in user-facing text.
+- No em-dashes anywhere (code, comments, docs, commit messages).
 - Current work plan: `docs/plans/phase0-plan.md`; PrismTerminal embedding research: `docs/plans/embedding-research.md`. Historical specs, plans and audits: `docs/history/`.

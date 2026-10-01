@@ -46,8 +46,9 @@ _ERROR_ALREADY_EXISTS = 183
 # The fixed name 0.6.6 and earlier held. It does not exclude the v2 name, so a
 # daemon that survived an upgrade is probed by it for one release.
 # TODO(#161): remove this probe (LEGACY_MUTEX_NAME, _legacy_mutex_held and
-# its tests) in the first release after 0.8.1; kept through 0.8.1 so a v1
-# daemon left over from 0.6.6 or earlier still excludes a new one.
+# its tests) in the first release after 0.8.3 is published; no release has
+# shipped yet, so users still run v1-mutex daemons (0.6.6 or earlier) that
+# it must exclude until they have upgraded once.
 LEGACY_MUTEX_NAME = "Global\\Sonara-Daemon-Singleton-v1"
 _SYNCHRONIZE = 0x00100000
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sonara"
-version = "0.8.2"
+version = "0.8.3"
 description = "Eyes-free text-to-speech layer for Claude Code (Windows)"
 readme = "README.md"
 requires-python = ">=3.9"
