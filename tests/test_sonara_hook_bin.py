@@ -216,3 +216,26 @@ def test_hook_is_inert_inside_summarizer_child(tmp_path):
                {"SONARA_FAKE_SENT_LOG": str(sent_log), "SONARA_SUMMARIZER": "1"})
     assert res.returncode == 0, res.stderr.decode()
     assert not sent_log.exists() or sent_log.read_text().strip() == ""
+
+
+def test_hook_partial_batch_write_is_not_resent(tmp_path):
+    # Part of the batch may already be applied (a FLUSH, a CHOICE): resending
+    # every message one by one would apply it twice. Only a batch that sent
+    # nothing falls back (#137).
+    sent_log = tmp_path / "sent.jsonl"
+    payload = json.dumps({"session_id": "s1", "cwd": "C:/x"}).encode()
+    res = _run("UserPromptSubmit", payload, {"SONARA_FAKE_SENT_LOG": str(sent_log),
+                                             "SONARA_FAKE_BATCH_PARTIAL": "1"})
+    assert res.returncode == 0, res.stderr.decode()
+    lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
+    assert [m["type"] for m in lines] == ["set_foreground"]
+
+
+def test_hook_older_client_without_send_many_sends_one_by_one(tmp_path):
+    sent_log = tmp_path / "sent.jsonl"
+    payload = json.dumps({"session_id": "s1", "cwd": "C:/x"}).encode()
+    res = _run("UserPromptSubmit", payload, {"SONARA_FAKE_SENT_LOG": str(sent_log),
+                                             "SONARA_FAKE_NO_BATCH": "1"})
+    assert res.returncode == 0, res.stderr.decode()
+    lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
+    assert [m["type"] for m in lines] == ["set_foreground", "flush"]
