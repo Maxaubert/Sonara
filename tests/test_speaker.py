@@ -450,9 +450,33 @@ def test_speak_forwards_on_play_to_say_runner():
     # audio is not held down for the whole multi-second synthesis.
     runner = OnPlayRecordingRunner()
     sp = Speaker(voice="Ava", rate=180, say_runner=runner)
-    marker = lambda: None
-    sp.speak("hello", on_play=marker)
-    assert runner.on_plays == [marker]
+    fired = []
+    sp.speak("hello", on_play=lambda: fired.append(1))
+    assert len(runner.on_plays) == 1
+    runner.on_plays[0]()                       # the forwarded callback reaches ours
+    assert fired == [1]
+
+
+def test_on_play_does_not_fire_after_cancel():
+    # #130: a cancelled (abandoned) synthesis still finishes on its helper thread
+    # and calls on_play. That must not duck/pause other audio after the cancel
+    # already restored it.
+    import threading
+    release, fired = threading.Event(), []
+
+    def runner(text, voice, rate, on_play=None):
+        release.wait(2)
+        on_play()
+        return FakePopen()
+
+    sp = Speaker(say_runner=runner)
+    t = threading.Thread(target=sp.speak, args=("hi",), kwargs={"on_play": lambda: fired.append(1)})
+    t.start()
+    sp.cancel()
+    release.set()
+    t.join(2)
+    import time; time.sleep(0.2)               # let the abandoned helper finish
+    assert fired == []
 
 
 def test_speak_without_on_play_keeps_three_arg_call():
