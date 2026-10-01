@@ -266,7 +266,7 @@
           <div class="key-row" data-action="faster"><div class="key-copy"><strong>Faster</strong><span>Increase the speaking rate.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Faster">&times;</button></div></div>
           <div class="key-row" data-action="slower"><div class="key-copy"><strong>Slower</strong><span>Decrease the speaking rate.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Slower">&times;</button></div></div>
         </div>
-        <div class="key-actions"><div class="hint">Click a shortcut to capture a new key, or use &times; to unbind it. The defaults use Win+Alt, because Ctrl+Alt is AltGr on many European keyboards. A combination may need to be changed if another Windows app has claimed it.</div><button class="btn" id="keymap-reset">Reset hotkeys to defaults</button></div>
+        <div class="key-actions"><div class="hint">Click a shortcut to capture a new key, or use &times; to unbind it. The defaults use Ctrl+Alt, which is AltGr on many European keyboards: if a shortcut warns that it eats a character, rebind it with Win. A combination may need to be changed if another Windows app has claimed it.</div><button class="btn" id="keymap-reset">Reset hotkeys to defaults</button></div>
       </section>
 
       <section class="page" id="system">
@@ -632,7 +632,7 @@ function render(s) {
     }
     if (warn) {
       const text = b.altgr
-        ? `This is AltGr+${b.mods.includes("shift") ? "Shift+" : ""}${b.key.toUpperCase()} on your keyboard, so ${b.altgr} cannot be typed. Reset hotkeys to defaults, or rebind it with Win.`
+        ? `This is AltGr+${b.mods.includes("shift") ? "Shift+" : ""}${b.key.toUpperCase()} on your keyboard, so ${b.altgr} cannot be typed. Rebind it with Win, for example Win+Alt+Home or Ctrl+Win+Up.`
         : "";
       if (warn.textContent !== text) warn.textContent = text;
       warn.hidden = !b.altgr;
@@ -830,7 +830,7 @@ document.querySelectorAll("[data-action]").forEach(row => {
   });
 });
 document.getElementById("keymap-reset").addEventListener("click", async () => {
-  if (!confirm("Reset every hotkey to the Win+Alt defaults?")) return;
+  if (!confirm("Reset every hotkey to the Ctrl+Alt defaults?")) return;
   cancelCapture();
   const r = await POST("/api/keymap", {reset: true});
   if (r.ok) { await acceptState(r); } else { await showApiError(r); }

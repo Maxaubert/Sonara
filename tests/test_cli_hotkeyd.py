@@ -12,7 +12,7 @@ from sonara import keymap
 
 def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeypatch):
     # Force the REAL platform to Windows so BOTH resolve_keymap (keytables) and
-    # display_combo (labels) agree -> deterministic Win+Alt output on any host.
+    # display_combo (labels) agree -> deterministic Ctrl+Alt output on any host.
     import sonara.platform as platform
     monkeypatch.setattr(platform.sys, "platform", "win32")
     platform._CACHE = None
@@ -28,7 +28,7 @@ def test_keymap_subcommand_prints_the_default_bindings(capsys, tmp_path, monkeyp
         # faster/slower are listed too, marked unbound (the keymap lists every action)
         assert "faster" in out and "slower" in out
         assert "(unbound)" in out
-        assert "Win+Alt+Home" in out and "Ctrl" not in out
+        assert "Ctrl+Alt+Up" in out and "Ctrl+Alt+M" in out and "Win" not in out
     finally:
         platform._CACHE = None
         cli._PLATFORM = None
@@ -47,14 +47,14 @@ def test_keymap_clear_unbinds_and_requests_live_reload(monkeypatch, tmp_path):
 
 
 def test_keymap_reset_restores_defaults_and_requests_live_reload(monkeypatch, tmp_path):
-    """#160: `sonara keymap --reset` moves an existing install (whose
-    keymap.json keeps the old Ctrl+Alt chords) to the Win+Alt defaults."""
+    """#160: `sonara keymap --reset` replaces every custom binding with the
+    Ctrl+Alt defaults."""
     import json
     import sonara.platform as platform
     monkeypatch.setattr(platform.sys, "platform", "win32")
     platform._CACHE = None
     km = tmp_path / "keymap.json"
-    km.write_text(json.dumps({"mute": {"key": "m", "mods": ["ctrl", "alt"]}}),
+    km.write_text(json.dumps({"mute": {"key": "x", "mods": ["win", "alt"]}}),
                   encoding="utf-8")
     monkeypatch.setattr(keymap, "KEYMAP_PATH", km)
     sent = []
