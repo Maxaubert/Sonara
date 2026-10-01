@@ -552,3 +552,32 @@ def test_speak_cue_untracked_uses_explicit_rate_and_survives_errors():
 
     sp = Speaker(voice="v", rate=200, say_runner=boom)
     sp.speak_cue_untracked("hi", "af_heart", rate=150)   # must not raise
+
+
+def test_abandon_after_helper_registered_proc_still_terminates_it(monkeypatch):
+    # F4 / L-speaker-race (#137): the helper registers its proc and reads
+    # abandoned=False under the lock, then releases it before done.set(). A
+    # caller that abandons in that gap returned False without killing the
+    # proc, and the helper never killed it either: unstoppable audio.
+    import threading
+    import types
+    import sonara.speaker as speaker_mod
+
+    proc = FakePopen()
+    sp = Speaker(say_runner=lambda text, voice, rate: proc)
+    go = threading.Event()
+    finished = threading.Event()
+
+    class _GapEvent(threading.Event):
+        def set(self):
+            sp.cancel()          # the cancel lands in the gap
+            go.wait(2)           # hold the helper until the caller gave up
+            super().set()
+            finished.set()
+
+    monkeypatch.setattr(speaker_mod, "threading", types.SimpleNamespace(
+        Event=_GapEvent, Thread=threading.Thread, Lock=threading.Lock))
+    assert sp.speak("hello") is False
+    go.set()
+    assert finished.wait(2)
+    assert proc.terminate_calls == 1
