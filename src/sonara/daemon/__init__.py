@@ -11,6 +11,7 @@ from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema, install_record
 from sonara.daemon import decision_text, tokens
+from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
     LOCK_PATH, SINGLETON_PATH, ensure_sonara_dir, socket_connectable,
@@ -169,11 +170,7 @@ class SpeechDaemon:
         self._hotkey_last: dict = {}              # toggle type -> last fire (debounce)
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
-        self._digest_seq_next = 0                 # next sequence number to hand out
-        self._digest_seq_serve = 0                # next sequence number to release
-        self._digest_parked: dict = {}            # seq -> apply closure (None = dropped)
-        self._digest_watchdogs: dict = {}         # seq -> Timer landing a hung slot (#138)
-        self._digest_release_counter = 0          # channel stamp source (#88)
+        self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
         self._current_item = None                 # item being spoken right now
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
@@ -1232,10 +1229,7 @@ class SpeechDaemon:
         dropped = False
         for sid in sessions:
             dropped = self._user_caught_up(sid) or dropped
-        for seq, fn in list(self._digest_parked.items()):
-            if fn is not None:
-                self._digest_parked[seq] = None    # land the slot dead
-                dropped = True
+        dropped = self._digests.kill_parked() or dropped
         self._pending_preamble = None
         self.router.clear_pending_announce()
         return dropped
@@ -1326,7 +1320,7 @@ class SpeechDaemon:
                     if self._summary_gen.get(session, 0) == gen:
                         self._enqueue_background_digest(session, text)
 
-                self._land_digest(self._alloc_digest_seq(), _deliver)
+                self._digests.land(self._digests.alloc(), _deliver)
             return False                 # spoken synchronously; no need to hold
         # Capture the session's CANCEL epoch WITHOUT advancing it. Only a user
         # action (a new prompt -> FLUSH) advances the epoch; a turn merely ending
@@ -1340,7 +1334,7 @@ class SpeechDaemon:
         self._inflight_digests[session] = self._inflight_digests.get(session, 0) + 1
         # Turn-end digests get an ordering slot (#88); lead-in digests bypass
         # (latency-critical, #83) and stay seq=None.
-        seq = None if leadin else self._alloc_digest_seq()
+        seq = None if leadin else self._digests.alloc()
         try:
             self._start_summary_thread(session, gen, text, token, leadin=leadin,
                                        seq=seq)
@@ -1353,8 +1347,8 @@ class SpeechDaemon:
                 self._inflight_digests[session] = n
             else:
                 self._inflight_digests.pop(session, None)
-            self._land_digest(seq, None if leadin else
-                              self._digest_apply(session, gen, text, False, None))
+            self._digests.land(seq, None if leadin else
+                               self._digest_apply(session, gen, text, False, None))
             raise
         if seq is not None:
             # A worker that never returns would park every later digest
@@ -1526,54 +1520,6 @@ class SpeechDaemon:
                 ch.append(it)
             self._wake.set()
 
-    def _alloc_digest_seq(self) -> int:
-        """Hand out the next digest sequence number (#88). Caller holds the
-        lock. Sequence order == dispatch order == turn-finish order."""
-        seq = self._digest_seq_next
-        self._digest_seq_next += 1
-        return seq
-
-    def _land_digest(self, seq, apply) -> None:
-        """Reorder buffer release (#88): park *apply* under *seq* and flush every
-        consecutive ready slot from the serve pointer. Digests thus become
-        audible strictly in dispatch order regardless of summarizer latency;
-        a dropped/cancelled digest lands with apply=None and just frees its
-        slot. seq=None bypasses (lead-in digests, #83: latency-critical and
-        session-ordered by the question hold). Caller holds the lock. Every
-        dispatched seq MUST eventually land exactly once - the workers land in
-        their finally, and a hung worker's slot is landed by its watchdog
-        (#138) - or later digests would park forever. A slot that was already
-        served ignores a second landing (a worker returning after its
-        watchdog fired).
-
-        A release that raises is logged and the flush continues (#138, audit
-        L-settle-fire): the serve pointer had already moved past it, so the
-        slots parked behind it were stranded until some unrelated landing."""
-        if seq is None:
-            if apply is not None:
-                self._run_release(apply)
-            return
-        if seq < self._digest_seq_serve:
-            return                       # already served (exceptional re-land)
-        t = self._digest_watchdogs.pop(seq, None)
-        if t is not None:
-            t.cancel()
-        self._digest_parked[seq] = apply
-        while self._digest_seq_serve in self._digest_parked:
-            fn = self._digest_parked.pop(self._digest_seq_serve)
-            self._digest_seq_serve += 1
-            if fn is not None:
-                self._run_release(fn)
-
-    @staticmethod
-    def _run_release(fn) -> None:
-        try:
-            fn()
-        except Exception:  # noqa: BLE001 - one bad release must not strand the rest
-            import traceback
-            _summary_log("digest release failed:\n{0}".format(
-                traceback.format_exc()))
-
     def _schedule_digest_watchdog(self, seq: int, apply) -> None:
         """Arm the hung-worker watchdog for a dispatched turn-end digest slot
         (#138, audit M1). Test seam: tests call _digest_watchdog_fire directly
@@ -1581,7 +1527,7 @@ class SpeechDaemon:
         t = threading.Timer(_digest_watchdog_s(self.config),
                             self._digest_watchdog_fire, args=(seq, apply))
         t.daemon = True
-        self._digest_watchdogs[seq] = t
+        self._digests.watch(seq, t)
         t.start()
 
     def _digest_watchdog_fire(self, seq: int, apply) -> None:
@@ -1589,14 +1535,14 @@ class SpeechDaemon:
         slot with *apply*, the raw-text fallback of a failed digest, so the turn
         is still spoken (never skip the last message) and every later digest
         parked behind it is released. A no-op once the worker has landed; the
-        worker's own landing after this is ignored by _land_digest."""
+        worker's own landing after this is ignored by DigestReorderBuffer.land."""
         with self._lock:
-            self._digest_watchdogs.pop(seq, None)
-            if seq < self._digest_seq_serve or seq in self._digest_parked:
+            self._digests.unwatch(seq)
+            if self._digests.landed(seq):
                 return
             _summary_log("digest seq {0} hung past the watchdog: "
                          "speaking the raw text".format(seq))
-            self._land_digest(seq, apply)
+            self._digests.land(seq, apply)
 
     def _start_summary_thread(self, session: str, gen: int, text: str,
                               token: int = 0, leadin: bool = False,
@@ -1663,8 +1609,7 @@ class SpeechDaemon:
             # Stamp the channel with the release index (#88): the router
             # serves waiting digest channels lowest-stamp-first, so the
             # heard order matches the turn-finish order just released.
-            ch.release_order = self._digest_release_counter
-            self._digest_release_counter += 1
+            ch.release_order = self._digests.next_release_stamp()
             if not fg:
                 # Let it be voiced + announced regardless of background policy
                 # (earcon_only would otherwise mute a non-foreground session).
@@ -1723,13 +1668,13 @@ class SpeechDaemon:
             apply = self._digest_apply(session, gen, text, leadin, summary)
             landed = False
             try:
-                self._land_digest(seq, apply)
+                self._digests.land(seq, apply)
                 landed = True
             finally:
                 if not landed:
                     # Landing raised: the ordering slot must still release or
                     # every later digest parks forever (#88).
-                    self._land_digest(seq, None)
+                    self._digests.land(seq, None)
                 # This worker is done: it no longer counts as in flight (a later
                 # decision must not hold behind a digest that already landed).
                 # ONLY when this worker's gen is still current: FLUSH/SESSION_END
@@ -1761,8 +1706,7 @@ class SpeechDaemon:
         self.digest_store.set(session, text)     # survives restarts (#118)
         ch = self.router.channel(session)
         ch.turn_done = True
-        ch.release_order = self._digest_release_counter   # heard in release order (#88)
-        self._digest_release_counter += 1
+        ch.release_order = self._digests.next_release_stamp()   # heard in release order (#88)
         self.router.authorize_replay(session)
         self._wake.set()
 

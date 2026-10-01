@@ -101,7 +101,7 @@ def _capture_spawn(daemon, monkeypatch):
         # Free the ordering slot (#88): these tests run workers manually with
         # seq=None (sequencer bypass), which would otherwise leave the slot
         # parked and block later synchronous lands (background short turns).
-        daemon._land_digest(seq, None)
+        daemon._digests.land(seq, None)
 
     monkeypatch.setattr(daemon, "_start_summary_thread", fake)
     return calls

@@ -115,7 +115,7 @@ def test_late_worker_after_the_watchdog_is_ignored(monkeypatch):
     heard = _drain(daemon, speaker)
     assert "Recap alpha" not in heard
     assert sum("Report alpha" in t for t in heard) == 1
-    assert daemon._digest_parked == {}
+    assert daemon._digests.parked == {}
 
 
 def test_watchdog_is_a_noop_once_the_worker_landed(monkeypatch):
@@ -162,8 +162,8 @@ def test_settle_fire_failure_still_lands_its_slot(monkeypatch):
 
     monkeypatch.setattr(daemon, "_start_summary_thread", boom)
     _finish_turn(daemon, "a", "alpha")           # must not raise
-    assert daemon._digest_seq_serve == daemon._digest_seq_next
-    assert daemon._digest_parked == {}
+    assert daemon._digests.serve_seq == daemon._digests.next_seq
+    assert daemon._digests.parked == {}
     assert not daemon._inflight_digests.get("a")
     heard = _drain(daemon, speaker)
     assert any("Report alpha" in t for t in heard)   # the turn still speaks
@@ -183,12 +183,12 @@ def test_settle_fire_failure_never_loses_the_question(monkeypatch):
 def test_a_raising_release_does_not_strand_later_slots(monkeypatch):
     daemon, speaker = _daemon(monkeypatch)
     ran = []
-    s0, s1, s2 = (daemon._alloc_digest_seq() for _ in range(3))
-    daemon._land_digest(s2, lambda: ran.append(2))
-    daemon._land_digest(s1, lambda: (_ for _ in ()).throw(RuntimeError("x")))
-    daemon._land_digest(s0, lambda: ran.append(0))
+    s0, s1, s2 = (daemon._digests.alloc() for _ in range(3))
+    daemon._digests.land(s2, lambda: ran.append(2))
+    daemon._digests.land(s1, lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    daemon._digests.land(s0, lambda: ran.append(0))
     assert ran == [0, 2]
-    assert daemon._digest_parked == {}
+    assert daemon._digests.parked == {}
 
 
 # --- L-settle-pop: teardown keeps the settle generation monotonic -----------

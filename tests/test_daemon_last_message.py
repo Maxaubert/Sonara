@@ -184,7 +184,7 @@ def _park_short_background_turn(daemon, monkeypatch):
     daemon.handle_message(_prose("B", "short turn text."))
     _turn_done(daemon, "B")
     _fire_settle(daemon, "B")
-    assert daemon._digest_parked                  # B waits behind A's slot
+    assert daemon._digests.parked                  # B waits behind A's slot
     return calls
 
 
