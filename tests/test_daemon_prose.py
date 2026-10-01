@@ -150,7 +150,7 @@ def test_flush_resets_assembler_so_next_turn_is_clean():
     # Step 2: FLUSH – clears channel items and drops the assembler.
     daemon.handle_message(_flush("fg"))
     assert daemon.router.channel("fg").pending() == 0
-    assert "fg" not in daemon._assemblers
+    assert "fg" not in daemon._ingest.assemblers
 
     # Step 3: fresh final message re-using index 0 (new turn, new assembler).
     daemon.handle_message(_prose("fg", "New sentence here.", 0, True))

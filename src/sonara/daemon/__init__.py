@@ -7,13 +7,13 @@ import threading
 
 from sonara.protocol import MsgType
 from sonara.queue import SpeechItem
-from sonara.assembler import ProseAssembler
 from sonara import config_schema
-from sonara.daemon import decision_text, setup_health, tokens
+from sonara.daemon import setup_health, tokens
 from sonara.daemon.audio import AudioControl
 from sonara.daemon.core import SessionRegistry, SharedState
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
+from sonara.daemon.ingest import Ingest
 from sonara.daemon.playback import SpeakLoop
 from sonara.daemon.server import ConnectionServer
 from sonara.daemon.summary.pipeline import SummaryPipeline, summary_log
@@ -69,7 +69,6 @@ class SpeechDaemon:
             from sonara.digest_store import DigestStore
             digests = DigestStore()
         self.digest_store = digests
-        self._assemblers = {}
         self._next_id = 0
         from sonara.router import Router
         self.router = Router(
@@ -96,7 +95,6 @@ class SpeechDaemon:
         # Shared by several features (#141): the item being spoken and the
         # per-session text summary-mode Up re-reads verbatim.
         self._shared = SharedState()
-        self._await_choice: set = set()           # sessions with an unanswered AskUserQuestion (suppress the redundant permission prompt it also fires)
         self._paused = threading.Event()          # play/pause: set == speech halted
         # Mute cycle: 0=unmuted, 1=muted (prose off, beeps on), 2=super muted
         # (prose AND beeps off). RESTORED from config (#65): hooks silently
@@ -118,7 +116,6 @@ class SpeechDaemon:
             persist=lambda: save_config(self.config), cues=self._cues,
             cue_target=lambda: self.router.active or self.sessions.foreground(),
             wake=self._wake)
-        self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
         # Global hotkeys: fires are queued by the pump thread and applied by a
         # worker under self._lock, like a socket message. handle_message is
@@ -150,7 +147,6 @@ class SpeechDaemon:
         reg = self._session_state
         reg.register_hook("pending_heard", self._drop_channel_pending)
         reg.register_hook("history", self.history.reset)
-        reg.register("warned_immediate", self._warned_immediate)
         reg.register_hook("setup_guide", self._setup_guide.forget)
         # Ending the session is a user action like FLUSH: cancel its summary
         # work (bumps the cancel epoch and the settle generation, drops held
@@ -161,11 +157,13 @@ class SpeechDaemon:
         reg.register("last_digest_text", self._last_digest_text)
         # Ended sessions don't rehydrate (#118).
         reg.register_hook("digest_store", self.digest_store.forget)
-        reg.register("assemblers", self._assemblers)
-        # A stale _await_choice entry from a dead session would suppress
-        # permission chimes DAEMON-WIDE forever: the chime carries no session,
-        # so the suppression check is global truthiness (audit #19).
-        reg.register("await_choice", self._await_choice)
+        # Hook traffic: prose, decisions, earcons, FLUSH, session lifecycle
+        # (daemon/ingest). Registers its own per-session state.
+        self._ingest = Ingest(self, reg)
+        # Message dispatch (#141): each feature registers the message types
+        # it owns; handle_message looks the handler up by type.
+        self._handlers: dict = {}
+        self._ingest.register(self._handlers)
 
     @property
     def _current_item(self):
@@ -197,13 +195,6 @@ class SpeechDaemon:
         if self._mute_level < 2:
             self.speaker.earcon(kind)
 
-    def _assembler(self, session: str) -> ProseAssembler:
-        a = self._assemblers.get(session)
-        if a is None:
-            a = ProseAssembler()
-            self._assemblers[session] = a
-        return a
-
     def _enqueue(self, session: str, kind: str, text: str, is_decision: bool,
                  entry=None, mute_exempt: bool = False,
                  pause_exempt: bool = False) -> None:
@@ -225,13 +216,6 @@ class SpeechDaemon:
 
     def _minqueue(self) -> int:
         return config_schema.current(self.config, "minqueue")
-
-    def _maybe_guide_setup(self, session: str, plugin_version: str) -> None:
-        """Speak ONE setup-guidance cue for this session, only when degraded
-        (see setup_health.SetupGuide.cue_for)."""
-        cue = self._setup_guide.cue_for(session, plugin_version)
-        if cue:
-            self._enqueue(session, "prose", cue, False)
 
     def _drop_channel_pending(self, session: str) -> None:
         """Drop heard-tracking entries for a session's not-yet-spoken channel items
@@ -315,238 +299,19 @@ class SpeechDaemon:
             self._current_item = None
             return True
 
-    def _selection_cue(self, session: str, verbosity: str) -> str:
-        if verbosity != "everything":
-            return ""
-        cue = "Press the option's number to choose, or Escape to cancel."
-        if session not in self._warned_immediate:
-            self._warned_immediate.add(session)
-            cue += " Selecting is immediate."
-        return cue
-
     def handle_message(self, msg):
         t = msg.get("type")
         session = msg.get("session", "")
-        verbosity = config_schema.get(self.config, "verbosity")
         # Liveness for the Sessions tab: any session-bearing hook traffic
         # counts as activity. Settings-page mutations are excluded, or naming
         # a stale row would bump it back into the recent list.
         if (isinstance(session, str) and session
                 and t not in (MsgType.SET_SESSION_PREF, MsgType.FORGET_SESSION)):
             self.sessions.touch(session)
-
-        if t == MsgType.PROSE:
-            final = msg.get("final", False)
-            a = self._assembler(session)
-            chunks = a.feed(msg.get("delta", ""), msg.get("index", 0), final)
-            from sonara.assembler import PARAGRAPH_BREAK
-            ch = self.router.channel(session)
-            for chunk in chunks:
-                if chunk is PARAGRAPH_BREAK:
-                    self.history.end_message(session)
-                    continue
-                entry = self.history.record(session, "prose", chunk)
-                # Quiet verbosity AND summary mode both record prose to history
-                # without enqueueing speech (summary mode reads a recap at turn
-                # end instead; repeat / Up still work from history).
-                if verbosity != "quiet" and not self.config.get("summary_mode"):
-                    item = SpeechItem(id=self._alloc_id(), session=session, kind="prose",
-                                      text=chunk, is_decision=False)
-                    self._pending_heard[item.id] = entry
-                    ch.append(item)
-            if final:
-                # NOTE: turn_done is NOT set here -- a per-block "final" flag means
-                # this text block finished, but the TURN ends only when the
-                # turn_done earcon (or FLUSH) arrives. This keeps minqueue batching
-                # correct: items accumulate until the threshold OR the turn ends.
-                self.history.end_message(session)
-            # Wake the speak loop ONLY when a batch is actually ready to read
-            # (>= minqueue, the turn is done, or a decision is waiting). Waking on
-            # every buffered delta made the loop spin on self._lock and starve the
-            # hotkey worker -- the root cause of the "thinking" mute-hang. A finished
-            # turn wakes via the turn_done earcon / TOOL / FLUSH paths below; the
-            # speak loop's poll_interval is the safety net if a wake is ever missed.
-            # Late prose after turn_done: reset the settle window so the turn-end
-            # digest waits for the full turn to land (#14). Only when armed.
-            self._summary.on_prose(session)
-            if ch.ready(self._minqueue()):
-                self._wake.set()
-            return None
-
-        # Decision CONTENT is enqueued (and gated by foreground). The ALERT
-        # earcon for a decision travels as a SEPARATE EARCON message that
-        # hooks_entry emits BEFORE the content message; it is handled by the
-        # MsgType.EARCON branch below, so the earcon fires instantly and
-        # cross-session WITHOUT being doubled here.
-        if t == MsgType.CHOICE:
-            # A question BLOCKS the turn (no turn_done -> no end-of-turn digest), so
-            # its lead-in prose must be voiced before the question. But the CHOICE
-            # can reach the daemon BEFORE its lead-in prose (separate hook processes
-            # race), so gathering the lead-in now would find nothing and speak the
-            # question alone. Build the question item now, then DEFER the lead-in
-            # gather + hold/enqueue through the settle window (#16).
-            text = decision_text.choice_text(msg)
-            extras = [e for e in (decision_text.choice_notes(msg),
-                                  self._selection_cue(session, verbosity)) if e]
-            if extras:
-                text = "{0} {1}".format(text, " ".join(extras))
-            entry = self.history.record(session, "choice", text)
-            self.history.end_message(session)
-            item = SpeechItem(id=self._alloc_id(), session=session, kind="choice",
-                              text=text, is_decision=True)
-            self._pending_heard[item.id] = entry
-            # AskUserQuestion ALSO fires a permission-prompt notification ~5-6s
-            # later; mark the question unanswered so that redundant permission
-            # (earcon + text) is suppressed until the turn moves on (issue #11 f/u).
-            # Set this NOW (not at settle fire) so the suppression is armed before
-            # the permission can arrive.
-            self._await_choice.add(session)
-            # Summary mode: defer the lead-in digest + question through the settle
-            # window so late lead-in prose is included, heard before the question.
-            # Non-summary speaks prose live, so enqueue the question immediately.
-            self._summary.on_decision(session, item)
-            return None
-
-        if t == MsgType.PLAN:
-            text = decision_text.plan_text(msg)
-            cue = self._selection_cue(session, verbosity)
-            if cue:
-                text = "{0} {1}".format(text, cue)
-            entry = self.history.record(session, "plan", text)
-            self.history.end_message(session)
-            item = SpeechItem(id=self._alloc_id(), session=session, kind="plan",
-                              text=text, is_decision=True)
-            self._pending_heard[item.id] = entry
-            # Same hook race as CHOICE (#16): the PLAN can beat its lead-in prose,
-            # so defer the lead-in gather + hold through the settle window in
-            # summary mode; the context is then heard before the plan (audit #21).
-            self._summary.on_decision(session, item)
-            return None
-
-        if t == MsgType.PERMISSION:
-            # Redundant permission that pairs with an unanswered AskUserQuestion:
-            # the question was already announced, so drop this one. CONSUME the
-            # guard here (the permission it exists to suppress has now arrived) --
-            # do NOT rely on unrelated prose/turn_done to clear it, since the
-            # pre-question prose streams in AFTER the choice and would clear it
-            # early (confirmed via message-sequence capture, issue #11 f/u).
-            if session in self._await_choice or (not session and self._await_choice):
-                self._await_choice.discard(session)
-                return None
-            text = decision_text.permission_text(msg)
-            cue = self._selection_cue(session, verbosity)
-            if cue:
-                text = "{0} {1}".format(text, cue)
-            entry = self.history.record(session, "permission", text)
-            self.history.end_message(session)
-            item = SpeechItem(id=self._alloc_id(), session=session, kind="permission",
-                              text=text, is_decision=True)
-            self._pending_heard[item.id] = entry
-            # Same hook race as CHOICE (#16): defer through the settle window in
-            # summary mode so a late lead-in is digested and heard first (audit #21).
-            self._summary.on_decision(session, item)
-            return None
-
-        if t == MsgType.TOOL:
-            self._await_choice.discard(session)  # a tool ran -> the question was answered
-            if verbosity == "everything":
-                tool = msg.get("tool", "")
-                summary = (msg.get("summary") or "").strip()
-                text = summary if summary else "Running {0}.".format(tool)
-                ch = self.router.channel(session)
-                # A tool announcement is immediate: flush any held prose
-                # (below the minqueue threshold) so it reads before the cue.
-                ch.turn_done = True
-                ch.append(SpeechItem(
-                    id=self._alloc_id(), session=session, kind="tool_announce",
-                    text=text, is_decision=False))
-                self._wake.set()
-            return None
-
-        if t == MsgType.EARCON:
-            # Instant: the Windows earcon backend plays on a separate audio path
-            # that mixes with the speech, so it no longer cuts the reading.
-            kind = msg.get("kind", "")
-            # Suppress the redundant permission chime that pairs with an unanswered
-            # AskUserQuestion (its message carries no session, so gate on "any
-            # question awaiting"). Real permission chimes still fire (issue #11 f/u).
-            if kind == "permission" and self._await_choice:
-                return None
-            self._earcon(kind)
-            if kind == "turn_done":
-                # End-of-turn boundary: safety-net flush in case the final PROSE
-                # flag never arrived. Wake the loop so a sub-threshold batch that was
-                # left buffered (no per-delta wake) is read now, not after a poll.
-                self.router.channel(session).turn_done = True
-                self._wake.set()
-                # Do NOT digest yet: the turn's final prose can arrive after this
-                # signal, so summary mode arms a settle window first (#14).
-                self._summary.on_turn_done(session)
-            return None
-
-        if t == MsgType.FLUSH:
-            cur = self._current_item
-            if cur is not None and cur.session == session:
-                self.speaker.cancel()
-            self._drop_channel_pending(session)
-            ch = self.router.channel(session)
-            ch.wipe()
-            seed = self.digest_store.get(session)
-            if seed:
-                # Keep the session cycle-reachable while its new turn cooks
-                # (#118): a bare-wiped channel fell out of the manual ring
-                # (empty channels are skipped, #117) for the WHOLE turn. The
-                # persisted last digest re-seeds it as an already-heard,
-                # replay-only item; real content replaces it.
-                ch.seed(SpeechItem(id=self._alloc_id(), session=session,
-                                   kind="summary", text=seed,
-                                   is_decision=False))
-            self._assemblers.pop(session, None)
-            self.history.reset(session)
-            # A new prompt is the user cancelling this session: advance the cancel
-            # epoch so any digest dispatched before now is dropped when it lands,
-            # rather than spoken into the new turn (#13); abandon any settling
-            # turn (#14) and drop held or deferred questions (#16).
-            self._summary.cancel(session)
-            self._last_digest_text.pop(session, None)   # no re-reading a stale digest
-            self._await_choice.discard(session)          # new prompt: no question pending
-            # A new prompt auto-resumes a paused voice only when it comes from
-            # the session the user hears (upstream #69): a background
-            # session's /loop tick or agent completion also sends FLUSH, and
-            # used to un-pause the voice the user deliberately held.
-            if self._engaged_session() == session:
-                self._paused.clear()
-            self._wake.set()
-            return None
-
-        if t in (MsgType.SET_FOREGROUND, MsgType.SESSION_START):
-            old_fg = self.sessions.foreground()
-            # Deliberately NOT gated on a paused voice (upstream #69 / #65):
-            # under the default earcon_only policy a non-foreground session's
-            # live prose is never voiced, so refusing a genuine prompt here
-            # would silently drop its turn. A held voice stays held through
-            # the FLUSH gate, and the cooperative drain keeps the paused
-            # session's interrupted message first on resume.
-            self.sessions.set_foreground(session, cwd=msg.get("cwd"))
-            if t == MsgType.SESSION_START:
-                self.sessions.register(session, cwd=msg.get("cwd"))
-                self._maybe_guide_setup(session, msg.get("plugin_version", ""))
-            # Cooperative hand-off: if the old foreground still has pending items,
-            # authorize it to drain before the new fg takes the floor. This is the
-            # "session B arrives while A is mid-response" case. Uses _replay_authorized
-            # so the policy gate is bypassed for the drain (A finished reading is
-            # a natural completion, not a user-visible session switch).
-            if old_fg is not None and old_fg != session:
-                old_ch = self.router.channels.get(old_fg)
-                if old_ch is not None and old_ch.pending() > 0:
-                    self.router.authorize_replay(old_fg)
-            return None
-
-        if t == MsgType.SESSION_END:
-            self.sessions.unregister(session)
-            self._teardown_session(session)
-            self.router.drop(session)
-            return None
+        # A malformed (unhashable) type is unknown, not a crash.
+        handler = self._handlers.get(t) if isinstance(t, str) else None
+        if handler is not None:
+            return handler(msg)
 
         if t == MsgType.STOP:
             # Silence everything (M3/F8): flush-to-end first cancels settle
@@ -924,7 +689,7 @@ class SpeechDaemon:
         # Deferred and held questions, the settle window, in-flight digests
         # and the voiced marker (summary/pipeline).
         dropped = self._summary.caught_up(session)
-        self._await_choice.discard(session)
+        self._ingest.await_choice.discard(session)
         self._wake.set()
         return bool(skipped) or cutting or dropped
 

@@ -583,10 +583,10 @@ def test_session_end_clears_await_choice(monkeypatch):
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._await_choice.add("fg")
+    daemon._ingest.await_choice.add("fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
                            "session": "fg"})
-    assert "fg" not in daemon._await_choice
+    assert "fg" not in daemon._ingest.await_choice
 
 
 def test_short_turn_does_not_suppress_session_announcement(monkeypatch):
@@ -787,12 +787,12 @@ def test_session_end_clears_per_session_state(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon._last_digest_text["fg"] = "stale"
     daemon._summary.voiced_upto["fg"] = object()
-    daemon._assemblers["fg"] = object()
+    daemon._ingest.assemblers["fg"] = object()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
                            "session": "fg"})
     assert "fg" not in daemon._last_digest_text
     assert "fg" not in daemon._summary.voiced_upto
-    assert "fg" not in daemon._assemblers
+    assert "fg" not in daemon._ingest.assemblers
 
 
 # --- short turns skip the summarizer and speak the original text ----------

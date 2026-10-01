@@ -193,7 +193,7 @@ def test_choice_answered_drops_pending_settle_decision(monkeypatch):
     daemon.handle_message({"v": PROTOCOL_VERSION,
                            "type": MsgType.CHOICE_ANSWERED, "session": "fg"})
     assert "fg" not in daemon._summary.pending_decision
-    assert "fg" not in daemon._await_choice
+    assert "fg" not in daemon._ingest.await_choice
 
 
 def test_flush_session_gets_the_same_summary_semantics(monkeypatch):

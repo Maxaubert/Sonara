@@ -23,6 +23,16 @@ def assert_lock_held(lock, what: str = "") -> None:
             "daemon lock not held{0}".format(": " + what if what else ""))
 
 
+def add_handlers(table: dict, handlers: dict) -> None:
+    """Add a feature's message handlers to the daemon's dispatch table (#141).
+    Each message type has exactly one owner: registering one twice is a
+    wiring bug, so it raises instead of silently replacing the first."""
+    for mtype, handler in handlers.items():
+        if mtype in table:
+            raise ValueError("message type {0!r} has two handlers".format(mtype))
+        table[mtype] = handler
+
+
 class SharedState:
     """State that more than one daemon feature reads or writes, so it belongs
     to none of them. Guarded by the daemon lock, like everything it replaces.
