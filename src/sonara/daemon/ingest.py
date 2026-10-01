@@ -332,8 +332,8 @@ class Ingest:
 
     def on_speak(self, msg):
         """SPEAK from an embedding host (#143): read *text* in the session
-        f"{source}:{tab or 'default'}". Queue of one: the session's unread
-        items are replaced, never queued behind, and the text is spoken as
+        f"{source}:{tab or 'default'}". Queue of one: the text replaces the
+        session's turn (unread items and history), and the text is spoken as
         given (cleaned for speech; no assembly, no summary). interrupt=true
         also cuts the session's current utterance; other sessions are left
         alone, and the global pause holds (a host must not un-pause the
@@ -352,13 +352,20 @@ class Ingest:
         cur = d._current_item
         if msg.get("interrupt") is True and cur is not None and cur.session == sid:
             d.speaker.cancel()
+        # One message, always the last (FE-1): each SPEAK replaces the
+        # session's turn, like a new prompt does for a Claude session, so
+        # read texts never pile up and Up replays only the latest. A
+        # non-interrupt SPEAK still lets the current utterance finish.
+        d._drop_channel_pending(sid)
         ch = d.router.channel(sid)
-        for it in ch.truncate_pending():
-            d._pending_heard.pop(it.id, None)
+        ch.wipe()
+        d.history.reset(sid)
+        d._last_digest_text.pop(sid, None)
         spoken = normalize_for_speech(text)
         if spoken:
             entry = d.history.record(sid, "summary", spoken)
             d.history.end_message(sid)
+            d._last_digest_text[sid] = spoken   # summary-mode Up re-reads it
             d._enqueue(sid, "summary", spoken, False, entry=entry)
             ch.turn_done = True   # whole text at once: no minqueue wait
             # Not a foreground Claude session: authorize it past the

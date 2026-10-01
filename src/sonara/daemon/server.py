@@ -116,7 +116,8 @@ class ConnectionServer:
         events = msg.get("events", ["state"])
         if self._stream is None:
             error = "subscribe is not available"
-        elif not isinstance(events, list) or "state" not in events:
+        elif (not isinstance(events, list) or "state" not in events
+              or any(e != "state" for e in events)):
             error = "unsupported events: only 'state' exists"
         else:
             error = None
