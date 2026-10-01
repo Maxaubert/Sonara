@@ -13,7 +13,7 @@ KEY_CODES = {
     "up": 0x26, "uparrow": 0x26,
     "right": 0x27, "rightarrow": 0x27,
     "down": 0x28, "downarrow": 0x28,
-    # Navigation block: Home/End are the default restart/flush keys (#160).
+    # Navigation block (#160): bindable, e.g. Win+Alt+Home/End on AltGr layouts.
     "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
 }
 # Every letter and digit (#38): the table used to cover only 9 letters, so a
@@ -34,12 +34,12 @@ MOD_MASKS = {
 # MOD_NOREPEAT (0x4000) is OR-ed in at register time, not part of a chord.
 MOD_NOREPEAT = 0x4000
 
-# Default chord: Win+Alt (#160). Ctrl+Alt was the default until 0.7.0, but
-# AltGr arrives as LCtrl+RAlt, so on layouts with AltGr characters (Norwegian
-# and German AltGr+M type the micro sign, Polish letters) a Ctrl+Alt hotkey
-# eats that character (E16). A Win chord never matches AltGr. Windows 11 owns
-# several Win+Alt chords (arrows snap windows, M/R/G/T/B/PrtScn belong to Game
-# Bar and HDR, D/K/H/digits to the shell), so the default KEYS in keymap.py
-# avoid them. RegisterHotKey suppresses the Start menu on the Win key-up of a
-# chord it delivered, so no extra handling is needed.
-DEFAULT_MODS = ["win", "alt"]
+# Default chord: Ctrl+Alt avoids Win-reserved and terminal shortcuts. It does
+# NOT avoid AltGr: AltGr arrives as LCtrl+RAlt, so on layouts with AltGr
+# characters (Norwegian and German AltGr+M type the micro sign, Polish letters)
+# a Ctrl+Alt hotkey eats that character (E16). Win+Alt was tried as the default
+# and reverted (#160, user decision 2026-10-02): a RegisterHotKey probe on the
+# maintainer's PC got ERROR_HOTKEY_ALREADY_REGISTERED for Win+Alt+Up/Down/M/P
+# (Windows, Game Bar, PowerToys). `sonara doctor` and the settings page warn
+# about an AltGr clash; the fix is to rebind that key with Win.
+DEFAULT_MODS = ["ctrl", "alt"]

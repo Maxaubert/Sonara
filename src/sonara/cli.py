@@ -361,7 +361,7 @@ def _register_local(sub) -> None:
     sp.add_argument("action", nargs="?", help="action to unbind")
     sp.add_argument("value", nargs="?", help="'clear' or 'none' to unbind the action")
     sp.add_argument("--reset", action="store_true",
-                    help="replace every binding with the defaults (Win+Alt)")
+                    help="replace every binding with the defaults (Ctrl+Alt)")
     sp.set_defaults(func=_cmd_keymap)
     sub.add_parser(
         "cleanup",

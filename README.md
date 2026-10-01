@@ -103,29 +103,27 @@ commands inside a session.
 
 ### Global hotkeys
 
-Default modifier is **Win+Alt** (rebind on the settings page or in
+Default modifier is **Ctrl+Alt** (rebind on the settings page or in
 `~/.sonara/keymap.json`). The daemon registers these as Windows global hotkeys, so no
 extra accessibility permission is needed. A hotkey must include Ctrl, Alt or Win.
 
-> **Changed in 0.7.0:** the defaults moved from Ctrl+Alt to Win+Alt, with new keys
-> (Ctrl+Alt+Up/Down/M/P became Win+Alt+Home/End/S/N). An existing install keeps the
-> bindings in its `~/.sonara/keymap.json`. To switch to the new defaults, press
-> **Reset hotkeys to defaults** on the settings page's Hotkeys tab, or run
-> `sonara keymap --reset`.
+> **New in 0.7.0:** the defaults are unchanged from 0.6.x, so there are no keys to
+> relearn. The settings page's Hotkeys tab has a **Reset hotkeys to defaults** button
+> (or run `sonara keymap --reset`), Home/End/PageUp/PageDown can be bound, and chords
+> with the Win key work.
 
-**Why Win+Alt:** Windows sends AltGr as Ctrl+Alt, so on layouts with AltGr characters
-(German, Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character away: with
-Ctrl+Alt+M bound to mute, AltGr+M no longer types µ. A Win chord never matches AltGr.
-If you keep or bind a clashing Ctrl+Alt hotkey, `sonara doctor` names each one and the
-character it eats in a **[warn] AltGr** row, and the settings page shows the same warning
-next to the binding.
+**European keyboard layouts:** Windows sends AltGr as Ctrl+Alt, so on layouts with AltGr
+characters (German, Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character
+away: with Ctrl+Alt+M bound to mute, AltGr+M no longer types µ. `sonara doctor` names
+each clashing hotkey and the character it eats in a **[warn] AltGr** row, and the
+settings page shows the same warning next to the binding. The fix is to rebind that key
+with Win, for example to Win+Alt+Home/End or Ctrl+Win+Up/Down. Resetting to the defaults
+does not help, since they use Ctrl+Alt.
 
-**Keys Windows already owns:** Windows 11 uses Win+Alt+Up/Down (snap a window to the top
-or bottom half), Win+Alt+M/R/G/T/PrtScn (Game Bar), Win+Alt+B (HDR), Win+Alt+D (date and
-time), Win+Alt+K (microphone mute), Win+Alt+H (voice typing) and Win+Alt+digits (jump
-lists). That is why restart and flush use Home and End instead of Up and Down, and mute
-uses S instead of M. If another app already holds a chord, `sonara doctor` reports it in
-its **hotkey chords** row; rebind that action on the settings page.
+**Keys Windows already owns:** Windows 11 and Game Bar hold Win+Alt+Up/Down/M/P and
+others (Win+Alt+B/D/G/K/R/T, digits), so Win+Alt was not made the default. If another
+app already holds a chord, `sonara doctor` reports it in its **hotkey chords** row;
+rebind that action on the settings page.
 
 Only these actions are bound by default (kept minimal so Sonara doesn't hog
 hotkeys). `pause`, `faster`, and `slower` are valid actions but ship **unbound** –
@@ -133,14 +131,14 @@ add a key in `~/.sonara/keymap.json` if you want one. Stop, repeat and skip
 live in the CLI below.
 
 Sonara always reads one message, the latest: there is no stepping back through
-paragraphs or older turns. Win+Alt+Home simply starts the latest response over.
+paragraphs or older turns. Up simply starts the latest response over.
 
 | Hotkey | Effect |
 |---|---|
-| Win+Alt+Home | Replay the latest response from the top (in summary mode, re-read the last summary) |
-| Win+Alt+End | Flush – silence everything queued, in every session, and go quiet (Win+Alt+Home brings the latest response back) |
-| Win+Alt+S | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
-| Win+Alt+N | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
+| Ctrl+Alt+Up | Replay the latest response from the top (in summary mode, re-read the last summary) |
+| Ctrl+Alt+Down | Flush – silence everything queued, in every session, and go quiet (Up brings the latest response back) |
+| Ctrl+Alt+M | Cycle mute: Unmuted → Muted (speech) → Super muted (speech + beeps) |
+| Ctrl+Alt+P | Cycle to the next session in a fixed round-robin (resumes an unread session, replays a read one). Says "Session changed: &lt;folder&gt;." |
 
 ### Selecting options
 
@@ -187,7 +185,7 @@ Three live-switchable levels (earcons fire in **all** of them):
 `sonara summary on` switches Sonara to a recap style: instead of narrating a whole
 response, Sonara waits for the message to finish and reads a 1-2 sentence summary.
 Decisions (questions, plans, permission prompts) are still read in full, every
-earcon still fires, and Win+Alt+Home re-reads the last summary.
+earcon still fires, and Ctrl+Alt+Up re-reads the last summary.
 
 How it works: when a turn finishes, Sonara runs a separate, throwaway
 `claude -p` call (default model: Haiku, tool-disabled) with only that message's
@@ -219,7 +217,7 @@ decision text are not read aloud until you bring that session forward. Submittin
 prompt or stopping flushes the queue, so the voice always resumes at what is current.
 
 To manually cycle the voice to another session without switching windows, press
-**Win+Alt+N**. Sonara advances to the next session in a
+**Ctrl+Alt+P**. Sonara advances to the next session in a
 fixed round-robin order, plays a short chime, and says "Session changed: &lt;folder&gt;." An
 unread session resumes from where it left off; a fully-read session is replayed from the
 top.
