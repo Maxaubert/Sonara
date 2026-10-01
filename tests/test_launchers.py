@@ -43,7 +43,7 @@ def _stub_dir(tmp_path):
     d.mkdir()
     for name in ("python", "python3"):
         p = d / name
-        p.write_text("#!/bin/sh\necho STUB\nexit 9009\n", encoding="utf-8", newline="\n")
+        p.write_bytes(b"#!/bin/sh\necho STUB\nexit 9009\n")  # LF; write_text(newline=) is py3.10+
         p.chmod(0o755)
         (d / (name + ".bat")).write_text("@echo STUB\r\n@exit /b 9009\r\n", encoding="utf-8")
     return d
