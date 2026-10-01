@@ -41,20 +41,19 @@ def test_action_messages_faster_has_delta_25():
 
 # --- default_keymap: per-OS chord -------------------------------------------
 
-def test_default_keymap_windows_uses_win_alt(win):
+def test_default_keymap_windows_uses_ctrl_alt(win):
     d = keymap.default_keymap()
-    assert all(b["mods"] == ["win", "alt"] for b in d.values())
-    assert d["mute"]["key"] == "s"
+    assert all(b["mods"] == ["ctrl", "alt"] for b in d.values())
+    assert d["mute"]["key"] == "m"
 
 
-def test_default_bindings_avoid_windows_win_alt_shortcuts(win):
-    # Windows 11 owns Win+Alt+Up/Down (snap top/bottom half), Win+Alt+M (Game
-    # Bar microphone), Win+Alt+B/D/G/K/R/T/PrtScn and Win+Alt+digits; on the
-    # maintainer's PC RegisterHotKey also refused Win+Alt+Left/Right/P/F/W/Y
-    # (#160). The defaults must stay clear of all of them.
-    taken = set("bdfgkmprtwy0123456789") | {"up", "down", "left", "right"}
-    keys = {b["key"] for b in keymap.default_keymap().values()}
-    assert not keys & taken
+def test_defaults_are_the_0_6_bindings(win):
+    # #160 (user decision 2026-10-02): Win+Alt was tried and reverted, since
+    # Windows owns Win+Alt+Up/Down/M/P (RegisterHotKey returned 1409 for all
+    # four). The defaults stay Ctrl+Alt+Up/Down/M/P, so nobody relearns keys.
+    d = keymap.default_keymap()
+    assert {a: b["key"] for a, b in d.items()} == {
+        "nav_start": "up", "flush": "down", "mute": "m", "next_session": "p"}
 
 
 # --- resolve_keymap ---------------------------------------------------------
@@ -144,7 +143,7 @@ def test_load_keymap_returns_defaults_when_missing(monkeypatch, tmp_path):
     loaded = keymap.load_keymap()
     assert loaded == keymap.default_keymap()
     loaded["nav_start"]["key"] = "x"  # independent copy
-    assert keymap.default_keymap()["nav_start"]["key"] == "home"
+    assert keymap.default_keymap()["nav_start"]["key"] == "up"
 
 
 def test_load_keymap_merges_user_override(monkeypatch, tmp_path):
@@ -242,10 +241,10 @@ def test_next_session_action_message():
     assert ACTION_MESSAGES["next_session"] == {"type": "next_session"}
 
 
-def test_next_session_default_binding_is_n():
+def test_next_session_default_binding_is_p():
     from sonara.keymap import default_keymap
     km = default_keymap()
-    assert km["next_session"]["key"] == "n"
+    assert km["next_session"]["key"] == "p"
 
 
 def test_nav_start_action_message_is_nav_first():
@@ -256,17 +255,15 @@ def test_flush_action_message():
     assert keymap.ACTION_MESSAGES["flush"] == {"type": "flush_session"}
 
 
-def test_nav_start_and_flush_default_to_home_and_end():
-    # Win+Alt+Up/Down snap windows in Windows 11, so restart/flush moved to
-    # the closest free pair: Home (back to the start) and End (to the end).
+def test_nav_start_and_flush_default_to_up_and_down():
     km = keymap.default_keymap()
-    assert km["nav_start"]["key"] == "home"
-    assert km["flush"]["key"] == "end"
+    assert km["nav_start"]["key"] == "up"
+    assert km["flush"]["key"] == "down"
 
 
 def test_existing_keymap_file_keeps_its_ctrl_alt_bindings(win, monkeypatch, tmp_path):
-    # #160: changing the default must not rebind an existing install. A
-    # keymap.json materialized by an earlier install keeps Ctrl+Alt.
+    # #160: loading never rewrites an existing install's bindings. A
+    # keymap.json materialized by an earlier install keeps what it holds.
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
     old = {"nav_start": {"key": "up", "mods": ["ctrl", "alt"]},
            "flush": {"key": "down", "mods": ["ctrl", "alt"]},
@@ -291,8 +288,8 @@ def test_reset_keymap_restores_the_defaults(win, monkeypatch, tmp_path):
 
 
 def test_migrate_legacy_chord_never_lands_on_a_windows_shortcut(win, monkeypatch, tmp_path):
-    # A pre-Ctrl+Alt keymap (Ctrl+Shift+Alt+Up) upgrades to the chord that
-    # install used (Ctrl+Alt+Up), never to Win+Alt+Up, which Windows owns.
+    # A pre-Ctrl+Alt keymap (Ctrl+Shift+Alt+Up) upgrades to Ctrl+Alt+Up, the
+    # default chord; never to Win+Alt+Up, which Windows owns (#160).
     km, _ = _patch_keymap_paths(monkeypatch, tmp_path)
     km.write_text(json.dumps({"nav_start": {"key": "up", "mods": ["ctrl", "shift", "alt"]},
                               "next_session": {"key": "p", "mods": ["ctrl", "shift", "alt"]}}),

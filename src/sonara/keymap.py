@@ -30,18 +30,14 @@ ACTION_MESSAGES = {
     "slower": {"type": "set_rate", "delta": -25},
 }
 
-# Action -> default key. The chord modifiers (Win+Alt) come from the active
+# Action -> default key. The chord modifiers (Ctrl+Alt) come from the active
 # backend's default_mods(). Only nav_start/flush + mute + next_session are bound
 # out of the box; pause and faster/slower are valid actions but ship UNBOUND
 # (blank by default) so the default keymap stays minimal: users add a key in
 # keymap.json if they want one.
-# The keys dodge Windows 11's own Win+Alt chords (#160): Win+Alt+Up/Down snap
-# windows, so restart/flush use Home (back to the start) and End (to the end);
-# Win+Alt+M is Game Bar's microphone toggle and Win+Alt+P was taken too, so
-# mute is S (silence) and next_session is N (next).
 _DEFAULT_KEYS = {
-    "nav_start": "home", "flush": "end",
-    "mute": "s", "next_session": "n",   # pause unbound; mute covers it.
+    "nav_start": "up", "flush": "down",
+    "mute": "m", "next_session": "p",   # next_session owns 'p'. pause unbound ('s' free); mute covers it.
 }
 
 
@@ -209,10 +205,10 @@ def unbind_action(action: str) -> None:
 # legacy chord; this constant lets migrate_default_chord() spot those stale defaults.
 _LEGACY_WINDOWS_MODS = ["ctrl", "shift", "alt"]
 # What the legacy migration has always produced: the Ctrl+Alt chord on the
-# pre-0.7.0 default keys. Frozen on purpose (#160): the Win+Alt default uses
-# other keys, and Win+Alt+Up/Down belong to Windows. Existing keymaps keep
-# their chord; reset_keymap() (settings page, `sonara keymap --reset`) moves
-# a user to the current defaults.
+# default keys. Frozen on purpose (#160): if the default chord ever changes,
+# the migration must not follow it onto a chord Windows owns (Win+Alt+Up/Down
+# do). reset_keymap() (settings page, `sonara keymap --reset`) moves a user
+# to the current defaults.
 _MIGRATED_MODS = ["ctrl", "alt"]
 _LEGACY_DEFAULT_KEYS = {"nav_start": "up", "flush": "down",
                         "mute": "m", "next_session": "p"}
@@ -246,8 +242,7 @@ def migrate_default_chord() -> bool:
 
 
 def reset_keymap() -> None:
-    """Replace the user's keymap.json with the current default bindings (#160):
-    the way an existing install moves from its old Ctrl+Alt chords to Win+Alt.
+    """Replace the user's keymap.json with the current default bindings (#160).
     Every override, including explicit unbinds, is dropped."""
     _write_user_keymap(default_keymap())
 

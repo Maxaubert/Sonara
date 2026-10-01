@@ -71,7 +71,7 @@ class Controls:
         fg = self.engaged_session()
         if d.config.get("summary_mode"):
             # Summary mode speaks ONE digest per turn: Up re-reads it. Flush
-            # ('go to end', Win+Alt+End by default) is a separate handler.
+            # ('go to end', Ctrl+Alt+Down) is a separate handler.
             moved = self.reread_last(fg) if fg is not None else False
             d._earcon("nav" if moved else "nav_edge")
             return None

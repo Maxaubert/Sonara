@@ -15,7 +15,7 @@ def test_hotkey_backend_is_real_not_stub():
     from sonara.platform.windows.hotkeys import WinHotkeyBackend
     hk = WinHotkeyBackend()
     # M3: real in-process backend -- keytables + display labels, no "M3 deferred".
-    assert hk.default_mods() == ["win", "alt"]
+    assert hk.default_mods() == ["ctrl", "alt"]
     assert hk.display_combo(0x0002, 0x53) == "Ctrl+S"
 
 
@@ -26,7 +26,7 @@ def test_display_combo_labels_ctrl_alt_o():
     assert WinHotkeyBackend().display_combo(0x0003, 0x4F) == "Ctrl+Alt+O"
 
 
-def test_display_combo_labels_the_win_alt_default_chord():
+def test_display_combo_labels_win_first_and_the_navigation_keys():
     from sonara.platform.windows.hotkeys import WinHotkeyBackend
     hk = WinHotkeyBackend()
     assert hk.display_combo(0x0008 | 0x0001, 0x24) == "Win+Alt+Home"
