@@ -140,7 +140,10 @@ def _read_user_keymap() -> dict:
 
 
 def _write_user_keymap(user: dict) -> None:
-    """Atomically persist the user's keymap.json overrides."""
+    """Atomically persist the user's keymap.json overrides. Bindings for
+    actions Sonara no longer defines (e.g. the removed nav_prev/nav_next) are
+    dropped, so a rewrite also cleans a stale file."""
+    user = {a: b for a, b in user.items() if a in ACTION_MESSAGES}
     ensure_sonara_dir()
     tmp = str(KEYMAP_PATH) + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
