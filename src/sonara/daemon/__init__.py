@@ -16,7 +16,7 @@ from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
 from sonara.daemon.playback import SpeakLoop
 from sonara.daemon.server import ConnectionServer
-from sonara.daemon.summary.pipeline import SummaryPipeline, _summary_log
+from sonara.daemon.summary.pipeline import SummaryPipeline, summary_log
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -105,7 +105,7 @@ class SpeechDaemon:
         self._mute_level = config_schema.current(config, "mute_level")
         # Digest reorder buffer (#88): turn-end digests become AUDIBLE in
         # dispatch (turn-finish) order, not summarizer-completion order.
-        self._digests = DigestReorderBuffer(lock=self._lock, log=_summary_log)
+        self._digests = DigestReorderBuffer(lock=self._lock, log=summary_log)
         # Control cues on the CONTROL channel, their voice, Kokoro notices.
         self._cues = Cues(config, self.router, speaker, self.session_prefs,
                           alloc_id=self._alloc_id,

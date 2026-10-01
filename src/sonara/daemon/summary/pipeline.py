@@ -72,7 +72,7 @@ def _digest_watchdog_s(config) -> float:
     return 2.0 * _summary_timeout_s(config)
 
 
-def _summary_log(reason) -> None:
+def summary_log(reason) -> None:
     """One summary-pipeline line on stderr, which the supervisor redirects to
     speechd.log, so a silent recap failure is diagnosable."""
     print("[summary] {0}".format(reason), file=sys.stderr, flush=True)
@@ -101,7 +101,7 @@ class SummaryPipeline:
         self._enqueue = enqueue
         self._replay = replay
         self._earcon = earcon
-        self._log = _summary_log
+        self._log = summary_log
         # Per-session CANCEL epoch. Only a user action (a new prompt -> FLUSH)
         # advances it; a finished digest is dropped iff the epoch moved since
         # it was dispatched. A turn merely ending does NOT advance it, so the
