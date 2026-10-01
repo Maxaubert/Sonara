@@ -33,10 +33,10 @@ def test_ensure_running_spawns_via_platform_launch_spec_when_socket_absent():
 def test_main_builds_components_and_runs():
     fake_cfg = {"voice": None, "rate": 200, "verbosity": "everything",
                 "background_policy": "earcon_only", "earcons": {}}
-    with mock.patch("sonara.daemon.load_config", return_value=fake_cfg), \
-         mock.patch("sonara.daemon.socket_connectable", return_value=False), \
-         mock.patch("sonara.daemon.transport.acquire_singleton_mutex", return_value=object()), \
-         mock.patch("sonara.daemon.transport.acquire_singleton", return_value=object()), \
+    with mock.patch("sonara.daemon.startup.load_config", return_value=fake_cfg), \
+         mock.patch("sonara.daemon.startup.socket_connectable", return_value=False), \
+         mock.patch("sonara.daemon.startup.transport.acquire_singleton_mutex", return_value=object()), \
+         mock.patch("sonara.daemon.startup.transport.acquire_singleton", return_value=object()), \
          mock.patch("sonara.daemon.SpeechDaemon.run", autospec=True) as run:
         daemon_mod.main()
     assert run.call_count == 1

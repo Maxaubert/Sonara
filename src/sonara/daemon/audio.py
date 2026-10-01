@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 
 from sonara import config_schema
+from sonara.daemon import core
 from sonara.protocol import MsgType
 
 
@@ -90,6 +91,9 @@ class AudioControl:
                "pause": "Media pause."}[mode]
         self._cues.speak(target, cue, exempt_mute=True, pause_exempt=True)
         self._wake.set()
+
+    def register(self, table: dict) -> None:
+        core.add_handlers(table, {t: self.handle for t in self.MESSAGES})
 
     def handle(self, msg):
         """Apply one of MESSAGES. Caller holds the daemon lock. Returns None

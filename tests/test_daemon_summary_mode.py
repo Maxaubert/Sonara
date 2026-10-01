@@ -577,16 +577,16 @@ def test_recorded_summary_is_not_resummarized(monkeypatch):
 
 def test_session_end_clears_await_choice(monkeypatch):
     # A session ending with an unanswered AskUserQuestion must not leave a stale
-    # _await_choice entry: the permission-chime suppression check is GLOBAL
+    # await_choice (daemon/ingest) entry: the permission-chime suppression check is GLOBAL
     # truthiness, so one stale entry would swallow every future permission chime
     # daemon-wide (audit #19).
     import sonara.daemon as daemon_module
     monkeypatch.setattr(daemon_module, "save_config", lambda cfg: None)
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
-    daemon._await_choice.add("fg")
+    daemon._ingest.await_choice.add("fg")
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
                            "session": "fg"})
-    assert "fg" not in daemon._await_choice
+    assert "fg" not in daemon._ingest.await_choice
 
 
 def test_short_turn_does_not_suppress_session_announcement(monkeypatch):
@@ -627,7 +627,7 @@ def test_reread_preserves_queued_question(monkeypatch):
     daemon._summary.worker(*calls[0])                    # digest + question enqueued
     ch = daemon.router.channel("fg")
     assert any(it.is_decision for it in ch.items[ch.cursor:])
-    assert daemon._reread_last("fg") is True             # Up during the digest read
+    assert daemon._controls.reread_last("fg") is True             # Up during the digest read
     items = ch.items[ch.cursor:]
     assert any(it.is_decision for it in items)           # question PRESERVED
     kinds = [it.kind for it in items]
@@ -787,12 +787,12 @@ def test_session_end_clears_per_session_state(monkeypatch):
     daemon, queue, speaker, sessions, config = make_daemon(foreground="fg")
     daemon._last_digest_text["fg"] = "stale"
     daemon._summary.voiced_upto["fg"] = object()
-    daemon._assemblers["fg"] = object()
+    daemon._ingest.assemblers["fg"] = object()
     daemon.handle_message({"v": PROTOCOL_VERSION, "type": MsgType.SESSION_END,
                            "session": "fg"})
     assert "fg" not in daemon._last_digest_text
     assert "fg" not in daemon._summary.voiced_upto
-    assert "fg" not in daemon._assemblers
+    assert "fg" not in daemon._ingest.assemblers
 
 
 # --- short turns skip the summarizer and speak the original text ----------
@@ -925,7 +925,7 @@ def test_reread_after_bare_question_replays_the_question(monkeypatch):
         daemon._playback.run_once()                        # question is spoken
     assert any("Pick one?" in t for t in speaker.spoken)
     speaker.spoken.clear()
-    assert daemon._reread_last("fg") is True             # was: False -> edge chime
+    assert daemon._controls.reread_last("fg") is True             # was: False -> edge chime
     for _ in range(4):
         daemon._playback.run_once()
     assert any("Pick one?" in t for t in speaker.spoken)  # question heard again
@@ -945,7 +945,7 @@ def test_reread_after_digest_and_question_replays_both(monkeypatch):
         daemon._playback.run_once()                        # digest + question spoken
     assert any("Pick one?" in t for t in speaker.spoken)
     speaker.spoken.clear()
-    assert daemon._reread_last("fg") is True
+    assert daemon._controls.reread_last("fg") is True
     for _ in range(6):
         daemon._playback.run_once()
     joined = " ".join(speaker.spoken)
@@ -970,7 +970,7 @@ def test_up_during_speaking_question_restarts_it(monkeypatch):
         daemon._current_item = item
     assert item is not None and item.is_decision
     # ...and MID-SPEECH the user presses Up:
-    assert daemon._reread_last("fg") is True             # was: False -> edge chime
+    assert daemon._controls.reread_last("fg") is True             # was: False -> edge chime
     daemon.note_spoken(item, False)                      # cancelled speak returns
     for _ in range(4):
         daemon._playback.run_once()
@@ -992,7 +992,7 @@ def test_up_during_speaking_digest_does_not_double_speak(monkeypatch):
     with daemon._lock:
         item = daemon.router.next_item()                 # digest mid-speech
         daemon._current_item = item
-    assert daemon._reread_last("fg") is True
+    assert daemon._controls.reread_last("fg") is True
     daemon.note_spoken(item, False)
     for _ in range(6):
         daemon._playback.run_once()
@@ -1010,7 +1010,7 @@ def test_reread_does_not_double_append_on_repeat_rereads(monkeypatch):
     for _ in range(4):
         daemon._playback.run_once()
     baseline = daemon._last_digest_text.get("fg")
-    daemon._reread_last("fg")
+    daemon._controls.reread_last("fg")
     for _ in range(4):
         daemon._playback.run_once()                        # re-read heard
     assert daemon._last_digest_text.get("fg") == baseline
@@ -1044,7 +1044,7 @@ def test_short_foreground_turn_sets_reread_text(monkeypatch):
     daemon.handle_message(_prose("fg", "Back on. ", 0, True))
     _turn_done(daemon)                                   # short turn, raw replay
     assert daemon._last_digest_text.get("fg") == "Back on."
-    assert daemon._reread_last("fg") is True             # Up now works
+    assert daemon._controls.reread_last("fg") is True             # Up now works
 
 
 def test_flush_clears_inflight_accounting_so_new_question_not_held(monkeypatch):

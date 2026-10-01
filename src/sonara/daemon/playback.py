@@ -181,7 +181,7 @@ class SpeakLoop:
         # preserved: the alert cue itself is played WITHOUT on_play, and the duck/
         # pause engage happens for the CONTENT, after the alert.
         # Read the alert ONCE under the lock (L-preamble): on_play and
-        # _flush_all clear it from other threads, and a None landing between
+        # flush_all (daemon/controls) clear it from other threads, and a None landing between
         # a check and the subscript raised TypeError in the speak loop.
         preamble = None
         with self._lock:

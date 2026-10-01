@@ -60,11 +60,11 @@ def test_main_resolves_earcons_at_runtime_without_touching_config():
     bundled = {"nav": "/app/nav.wav", "choice": "/app/choice.wav"}
     plat = mock.MagicMock()
     plat.earcon.default_earcons.return_value = bundled
-    with mock.patch("sonara.daemon.load_config", return_value=fake_cfg), \
+    with mock.patch("sonara.daemon.startup.load_config", return_value=fake_cfg), \
          mock.patch("sonara.platform.get_platform", return_value=plat), \
-         mock.patch("sonara.daemon.socket_connectable", return_value=False), \
-         mock.patch("sonara.daemon.transport.acquire_singleton_mutex", return_value=object()), \
-         mock.patch("sonara.daemon.transport.acquire_singleton", return_value=object()), \
+         mock.patch("sonara.daemon.startup.socket_connectable", return_value=False), \
+         mock.patch("sonara.daemon.startup.transport.acquire_singleton_mutex", return_value=object()), \
+         mock.patch("sonara.daemon.startup.transport.acquire_singleton", return_value=object()), \
          mock.patch("sonara.platform.windows.ducking.restore_from_state_file"), \
          mock.patch("sonara.platform.windows.pausing.resume_from_state_file"), \
          mock.patch("sonara.daemon.SpeechDaemon.run", autospec=True) as run:

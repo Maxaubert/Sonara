@@ -203,7 +203,7 @@ def test_session_end_resets_immediate_warning():
     # session ends -> the per-session warned flag is cleared (bounds the set,
     # and a reconnect under the same id re-hears the warning)
     daemon.handle_message(_msg(MsgType.SESSION_END, "fg"))
-    assert "fg" not in daemon._warned_immediate
+    assert "fg" not in daemon._ingest.warned_immediate
     sessions.set_foreground("fg")
     daemon.handle_message(_two_option_choice("fg"))
     assert WARN in queue.pop_next().text
