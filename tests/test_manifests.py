@@ -84,19 +84,33 @@ def test_every_phase1_event_is_hooked():
     assert not missing, f"hooks.json is missing event hooks: {sorted(missing)}"
 
 
-def test_plugin_json_version_is_0_5_0():
-    data = _load(PLUGIN_JSON)
-    assert data.get("version") == "0.5.0"
-
-
-def test_pyproject_version_is_0_5_0():
+def _pyproject_version() -> str:
+    # Regex, not tomllib: the suite also runs on Python 3.9 (no tomllib there).
+    import re
     text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.5.0"' in text
+    m = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
+    assert m, "pyproject.toml declares no [project] version"
+    return m.group(1)
 
 
-def test_marketplace_plugin_version_is_0_5_0():
-    mp = REPO_ROOT / ".claude-plugin" / "marketplace.json"
-    data = _load(mp)
-    plugins = data.get("plugins") or []
+def test_manifest_versions_match_pyproject():
+    # release.yml publishes v<pyproject version> and refuses a mismatch; plugin
+    # updates are keyed on the manifest version, so all three must move together.
+    version = _pyproject_version()
+    assert _load(PLUGIN_JSON).get("version") == version
+    plugins = _load(REPO_ROOT / ".claude-plugin" / "marketplace.json").get("plugins") or []
     assert plugins, "marketplace.json declares no plugins"
-    assert plugins[0].get("version") == "0.5.0"
+    assert plugins[0].get("version") == version
+
+
+def test_pyproject_version_is_0_6_0():
+    assert _pyproject_version() == "0.6.0"
+
+
+def test_manifests_have_no_em_dash():
+    # User-facing text never uses em-dashes (#45); the manifests are shown in
+    # the plugin marketplace UI.
+    for name in ("plugin.json", "marketplace.json"):
+        raw = (REPO_ROOT / ".claude-plugin" / name).read_text(encoding="utf-8")
+        text = json.dumps(json.loads(raw), ensure_ascii=False)
+        assert "\u2014" not in text, name

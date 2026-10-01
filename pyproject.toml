@@ -4,17 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sonara"
-version = "0.5.0"
+version = "0.6.0"
 description = "Eyes-free text-to-speech layer for Claude Code (Windows)"
+readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "Nima Hakimi", email = "hakimi.nima1@gmail.com" }]
+maintainers = [{ name = "Max Aubert" }]
 license = { text = "MIT" }
+
+[project.urls]
+Homepage = "https://github.com/Maxaubert/Sonara"
+Repository = "https://github.com/Maxaubert/Sonara"
+Issues = "https://github.com/Maxaubert/Sonara/issues"
 
 [project.scripts]
 sonara = "sonara.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+# numpy: tests/test_kokoro.py builds fake Kokoro audio arrays.
+dev = ["pytest>=7", "ruff", "numpy"]
+# Headless settings-page tests (tests/e2e); also run `playwright install chromium`.
+e2e = ["playwright"]
 # Windows TTS runtime. OneCore speech is reached via PyWinRT; without these the
 # daemon cannot synthesize and Windows users get silent no-speech (#7).
 windows = [
@@ -37,4 +47,24 @@ kokoro = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-sonara = ["platform/windows/earcons/*.wav", "settings.html"]
+sonara = ["platform/windows/earcons/*.wav", "settings.html", "requirements-kokoro.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live_windows: drives real OneCore/winsound; skipped unless selected with -m live_windows",
+]
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+# pyupgrade (UP) is left out: ~270 mechanical rewrites (format strings,
+# quoted annotations) with no bug signal, too much churn next to the
+# daemon split. Revisit once daemon.py is broken up.
+select = ["E9", "F", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Imports the `server` fixture from test_webui by name so pytest can inject it;
+# the test parameters then shadow the import by design.
+"tests/test_webui_restart_respawn.py" = ["F811"]

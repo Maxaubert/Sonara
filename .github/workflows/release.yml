@@ -1,0 +1,70 @@
+# Auto-release on every push to main.
+# - Reads the version from pyproject.toml and refuses to run if
+#   .claude-plugin/plugin.json or marketplace.json disagree.
+# - REFUSES to run if release v<version> already exists: bump the version in the PR.
+# - Publishes v<version> with GitHub-generated notes. No asset: Sonara ships as a
+#   Claude Code plugin from the repo itself, so there is no binary to sign.
+# Docs-only pushes are skipped by paths-ignore.
+name: release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0 -or -not $v) { Write-Error "cannot read the version from pyproject.toml"; exit 1 }
+          $plugin = (Get-Content .claude-plugin/plugin.json -Raw | ConvertFrom-Json).version
+          $market = (Get-Content .claude-plugin/marketplace.json -Raw | ConvertFrom-Json).plugins[0].version
+          if ($plugin -ne $v -or $market -ne $v) {
+            Write-Error "Version mismatch: pyproject.toml $v, plugin.json $plugin, marketplace.json $market. Keep all three equal."
+            exit 1
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Refuse to overwrite an existing release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.ver.outputs.version }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Error "Release $tag already exists. Bump the version in pyproject.toml, plugin.json and marketplace.json (patch for a fix, minor for a feature) and push again."
+            exit 1
+          }
+          # gh exiting 1 (release absent) is the pass case, but the pwsh step
+          # wrapper propagates a lingering $LASTEXITCODE as the step result.
+          exit 0
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ steps.ver.outputs.version }}"
+          gh release create $tag --title $tag --generate-notes --latest --target $env:GITHUB_SHA
