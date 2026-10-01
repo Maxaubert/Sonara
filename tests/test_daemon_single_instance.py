@@ -31,3 +31,37 @@ def test_main_exits_when_another_instance_owns_the_mutex():
          mock.patch("sonara.daemon.load_config", return_value={}):
         daemon_mod.main()
     run.assert_not_called()
+
+
+def test_main_logs_when_another_instance_owns_the_mutex(capsys):
+    with mock.patch("sonara.daemon.socket_connectable", return_value=False), \
+         mock.patch("sonara.daemon.transport.acquire_singleton_mutex", return_value=None), \
+         mock.patch.object(daemon_mod.SpeechDaemon, "run"), \
+         mock.patch("sonara.daemon.load_config", return_value={}):
+        daemon_mod.main()
+    assert "already running" in capsys.readouterr().err
+
+
+def test_mutex_failure_falls_back_to_the_lock_file(capsys):
+    """M11: a CreateMutexW failure is logged and the byte-lock decides."""
+    with mock.patch("sonara.daemon.socket_connectable", return_value=False), \
+         mock.patch("sonara.daemon.transport.acquire_singleton_mutex",
+                    side_effect=OSError("CreateMutexW failed: error 5")), \
+         mock.patch("sonara.daemon.transport.acquire_singleton", return_value=object()), \
+         mock.patch.object(daemon_mod.SpeechDaemon, "run") as run, \
+         mock.patch("sonara.daemon.load_config", return_value={}), \
+         mock.patch("sonara.speaker.Speaker"):
+        daemon_mod.main()
+    run.assert_called_once()
+    assert "CreateMutexW failed" in capsys.readouterr().err
+
+
+def test_mutex_failure_and_lock_file_held_exits(capsys):
+    with mock.patch("sonara.daemon.socket_connectable", return_value=False), \
+         mock.patch("sonara.daemon.transport.acquire_singleton_mutex",
+                    side_effect=OSError("CreateMutexW failed: error 5")), \
+         mock.patch("sonara.daemon.transport.acquire_singleton", return_value=None), \
+         mock.patch.object(daemon_mod.SpeechDaemon, "run") as run, \
+         mock.patch("sonara.daemon.load_config", return_value={}):
+        daemon_mod.main()
+    run.assert_not_called()

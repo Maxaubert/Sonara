@@ -2801,10 +2801,23 @@ def main() -> None:
     # below is tied to the lock FILE's inode, so a deleted/recreated file or two
     # daemons racing to create it stop excluding -> a daemon explosion (observed
     # live). The mutex is keyed by name, immune to that, and frees on death.
-    _MUTEX = transport.acquire_singleton_mutex()
+    try:
+        _MUTEX = transport.acquire_singleton_mutex()
+    except OSError as exc:
+        # M11: a mutex that cannot be created is not "another daemon owns
+        # it". Log it and let the lock-file byte-lock below decide.
+        print("[singleton] {0}; using the lock file instead".format(exc),
+              file=sys.stderr, flush=True)
+        _MUTEX = False
     if _MUTEX is None:
-        return  # another daemon already owns the single-instance mutex
+        print("[singleton] another Sonara daemon is already running for this "
+              "user; exiting", file=sys.stderr, flush=True)
+        return
     _SINGLETON = transport.acquire_singleton(SINGLETON_PATH)  # pid record (best-effort)
+    if _MUTEX is False and _SINGLETON is None:
+        print("[singleton] the lock file is held by another daemon; exiting",
+              file=sys.stderr, flush=True)
+        return
 
     _harden_process()   # win32: opt out of EcoQoS throttling + raise priority so
                         # global hotkeys stay responsive after long idle

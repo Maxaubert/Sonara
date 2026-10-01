@@ -114,25 +114,49 @@ def acquire_singleton(path):
 # exclude -> a daemon explosion (observed live). A named kernel mutex is keyed by
 # NAME, shared by every process regardless of any file, and the kernel releases it
 # on process death. This is the AUTHORITATIVE single-instance guard on Windows.
-_MUTEX_NAME = "Global\\Sonara-Daemon-Singleton-v1"
+_MUTEX_PREFIX = "Global\\Sonara-Daemon-Singleton-v2-"
 _ERROR_ALREADY_EXISTS = 183
 
 
-def acquire_singleton_mutex(name: str = _MUTEX_NAME):
+def singleton_mutex_name(sonara_dir) -> str:
+    """The mutex name for one user's Sonara (M11): keyed by that user's
+    ~/.sonara, so another Windows user's daemon neither blocks this one (the
+    old fixed Global\\ name was access-denied across users, and that read as
+    "already owned") nor is blocked by it. Global\\ still spans this user's
+    own sessions (console and RDP), which share one ~/.sonara."""
+    import hashlib
+    key = os.path.normcase(os.path.abspath(str(sonara_dir))).lower()
+    return _MUTEX_PREFIX + hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
+
+
+def default_mutex_name() -> str:
+    from sonara import paths
+    return singleton_mutex_name(paths.SONARA_DIR)
+
+
+def acquire_singleton_mutex(name=None, kernel32=None, last_error=None):
     """Create/own the named single-instance mutex. Returns an opaque handle to
     hold for the process's lifetime, or None if another process already owns it.
+    Raises OSError when the mutex cannot be created at all (M11): that used to
+    read as "owned", and the daemon exited without a word.
     Non-Windows (no such API): returns a truthy sentinel so callers don't gate on
     it (the byte-lock remains the guard there)."""
     if os.name != "nt":
         return True
-    import ctypes
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    if name is None:
+        name = default_mutex_name()
+    if kernel32 is None:
+        import ctypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]   # 64-bit handles
+        last_error = ctypes.get_last_error
     handle = kernel32.CreateMutexW(None, True, name)   # bInitialOwner=True
+    err = last_error()
     if not handle:
-        return None
-    if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
-        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        raise OSError("CreateMutexW failed for {0}: error {1}".format(name, err))
+    if err == _ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(handle)
         return None
     return handle
 
