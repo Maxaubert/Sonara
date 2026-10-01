@@ -5,7 +5,7 @@ import socket
 import sys
 import threading
 
-from sonara.protocol import MsgType, encode, decode
+from sonara.protocol import MsgType
 from sonara.queue import SpeechItem
 from sonara.assembler import ProseAssembler
 from sonara import config_schema
@@ -13,6 +13,7 @@ from sonara.daemon import decision_text, setup_health, tokens
 from sonara.daemon.audio import AudioControl
 from sonara.daemon.cues import Cues
 from sonara.daemon.hotkeys import HotkeyController
+from sonara.daemon.server import ConnectionServer
 from sonara.daemon.summary.reorder import DigestReorderBuffer
 from sonara.config import save_config, load_config
 from sonara.paths import (
@@ -93,11 +94,6 @@ def _summary_log(reason) -> None:
     speechd.log, so a silent recap failure is diagnosable."""
     print("[summary] {0}".format(reason), file=sys.stderr, flush=True)
 
-# Cap on concurrent connection-handler threads. Legitimate clients are short-lived
-# (one request each), so this bound is generous; it just stops a misbehaving or
-# hostile peer from leaking unbounded threads by opening many connections.
-_MAX_CONN_THREADS = 32
-
 # Startup channel rehydration horizon (#118): sessions seen within this window
 # get their persisted last digest re-seeded as a replayable channel, so the
 # manual cycle reaches them across daemon restarts. Matches the settings
@@ -143,8 +139,10 @@ class SpeechDaemon:
         self._running = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
-        self._server = None
-        self._token = None
+        # The loopback socket: accept loop, token check, handler threads.
+        # handle_message is looked up at call time, as for the hotkeys.
+        self._server = ConnectionServer(
+            self._running, self._lock, lambda m: self.handle_message(m))
         self._webui = None
         self._poll_interval = 0.1
         from sonara.history import SessionHistory
@@ -179,7 +177,6 @@ class SpeechDaemon:
         self._pending_preamble = None             # (session, alert_text) deferred to content on_play (#94)
         self._warned_immediate: set = set()
         self._setup_guide = setup_health.SetupGuide()   # one setup cue per session
-        self._conn_sem = threading.BoundedSemaphore(_MAX_CONN_THREADS)
         # Global hotkeys: fires are queued by the pump thread and applied by a
         # worker under self._lock, like a socket message. handle_message is
         # looked up at call time so a replaced handler (tests) is honoured.
@@ -940,12 +937,7 @@ class SpeechDaemon:
         self._hotkeys.stop()
         if getattr(self, "_webui", None) is not None:
             self._webui.stop()
-        srv = self._server
-        if srv is not None:
-            try:
-                srv.close()
-            except OSError:
-                pass
+        self._server.close()
 
     def _replay(self, session: str, entries, append: bool = False,
                 suppress_announce: bool = True) -> None:
@@ -1912,125 +1904,6 @@ class SpeechDaemon:
             if pending is not None and pending[0] == session:
                 self._pending_preamble = None
 
-    def _handle_conn(self, conn) -> None:
-        try:
-            buf = b""
-            with conn:
-                conn.settimeout(5.0)
-                # --- token handshake: the first newline-terminated line must
-                # equal the daemon's session token, or the peer is dropped. ---
-                while b"\n" not in buf:
-                    try:
-                        data = conn.recv(4096)
-                    except (OSError, socket.timeout):
-                        return
-                    if not data:
-                        return
-                    buf += data
-                token_line, buf = buf.split(b"\n", 1)
-                if token_line.decode("utf-8", "replace") != self._token:
-                    return  # reject unauthenticated peer
-                while self._running.is_set():
-                    # Process any complete messages already buffered (e.g. a
-                    # message that arrived in the same packet as the token).
-                    while b"\n" in buf:
-                        line, buf = buf.split(b"\n", 1)
-                        if not line.strip():
-                            continue
-                        try:
-                            msg = decode(line)
-                        except (ValueError, UnicodeDecodeError):
-                            continue
-                        reply = self._handle_message_guarded(msg)
-                        if reply is not None:
-                            try:
-                                conn.sendall(encode(reply))
-                            except OSError:
-                                return
-                    try:
-                        data = conn.recv(4096)
-                    except (OSError, socket.timeout):
-                        return
-                    if not data:
-                        return
-                    buf += data
-        except OSError:
-            return
-
-    def _handle_message_guarded(self, msg):
-        """Dispatch one socket message under the lock, contained so a malformed or
-        buggy message logs a traceback instead of silently killing the connection
-        thread (mirrors the hotkey worker's guard). Returns the reply or None."""
-        try:
-            with self._lock:
-                return self.handle_message(msg)
-        except Exception:  # noqa: BLE001 - one bad message must not drop the connection
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-            return None
-
-    def _handle_conn_guarded(self, conn) -> None:
-        """Run _handle_conn, contain any crash (log it, don't die silently), and
-        always release the concurrency permit so capacity recovers."""
-        try:
-            self._handle_conn(conn)
-        except Exception:  # noqa: BLE001 - a handler crash must be logged, not silent
-            import sys
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-        finally:
-            self._conn_sem.release()
-
-    def _spawn_conn_handler(self, conn) -> bool:
-        """Spawn a handler thread for *conn* if under the concurrency cap; else
-        drop (close) the connection. Returns True iff a handler was spawned."""
-        if not self._conn_sem.acquire(blocking=False):
-            try:
-                conn.close()
-            except OSError:
-                pass
-            return False
-        try:
-            th = threading.Thread(target=self._handle_conn_guarded, args=(conn,), daemon=True)
-            th.start()
-        except Exception:  # noqa: BLE001 - thread creation can fail (resource limits)
-            # The handler that would release the permit never ran: release it here
-            # and drop the connection, else this slot leaks forever (M8).
-            self._conn_sem.release()
-            try:
-                conn.close()
-            except OSError:
-                pass
-            return False
-        return True
-
-    def _accept_loop(self) -> None:
-        import time
-        srv = self._server
-        failures = 0
-        while self._running.is_set():
-            try:
-                conn, _ = srv.accept()
-            except OSError:
-                if not self._running.is_set():
-                    return                    # shutdown closed the socket
-                # A transient accept failure (WSAECONNRESET burst etc.) used to
-                # kill the WHOLE daemon, which the hooks then silently respawned
-                # with fresh state - one of the mute-reset triggers (#65). Retry;
-                # a genuinely dead socket exhausts the cap and exits as before.
-                failures += 1
-                if failures > 20:
-                    print("[daemon] accept failing persistently; exiting",
-                          file=sys.stderr, flush=True)
-                    return
-                print("[daemon] transient accept error; retrying",
-                      file=sys.stderr, flush=True)
-                time.sleep(0.2)
-                continue
-            failures = 0
-            self._spawn_conn_handler(conn)
-
     def run(self) -> None:
         ensure_sonara_dir()
         try:
@@ -2046,9 +1919,9 @@ class SpeechDaemon:
         # Restart button and bookmarked page URLs keep working because the
         # respawned daemon accepts the same token. Same-user security boundary
         # is unchanged -- the token still lives 0600 in the user's own home.
-        self._token = tokens.persistent_token()
+        self._server.token = tokens.persistent_token()
         from sonara.webui import SettingsServer
-        self._webui = SettingsServer(self, self._token,
+        self._webui = SettingsServer(self, self._server.token,
                                      int(config_schema.get(self.config, "settings_port")))
         try:
             http_port = self._webui.start()
@@ -2056,13 +1929,13 @@ class SpeechDaemon:
             self._webui, http_port = None, None
         self._start_preview_builder()   # render missing voice previews (#38)
         transport.write_lockfile(
-            LOCK_PATH, transport.HOST, port, self._token, os.getpid(),
+            LOCK_PATH, transport.HOST, port, self._server.token, os.getpid(),
             http_port=http_port)
-        self._server = srv
+        self._server.sock = srv
         self._running.set()
 
         speak_thread = threading.Thread(target=self._speak_loop, daemon=True)
-        accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
+        accept_thread = threading.Thread(target=self._server.accept_loop, daemon=True)
         hotkey_worker = threading.Thread(target=self._hotkeys.worker,
                                          name="sonara-hotkey-worker", daemon=True)
         self._log_start_marker()

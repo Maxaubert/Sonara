@@ -113,12 +113,12 @@ def _make_inet_daemon(tmp_path):
     srv.bind(("127.0.0.1", 0))
     srv.listen(4)
     host, port = srv.getsockname()
-    daemon._server = srv
-    daemon._token = "testtoken"          # daemon checks this as the first line
+    daemon._server.sock = srv
+    daemon._server.token = "testtoken"          # daemon checks this as the first line
     daemon._running.set()
 
     speak_t = threading.Thread(target=daemon._speak_loop, daemon=True)
-    accept_t = threading.Thread(target=daemon._accept_loop, daemon=True)
+    accept_t = threading.Thread(target=daemon._server.accept_loop, daemon=True)
     speak_t.start()
     accept_t.start()
 

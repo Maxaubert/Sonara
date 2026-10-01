@@ -61,9 +61,9 @@ def test_accept_loop_survives_transient_oserror():
             raise OSError("closed")
 
     daemon._running.set()
-    daemon._server = FlakyServer()
-    daemon._accept_loop()                       # returns instead of hanging
-    assert daemon._server.calls == 3            # survived the first two errors
+    daemon._server.sock = FlakyServer()
+    daemon._server.accept_loop()                       # returns instead of hanging
+    assert daemon._server.sock.calls == 3            # survived the first two errors
 
 
 def test_accept_loop_exits_on_persistent_failure():
@@ -78,11 +78,11 @@ def test_accept_loop_exits_on_persistent_failure():
             raise OSError("dead socket")
 
     daemon._running.set()
-    daemon._server = DeadServer()
+    daemon._server.sock = DeadServer()
     import time as _t
     with mock.patch.object(_t, "sleep"):
-        daemon._accept_loop()
-    assert daemon._server.calls > 20            # capped, no infinite loop
+        daemon._server.accept_loop()
+    assert daemon._server.sock.calls > 20            # capped, no infinite loop
 
 
 # --- faulthandler evidence preservation ---------------------------------------
