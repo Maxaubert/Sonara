@@ -136,7 +136,7 @@ class Speaker:
             try:
                 proc.wait(timeout=self._wait_timeout)
             except subprocess.TimeoutExpired:
-                # 'say' hung past the generous deadline; kill it and move on.
+                # The synthesis process hung past the generous deadline; kill it and move on.
                 proc.terminate()
         finally:
             with self._current_lock:
