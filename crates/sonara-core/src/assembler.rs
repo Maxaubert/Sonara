@@ -428,4 +428,13 @@ mod tests {
             let _ = a.feed(d, i as u32, i == 3);
         }
     }
+
+    #[test]
+    fn long_input_never_panics() {
+        for s in crate::text::tests::long_inputs() {
+            let mut a = ProseAssembler::new();
+            let _ = a.feed(&s, 0, false);
+            let _ = a.feed("", 1, true);
+        }
+    }
 }
