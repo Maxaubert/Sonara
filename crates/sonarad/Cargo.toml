@@ -3,7 +3,7 @@ name = "sonarad"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Sonara host process: serves protocol v1 (core) over loopback TCP and HTTP"
+description = "Sonara host process: serves protocol v1 (core and extensions) over loopback TCP and HTTP"
 
 [[bin]]
 name = "sonarad"
@@ -15,6 +15,7 @@ path = "src/main.rs"
 sonara-reader = { workspace = true, features = ["onecore", "test-util"] }
 sonara-engine = { workspace = true, features = ["test-util"] }
 sonara-audio.workspace = true
+sonara-channels.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal"] }
 hyper = { workspace = true, features = ["server", "http1"] }

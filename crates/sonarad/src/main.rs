@@ -155,6 +155,7 @@ async fn run(
             .iter()
             .map(|s| s.to_string())
             .collect(),
+        extensions: protocol::EXTENSIONS.iter().map(|s| s.to_string()).collect(),
         started_at: runtime_file::rfc3339(SystemTime::now()),
     };
     runtime_file::write(&home.runtime_json(), &info, |p| {

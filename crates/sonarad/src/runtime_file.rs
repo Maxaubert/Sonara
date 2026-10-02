@@ -15,6 +15,8 @@ pub struct RuntimeInfo {
     pub version: String,
     pub protocol: (u64, u64),
     pub capabilities: Vec<String>,
+    /// Extensions a client may enable in `hello`.
+    pub extensions: Vec<String>,
     /// RFC 3339, UTC.
     pub started_at: String,
 }
@@ -29,6 +31,7 @@ impl RuntimeInfo {
             "version": self.version,
             "protocol": {"major": self.protocol.0, "minor": self.protocol.1},
             "capabilities": self.capabilities,
+            "extensions": self.extensions,
             "started_at": self.started_at,
         })
     }
@@ -126,6 +129,7 @@ mod tests {
             version: "0.0.0".into(),
             protocol: (1, 0),
             capabilities: vec!["core".into()],
+            extensions: vec!["channels".into()],
             started_at: "2026-01-01T00:00:00Z".into(),
         }
     }
