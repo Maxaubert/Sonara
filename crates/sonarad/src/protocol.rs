@@ -4,12 +4,14 @@
 //! and the connection's `Session`, calls the reader facade, and returns the
 //! reply plus what the transport must do next (close, start an event
 //! stream, end the process). Unknown fields are ignored everywhere.
+use crate::channels_ext::{self, Slot};
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
+use sonara_channels::Channels;
 use sonara_reader::{Control, Key, QueueMode, ReaderHandle};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
@@ -31,8 +33,8 @@ pub const CAPABILITIES: &[&str] = &[
     "events.log",
 ];
 
-/// Extensions this host implements (none yet: M6 to M8 add them).
-pub const EXTENSIONS: &[&str] = &[];
+/// Extensions this host implements (M7 and M8 add `agent` and `system`).
+pub const EXTENSIONS: &[&str] = &[channels_ext::NAME];
 
 /// Message types of the extensions (spec 4.2 to 4.4). They are known, so a
 /// client gets `E_UNSUPPORTED` (extension not enabled) rather than
@@ -50,6 +52,7 @@ const EXTENSION_TYPES: &[&str] = &[
 
 /// Extension keys of `set`/`get` and actions of `control`.
 const EXTENSION_KEYS: &[&str] = &[
+    channels_ext::ANNOUNCE_KEY,
     "mute_level",
     "summaries",
     "audio_mode",
@@ -117,15 +120,20 @@ pub struct Server {
     /// setting it are atomic with respect to them: nothing is accepted
     /// after the takeover and then silently dropped by the exit.
     retiring: Mutex<bool>,
+    /// The `channels` extension, once a client enabled it (it stays
+    /// enabled for the life of the process).
+    channels: Slot,
+    /// Serializes enabling an extension.
+    enabling: Mutex<()>,
 }
 
-type Handled = Result<(Map<String, Value>, After), Failure>;
+pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
 
-fn bad(message: impl Into<String>) -> Failure {
+pub(crate) fn bad(message: impl Into<String>) -> Failure {
     Failure::new(Code::BadRequest, message)
 }
 
-fn reader_failure(e: sonara_reader::Error) -> Failure {
+pub(crate) fn reader_failure(e: sonara_reader::Error) -> Failure {
     use sonara_engine::Error as E;
     use sonara_reader::Error as R;
     let code = match &e {
@@ -145,7 +153,10 @@ pub fn token_eq(a: &str, b: &str) -> bool {
             == 0
 }
 
-fn opt_str<'a>(m: &'a Map<String, Value>, field: &str) -> Result<Option<&'a str>, Failure> {
+pub(crate) fn opt_str<'a>(
+    m: &'a Map<String, Value>,
+    field: &str,
+) -> Result<Option<&'a str>, Failure> {
     match m.get(field) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s)),
@@ -204,7 +215,34 @@ impl Server {
             engine: Arc::new(Mutex::new(engine)),
             lifetime,
             retiring: Mutex::new(false),
+            channels: Arc::new(OnceLock::new()),
+            enabling: Mutex::new(()),
         }
+    }
+
+    /// The `channels` extension, if a client enabled it.
+    pub fn channels(&self) -> Option<&Channels> {
+        self.channels.get()
+    }
+
+    /// Enable an extension this host offers (idempotent).
+    fn enable(&self, name: &str) -> Result<(), Failure> {
+        let _one = self.enabling.lock().unwrap_or_else(|p| p.into_inner());
+        if name == channels_ext::NAME && self.channels.get().is_none() {
+            let ch = Channels::new(self.reader.clone(), sonara_channels::Config::default())
+                .map_err(|e| Failure::new(Code::Engine, e.to_string()))?;
+            let _ = self.channels.set(ch);
+        }
+        Ok(())
+    }
+
+    /// The extensions enabled now.
+    pub fn enabled(&self) -> Vec<&'static str> {
+        let mut v = Vec::new();
+        if self.channels.get().is_some() {
+            v.push(channels_ext::NAME);
+        }
+        v
     }
 
     pub fn reader(&self) -> &ReaderHandle {
@@ -219,12 +257,14 @@ impl Server {
         token_eq(token, &self.token)
     }
 
-    /// Nothing playing and nothing queued (a paused item is not idle).
+    /// Nothing playing and nothing queued (a paused item is not idle), and
+    /// no channel with text it would read.
     pub fn is_idle(&self) -> bool {
-        match self.reader.state() {
+        let reader = match self.reader.state() {
             Ok(s) => s.now_playing.is_none() && s.queued == 0,
             Err(_) => true,
-        }
+        };
+        reader && self.channels.get().is_none_or(Channels::is_idle)
     }
 
     /// Something is being read right now (an item playing, not paused): the
@@ -251,7 +291,13 @@ impl Server {
 
     /// Start an event stream (used by `subscribe` and `GET /v1/events`).
     pub fn events(&self, set: EventSet) -> Result<mpsc::Receiver<WireEvent>, Failure> {
-        events::subscribe(&self.reader, self.engine.clone(), set).map_err(reader_failure)
+        events::subscribe(
+            &self.reader,
+            self.engine.clone(),
+            self.channels.clone(),
+            set,
+        )
+        .map_err(reader_failure)
     }
 
     /// Handle one request. A request that is not a JSON object, or has no
@@ -306,6 +352,15 @@ impl Server {
             "get" => self.get(m),
             "voices" => self.voices(m),
             "subscribe" => self.subscribe(session, m),
+            "channel_open" | "channel_close" | "focus" if self.channels.get().is_some() => {
+                let ch = self.channels.get().expect("checked");
+                let _admitted = self.admit()?;
+                match kind {
+                    "channel_open" => channels_ext::open(ch, m),
+                    "channel_close" => channels_ext::close(ch, m),
+                    _ => channels_ext::focus(ch, m),
+                }
+            }
             k if EXTENSION_TYPES.contains(&k) => Err(Failure::new(
                 Code::Unsupported,
                 format!("'{k}' belongs to an extension this host does not offer"),
@@ -325,7 +380,7 @@ impl Server {
             json!({"major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR}),
         );
         f.insert("capabilities".into(), json!(CAPABILITIES));
-        f.insert("extensions".into(), json!(EXTENSIONS));
+        f.insert("extensions".into(), json!(self.enabled()));
         f.insert("unavailable".into(), json!(unavailable));
         f
     }
@@ -380,9 +435,17 @@ impl Server {
         }
         let wanted = str_list(m, "extensions")?.unwrap_or_default();
         let unavailable: Vec<&str> = wanted
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|e| !EXTENSIONS.contains(e))
             .collect();
+        // An extension is enabled for the instance when any client asks for
+        // it (or requires it) and stays enabled (spec section 3).
+        for e in wanted.iter().chain(require.iter()) {
+            if EXTENSIONS.contains(e) {
+                self.enable(e)?;
+            }
+        }
         if opt_bool(m, "keep_alive")? {
             self.lifetime.set_keep_alive();
         }
@@ -396,16 +459,24 @@ impl Server {
             _ => return Err(bad("'text' must be a string")),
         };
         let mode = match opt_str(m, "mode")? {
-            None | Some("append") => QueueMode::Append,
-            Some("replace") => QueueMode::Replace,
+            None => None,
+            Some("append") => Some(QueueMode::Append),
+            Some("replace") => Some(QueueMode::Replace),
             Some(other) => return Err(bad(format!("unknown mode '{other}'"))),
         };
         let interrupt = opt_bool(m, "interrupt")?;
         let label = opt_str(m, "label")?.map(str::to_string);
+        // Without the extension, `channel` is an unknown field (ignored).
+        if let Some(ch) = self.channels.get() {
+            if let Some(id) = opt_str(m, "channel")? {
+                let _admitted = self.admit()?;
+                return channels_ext::speak(ch, id, text, mode, interrupt, label);
+            }
+        }
         let _admitted = self.admit()?;
         let id = self
             .reader
-            .speak(text, mode, interrupt, label)
+            .speak(text, mode.unwrap_or(QueueMode::Append), interrupt, label)
             .map_err(reader_failure)?;
         let mut f = Map::new();
         f.insert("item_id".into(), json!(id.0));
@@ -414,6 +485,15 @@ impl Server {
 
     fn control(&self, m: &Map<String, Value>) -> Handled {
         let action = opt_str(m, "action")?.ok_or_else(|| bad("missing 'action'"))?;
+        if let Some(ch) = self.channels.get() {
+            let c = match parse_control(action) {
+                Some(c) => Some(c),
+                None if action == "next_channel" => None,
+                None => return Err(bad(format!("unknown action '{action}'"))),
+            };
+            let _admitted = self.admit()?;
+            return channels_ext::control(ch, c, m);
+        }
         let c = match parse_control(action) {
             Some(c) => c,
             None if EXTENSION_ACTIONS.contains(&action) => {
@@ -449,7 +529,25 @@ impl Server {
         Ok((f, After::Nothing))
     }
 
+    /// `set`/`get` of an enabled extension's key, if `m` names one.
+    fn extension_setting(&self, m: &Map<String, Value>, set: bool) -> Option<Handled> {
+        let name = opt_str(m, "key").ok().flatten()?;
+        let ch = self.channels.get()?;
+        if name != channels_ext::ANNOUNCE_KEY {
+            return None;
+        }
+        let value = if set {
+            Some(m.get("value").unwrap_or(&Value::Null))
+        } else {
+            None
+        };
+        Some(channels_ext::announce(ch, value))
+    }
+
     fn set(&self, m: &Map<String, Value>) -> Handled {
+        if let Some(done) = self.extension_setting(m, true) {
+            return done;
+        }
         let key = self.key(m)?;
         let raw = m.get("value").unwrap_or(&Value::Null);
         let value = wire::setting_from_json(raw)
@@ -464,6 +562,9 @@ impl Server {
     }
 
     fn get(&self, m: &Map<String, Value>) -> Handled {
+        if let Some(done) = self.extension_setting(m, false) {
+            return done;
+        }
         let key = self.key(m)?;
         self.key_value(key)
     }
@@ -570,8 +671,8 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("core")));
-        assert_eq!(r["extensions"], json!([]));
-        assert_eq!(r["unavailable"], json!(["channels"]));
+        assert_eq!(r["extensions"], json!(["channels"]));
+        assert_eq!(r["unavailable"], json!([]));
         assert!(session.authed);
     }
 
@@ -582,7 +683,7 @@ mod tests {
         let o = call(
             &s,
             &mut session,
-            json!({"type": "hello", "token": "secret", "require": ["core", "channels"]}),
+            json!({"type": "hello", "token": "secret", "require": ["core", "agent"]}),
         );
         assert_eq!(code(&o), "E_UNSUPPORTED");
         assert!(!session.authed);

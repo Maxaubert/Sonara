@@ -6,8 +6,9 @@
 //! dropped for it (each `state` event is a full snapshot, so the next one
 //! brings it up to date). The thread ends with the reader, or at the first
 //! event after the client went away.
+use crate::channels_ext::{self, Slot};
 use crate::wire;
-use sonara_reader::{Event, ReaderHandle};
+use sonara_reader::{Event, ReaderHandle, State};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
@@ -73,9 +74,19 @@ pub fn engine_name(e: &EngineName) -> String {
     e.lock().unwrap_or_else(|p| p.into_inner()).clone()
 }
 
-fn render(e: &Event, set: EventSet, engine: &EngineName) -> Option<WireEvent> {
+/// The `state` event, with the `channels` extension's fields once it is
+/// enabled.
+fn state_json(s: &State, engine: &EngineName, channels: &Slot) -> serde_json::Value {
+    let mut v = wire::state_event(s, &engine_name(engine));
+    if let Some(ch) = channels.get() {
+        channels_ext::annotate_state(ch, &mut v);
+    }
+    v
+}
+
+fn render(e: &Event, set: EventSet, engine: &EngineName, channels: &Slot) -> Option<WireEvent> {
     let (name, value) = match e {
-        Event::State(s) if set.state => ("state", wire::state_event(s, &engine_name(engine))),
+        Event::State(s) if set.state => ("state", state_json(s, engine, channels)),
         Event::Item { item_id, phase } if set.items => {
             ("item", wire::item_event(item_id.0, *phase))
         }
@@ -94,6 +105,7 @@ fn render(e: &Event, set: EventSet, engine: &EngineName) -> Option<WireEvent> {
 pub fn subscribe(
     reader: &ReaderHandle,
     engine: EngineName,
+    channels: Slot,
     set: EventSet,
 ) -> sonara_reader::Result<mpsc::Receiver<WireEvent>> {
     let events = reader.subscribe()?;
@@ -102,14 +114,14 @@ pub fn subscribe(
         let s = reader.state()?;
         let _ = tx.try_send(WireEvent {
             name: "state",
-            json: wire::state_event(&s, &engine_name(&engine)).to_string(),
+            json: state_json(&s, &engine, &channels).to_string(),
         });
     }
     std::thread::Builder::new()
         .name("sonarad-events".into())
         .spawn(move || {
             while let Ok(e) = events.recv() {
-                let Some(w) = render(&e, set, &engine) else {
+                let Some(w) = render(&e, set, &engine, &channels) else {
                     continue;
                 };
                 if let Err(mpsc::error::TrySendError::Closed(_)) = tx.try_send(w) {

@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-audio"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "rodio",
  "sonara-audio",
@@ -749,8 +749,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonara-channels"
+version = "0.9.5"
+dependencies = [
+ "serde_json",
+ "sonara-audio",
+ "sonara-engine",
+ "sonara-reader",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sonara-core"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "once_cell",
  "regex",
@@ -760,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-engine"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "sonara-engine",
  "thiserror 2.0.21",
@@ -770,7 +781,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-reader"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "sonara-audio",
  "sonara-core",
@@ -781,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "sonarad"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -789,6 +800,7 @@ dependencies = [
  "hyper-util",
  "serde_json",
  "sonara-audio",
+ "sonara-channels",
  "sonara-engine",
  "sonara-reader",
  "tokio",

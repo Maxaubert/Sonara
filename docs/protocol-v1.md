@@ -1,8 +1,8 @@
 # Sonara protocol v1
 
-The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers. Extensions (`channels`, `agent`, `system`) are reserved and listed at the end; until a runtime offers them, their messages return `E_UNSUPPORTED`.
+The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels` extension](#extension-channels). The `agent` and `system` extensions are reserved and listed at the end; until a runtime offers them, their messages return `E_UNSUPPORTED`.
 
-Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
+Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
 The Python daemon of the Claude Code plugin still speaks the older protocol in `docs/protocol.md` until the cutover (M11).
 
@@ -18,9 +18,10 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "port": 50311,
   "http_port": 50312,
   "token": "64 hex characters",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "protocol": {"major": 1, "minor": 0},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log"],
+  "extensions": ["channels"],
   "started_at": "2026-10-02T10:40:45Z"
 }
 ```
@@ -65,15 +66,17 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 | `token` | from `runtime.json` (TCP: required) |
 | `client` | `{name, version}`, informational |
 | `protocol` | `{major, minor}` the client speaks; a major other than 1 is `E_INCOMPATIBLE` (omitted: 1.0) |
-| `require[]` | capabilities or extensions the client cannot work without; any missing is `E_UNSUPPORTED` |
+| `require[]` | capabilities or extensions the client cannot work without; any missing is `E_UNSUPPORTED`. A required extension is also enabled |
 | `extensions[]` | extensions the client would like enabled; those this runtime lacks are listed in `unavailable`, not an error |
 | `takeover?` | `true`: ask the runtime to exit for a newer one (see [Takeover](#takeover)) |
 | `keep_alive?` | `true`: the runtime keeps running after the last client left (until a takeover or the process is ended) |
 
 ```json
 > {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.9.4", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": [], "unavailable": ["channels"]}
+< {"id": 1, "ok": true, "version": "0.9.5", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
+
+The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.
 
 **Capabilities** of protocol 1.0: `core`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`, `events.state`, `events.items`, `events.log`. A later minor adds capability strings for what it adds, so a client can `require` them.
 
@@ -215,12 +218,56 @@ for line in f:
         break
 ```
 
+## Extension `channels`
+
+Spec section 4.2, L2 (`crates/sonara-channels`). Several named sources (terminal tabs, chats) share the one reader: each **channel** keeps its own messages and policy, and one channel is read at a time. Enable it with `hello` `extensions: ["channels"]`. Black-box tests: `conformance/channels/`.
+
+**Model.** A channel holds its current **batch**: the messages sent to it since it was last caught up, with a read position. Messages wait in their channel and go to the reader one at a time, only when the reader is idle, so text spoken without a `channel` (core `speak`) is read first. Heard messages stay, so a manual return can replay the batch; a message sent to a channel that is caught up (and not still reading its last message) starts a new batch.
+
+- **Policy** `latest` (the default): a new message replaces the channel's unread messages, so the newest one is always read and never dropped ("one message, always the last"). `queue`: every message is read, in order.
+- **Who reads next:** the channel being read keeps the floor until its batch is read; then the focused channel; then the first channel (in opening order) with something unread. A channel you left with `next_channel` is not resumed on its own until it gets a new message.
+- **Announcements:** a switch to another channel is announced by a short item before its first message: `"<label>."`, or `"<label>, reading again."` when the batch is replayed from the top. An automatic hand-off is announced when the channel differs from the one that read last (never for the first channel to read); `next_channel` is always announced. A channel without a `label` is not announced. `set channel_announce "off"` turns announcements off.
+
+### Messages
+
+| type | fields | effect |
+|---|---|---|
+| `channel_open` | `channel`, `label?`, `host_tab?`, `policy?: latest\|queue` | open a channel, or update an open one (its messages stay; `policy` omitted keeps the current one). Reply `{channel, created, policy}` |
+| `channel_close` | `channel` | close it and forget its messages; if it is being read, its item is cut and the next channel follows (not announced) |
+| `focus` | `channel` | read this channel next once the channel being read has finished its batch (does not cut) |
+| `speak` | `channel?` plus the core fields | with `channel`: add a message to it (opened with the defaults if needed). `mode` overrides the policy for this message (`replace` drops the channel's unread messages, `append` keeps them). `interrupt: true` reads it now: it goes before the channel's unread messages, the current item is cut and the switch is announced. Reply `{item_id, channel, dropped}`: `item_id` is the reader item when the message went to the reader at once, `null` while it waits in its channel (behind other messages or an announcement); `dropped` counts the unread messages it replaced |
+| `control` | `channel?` plus the core `action`, or `action: next_channel` | see below |
+
+`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); an unknown channel in `channel_close`, `focus` or `control` is `E_NOT_FOUND`.
+
+**`control` once `channels` is enabled.** Without `channel` the actions are the core ones, except:
+
+- `stop` also skips every channel to its end (nothing more is read until a new message; heard messages stay replayable).
+- `restart` while nothing is playing replays the batch of the channel being read or read last (the Claude plugin's Up key), not only its last item.
+
+With `channel`: `stop` skips that channel to its end and cuts its item if it is being read; `restart` goes back to the start of its item if that channel is being read, else replays the channel's batch from the top and switches to it (cutting the current item, announced); any other action applies only while that channel is being read, and is a no-op otherwise.
+
+`next_channel` (reply `{channel}`, `null` when no channel is open) switches now: it moves around the channels in opening order, skipping channels with nothing to hear (unless all are empty), starting from the channel being read or the one that read last. It cuts the current item and announces the target. A fully heard target, landing on the same channel, or returning to a replay in progress replays the batch from the top; unread messages resume where they stopped (a message cut by the switch is read again).
+
+### Setting
+
+| key | value |
+|---|---|
+| `channel_announce` | `"on"` (default) or `"off"`: switch announcements |
+
+### State
+
+`state.now_playing` gains `channel` and `host_tab` (both `null` for text spoken without a channel; an announcement belongs to the channel it announces), and `queued` also counts the channels' unread messages. A `state` event is sent when the reader's state changes, so `queued` catches up with a new channel message at the next change.
+
+```json
+{"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore"}}
+```
+
 ## Extensions (reserved)
 
-Spec sections 4.2 to 4.4. A client asks for them in `hello.extensions`; this runtime offers none yet, so their messages return `E_UNSUPPORTED`.
+Spec sections 4.3 and 4.4. A client asks for them in `hello.extensions`; this runtime does not offer them yet, so their messages return `E_UNSUPPORTED`.
 
 | extension | adds |
 |---|---|
-| `channels` | `channel?` on `speak`/`control`; `channel_open`, `channel_close`, `focus`; `control` `next_channel`; `state.now_playing.channel`, `host_tab` |
 | `agent` (needs `channels`) | `stream`, `turn_start`, `turn_end`, `ask`, `earcon`; `set mute_level`, `set summaries` |
 | `system` | `set audio_mode`, `set duck_level`, `set hotkeys`, `get settings_url` |
