@@ -30,7 +30,11 @@ class Ingest:
         # permission prompt it also fires.
         self.await_choice: set = set()
         self.warned_immediate: set = set()
+        # session -> hook start time of its last FLUSH (#174): old-turn prose
+        # and turn_done stamped before it are late arrivals and are dropped.
+        self.flush_t: dict = {}
         registry.register("warned_immediate", self.warned_immediate)
+        registry.register("flush_t", self.flush_t)
         registry.register("assemblers", self.assemblers)
         # A stale await_choice entry from a dead session would suppress
         # permission chimes DAEMON-WIDE forever: the chime carries no session,
@@ -84,9 +88,22 @@ class Ingest:
             # Keyed, so sessions starting together say it once.
             d._cues.speak(session, cue, cue_key="setup_guide")
 
+    def _stale(self, msg, session) -> bool:
+        """True if *msg* came from a hook started before *session*'s last
+        new prompt (#174). Each hook event is its own process on its own
+        connection, so the old turn's last MessageDisplay or Stop can arrive
+        after the FLUSH; block indexes restart at 0 per block, so only the
+        start time tells the turns apart. Unstamped messages are never stale."""
+        t = msg.get("t")
+        ft = self.flush_t.get(session)
+        return (isinstance(t, (int, float)) and isinstance(ft, (int, float))
+                and t < ft)
+
     def on_prose(self, msg):
         d = self._d
         session = msg.get("session", "")
+        if self._stale(msg, session):
+            return None
         verbosity = self._verbosity()
         final = msg.get("final", False)
         a = self.assembler(session)
@@ -234,6 +251,8 @@ class Ingest:
         # question awaiting"). Real permission chimes still fire (issue #11 f/u).
         if kind == "permission" and self.await_choice:
             return None
+        if kind == "turn_done" and self._stale(msg, session):
+            return None     # the previous turn's Stop, after the new prompt
         d._earcon(kind)
         if kind == "turn_done":
             # End-of-turn boundary: safety-net flush in case the final PROSE
@@ -266,6 +285,9 @@ class Ingest:
                                kind="summary", text=seed,
                                is_decision=False))
         self.assemblers.pop(session, None)
+        t = msg.get("t")
+        if isinstance(t, (int, float)):
+            self.flush_t[session] = t
         d.history.reset(session)
         # A new prompt is the user cancelling this session: advance the cancel
         # epoch so any digest dispatched before now is dropped when it lands,

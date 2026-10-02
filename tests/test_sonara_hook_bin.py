@@ -239,3 +239,22 @@ def test_hook_older_client_without_send_many_sends_one_by_one(tmp_path):
     assert res.returncode == 0, res.stderr.decode()
     lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
     assert [m["type"] for m in lines] == ["set_foreground", "flush"]
+
+
+def test_hook_stamps_every_message_with_its_start_time(tmp_path):
+    # #174: the daemon drops old-turn text that arrives after a new prompt by
+    # comparing these stamps, so every message of one event carries the same
+    # process start time.
+    import time
+    sent_log = tmp_path / "sent.jsonl"
+    before = time.time()
+    payload = json.dumps({"session_id": "s1", "prompt": "hi"}).encode()
+    res = _run("UserPromptSubmit", payload, {"SONARA_FAKE_SENT_LOG": str(sent_log)})
+    after = time.time()
+    assert res.returncode == 0, res.stderr.decode()
+    lines = [json.loads(x) for x in sent_log.read_text().splitlines() if x.strip()]
+    assert lines, "no messages sent"
+    stamps = {m.get("t") for m in lines}
+    assert len(stamps) == 1
+    t = stamps.pop()
+    assert isinstance(t, float) and before <= t <= after

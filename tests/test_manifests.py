@@ -116,8 +116,8 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_8_4():
-    assert _pyproject_version() == "0.8.4"
+def test_pyproject_version_is_0_8_5():
+    assert _pyproject_version() == "0.8.5"
 
 
 def test_manifests_have_no_em_dash():
