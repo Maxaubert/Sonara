@@ -1,6 +1,7 @@
 """The runtime release zip (packaging/release_zip.py, runtime plan M9)."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import zipfile
 from pathlib import Path
@@ -17,12 +18,20 @@ def _module():
     return mod
 
 
+EXES = ("sonarad.exe", "sonara-hook.exe", "sonara.exe")
+
+
+def _exes(build):
+    for name in EXES:
+        (build / name).write_bytes(b"MZ " + name.encode())
+    return build / "sonarad.exe"
+
+
 def test_zip_holds_the_runtime_and_the_notices_under_one_folder(tmp_path):
     rz = _module()
     build = tmp_path / "release"
     build.mkdir()
-    exe = build / "sonarad.exe"
-    exe.write_bytes(b"MZ fake")
+    exe = _exes(build)
     shipped = (
         "onnxruntime.dll", "onnxruntime-LICENSE.txt", "onnxruntime-ThirdPartyNotices.txt",
         "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll",
@@ -35,18 +44,41 @@ def test_zip_holds_the_runtime_and_the_notices_under_one_folder(tmp_path):
     assert path.name == "sonara-runtime-win-x64-1.2.3.zip"
     with zipfile.ZipFile(path) as z:
         names = sorted(z.namelist())
-        assert z.read("sonara-runtime-win-x64-1.2.3/sonarad.exe") == b"MZ fake"
+        assert z.read("sonara-runtime-win-x64-1.2.3/sonarad.exe") == b"MZ sonarad.exe"
+        assert z.read("sonara-runtime-win-x64-1.2.3/sonara-hook.exe") == b"MZ sonara-hook.exe"
     assert names == sorted(
         f"sonara-runtime-win-x64-1.2.3/{n}"
-        for n in ("sonarad.exe", *shipped, "LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
+        for n in (*EXES, *shipped, "LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
     )
+
+
+def test_the_plugin_needs_the_hook_and_the_cli_in_the_zip(tmp_path):
+    # #202: the plugin's launcher runs sonara-hook.exe, its commands sonara.exe.
+    build = tmp_path / "release"
+    build.mkdir()
+    exe = _exes(build)
+    for f in ("onnxruntime.dll", "onnxruntime-LICENSE.txt"):
+        (build / f).write_bytes(b"x")
+    (build / "sonara.exe").unlink()
+    with pytest.raises(SystemExit, match="sonara.exe"):
+        _module().build_zip(exe, tmp_path / "dist", "1.2.3")
+
+
+def test_sha256sums_lists_the_zip_for_the_bootstrap(tmp_path):
+    # bin/sonara-bootstrap.ps1 checks the download against this file.
+    rz = _module()
+    zip_path = tmp_path / "sonara-runtime-win-x64-1.2.3.zip"
+    zip_path.write_bytes(b"zip bytes")
+    sums = rz.write_sums([zip_path], tmp_path)
+    assert sums == tmp_path / "SHA256SUMS"
+    want = hashlib.sha256(b"zip bytes").hexdigest()
+    assert sums.read_bytes() == f"{want}  sonara-runtime-win-x64-1.2.3.zip\n".encode()
 
 
 def test_the_zip_needs_onnx_runtime_for_kokoro(tmp_path):
     build = tmp_path / "release"
     build.mkdir()
-    exe = build / "sonarad.exe"
-    exe.write_bytes(b"MZ fake")
+    exe = _exes(build)
     with pytest.raises(SystemExit, match="runtime_dlls.py stage"):
         _module().build_zip(exe, tmp_path / "dist", "1.2.3")
 

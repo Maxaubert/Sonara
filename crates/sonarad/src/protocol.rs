@@ -58,6 +58,7 @@ const EXTENSION_TYPES: &[&str] = &[
     "tool",
     "answered",
     "preview",
+    "shutdown",
 ];
 
 /// Extension keys of `set`/`get` and actions of `control`.
@@ -119,7 +120,7 @@ pub enum After {
     Close,
     /// Replace this connection's event stream with this one.
     Subscribe(mpsc::Receiver<WireEvent>),
-    /// End the process (an accepted takeover).
+    /// End the process (an accepted takeover, or `shutdown`).
     Exit,
 }
 
@@ -530,7 +531,10 @@ impl Server {
                 && self.system.as_ref().is_some_and(|s| s.is_enabled()) =>
             {
                 let s = self.system.as_ref().expect("checked");
-                s.preview(&self.reader, m)
+                match k {
+                    "shutdown" => self.shutdown(),
+                    _ => s.preview(&self.reader, m),
+                }
             }
             k if EXTENSION_TYPES.contains(&k) => Err(Failure::new(
                 Code::Unsupported,
@@ -797,12 +801,17 @@ impl Server {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone();
-        let Some(Value::String(saved)) = self.store.user("voice") else {
-            return;
-        };
         if now == before {
             return;
         }
+        let Some(Value::String(saved)) = self.store.user("voice") else {
+            // No voice of the user's: the default voice (af_sarah) comes
+            // back with an engine that has it.
+            if let Some(Value::String(d)) = config::default("voice") {
+                let _ = self.reader.set(Key::Voice, sonara_reader::Value::Text(d));
+            }
+            return;
+        };
         let offered = self
             .reader
             .voices(Some(&now))
@@ -879,8 +888,18 @@ impl Server {
         Ok((f, After::Subscribe(rx)))
     }
 
-    /// Carry out an accepted takeover: called by the transport after the
-    /// reply went out.
+    /// `shutdown` (extension `system`, #202): the user's stop (`sonara
+    /// stop`, uninstall, an upgrade replacing this runtime). Whatever is
+    /// reading or queued ends; requests after it are `E_BUSY`, and the
+    /// process exits once the reply went out, restoring other apps first.
+    fn shutdown(&self) -> Handled {
+        *self.retiring.lock().unwrap_or_else(|p| p.into_inner()) = true;
+        let _ = self.reader.control(Control::Stop);
+        Ok((Map::new(), After::Exit))
+    }
+
+    /// Carry out an accepted takeover or a `shutdown`: called by the
+    /// transport after the reply went out.
     pub fn exit_for_takeover(&self) {
         self.lifetime.request_exit(ExitReason::Takeover);
     }

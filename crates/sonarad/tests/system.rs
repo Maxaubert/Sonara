@@ -147,7 +147,7 @@ fn the_extension_is_offered_and_its_keys_answer_once_enabled() {
         .unwrap()
         .contains(&json!("system")));
     let g = ok(s, &mut session, json!({"type": "get", "key": "audio_mode"}));
-    assert_eq!(g["value"], "off");
+    assert_eq!(g["value"], "pause", "the product default (#202)");
     let g = ok(
         s,
         &mut session,
@@ -527,6 +527,9 @@ fn saved(home: &std::path::Path) -> Value {
 fn the_schema_defaults_are_the_layers_defaults() {
     let r = rig();
     let s = &r.server;
+    // As `main` does before serving: the reader takes the L1 defaults.
+    let (store, _) = Store::load(&r.home);
+    assert!(config::apply_reader(&store, s.reader(), false).is_empty());
     let mut h = Session::http();
     ok(
         s,
@@ -536,7 +539,6 @@ fn the_schema_defaults_are_the_layers_defaults() {
     for key in [
         "rate",
         "volume",
-        "voice",
         "channel_announce",
         "mute_level",
         "verbosity",
@@ -905,12 +907,12 @@ fn the_cues_event_stream_needs_the_system_extension() {
     ok(
         s,
         &mut h,
-        json!({"type": "set", "key": "audio_mode", "value": "pause"}),
+        json!({"type": "set", "key": "audio_mode", "value": "duck"}),
     );
     let w = rx.blocking_recv().unwrap();
     assert_eq!(w.name, "cue");
     let v: Value = serde_json::from_str(&w.json).unwrap();
-    assert_eq!(v, json!({"event": "cue", "text": "Media pause."}));
+    assert_eq!(v, json!({"event": "cue", "text": "Audio ducking."}));
 }
 
 #[test]
@@ -922,6 +924,12 @@ fn a_muted_channel_pref_holds_the_channels_speech() {
         let s = &r.server;
         let mut h = Session::http();
         ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+        // Read prose at once (the product default holds five chunks).
+        ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "minqueue", "value": 1}),
+        );
         ok(
             s,
             &mut h,
@@ -1024,21 +1032,21 @@ fn the_background_policy_is_a_persisted_agent_key() {
         let s = &r.server;
         let mut h = Session::http();
         ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
-        assert!(s.channels().unwrap().focus_only(), "earcon_only by default");
+        assert!(!s.channels().unwrap().focus_only(), "all by default (#202)");
         let g = ok(
             s,
             &mut h,
-            json!({"type": "set", "key": "background_policy", "value": "all"}),
+            json!({"type": "set", "key": "background_policy", "value": "earcon_only"}),
         );
-        assert_eq!(g["value"], "all");
-        assert!(!s.channels().unwrap().focus_only());
-        assert_eq!(saved(&home)["background_policy"], "all");
+        assert_eq!(g["value"], "earcon_only");
+        assert!(s.channels().unwrap().focus_only());
+        assert_eq!(saved(&home)["background_policy"], "earcon_only");
     }
     let r = rig_on(home);
     let s = &r.server;
     let mut h = Session::http();
     ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
-    assert!(!s.channels().unwrap().focus_only(), "applied at start");
+    assert!(s.channels().unwrap().focus_only(), "applied at start");
 }
 
 /// Kokoro as `sonarad` builds it, but without downloads, ONNX Runtime or a
@@ -1115,4 +1123,29 @@ fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
     );
     let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
     assert_eq!(g["value"]["saved_voice"], "af_sarah");
+}
+
+#[test]
+fn shutdown_stops_reading_refuses_more_and_asks_to_exit() {
+    // #202: `sonara stop` and upgrades end the runtime through `shutdown`.
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    let refused = s.handle(&mut session, &json!({"type": "shutdown"}));
+    assert_eq!(refused.reply["ok"], false, "not before the extension is on");
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system"]}),
+    );
+    ok(
+        s,
+        &mut session,
+        json!({"type": "speak", "text": "Hello there."}),
+    );
+    let out = s.handle(&mut session, &json!({"type": "shutdown"}));
+    assert_eq!(out.reply["ok"], true, "{}", out.reply);
+    assert!(matches!(out.after, sonarad::protocol::After::Exit));
+    let busy = call(s, &mut session, json!({"type": "speak", "text": "More."}));
+    assert_eq!(busy["error"]["code"], "E_BUSY", "{busy}");
 }

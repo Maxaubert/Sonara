@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Sonara's Claude Code hook launcher (#202). It needs nothing but Git Bash.
+#
+# hooks/hooks.json runs `bin/sonara-hook-launch <Event>` through Git Bash,
+# which is how Claude Code runs hook commands on Windows. The runtime this
+# plugin version needs (bin/runtime-version) lives in
+# %LOCALAPPDATA%\Sonara\runtime\<version>\. When it, or a newer release,
+# is installed, this execs the newest one's sonara-hook.exe with the event
+# (bin/sonara-runtime.sh: upgrades go one way); the payload on stdin
+# passes through. That path uses shell builtins only (no fork), so a hook
+# stays fast. sonara-hook.exe starts sonarad itself when none answers
+# (--standalone: it stays up while the plugin is in use).
+#
+# When none is installed (first use, or a plugin update needs a new
+# release), it starts bin/sonara-bootstrap.ps1 ONCE in the background (a
+# lock folder keeps parallel hooks from racing) and exits 0 at once: the
+# bootstrap downloads the release zip, checks its SHA-256, installs it and
+# starts the runtime, so the next event speaks. A failed bootstrap
+# (offline) is retried by a hook after 5 minutes. Nothing is installed
+# while Sonara is stopped (<home>\stopped: /sonara:stop, uninstall).
+# Always exits 0: a hook must never block or fail the Claude session.
+here="${0%/*}"
+[ "$here" = "$0" ] && here=.
+ver=""
+{ IFS= read -r ver < "$here/runtime-version"; } 2>/dev/null
+ver="${ver%$'\r'}"
+lad="${LOCALAPPDATA//\//}"
+[ -n "$ver" ] && [ -n "$lad" ] || exit 0
+sonara_rt=""
+if . "$here/sonara-runtime.sh" 2>/dev/null; then
+    sonara_pick_runtime "$lad/Sonara/runtime" "$ver" sonara-hook.exe
+elif [ -f "$lad/Sonara/runtime/$ver/sonara-hook.exe" ]; then
+    sonara_rt="$ver"
+fi
+if [ -n "$sonara_rt" ]; then
+    exe="$lad/Sonara/runtime/$sonara_rt/sonara-hook.exe"
+    export SONARA_RUNTIME_ARGS="--standalone${SONARA_RUNTIME_ARGS:+ $SONARA_RUNTIME_ARGS}"
+    exec "$exe" "$@"
+fi
+
+# --- not installed: start the bootstrap once, in the background ----------
+exec </dev/null >/dev/null 2>&1
+home="${SONARA_HOME//\//}"
+[ -n "$home" ] || home="$lad/Sonara"
+[ -e "$home/stopped" ] && exit 0
+root="$lad/Sonara/runtime"
+mkdir -p "$root" || exit 0
+failed="$root/.bootstrap.failed"
+if [ -f "$failed" ] && [ -n "$(find "$failed" -mmin -5 2>/dev/null)" ]; then
+    exit 0
+fi
+lock="$root/.bootstrap.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+    # Another hook's bootstrap is running; one older than 15 minutes was
+    # killed and is taken over.
+    [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ] || exit 0
+    rm -rf "$lock"
+    mkdir "$lock" 2>/dev/null || exit 0
+fi
+ps1="$here/sonara-bootstrap.ps1"
+if command -v cygpath >/dev/null 2>&1; then
+    ps1="$(cygpath -w "$ps1")"
+    lock="$(cygpath -w "$lock")"
+fi
+# A PowerShell 7 PSModulePath breaks Windows PowerShell's own modules.
+# -WindowStyle Hidden: no console flashes up, even where the hook's own
+# console is visible.
+env -u PSModulePath powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden \
+    -ExecutionPolicy Bypass -File "$ps1" -Version "$ver" -Lock "$lock" &
+exit 0

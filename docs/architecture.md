@@ -4,6 +4,11 @@ How Sonara is put together, for contributors. Current as of 0.8.3 (2026-10-02). 
 behaviour is in the [README](../README.md); the wire contract for embedding hosts is
 [protocol.md](protocol.md).
 
+> Since 0.11 (#202) the Claude Code plugin runs the Rust runtime (`crates/`) and no longer uses
+> the Python package described here; it stays until a follow-up removes it. The runtime's
+> contract is [protocol-v1.md](protocol-v1.md), its design the runtime spec and plan in
+> `docs/plans/`.
+
 ## Big picture
 
 Sonara is two kinds of process:
@@ -18,6 +23,19 @@ The daemon runs the copy of the package in `~/.sonara/app`, not the plugin's fil
 updates never change code under a running daemon. `/sonara:install` refreshes that copy.
 
 ## Data flow
+
+The Claude Code plugin (0.11+, #202) no longer takes this path. Its hook chain is:
+
+```
+Claude Code hook event
+  -> hooks/hooks.json
+  -> bin/sonara-hook-launch       Git Bash; picks the runtime in %LOCALAPPDATA%\Sonara\runtime\
+                                  (bin/sonara-runtime.sh), or starts bin/sonara-bootstrap.ps1
+  -> sonara-hook.exe              event -> protocol v1 messages; starts sonarad.exe if needed
+  -> sonarad.exe                  the Rust runtime (crates/), contract docs/protocol-v1.md
+```
+
+The rest of this section, and of this document, is the legacy Python package:
 
 ```
 Claude Code hook event

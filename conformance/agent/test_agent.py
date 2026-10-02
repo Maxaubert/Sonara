@@ -15,16 +15,20 @@ LONG = long_text(1)
 TWO_LONG = long_text(2)
 
 
-def agent_client(rt, announce=False, policy=None):
+def agent_client(rt, announce=False, policy="earcon_only"):
     """A TCP client with the agent extension on, subscribed to state, items
-    and earcons, past the first (idle) state. ``policy`` sets the
-    background speech policy (default: the runtime's, ``earcon_only``)."""
+    and earcons, past the first (idle) state. The parity cases run on the
+    Python plugin's settings (prose read at once, every kind of text,
+    ``policy`` as the background speech policy, default ``earcon_only``),
+    not on the product defaults of #202 (five chunks held, ``medium``,
+    ``all``)."""
     c = rt.tcp(extensions=["agent"])
     assert c.request({"type": "subscribe", "events": ["state", "items", "earcons"]})["ok"]
     c.state()
     ok(c, {"type": "set", "key": "channel_announce", "value": "on" if announce else "off"})
-    if policy is not None:
-        ok(c, {"type": "set", "key": "background_policy", "value": policy})
+    ok(c, {"type": "set", "key": "minqueue", "value": 1})
+    ok(c, {"type": "set", "key": "verbosity", "value": "everything"})
+    ok(c, {"type": "set", "key": "background_policy", "value": policy})
     return c
 
 
@@ -301,9 +305,13 @@ def test_agent_over_http(rt):
 # -- background speech policy (#195) and per-channel mute (#196) ----------
 
 
-def test_the_background_policy_defaults_to_earcon_only(rt):
-    c = agent_client(rt)
-    assert ok(c, {"type": "get", "key": "background_policy"})["value"] == "earcon_only"
+def test_the_agent_defaults_are_the_product_defaults(rt):
+    # #202: the maintainer's settings of the Python plugin, unmuted.
+    c = rt.tcp(extensions=["agent"])
+    for key, want in (("background_policy", "all"), ("verbosity", "medium"),
+                      ("minqueue", 5), ("mute_level", 0)):
+        assert ok(c, {"type": "get", "key": key})["value"] == want, key
+    assert ok(c, {"type": "get", "key": "summaries"})["value"]["enabled"] is False
     r = c.request({"type": "set", "key": "background_policy", "value": "silent"})
     assert r["error"]["code"] == "E_BAD_REQUEST"
 

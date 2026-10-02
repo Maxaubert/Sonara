@@ -87,16 +87,17 @@ def rename_retrying(src: str, dst: str, attempts: int = 10,
 
 def is_plugin_root(path) -> bool:
     """True if *path* is a plugin checkout install() can deploy from: it has the
-    package source, the hook entry the hooks point at, and the hooks file."""
+    package source and the hooks file. (Since #202 the plugin runs the Rust
+    runtime and ships no Python hook shim; this package stays until its
+    removal and no longer requires bin/sonara-hook.)"""
     if not path:
         return False
     return (os.path.isfile(os.path.join(path, "src", "sonara", "__init__.py"))
-            and os.path.isfile(os.path.join(path, "bin", "sonara-hook"))
             and os.path.isfile(os.path.join(path, "hooks", "hooks.json")))
 
 
 def print_no_plugin_root() -> None:
-    print("Cannot find the Sonara plugin files (src/sonara, bin/sonara-hook, "
+    print("Cannot find the Sonara plugin files (src/sonara, "
           "hooks/hooks.json) next to this copy of Sonara, which looks like "
           "the deployed runtime in ~/.sonara. Nothing was changed. Run "
           "/sonara:install in Claude Code, or <plugin folder>/bin/sonara install.")

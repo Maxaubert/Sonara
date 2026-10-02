@@ -10,7 +10,7 @@ What you need:
 | a player UI (React or any framework) | `@sonara/player` | a headless `PlayerController` (state to view model, buttons to controls) and `<SonaraPlayer client={...} />` from `@sonara/player/react` (React as a peer only); see `clients/player/README.md` |
 | Node 18+ / Electron | `@sonara/runtime-win32-x64` | `bin/` (`sonarad.exe` and the files next to it), the notices, `runtimePath()` |
 | Python 3.9+ | `sonara-client` | the same API, standard library only |
-| anything else | `sonara-runtime-win-x64-<version>.zip` (GitHub release) | `sonarad.exe`, the files next to it and the notices; speak protocol v1 over TCP or HTTP |
+| anything else | `sonara-runtime-win-x64-<version>.zip` (GitHub release, with `SHA256SUMS`) | `sonarad.exe`, the files next to it and the notices; speak protocol v1 over TCP or HTTP. The zip also holds `sonara-hook.exe` and `sonara.exe`, the Claude Code plugin's hook adapter and command line, which a host does not need |
 
 The protocol behind all of them is `docs/protocol-v1.md`. The one licensing duty is to ship `THIRD_PARTY_NOTICES.md` (see [Licensing](#licensing)).
 
@@ -136,7 +136,7 @@ Summary of `LICENSING.md`: you may sell your app, keep it closed-source, choose 
 
 ## Publishing the packages (maintainers)
 
-Releases are cut by `release.yml` on every push to `main`: it builds `sonarad.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to it (`packaging/runtime_dlls.py`), attaches `sonara-runtime-win-x64-<version>.zip` to the GitHub release and stops there. Nothing is published to npm or PyPI automatically: there are no registry tokens yet. To publish by hand from a checkout of the release tag (the version is already the same in every manifest; `tests/test_manifests.py` checks it):
+Releases are cut by `release.yml` on every push to `main`: it builds `sonarad.exe`, `sonara-hook.exe` and `sonara.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to them (`packaging/runtime_dlls.py`), attaches `sonara-runtime-win-x64-<version>.zip` and its `SHA256SUMS` to the GitHub release (the Claude Code plugin installs that zip on first use) and stops there. Nothing is published to npm or PyPI automatically: there are no registry tokens yet. To publish by hand from a checkout of the release tag (the version is already the same in every manifest; `tests/test_manifests.py` checks it):
 
 ```sh
 cargo build -p sonarad --release

@@ -2,7 +2,7 @@
 
 Run after building the runtime:
 
-    cargo build -p sonarad -p sonara-hook
+    cargo build -p sonarad -p sonara-hook -p sonara-cli
     python -m pytest conformance -q
 
 Set ``SONARAD`` to test another build of ``sonarad.exe`` (and

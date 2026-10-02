@@ -29,6 +29,8 @@ def hook(exe, rt, event, payload, env=None):
 
 def listener(rt):
     c = rt.tcp(extensions=["agent"])
+    # Read prose at once (the product default holds five chunks, #202).
+    assert c.request({"type": "set", "key": "minqueue", "value": 1})["ok"]
     assert c.request({"type": "subscribe", "events": ["state", "earcons"]})["ok"]
     c.state()
     return c

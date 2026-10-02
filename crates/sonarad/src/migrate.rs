@@ -125,8 +125,32 @@ fn int(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_f64().map(|f| f.round() as i64))
 }
 
+/// The Python plugin's defaults. A file from before format 2 wrote every
+/// key, so there a value equal to these was no choice of the user's and is
+/// not imported (the runtime's own default applies).
+const PYTHON_DEFAULTS: &[(&str, &str)] = &[
+    ("rate", "200"),
+    ("volume", "100"),
+    ("audio_mode", "\"off\""),
+    ("duck_level", "20"),
+    ("mute_level", "0"),
+    ("verbosity", "\"everything\""),
+    ("minqueue", "1"),
+    ("background_policy", "\"earcon_only\""),
+];
+
+fn python_default(key: &str) -> Option<Value> {
+    PYTHON_DEFAULTS
+        .iter()
+        .find(|(k, _)| *k == key)
+        .and_then(|(_, v)| serde_json::from_str(v).ok())
+}
+
 /// The runtime's `config.json` keys for the plugin's `config.json`, and
-/// notes for the log.
+/// notes for the log. A format 2 file holds only the keys the user set, and
+/// each is imported, also one equal to the runtime's default (#202: the
+/// defaults changed to the maintainer's, so a user who chose the old
+/// default keeps it).
 pub fn convert_config(
     py: &Map<String, Value>,
     legacy_dir: &Path,
@@ -140,7 +164,7 @@ pub fn convert_config(
     };
     let mut put = |key: &str, v: Value, notes: &mut Vec<String>| match config::validate(key, &v) {
         Ok(clean) => {
-            if config::default(key).as_ref() != Some(&clean) {
+            if !(legacy_file && python_default(key).as_ref() == Some(&clean)) {
                 out.insert(key.to_string(), clean);
             }
         }
@@ -415,7 +439,7 @@ mod tests {
         for (py, want) in [
             (json!("all"), Some(json!("all"))),
             (json!("anything"), Some(json!("all"))),
-            (json!("earcon_only"), None),
+            (json!("earcon_only"), Some(json!("earcon_only"))),
         ] {
             let (out, _) =
                 convert_config(&obj(json!({"_format": 2, "background_policy": py})), &dir);
@@ -443,6 +467,7 @@ mod tests {
             json!({
                 "voice": "af_sarah", "rate": 250, "audio_mode": "duck",
                 "duck_level": 20, "mute_level": 1, "verbosity": "medium", "minqueue": 3,
+                "background_policy": "earcon_only", "volume": 100,
                 "summaries": {"enabled": true, "command": "codex", "model": "gpt-5.4-mini",
                               "timeout": 90, "style": "brief",
                               "prompts": {"brief": "Say it short."}}

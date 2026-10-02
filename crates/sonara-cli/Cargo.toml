@@ -1,0 +1,15 @@
+[package]
+name = "sonara-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sonara's command line (sonara.exe): start, stop, settings, doctor and uninstall for the Claude Code plugin's runtime"
+
+[[bin]]
+name = "sonara"
+path = "src/main.rs"
+
+[dependencies]
+# Protocol only, like the hook (R7): no runtime crate.
+sonara-hook = { path = "../sonara-hook" }
+serde_json.workspace = true

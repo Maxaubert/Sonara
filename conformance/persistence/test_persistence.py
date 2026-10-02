@@ -41,7 +41,7 @@ ALL = ["agent", "system"]
 
 def test_a_fresh_home_writes_no_config(rt):
     c = rt.tcp(extensions=ALL)
-    assert get(c, "rate") == 200
+    assert get(c, "rate") == 250
     assert get(c, "summaries")["enabled"] is False
     assert not (rt.home / "config.json").exists()
 
@@ -111,12 +111,12 @@ def test_a_corrupt_config_gives_the_defaults(start, tmp_path):
     (home / "config.json").write_text('{"rate": 9999, "volume": 30, ', encoding="utf-8")
     rt = start(home=home)
     c = rt.tcp()
-    assert get(c, "rate") == 200
+    assert get(c, "rate") == 250
     assert get(c, "volume") == 100
     (home / "config.json").write_text('{"rate": 9999, "volume": 30}', encoding="utf-8")
     rt = restart(start, rt)
     c = rt.tcp()
-    assert get(c, "rate") == 200, "an out-of-range value is dropped"
+    assert get(c, "rate") == 250, "an out-of-range value gives the default"
     assert get(c, "volume") == 30, "the others still apply"
     log = (home / "logs" / "sonarad.log").read_text(encoding="utf-8")
     assert "rate" in log

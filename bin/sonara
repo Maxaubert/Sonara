@@ -1,43 +1,72 @@
 #!/usr/bin/env bash
-# Self-contained: run the plugin's own src with no installed 'sonara'.
-here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/.." && pwd)"
-# PYTHONPATH is read by the WINDOWS python.exe, which splits on ';' -- not the
-# ':' Git Bash would naturally use. Joining with ':' collapsed both entries into
-# one bogus path, so an already-set PYTHONPATH produced "No module named sonara"
-# (only an EMPTY PYTHONPATH happened to work, which is why this survived).
-case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*|Windows*) _sep=';' ;;
-    *)                             _sep=':' ;;
-esac
-export PYTHONPATH="$root/src${PYTHONPATH:+$_sep$PYTHONPATH}"
-# The interpreter /sonara:install recorded comes first: it is the one install
-# validated. PATH `python` was preferred before, but on Windows that is the
-# WindowsApps Store alias by default, which runs nothing (E4). Then a PATH
-# python/python3 that is not the Store alias, then the py launcher.
-py=""
-rec="$HOME/.sonara/python.path"
-if [ -f "$rec" ]; then
-    IFS= read -r line < "$rec" || true
-    line="${line#$'\xef\xbb\xbf'}"     # a BOM from older PowerShell records (M14)
-    line="${line%$'\r'}"
-    line="${line//\\//}"
-    [ -n "$line" ] && [ -f "$line" ] && py="$line"
-fi
-if [ -z "$py" ]; then
-    for name in python python3; do
-        cand="$(command -v "$name" 2>/dev/null)" || continue
-        case "$cand" in
-            *WindowsApps*|*windowsapps*) ;;   # the Store alias: runs nothing
-            *) py="$cand"; break ;;
-        esac
-    done
-fi
-if [ -z "$py" ]; then
-    if command -v py >/dev/null 2>&1; then
-        exec py -3 -m sonara.cli "$@"
-    fi
-    echo "No Python found. Run /sonara:install to set up Sonara." >&2
+# The plugin's slash commands run `bin/sonara <command>` (#202): sonara.exe
+# of the runtime this plugin version needs (bin/runtime-version), or of the
+# newest newer one installed (bin/sonara-runtime.sh), from
+# %LOCALAPPDATA%\Sonara\runtime\<version>\. When none is installed, the
+# runtime is installed first, in the foreground, with
+# bin/sonara-bootstrap.ps1 (download, SHA-256 check, install).
+here="$(cd "${0%/*}" 2>/dev/null && pwd)" || here="${0%/*}"
+ver=""
+{ IFS= read -r ver < "$here/runtime-version"; } 2>/dev/null
+ver="${ver%$'\r'}"
+lad="${LOCALAPPDATA//\//}"
+if [ -z "$ver" ] || [ -z "$lad" ]; then
+    echo "Sonara: cannot find bin/runtime-version or LOCALAPPDATA." >&2
     exit 1
 fi
-exec "$py" -m sonara.cli "$@"
+root="$lad/Sonara/runtime"
+exe="$root/$ver/sonara.exe"
+if . "$here/sonara-runtime.sh" 2>/dev/null; then
+    sonara_pick_runtime "$root" "$ver" sonara.exe
+    [ -n "$sonara_rt" ] && exe="$root/$sonara_rt/sonara.exe"
+fi
+# `sonara doctor` checks the plugin's hooks; a slash command's Bash tool may
+# not have the variable set.
+if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
+    CLAUDE_PLUGIN_ROOT="${here%/*}"
+    if command -v cygpath >/dev/null 2>&1; then
+        CLAUDE_PLUGIN_ROOT="$(cygpath -w "$CLAUDE_PLUGIN_ROOT")"
+    fi
+    export CLAUDE_PLUGIN_ROOT
+fi
+if [ ! -f "$exe" ]; then
+    if [ "$1" = "uninstall" ] || [ "$1" = "stop" ]; then
+        echo "Sonara's runtime $ver is not installed: nothing to $1."
+        exit 0
+    fi
+    echo "Installing the Sonara runtime $ver (about 15 MB) from GitHub..."
+    mkdir -p "$root" || exit 1
+    lock="$root/.bootstrap.lock"
+    # A hook may be installing it already: wait for it. As in the hook
+    # launcher, only a lock older than 15 minutes (a killed bootstrap) is
+    # taken over; a slow download keeps its lock.
+    own=""
+    while [ ! -f "$exe" ]; do
+        if mkdir "$lock" 2>/dev/null; then
+            own=1
+            break
+        fi
+        if [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then
+            rm -rf "$lock"
+            continue
+        fi
+        sleep 1
+    done
+    if [ -n "$own" ] && [ ! -f "$exe" ]; then
+        ps1="$here/sonara-bootstrap.ps1"
+        lockw="$lock"
+        if command -v cygpath >/dev/null 2>&1; then
+            ps1="$(cygpath -w "$ps1")"
+            lockw="$(cygpath -w "$lock")"
+        fi
+        env -u PSModulePath powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File "$ps1" -Version "$ver" -Lock "$lockw" -NoStart
+    elif [ -n "$own" ]; then
+        rm -rf "$lock"
+    fi
+    if [ ! -f "$exe" ]; then
+        echo "Sonara: the runtime could not be installed; see the log in %LOCALAPPDATA%\Sonara\logs\bootstrap.log." >&2
+        exit 1
+    fi
+fi
+exec "$exe" "$@"

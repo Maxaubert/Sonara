@@ -56,8 +56,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install pytest
-      - run: cargo build -p sonarad -p sonara-hook
-      - name: Conformance (core, channels, agent)
+      - run: cargo build -p sonarad -p sonara-hook -p sonara-cli
+      # Also the Claude Code plugin (#202): bin/sonara-hook-launch and the
+      # PowerShell bootstrap in Git Bash against a local release server,
+      # sonara.exe, and a release zip installed by the first hook.
+      - name: Conformance (core, channels, agent, system, persistence, plugin)
         run: python -m pytest conformance -q
       # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
       # dependency change must regenerate it (spec R6).
