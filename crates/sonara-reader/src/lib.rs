@@ -53,10 +53,13 @@ pub enum Event {
     /// The current engine's readiness changed (Kokoro loading or
     /// downloading its model, speaking with its fallback meanwhile). Polled
     /// about four times a second; engines that are always ready never send
-    /// it.
+    /// it. `changes` counts the status changes this reader has told so
+    /// far (the same for every subscriber), so a host can give each a
+    /// `seq` that is the same on every stream.
     EngineStatus {
         engine: EngineId,
         status: EngineStatus,
+        changes: u64,
     },
 }
 
@@ -256,6 +259,12 @@ impl ReaderHandle {
 
     /// The current engine's readiness (spec 4.1 `engine_status`).
     pub fn engine_status(&self) -> Result<EngineStatus> {
+        Ok(self.engine_status_changes()?.0)
+    }
+
+    /// The current engine's readiness and how many status changes the
+    /// reader has told (`Event::EngineStatus::changes`).
+    pub fn engine_status_changes(&self) -> Result<(EngineStatus, u64)> {
         self.call(Msg::EngineStatus)
     }
 

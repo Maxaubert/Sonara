@@ -48,6 +48,9 @@ pub enum Fault {
     IgnoreRange,
     /// Send other bytes of the same length (a bad mirror).
     Corrupt,
+    /// Wait this long after the headers before sending the body (a slow
+    /// line: the download is still running meanwhile).
+    Delay(std::time::Duration),
 }
 
 /// One request the server saw.
@@ -207,6 +210,10 @@ fn serve(conn: TcpStream, s: &Shared) {
         ),
     };
     let _ = out.write_all(head.as_bytes());
+    if let Some(Fault::Delay(d)) = &fault {
+        let _ = out.flush();
+        thread::sleep(*d);
+    }
     match fault {
         Some(Fault::CutAfter(n)) => {
             let _ = out.write_all(&body[..n.min(body.len())]);

@@ -136,7 +136,7 @@ Hand-maintained (`packaging/notices/models-and-data.md`). Each entry says whethe
 ### Microsoft Visual C++ runtime
 
 - `sonarad.exe` and `sonara-hook.exe` link the C runtime statically (`+crt-static`) and need no Visual C++ redistributable; they use the Universal CRT that Windows 10 and 11 provide.
-- `onnxruntime.dll` imports `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`. These ship app-locally next to it, copied from the Visual Studio redistributable folder (`VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`).
+- `onnxruntime.dll` imports `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`. These ship app-locally next to it, copied from the Visual Studio redistributable folder (`VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`). `runtime_dlls.py` refuses a `msvcp140.dll` or `vcruntime140.dll` older than 14.40.33810.0 (VS 2022 17.10, the oldest runtime ONNX Runtime 1.28.2 runs with) and prints the versions it stages; the shipped version is that of the build runner's newest Visual Studio (14.51.36247.0 on the development PC, 2026-10-02).
 - Licence: Microsoft Visual C++ Redistributable, "Distributable Code" under the Microsoft Visual Studio licence terms, which allow app-local deployment of these files. A bundler may instead install the redistributable with its own installer.
 - Ships: yes (the four DLLs above).
 

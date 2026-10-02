@@ -103,7 +103,7 @@ fn build_reader(
     engine: Option<&str>,
     output: OutputKind,
     home: &Home,
-) -> Result<ReaderHandle, String> {
+) -> Result<(ReaderHandle, Option<Kokoro>), String> {
     let (registry, engine, kokoro) = build_registry(engine, home)?;
     let mut config = Config::new(registry);
     config.engine = Some(engine.clone());
@@ -114,10 +114,10 @@ fn build_reader(
     let reader = ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))?;
     // Prefetch: verify, download (in the background) and load the model now,
     // so the first sentence is soon Kokoro's.
-    if let (Some(k), true) = (kokoro, engine == kokoro::ID.as_str()) {
+    if let (Some(k), true) = (&kokoro, engine == kokoro::ID.as_str()) {
         k.prepare();
     }
-    Ok(reader)
+    Ok((reader, kokoro))
 }
 
 /// The platform of the `system` extension.
@@ -161,12 +161,13 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Err(AcquireError::Os(e)) => return Err(fail(e)),
     };
     let token = instance::new_token().map_err(fail)?;
-    let reader = build_reader(args.engine.as_deref(), args.output, &home).map_err(fail)?;
+    let (reader, kokoro) =
+        build_reader(args.engine.as_deref(), args.output, &home).map_err(fail)?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| fail(format!("cannot start the runtime: {e}")))?;
-    let result = rt.block_on(run(&args, &home, &sid, token, reader.clone()));
+    let result = rt.block_on(run(&args, &home, &sid, token, reader.clone(), kokoro));
     reader.shutdown();
     rt.shutdown_timeout(Duration::from_millis(500));
     // Release the instance lock before runtime.json goes: a client that
@@ -184,6 +185,7 @@ async fn run(
     sid: &str,
     token: String,
     reader: ReaderHandle,
+    kokoro: Option<Kokoro>,
 ) -> Result<(), String> {
     // Loopback only, never another address (spec section 4).
     let tcp_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -216,11 +218,13 @@ async fn run(
     }
     tokio::spawn(tcp::serve(tcp_listener, server.clone()));
     tokio::spawn(http::serve(http_listener, server.clone()));
+    // Reading, or fetching the Kokoro model: an idle exit mid-download
+    // would leave the first install without Kokoro for longer.
     let busy_server = server.clone();
     tokio::spawn(lifetime::monitor(
         life.clone(),
         Duration::from_millis(100),
-        move || busy_server.is_reading(),
+        move || busy_server.is_reading() || kokoro.as_ref().is_some_and(Kokoro::is_preparing),
     ));
 
     let info = RuntimeInfo {

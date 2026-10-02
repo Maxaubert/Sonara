@@ -271,3 +271,97 @@ fn voices_list_the_english_catalogue() {
         .all(|v| v.engine == kokoro::ID
             && v.license_class == sonara_engine::LicenseClass::Permissive));
 }
+
+/// A fallback that cannot speak here: OneCore on a PC that lists no voices
+/// for new programs (D7). Its warm fails and every synthesis fails.
+#[derive(Default)]
+struct MuteEngine {
+    syntheses: std::sync::atomic::AtomicUsize,
+}
+
+impl Engine for MuteEngine {
+    fn id(&self) -> sonara_engine::EngineId {
+        sonara_engine::EngineId("mute")
+    }
+    fn license_class(&self) -> sonara_engine::LicenseClass {
+        sonara_engine::LicenseClass::Permissive
+    }
+    fn voices(&self) -> Vec<sonara_engine::Voice> {
+        Vec::new()
+    }
+    fn warm(&self) -> Result<()> {
+        Err(Error::Engine("no voices installed".into()))
+    }
+    fn synthesize(&self, _: &str, _: &str, _: u32) -> Result<sonara_engine::PcmStream> {
+        self.syntheses
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(Error::Engine("no voices installed".into()))
+    }
+    fn cancel(&self) {}
+}
+
+fn with_mute_fallback(fx: &Fixture, base: &str) -> (Kokoro, Arc<MuteEngine>) {
+    let mute = Arc::new(MuteEngine::default());
+    let mut config = fx.config(base);
+    config.fallback = Some(mute.clone());
+    (Kokoro::new(config), mute)
+}
+
+#[test]
+fn a_fallback_that_cannot_speak_waits_for_kokoro_instead_of_dropping_speech() {
+    let fx = Fixture::new();
+    let server = fx.server();
+    server.fault(MODEL_FILE, Fault::Delay(Duration::from_millis(600)));
+    let (e, mute) = with_mute_fallback(&fx, &server.base);
+    e.warm().unwrap();
+    assert!(e.is_preparing(), "{:?}", e.status());
+    // Nothing speaks meanwhile, so the status names no fallback.
+    assert_eq!(e.status().fallback, None, "{:?}", e.status());
+    // The first item, asked for mid-download, is Kokoro's once it is ready.
+    let out = chunks(&e, "Hello there.", "", 200);
+    assert!(!out.is_empty());
+    assert!(out.iter().all(|c| c.sample_rate == kokoro::SAMPLE_RATE));
+    assert_eq!(
+        mute.syntheses.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the mute fallback was asked to speak"
+    );
+    assert!(e.is_ready() && !e.is_preparing());
+}
+
+#[test]
+fn cancel_ends_a_wait_for_kokoro() {
+    let fx = Fixture::new();
+    let server = fx.server();
+    server.fault(MODEL_FILE, Fault::Delay(Duration::from_secs(10)));
+    let (e, _mute) = with_mute_fallback(&fx, &server.base);
+    e.warm().unwrap();
+    let canceller = e.clone();
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        canceller.cancel();
+    });
+    let started = std::time::Instant::now();
+    let r = e.synthesize("Hello.", "", 200);
+    assert!(matches!(r, Err(Error::Cancelled)), "{:?}", r.err());
+    assert!(started.elapsed() < Duration::from_secs(5));
+    t.join().unwrap();
+}
+
+#[test]
+fn a_fallback_that_cannot_speak_and_no_onnx_runtime_fail_at_once() {
+    let fx = Fixture::new();
+    fx.seed();
+    let (e, _mute) = {
+        let mute = Arc::new(MuteEngine::default());
+        let mut config = fx.config("http://127.0.0.1:9/unused");
+        config.fallback = Some(mute.clone());
+        config.loader = None; // no onnxruntime.dll
+        (Kokoro::new(config), mute)
+    };
+    assert!(e.warm().is_err());
+    let started = std::time::Instant::now();
+    let err = e.synthesize("Hello.", "", 200).err().unwrap();
+    assert!(err.to_string().contains("ONNX Runtime"), "{err}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}

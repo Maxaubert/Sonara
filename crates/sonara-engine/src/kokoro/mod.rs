@@ -9,6 +9,11 @@
 //!   engine (OneCore in `sonarad`) at once, and `status` says why. Loading
 //!   a model that is on disk takes about a second; a synthesis waits for it
 //!   rather than switching voices.
+//! - **A fallback that cannot speak** (its warm-up fails or it lists no
+//!   voices, as OneCore on a PC without voices for new programs) counts as
+//!   none: a synthesis then waits for Kokoro while it is downloading or
+//!   loading (at most `NO_FALLBACK_WAIT`, ended by `cancel`), so a fresh
+//!   install drops no speech.
 //! - **Synthesis** runs the text rules (`text`), G2P (`phonemes`), then one
 //!   model call per sentence (`phonemes::batches`); each batch is a
 //!   `PcmChunk` (24 kHz mono), silence-trimmed and loudness-normalized like
@@ -55,6 +60,9 @@ pub type Loader = Arc<dyn Fn(&Path) -> Result<Box<dyn Acoustic>> + Send + Sync>;
 
 /// How long a synthesis waits for a model that is loading.
 const LOAD_WAIT: Duration = Duration::from_secs(30);
+
+/// How long a synthesis waits for Kokoro when no fallback can speak.
+pub const NO_FALLBACK_WAIT: Duration = Duration::from_secs(5 * 60);
 
 /// How to build the engine.
 pub struct Config {
@@ -126,6 +134,9 @@ struct Inner {
     download: bool,
     backoff: Backoff,
     fallback: Option<Arc<dyn Engine>>,
+    /// Whether the fallback can speak here (warmed and has voices), found
+    /// out once.
+    fallback_ok: OnceLock<bool>,
     loader: Option<Loader>,
     progress: Mutex<Progress>,
     changed: Condvar,
@@ -155,6 +166,7 @@ impl Kokoro {
                 download: config.download,
                 backoff: config.backoff,
                 fallback: config.fallback,
+                fallback_ok: OnceLock::new(),
                 loader: config.loader,
                 progress: Mutex::new(Progress {
                     stage: Stage::Idle,
@@ -176,6 +188,49 @@ impl Kokoro {
     /// The model is loaded: syntheses use Kokoro itself.
     pub fn is_ready(&self) -> bool {
         self.inner.lock().loaded.is_some()
+    }
+
+    /// Verifying, downloading or loading the model right now (a host keeps
+    /// running meanwhile rather than idling out mid-download).
+    pub fn is_preparing(&self) -> bool {
+        let p = self.inner.lock();
+        p.loaded.is_none() && (p.stage != Stage::Idle || self.inner.manager.is_running())
+    }
+
+    /// The fallback, if it can speak here. The first call warms it.
+    fn usable_fallback(&self) -> Option<&Arc<dyn Engine>> {
+        let f = self.inner.fallback.as_ref()?;
+        let ok = *self
+            .inner
+            .fallback_ok
+            .get_or_init(|| f.warm().is_ok() && !f.voices().is_empty());
+        ok.then_some(f)
+    }
+
+    /// With no fallback that can speak: wait while Kokoro downloads or
+    /// loads, up to `timeout`; `Cancelled` if `cancel` came meanwhile.
+    fn wait_kokoro(&self, generation: u64, timeout: Duration) -> Result<Option<Arc<Loaded>>> {
+        let end = Instant::now() + timeout;
+        let mut p = self.inner.lock();
+        loop {
+            if let Some(l) = &p.loaded {
+                return Ok(Some(l.clone()));
+            }
+            if self.inner.generation.load(Ordering::SeqCst) != generation {
+                return Err(Error::Cancelled);
+            }
+            let preparing = p.stage != Stage::Idle || self.inner.manager.is_running();
+            let now = Instant::now();
+            if p.unavailable.is_some() || !preparing || now >= end {
+                return Ok(None);
+            }
+            p = self
+                .inner
+                .changed
+                .wait_timeout(p, (end - now).min(Duration::from_millis(50)))
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
     }
 
     /// Start getting ready in the background (verify, download, load) if
@@ -384,13 +439,13 @@ impl Engine for Kokoro {
     fn warm(&self) -> Result<()> {
         self.prepare();
         self.wait_loading(self.inner.generation.load(Ordering::SeqCst));
-        if let Some(f) = &self.inner.fallback {
-            if !self.is_ready() {
-                let _ = f.warm();
-            }
-        }
+        let fallback = if self.is_ready() {
+            None
+        } else {
+            self.usable_fallback()
+        };
         let p = self.inner.lock();
-        match (&p.unavailable, &self.inner.fallback) {
+        match (&p.unavailable, fallback) {
             (Some(why), None) => Err(Error::Engine(format!("Kokoro cannot run: {why}"))),
             _ => Ok(()),
         }
@@ -402,13 +457,17 @@ impl Engine for Kokoro {
         self.prepare();
         self.wait_loading(generation);
         let loaded = self.inner.lock().loaded.clone();
-        let Some(loaded) = loaded else {
-            return match &self.inner.fallback {
-                // The fallback's own default voice: Kokoro's ids mean
-                // nothing to it.
-                Some(f) => f.synthesize(text, "", rate),
-                None => Err(self.not_ready()),
-            };
+        let loaded = match loaded {
+            Some(l) => l,
+            // The fallback's own default voice: Kokoro's ids mean nothing
+            // to it.
+            None => match self.usable_fallback() {
+                Some(f) => return f.synthesize(text, "", rate),
+                None => match self.wait_kokoro(generation, NO_FALLBACK_WAIT)? {
+                    Some(l) => l,
+                    None => return Err(self.not_ready()),
+                },
+            },
         };
         let ps = loaded.phonemizer.phonemize(text);
         Ok(Box::new(Stream {
@@ -435,7 +494,11 @@ impl Engine for Kokoro {
         if p.loaded.is_some() {
             return EngineStatus::ready();
         }
-        let fallback = self.inner.fallback.as_ref().map(|f| f.id());
+        // A fallback known not to speak here is not named.
+        let fallback = match self.inner.fallback_ok.get() {
+            Some(false) => None,
+            _ => self.inner.fallback.as_ref().map(|f| f.id()),
+        };
         let status = |readiness, progress, message| EngineStatus {
             readiness,
             progress,

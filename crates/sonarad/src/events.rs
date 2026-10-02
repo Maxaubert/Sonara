@@ -92,12 +92,13 @@ pub fn engine_name(e: &EngineName) -> String {
 }
 
 /// What one stream knows to build its `state` events: the reader's last
-/// state, the engine's status, and how many status changes it has seen
-/// (added to the reader's `seq`, so a status-only change is a new `seq`).
+/// state, the engine's status, and how many status changes the reader has
+/// told (added to the reader's `seq`, so a status-only change is a new
+/// `seq`, the same on every stream).
 struct StateView {
     state: State,
     status: EngineStatus,
-    bumps: u64,
+    changes: u64,
     /// The last `seq` sent: older reader states (raced with the first
     /// snapshot) are not sent again.
     sent: Option<u64>,
@@ -105,7 +106,7 @@ struct StateView {
 
 impl StateView {
     fn seq(&self) -> u64 {
-        self.state.seq + self.bumps
+        self.state.seq + self.changes
     }
 
     /// The `state` event, with the `channels` extension's fields once it is
@@ -143,9 +144,15 @@ fn render(
             view.state = s;
             return set.state.then(|| view.render(engine, channels)).flatten();
         }
-        Event::EngineStatus { status, .. } => {
+        Event::EngineStatus {
+            status, changes, ..
+        } => {
+            // An older status (raced with the first snapshot): keep the newer.
+            if changes <= view.changes {
+                return None;
+            }
             view.status = status;
-            view.bumps += 1;
+            view.changes = changes;
             return set.state.then(|| view.render(engine, channels)).flatten();
         }
         Event::Item { item_id, phase } if set.items => ("item", wire::item_event(item_id.0, phase)),
@@ -196,10 +203,11 @@ pub fn subscribe(
             })
             .map_err(|e| sonara_reader::Error::Start(e.to_string()))?;
     }
+    let (status, changes) = reader.engine_status_changes()?;
     let mut view = StateView {
         state: reader.state()?,
-        status: reader.engine_status()?,
-        bumps: 0,
+        status,
+        changes,
         sent: None,
     };
     if set.state {
@@ -242,7 +250,7 @@ mod tests {
                 voice: None,
             },
             status: EngineStatus::ready(),
-            bumps: 0,
+            changes: 0,
             sent: None,
         }
     }
@@ -278,7 +286,8 @@ mod tests {
         let w = render(
             Event::EngineStatus {
                 engine: EngineId("kokoro"),
-                status: downloading,
+                status: downloading.clone(),
+                changes: 1,
             },
             set,
             &mut v,
@@ -306,6 +315,7 @@ mod tests {
             Event::EngineStatus {
                 engine: EngineId("kokoro"),
                 status: EngineStatus::ready(),
+                changes: 2,
             },
             none,
             &mut v,
@@ -313,6 +323,52 @@ mod tests {
             &channels,
         )
         .is_none());
+    }
+
+    #[test]
+    fn streams_that_subscribed_at_different_times_agree_on_seq() {
+        let engine: EngineName = Arc::new(Mutex::new("kokoro".into()));
+        let channels = Slot::default();
+        let status = |done| EngineStatus {
+            readiness: Readiness::Downloading,
+            progress: Some((done, 100)),
+            fallback: None,
+            message: None,
+        };
+        let event = |done, changes| Event::EngineStatus {
+            engine: EngineId("kokoro"),
+            status: status(done),
+            changes,
+        };
+        // An early stream saw three status changes.
+        let mut early = view(5);
+        early.render(&engine, &channels);
+        for n in 1..=3 {
+            render(
+                event(n * 10, n),
+                EventSet::ALL,
+                &mut early,
+                &engine,
+                &channels,
+            );
+        }
+        // A late one starts from the reader's count of 3.
+        let mut late = view(5);
+        late.status = status(30);
+        late.changes = 3;
+        assert_eq!(seq_of(late.render(&engine, &channels)), Some(8));
+        // The next change has the same seq on both; a stale one is dropped.
+        let mut seqs = [&mut early, &mut late]
+            .map(|v| seq_of(render(event(40, 4), EventSet::ALL, v, &engine, &channels)));
+        assert_eq!(seqs, [Some(9), Some(9)]);
+        seqs[0] = seq_of(render(
+            event(20, 2),
+            EventSet::ALL,
+            &mut late,
+            &engine,
+            &channels,
+        ));
+        assert_eq!(seqs[0], None);
     }
 
     #[test]

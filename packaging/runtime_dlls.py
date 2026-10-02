@@ -8,7 +8,10 @@
   ``msvcp140_1.dll``, ``vcruntime140.dll``, ``vcruntime140_1.dll``), copied
   from the Visual Studio redistributable folder of this machine (app-local
   deployment, allowed by the Visual Studio licence terms). ``sonarad.exe``
-  itself links the C runtime statically and needs none of them.
+  itself links the C runtime statically and needs none of them. A redist
+  older than ``MIN_VC_VERSION`` is refused: a runtime older than the toolset
+  ORT was built with can crash (the ``std::mutex`` constexpr change of
+  VS 2022 17.10, runtime 14.40).
 
     python packaging/runtime_dlls.py fetch            # download + verify (cached)
     python packaging/runtime_dlls.py stage target/release
@@ -43,6 +46,10 @@ ORT_FILES = (
     ("ThirdPartyNotices.txt", "onnxruntime-ThirdPartyNotices.txt"),
 )
 VC_DLLS = ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+# The oldest VC++ runtime ORT 1.28.2 may load with: VS 2022 17.10 (14.40),
+# the first with the constexpr std::mutex its builds rely on.
+MIN_VC_VERSION = (14, 40, 33810, 0)
+VERSIONED = ("msvcp140.dll", "vcruntime140.dll")
 
 
 def sha256(path: Path) -> str:
@@ -75,6 +82,50 @@ def fetch(cache: Path = CACHE, url: str = ORT_URL, expected: str = ORT_SHA256) -
         for member, name in ORT_FILES:
             (out / name).write_bytes(z.read(root + member))
     return out
+
+
+def file_version(path: Path):
+    """The file version of a Windows PE as (major, minor, build, private), or None."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    ver = ctypes.WinDLL("version")
+    ver.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, wintypes.LPDWORD]
+    ver.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
+    ver.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p),
+                                   ctypes.POINTER(wintypes.UINT)]
+    size = ver.GetFileVersionInfoSizeW(str(path), None)
+    if not size:
+        return None
+    buf = ctypes.create_string_buffer(size)
+    if not ver.GetFileVersionInfoW(str(path), 0, size, buf):
+        return None
+    ptr, n = ctypes.c_void_p(), wintypes.UINT()
+    if not ver.VerQueryValueW(buf, "\\", ctypes.byref(ptr), ctypes.byref(n)) or n.value < 52:
+        return None
+    # VS_FIXEDFILEINFO: signature, struc version, then FileVersionMS and LS.
+    ms, ls = ctypes.cast(ptr, ctypes.POINTER(wintypes.DWORD * 4)).contents[2:4]
+    return (ms >> 16, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+
+
+def check_vc(crt: Path, read=file_version) -> dict:
+    """Refuse a redist older than ``MIN_VC_VERSION``; the versions found, by DLL."""
+    found = {}
+    least = ".".join(map(str, MIN_VC_VERSION))
+    for d in VERSIONED:
+        v = read(crt / d)
+        if v is None:
+            raise SystemExit(f"{crt / d}: no file version; cannot check it is at least {least}")
+        shown = ".".join(map(str, v))
+        if tuple(v) < MIN_VC_VERSION:
+            raise SystemExit(
+                f"{crt / d} {shown} is older than {least}, the oldest VC++ runtime "
+                f"ONNX Runtime {ORT_VERSION} runs with; update Visual Studio Build Tools"
+            )
+        found[d] = shown
+    return found
 
 
 def vc_redist_dir() -> Path:
@@ -110,6 +161,8 @@ def stage(dest: Path, vc: bool = True, cache: Path = CACHE) -> list:
         names.append(name)
     if vc:
         crt = vc_redist_dir()
+        for d, v in check_vc(crt).items():
+            print(f"{d} {v}", file=sys.stderr)
         for d in VC_DLLS:
             shutil.copy2(crt / d, dest / d)
             names.append(d)

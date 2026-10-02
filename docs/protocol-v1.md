@@ -134,7 +134,7 @@ A rate, voice or engine change applies to chunks synthesized from then on. Out-o
 
 `license_class` is `permissive` or `os`. `installed: false` means listed but not yet able to speak (voice data missing, a model still to download). An unknown engine is `E_NOT_FOUND`.
 
-**Engines.** `onecore` is Windows' own speech: zero download, licence class `os`. `kokoro` is Kokoro-82M v1.0 (Apache-2.0 weights) on Microsoft's ONNX Runtime with GPL-free phonemes, licence class `permissive`, 28 English voices (`af_heart`, the default, `af_sarah`, `bm_george`, ...; ids also accept the `kokoro:` prefix and display names such as `Heart (Kokoro)`). Its model (about 354 MB) is downloaded on first use into `<home>\models\kokoro\v1.0\` from pinned URLs with pinned SHA-256 values, resumed after an interruption (a download in progress is `<file>.part`), and checked before use (`verified.json` there remembers checked files by size and time); a host may pre-seed that folder with the two files (`kokoro-v1.0.onnx`, `voices-v1.0.bin`). Until Kokoro is ready (downloading, a failed download waiting to retry, no ONNX Runtime) it speaks with `onecore` at once, and `state.engine_status` says so. A failed download is retried after 30 s, then after twice as long each time up to 30 minutes, never on every sentence. The rate maps to Kokoro's speed as `rate / 200`, from 0.5 to 2.0.
+**Engines.** `onecore` is Windows' own speech: zero download, licence class `os`. `kokoro` is Kokoro-82M v1.0 (Apache-2.0 weights) on Microsoft's ONNX Runtime with GPL-free phonemes, licence class `permissive`, 28 English voices (`af_heart`, the default, `af_sarah`, `bm_george`, ...; ids also accept the `kokoro:` prefix and display names such as `Heart (Kokoro)`). Its model (about 354 MB) is downloaded on first use into `<home>\models\kokoro\v1.0\` from pinned URLs with pinned SHA-256 values, resumed after an interruption (a download in progress is `<file>.part`), and checked before use (`verified.json` there remembers checked files by size and time); a host may pre-seed that folder with the two files (`kokoro-v1.0.onnx`, `voices-v1.0.bin`). Until Kokoro is ready (downloading, a failed download waiting to retry, no ONNX Runtime) it speaks with `onecore` at once, and `state.engine_status` says so. Where `onecore` cannot speak (its warm-up fails or it lists no voices), there is no fallback: `engine_status` names none, and each item waits for Kokoro while the model downloads or loads (up to 5 minutes), so no speech is dropped. The runtime does not idle out while the model downloads or loads. A failed download is retried after 30 s, then after twice as long each time up to 30 minutes, never on every sentence. The rate maps to Kokoro's speed as `rate / 200`, from 0.5 to 2.0.
 
 ### `subscribe` (TCP)
 
@@ -169,7 +169,7 @@ A client that does not read its events never slows the reader: past 256 unread e
 "engine_status": {"engine": "kokoro", "ready": false, "status": "downloading", "progress": {"done": 104873984, "total": 353746785}, "fallback": "onecore"}
 ```
 
-A change of `engine_status` alone (download progress, about four times a second at most) is a new `state` event with a new `seq`.
+A change of `engine_status` alone (download progress, about four times a second at most) is a new `state` event with a new `seq`. The runtime counts these changes once, so every client sees the same `seq` for the same state, however long it has been subscribed.
 
 ## Errors
 
@@ -281,7 +281,7 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 `state.now_playing` gains `channel` and `host_tab` (both `null` for text spoken without a channel; an announcement belongs to the channel it announces), and `queued` also counts the channels' unread messages. A `state` event is sent when the reader's state changes, so `queued` catches up with a new channel message at the next change.
 
 ```json
-{"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore"}}
+{"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore", "ready": true, "status": "ready"}}
 ```
 
 ## Extension `agent`

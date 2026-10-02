@@ -21,7 +21,7 @@ fn downloading(done: u64) -> EngineStatus {
 
 fn next_status(rig: &Rig) -> EngineStatus {
     match rig.events.recv_timeout(Duration::from_secs(5)) {
-        Ok(Event::EngineStatus { engine, status }) => {
+        Ok(Event::EngineStatus { engine, status, .. }) => {
             assert_eq!(engine, EngineId("status"));
             status
         }
@@ -44,6 +44,30 @@ fn engine_status_changes_are_sent_to_subscribers() {
         ["log engine 'status' is ready", "engine status ready"]
     );
     assert_eq!(rig.h.engine_status().unwrap().readiness, Readiness::Ready);
+}
+
+#[test]
+fn status_changes_are_counted_once_for_every_subscriber() {
+    let engine = Arc::new(StatusEngine::new(downloading(10)));
+    let rig = Rig::with(engine.clone());
+    assert_eq!(rig.h.engine_status_changes().unwrap(), (downloading(10), 0));
+    engine.set(downloading(20));
+    next_status(&rig);
+    engine.set(downloading(30));
+    next_status(&rig);
+    // A subscriber that comes later sees the same count: it is the
+    // reader's, not the subscription's.
+    let late = rig.h.subscribe().unwrap();
+    assert_eq!(rig.h.engine_status_changes().unwrap(), (downloading(30), 2));
+    engine.set(downloading(40));
+    let changes = |rx: &std::sync::mpsc::Receiver<Event>| loop {
+        match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
+            Event::EngineStatus { changes, .. } => return changes,
+            _ => continue,
+        }
+    };
+    assert_eq!(changes(&rig.events), 3);
+    assert_eq!(changes(&late), 3);
 }
 
 #[test]
