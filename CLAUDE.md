@@ -8,7 +8,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 
 ## Build, test, release
 - Typecheck/lint: `ruff check src tests` (no typechecker)
-- Rust (`crates/`, needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. Live OneCore (opt-in): `cargo test -p sonara-engine --test onecore_live -- --ignored`. End to end: `cargo run -p sonara-audio --example say -- --engine onecore|fake "Hello."`
+- Rust (`crates/`, needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. Live OneCore (opt-in): `cargo test -p sonara-engine --test onecore_live -- --ignored`. End to end: `cargo run -p sonara-reader --example say -- --engine onecore|fake "Hello."`
 - Unit: `python -m pytest -q` (system Python with `.[dev,windows]`; conftest adds `src/` to `sys.path`). Live OneCore checks: `-m live_windows` (opt-in)
 - E2E (headless): `python -m pytest tests/e2e -q` (needs `pip install -e ".[e2e]"` and `playwright install chromium`)   Run when: `src/sonara/settings.html`, `src/sonara/webui.py`
 - Build / package: none (plugin, no build step)   Artifact: n/a
