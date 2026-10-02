@@ -92,6 +92,19 @@ jobs:
           npm run typecheck
           npm run build
           npm test
+      # The player builds only on the core API; its React tests run in jsdom.
+      - name: "@sonara/player: typecheck, build, test"
+        working-directory: clients/player
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
+      - name: "Player demo: build"
+        working-directory: examples/player-demo
+        run: |
+          npm ci
+          npm run build
       - name: "@sonara/runtime-win32-x64: build, test"
         working-directory: packaging/npm-runtime
         run: |

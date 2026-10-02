@@ -7,6 +7,7 @@ What you need:
 | you write | package | what it gives you |
 |---|---|---|
 | Node 18+ / Electron main | `@sonara/client` | `connect`, `speak`, `control`, `set`/`get`, `voices`, `onState`/`onItem`/`onLog`, `close` (zero dependencies) |
+| a player UI (React or any framework) | `@sonara/player` | a headless `PlayerController` (state to view model, buttons to controls) and `<SonaraPlayer client={...} />` from `@sonara/player/react` (React as a peer only); see `clients/player/README.md` |
 | Node 18+ / Electron | `@sonara/runtime-win32-x64` | `bin/sonarad.exe`, the notices, `runtimePath()` |
 | Python 3.9+ | `sonara-client` | the same API, standard library only |
 | anything else | `sonara-runtime-win-x64-<version>.zip` (GitHub release) | `sonarad.exe` and the notices; speak protocol v1 over TCP or HTTP |
