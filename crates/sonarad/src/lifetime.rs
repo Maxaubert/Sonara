@@ -117,10 +117,14 @@ impl Lifetime {
 }
 
 /// Check the idle rule every `tick`. `busy` says whether the reader is
-/// reading right now (that restarts the countdown).
-pub async fn monitor<F>(life: Arc<Lifetime>, tick: Duration, busy: F)
+/// reading right now (that restarts the countdown). Once the countdown ran
+/// out, `retire` makes the final decision atomically with the requests
+/// that start speech (`Server::retire_if_idle`): the exit is requested only
+/// when it says yes.
+pub async fn monitor<F, G>(life: Arc<Lifetime>, tick: Duration, busy: F, retire: G)
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,
+    G: Fn() -> bool + Send + Sync + Clone + 'static,
 {
     let mut interval = tokio::time::interval(tick);
     loop {
@@ -138,8 +142,11 @@ where
             continue;
         }
         if life.idle_expired() {
-            life.request_exit(ExitReason::Idle);
-            return;
+            let r = retire.clone();
+            if tokio::task::spawn_blocking(r).await.unwrap_or(false) {
+                life.request_exit(ExitReason::Idle);
+                return;
+            }
         }
     }
 }
@@ -147,6 +154,27 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_monitor_exits_only_when_retire_agrees() {
+        let life = Lifetime::new(Duration::ZERO, false);
+        let agree = Arc::new(AtomicBool::new(false));
+        let a = agree.clone();
+        let task = tokio::spawn(monitor(
+            life.clone(),
+            Duration::from_millis(10),
+            || false,
+            move || a.load(Ordering::SeqCst),
+        ));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(life.exit_requested(), None, "retire said no");
+        agree.store(true, Ordering::SeqCst);
+        let why = tokio::time::timeout(Duration::from_secs(5), life.wait_exit())
+            .await
+            .unwrap();
+        assert_eq!(why, ExitReason::Idle);
+        task.await.unwrap();
+    }
 
     #[test]
     fn a_client_or_keep_alive_blocks_the_idle_exit() {
@@ -183,6 +211,7 @@ mod tests {
             life.clone(),
             Duration::from_millis(10),
             move || b.load(Ordering::SeqCst),
+            || true,
         ));
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(life.exit_requested(), None, "busy keeps it alive");

@@ -200,16 +200,48 @@ fn text_update(m: &Map<String, Value>, field: &str) -> Result<Option<Option<Stri
     }
 }
 
+/// Mute every channel the user muted (a new `Channels`).
+pub fn apply_mutes(ch: &Channels, store: &Store) {
+    for (id, p) in store.all_prefs() {
+        if p.muted {
+            let _ = ch.set_muted(&id, true);
+        }
+    }
+}
+
 /// `get channel_prefs` (the list) and `set channel_prefs {channel, label?,
 /// voice?, muted?}` (stored at once; a new label renames an open channel's
-/// announcements). Voice and mute are stored for the page; the agent layer
-/// enforces them in a later release (#196).
-pub fn prefs_setting(ch: &Channels, store: &Store, value: Option<&Value>) -> Handled {
+/// announcements; `muted` holds the channel's speech unread at once, #196;
+/// the voice is stored for the page). `set channel_prefs {channel, forget:
+/// true}` forgets a channel that is not focused: its preferences, and its
+/// channel and turn state (`forget` closes it when the agent is on).
+pub fn prefs_setting(
+    ch: &Channels,
+    agent: Option<&sonara_agent::Agent>,
+    store: &Store,
+    value: Option<&Value>,
+) -> Handled {
     if let Some(v) = value {
-        let m = v
-            .as_object()
-            .ok_or_else(|| bad("'channel_prefs' is {channel, label?, voice?, muted?}"))?;
+        let m = v.as_object().ok_or_else(|| {
+            bad("'channel_prefs' is {channel, label?, voice?, muted?} or {channel, forget: true}")
+        })?;
         let id = channel(m)?;
+        if m.get("forget") == Some(&Value::Bool(true)) {
+            if ch.focused().as_deref() == Some(id) {
+                return Err(bad("the focused channel cannot be forgotten"));
+            }
+            store.forget_prefs(id);
+            ch.set_muted(id, false).map_err(failure)?;
+            match agent {
+                Some(a) => a.forget(id).map_err(crate::agent_ext::failure)?,
+                None if ch.channel(id).is_some() => ch.close(id).map_err(failure)?,
+                None => {}
+            }
+            let mut f = Map::new();
+            f.insert("key".into(), json!(PREFS_KEY));
+            f.insert("value".into(), prefs_list(ch, store));
+            return ok(f);
+        }
         let muted = match m.get("muted") {
             None | Some(Value::Null) => None,
             Some(Value::Bool(b)) => Some(*b),
@@ -222,6 +254,9 @@ pub fn prefs_setting(ch: &Channels, store: &Store, value: Option<&Value>) -> Han
         };
         let relabel = update.label.is_some();
         let p = store.set_prefs(id, update);
+        if let Some(mute) = muted {
+            ch.set_muted(id, mute).map_err(failure)?;
+        }
         if relabel {
             if let Some(c) = ch.channel(id) {
                 let label = p.label.or_else(|| store.client_label(id));

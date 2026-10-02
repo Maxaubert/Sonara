@@ -2,7 +2,8 @@
 //! and the switch announcements. No threads, no reader: `Channels` asks it
 //! what to feed next and carries that out. Ported from the Python daemon's
 //! `router.py` and `channel.py` without the agent parts (turns, decisions,
-//! digests, minimum batches, background speech policy), which are L3.
+//! digests, minimum batches), which are L3. L3 sets the gates below that
+//! carry out its background speech policy and per-channel mute.
 //!
 //! Rules (binding for `Channels` and the `channels` protocol extension):
 //! - A channel keeps its current **batch**: the entries pushed since it was
@@ -17,6 +18,17 @@
 //!   focused channel; then the first channel (in opening order) with
 //!   something unread. A channel the user switched away from with
 //!   `next_channel` is skipped until it gets new content.
+//! - **Muted** channels (`set_muted`, kept by id whether open or not) are
+//!   never picked: their entries wait, unread, until they are unmuted (the
+//!   Python `session_prefs` `muted` rule). A muted channel never takes the
+//!   floor on `next_channel` unless every channel is muted.
+//! - **Focus only** (`set_focus_only`, L3's background policy
+//!   `earcon_only`): the auto pick reads only the focused channel, the
+//!   channel reading now and **authorized** channels (`authorize`: a
+//!   replay, a summary delivery, host text, the previous focus finishing
+//!   what it had when the focus moved); the others wait. With no channel
+//!   focused nothing is held back. An authorization lasts until the
+//!   channel has nothing unread.
 //! - Switching from one channel to another is announced before the new
 //!   channel's first entry: automatically when the channel that read last
 //!   differs (never for the first reader), always on `next_channel`. A
@@ -26,7 +38,7 @@
 //!   channel reading or, after an idle gap, the one that read last. A fully
 //!   heard target, landing on yourself, or re-landing on a replay in
 //!   progress replays the batch from the top; unread content resumes.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// How a channel treats a new entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +90,8 @@ pub struct Channel {
     /// A manual replay is in progress: re-landing on it restarts from the
     /// top (#118). New content ends it.
     replaying: bool,
+    /// Never picked (`Router::set_muted`).
+    muted: bool,
 }
 
 impl Channel {
@@ -91,7 +105,13 @@ impl Channel {
             cursor: 0,
             gen: 0,
             replaying: false,
+            muted: false,
         }
+    }
+
+    /// The channel is muted: its entries wait, unread.
+    pub fn muted(&self) -> bool {
+        self.muted
     }
 
     /// The batch, read and unread.
@@ -199,6 +219,14 @@ pub struct Router {
     /// Channels to read before anything else, oldest first; one leaves the
     /// list once it has nothing unread.
     priority: Vec<String>,
+    /// Muted channel ids (open or not, so a channel opened later starts
+    /// muted).
+    muted: HashSet<String>,
+    /// Only the focused channel is read automatically (module docs).
+    focus_only: bool,
+    /// Channels read past the focus-only gate until they have nothing
+    /// unread.
+    authorized: HashSet<String>,
 }
 
 impl Router {
@@ -259,8 +287,9 @@ impl Router {
             return false;
         }
         let policy = policy.unwrap_or(Policy::Latest);
-        self.channels
-            .push(Channel::new(id, label, host_tab, policy));
+        let mut c = Channel::new(id, label, host_tab, policy);
+        c.muted = self.muted.contains(id);
+        self.channels.push(c);
         true
     }
 
@@ -288,16 +317,71 @@ impl Router {
         }
         self.suppressed.remove(id);
         self.priority.retain(|p| p != id);
+        self.authorized.remove(id);
         true
     }
 
-    /// Put `id` in front for the auto pick. False if it is not open.
+    /// Put `id` in front for the auto pick. False if it is not open. The
+    /// channel focused before keeps the right to finish what it has unread
+    /// (the Python cooperative hand-off): it is authorized.
     pub fn focus(&mut self, id: &str) -> bool {
         if self.index(id).is_none() {
             return false;
         }
+        if let Some(old) = self.focus.clone().filter(|o| o != id) {
+            if self.ready(&old) {
+                self.authorized.insert(old);
+            }
+        }
         self.focus = Some(id.to_string());
         true
+    }
+
+    /// Mute or unmute `id` (open or not; remembered by id).
+    pub fn set_muted(&mut self, id: &str, muted: bool) {
+        if muted {
+            self.muted.insert(id.to_string());
+        } else {
+            self.muted.remove(id);
+        }
+        if let Some(c) = self.channel_mut(id) {
+            c.muted = muted;
+        }
+    }
+
+    pub fn is_muted(&self, id: &str) -> bool {
+        self.muted.contains(id)
+    }
+
+    /// Read only the focused channel automatically (module docs).
+    pub fn set_focus_only(&mut self, on: bool) {
+        self.focus_only = on;
+    }
+
+    pub fn focus_only(&self) -> bool {
+        self.focus_only
+    }
+
+    /// Let `id` past the focus-only gate until it has nothing unread. False
+    /// if it is not open.
+    pub fn authorize(&mut self, id: &str) -> bool {
+        if self.index(id).is_none() {
+            return false;
+        }
+        self.authorized.insert(id.to_string());
+        true
+    }
+
+    /// `id` is authorized now (diagnostics, tests).
+    pub fn is_authorized(&self, id: &str) -> bool {
+        self.authorized.contains(id)
+    }
+
+    /// The focus-only gate holds `id` back.
+    fn gated(&self, id: &str) -> bool {
+        self.focus_only
+            && self.focus.as_deref().is_some_and(|f| f != id)
+            && !self.authorized.contains(id)
     }
 
     /// Push `text` into an open channel by its policy: `latest` drops the
@@ -354,6 +438,17 @@ impl Router {
         self.channel(id).is_some_and(|c| c.pending() > 0)
     }
 
+    /// Something unread and not muted.
+    fn audible(&self, id: &str) -> bool {
+        self.channel(id)
+            .is_some_and(|c| c.pending() > 0 && !c.muted)
+    }
+
+    /// May the auto pick choose `id` (other than the channel reading now)?
+    fn pickable(&mut self, id: &str) -> bool {
+        self.audible(id) && !self.is_suppressed(id) && !self.gated(id)
+    }
+
     /// Read `id` before every other channel (after the item being read)
     /// until its unread entries are read: an L3 decision preempts the batch
     /// reading now. False if it is not open.
@@ -381,27 +476,32 @@ impl Router {
             .cloned()
             .collect();
         self.priority.retain(|p| !drained.contains(p));
-        let first = self
-            .priority
-            .clone()
-            .into_iter()
-            .find(|p| !self.is_suppressed(p));
+        // An authorization ends once its channel has nothing unread.
+        let spent: Vec<String> = self
+            .authorized
+            .iter()
+            .filter(|a| !self.ready(a))
+            .cloned()
+            .collect();
+        for a in spent {
+            self.authorized.remove(&a);
+        }
+        let first = self.priority.clone().into_iter().find(|p| self.pickable(p));
         if first.is_some() {
             return first;
         }
         if let Some(a) = self.active.clone() {
-            if self.ready(&a) {
+            if self.audible(&a) {
                 return Some(a);
             }
         }
         if let Some(f) = self.focus.clone() {
-            if self.ready(&f) && !self.is_suppressed(&f) {
+            if self.audible(&f) && !self.is_suppressed(&f) {
                 return Some(f);
             }
         }
         let ids: Vec<String> = self.channels.iter().map(|c| c.id.clone()).collect();
-        ids.into_iter()
-            .find(|id| self.ready(id) && !self.is_suppressed(id))
+        ids.into_iter().find(|id| self.pickable(id))
     }
 
     fn arm(&mut self, id: &str, replay: bool, manual: bool) {
@@ -455,7 +555,12 @@ impl Router {
                 return self.next_feed();
             }
         }
-        let entry = self.channel_mut(&target)?.take()?;
+        let c = self.channel_mut(&target)?;
+        let entry = c.take()?;
+        if c.pending() == 0 {
+            // Its last unread entry: the authorization is spent.
+            self.authorized.remove(&target);
+        }
         self.reading = Some((target.clone(), entry.id));
         Some(Feed::Entry {
             channel: target,
@@ -477,14 +582,22 @@ impl Router {
         if all.is_empty() {
             return None;
         }
+        // A muted channel never takes the floor, unless every channel is
+        // muted (never dead-end).
+        let audible: Vec<String> = all
+            .iter()
+            .filter(|id| self.channel(id).is_some_and(|c| !c.muted))
+            .cloned()
+            .collect();
+        let ring = if audible.is_empty() { &all } else { &audible };
         // A channel with nothing to hear is skipped, unless all are empty
         // (never dead-end; #117).
-        let nonempty: Vec<String> = all
+        let nonempty: Vec<String> = ring
             .iter()
             .filter(|id| self.channel(id).is_some_and(|c| !c.entries.is_empty()))
             .cloned()
             .collect();
-        let ring = if nonempty.is_empty() { &all } else { &nonempty };
+        let ring = if nonempty.is_empty() { ring } else { &nonempty };
         let old = self.active.clone();
         // The ring position survives idle gaps (#111).
         let cur = self.active.clone().or_else(|| self.last_active.clone());
@@ -557,6 +670,8 @@ impl Router {
         self.active = Some(id.to_string());
         self.last_active = Some(id.to_string());
         self.suppressed.remove(id);
+        // A replay is read whatever the focus (Python authorize_replay).
+        self.authorized.insert(id.to_string());
         if handoff {
             self.arm(id, true, true);
         }

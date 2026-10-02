@@ -12,7 +12,8 @@
 //!   above 100 % is 100, and in a file from before the plugin's format 2
 //!   the old defaults `duck_level: 20` and `summary_timeout: 20` count as
 //!   unset. The cue voice and fast cues are not carried over: the runtime
-//!   has no spoken control cues yet.
+//!   speaks its control cues in the voice in force. `background_policy`
+//!   `earcon_only` stays the default; any other value is `all`.
 //! - `keymap.json`: `nav_start` is `restart`, `next_session` is
 //!   `next_channel`; a binding with a key or modifier the runtime lacks is
 //!   left out (and noted). Only when the home has no `keymap.json` yet.
@@ -188,6 +189,16 @@ pub fn convert_config(
     if let Some(v) = py.get("verbosity") {
         put("verbosity", v.clone(), &mut notes);
     }
+    // sessions.py: "earcon_only" holds background sessions back; any other
+    // value reads every session.
+    if let Some(v) = py.get("background_policy") {
+        let policy = if v.as_str() == Some("earcon_only") {
+            "earcon_only"
+        } else {
+            "all"
+        };
+        put("background_policy", json!(policy), &mut notes);
+    }
 
     // Summaries: one object in the runtime.
     let mut s = Map::new();
@@ -243,7 +254,7 @@ pub fn convert_config(
     }
     if py.contains_key("cue_voice") || py.contains_key("fast_cues") {
         notes.push(
-            "cue voice and fast cues are not imported: the runtime has no spoken control cues yet"
+            "cue voice and fast cues are not imported: the runtime speaks its control cues in the              voice in force"
                 .into(),
         );
     }
@@ -396,6 +407,20 @@ mod tests {
 
     fn obj(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn the_background_policy_is_imported_with_the_python_meaning() {
+        let dir = tmp();
+        for (py, want) in [
+            (json!("all"), Some(json!("all"))),
+            (json!("anything"), Some(json!("all"))),
+            (json!("earcon_only"), None),
+        ] {
+            let (out, _) =
+                convert_config(&obj(json!({"_format": 2, "background_policy": py})), &dir);
+            assert_eq!(out.get("background_policy").cloned(), want, "{py}");
+        }
     }
 
     #[test]

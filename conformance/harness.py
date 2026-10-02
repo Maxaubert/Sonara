@@ -61,18 +61,25 @@ class Hook:
     payload on stdin. Its start time (``t``) is taken when it starts, so a
     test can hold the payload back to deliver it late."""
 
-    def __init__(self, exe: Path, home: Path, event: str, env: dict | None = None):
+    def __init__(self, exe: Path, home: Path, event: str, env: dict | None = None,
+                 pipes: bool = False):
         e = dict(os.environ)
         e["SONARA_HOME"] = str(home)
-        for k in ("SONARA_SUMMARIZER", "SONARA_CAPTURE", "SONARA_HOST_TAB", "PRISM_TAB_ID"):
+        for k in ("SONARA_SUMMARIZER", "SONARA_CAPTURE", "SONARA_HOST_TAB", "PRISM_TAB_ID",
+                  "SONARA_NO_START", "SONARA_RUNTIME_ARGS"):
             e.pop(k, None)
+        # A runtime the hook starts never touches this PC's audio or
+        # hotkeys; a test that wants the start passes its own arguments.
+        e["SONARA_RUNTIME_ARGS"] = "--engine fake --system fake"
         e.update(env or {})
         self.proc = subprocess.Popen(
             [str(exe), event],
             env=e,
             stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            # Claude Code reads the hook's output through pipes (``pipes``):
+            # they must reach end of file when the hook ends.
+            stdout=subprocess.PIPE if pipes else subprocess.DEVNULL,
+            stderr=subprocess.PIPE if pipes else subprocess.DEVNULL,
             creationflags=CREATE_NO_WINDOW,
         )
 
@@ -115,6 +122,11 @@ class Runtime:
         self.info: dict = {}
         if wait:
             self.wait_ready()
+
+    @classmethod
+    def attach(cls, exe: Path, home: Path, info: dict) -> "Attached":
+        """A runtime someone else started (by its ``runtime.json``)."""
+        return Attached(exe, home, info)
 
     @property
     def runtime_json(self) -> Path:
@@ -191,6 +203,38 @@ class Runtime:
             self.proc.kill()
             self.proc.wait(TIMEOUT)
         self._stderr.close()
+
+
+class Attached(Runtime):
+    """A runtime this test did not start (the hook did): reached through
+    its ``runtime.json``, ended with ``kill``."""
+
+    def __init__(self, exe: Path, home: Path, info: dict):  # noqa: D107 - no process to start
+        self.exe = exe
+        self.home = home
+        self.info = info
+
+    def alive(self) -> bool:
+        return _pid_alive(self.info["pid"])
+
+    def kill(self) -> None:
+        subprocess.run(["taskkill", "/F", "/PID", str(self.info["pid"])],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       creationflags=CREATE_NO_WINDOW, check=False)
+        wait_until(lambda: not self.alive())
+
+
+def _pid_alive(pid: int) -> bool:
+    """True while the process runs (OpenProcess; os.kill would end it)."""
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    h = k32.OpenProcess(0x1000 | 0x00100000, False, pid)  # QUERY_LIMITED | SYNCHRONIZE
+    if not h:
+        return False
+    try:
+        return k32.WaitForSingleObject(h, 0) == 0x102  # WAIT_TIMEOUT: still running
+    finally:
+        k32.CloseHandle(h)
 
 
 def _http(req):

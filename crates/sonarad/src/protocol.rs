@@ -65,6 +65,7 @@ const EXTENSION_KEYS: &[&str] = &[
     "mute_level",
     "verbosity",
     "minqueue",
+    "background_policy",
     "summaries",
     "audio_mode",
     "duck_level",
@@ -132,10 +133,11 @@ pub struct Server {
     token: String,
     engine: EngineName,
     lifetime: Arc<Lifetime>,
-    /// Set once a takeover is accepted. `speak` and `control` hold this lock
-    /// while they reach the reader, so the idle check of a takeover and
-    /// setting it are atomic with respect to them: nothing is accepted
-    /// after the takeover and then silently dropped by the exit.
+    /// Set once a takeover is accepted or the idle exit decided. `speak`
+    /// and `control` hold this lock while they reach the reader, so the
+    /// idle check and setting it are atomic with respect to them: nothing
+    /// is accepted after the decision and then silently dropped by the
+    /// exit (#194).
     retiring: Arc<Mutex<bool>>,
     /// The `channels` extension, once a client enabled it (it stays
     /// enabled for the life of the process).
@@ -164,6 +166,8 @@ pub(crate) fn reader_failure(e: sonara_reader::Error) -> Failure {
     use sonara_reader::Error as R;
     let code = match &e {
         R::BadValue { .. } => Code::BadRequest,
+        // The reader shut down: the runtime is exiting (#194).
+        R::Closed => Code::Busy,
         R::Engine(E::UnknownEngine(_)) | R::Engine(E::UnknownVoice(_)) => Code::NotFound,
         _ => Code::Engine,
     };
@@ -271,6 +275,7 @@ impl Server {
             agent: self.agent.clone(),
             retiring: self.retiring.clone(),
             store: self.store.clone(),
+            cues: None,
         };
         self.system = Some(Arc::new(SystemExt::new(host, target)));
         self
@@ -319,6 +324,8 @@ impl Server {
             };
             let ch =
                 Channels::new(self.reader.clone(), config).map_err(|e| engine(e.to_string()))?;
+            // The channels the user muted stay muted (#196).
+            channels_ext::apply_mutes(&ch, &self.store);
             let _ = self.channels.set(ch);
         }
         if name == agent_ext::NAME && self.agent.get().is_none() {
@@ -397,15 +404,31 @@ impl Server {
         }
     }
 
+    /// The idle exit (spec section 3), decided under the admission lock:
+    /// true (and nothing is admitted from now on) when no client is
+    /// connected, the idle time ran out since the last activity and
+    /// nothing is being read; false otherwise. A request that touched the
+    /// lifetime before this check keeps the runtime; one admitted after it
+    /// gets `E_BUSY` instead of being accepted and then lost (#194).
+    pub fn retire_if_idle(&self) -> bool {
+        let mut retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
+        if *retiring {
+            return true;
+        }
+        let life = &self.lifetime;
+        if !life.may_idle_exit() || !life.idle_expired() || self.is_reading() {
+            return false;
+        }
+        *retiring = true;
+        true
+    }
+
     /// Hold the admission lock for a request that could start speech, or
-    /// `E_BUSY` once a takeover was accepted.
+    /// `E_BUSY` once a takeover was accepted or the idle exit decided.
     fn admit(&self) -> Result<std::sync::MutexGuard<'_, bool>, Failure> {
         let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
         if *retiring {
-            return Err(Failure::new(
-                Code::Busy,
-                "this runtime is exiting for a takeover",
-            ));
+            return Err(Failure::new(Code::Busy, "this runtime is exiting"));
         }
         Ok(retiring)
     }
@@ -417,6 +440,7 @@ impl Server {
             self.engine.clone(),
             self.channels.clone(),
             self.agent.clone(),
+            self.system.clone().filter(|s| s.is_enabled()),
             set,
         )
         .map_err(reader_failure)
@@ -717,7 +741,12 @@ impl Server {
         let ch = self.channels.get()?;
         match name {
             channels_ext::ANNOUNCE_KEY => Some(channels_ext::announce(ch, value)),
-            channels_ext::PREFS_KEY => Some(channels_ext::prefs_setting(ch, &self.store, value)),
+            channels_ext::PREFS_KEY => Some(channels_ext::prefs_setting(
+                ch,
+                self.agent.get(),
+                &self.store,
+                value,
+            )),
             _ => None,
         }
     }
@@ -733,8 +762,18 @@ impl Server {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone();
+        let mute_before = self.agent.get().map(|a| a.settings().mute_level);
         let result = self.set_now(m);
         if let (Ok((fields, _)), Some(name)) = (&result, opt_str(m, "key").ok().flatten()) {
+            // The mute level's spoken cue (the hotkey's, #197), when it
+            // changed; `audio_mode` and `duck_level` speak theirs in the
+            // system extension.
+            if let (Some(s), "mute_level", Some(before)) = (&self.system, name, mute_before) {
+                let now = fields.get("value").and_then(Value::as_u64);
+                if let Some(level) = now.filter(|l| *l != u64::from(before)) {
+                    s.cue(crate::cues::mute_level_cue(level), None);
+                }
+            }
             if name != "summaries" && config::setting(name).is_some() {
                 if let Some(v) = fields.get("value") {
                     self.store.record(name, v);
@@ -824,6 +863,12 @@ impl Server {
             return Err(Failure::new(
                 Code::Unsupported,
                 "the 'earcons' events belong to the agent extension",
+            ));
+        }
+        if set.cues && !self.system.as_ref().is_some_and(|s| s.is_enabled()) {
+            return Err(Failure::new(
+                Code::Unsupported,
+                "the 'cues' events belong to the system extension",
             ));
         }
         let rx = self.events(set)?;
@@ -1116,6 +1161,50 @@ mod tests {
             json!({"type": "hello", "token": "secret", "keep_alive": true}),
         );
         assert!(!s.lifetime().may_idle_exit());
+    }
+
+    #[test]
+    fn an_idle_exit_is_refused_while_reading_and_then_admits_nothing() {
+        // #194: the exit decision and a request that starts speech must
+        // not interleave (sonarad exited while an item was playing).
+        let (s, out) = server();
+        let life_idle = Lifetime::new(Duration::ZERO, false);
+        let s = Server {
+            lifetime: life_idle,
+            ..s
+        };
+        let mut session = Session::http();
+        call(
+            &s,
+            &mut session,
+            json!({"type": "speak", "text": "One. Two."}),
+        );
+        assert!(!s.retire_if_idle(), "reading: no exit");
+        assert_eq!(
+            code(&call(
+                &s,
+                &mut session,
+                json!({"type": "control", "action": "stop"})
+            )),
+            ""
+        );
+        let _ = out.take_calls();
+        assert!(s.retire_if_idle(), "idle and expired: exit");
+        let o = call(&s, &mut session, json!({"type": "speak", "text": "Late."}));
+        assert_eq!(code(&o), "E_BUSY", "nothing is accepted and then dropped");
+    }
+
+    #[test]
+    fn a_recent_request_keeps_it_from_retiring() {
+        let (s, _) = server();
+        let s = Server {
+            lifetime: Lifetime::new(Duration::from_secs(30), false),
+            ..s
+        };
+        s.lifetime().touch();
+        assert!(!s.retire_if_idle());
+        s.lifetime().set_keep_alive();
+        assert!(!s.retire_if_idle());
     }
 
     #[test]

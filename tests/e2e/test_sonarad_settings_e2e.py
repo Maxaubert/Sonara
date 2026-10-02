@@ -112,6 +112,19 @@ def test_rate_change_is_saved_and_survives_a_restart(live, browser):
     page.close()
 
 
+def test_background_sessions_choice_is_saved(live, browser):
+    # #195: the background speech policy (Python background_policy).
+    lv = live()
+    page = open_page(browser, lv.url)
+    seg = "#background-seg [data-value=%s]"
+    pw.expect(page.locator(seg % "earcon_only")).to_have_attribute("aria-checked", "true")
+    page.click(seg % "all")
+    pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")
+    assert eventually(lambda: lv.saved().get("background_policy") == "all")
+    assert lv.get("background_policy") == "all"
+    page.close()
+
+
 def test_summary_mode_style_and_prompt(live, browser):
     lv = live()
     page = open_page(browser, lv.url)

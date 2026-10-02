@@ -8,10 +8,22 @@
 //! their actions under one lock, so messages apply in the order they
 //! arrive:
 //!
-//! - `Speak` goes to the channel as an appended entry (whatever the
-//!   channel's policy: a turn is many chunks); a decision also
+//! - `Speak` goes to the channel as an appended entry (`Channels::add`,
+//!   whatever the channel's policy: a turn is many chunks); a decision also
 //!   `prioritize`s the channel, so it is read before the other channels
-//!   once the item playing ends.
+//!   once the item playing ends; a summary delivery `authorize`s it past
+//!   the background policy.
+//! - **Background policy** (`set_background_policy`): `earcon_only` turns
+//!   on L2's focus-only gate, so only the focused channel (the session the
+//!   user last prompted) is read; `all` turns it off.
+//! - **Per-channel mute** (`set_channel_muted`): L2 holds the channel's
+//!   text unread and never switches to it (earcons still play).
+//! - **Dead sessions**: a channel with no message for `Config::forget_after`
+//!   has its turn state freed (as `close`) and, when it is neither focused
+//!   nor being read and has nothing unread, its L2 channel closed: a
+//!   session that died without `SessionEnd` does not keep memory for the
+//!   life of the runtime (the Python `forget_session`). `forget` does it
+//!   at once.
 //! - `Wipe` (a new turn, an answer) is `control(Stop, channel)`: the
 //!   channel's unread entries are skipped and its item cut. For a new turn
 //!   the reader is un-paused when the channel is the engaged one
@@ -31,12 +43,22 @@ pub mod summarizer;
 pub use decision::{AskKind, Choice};
 pub use earcon::Earcon;
 pub use rules::{Action, Ask, Job, Rules, Stale, Timer};
-pub use settings::{Settings, Style, SummaryCommand, SummarySettings, Verbosity};
+pub use settings::{BackgroundPolicy, Settings, Style, SummaryCommand, SummarySettings, Verbosity};
 pub use sonara_channels::{Channels, Control, QueueMode};
 pub use summarizer::Summarizer;
 
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::time::{Duration, Instant};
+
+/// How long a channel may stay silent before its turn state is freed
+/// (`Config::forget_after`): far longer than any turn, so only a session
+/// that died without `SessionEnd` is affected.
+pub const FORGET_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// How often the dead-session sweep runs at most.
+const SWEEP_EVERY: Duration = Duration::from_secs(60);
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -74,6 +96,8 @@ pub fn default_summarizer() -> Option<Arc<dyn Summarizer>> {
 pub struct Config {
     pub settings: Settings,
     pub summarizer: Option<Arc<dyn Summarizer>>,
+    /// A channel silent this long has its turn state freed (module docs).
+    pub forget_after: Duration,
 }
 
 impl Default for Config {
@@ -81,15 +105,45 @@ impl Default for Config {
         Config {
             settings: Settings::default(),
             summarizer: default_summarizer(),
+            forget_after: FORGET_AFTER,
         }
     }
+}
+
+/// Earcons as they play (`Agent::subscribe`). Dropping it unsubscribes:
+/// the agent forgets its sender at the next earcon or subscription.
+pub struct EarconStream {
+    rx: Receiver<Earcon>,
+    _alive: Arc<()>,
+}
+
+impl std::ops::Deref for EarconStream {
+    type Target = Receiver<Earcon>;
+
+    fn deref(&self) -> &Receiver<Earcon> {
+        &self.rx
+    }
+}
+
+struct Subscriber {
+    tx: Sender<Earcon>,
+    alive: Weak<()>,
+}
+
+/// When each channel last had a message, for the dead-session sweep.
+struct Seen {
+    at: HashMap<String, Instant>,
+    swept: Instant,
 }
 
 struct Inner {
     channels: Channels,
     rules: Mutex<Rules>,
     summarizer: Option<Arc<dyn Summarizer>>,
-    subscribers: Mutex<Vec<Sender<Earcon>>>,
+    subscribers: Mutex<Vec<Subscriber>>,
+    forget_after: Duration,
+    /// Locked only while `rules` is held.
+    seen: Mutex<Seen>,
 }
 
 /// L3 over L2. Clones share it.
@@ -111,12 +165,18 @@ impl Agent {
         if config.settings.summaries.enabled && config.summarizer.is_none() {
             return Err(Error::NoSummarizer);
         }
+        channels.set_focus_only(config.settings.background == BackgroundPolicy::EarconOnly)?;
         Ok(Agent {
             inner: Arc::new(Inner {
                 channels,
                 rules: Mutex::new(Rules::new(config.settings)),
                 summarizer: config.summarizer,
                 subscribers: Mutex::new(Vec::new()),
+                forget_after: config.forget_after,
+                seen: Mutex::new(Seen {
+                    at: HashMap::new(),
+                    swept: Instant::now(),
+                }),
             }),
         })
     }
@@ -141,6 +201,7 @@ impl Agent {
             check(c)?;
         }
         let mut rules = self.lock();
+        self.inner.seen(&mut rules, channel);
         match f(&mut rules) {
             Ok(actions) => {
                 self.inner.execute(&rules, actions)?;
@@ -206,7 +267,45 @@ impl Agent {
         check(channel)?;
         let mut rules = self.lock();
         rules.close(channel);
+        self.inner.forget_seen(channel);
         Ok(self.inner.channels.close(channel)?)
+    }
+
+    /// Forget a channel at once (a session that died without
+    /// `SessionEnd`): its turn state is freed and its L2 channel closed if
+    /// it is open. Unlike `close`, an unknown channel is not an error.
+    pub fn forget(&self, channel: &str) -> Result<()> {
+        check(channel)?;
+        let mut rules = self.lock();
+        rules.close(channel);
+        self.inner.forget_seen(channel);
+        if self.inner.channels.channel(channel).is_some() {
+            self.inner.channels.close(channel)?;
+        }
+        Ok(())
+    }
+
+    /// The channels with turn state (diagnostics, tests).
+    pub fn tracked(&self) -> Vec<String> {
+        self.lock().channels()
+    }
+
+    /// Mute or unmute one channel's speech (its earcons still play): its
+    /// text waits unread and a channel switch never lands on it (L2
+    /// `set_muted`).
+    pub fn set_channel_muted(&self, channel: &str, muted: bool) -> Result<()> {
+        check(channel)?;
+        Ok(self.inner.channels.set_muted(channel, muted)?)
+    }
+
+    /// `all` reads every channel; `earcon_only` only the focused one.
+    pub fn set_background_policy(&self, policy: BackgroundPolicy) -> Result<()> {
+        let mut rules = self.lock();
+        rules.settings.background = policy;
+        Ok(self
+            .inner
+            .channels
+            .set_focus_only(policy == BackgroundPolicy::EarconOnly)?)
     }
 
     /// `control stop`: drop every channel's summary work and held
@@ -277,16 +376,32 @@ impl Agent {
         Ok(())
     }
 
-    /// Every earcon played from now on (dropping the receiver
-    /// unsubscribes).
-    pub fn subscribe(&self) -> Receiver<Earcon> {
+    /// Every earcon played from now on (dropping the stream unsubscribes;
+    /// senders of streams that went away are pruned at the next earcon or
+    /// subscription).
+    pub fn subscribe(&self) -> EarconStream {
         let (tx, rx) = channel();
+        let alive = Arc::new(());
+        let mut subs = self
+            .inner
+            .subscribers
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        subs.retain(|s| s.alive.strong_count() > 0);
+        subs.push(Subscriber {
+            tx,
+            alive: Arc::downgrade(&alive),
+        });
+        EarconStream { rx, _alive: alive }
+    }
+
+    /// Earcon subscribers held now (tests).
+    pub fn subscribers(&self) -> usize {
         self.inner
             .subscribers
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .push(tx);
-        rx
+            .len()
     }
 
     /// The pure rules' summary state of a channel (diagnostics, tests).
@@ -299,6 +414,54 @@ impl Inner {
     fn lock(&self) -> MutexGuard<'_, Rules> {
         // A panic under the lock already failed a test; keep serving.
         self.rules.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock_seen(&self) -> MutexGuard<'_, Seen> {
+        self.seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn forget_seen(&self, channel: &str) {
+        self.lock_seen().at.remove(channel);
+    }
+
+    /// A message for `channel` (or a setting): note it, and now and then
+    /// free the turn state of channels silent for `forget_after` (module
+    /// docs). Called with the rules locked.
+    fn seen(&self, rules: &mut Rules, channel: Option<&str>) {
+        let now = Instant::now();
+        let mut seen = self.lock_seen();
+        if let Some(c) = channel {
+            seen.at.insert(c.to_string(), now);
+        }
+        let every = SWEEP_EVERY.min(self.forget_after);
+        if now.duration_since(seen.swept) < every {
+            return;
+        }
+        seen.swept = now;
+        let dead: Vec<String> = rules
+            .channels()
+            .into_iter()
+            .filter(|c| {
+                seen.at
+                    .get(c)
+                    .is_none_or(|t| now.duration_since(*t) >= self.forget_after)
+            })
+            .collect();
+        if dead.is_empty() {
+            return;
+        }
+        let focused = self.channels.focused();
+        let engaged = self.channels.engaged();
+        for c in dead {
+            seen.at.remove(&c);
+            rules.close(&c);
+            let busy = focused.as_deref() == Some(c.as_str())
+                || engaged.as_deref() == Some(c.as_str())
+                || self.channels.channel(&c).is_none_or(|ch| ch.pending() > 0);
+            if !busy {
+                let _ = self.channels.close(&c);
+            }
+        }
     }
 
     /// Carry out actions in order; the first error is returned after the
@@ -322,10 +485,14 @@ impl Inner {
                 channel,
                 text,
                 decision,
+                release,
             } => {
-                ch.speak(&channel, &text, Some(QueueMode::Append), false, None)?;
+                ch.add(&channel, &text)?;
                 if decision {
                     ch.prioritize(&channel)?;
+                }
+                if release {
+                    ch.authorize(&channel)?;
                 }
             }
             Action::Earcon(e) => {
@@ -335,7 +502,7 @@ impl Inner {
                 self.subscribers
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
-                    .retain(|s| s.send(e).is_ok());
+                    .retain(|s| s.alive.strong_count() > 0 && s.tx.send(e).is_ok());
             }
             Action::Wipe { channel, resume } => {
                 if ch.channel(&channel).is_none() {

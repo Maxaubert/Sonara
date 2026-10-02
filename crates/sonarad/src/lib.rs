@@ -17,6 +17,7 @@ pub mod agent_ext;
 pub mod args;
 pub mod channels_ext;
 pub mod config;
+pub mod cues;
 pub mod events;
 pub mod home;
 pub mod http;

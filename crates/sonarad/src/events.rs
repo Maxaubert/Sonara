@@ -8,9 +8,11 @@
 //! event after the client went away. The `agent` extension's `earcon`
 //! events come from the agent's own subscription, drained by a second
 //! thread into the same queue; that thread also ends within a second of
-//! its client going away.
+//! its client going away. The `system` extension's `cue` events (spoken
+//! control cues) come the same way from the cue path.
 use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
+use crate::system_ext::SystemExt;
 use crate::wire;
 use sonara_reader::{Event, ReaderHandle, State};
 use std::sync::mpsc::RecvTimeoutError;
@@ -32,6 +34,8 @@ pub struct EventSet {
     pub log: bool,
     /// `earcon` events (extension `agent`).
     pub earcons: bool,
+    /// `cue` events (extension `system`).
+    pub cues: bool,
 }
 
 impl EventSet {
@@ -41,10 +45,12 @@ impl EventSet {
         items: true,
         log: true,
         earcons: false,
+        cues: false,
     };
 
-    /// Parse protocol names (`state`, `items`, `log`, and `earcons` of the
-    /// agent extension); the unknown name on error.
+    /// Parse protocol names (`state`, `items`, `log`, `earcons` of the
+    /// agent extension and `cues` of the system extension); the unknown
+    /// name on error.
     pub fn parse<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<EventSet, String> {
         let mut set = EventSet::default();
         for n in names {
@@ -53,6 +59,7 @@ impl EventSet {
                 "items" => set.items = true,
                 "log" => set.log = true,
                 "earcons" => set.earcons = true,
+                "cues" => set.cues = true,
                 other => return Err(other.to_string()),
             }
         }
@@ -72,6 +79,9 @@ impl EventSet {
         }
         if self.earcons {
             v.push("earcons");
+        }
+        if self.cues {
+            v.push("cues");
         }
         v
     }
@@ -124,10 +134,32 @@ pub fn subscribe(
     engine: EngineName,
     channels: Slot,
     agent: agent_ext::Slot,
+    system: Option<Arc<SystemExt>>,
     set: EventSet,
 ) -> sonara_reader::Result<mpsc::Receiver<WireEvent>> {
     let events = reader.subscribe()?;
     let (tx, rx) = mpsc::channel(QUEUE);
+    if let (true, Some(s)) = (set.cues, system) {
+        let cues = s.cues().subscribe();
+        let tx = tx.clone();
+        std::thread::Builder::new()
+            .name("sonarad-cues-relay".into())
+            .spawn(move || loop {
+                let text = match cues.recv_timeout(CLOSED_POLL) {
+                    Ok(t) => t,
+                    Err(RecvTimeoutError::Timeout) if !tx.is_closed() => continue,
+                    Err(_) => return,
+                };
+                let w = WireEvent {
+                    name: "cue",
+                    json: serde_json::json!({"event": "cue", "text": text}).to_string(),
+                };
+                if let Err(mpsc::error::TrySendError::Closed(_)) = tx.try_send(w) {
+                    return;
+                }
+            })
+            .map_err(|e| sonara_reader::Error::Start(e.to_string()))?;
+    }
     if let (true, Some(a)) = (set.earcons, agent.get()) {
         let earcons = a.subscribe();
         let tx = tx.clone();
@@ -193,6 +225,10 @@ mod tests {
             ["state", "earcons"]
         );
         assert_eq!(EventSet::ALL.names(), ["state", "items", "log"]);
+        assert_eq!(
+            EventSet::parse(["cues", "log"]).unwrap().names(),
+            ["log", "cues"]
+        );
         assert_eq!(EventSet::parse([]).unwrap(), EventSet::default());
     }
 }

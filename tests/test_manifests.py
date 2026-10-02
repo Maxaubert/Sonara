@@ -117,7 +117,7 @@ def test_package_version_matches_pyproject():
 
 
 def test_pyproject_version_is_0_10_1():
-    assert _pyproject_version() == "0.10.1"
+    assert _pyproject_version() == "0.10.2"
 
 
 def test_sdk_package_versions_match_pyproject():

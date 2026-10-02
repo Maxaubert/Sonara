@@ -26,6 +26,12 @@
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
 //!   uses it so a decision preempts (the Python router's decision rule).
+//! - `set_muted` mutes one channel (its entries wait; muting the channel
+//!   being read cuts its item) and `set_focus_only` reads only the focused
+//!   channel automatically: L3 uses them for per-channel mute and the
+//!   background speech policy (router docs). Text a host speaks into a
+//!   channel (`speak`) is always read (it authorizes the channel); L3's
+//!   own text goes through `add`, which the gates apply to.
 //! - A thread drains the reader's events; it holds the driver weakly and
 //!   ends with the reader.
 pub mod router;
@@ -218,7 +224,9 @@ impl Channels {
     /// Add `text` to `channel` (opened with the defaults if needed).
     /// `mode` overrides the channel's policy for this text (`Replace` drops
     /// its unread entries). `interrupt` reads it now: it cuts the current
-    /// item and takes the floor for this channel.
+    /// item and takes the floor for this channel. A host's text is read
+    /// whatever the focus-only gate (the channel is authorized); a muted
+    /// channel still holds it.
     pub fn speak(
         &self,
         channel: &str,
@@ -226,6 +234,25 @@ impl Channels {
         mode: Option<QueueMode>,
         interrupt: bool,
         label: Option<String>,
+    ) -> Result<Spoken> {
+        self.push(channel, text, mode, interrupt, label, true)
+    }
+
+    /// Append `text` to `channel` (opened with the defaults if needed)
+    /// under the gates: L3's prose and decisions. A channel the focus-only
+    /// gate holds back keeps it until it is focused or authorized.
+    pub fn add(&self, channel: &str, text: &str) -> Result<Spoken> {
+        self.push(channel, text, Some(QueueMode::Append), false, None, false)
+    }
+
+    fn push(
+        &self,
+        channel: &str,
+        text: &str,
+        mode: Option<QueueMode>,
+        interrupt: bool,
+        label: Option<String>,
+        authorize: bool,
     ) -> Result<Spoken> {
         check(channel)?;
         let mut st = self.lock();
@@ -242,6 +269,9 @@ impl Channels {
             .router
             .push_with(channel, text, label, replace, interrupt)
             .ok_or_else(|| Error::UnknownChannel(channel.to_string()))?;
+        if authorize {
+            st.router.authorize(channel);
+        }
         let dropped = if replace { before } else { 0 };
         let fed = if interrupt {
             // Another channel's message cut here was not heard: it is read
@@ -258,6 +288,43 @@ impl Channels {
         };
         let item_id = fed.filter(|f| f.entry == Some(entry)).map(|f| f.id);
         Ok(Spoken { item_id, dropped })
+    }
+
+    /// Mute or unmute a channel (open or not: a channel opened later starts
+    /// muted). Its entries wait while it is muted; muting the channel being
+    /// read cuts its item.
+    pub fn set_muted(&self, channel: &str, muted: bool) -> Result<()> {
+        check(channel)?;
+        let mut st = self.lock();
+        st.router.set_muted(channel, muted);
+        if muted {
+            self.inner.cut_if(&mut st, channel)?;
+        }
+        self.inner.pump(&mut st)
+    }
+
+    pub fn is_muted(&self, channel: &str) -> bool {
+        self.lock().router.is_muted(channel)
+    }
+
+    /// Read only the focused channel automatically (router docs).
+    pub fn set_focus_only(&self, on: bool) -> Result<()> {
+        let mut st = self.lock();
+        st.router.set_focus_only(on);
+        self.inner.pump(&mut st)
+    }
+
+    pub fn focus_only(&self) -> bool {
+        self.lock().router.focus_only()
+    }
+
+    /// Let `channel` past the focus-only gate until it has nothing unread
+    /// (a summary delivery). False if it is not open.
+    pub fn authorize(&self, channel: &str) -> Result<bool> {
+        let mut st = self.lock();
+        let ok = st.router.authorize(channel);
+        self.inner.pump(&mut st)?;
+        Ok(ok)
     }
 
     /// A playback control. Without a channel it acts on the reader, except

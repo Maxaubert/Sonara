@@ -63,6 +63,9 @@ fn run(home: &Home, event: &str, stdin: &[u8], extra: &[(&str, &str)]) -> i32 {
         .env_remove("SONARA_CAPTURE")
         .env_remove("SONARA_HOST_TAB")
         .env_remove("PRISM_TAB_ID")
+        // Never start a real runtime from a unit test (conformance covers
+        // the start with the fake engine and system).
+        .env("SONARA_NO_START", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -105,7 +108,8 @@ fn a_prompt_is_sent_as_one_batch_after_hello_and_stamped() {
     let kinds: Vec<&str> = got.iter().map(|m| m["type"].as_str().unwrap()).collect();
     assert_eq!(kinds, ["hello", "channel_open", "focus", "turn_start"]);
     assert_eq!(got[0]["token"], "tok");
-    assert_eq!(got[0]["extensions"], json!(["agent"]));
+    assert_eq!(got[0]["extensions"], json!(["agent", "system"]));
+    assert_eq!(got[0]["keep_alive"], true);
     assert_eq!(got[1]["label"], "proj");
     assert_eq!(got[1]["host_tab"], "t-3");
     let t = got[3]["t"].as_f64().unwrap();
@@ -144,6 +148,7 @@ fn nothing_is_sent_for_silent_events_or_inside_the_summarizer() {
 #[test]
 fn it_always_exits_zero() {
     let home = Home::new("errors");
+    let t = Instant::now();
     // No runtime.json, then a runtime.json naming a closed port, garbage
     // stdin, no event name.
     assert_eq!(run(&home, "Stop", br#"{"session_id": "s"}"#, &[]), 0);
@@ -160,6 +165,11 @@ fn it_always_exits_zero() {
     assert_eq!(run(&home, "Stop", br#"{"session_id": "s"}"#, &[]), 0);
     assert_eq!(run(&home, "MessageDisplay", b"\xff not json", &[]), 0);
     assert_eq!(run(&home, "", b"", &[]), 0);
+    assert!(
+        t.elapsed() < Duration::from_secs(8),
+        "a dead runtime does not hold the hooks up: {:?}",
+        t.elapsed()
+    );
 }
 
 #[test]

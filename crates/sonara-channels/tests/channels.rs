@@ -433,3 +433,47 @@ fn prioritize_reads_a_channel_after_the_current_item_without_cutting_it() {
         Err(sonara_channels::Error::UnknownChannel(_))
     ));
 }
+
+#[test]
+fn muting_the_channel_being_read_cuts_it_and_unmuting_reads_the_rest() {
+    let r = Rig::two();
+    r.ch.set_announce(false);
+    r.speak("a", "One is here.");
+    r.speak("a", "Two is here.");
+    r.wait_for("One is here.");
+    r.ch.set_muted("a", true).unwrap();
+    assert!(r.ch.is_muted("a"));
+    r.wait_idle();
+    r.speak("b", "From beta.");
+    r.read("From beta.");
+    r.stays_idle();
+    r.ch.set_muted("a", false).unwrap();
+    r.read("Two is here.");
+    r.stays_idle();
+}
+
+#[test]
+fn focus_only_holds_added_text_but_not_a_hosts_speak() {
+    let r = Rig::two();
+    r.ch.set_announce(false);
+    r.ch.focus("a").unwrap();
+    r.ch.set_focus_only(true).unwrap();
+    assert!(r.ch.focus_only());
+    r.ch.add("b", "Agent prose.").unwrap();
+    r.stays_idle();
+    r.speak("b", "Host text.");
+    r.read("Agent prose.");
+    r.read("Host text.");
+    r.stays_idle();
+    r.ch.add("b", "Held again.").unwrap();
+    r.stays_idle();
+    assert!(r.ch.authorize("b").unwrap());
+    r.read("Held again.");
+    // Once its batch is read, the channel is held back again.
+    r.wait_idle();
+    r.ch.add("b", "And again.").unwrap();
+    r.stays_idle();
+    r.ch.set_focus_only(false).unwrap();
+    r.read("And again.");
+    r.stays_idle();
+}

@@ -258,6 +258,7 @@
         <div class="inset">
           <div class="pref agent-pref"><div class="pref-copy"><strong id="mute-label">Mute</strong><div class="hint">Muted keeps the attention sounds; super muted silences them too. The mute hotkey cycles through these.</div></div><div class="control"><div class="segments" id="mute-seg" role="radiogroup" aria-labelledby="mute-label"><button type="button" role="radio" data-value="0">Unmuted</button><button type="button" role="radio" data-value="1">Muted</button><button type="button" role="radio" data-value="2">Super muted</button></div></div></div>
           <div class="pref agent-pref"><div class="pref-copy"><strong id="verbosity-label">Verbosity</strong><div class="hint">What is read besides the agent's answer.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="quiet">Quiet</button></div><div class="hint" id="verbosity-hint"></div></div></div>
+          <div class="pref agent-pref"><div class="pref-copy"><strong id="background-label">Background sessions</strong><div class="hint">With several sessions open: read every session in turn, or only the one you last prompted (the others chime; switch to them to hear them).</div></div><div class="control"><div class="segments" id="background-seg" role="radiogroup" aria-labelledby="background-label"><button type="button" role="radio" data-value="all">Read all</button><button type="button" role="radio" data-value="earcon_only">Chime only</button></div></div></div>
         </div>
       </section>
 
@@ -472,7 +473,8 @@ async function change(key, value, label) {
 }
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
-              "mute_level", "verbosity", "minqueue", "summaries", "channel_announce", "channel_prefs"];
+              "mute_level", "verbosity", "minqueue", "background_policy", "summaries", "channel_announce",
+              "channel_prefs"];
 let voices = [];
 
 async function refresh() {
@@ -618,6 +620,7 @@ function render() {
     setSegments("mute-seg", s.mute_level);
     setSegments("verbosity-seg", s.verbosity);
     setText("verbosity-hint", VERBOSITY_HINTS[s.verbosity] || "");
+    setSegments("background-seg", s.background_policy);
     renderSummary(s.summaries);
     setText("minqueue-out", String(s.minqueue));
   }
@@ -945,6 +948,7 @@ $("duck").addEventListener("change", e => change("duck_level", Number(e.target.v
 wireSegments("audio-seg", v => change("audio_mode", v, "Audio mode"));
 wireSegments("mute-seg", v => change("mute_level", Number(v), "Mute"));
 wireSegments("verbosity-seg", v => change("verbosity", v, "Verbosity"));
+wireSegments("background-seg", v => change("background_policy", v, "Background sessions"));
 wireSegments("summary-seg", v => change("summaries", v === "off" ? {enabled: false} : {enabled: true, style: v}, "Summary mode"));
 $("model-select").addEventListener("change", e => {
   const [command, model] = e.target.value.split("|");

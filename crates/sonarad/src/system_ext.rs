@@ -2,7 +2,10 @@
 //! apps' audio while speech plays (`audio_mode` `off`, `duck` or `pause`,
 //! `duck_level`), global hotkeys (`hotkeys`) and the settings page
 //! (`settings_url`), with voice previews (`preview`) and the runtime's
-//! details (`runtime`) for the page.
+//! details (`runtime`) for the page, and the spoken control cues
+//! (`cues`: "Paused.", "Muted.", "Rate 250.", ... after a hotkey or a
+//! change of `mute_level`, `audio_mode` or `duck_level`; the `cues` event
+//! stream reports them).
 //!
 //! **Enabled** (instance-wide, like the other extensions) once a client
 //! asks for it: its keys answer and the settings page is served. **Armed**
@@ -15,6 +18,7 @@
 use crate::agent_ext;
 use crate::channels_ext;
 use crate::config::Store;
+use crate::cues::{self, Cues};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
@@ -57,9 +61,10 @@ pub struct SystemHost {
     pub home: PathBuf,
     pub http_port: u16,
     pub token: String,
-    /// Engines for voice previews: a registry of their own (built like the
-    /// reader's), so a preview never cancels or waits for the reader's
-    /// synthesis. `None`: `preview` is `E_UNSUPPORTED`.
+    /// Engines for voice previews and spoken cues: a registry of their own
+    /// (built like the reader's), so a preview or a cue never cancels or
+    /// waits for the reader's synthesis. `None`: `preview` is
+    /// `E_UNSUPPORTED` and cues are reported but not heard.
     pub previews: Option<Registry>,
 }
 
@@ -73,6 +78,8 @@ pub struct HotkeyTarget {
     /// Hotkeys that change a setting (mute cycle, faster, slower) persist
     /// it like a `set`.
     pub store: Arc<Store>,
+    /// The spoken cues (set by `SystemExt::new`).
+    pub cues: Option<Arc<Cues>>,
 }
 
 impl HotkeyTarget {
@@ -100,6 +107,12 @@ impl HotkeyTarget {
         }
     }
 
+    fn cue(&self, text: &str, key: Option<&'static str>) {
+        if let Some(c) = &self.cues {
+            c.speak(text, key);
+        }
+    }
+
     fn busy(&self) -> bool {
         let reader = self
             .reader
@@ -112,7 +125,16 @@ impl HotkeyTarget {
     fn apply(&self, action: Action) -> Result<(), String> {
         match action {
             Action::Restart => self.control(Control::Restart),
-            Action::Pause => self.control(Control::Toggle),
+            Action::Pause => {
+                // "Paused." / "Resumed." (Python controls.py): spoken over
+                // the paused reader, so the user hears what the key did.
+                let before = self.reader.state().ok();
+                self.control(Control::Toggle)?;
+                if let Some(s) = before.filter(|s| s.now_playing.is_some()) {
+                    self.cue(if s.paused { "Resumed." } else { "Paused." }, None);
+                }
+                Ok(())
+            }
             Action::Flush => {
                 // Flush to end (#107): silence everything queued or in
                 // flight, as `control stop` without a channel.
@@ -130,6 +152,7 @@ impl HotkeyTarget {
                     let next = (a.settings().mute_level + 1) % 3;
                     a.set_mute_level(next).map_err(|e| e.to_string())?;
                     self.store.record("mute_level", &json!(next));
+                    self.cue(cues::mute_level_cue(u64::from(next)), None);
                     Ok(())
                 }
                 None => {
@@ -139,7 +162,11 @@ impl HotkeyTarget {
                     } else {
                         Control::Mute
                     };
-                    self.reader.control(c).map_err(|e| e.to_string())
+                    self.reader.control(c).map_err(|e| e.to_string())?;
+                    // A muted reader plays clips silently: only the unmute
+                    // is heard.
+                    self.cue(if muted { "Unmuted." } else { "Muted." }, None);
+                    Ok(())
                 }
             },
             Action::NextChannel => {
@@ -148,7 +175,9 @@ impl HotkeyTarget {
                 };
                 match ch.next_channel().map_err(|e| e.to_string())? {
                     Some(_) => self.earcon(Earcon::SessionChange),
-                    None => self.earcon(Earcon::NavEdge),
+                    // Python controls.py: a spoken "No session." (it had no
+                    // earcon for it).
+                    None => self.cue("No session.", None),
                 }
                 Ok(())
             }
@@ -166,6 +195,7 @@ impl HotkeyTarget {
                     .set(Key::Rate, sonara_reader::Value::Number(u64::from(next)))
                     .map_err(|e| e.to_string())?;
                 self.store.record("rate", &json!(next));
+                self.cue(&cues::rate_cue(u64::from(next)), Some("rate"));
                 Ok(())
             }
         }
@@ -196,9 +226,10 @@ pub struct SystemExt {
     /// extension ends up armed with ducking off and no hotkeys.
     transition: Mutex<()>,
     hotkeys: Mutex<Option<Hotkeys>>,
-    previews: Option<Registry>,
-    /// One preview at a time.
-    previewing: Mutex<()>,
+    previews: Option<Arc<Registry>>,
+    /// One preview or cue synthesis at a time.
+    previewing: Arc<Mutex<()>>,
+    cues: Arc<Cues>,
     started: std::time::Instant,
     store: Arc<Store>,
 }
@@ -207,8 +238,16 @@ impl SystemExt {
     /// The extension on this host; the persisted `audio_mode` and
     /// `duck_level` apply from the start (nothing is ducked or paused
     /// before the extension is armed).
-    pub fn new(host: SystemHost, target: HotkeyTarget) -> SystemExt {
+    pub fn new(host: SystemHost, mut target: HotkeyTarget) -> SystemExt {
         let audio = AudioControl::new(&host.platform, AudioConfig::new(host.home.join("state")));
+        let previews = host.previews.map(Arc::new);
+        let previewing = Arc::new(Mutex::new(()));
+        let cues = Arc::new(Cues::new(
+            target.reader.clone(),
+            previews.clone(),
+            previewing.clone(),
+        ));
+        target.cues = Some(cues.clone());
         let store = target.store.clone();
         if let Some(mode) = store
             .value("audio_mode")
@@ -235,8 +274,9 @@ impl SystemExt {
             holds: Mutex::new(Holds::default()),
             transition: Mutex::new(()),
             hotkeys: Mutex::new(None),
-            previews: host.previews,
-            previewing: Mutex::new(()),
+            previews,
+            previewing,
+            cues,
             started: std::time::Instant::now(),
             store,
         }
@@ -403,7 +443,20 @@ impl SystemExt {
     /// The runtime exits: release the hotkeys and restore other apps.
     pub fn shutdown(&self) {
         self.stop_hotkeys();
+        self.cues.shutdown();
         self.audio.shutdown();
+    }
+
+    /// Speak a control cue (module docs), once the extension is enabled.
+    pub fn cue(&self, text: &str, key: Option<&'static str>) {
+        if self.is_enabled() {
+            self.cues.speak(text, key);
+        }
+    }
+
+    /// The spoken cues (the `cues` event stream).
+    pub fn cues(&self) -> &Cues {
+        &self.cues
     }
 
     /// `get hotkeys`: the bindings, what is registered, the key names and
@@ -459,6 +512,9 @@ impl SystemExt {
                         .and_then(AudioMode::parse)
                         .ok_or_else(|| bad("'audio_mode' is \"off\", \"duck\" or \"pause\""))?;
                     self.audio.set_mode(mode);
+                    if let Some(c) = cues::audio_mode_cue(mode.as_str()) {
+                        self.cue(c, Some("audio_mode"));
+                    }
                 }
                 "duck_level" => {
                     let n = v
@@ -466,6 +522,7 @@ impl SystemExt {
                         .filter(|n| *n <= 100)
                         .ok_or_else(|| bad("'duck_level' is an integer 0 to 100"))?;
                     self.audio.set_duck_level(n as u8);
+                    self.cue(&cues::duck_level_cue(n), Some("duck_level"));
                 }
                 "hotkeys" => {
                     self.set_hotkeys(v)?;
@@ -550,26 +607,16 @@ impl SystemExt {
             sonara_reader::Value::Number(n) => n as u32,
             _ => 200,
         };
-        let _one = self.previewing.lock().unwrap_or_else(|p| p.into_inner());
         let engine_err = |e| reader_failure(sonara_reader::Error::Engine(e));
-        let chunks = engine
-            .synthesize(&text, &voice, rate)
-            .map_err(engine_err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(engine_err)?;
-        let sample_rate = chunks.first().map(|c| c.sample_rate).unwrap_or(16_000);
-        let mut samples: Vec<i16> = Vec::new();
-        for c in &chunks {
-            if c.channels <= 1 {
-                samples.extend_from_slice(&c.samples);
-            } else {
-                // Down-mix to mono: play_clip takes one channel.
-                let n = usize::from(c.channels);
-                samples.extend(c.samples.chunks(n).map(|f| {
-                    (f.iter().map(|&x| i32::from(x)).sum::<i32>() / f.len() as i32) as i16
-                }));
-            }
-        }
+        let chunks = {
+            let _one = self.previewing.lock().unwrap_or_else(|p| p.into_inner());
+            engine
+                .synthesize(&text, &voice, rate)
+                .map_err(engine_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(engine_err)?
+        };
+        let (samples, sample_rate) = cues::mono(&chunks);
         reader
             .play_clip(samples, sample_rate)
             .map_err(reader_failure)?;

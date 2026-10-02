@@ -1,12 +1,13 @@
 //! `sonara-hook.exe <Event>`: the Claude Code hook adapter (see the library
 //! docs). A GUI-subsystem program, so no console window flashes up; it
-//! never fails the Claude session (exit code 0, errors swallowed).
+//! never fails the Claude session (exit code 0, errors swallowed). It
+//! starts `sonarad.exe` from its own folder when no runtime answers.
 #![windows_subsystem = "windows"]
 
 use serde_json::Value;
-use sonara_hook::{home, map_event, read_runtime, send, stamp};
+use sonara_hook::{deliver, home, map_event, runtime_args, runtime_exe, stamp, START_BUDGET};
 use std::io::Read;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// How long one hook may spend reaching the runtime and hearing back.
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -15,7 +16,7 @@ fn env(key: &str) -> Option<String> {
     std::env::var(key).ok()
 }
 
-fn run(t0: f64) {
+fn run(t0: f64, started: Instant) {
     // Hooks fired inside the summarizer's own headless session (it sets
     // SONARA_SUMMARIZER) are not a user session: send nothing, or the
     // runtime would summarize its own summarizer.
@@ -49,10 +50,22 @@ fn run(t0: f64) {
         return;
     }
     stamp(&mut msgs, t0);
-    let Some(rt) = home(&env).and_then(|h| read_runtime(&h)) else {
+    let Some(home) = home(&env) else {
         return;
     };
-    let _ = send(&rt, &msgs, TIMEOUT);
+    let exe = if env("SONARA_NO_START").is_some_and(|v| !v.is_empty()) {
+        None
+    } else {
+        std::env::current_exe().ok().and_then(|me| runtime_exe(&me))
+    };
+    let _ = deliver(
+        &home,
+        &msgs,
+        exe.as_deref(),
+        &runtime_args(&env),
+        started + START_BUDGET,
+        TIMEOUT,
+    );
 }
 
 fn main() {
@@ -62,6 +75,7 @@ fn main() {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
-    let _ = std::panic::catch_unwind(|| run(t0));
+    let started = Instant::now();
+    let _ = std::panic::catch_unwind(|| run(t0, started));
     std::process::exit(0);
 }
