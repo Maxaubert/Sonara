@@ -6,7 +6,7 @@
 
 **Architecture:** One per-user `sonarad.exe` shared by every host; thin MIT clients (TypeScript, Python, raw protocol) talk to it over loopback TCP JSON lines or HTTP+SSE. Pure `sonara-core` (text rules, sessions, queue policy, state) under engine, audio and Windows platform crates. GPL-free engines: Windows OneCore and Kokoro with a lexicon G2P.
 
-**Tech Stack:** Rust stable (MSVC x64), `regex` + `fancy-regex`, `serde`/`serde_json`, `tokio` (server), `windows` crate (OneCore, WASAPI session volume, GSMTC), `cpal` or `rodio` (output), `ort` or sherpa-onnx C API (chosen in M0), `cargo-deny`; TypeScript (Node 18+, zero deps) for `@sonara/client`; Python 3.9+ stdlib for `sonara-client` and the pytest conformance suite.
+**Tech Stack:** Rust stable (MSVC x64), `regex` (backtracking rules as linear scanners), `serde`/`serde_json`, `tokio` (server), `windows` crate (OneCore, WASAPI session volume, GSMTC), `cpal` or `rodio` (output), `ort` or sherpa-onnx C API (chosen in M0), `cargo-deny`; TypeScript (Node 18+, zero deps) for `@sonara/client`; Python 3.9+ stdlib for `sonara-client` and the pytest conformance suite.
 
 **Spec:** `docs/plans/2026-10-02-sonara-runtime-spec.md`
 
@@ -135,7 +135,6 @@ repository = "https://github.com/Maxaubert/Sonara"
 
 [workspace.dependencies]
 regex = "1"
-fancy-regex = "0.14"
 once_cell = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -151,6 +150,9 @@ targets = ["x86_64-pc-windows-msvc"]
 
 `deny.toml`:
 ```toml
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
 [licenses]
 allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016"]
 confidence-threshold = 0.9
@@ -169,7 +171,6 @@ license.workspace = true
 
 [dependencies]
 regex.workspace = true
-fancy-regex.workspace = true
 once_cell.workspace = true
 
 [dev-dependencies]
@@ -184,7 +185,7 @@ pub mod assembler;
 pub mod text;
 ```
 
-- [ ] **Step 2: Add the CI job** to `.github/workflows/ci.yml` (keep the existing Python jobs):
+- [ ] **Step 2: Add the CI job** to `.github/workflows/ci.yml` (keep the existing Python jobs; cargo-deny runs in its own Linux job because its action is Docker-based):
 
 ```yaml
   rust:
@@ -198,6 +199,14 @@ pub mod text;
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  # cargo-deny-action is a Docker action, which GitHub runs only on Linux
+  # runners. deny.toml pins the graph to the Windows target, so Windows-only
+  # dependencies are still checked from here.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans
@@ -273,7 +282,7 @@ fn every_golden_case_matches() {
 
 ### Task 3: Port the cleaner (`text.rs`)
 
-Python source of truth: `src/sonara/cleaner.py` (93 lines). Rust `regex` has no lookaround; `_BARE_URL` (lookahead) and `_SNAKE` (lookbehind and lookahead) use `fancy-regex`, the rest use `regex`.
+Python source of truth: `src/sonara/cleaner.py` (93 lines). Rust `regex` has no lookaround or backreferences; `_EMPHASIS` (backreference), `_BARE_URL` (lookahead) and `_SNAKE` (lookbehind and lookahead) are hand-written linear scanners, the rest use `regex`. (First drafted on `fancy-regex`; its `replace_all` panics past 1M backtracks, so long input such as 500 KB of plain words crashed the core. Covered by `long_input_never_panics`.)
 
 - [ ] **Step 1: Write unit tests** at the bottom of `text.rs`:
 
