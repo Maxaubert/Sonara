@@ -15,7 +15,12 @@
 //!   or `"<label>, reading again."` for a replay) fed before the new
 //!   channel's first entry. `Config::announce` turns it off.
 //! - `next_channel` and `speak` with `interrupt` cut the current item (the
-//!   reader's `interrupt`); `Stop` without a channel flushes every channel,
+//!   reader's `interrupt`); another channel's message cut that way is read
+//!   again later. The cut only replaces the current item: text already
+//!   queued in the reader (core `speak`) still plays before the new
+//!   channel's message, right after the announcement. An item ended from
+//!   outside (a core `speak` with `interrupt`, `skip`) counts as read: L2
+//!   cannot tell it from a user skip. `Stop` without a channel flushes every channel,
 //!   with a channel only that one. `Restart` while idle replays the engaged
 //!   channel's batch (the Python plugin's Up key).
 //! - A thread drains the reader's events; it holds the driver weakly and
@@ -225,8 +230,14 @@ impl Channels {
             .ok_or_else(|| Error::UnknownChannel(channel.to_string()))?;
         let dropped = if replace { before } else { 0 };
         let fed = if interrupt {
+            // Another channel's message cut here was not heard: it is read
+            // again once this channel's batch drains (as for next_channel).
+            if let Some(cut) = st.in_flight.take() {
+                if let (Some(e), true) = (cut.entry, cut.channel != channel) {
+                    st.router.rewind(&cut.channel, e);
+                }
+            }
             st.router.take_floor(channel);
-            st.in_flight = None;
             self.inner.feed(&mut st, true)?
         } else {
             self.inner.pump_fed(&mut st)?

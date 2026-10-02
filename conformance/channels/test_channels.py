@@ -255,6 +255,18 @@ def test_interrupt_reads_the_new_message_now(rt):
     assert heard(c, 2) == [("Beta.", "b"), ("Urgent beta.", "b")]
 
 
+def test_a_message_cut_by_another_channels_interrupt_is_read_again(rt):
+    c = channels_client(rt)
+    open_two(c, policy="latest")
+    a = ok(c, {"type": "speak", "channel": "a", "text": LONG})["item_id"]
+    heard(c, 1)
+    ok(c, {"type": "speak", "channel": "b", "text": "Urgent beta.", "interrupt": True})
+    c.item(a, "skipped")
+    assert heard(c, 2) == [("Beta.", "b"), ("Urgent beta.", "b")]
+    h = heard(c, 2)
+    assert h[0] == ("Alpha.", "a") and is_long(h[1], "a")
+
+
 def test_text_without_a_channel_is_core_and_read_first(rt):
     c = channels_client(rt)
     open_two(c)

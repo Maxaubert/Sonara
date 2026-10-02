@@ -329,13 +329,50 @@ fn interrupt_reads_the_new_text_now() {
     assert_eq!(s.item_id, None, "the announcement goes first");
     r.read("Beta.");
     r.read("Urgent beta.");
+    // The cut alpha message was not heard: it follows.
+    r.read("Alpha.");
+    r.read("From alpha.");
     r.stays_idle();
     // Within the reading channel, an interrupt replaces the current item.
-    let s = r.ch.speak("b", "Second beta.", None, false, None).unwrap();
+    let s = r.ch.speak("a", "Second alpha.", None, false, None).unwrap();
     assert!(s.item_id.is_some());
-    let s = r.ch.speak("b", "Third beta.", None, true, None).unwrap();
+    let s = r.ch.speak("a", "Third alpha.", None, true, None).unwrap();
     assert!(s.item_id.is_some());
-    r.read("Third beta.");
+    r.read("Third alpha.");
+    r.stays_idle();
+}
+
+#[test]
+fn an_interrupt_from_another_channel_reads_the_cut_message_again_after() {
+    let r = Rig::new();
+    r.ch.open("a", Some("Alpha".into()), None, None).unwrap();
+    r.ch.open("b", Some("Beta".into()), None, None).unwrap();
+    r.speak("a", "From alpha.");
+    r.wait_for("From alpha.");
+    r.ch.speak("b", "Urgent beta.", None, true, None).unwrap();
+    r.read("Beta.");
+    r.read("Urgent beta.");
+    // Alpha's only (latest) message was cut, not heard: it is read again.
+    r.read("Alpha.");
+    r.read("From alpha.");
+    r.stays_idle();
+}
+
+#[test]
+fn next_channel_reads_queued_core_text_between_the_announcement_and_the_message() {
+    let r = Rig::two();
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    r.wait_for("From alpha.");
+    r.reader()
+        .speak("Core text.", QueueMode::Append, false, None)
+        .unwrap();
+    r.ch.next_channel().unwrap();
+    // Documented order: the switch only cuts the current item; text spoken
+    // to the reader directly still goes before the channel's next message.
+    r.read("Beta.");
+    r.read("Core text.");
+    r.read("From beta.");
     r.stays_idle();
 }
 
