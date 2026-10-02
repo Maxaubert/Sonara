@@ -28,7 +28,7 @@ jobs:
       - run: python -m pip install -e ".[dev,windows]"
       - name: Lint
         if: matrix.python == '3.12'
-        run: ruff check src tests
+        run: ruff check src tests conformance
       - name: Unit tests
         run: python -m pytest -q
       # The daemon's lock-discipline asserts (daemon/core.py) are off in

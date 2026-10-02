@@ -143,3 +143,14 @@ def test_a_new_instance_starts_after_a_takeover(start, rt):
     new = start(home=rt.home)
     assert new.info["pid"] != rt.info["pid"]
     assert wait_until(lambda: new.read_runtime() is not None)
+
+
+def test_relaunch_as_soon_as_runtime_json_is_gone_after_a_takeover(start, rt):
+    c = rt.tcp(hello=False)
+    assert c.hello(rt.token, takeover=True)["ok"]
+    assert wait_until(lambda: not rt.runtime_json.exists(), step=0.001)
+    # The instance lock is released before runtime.json goes, so a client
+    # that does not wait for the pid still starts (not exit code 3).
+    new = start(home=rt.home)
+    assert new.info["pid"] != rt.info["pid"]
+    assert rt.wait_exit() == 0

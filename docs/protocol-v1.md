@@ -43,7 +43,7 @@ Both transports bind `127.0.0.1` on ephemeral ports and never another address. E
 ### TCP JSON lines (`port`)
 
 - One UTF-8 JSON object per line (`\n`), both ways; at most 1 MiB per line.
-- The **first message must be `hello` with the token**. Anything else (another type, a wrong token, invalid JSON) is answered with `E_AUTH` and the connection closes. A `hello` that fails for another reason (`E_UNSUPPORTED`, `E_INCOMPATIBLE`, `E_BUSY`) leaves the connection open and unauthenticated, so the client may send `hello` again.
+- The **first message must be `hello` with the token**. Anything else (another type, a wrong token, invalid JSON) is answered with `E_AUTH` and the connection closes. So is a connection that sends no successful `hello` within 5 s. A `hello` that fails for another reason (`E_UNSUPPORTED`, `E_INCOMPATIBLE`, `E_BUSY`) leaves the connection open and unauthenticated, so the client may send `hello` again.
 - Replies and events share the connection: a reply has `ok`, an event has `event`. Replies come in request order.
 - Invalid JSON after `hello` is `E_BAD_REQUEST`; the connection stays open.
 
@@ -153,12 +153,12 @@ A client that does not read its events never slows the reader: past 256 unread e
 
 | code | when |
 |---|---|
-| `E_AUTH` | missing or wrong token; on TCP a first message other than `hello` (the connection closes) |
+| `E_AUTH` | missing or wrong token; on TCP a first message other than `hello`, or no `hello` within 5 s (the connection closes) |
 | `E_BAD_REQUEST` | not a JSON object, missing `type`, a missing or wrongly typed field, an out-of-range value, an unknown action or key |
 | `E_UNKNOWN_TYPE` | a `type` this protocol does not define |
 | `E_UNSUPPORTED` | an unmet `require`, an unknown event stream, or a message, action or key of an extension that is not enabled |
 | `E_INCOMPATIBLE` | `hello` with another protocol major |
-| `E_BUSY` | `hello` with `takeover: true` while something is playing or queued |
+| `E_BUSY` | `hello` with `takeover: true` while something is playing or queued; `speak` or `control` after a takeover was accepted |
 | `E_ENGINE` | the engine or the reader failed |
 | `E_NOT_FOUND` | an unknown voice or engine |
 
@@ -171,7 +171,7 @@ A client is a TCP connection that completed `hello`, or an open SSE stream; a pl
 When a client finds an instance it cannot use (another protocol major, a missing capability):
 
 1. It sends `hello` with the token and `takeover: true`.
-2. If nothing is playing or queued (a paused item counts as busy), the runtime replies `{ok: true, takeover: true, ...}`, closes the connection, stops audio, removes `runtime.json` and exits with code 0. The client waits for the process to end, then starts its bundled runtime.
+2. If nothing is playing or queued (a paused item counts as busy), the runtime replies `{ok: true, takeover: true, ...}` and from then on answers `speak` and `control` from any client with `E_BUSY`, so nothing is accepted and then dropped. It closes the connection, stops audio, releases the single-instance lock, removes `runtime.json` and exits with code 0. The client waits for the process to end (or, at the least, for `runtime.json` to go), then starts its bundled runtime.
 3. Otherwise the reply is `E_BUSY`; the client retries after the current item (bounded, 30 s in total), then gives up with `E_INCOMPATIBLE`.
 
 ## Versioning

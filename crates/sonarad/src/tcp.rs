@@ -6,6 +6,7 @@ use crate::protocol::{After, Server, Session};
 use crate::wire::{self, Code, Failure};
 use serde_json::Value;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
@@ -13,16 +14,24 @@ use tokio::sync::mpsc;
 /// Longest accepted line (bytes, newline included).
 pub const MAX_LINE: usize = 1 << 20;
 
+/// How long a new connection may wait before a successful `hello`; then it
+/// gets `E_AUTH` and is closed.
+pub const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub async fn serve(listener: TcpListener, server: Arc<Server>) {
+    serve_with(listener, server, HELLO_TIMEOUT).await
+}
+
+pub async fn serve_with(listener: TcpListener, server: Arc<Server>, hello_timeout: Duration) {
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
                 let server = server.clone();
                 tokio::spawn(async move {
-                    let _ = connection(stream, server).await;
+                    let _ = connection(stream, server, hello_timeout).await;
                 });
             }
-            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(50)).await,
+            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
         }
     }
 }
@@ -72,7 +81,11 @@ async fn send(w: &mut tokio::net::tcp::OwnedWriteHalf, v: &str) -> std::io::Resu
     w.write_all(line.as_bytes()).await
 }
 
-async fn connection(stream: TcpStream, server: Arc<Server>) -> std::io::Result<()> {
+async fn connection(
+    stream: TcpStream,
+    server: Arc<Server>,
+    hello_timeout: Duration,
+) -> std::io::Result<()> {
     let _ = stream.set_nodelay(true);
     let (rd, mut wr) = stream.into_split();
     let (tx, mut lines) = mpsc::channel(16);
@@ -80,6 +93,8 @@ async fn connection(stream: TcpStream, server: Arc<Server>) -> std::io::Result<(
     let mut session = Session::tcp();
     let mut events: Option<mpsc::Receiver<crate::events::WireEvent>> = None;
     let mut client = None;
+    let hello_deadline = tokio::time::sleep(hello_timeout);
+    tokio::pin!(hello_deadline);
     let result = loop {
         let next_event = async {
             match events.as_mut() {
@@ -143,6 +158,11 @@ async fn connection(stream: TcpStream, server: Arc<Server>) -> std::io::Result<(
                     }
                 }
             }
+            _ = &mut hello_deadline, if !session.authed => {
+                let f = Failure::new(Code::Auth, "no hello with the token in time");
+                let _ = send(&mut wr, &wire::error_reply(None, &f).to_string()).await;
+                break Ok(());
+            }
             ev = next_event => {
                 match ev {
                     Some(ev) => {
@@ -159,4 +179,46 @@ async fn connection(stream: TcpStream, server: Arc<Server>) -> std::io::Result<(
     let _ = wr.shutdown().await;
     drop(client);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lifetime::Lifetime;
+    use sonara_audio::TestOutput;
+    use sonara_engine::fake::FakeEngine;
+    use sonara_reader::{Config, ReaderHandle, Registry};
+    use std::time::Duration;
+
+    fn server() -> Arc<Server> {
+        let mut registry = Registry::default();
+        registry.register(Arc::new(FakeEngine::new())).unwrap();
+        let (out, rx) = TestOutput::new();
+        let reader =
+            ReaderHandle::new(Config::new(registry).with_output(Box::new(out), rx)).unwrap();
+        let life = Lifetime::new(Duration::from_secs(30), false);
+        Arc::new(Server::new(reader, "secret".into(), life))
+    }
+
+    #[tokio::test]
+    async fn a_connection_without_hello_is_closed_with_e_auth() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(serve_with(listener, server(), Duration::from_millis(200)));
+        let stream = TcpStream::connect(addr).await.unwrap();
+        let mut lines = BufReader::new(stream);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(5), lines.read_line(&mut line))
+            .await
+            .expect("the silent connection was not closed")
+            .unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["error"]["code"], "E_AUTH");
+        line.clear();
+        let n = tokio::time::timeout(Duration::from_secs(5), lines.read_line(&mut line))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(n, 0, "the connection closes after E_AUTH");
+    }
 }

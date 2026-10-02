@@ -112,6 +112,11 @@ pub struct Server {
     token: String,
     engine: EngineName,
     lifetime: Arc<Lifetime>,
+    /// Set once a takeover is accepted. `speak` and `control` hold this lock
+    /// while they reach the reader, so the idle check of a takeover and
+    /// setting it are atomic with respect to them: nothing is accepted
+    /// after the takeover and then silently dropped by the exit.
+    retiring: Mutex<bool>,
 }
 
 type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -198,6 +203,7 @@ impl Server {
             token,
             engine: Arc::new(Mutex::new(engine)),
             lifetime,
+            retiring: Mutex::new(false),
         }
     }
 
@@ -228,6 +234,19 @@ impl Server {
             Ok(s) => s.now_playing.is_some() && !s.paused,
             Err(_) => false,
         }
+    }
+
+    /// Hold the admission lock for a request that could start speech, or
+    /// `E_BUSY` once a takeover was accepted.
+    fn admit(&self) -> Result<std::sync::MutexGuard<'_, bool>, Failure> {
+        let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
+        if *retiring {
+            return Err(Failure::new(
+                Code::Busy,
+                "this runtime is exiting for a takeover",
+            ));
+        }
+        Ok(retiring)
     }
 
     /// Start an event stream (used by `subscribe` and `GET /v1/events`).
@@ -319,12 +338,14 @@ impl Server {
             }
         }
         if opt_bool(m, "takeover")? {
-            if !self.is_idle() {
+            let mut retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
+            if !*retiring && !self.is_idle() {
                 return Err(Failure::new(
                     Code::Busy,
                     "something is playing or queued; retry after the current item",
                 ));
             }
+            *retiring = true;
             let mut f = self.hello_fields(Vec::new());
             f.insert("takeover".into(), Value::Bool(true));
             return Ok((f, After::Exit));
@@ -381,6 +402,7 @@ impl Server {
         };
         let interrupt = opt_bool(m, "interrupt")?;
         let label = opt_str(m, "label")?.map(str::to_string);
+        let _admitted = self.admit()?;
         let id = self
             .reader
             .speak(text, mode, interrupt, label)
@@ -402,6 +424,7 @@ impl Server {
             }
             None => return Err(bad(format!("unknown action '{action}'"))),
         };
+        let _admitted = self.admit()?;
         self.reader.control(c).map_err(reader_failure)?;
         Ok((Map::new(), After::Nothing))
     }
@@ -601,6 +624,32 @@ mod tests {
         assert_eq!(o.reply["ok"], true);
         assert_eq!(o.reply["takeover"], true);
         assert!(matches!(o.after, After::Exit));
+    }
+
+    #[test]
+    fn after_an_accepted_takeover_speak_and_control_are_busy() {
+        let (s, _) = server();
+        let mut session = authed(&s);
+        let mut other = Session::tcp();
+        let o = call(
+            &s,
+            &mut other,
+            json!({"type": "hello", "token": "secret", "takeover": true}),
+        );
+        assert_eq!(o.reply["ok"], true);
+        let o = call(&s, &mut session, json!({"type": "speak", "text": "Late."}));
+        assert_eq!(
+            code(&o),
+            "E_BUSY",
+            "a speak after the takeover would be dropped"
+        );
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "control", "action": "play"}),
+        );
+        assert_eq!(code(&o), "E_BUSY");
+        assert!(s.is_idle());
     }
 
     #[test]

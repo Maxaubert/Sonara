@@ -78,7 +78,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Some(home::key(&home))
     };
     let name = instance::mutex_name(&sid, key.as_deref());
-    let _instance = match instance::acquire(&name) {
+    let instance = match instance::acquire(&name) {
         Ok(i) => i,
         Err(AcquireError::AlreadyRunning) => {
             let pid = runtime_file::read_pid(&home.runtime_json())
@@ -104,6 +104,11 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     let result = rt.block_on(run(&args, &home, &sid, token, reader.clone()));
     reader.shutdown();
     rt.shutdown_timeout(Duration::from_millis(500));
+    // Release the instance lock before runtime.json goes: a client that
+    // relaunches as soon as the file is gone (instead of waiting for the
+    // pid) then starts rather than exiting with code 3. A new instance that
+    // wins the lock meanwhile writes its own file, which this one leaves.
+    drop(instance);
     runtime_file::remove_if_ours(&home.runtime_json(), std::process::id());
     result.map_err(fail)
 }
@@ -165,9 +170,8 @@ async fn run(
         why = life.wait_exit() => why,
         _ = tokio::signal::ctrl_c() => ExitReason::Signal,
     };
-    // Remove the file first: a client waiting on a takeover sees it go, then
-    // the process exit.
-    runtime_file::remove_if_ours(&home.runtime_json(), std::process::id());
+    // `start` removes runtime.json once speech stopped and the instance
+    // lock is released.
     eprintln!("sonarad: exiting ({why:?})");
     Ok(())
 }
