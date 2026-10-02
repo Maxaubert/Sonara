@@ -226,3 +226,24 @@ def test_offline_banner_when_the_runtime_exits(live, browser):
     lv.rt.close()
     page.wait_for_selector("#offline-banner", state="visible", timeout=8000)
     page.close()
+
+
+def test_a_saved_voice_the_engine_lacks_is_shown(live, browser, tmp_path):
+    """A migrated voice that cannot apply yet (a Kokoro voice under another
+    engine) is named on the page, so the user sees it was kept."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({"voice": "af_sarah"}), encoding="utf-8")
+    lv = live()
+    page = open_page(browser, lv.url)
+    note = page.locator("#voice-saved")
+    pw.expect(note).to_be_visible()
+    pw.expect(note).to_contain_text("af_sarah")
+    page.close()
+
+
+def test_no_saved_voice_note_when_the_voice_applies(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#voice-saved")).to_be_hidden()
+    page.close()

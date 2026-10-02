@@ -327,6 +327,11 @@ pub struct PrefsUpdate {
 struct Inner {
     /// `config.json`: the user's keys (and the marker).
     user: Map<String, Value>,
+    /// Keys of `config.json` this runtime does not use: unknown ones (from a
+    /// newer release) and values the schema refuses (a hand edit). They are
+    /// written back unchanged, so a save never erases them; setting the key
+    /// replaces a refused value.
+    extra: Map<String, Value>,
     /// `session_prefs.json`, oldest change first, with the time of the
     /// change (milliseconds since 1970, `changed` in the file: a JSON
     /// object keeps no order).
@@ -342,7 +347,10 @@ pub struct Store {
     inner: Mutex<Inner>,
 }
 
-fn read_object(path: &Path, problems: &mut Vec<String>) -> Map<String, Value> {
+/// Read a JSON object file. A file that exists but is not a JSON object is
+/// copied to `<name>.bad` first when `backup` is set, so the next save
+/// (which replaces it) does not lose what the user had.
+fn read_object(path: &Path, problems: &mut Vec<String>, backup: bool) -> Map<String, Value> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Map::new(),
@@ -354,10 +362,22 @@ fn read_object(path: &Path, problems: &mut Vec<String>) -> Map<String, Value> {
     match serde_json::from_str::<Value>(text.trim_start_matches('\u{feff}')) {
         Ok(Value::Object(m)) => m,
         _ => {
-            problems.push(format!(
+            let mut note = format!(
                 "{} is not a JSON object; using the defaults",
                 path.display()
-            ));
+            );
+            if backup {
+                let mut bad = path.as_os_str().to_owned();
+                bad.push(".bad");
+                let bad = PathBuf::from(bad);
+                match std::fs::write(&bad, &text) {
+                    Ok(()) => note.push_str(&format!(" (a copy is in {})", bad.display())),
+                    Err(e) => {
+                        note.push_str(&format!(" (cannot copy it to {}: {e})", bad.display()))
+                    }
+                }
+            }
+            problems.push(note);
             Map::new()
         }
     }
@@ -377,6 +397,7 @@ impl Store {
             dir: None,
             inner: Mutex::new(Inner {
                 user: Map::new(),
+                extra: Map::new(),
                 prefs: Vec::new(),
                 client_labels: HashMap::new(),
             }),
@@ -387,8 +408,9 @@ impl Store {
     /// found (values dropped, unreadable files), for the log.
     pub fn load(dir: &Path) -> (Arc<Store>, Vec<String>) {
         let mut problems = Vec::new();
-        let raw = read_object(&dir.join(CONFIG_FILE), &mut problems);
+        let raw = read_object(&dir.join(CONFIG_FILE), &mut problems, true);
         let mut user = Map::new();
+        let mut extra = Map::new();
         for (key, value) in raw {
             if key.starts_with('_') {
                 user.insert(key, value);
@@ -399,12 +421,20 @@ impl Store {
                     user.insert(key, v);
                 }
                 Err(e) if setting(&key).is_some() => {
-                    problems.push(format!("config.json: {e}; using the default"))
+                    problems.push(format!(
+                        "config.json: {e}; using the default (the value is kept in the file)"
+                    ));
+                    extra.insert(key, value);
                 }
-                Err(_) => problems.push(format!("config.json: unknown key '{key}' ignored")),
+                Err(_) => {
+                    problems.push(format!(
+                        "config.json: unknown key '{key}' ignored (kept in the file)"
+                    ));
+                    extra.insert(key, value);
+                }
             }
         }
-        let raw = read_object(&dir.join(PREFS_FILE), &mut problems);
+        let raw = read_object(&dir.join(PREFS_FILE), &mut problems, false);
         let mut prefs: Vec<(String, Prefs, u64)> = raw
             .iter()
             .filter(|(id, _)| !id.is_empty())
@@ -421,6 +451,7 @@ impl Store {
             dir: Some(dir.to_path_buf()),
             inner: Mutex::new(Inner {
                 user,
+                extra,
                 prefs,
                 client_labels: HashMap::new(),
             }),
@@ -456,7 +487,9 @@ impl Store {
     fn save_config(&self, inner: &Inner) {
         if let Some(dir) = &self.dir {
             let path = dir.join(CONFIG_FILE);
-            if let Err(e) = write_json(&path, &Value::Object(inner.user.clone())) {
+            let mut all = inner.extra.clone();
+            all.extend(inner.user.clone());
+            if let Err(e) = write_json(&path, &Value::Object(all)) {
                 eprintln!("sonarad: cannot write {}: {e}", path.display());
             }
         }
@@ -492,7 +525,8 @@ impl Store {
         match validate(key, value) {
             Ok(v) => {
                 let mut inner = self.lock();
-                if inner.user.get(key) == Some(&v) {
+                let refused = inner.extra.remove(key).is_some();
+                if inner.user.get(key) == Some(&v) && !refused {
                     return;
                 }
                 inner.user.insert(key.to_string(), v);
@@ -505,7 +539,8 @@ impl Store {
     /// Forget the user's value of `key` (the default applies again).
     pub fn forget(&self, key: &str) {
         let mut inner = self.lock();
-        if inner.user.remove(key).is_some() {
+        let refused = inner.extra.remove(key).is_some();
+        if inner.user.remove(key).is_some() || refused {
             self.save_config(&inner);
         }
     }
@@ -529,6 +564,7 @@ impl Store {
             .cloned()
             .unwrap_or_default();
         let before = stored.clone();
+        let refused = inner.extra.remove("summaries").is_some();
         for (k, v) in clean {
             if k == "prompts" && v.as_object().is_some_and(Map::is_empty) {
                 stored.remove("prompts");
@@ -536,7 +572,7 @@ impl Store {
                 stored.insert(k, v);
             }
         }
-        if stored == before && inner.user.contains_key("summaries") {
+        if stored == before && inner.user.contains_key("summaries") && !refused {
             return;
         }
         if stored.is_empty() {
@@ -820,7 +856,16 @@ mod tests {
         store.record("rate", &json!(310));
         let saved = read(&dir.join(CONFIG_FILE));
         assert_eq!(saved["_migrated"]["from"], "x", "the marker is kept");
-        assert!(saved.get("bogus").is_none());
+        assert_eq!(saved["bogus"], json!(1), "an unknown key is written back");
+        assert_eq!(saved["volume"], json!(400), "a refused value is kept");
+        assert_eq!(saved["rate"], json!(310));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("config.json.bad")).unwrap(),
+            "{not json",
+            "the unreadable file was copied first"
+        );
+        store.record("volume", &json!(50));
+        assert_eq!(read(&dir.join(CONFIG_FILE))["volume"], json!(50));
     }
 
     #[test]

@@ -142,14 +142,15 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_else(|| args.engine.clone())
     };
-    let reader = match build_reader(&engine, args.output) {
-        Ok(r) => r,
+    let (reader, engine) = match build_reader(&engine, args.output) {
+        Ok(r) => (r, engine),
         Err(e) if engine != args.engine => {
             home.log(&format!(
                 "config.json: engine '{engine}' not available ({e}); using '{}'",
                 args.engine
             ));
-            build_reader(&args.engine, args.output).map_err(fail)?
+            let r = build_reader(&args.engine, args.output).map_err(fail)?;
+            (r, args.engine.clone())
         }
         Err(e) => return Err(fail(e)),
     };
@@ -157,6 +158,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     for p in config::apply_reader(&store, &reader, false) {
         home.log(&p);
     }
+    // Previews use the engines of the reader actually started.
     let previews = build_registry(&engine).ok();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

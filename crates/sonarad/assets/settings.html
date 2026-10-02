@@ -250,7 +250,7 @@
         <h2 class="group-label">Voice</h2>
         <div class="inset">
           <div class="pref"><div class="pref-copy"><label class="title" for="engine-select">Engine</label><div class="hint">Which speech engine reads.</div></div><div class="control"><select id="engine-select"></select></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">A voice of the engine above.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">A voice of the engine above.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
         </div>
         <h2 class="group-label">Delivery</h2>
@@ -656,6 +656,12 @@ function render() {
     setText("rt-port", String(s.runtime.http_port));
     setText("rt-config", s.runtime.config || "Not saved (this runtime keeps settings in memory)");
     setDisabled($("voice-preview"), !s.runtime.previews);
+    // A saved voice this engine lacks waits in config.json: say so, so a
+    // migrated choice does not look lost.
+    const saved = s.runtime.saved_voice;
+    const note = $("voice-saved");
+    note.hidden = !saved || saved === s.voice;
+    if (!note.hidden) note.textContent = "Saved voice " + saved + " is not available with this engine. It is kept and applies once it is.";
   }
   renderEngines();
 }

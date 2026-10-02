@@ -158,3 +158,48 @@ def test_the_runtime_key_and_previews(rt):
     assert r["error"]["code"] == "E_NOT_FOUND"
     status, r = rt.post("preview", {})
     assert status == 200 and r["engine"] == "fake"
+
+
+def seeded(tmp_path, config):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    return home
+
+
+def test_a_saved_voice_the_engine_lacks_survives_setting_the_engine(start, tmp_path):
+    """A voice that could not apply (a Kokoro voice under OneCore) stays
+    saved when the user picks the same engine again."""
+    home = seeded(tmp_path, {"voice": "af_sarah"})
+    rt = start(home=home)
+    c = rt.tcp(extensions=["system"])
+    assert get(c, "voice") is None
+    assert get(c, "runtime")["saved_voice"] == "af_sarah"
+    set_key(c, "engine", "fake")
+    assert saved(rt)["voice"] == "af_sarah"
+
+
+def test_unknown_and_refused_keys_survive_a_save(start, tmp_path):
+    """A key from a newer release or a hand-edited value the schema refuses
+    is not erased by the next save."""
+    home = seeded(tmp_path, {"from_the_future": {"x": 1}, "minqueue": -5, "volume": 30})
+    rt = start(home=home)
+    c = rt.tcp()
+    set_key(c, "rate", 250)
+    cfg = saved(rt)
+    assert cfg == {"from_the_future": {"x": 1}, "minqueue": -5, "volume": 30, "rate": 250}
+    c = rt.tcp(extensions=["agent"])
+    set_key(c, "minqueue", 3)
+    assert saved(rt)["minqueue"] == 3, "setting the key replaces the refused value"
+
+
+def test_an_unreadable_config_is_backed_up_before_it_is_replaced(start, tmp_path):
+    home = seeded(tmp_path, {})
+    (home / "config.json").write_text('{"rate": 300, ', encoding="utf-8")
+    rt = start(home=home)
+    c = rt.tcp()
+    set_key(c, "rate", 250)
+    assert (home / "config.json.bad").read_text(encoding="utf-8") == '{"rate": 300, '
+    assert saved(rt) == {"rate": 250}
+    log = (home / "logs" / "sonarad.log").read_text(encoding="utf-8")
+    assert "config.json.bad" in log

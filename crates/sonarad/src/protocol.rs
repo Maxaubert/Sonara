@@ -148,6 +148,9 @@ pub struct Server {
     enabling: Mutex<()>,
     /// The persisted settings (`config.json`, `session_prefs.json`).
     store: Arc<Store>,
+    /// Serializes `set`: the change and its record in `config.json`, so two
+    /// clients setting one key leave the file holding the value in force.
+    setting: Mutex<()>,
 }
 
 pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -243,6 +246,7 @@ impl Server {
             system: None,
             enabling: Mutex::new(()),
             store: Store::memory(),
+            setting: Mutex::new(()),
         }
     }
 
@@ -723,21 +727,51 @@ impl Server {
     /// agent extension, field by field; the keymap and channel preferences
     /// have files of their own).
     fn set(&self, m: &Map<String, Value>) -> Handled {
+        let _one_at_a_time = self.setting.lock().unwrap_or_else(|p| p.into_inner());
+        let engine_before = self
+            .engine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
         let result = self.set_now(m);
         if let (Ok((fields, _)), Some(name)) = (&result, opt_str(m, "key").ok().flatten()) {
             if name != "summaries" && config::setting(name).is_some() {
                 if let Some(v) = fields.get("value") {
                     self.store.record(name, v);
                 }
-                // Switching engine resets a voice the new engine lacks.
-                if name == "engine" && self.store.user("voice").is_some() {
-                    if let Ok(v) = self.reader.get(Key::Voice) {
-                        self.store.record("voice", &wire::setting_to_json(&v));
-                    }
+                if name == "engine" {
+                    self.engine_switched(&engine_before);
                 }
             }
         }
         result
+    }
+
+    /// After `set engine`: a saved voice the new engine lacks is replaced by
+    /// the voice the reader now uses. Picking the same engine again keeps a
+    /// saved voice that could not apply (it waits until it is available).
+    fn engine_switched(&self, before: &str) {
+        let now = self
+            .engine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let Some(Value::String(saved)) = self.store.user("voice") else {
+            return;
+        };
+        if now == before {
+            return;
+        }
+        let offered = self
+            .reader
+            .voices(Some(&now))
+            .map(|vs| vs.iter().any(|v| v.id == saved || v.name == saved))
+            .unwrap_or(false);
+        if !offered {
+            if let Ok(v) = self.reader.get(Key::Voice) {
+                self.store.record("voice", &wire::setting_to_json(&v));
+            }
+        }
     }
 
     fn set_now(&self, m: &Map<String, Value>) -> Handled {

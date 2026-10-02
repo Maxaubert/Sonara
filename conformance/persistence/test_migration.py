@@ -173,3 +173,25 @@ def test_nothing_to_migrate_writes_nothing(start, tmp_path, profile):
     c = rt.tcp()
     assert get(c, "rate") == 200
     assert not (rt.home / "config.json").exists()
+
+
+def test_the_default_home_imports_from_the_profile(start, tmp_path, profile):
+    """What an end user gets: no flag, the default %LOCALAPPDATA%\\Sonara home
+    (passed with --home as the SDK clients do) and the plugin's folder in
+    %USERPROFILE%. Both are temporary folders here. The default home's
+    instance lock is per user only, so a real runtime on this PC makes the
+    test skip rather than collide."""
+    lad = tmp_path / "lad"
+    home = lad / "Sonara"
+    plugin_tree(tmp_path / "profile")
+    env = {**profile, "LOCALAPPDATA": str(lad), "SONARA_HOME": ""}
+    try:
+        rt = start("--home", str(home), home=home, env=env)
+    except RuntimeError as e:
+        if "already running" in str(e):
+            pytest.skip("a runtime on the real default home holds the per-user lock")
+        raise
+    c = rt.tcp()
+    assert get(c, "rate") == 250
+    cfg = json.loads((home / "config.json").read_text(encoding="utf-8"))
+    assert cfg["_migrated"]["from"] == str(tmp_path / "profile" / ".sonara")

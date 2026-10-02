@@ -496,6 +496,9 @@ impl SystemExt {
             "http_port": self.http_port,
             "config": self.store.config_path().map(|p| p.display().to_string()),
             "previews": self.previews.is_some(),
+            // The saved voice, which may differ from the voice in force when
+            // this engine lacks it (it applies once it is available).
+            "saved_voice": self.store.user("voice").unwrap_or(Value::Null),
         })
     }
 
