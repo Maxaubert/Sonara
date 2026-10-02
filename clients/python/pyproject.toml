@@ -9,6 +9,8 @@ description = "Client for the Sonara text-to-speech runtime (protocol v1). Stand
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+# setuptools ships LICENSE beside this file (a copy of the root one) in
+# the sdist and the wheel by default.
 maintainers = [{ name = "Max Aubert" }]
 # Zero runtime dependencies (spec R6): bundlers ship nothing else's licence.
 dependencies = []

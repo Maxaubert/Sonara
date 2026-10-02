@@ -138,6 +138,18 @@ def test_sdk_package_versions_match_pyproject():
     assert m and m.group(1) == version, "clients/python/src/sonara_client/version.py"
 
 
+def test_sdk_packages_ship_the_mit_licence():
+    # The published clients carry Sonara's MIT text: npm takes LICENSE from
+    # `files`, setuptools picks up a LICENSE next to pyproject.toml.
+    root = (REPO_ROOT / "LICENSE").read_text(encoding="utf-8").splitlines()
+    for rel in ("clients/ts", "clients/python"):
+        copy = REPO_ROOT / rel / "LICENSE"
+        assert copy.is_file(), f"{rel}/LICENSE missing"
+        assert copy.read_text(encoding="utf-8").splitlines() == root, f"{rel}/LICENSE differs from LICENSE"
+    files = _load(REPO_ROOT / "clients" / "ts" / "package.json")["files"]
+    assert "LICENSE" in files
+
+
 def test_cargo_workspace_version_matches_pyproject():
     # The Rust runtime (crates/) ships from the same release tag, so the
     # [workspace.package] version moves with pyproject (runtime plan, M1).

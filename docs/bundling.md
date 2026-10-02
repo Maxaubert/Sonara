@@ -20,6 +20,8 @@ The protocol behind all of them is `docs/protocol-v1.md`. The one licensing duty
 3. Otherwise it starts your bundled `sonarad.exe --home <home>` (no console window) and waits up to 5 s for it.
 4. When the running instance is too old for you, it asks it to step down (a takeover). The instance agrees only when nothing is playing or queued; while it is busy the client retries for up to 30 s, then fails with `E_INCOMPATIBLE`.
 
+A takeover does not compare versions: it runs whenever the running instance cannot serve you and you have a runtime to start. If your own bundled `sonarad.exe` lacks the capability you `require` too, an idle (possibly newer) shared instance is stopped, yours starts and `connect()` still fails with `E_INCOMPATIBLE`. So `require` only what your bundled runtime offers, and keep it current: two apps that bundle runtimes of different protocol majors will take the idle instance from each other in turn.
+
 The runtime exits by itself 30 s after the last app disconnected. You never stop it yourself: other apps may be using it.
 
 ## Electron
@@ -40,21 +42,22 @@ electron-builder copies the runtime folder next to your app's resources (it must
 }
 ```
 
-In the main process:
+In the main process (CommonJS, so it runs on every Electron version; with an ESM main, use `import` and `import.meta.dirname`, Electron 29 or later):
 
 ```js
-import { app, ipcMain, BrowserWindow } from "electron";
-import path from "node:path";
-import { connect } from "@sonara/client";
-import { runtimePath } from "@sonara/runtime-win32-x64";
+const { app, ipcMain, BrowserWindow } = require("electron");
+const path = require("node:path");
+const { connect } = require("@sonara/client");
+const { runtimePath } = require("@sonara/runtime-win32-x64");
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ webPreferences: { preload: path.join(import.meta.dirname, "preload.js") } });
+  const win = new BrowserWindow({ webPreferences: { preload: path.join(__dirname, "preload.js") } });
   const sonara = await connect({
     clientName: "my-app",
     runtimePath: app.isPackaged ? path.join(process.resourcesPath, "sonara", "sonarad.exe") : runtimePath(),
   });
   sonara.onState((state) => win.webContents.send("sonara:state", state)); // drive your player UI
+  sonara.onLog((e) => console.log("sonara:", e.message)); // includes "event stream closed"
   ipcMain.handle("sonara:speak", (_e, text) => sonara.speak(text));
   ipcMain.handle("sonara:control", (_e, action) => sonara.control(action)); // play, pause, next...
   app.on("before-quit", () => sonara.close());

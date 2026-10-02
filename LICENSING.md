@@ -16,4 +16,6 @@ Why this holds (runtime spec decision R6):
 - The JavaScript and Python clients have zero runtime dependencies.
 - Models and data that are not code (the Kokoro voice model, the misaki lexicons, ONNX Runtime, the Visual C++ runtime) are listed by hand in `packaging/notices/models-and-data.md`, which the generated file includes.
 
+Known gap, closed before the first commercial bundle: the notices credit each crate by its licence, authors and source, and carry one generic text per licence. They do not yet reproduce each MIT crate's own copyright line or licence file, nor the `NOTICE` file of an Apache-2.0 crate. The generator will collect those from the cargo registry sources.
+
 This is a summary for developers, not legal advice. Bundling steps: `docs/bundling.md`.
