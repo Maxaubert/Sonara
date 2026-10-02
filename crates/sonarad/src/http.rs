@@ -1,5 +1,7 @@
 //! HTTP/1.1: `POST /v1/<type>` with a JSON body and `GET /v1/events` as
-//! Server-Sent Events, both with `Authorization: Bearer <token>`.
+//! Server-Sent Events, both with `Authorization: Bearer <token>`; and
+//! `GET /settings?token=<token>`, the settings page of the `system`
+//! extension (`settings_page`).
 //!
 //! The body of a POST is the request without `type` (the path gives it); an
 //! empty body is `{}`. The reply body is the same JSON as on TCP; the status
@@ -12,7 +14,7 @@ use crate::wire::{self, Code, Failure};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Body, Frame, Incoming};
-use hyper::header::{HeaderValue, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE};
+use hyper::header::{HeaderName, HeaderValue, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST};
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
@@ -75,8 +77,42 @@ fn bearer_ok(req: &Request<Incoming>, server: &Server) -> bool {
         .unwrap_or(false)
 }
 
+/// `GET /settings`: the page with the token injected, or a short text
+/// error (`settings_page` has the rules).
+fn settings(req: &Request<Incoming>, server: &Server) -> Response<BoxBody> {
+    let host = req.headers().get(HOST).and_then(|h| h.to_str().ok());
+    let page = match server.system() {
+        Some(s) => s.settings_page(host, req.uri().query()),
+        None => Err((404, "this runtime has no settings page")),
+    };
+    match page {
+        Ok(html) => {
+            let mut r = Response::new(Full::new(Bytes::from(html)).boxed_unsync());
+            for (k, v) in crate::settings_page::HEADERS {
+                r.headers_mut()
+                    .insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+            }
+            r
+        }
+        Err((status, message)) => {
+            let mut r = Response::new(Full::new(Bytes::from(message)).boxed_unsync());
+            *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::NOT_FOUND);
+            r.headers_mut().insert(
+                CONTENT_TYPE,
+                HeaderValue::from_static("text/plain; charset=utf-8"),
+            );
+            r
+        }
+    }
+}
+
 async fn route(req: Request<Incoming>, server: Arc<Server>) -> Response<BoxBody> {
     let path = req.uri().path().to_string();
+    if path == "/settings" && req.method() == Method::GET {
+        server.lifetime().touch();
+        let srv = server.clone();
+        return settings(&req, &srv);
+    }
     let Some(kind) = path.strip_prefix("/v1/").map(str::to_string) else {
         return failure(Failure::new(Code::NotFound, format!("no route {path}")));
     };

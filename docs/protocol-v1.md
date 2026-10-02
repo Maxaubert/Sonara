@@ -1,8 +1,8 @@
 # Sonara protocol v1
 
-The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels`](#extension-channels) and [`agent`](#extension-agent) extensions. The `system` extension is reserved and listed at the end; until a runtime offers it, its messages return `E_UNSUPPORTED`.
+The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels`](#extension-channels), [`agent`](#extension-agent) and [`system`](#extension-system) extensions.
 
-Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
+Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension), `crates/sonara-agent` (`agent`), `crates/sonara-system` (`system`). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
 The Python daemon of the Claude Code plugin still speaks the older protocol in `docs/protocol.md` until the cutover (M11).
 
@@ -18,10 +18,10 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "port": 50311,
   "http_port": 50312,
   "token": "64 hex characters",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "protocol": {"major": 1, "minor": 0},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log"],
-  "extensions": ["channels", "agent"],
+  "extensions": ["channels", "agent", "system"],
   "started_at": "2026-10-02T10:40:45Z"
 }
 ```
@@ -73,7 +73,7 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 
 ```json
 > {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.9.6", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
+< {"id": 1, "ok": true, "version": "0.9.7", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
 
 The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.
@@ -183,7 +183,7 @@ Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fi
 
 ## Testing aids
 
-`sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. They are meant for tests and the conformance suite, not for apps.
+`sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. They are meant for tests and the conformance suite, not for apps.
 
 ## Examples
 
@@ -315,10 +315,67 @@ Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the e
 < {"ok": true}
 ```
 
-## Extensions (reserved)
+## Extension `system`
 
-Spec section 4.4. A client asks for it in `hello.extensions`; this runtime does not offer it yet, so its messages return `E_UNSUPPORTED`.
+Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other apps' audio while Sonara speaks, global hotkeys and the settings page. Enable it with `hello` `extensions: ["system"]`. Black-box tests: `conformance/system/` (with `--system fake`).
 
-| extension | adds |
+**Armed while needed.** Like every extension, `system` is enabled for the whole runtime once a client asks for it, and its keys and the settings page work from then on. It acts on the PC (ducks or pauses other apps, holds the hotkeys) only while it is **armed**: while a TCP client whose `hello` asked for it is connected, or for good once a client asked for it with `keep_alive: true` (over TCP or HTTP). When the last client that needed it disconnects, other apps are restored at once and the hotkeys are released, even if the reader goes on reading. A plain HTTP request (the settings page) never arms it.
+
+**Other apps' audio.** With `audio_mode` `duck`, every other app's audio session on every active output device is lowered to `duck_level` percent while an item is being read (playing, not paused, not muted); with `pause`, media apps that are playing (Windows media transport controls) are paused and later resumed. Never touched: the runtime's own process, the Windows audio engine (`audiodg.exe`) and virtual mixers whose session is the whole mix (SteelSeries Sonar, VoiceMeeter); an app already at or below the level is left alone. Other apps come back at once on `pause`, `mute`, a mode change and when the extension is disarmed, about 0.4 s after the reader goes idle (so the gap between two messages does not bring them up and down), and when the runtime exits.
+
+**Crash restore.** Before an app is lowered or paused it is recorded in `state\duck_state.json` or `state\pause_state.json` in the home, and the files are removed once everything is back. A runtime that starts finds these files and restores the apps before it accepts clients; what still fails stays recorded and is retried by the next restore.
+
+### Settings
+
+| key | value |
 |---|---|
-| `system` | `set audio_mode`, `set duck_level`, `set hotkeys`, `get settings_url` |
+| `audio_mode` | `"off"` (default), `"duck"` or `"pause"` |
+| `duck_level` | integer 0 to 100 (default 30): the volume other apps keep while ducked. A change applies at once while ducked |
+| `hotkeys` | `get`: the keymap (below). `set`: `{"action", "key", "mods"}` binds an action, `{"action", "key": null}` unbinds it, `"reset"` restores the defaults; the reply is the keymap now in force |
+| `settings_url` | read-only (`set` is `E_BAD_REQUEST`): `http://127.0.0.1:<http_port>/settings?token=<token>`, the settings page |
+
+Settings are not persisted across runtimes yet, except the hotkeys (`keymap.json` in the home).
+
+### Hotkeys
+
+Actions and what they do (the same as the protocol request named):
+
+| action | default | effect |
+|---|---|---|
+| `restart` | Ctrl+Alt+Up | `control restart` |
+| `flush` | Ctrl+Alt+Down | `control stop` (everything queued or playing); with `agent`, plays `nav` (or `nav_edge` when there was nothing) |
+| `pause` | unbound | `control toggle` |
+| `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute` |
+| `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` (or `nav_edge`) |
+| `faster` / `slower` | unbound | `rate` plus or minus 25 |
+
+A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A hotkey must hold Ctrl, Alt or Win (`E_BAD_REQUEST` otherwise: it would take that key away from every app); an unknown key, modifier or action is `E_BAD_REQUEST`, and nothing is written. Holding a key does not repeat an action, and a second press of `pause` or `mute` within 0.3 s is ignored. Hotkeys do nothing once a takeover was accepted.
+
+The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a hotkey that is AltGr typing a character is reported in `altgr`, and the fix is a binding with Win (Windows itself owns Win+Alt+Up/Down/M/P). The user's bindings are kept in `keymap.json` in the home (only the overrides; `nav_start` and `next_session` from the Python plugin's keymap are read as `restart` and `next_channel`).
+
+`get hotkeys` value:
+
+```json
+{"active": true,
+ "bindings": [{"action": "restart", "key": "up", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+Up", "registered": true, "error": null, "altgr": null},
+              {"action": "mute", "key": "m", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+M", "registered": true, "error": null, "altgr": "µ"},
+              {"action": "pause", "key": null, "mods": [], "combo": null, "registered": false, "error": null, "altgr": null}],
+ "keys": ["0", "1", "...", "up"], "mods": ["alt", "cmd", "control", "ctrl", "shift", "win"], "problems": []}
+```
+
+`active`: the hotkeys are registered now (the extension is armed). `registered: false` with `error: "already_owned"` means another program owns that chord. `problems` lists entries of `keymap.json` that were skipped: an unknown key or modifier never disables the other hotkeys.
+
+### Settings page
+
+`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves a page for speech (engine, voice, rate, volume), other apps' audio, the hotkeys (capture, unbind, reset, AltGr and ownership warnings), the agent settings when `agent` is on, and the runtime's version. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
+
+```json
+> {"type": "hello", "token": "...", "extensions": ["agent", "system"]}
+< {"ok": true, "extensions": ["channels", "agent", "system"], ...}
+> {"type": "set", "key": "audio_mode", "value": "duck"}
+< {"ok": true, "key": "audio_mode", "value": "duck"}
+> {"type": "set", "key": "hotkeys", "value": {"action": "mute", "key": "m", "mods": ["win", "alt"]}}
+< {"ok": true, "key": "hotkeys", "value": {"active": true, "bindings": [...], ...}}
+> {"type": "get", "key": "settings_url"}
+< {"ok": true, "key": "settings_url", "value": "http://127.0.0.1:50312/settings?token=..."}
+```

@@ -3,13 +3,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine onecore|fake] \
-[--output device|null] [--idle-exit SECONDS] [--standalone] [--version]
+[--output device|null] [--system windows|fake] [--idle-exit SECONDS] [--standalone] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
   --engine ID         engine to start with (default: onecore). 'fake' is a
                       deterministic tone engine for tests and conformance runs
   --output KIND       'device' (default; 'null' with --engine fake) or 'null',
                       a silent output that keeps real time
+  --system KIND       platform of the 'system' extension: 'windows' (default)
+                      or 'fake', a testing aid that keeps fake apps, media
+                      and hotkeys in <home>\\fake-system.json
   --idle-exit SECONDS exit this long after the last client left and nothing is
                       playing (default 30)
   --standalone        never exit for idleness";
@@ -20,11 +23,20 @@ pub enum OutputKind {
     Null,
 }
 
+/// The platform behind the `system` extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemKind {
+    Windows,
+    /// Fake apps, media and hotkeys in a JSON file in the home (tests).
+    Fake,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Args {
     pub home: Option<PathBuf>,
     pub engine: String,
     pub output: OutputKind,
+    pub system: SystemKind,
     pub idle_exit: Duration,
     pub standalone: bool,
 }
@@ -41,6 +53,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     let mut home = None;
     let mut engine = "onecore".to_string();
     let mut output = None;
+    let mut system = SystemKind::Windows;
     let mut idle_exit = crate::lifetime::DEFAULT_IDLE_EXIT;
     let mut standalone = false;
     let mut it = args.into_iter();
@@ -55,6 +68,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
                     "null" => OutputKind::Null,
                     other => return Err(format!("unknown --output '{other}'")),
                 })
+            }
+            "--system" => {
+                system = match value("--system")?.as_str() {
+                    "windows" => SystemKind::Windows,
+                    "fake" => SystemKind::Fake,
+                    other => return Err(format!("unknown --system '{other}'")),
+                }
             }
             "--idle-exit" => {
                 let v = value("--idle-exit")?;
@@ -80,6 +100,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
         home,
         engine,
         output,
+        system,
         idle_exit,
         standalone,
     }))
@@ -103,6 +124,13 @@ mod tests {
         assert_eq!(a.output, OutputKind::Device);
         assert_eq!(a.idle_exit, Duration::from_secs(30));
         assert!(!a.standalone);
+        assert_eq!(a.system, SystemKind::Windows);
+    }
+
+    #[test]
+    fn the_system_platform_can_be_the_fake() {
+        assert_eq!(run(&["--system", "fake"]).system, SystemKind::Fake);
+        assert!(parse(["--system".to_string(), "linux".to_string()]).is_err());
     }
 
     #[test]
