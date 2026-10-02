@@ -247,17 +247,34 @@ fn load(path: &Path, len: u64) -> Result<PcmChunk, String> {
     Ok(pcm)
 }
 
-/// Mix down to one channel (the bundled WAVs are mono already).
+/// Mix down to one channel (the bundled WAVs are mono already). Stereo is
+/// averaged; with more channels the loudest one is kept, since averaging a
+/// surround file whose sound sits in one channel would make it much quieter.
 fn mono(pcm: PcmChunk) -> PcmChunk {
     let n = pcm.channels.max(1) as usize;
     if n == 1 {
         return pcm;
     }
-    let samples = pcm
-        .samples
-        .chunks(n)
-        .map(|f| (f.iter().map(|&s| s as i32).sum::<i32>() / f.len() as i32) as i16)
-        .collect();
+    let samples = if n == 2 {
+        pcm.samples
+            .chunks(n)
+            .map(|f| (f.iter().map(|&s| s as i32).sum::<i32>() / f.len() as i32) as i16)
+            .collect()
+    } else {
+        let peak = |c: usize| {
+            pcm.samples
+                .chunks(n)
+                .filter_map(|f| f.get(c))
+                .map(|s| s.unsigned_abs())
+                .max()
+                .unwrap_or(0)
+        };
+        let loudest = (0..n).max_by_key(|&c| peak(c)).unwrap_or(0);
+        pcm.samples
+            .chunks(n)
+            .map(|f| f.get(loudest).copied().unwrap_or(0))
+            .collect()
+    };
     PcmChunk {
         samples,
         sample_rate: pcm.sample_rate,
@@ -290,7 +307,23 @@ mod tests {
         assert_eq!(Earcon::TurnDone.as_str(), "turn_done");
     }
 
-    fn tmp() -> PathBuf {
+    /// A fresh folder in `%TEMP%`, removed when the test ends.
+    struct Tmp(PathBuf);
+
+    impl std::ops::Deref for Tmp {
+        type Target = PathBuf;
+        fn deref(&self) -> &PathBuf {
+            &self.0
+        }
+    }
+
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tmp() -> Tmp {
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
         let d = std::env::temp_dir().join(format!(
@@ -300,7 +333,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        d
+        Tmp(d)
     }
 
     /// A WAV fixture: format `tag` (1 integer PCM, 3 float) of `bits`, on
@@ -369,7 +402,7 @@ mod tests {
             .unwrap();
         }
         let (log, lines) = logged();
-        let lib = Library::new(dir.clone(), Some(log));
+        let lib = Library::new(dir.to_path_buf(), Some(log));
         assert_eq!(
             lib.custom(),
             [
@@ -402,7 +435,7 @@ mod tests {
         let path = dir.join("session_change.wav");
         std::fs::write(&path, b"not a wav").unwrap();
         let (log, lines) = logged();
-        let lib = Library::new(dir.clone(), Some(log));
+        let lib = Library::new(dir.to_path_buf(), Some(log));
         assert!(lib.custom().is_empty());
         assert_eq!(
             *lib.clip(Earcon::SessionChange),
@@ -463,5 +496,26 @@ mod tests {
             channels: 2,
         };
         assert_eq!(mono(pcm).samples, [15, 0]);
+    }
+
+    #[test]
+    fn more_than_two_channels_keep_the_loudest_channel_at_full_level() {
+        // A 5.1 file with the chime only in the centre channel (index 2):
+        // averaging would cut it to a sixth.
+        let mut samples = Vec::new();
+        for i in 0..100 {
+            let x: i16 = if i % 2 == 0 { 6000 } else { -6000 };
+            samples.extend_from_slice(&[0, 0, x, 0, 10, 0]);
+        }
+        let pcm = PcmChunk {
+            samples,
+            sample_rate: 48_000,
+            channels: 6,
+        };
+        let m = mono(pcm);
+        assert_eq!(m.channels, 1);
+        assert_eq!(m.samples.len(), 100);
+        assert_eq!(m.samples[0], 6000);
+        assert_eq!(m.samples[1], -6000);
     }
 }

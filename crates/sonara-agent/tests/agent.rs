@@ -329,6 +329,13 @@ fn custom_earcons_replace_the_bundled_clips() {
         };
         std::fs::write(dir.join(format!("{name}.wav")), wav::encode(&pcm)).unwrap();
     }
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(dir.clone());
     let lib = Arc::new(Library::new(dir.clone(), None));
     let r = Rig::announcing(Some(lib));
     r.stream("a", "From alpha.", 0, None);

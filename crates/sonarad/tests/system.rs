@@ -20,7 +20,23 @@ use tokio::net::{TcpListener, TcpStream};
 
 const TOKEN: &str = "secret";
 
-fn tmp() -> PathBuf {
+/// A fresh home in `%TEMP%`, removed when the test ends.
+struct Tmp(PathBuf);
+
+impl std::ops::Deref for Tmp {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn tmp() -> Tmp {
     static N: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
         "sonarad-system-{}-{}",
@@ -29,7 +45,7 @@ fn tmp() -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    Tmp(dir)
 }
 
 struct Rig {
@@ -37,6 +53,8 @@ struct Rig {
     fake: Fake,
     out: TestOutput,
     home: PathBuf,
+    /// Last, so the server is gone before its home is removed.
+    _tmp: Option<Tmp>,
 }
 
 fn fake_registry() -> Registry {
@@ -46,7 +64,10 @@ fn fake_registry() -> Registry {
 }
 
 fn rig() -> Rig {
-    rig_on(tmp())
+    let t = tmp();
+    let mut r = rig_on(t.to_path_buf());
+    r._tmp = Some(t);
+    r
 }
 
 /// A rig on `home`, with the settings persisted there.
@@ -79,6 +100,7 @@ fn rig_on(home: PathBuf) -> Rig {
         fake,
         out,
         home,
+        _tmp: None,
     }
 }
 
@@ -768,7 +790,7 @@ fn persisted_settings_apply_when_each_layer_starts() {
             "channel_announce": "off", "summaries": {"style": "brief", "prompts": {"brief": "Short."}}}"#,
     )
     .unwrap();
-    let r = rig_on(home);
+    let r = rig_on(home.to_path_buf());
     let s = &r.server;
     let mut h = Session::http();
     ok(
@@ -1145,7 +1167,7 @@ fn a_muted_channel_pref_holds_the_channels_speech() {
             json!({"type": "set", "key": "channel_prefs", "value": {"channel": "m", "muted": true}}),
         );
     }
-    let r = rig_on(home);
+    let r = rig_on(home.to_path_buf());
     let s = &r.server;
     let mut h = Session::http();
     ok(
@@ -1226,7 +1248,7 @@ fn the_background_policy_is_a_persisted_agent_key() {
         assert!(s.channels().unwrap().focus_only());
         assert_eq!(saved(&home)["background_policy"], "earcon_only");
     }
-    let r = rig_on(home);
+    let r = rig_on(home.to_path_buf());
     let s = &r.server;
     let mut h = Session::http();
     ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
