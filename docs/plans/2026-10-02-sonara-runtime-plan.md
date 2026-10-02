@@ -150,6 +150,9 @@ targets = ["x86_64-pc-windows-msvc"]
 
 `deny.toml`:
 ```toml
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
 [licenses]
 allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016"]
 confidence-threshold = 0.9
@@ -182,7 +185,7 @@ pub mod assembler;
 pub mod text;
 ```
 
-- [ ] **Step 2: Add the CI job** to `.github/workflows/ci.yml` (keep the existing Python jobs):
+- [ ] **Step 2: Add the CI job** to `.github/workflows/ci.yml` (keep the existing Python jobs; cargo-deny runs in its own Linux job because its action is Docker-based):
 
 ```yaml
   rust:
@@ -196,6 +199,14 @@ pub mod text;
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  # cargo-deny-action is a Docker action, which GitHub runs only on Linux
+  # runners. deny.toml pins the graph to the Windows target, so Windows-only
+  # dependencies are still checked from here.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans

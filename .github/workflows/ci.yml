@@ -50,6 +50,14 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  # cargo-deny-action is a Docker action, which GitHub runs only on Linux
+  # runners. deny.toml pins the graph to the Windows target, so Windows-only
+  # dependencies are still checked from here.
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans
