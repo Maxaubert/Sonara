@@ -58,7 +58,7 @@ def test_the_daemon_registers_every_feature_s_per_session_state():
     # An exact set, not a subset: adding or dropping a per-session store
     # must fail here so the change gets a deliberate review.
     names = set(daemon._session_state.names())
-    assert names == {"await_choice", "warned_immediate", "assemblers",
+    assert names == {"await_choice", "warned_immediate", "flush_t", "assemblers",
                      "last_digest_text", "pending_heard", "history",
                      "setup_guide", "summary", "digest_store"}
 
