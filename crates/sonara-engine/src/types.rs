@@ -63,3 +63,82 @@ impl PcmChunk {
         self.samples.len() as u64 * 1000 / per_second
     }
 }
+
+/// How far an engine is from speaking with its own voice (spec 4.1
+/// `state.engine_status`). Engines that are always ready (OneCore, fake)
+/// keep the trait's default, `EngineStatus::ready()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Readiness {
+    Ready,
+    /// Loading its model (seconds).
+    Loading,
+    /// Downloading its model; `EngineStatus::progress` says how far.
+    Downloading,
+    /// The last download or load failed; it tries again later
+    /// (`EngineStatus::message` says why).
+    Waiting,
+    /// It cannot run in this install (for Kokoro: no ONNX Runtime).
+    Unavailable,
+}
+
+impl Readiness {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Readiness::Ready => "ready",
+            Readiness::Loading => "loading",
+            Readiness::Downloading => "downloading",
+            Readiness::Waiting => "waiting",
+            Readiness::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// An engine's readiness, with what speaks meanwhile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineStatus {
+    pub readiness: Readiness,
+    /// Bytes done and expected while a model downloads.
+    pub progress: Option<(u64, u64)>,
+    /// The engine that speaks while this one is not ready (Kokoro falls
+    /// back to OneCore).
+    pub fallback: Option<EngineId>,
+    /// Why it is not ready, when something failed.
+    pub message: Option<String>,
+}
+
+impl EngineStatus {
+    pub fn ready() -> Self {
+        EngineStatus {
+            readiness: Readiness::Ready,
+            progress: None,
+            fallback: None,
+            message: None,
+        }
+    }
+}
+
+impl fmt::Display for EngineStatus {
+    /// For log lines: "downloading its model (40%), speaking with onecore
+    /// meanwhile".
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.readiness {
+            Readiness::Ready => f.write_str("ready")?,
+            Readiness::Loading => f.write_str("loading its model")?,
+            Readiness::Downloading => {
+                f.write_str("downloading its model")?;
+                if let Some((done, total)) = self.progress.filter(|(_, t)| *t > 0) {
+                    write!(f, " ({}%)", done.saturating_mul(100) / total)?;
+                }
+            }
+            Readiness::Waiting => f.write_str("not ready, retrying later")?,
+            Readiness::Unavailable => f.write_str("unavailable")?,
+        }
+        if let Some(m) = &self.message {
+            write!(f, ": {m}")?;
+        }
+        match (self.readiness, self.fallback) {
+            (Readiness::Ready, _) | (_, None) => Ok(()),
+            (_, Some(e)) => write!(f, "; speaking with {e} meanwhile"),
+        }
+    }
+}

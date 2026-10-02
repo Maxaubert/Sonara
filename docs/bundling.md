@@ -8,11 +8,23 @@ What you need:
 |---|---|---|
 | Node 18+ / Electron main | `@sonara/client` | `connect`, `speak`, `control`, `set`/`get`, `voices`, `onState`/`onItem`/`onLog`, `close` (zero dependencies) |
 | a player UI (React or any framework) | `@sonara/player` | a headless `PlayerController` (state to view model, buttons to controls) and `<SonaraPlayer client={...} />` from `@sonara/player/react` (React as a peer only); see `clients/player/README.md` |
-| Node 18+ / Electron | `@sonara/runtime-win32-x64` | `bin/sonarad.exe`, the notices, `runtimePath()` |
+| Node 18+ / Electron | `@sonara/runtime-win32-x64` | `bin/` (`sonarad.exe` and the files next to it), the notices, `runtimePath()` |
 | Python 3.9+ | `sonara-client` | the same API, standard library only |
-| anything else | `sonara-runtime-win-x64-<version>.zip` (GitHub release) | `sonarad.exe` and the notices; speak protocol v1 over TCP or HTTP |
+| anything else | `sonara-runtime-win-x64-<version>.zip` (GitHub release) | `sonarad.exe`, the files next to it and the notices; speak protocol v1 over TCP or HTTP |
 
 The protocol behind all of them is `docs/protocol-v1.md`. The one licensing duty is to ship `THIRD_PARTY_NOTICES.md` (see [Licensing](#licensing)).
+
+## What ships next to `sonarad.exe`
+
+Keep these files in one folder (the package's `bin/`, the zip's top folder):
+
+| file | why |
+|---|---|
+| `sonarad.exe` | the runtime (C runtime linked in: no Visual C++ redistributable needed for it) |
+| `onnxruntime.dll`, `onnxruntime-LICENSE.txt`, `onnxruntime-ThirdPartyNotices.txt` | Microsoft's ONNX Runtime (CPU, MIT) for the Kokoro voice |
+| `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` | the Visual C++ runtime that `onnxruntime.dll` needs (app-local copies) |
+
+**Voices.** The runtime starts with Kokoro (neural, 28 English voices) when `onnxruntime.dll` is there, else with Windows' own voices. Kokoro's model (about 354 MB) is not in the package: it downloads on first use into `%LOCALAPPDATA%\Sonara\models\kokoro\v1.0\`, and Windows' voice reads meanwhile, so the first sentences never wait for it. `state.engine_status` shows the progress (draw it in your UI if you like). To ship the model with your installer instead, copy `kokoro-v1.0.onnx` and `voices-v1.0.bin` (the pinned files, see `THIRD_PARTY_NOTICES.md`) into that folder; nothing is downloaded then.
 
 ## How `connect()` finds the runtime
 
@@ -120,18 +132,19 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 
 Summary of `LICENSING.md`: you may sell your app, keep it closed-source, choose its licence and code-sign it (including the bundled `sonarad.exe`). Ship `THIRD_PARTY_NOTICES.md` and `LICENSE` with it; both are in the runtime package and the release zip. Everything that ships is under a permissive licence, CI enforces that (`cargo deny`), and the clients have no dependencies.
 
-`sonarad.exe` needs the Microsoft Visual C++ runtime (`vcruntime140.dll`), present on most PCs; installers can include Microsoft's redistributable.
+`sonarad.exe` links the C runtime statically. `onnxruntime.dll` needs the Microsoft Visual C++ runtime, whose DLLs ship next to it (Microsoft's redistributable terms allow app-local copies); an installer may install the redistributable instead.
 
 ## Publishing the packages (maintainers)
 
-Releases are cut by `release.yml` on every push to `main`: it builds `sonarad.exe` (release), attaches `sonara-runtime-win-x64-<version>.zip` to the GitHub release and stops there. Nothing is published to npm or PyPI automatically: there are no registry tokens yet. To publish by hand from a checkout of the release tag (the version is already the same in every manifest; `tests/test_manifests.py` checks it):
+Releases are cut by `release.yml` on every push to `main`: it builds `sonarad.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to it (`packaging/runtime_dlls.py`), attaches `sonara-runtime-win-x64-<version>.zip` to the GitHub release and stops there. Nothing is published to npm or PyPI automatically: there are no registry tokens yet. To publish by hand from a checkout of the release tag (the version is already the same in every manifest; `tests/test_manifests.py` checks it):
 
 ```sh
 cargo build -p sonarad --release
+python packaging/runtime_dlls.py stage target/release
 python packaging/notices/gen_notices.py --check
 
 cd clients/ts && npm ci && npm run build && npm test && npm publish --access public
-cd ../../packaging/npm-runtime && npm run build && npm publish --access public   # prepack copies sonarad.exe and the notices
+cd ../../packaging/npm-runtime && npm run build && npm publish --access public   # prepack copies sonarad.exe, the files next to it and the notices
 
 cd ../../clients/python && python -m pip install build twine && python -m build && python -m twine upload dist/*
 ```

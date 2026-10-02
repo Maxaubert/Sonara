@@ -62,6 +62,11 @@ impl Home {
     pub fn runtime_json(&self) -> PathBuf {
         self.dir.join("runtime.json")
     }
+
+    /// `models\<engine>\<version>\` (spec section 3).
+    pub fn models(&self) -> PathBuf {
+        self.dir.join("models")
+    }
 }
 
 #[cfg(test)]

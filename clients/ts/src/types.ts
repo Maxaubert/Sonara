@@ -46,7 +46,23 @@ export interface State {
   volume: number;
   rate: number;
   voice: string | null;
-  engine_status: { engine: string; [extra: string]: unknown };
+  engine_status: EngineStatus;
+  [extra: string]: unknown;
+}
+
+/**
+ * `state.engine_status`. Protocol 1.1 adds readiness: Kokoro is `loading`,
+ * `downloading` (with `progress`), `waiting` to retry or `unavailable`
+ * until it is `ready`, and names the engine speaking meanwhile in
+ * `fallback`. A 1.0 runtime sends only `engine`.
+ */
+export interface EngineStatus {
+  engine: string;
+  ready?: boolean;
+  status?: "ready" | "loading" | "downloading" | "waiting" | "unavailable";
+  progress?: { done: number; total: number };
+  fallback?: string;
+  message?: string;
   [extra: string]: unknown;
 }
 

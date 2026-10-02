@@ -23,8 +23,14 @@ def test_zip_holds_the_runtime_and_the_notices_under_one_folder(tmp_path):
     build.mkdir()
     exe = build / "sonarad.exe"
     exe.write_bytes(b"MZ fake")
-    (build / "onnxruntime.dll").write_bytes(b"dll")
+    shipped = (
+        "onnxruntime.dll", "onnxruntime-LICENSE.txt", "onnxruntime-ThirdPartyNotices.txt",
+        "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll",
+    )
+    for f in shipped:
+        (build / f).write_bytes(b"runtime file")
     (build / "other.dll").write_bytes(b"not shipped")
+    (build / "onnxruntime_providers_shared.dll").write_bytes(b"not needed on CPU")
     path = rz.build_zip(exe, tmp_path / "dist", "1.2.3")
     assert path.name == "sonara-runtime-win-x64-1.2.3.zip"
     with zipfile.ZipFile(path) as z:
@@ -32,8 +38,17 @@ def test_zip_holds_the_runtime_and_the_notices_under_one_folder(tmp_path):
         assert z.read("sonara-runtime-win-x64-1.2.3/sonarad.exe") == b"MZ fake"
     assert names == sorted(
         f"sonara-runtime-win-x64-1.2.3/{n}"
-        for n in ("sonarad.exe", "onnxruntime.dll", "LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
+        for n in ("sonarad.exe", *shipped, "LICENSE", "LICENSING.md", "THIRD_PARTY_NOTICES.md")
     )
+
+
+def test_the_zip_needs_onnx_runtime_for_kokoro(tmp_path):
+    build = tmp_path / "release"
+    build.mkdir()
+    exe = build / "sonarad.exe"
+    exe.write_bytes(b"MZ fake")
+    with pytest.raises(SystemExit, match="runtime_dlls.py stage"):
+        _module().build_zip(exe, tmp_path / "dist", "1.2.3")
 
 
 def test_a_missing_exe_is_a_clear_error(tmp_path):

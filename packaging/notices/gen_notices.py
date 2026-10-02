@@ -38,7 +38,7 @@ PREFERENCE = ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Zlib"
 def cargo_metadata() -> dict:
     out = subprocess.run(
         ["cargo", "metadata", "--format-version", "1", "--locked", "--filter-platform", TARGET],
-        cwd=REPO, capture_output=True, text=True, check=True,
+        cwd=REPO, capture_output=True, text=True, encoding="utf-8", check=True,
     )
     return json.loads(out.stdout)
 

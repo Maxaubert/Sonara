@@ -8,17 +8,25 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 
 ## Rust crates in sonarad.exe (x86_64-pc-windows-msvc)
 
-60 crates. Where a crate offers a choice of licences, Sonara uses it under the one in the "used under" column. Copyright belongs to the authors listed.
+95 crates. Where a crate offers a choice of licences, Sonara uses it under the one in the "used under" column. Copyright belongs to the authors listed.
 
 | crate | version | licence | used under | authors | source |
 |---|---|---|---|---|---|
 | aho-corasick | 1.1.5 | Unlicense OR MIT | MIT | Andrew Gallant | https://github.com/BurntSushi/aho-corasick |
 | atomic-waker | 1.1.2 | Apache-2.0 OR MIT | MIT | Stjepan Glavina, Contributors to futures-rs | https://github.com/smol-rs/atomic-waker |
+| base64 | 0.23.1 | MIT OR Apache-2.0 | MIT | Marshall Pierce | https://github.com/marshallpierce/rust-base64 |
+| block-buffer | 0.10.4 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/utils |
 | bytes | 1.12.1 | MIT | MIT | Carl Lerche, Sean McArthur | https://github.com/tokio-rs/bytes |
+| cfg-if | 1.0.5 | MIT OR Apache-2.0 | MIT | Alex Crichton | https://github.com/rust-lang/cfg-if |
 | cpal | 0.16.0 | Apache-2.0 | Apache-2.0 | the cpal authors | https://github.com/rustaudio/cpal |
+| cpufeatures | 0.2.17 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/utils |
+| crypto-common | 0.1.7 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/traits |
 | dasp_sample | 0.11.0 | MIT OR Apache-2.0 | MIT | mitchmindtree | https://github.com/rustaudio/sample.git |
+| digest | 0.10.7 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/traits |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | MIT | the futures-channel authors | https://github.com/rust-lang/futures-rs |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 | MIT | the futures-core authors | https://github.com/rust-lang/futures-rs |
+| generic-array | 0.14.7 | MIT | MIT | Bartłomiej Kamiński, Aaron Trent | https://github.com/fizyk20/generic-array.git |
+| getrandom | 0.2.17 | MIT OR Apache-2.0 | MIT | The Rand Project Developers | https://github.com/rust-random/getrandom |
 | http | 1.5.0 | MIT OR Apache-2.0 | MIT | Alex Crichton, Carl Lerche, Sean McArthur | https://github.com/hyperium/http |
 | http-body | 1.1.0 | MIT | MIT | Carl Lerche, Lucio Franco, Sean McArthur | https://github.com/hyperium/http-body |
 | http-body-util | 0.1.5 | MIT | MIT | Carl Lerche, Lucio Franco, Sean McArthur | https://github.com/hyperium/http-body |
@@ -27,33 +35,58 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 | hyper | 1.11.1 | MIT | MIT | Sean McArthur | https://github.com/hyperium/hyper |
 | hyper-util | 0.1.21 | MIT | MIT | Sean McArthur | https://github.com/hyperium/hyper-util |
 | itoa | 1.0.18 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/itoa |
+| libloading | 0.9.0 | ISC | ISC | Simonas Kazlauskas | https://github.com/nagisa/rust_libloading/ |
+| log | 0.4.34 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-lang/log |
+| lzma-rust2 | 0.15.8 | Apache-2.0 | Apache-2.0 | the lzma-rust2 authors | https://github.com/hasenbanck/lzma-rust2/ |
+| matrixmultiply | 0.3.11 | MIT/Apache-2.0 | MIT | bluss, R. Janis Goldschmidt | https://github.com/bluss/matrixmultiply/ |
 | memchr | 2.8.3 | Unlicense OR MIT | MIT | Andrew Gallant, bluss | https://github.com/BurntSushi/memchr |
 | mio | 1.2.3 | MIT | MIT | Carl Lerche, Thomas de Zeeuw, Tokio Contributors | https://github.com/tokio-rs/mio |
+| ndarray | 0.17.2 | MIT OR Apache-2.0 | MIT | Ulrik Sverdrup "bluss", Jim Turner | https://github.com/rust-ndarray/ndarray |
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-bigint |
+| num-complex | 0.4.6 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-complex |
 | num-integer | 0.1.47 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-integer |
 | num-rational | 0.4.2 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-rational |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | MIT | The Rust Project Developers | https://github.com/rust-num/num-traits |
+| num2words | 0.4.1 | MIT OR Apache-2.0 | MIT | Asperatus | https://github.com/Ballasi/num2words/ |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | MIT | Aleksey Kladov | https://github.com/matklad/once_cell |
+| ort | 2.0.0-rc.13 | MIT OR Apache-2.0 | MIT | pyke.io, Nicolas Bigaouette | https://github.com/pykeio/ort |
+| ort-sys | 2.0.0-rc.13 | MIT OR Apache-2.0 | MIT | pyke.io | https://github.com/pykeio/ort |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | MIT | The rust-url developers | https://github.com/servo/rust-url/ |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT | MIT | the pin-project-lite authors | https://github.com/taiki-e/pin-project-lite |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | MIT | David Tolnay, Alex Crichton | https://github.com/dtolnay/proc-macro2 |
 | quote | 1.0.47 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/quote |
+| rawpointer | 0.2.1 | MIT/Apache-2.0 | MIT | bluss | https://github.com/bluss/rawpointer/ |
 | regex | 1.13.1 | MIT OR Apache-2.0 | MIT | The Rust Project Developers, Andrew Gallant | https://github.com/rust-lang/regex |
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | MIT | The Rust Project Developers, Andrew Gallant | https://github.com/rust-lang/regex |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | MIT | The Rust Project Developers, Andrew Gallant | https://github.com/rust-lang/regex |
+| ring | 0.17.14 | Apache-2.0 AND ISC | Apache-2.0 AND ISC | the ring authors | https://github.com/briansmith/ring |
 | rodio | 0.21.1 | MIT OR Apache-2.0 | MIT | the rodio authors | https://github.com/RustAudio/rodio |
+| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | MIT | the rustls authors | https://github.com/rustls/rustls |
+| rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | MIT | the rustls-pki-types authors | https://github.com/rustls/pki-types |
+| rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | MIT | the rustls-platform-verifier authors | https://github.com/rustls/rustls-platform-verifier |
+| rustls-webpki | 0.103.15 | ISC | ISC | the rustls-webpki authors | https://github.com/rustls/webpki |
 | serde | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/json |
+| sha2 | 0.10.9 | MIT OR Apache-2.0 | MIT | RustCrypto Developers | https://github.com/RustCrypto/hashes |
 | smallvec | 1.16.2 | MIT OR Apache-2.0 | MIT | The Servo Project Developers | https://github.com/servo/rust-smallvec |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | MIT | Alex Crichton, Thomas de Zeeuw | https://github.com/rust-lang/socket2 |
+| subtle | 2.6.1 | BSD-3-Clause | BSD-3-Clause | Isis Lovecruft, Henry de Valence | https://github.com/dalek-cryptography/subtle |
 | syn | 2.0.119 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/syn |
 | syn | 3.0.6 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/syn |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/thiserror |
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | MIT | David Tolnay | https://github.com/dtolnay/thiserror |
 | tokio | 1.53.1 | MIT | MIT | Tokio Contributors | https://github.com/tokio-rs/tokio |
 | tokio-macros | 2.7.2 | MIT | MIT | Tokio Contributors | https://github.com/tokio-rs/tokio |
+| tracing | 0.1.44 | MIT | MIT | Eliza Weisman, Tokio Contributors | https://github.com/tokio-rs/tracing |
+| tracing-core | 0.1.36 | MIT | MIT | Tokio Contributors | https://github.com/tokio-rs/tracing |
+| typenum | 1.20.1 | MIT OR Apache-2.0 | MIT | the typenum authors | https://github.com/paholg/typenum |
 | unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | MIT AND Unicode-3.0 | David Tolnay | https://github.com/dtolnay/unicode-ident |
+| untrusted | 0.9.0 | ISC | ISC | Brian Smith | https://github.com/briansmith/untrusted |
+| ureq | 3.4.2 | MIT OR Apache-2.0 | MIT | Martin Algesten, Jacob Hoffman-Andrews | https://github.com/algesten/ureq |
+| ureq-proto | 0.6.4 | MIT OR Apache-2.0 | MIT | Martin Algesten | https://github.com/algesten/ureq-proto |
+| utf8-zero | 0.8.1 | MIT OR Apache-2.0 | MIT | Simon Sapin, Martin Algesten | https://github.com/algesten/utf8-zero |
 | windows | 0.54.0 | MIT OR Apache-2.0 | MIT | Microsoft | https://github.com/microsoft/windows-rs |
 | windows | 0.62.2 | MIT OR Apache-2.0 | MIT | the windows authors | https://github.com/microsoft/windows-rs |
 | windows-collections | 0.3.2 | MIT OR Apache-2.0 | MIT | the windows-collections authors | https://github.com/microsoft/windows-rs |
@@ -71,40 +104,45 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | MIT | Microsoft | https://github.com/microsoft/windows-rs |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 | MIT | the windows-threading authors | https://github.com/microsoft/windows-rs |
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | MIT | Microsoft | https://github.com/microsoft/windows-rs |
+| winreg | 0.56.0 | MIT | MIT | Igor Shaula | https://github.com/gentoo90/winreg-rs |
+| zeroize | 1.9.0 | Apache-2.0 OR MIT | MIT | The RustCrypto Project Developers | https://github.com/RustCrypto/utils |
 | zmij | 1.0.23 | MIT | MIT | David Tolnay | https://github.com/dtolnay/zmij |
 
 ## Models, data and Microsoft components
 
-Hand-maintained (`packaging/notices/models-and-data.md`). Each entry says whether it ships in the runtime release today.
+Hand-maintained (`packaging/notices/models-and-data.md`). Each entry says whether it ships in the runtime release today. Sources and licences checked on 2026-10-02 (runtime M4, #200).
 
 ### Kokoro-82M v1.0 voice model
 
-- Source: hexgrad, https://huggingface.co/hexgrad/Kokoro-82M
-- Licence: Apache-2.0 (the weights and voice files). Full text below.
-- Ships: no. The Kokoro engine downloads the model on first use into `%LOCALAPPDATA%\Sonara\models\kokoro\<version>\` (SHA-256 pinned); a host may pre-seed that folder, and must then ship this notice. Not part of this release (the engine lands with runtime milestone M4).
+- Source: hexgrad, https://huggingface.co/hexgrad/Kokoro-82M (model card licence: Apache-2.0). Full text below.
+- Files: `kokoro-v1.0.onnx` (the fp32 ONNX export by taylorchu/kokoro-onnx, MIT, of the Apache-2.0 weights) and `voices-v1.0.bin` (the Kokoro v1.0 voice style vectors), from the release assets `model-files-v1.0` of https://github.com/thewh1teagle/kokoro-onnx (MIT). SHA-256 `7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5` and `bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d`.
+- Ships: no. The Kokoro engine downloads both files on first use into `%LOCALAPPDATA%\Sonara\models\kokoro\v1.0\` (SHA-256 pinned); a host may pre-seed that folder, and must then ship this notice.
+- Ships in `sonarad.exe`: the model's phoneme vocabulary (the `vocab` table of Kokoro-82M's `config.json`, Apache-2.0).
 
-### misaki English lexicons
+### misaki G2P (vendored misaki-rs) and its English lexicons
 
-- Source: hexgrad, https://github.com/hexgrad/misaki
-- Licence: Apache-2.0. Attribution: the English pronunciation lexicons used by the Kokoro engine come from misaki by hexgrad.
-- Data provenance: some lexicon entries were corrected with the output of espeak-ng (GPL-3.0); no espeak-ng code or data ships with Sonara. This provenance is reviewed before the first commercial bundle (runtime spec, section 5).
-- Ships: no (with the Kokoro engine, M4).
+- Code: misaki-rs 0.6.0 by Michele Yin, https://github.com/MicheleYin/misaki-rs, MIT (Copyright (c) 2026 Michele Yin), a Rust port of misaki. Vendored and trimmed as `crates/misaki` (US English only, compressed data, no espeak fallback).
+- Lexicons: hexgrad, https://github.com/hexgrad/misaki, Apache-2.0. Attribution: the English pronunciation lexicons used by the Kokoro engine come from misaki by hexgrad.
+- Data provenance: misaki-rs extended and corrected the US lexicon "using eSpeak" (its README): some entries are output of espeak-ng (GPL-3.0). No espeak-ng code or data ships with Sonara. This provenance is reviewed before the first commercial bundle (runtime spec, section 5).
+- Part-of-speech tagger weights (inside misaki-rs): NLTK's `averaged_perceptron_tagger` model (https://github.com/nltk/nltk_data), as packaged by postagger.rs (Apache-2.0, https://github.com/shubham0204/postagger.rs); the tagger design comes from textblob-aptagger by Matthew Honnibal (MIT). The weights were trained on the Wall Street Journal part of the Penn Treebank; reviewed with the lexicon provenance before the first commercial bundle.
+- Ships: yes, compiled into `sonarad.exe` (xz-compressed).
 
 ### Microsoft ONNX Runtime
 
-- Source: Microsoft, https://github.com/microsoft/onnxruntime (the official CPU build)
-- Licence: MIT, Copyright (c) Microsoft Corporation. Full text below.
-- Ships: no. It will ship as `onnxruntime.dll` next to `sonarad.exe` with the Kokoro engine (M4).
+- Source: Microsoft, https://github.com/microsoft/onnxruntime, the official CPU build `onnxruntime-win-x64-1.28.2.zip` (SHA-256 `c4eedd29489d5feca21866d054638416f3655bf6b18851b3b6b85c8313e95c35`).
+- Licence: MIT, Copyright (c) Microsoft Corporation. Full text below. Its own third-party notices ship as `onnxruntime-ThirdPartyNotices.txt`.
+- Ships: yes, as `onnxruntime.dll` next to `sonarad.exe`, with `onnxruntime-LICENSE.txt` and `onnxruntime-ThirdPartyNotices.txt` (`packaging/runtime_dlls.py`). `sonarad.exe` loads it at run time by its full path; without it the Kokoro engine is unavailable and Windows' voices speak.
 
 ### Microsoft Visual C++ runtime
 
-- `sonarad.exe` is built with MSVC and loads `vcruntime140.dll` and the Universal CRT (`api-ms-win-crt-*`), which Windows 10 and 11 provide.
-- Licence: Microsoft Visual C++ Redistributable, "Distributable Code" under the Microsoft Visual Studio licence terms. A bundler may ship the redistributable (or `vcruntime140.dll` next to the exe) with its own installer, or rely on the copy already on the PC.
-- Ships: no; the runtime zip does not include it.
+- `sonarad.exe` and `sonara-hook.exe` link the C runtime statically (`+crt-static`) and need no Visual C++ redistributable; they use the Universal CRT that Windows 10 and 11 provide.
+- `onnxruntime.dll` imports `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` and `vcruntime140_1.dll`. These ship app-locally next to it, copied from the Visual Studio redistributable folder (`VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`). `runtime_dlls.py` refuses a `msvcp140.dll` or `vcruntime140.dll` older than 14.40.33810.0 (VS 2022 17.10, the oldest runtime ONNX Runtime 1.28.2 runs with) and prints the versions it stages; the shipped version is that of the build runner's newest Visual Studio (14.51.36247.0 on the development PC, 2026-10-02).
+- Licence: Microsoft Visual C++ Redistributable, "Distributable Code" under the Microsoft Visual Studio licence terms, which allow app-local deployment of these files. A bundler may instead install the redistributable with its own installer.
+- Ships: yes (the four DLLs above).
 
 ### Windows voices (OneCore)
 
-- The default voice is Windows' own speech (`Windows.Media.SpeechSynthesis`), part of the operating system. Nothing ships.
+- Windows' own speech (`Windows.Media.SpeechSynthesis`), part of the operating system: the zero-download voice and Kokoro's stand-in until its model is ready. Nothing ships.
 
 ## Licence texts
 
@@ -315,6 +353,52 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
    of your accepting any such warranty or additional liability.
 
 END OF TERMS AND CONDITIONS
+```
+
+### BSD-3-Clause
+
+```text
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+```
+
+### ISC
+
+```text
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ```
 
 ### Unicode-3.0

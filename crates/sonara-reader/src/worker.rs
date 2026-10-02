@@ -9,7 +9,7 @@ use sonara_audio::{AudioEvent, Output, PcmChunk};
 use sonara_core::reader::{
     Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
 };
-use sonara_engine::{Engine, Registry};
+use sonara_engine::{Engine, EngineStatus, Registry};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -20,6 +20,9 @@ use std::time::Duration;
 /// How often the audio forwarder looks for shutdown while the output is
 /// quiet.
 const FORWARD_POLL: Duration = Duration::from_millis(50);
+/// How often the worker reads the engine's status (a model download moves
+/// on its own).
+const STATUS_POLL: Duration = Duration::from_millis(250);
 
 pub(crate) enum Msg {
     Speak {
@@ -40,6 +43,7 @@ pub(crate) enum Msg {
         reply: Sender<Value>,
     },
     State(Sender<State>),
+    EngineStatus(Sender<(EngineStatus, u64)>),
     Subscribe(Sender<Receiver<Event>>),
     Clip {
         samples: Vec<i16>,
@@ -89,15 +93,24 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         muted: false,
         subscribers: Vec::new(),
         not_ready: None,
+        status: EngineStatus::ready(),
+        status_changes: 0,
     };
     thread::Builder::new()
         .name("sonara-reader".into())
         .spawn(move || {
             l.init(start.voice, start.rate, start.volume);
-            while let Ok(msg) = rx.recv() {
-                if !l.handle(msg) {
-                    break;
+            loop {
+                match rx.recv_timeout(STATUS_POLL) {
+                    Ok(msg) => {
+                        if !l.handle(msg) {
+                            break;
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
                 }
+                l.check_status();
             }
             l.close();
             stop.store(true, Ordering::SeqCst);
@@ -154,6 +167,10 @@ struct Loop {
     /// Why the current engine failed its warm-up, told again to each new
     /// subscriber (they can only subscribe once `new` returned).
     not_ready: Option<String>,
+    /// The current engine's status as last told to subscribers.
+    status: EngineStatus,
+    /// How many status changes were told (`Event::EngineStatus::changes`).
+    status_changes: u64,
 }
 
 impl Loop {
@@ -165,7 +182,30 @@ impl Loop {
         self.volume = self.reader.state().volume;
         let fx = self.reader.set_volume(volume);
         self.run(fx);
+        self.status = self.engine.status();
         self.synth.warm(self.engine.clone());
+    }
+
+    /// Tell subscribers when the current engine's status changed (a model
+    /// loaded, a download moved on or failed), with a log line when its
+    /// readiness changed (not for every bit of download progress).
+    fn check_status(&mut self) {
+        let status = self.engine.status();
+        if status != self.status {
+            let moved = status.readiness != self.status.readiness;
+            self.status = status.clone();
+            self.status_changes += 1;
+            if moved {
+                self.broadcast(Event::Log {
+                    message: format!("engine '{}' is {status}", self.engine.id()),
+                });
+            }
+            self.broadcast(Event::EngineStatus {
+                engine: self.engine.id(),
+                status,
+                changes: self.status_changes,
+            });
+        }
     }
 
     /// Handle one message; false ends the loop.
@@ -196,6 +236,11 @@ impl Loop {
             }
             Msg::State(reply) => {
                 let _ = reply.send(self.reader.state());
+            }
+            Msg::EngineStatus(reply) => {
+                // Tell a change first, so the answer and the count agree.
+                self.check_status();
+                let _ = reply.send((self.status.clone(), self.status_changes));
             }
             Msg::Subscribe(reply) => {
                 let (tx, rx) = channel();

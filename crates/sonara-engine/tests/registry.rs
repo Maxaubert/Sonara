@@ -100,3 +100,26 @@ fn refusal_message_names_the_engine_and_class() {
         "engine 'onecore' refused: licence class Os is not allowed by this host"
     );
 }
+
+#[test]
+fn engine_status_reads_well_in_a_log() {
+    use sonara_engine::{EngineId, EngineStatus, Readiness};
+    let s = EngineStatus {
+        readiness: Readiness::Downloading,
+        progress: Some((40, 100)),
+        fallback: Some(EngineId("onecore")),
+        message: None,
+    };
+    assert_eq!(
+        s.to_string(),
+        "downloading its model (40%); speaking with onecore meanwhile"
+    );
+    let s = EngineStatus {
+        readiness: Readiness::Waiting,
+        progress: None,
+        fallback: None,
+        message: Some("HTTP 503".into()),
+    };
+    assert_eq!(s.to_string(), "not ready, retrying later: HTTP 503");
+    assert_eq!(EngineStatus::ready().to_string(), "ready");
+}
