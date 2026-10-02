@@ -9,6 +9,12 @@ so a failure here can never break the Claude session. Keep total work tiny.
 """
 import os
 import sys
+import time
+
+# Process start time, stamped on every message (#174): hook events are
+# separate processes, so the old turn's text can reach the daemon AFTER the
+# new prompt; the daemon drops what was started before that prompt.
+_T0 = time.time()
 
 
 def main() -> None:
@@ -82,6 +88,9 @@ def main() -> None:
     msgs = handle_event(event, payload)
     if not msgs:
         return
+    for m in msgs:
+        if isinstance(m, dict):
+            m.setdefault("t", _T0)
 
     try:
         client.ensure_daemon()
