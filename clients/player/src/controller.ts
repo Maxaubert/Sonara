@@ -194,8 +194,8 @@ export class PlayerController {
       ok = false;
       this.fail(err);
     }
+    if (ok) this.succeed();
     if (shown) this.settle(key!, ok);
-    else if (ok) this.succeed();
     this.update();
   }
 

@@ -88,9 +88,12 @@ describe("rendering", () => {
 
   it("shows a failed action", async () => {
     const { client } = await mount(playing());
+    const region = screen.getByRole("status");
+    assert.equal(region.textContent, "", "the live region is there, empty, before any failure");
     client.failWith = new Error("E_ENGINE: no voice");
     await act(async () => fireEvent.click(button("Pause")));
-    assert.equal(screen.getByRole("status").textContent, "E_ENGINE: no voice");
+    assert.equal(screen.getByRole("status"), region, "the same region, now holding the error");
+    assert.equal(region.textContent, "E_ENGINE: no voice");
   });
 
   it("takes translated labels, a theme and a class", async () => {

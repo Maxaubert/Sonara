@@ -131,11 +131,11 @@ export function SonaraPlayer(props: SonaraPlayerProps): ReactElement {
           }}
         />
       </div>
-      {view.error ? (
-        <p className="sonara-player__error" role="status">
-          {view.error.message}
-        </p>
-      ) : null}
+      {/* Always in the DOM: a live region that appears with its text
+          already in it goes unannounced in several screen readers. */}
+      <p className="sonara-player__error" role="status">
+        {view.error ? view.error.message : ""}
+      </p>
     </div>
   );
 }

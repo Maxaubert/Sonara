@@ -180,7 +180,7 @@ export const PLAYER_CSS = `
   accent-color: var(--_accent);
   cursor: pointer;
 }
-:where(.sonara-player__volume:disabled) {
+:where(.sonara-player__volume[aria-disabled="true"]) {
   opacity: 0.38;
   cursor: default;
 }
@@ -189,6 +189,13 @@ export const PLAYER_CSS = `
   margin: 0;
   font-size: 0.85em;
   color: var(--_danger);
+}
+:where(.sonara-player__error:empty) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
 }
 :where(.sonara-player__icon) {
   display: block;

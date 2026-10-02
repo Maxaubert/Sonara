@@ -236,6 +236,22 @@ describe("actions", () => {
     assert.equal(player.view.error, null);
   });
 
+  it("clears the error when a shown action (pause, mute) succeeds", async () => {
+    const { client, player } = setup();
+    client.emit(playing());
+    client.failWith = new Error("boom");
+    await player.next();
+    assert.equal(player.view.error.message, "boom");
+    client.failWith = null;
+    await player.pause();
+    assert.equal(player.view.error, null, "a successful pause clears the error");
+    client.failWith = new Error("boom");
+    await player.next();
+    client.failWith = null;
+    await player.mute();
+    assert.equal(player.view.error, null, "a successful mute clears the error");
+  });
+
   it("does nothing after dispose", async () => {
     const { client, player, views } = setup();
     client.emit(playing());
