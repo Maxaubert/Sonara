@@ -85,6 +85,58 @@ impl Engine for GateEngine {
     }
 }
 
+/// Speaks like the fake engine, but `warm` blocks until `cancel`.
+#[derive(Default)]
+pub struct SlowWarmEngine {
+    inner: FakeEngine,
+    /// (warming, cancelled)
+    state: Mutex<(bool, bool)>,
+    changed: Condvar,
+}
+
+impl SlowWarmEngine {
+    /// Wait until `warm` is running.
+    pub fn wait_warming(&self) {
+        let end = Instant::now() + super::TIMEOUT;
+        while !self.state.lock().unwrap().0 {
+            assert!(Instant::now() < end, "warm never started");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+}
+
+impl Engine for SlowWarmEngine {
+    fn id(&self) -> EngineId {
+        EngineId("slow-warm")
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Permissive
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        let mut st = self.state.lock().unwrap();
+        st.0 = true;
+        while !st.1 {
+            st = self.changed.wait(st).unwrap();
+        }
+        Err(Error::Cancelled)
+    }
+
+    fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
+        self.inner.synthesize(text, voice, rate)
+    }
+
+    fn cancel(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.changed.notify_all();
+    }
+}
+
 /// Never ready, never speaks.
 pub struct BrokenEngine;
 

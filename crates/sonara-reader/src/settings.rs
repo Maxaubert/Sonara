@@ -64,14 +64,14 @@ pub(crate) fn check_volume(v: u64) -> Result<u8> {
     Ok(v as u8)
 }
 
-pub(crate) fn check_rate(v: u32) -> Result<u32> {
-    if !(RATE_MIN..=RATE_MAX).contains(&v) {
+pub(crate) fn check_rate(v: u64) -> Result<u32> {
+    if !(RATE_MIN as u64..=RATE_MAX as u64).contains(&v) {
         return Err(bad(
             Key::Rate,
             format!("{v} is not in {RATE_MIN}..={RATE_MAX}"),
         ));
     }
-    Ok(v)
+    Ok(v as u32)
 }
 
 pub(crate) fn number(key: Key, value: &Value) -> Result<u64> {

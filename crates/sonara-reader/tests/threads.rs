@@ -2,7 +2,7 @@
 //! engines off the control path, engine errors, shutdown, control storms.
 mod common;
 
-use common::engines::{BrokenEngine, GateEngine};
+use common::engines::{BrokenEngine, GateEngine, SlowWarmEngine};
 use common::{fmt, len, play, Rig, THREE, TIMEOUT};
 use sonara_audio::OutputCall;
 use sonara_reader::{
@@ -152,6 +152,37 @@ fn an_engine_that_cannot_speak_fails_items_and_says_why() {
 }
 
 #[test]
+fn a_late_subscriber_still_hears_why_the_engine_is_not_ready() {
+    let r = Rig::with(Arc::new(BrokenEngine));
+    let why = "log engine 'broken' is not ready: no usable Windows voices";
+    // The warm-up may end before or after the rig subscribed: told once.
+    let first = fmt(&r.events.recv_timeout(TIMEOUT).expect("no warm-up log"));
+    assert!(first.starts_with(why), "{first}");
+    let late = r.h.subscribe().unwrap();
+    r.h.state().unwrap();
+    let got: Vec<_> = late.try_iter().map(|e| fmt(&e)).collect();
+    assert_eq!(got, [first]);
+    assert_eq!(r.events_now(), Vec::<String>::new());
+}
+
+#[test]
+fn shutdown_cancels_an_engine_warm_up() {
+    let engine = Arc::new(SlowWarmEngine::default());
+    let r = Rig::with(engine.clone());
+    engine.wait_warming();
+    let h = r.h.clone();
+    let (done, finished) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        h.shutdown();
+        let _ = done.send(());
+    });
+    assert!(
+        finished.recv_timeout(TIMEOUT).is_ok(),
+        "shutdown waited for the warm-up"
+    );
+}
+
+#[test]
 fn shutdown_while_playing_ends_items_and_closes_everything() {
     let (r, _) = Rig::new();
     speak(&r.h, THREE);
@@ -178,6 +209,7 @@ fn shutdown_while_playing_ends_items_and_closes_everything() {
         Err(Error::Closed)
     );
     assert_eq!(clone.get(Key::Volume), Err(Error::Closed));
+    assert_eq!(clone.voices(None), Err(Error::Closed));
     assert!(clone.subscribe().is_err());
     clone.shutdown();
     r.h.shutdown();

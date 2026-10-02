@@ -15,7 +15,9 @@
 //!   `Event::Log`.
 //! - `subscribe` gives every subscriber every event from then on. Sending
 //!   never waits (the channels are unbounded), so a slow subscriber never
-//!   blocks the reader; a dropped one is forgotten on the next event.
+//!   blocks the reader; a dropped one is forgotten on the next event. A host
+//!   that relays events to clients (`sonarad`) bounds or drains its own
+//!   per-client queues.
 //! - The handle is `Clone + Send + Sync`. Each call is answered by the
 //!   worker after its effects were carried out, so calls from one thread
 //!   apply in order. `shutdown` (or dropping the last handle) stops speech,
@@ -117,12 +119,23 @@ struct Shared {
 }
 
 impl Shared {
+    /// Joins while holding the lock, so a concurrent caller returns only
+    /// once the threads have stopped.
     fn shutdown(&self) {
-        let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
-        if let Some(worker) = worker {
+        let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(worker) = worker.take() {
             let _ = self.tx.send(Msg::Shutdown);
             let _ = worker.join();
         }
+    }
+}
+
+impl Shared {
+    fn is_closed(&self) -> bool {
+        self.worker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none()
     }
 }
 
@@ -152,7 +165,7 @@ impl ReaderHandle {
             }
         };
         let voice = settings::resolve_voice(engine.as_ref(), config.voice.as_deref())?;
-        settings::check_rate(config.rate)?;
+        settings::check_rate(config.rate as u64)?;
         settings::check_volume(config.volume as u64)?;
         let (output, events) = match config.output {
             Some(o) => o,
@@ -235,13 +248,17 @@ impl ReaderHandle {
 
     /// Voices of one engine, or of every registered engine.
     pub fn voices(&self, engine: Option<&str>) -> Result<Vec<Voice>> {
+        if self.shared.is_closed() {
+            return Err(Error::Closed);
+        }
         match engine {
             Some(id) => Ok(self.shared.registry.get(id)?.voices()),
             None => Ok(self.shared.registry.voices()),
         }
     }
 
-    /// Every event from now on. Dropping the receiver unsubscribes.
+    /// Every event from now on. Dropping the receiver unsubscribes. If the
+    /// current engine failed its warm-up, the first event is that `Log`.
     pub fn subscribe(&self) -> Result<Receiver<Event>> {
         self.call(Msg::Subscribe)
     }

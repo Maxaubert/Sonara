@@ -83,6 +83,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         volume: 100,
         muted: false,
         subscribers: Vec::new(),
+        not_ready: None,
     };
     thread::Builder::new()
         .name("sonara-reader".into())
@@ -145,6 +146,9 @@ struct Loop {
     volume: u8,
     muted: bool,
     subscribers: Vec<Sender<Event>>,
+    /// Why the current engine failed its warm-up, told again to each new
+    /// subscriber (they can only subscribe once `new` returned).
+    not_ready: Option<String>,
 }
 
 impl Loop {
@@ -190,6 +194,11 @@ impl Loop {
             }
             Msg::Subscribe(reply) => {
                 let (tx, rx) = channel();
+                if let Some(message) = &self.not_ready {
+                    let _ = tx.send(Event::Log {
+                        message: message.clone(),
+                    });
+                }
                 self.subscribers.push(tx);
                 let _ = reply.send(rx);
             }
@@ -216,8 +225,7 @@ impl Loop {
                 self.reader.set_volume(v)
             }
             Key::Rate => {
-                let n = settings::number(key, &value)?;
-                let v = settings::check_rate(u32::try_from(n).unwrap_or(u32::MAX))?;
+                let v = settings::check_rate(settings::number(key, &value)?)?;
                 self.reader.set_rate(v)
             }
             Key::Voice => {
@@ -245,6 +253,7 @@ impl Loop {
                     return Ok(());
                 }
                 self.engine = engine;
+                self.not_ready = None;
                 self.synth.warm(self.engine.clone());
                 // A voice of the old engine means nothing to the new one.
                 match self.reader.state().voice {
@@ -285,7 +294,10 @@ impl Loop {
                 chunk,
                 result,
             } => (item, chunk, result),
-            Done::WarmFailed(message) => {
+            Done::WarmFailed { engine, message } => {
+                if engine == self.engine.id() {
+                    self.not_ready = Some(message.clone());
+                }
                 self.broadcast(Event::Log { message });
                 return;
             }

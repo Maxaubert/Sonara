@@ -36,6 +36,13 @@ fn out_of_range_and_wrong_types_are_refused_and_change_nothing() {
     bad(r.h.set(Key::Rate, Value::Number(99)), Key::Rate);
     bad(r.h.set(Key::Rate, Value::Number(401)), Key::Rate);
     bad(r.h.set(Key::Rate, Value::Number(u64::MAX)), Key::Rate);
+    // The message echoes what was sent, not a narrowed number.
+    match r.h.set(Key::Rate, Value::Number(1 << 40)) {
+        Err(Error::BadValue { reason, .. }) => {
+            assert!(reason.starts_with("1099511627776 "), "{reason}")
+        }
+        other => panic!("expected BadValue, got {other:?}"),
+    }
     bad(r.h.set(Key::Voice, Value::Number(1)), Key::Voice);
     bad(r.h.set(Key::Engine, Value::Null), Key::Engine);
     assert_eq!(

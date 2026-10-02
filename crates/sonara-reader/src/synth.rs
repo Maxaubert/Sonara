@@ -2,7 +2,7 @@
 //! The worker queues jobs, moves the one a play waits for to the front, and
 //! drops the jobs of an item that ended (cancelling it if in flight).
 use sonara_core::reader::ItemId;
-use sonara_engine::{Engine, PcmChunk};
+use sonara_engine::{Engine, EngineId, PcmChunk};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -30,14 +30,18 @@ pub(crate) enum Done {
         chunk: usize,
         result: Result<Vec<PcmChunk>, sonara_engine::Error>,
     },
-    WarmFailed(String),
+    WarmFailed {
+        engine: EngineId,
+        message: String,
+    },
 }
 
 #[derive(Default)]
 struct Queue {
     tasks: VecDeque<Task>,
-    /// The chunk being synthesized and its engine, for cancel.
-    in_flight: Option<(ItemId, Arc<dyn Engine>)>,
+    /// The task running and its engine, for cancel: the chunk's item, or
+    /// `None` for a warm-up (cancelled only on shutdown).
+    in_flight: Option<(Option<ItemId>, Arc<dyn Engine>)>,
     closed: bool,
 }
 
@@ -105,7 +109,7 @@ impl Synth {
         q.tasks
             .retain(|t| !matches!(t, Task::Chunk(j) if j.item == item));
         if let Some((busy, engine)) = &q.in_flight {
-            if *busy == item {
+            if *busy == Some(item) {
                 engine.cancel();
             }
         }
@@ -144,9 +148,10 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
                     return;
                 }
                 if let Some(task) = q.tasks.pop_front() {
-                    if let Task::Chunk(job) = &task {
-                        q.in_flight = Some((job.item, job.engine.clone()));
-                    }
+                    q.in_flight = Some(match &task {
+                        Task::Warm(engine) => (None, engine.clone()),
+                        Task::Chunk(job) => (Some(job.item), job.engine.clone()),
+                    });
                     break task;
                 }
                 q = shared.wake.wait(q).unwrap_or_else(|e| e.into_inner());
@@ -154,11 +159,13 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
         };
         match task {
             Task::Warm(engine) => {
-                if let Err(e) = engine.warm() {
-                    done(Done::WarmFailed(format!(
-                        "engine '{}' is not ready: {e}",
-                        engine.id()
-                    )));
+                let result = engine.warm();
+                shared.lock().in_flight = None;
+                if let Err(e) = result {
+                    done(Done::WarmFailed {
+                        engine: engine.id(),
+                        message: format!("engine '{}' is not ready: {e}", engine.id()),
+                    });
                 }
             }
             Task::Chunk(job) => {
