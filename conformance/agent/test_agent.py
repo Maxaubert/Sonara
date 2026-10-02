@@ -15,13 +15,16 @@ LONG = long_text(1)
 TWO_LONG = long_text(2)
 
 
-def agent_client(rt, announce=False):
+def agent_client(rt, announce=False, policy=None):
     """A TCP client with the agent extension on, subscribed to state, items
-    and earcons, past the first (idle) state."""
+    and earcons, past the first (idle) state. ``policy`` sets the
+    background speech policy (default: the runtime's, ``earcon_only``)."""
     c = rt.tcp(extensions=["agent"])
     assert c.request({"type": "subscribe", "events": ["state", "items", "earcons"]})["ok"]
     c.state()
     ok(c, {"type": "set", "key": "channel_announce", "value": "on" if announce else "off"})
+    if policy is not None:
+        ok(c, {"type": "set", "key": "background_policy", "value": policy})
     return c
 
 
@@ -164,7 +167,12 @@ def test_text_of_an_earlier_turn_id_is_dropped(rt):
 
 
 def test_the_pause_stays_on_when_another_channel_gets_a_new_turn(rt):
-    c = agent_client(rt)
+    # Both channels are read, so the case runs with policy "all" (#195:
+    # under earcon_only a focused session's background peer is not read).
+    c = agent_client(rt, policy="all")
+    ok(c, {"type": "channel_open", "channel": "a"})
+    ok(c, {"type": "channel_open", "channel": "b"})
+    ok(c, {"type": "focus", "channel": "b"})
     stream(c, "a", LONG)
     assert starts_long(heard(c, 1)[0], "a")
     ok(c, {"type": "control", "action": "pause"})
@@ -288,3 +296,103 @@ def test_agent_over_http(rt):
     assert status == 400 and r["error"]["code"] == "E_BAD_REQUEST"
     status, r = rt.post("get", {"key": "summaries"})
     assert status == 200 and r["value"]["enabled"] is False
+
+
+# -- background speech policy (#195) and per-channel mute (#196) ----------
+
+
+def test_the_background_policy_defaults_to_earcon_only(rt):
+    c = agent_client(rt)
+    assert ok(c, {"type": "get", "key": "background_policy"})["value"] == "earcon_only"
+    r = c.request({"type": "set", "key": "background_policy", "value": "silent"})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
+
+
+def test_earcon_only_reads_the_focused_session_and_chimes_for_the_others(rt):
+    # sessions.py earcon_only: only the foreground session (the last one
+    # prompted) is read; a background session plays its earcons and its
+    # text waits until the user prompts it or switches to it.
+    c = agent_client(rt)
+    for ch in ("fg", "bg"):
+        ok(c, {"type": "channel_open", "channel": ch})
+    ok(c, {"type": "focus", "channel": "fg"})
+    stream(c, "bg", "Background prose.")
+    ok(c, {"type": "ask", "channel": "bg", "kind": "question", "text": "Background question?"})
+    assert earcon(c) == "choice"
+    ok(c, {"type": "turn_end", "channel": "bg"})
+    assert earcon(c) == "turn_done"
+    quiet(c)
+    stream(c, "fg", "Foreground prose.")
+    assert heard(c, 1) == [("Foreground prose.", "fg")]
+    quiet(c)
+    ok(c, {"type": "control", "action": "next_channel"})
+    assert heard(c, 2) == [("Background prose.", "bg"), ("Background question?", "bg")]
+
+
+def test_policy_all_reads_every_session(rt):
+    c = agent_client(rt, policy="all")
+    for ch in ("fg", "bg"):
+        ok(c, {"type": "channel_open", "channel": ch})
+    ok(c, {"type": "focus", "channel": "fg"})
+    stream(c, "bg", "Background prose.")
+    assert heard(c, 1) == [("Background prose.", "bg")]
+
+
+def test_the_previous_focus_finishes_its_message_when_another_session_is_prompted(rt):
+    # ingest.py cooperative hand-off.
+    c = agent_client(rt)
+    ok(c, {"type": "channel_open", "channel": "a"})
+    ok(c, {"type": "channel_open", "channel": "b"})
+    ok(c, {"type": "focus", "channel": "a"})
+    stream(c, "a", "First sentence here. Second sentence here.")
+    assert heard(c, 1) == [("First sentence here.", "a")]
+    ok(c, {"type": "focus", "channel": "b"})
+    stream(c, "b", "Beta answer.")
+    assert heard(c, 2) == [("Second sentence here.", "a"), ("Beta answer.", "b")]
+
+
+def test_a_muted_session_is_held_and_never_switched_to(rt):
+    # #196 (router.py, session_prefs muted): its text waits unread, its
+    # earcons play, a channel switch skips it; unmuted, it is read.
+    c = agent_client(rt, policy="all")
+    for ch in ("a", "m"):
+        ok(c, {"type": "channel_open", "channel": ch})
+    ok(c, {"type": "set", "key": "channel_prefs", "value": {"channel": "m", "muted": True}})
+    stream(c, "m", "Muted words.")
+    ok(c, {"type": "turn_end", "channel": "m"})
+    assert earcon(c) == "turn_done"
+    quiet(c)
+    stream(c, "a", "Alpha words.")
+    assert heard(c, 1) == [("Alpha words.", "a")]
+    c.state(lambda s: s["now_playing"] is None)
+    r = ok(c, {"type": "control", "action": "next_channel"})
+    assert r["channel"] == "a", "the muted session never takes the floor"
+    c.state(lambda s: s["now_playing"] is None)
+    c.events.clear()
+    ok(c, {"type": "set", "key": "channel_prefs", "value": {"channel": "m", "muted": False}})
+    assert heard(c, 1) == [("Muted words.", "m")]
+
+
+def test_muting_the_session_being_read_cuts_it(rt):
+    c = agent_client(rt)
+    stream(c, "a", LONG)
+    assert starts_long(heard(c, 1)[0], "a")
+    ok(c, {"type": "set", "key": "channel_prefs", "value": {"channel": "a", "muted": True}})
+    c.state(lambda s: s["now_playing"] is None)
+    quiet(c)
+
+
+def test_forgetting_a_dead_session(rt):
+    # #197 (Python forget_session): a session that died without SessionEnd.
+    c = agent_client(rt)
+    ok(c, {"type": "channel_open", "channel": "dead", "label": "old"})
+    ok(c, {"type": "channel_open", "channel": "live"})
+    ok(c, {"type": "focus", "channel": "live"})
+    ok(c, {"type": "turn_start", "channel": "dead", "t": 50.0})
+    r = c.request({"type": "set", "key": "channel_prefs", "value": {"channel": "live", "forget": True}})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
+    r = ok(c, {"type": "set", "key": "channel_prefs", "value": {"channel": "dead", "forget": True}})
+    assert [row["channel"] for row in r["value"]] == ["live"]
+    assert c.request({"type": "focus", "channel": "dead"})["error"]["code"] == "E_NOT_FOUND"
+    # Reopened, the old turn's start time no longer applies.
+    assert stream(c, "dead", "Fresh start.", t=1.0)["stale"] is False

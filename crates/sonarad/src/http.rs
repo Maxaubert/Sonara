@@ -123,6 +123,11 @@ async fn route(req: Request<Incoming>, server: Arc<Server>) -> Response<BoxBody>
         ));
     }
     server.lifetime().touch();
+    if server.lifetime().exit_requested().is_some() {
+        // The reader may already be shut down: say so instead of failing
+        // with an engine error (#194).
+        return failure(Failure::new(Code::Busy, "this runtime is exiting"));
+    }
     match (req.method(), kind.as_str()) {
         (&Method::GET, "events") => events(req, server).await,
         (&Method::POST, _) if !kind.is_empty() && !kind.contains('/') => {
@@ -203,6 +208,9 @@ async fn events(req: Request<Incoming>, server: Arc<Server>) -> Response<BoxBody
         Ok(s) => s,
         Err(f) => return failure(f),
     };
+    // Count the stream as a client before subscribing, so the idle exit
+    // cannot be decided in between (#194).
+    let client = server.lifetime().client();
     let srv = server.clone();
     let rx = match tokio::task::spawn_blocking(move || srv.events(set)).await {
         Ok(Ok(rx)) => rx,
@@ -212,7 +220,7 @@ async fn events(req: Request<Incoming>, server: Arc<Server>) -> Response<BoxBody
     let body = SseBody {
         rx,
         ping: tokio::time::interval_at(tokio::time::Instant::now() + PING, PING),
-        _client: server.lifetime().client(),
+        _client: client,
         opened: false,
     };
     let mut r = Response::new(body.boxed_unsync());

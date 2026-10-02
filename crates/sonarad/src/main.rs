@@ -290,14 +290,6 @@ async fn run(
     }
     tokio::spawn(tcp::serve(tcp_listener, server.clone()));
     tokio::spawn(http::serve(http_listener, server.clone()));
-    // Reading, or fetching the Kokoro model: an idle exit mid-download
-    // would leave the first install without Kokoro for longer.
-    let busy_server = server.clone();
-    tokio::spawn(lifetime::monitor(
-        life.clone(),
-        Duration::from_millis(100),
-        move || busy_server.is_reading() || kokoro.as_ref().is_some_and(Kokoro::is_preparing),
-    ));
 
     let info = RuntimeInfo {
         pid: std::process::id(),
@@ -316,6 +308,20 @@ async fn run(
     runtime_file::write(&home.runtime_json(), &info, |p| {
         instance::restrict_to_user(p, sid)
     })?;
+    // The idle countdown starts once clients can find the runtime: a slow
+    // start (the startup sweep, the migration) must not use up the idle
+    // time before the first client could connect (#194).
+    life.touch();
+    // Reading, or fetching the Kokoro model: an idle exit mid-download
+    // would leave the first install without Kokoro for longer.
+    let busy_server = server.clone();
+    let retire_server = server.clone();
+    tokio::spawn(lifetime::monitor(
+        life.clone(),
+        Duration::from_millis(100),
+        move || busy_server.is_reading() || kokoro.as_ref().is_some_and(Kokoro::is_preparing),
+        move || retire_server.retire_if_idle(),
+    ));
     eprintln!(
         "sonarad {VERSION}: listening on 127.0.0.1:{port} (tcp) and 127.0.0.1:{http_port} (http), \
          home {}",

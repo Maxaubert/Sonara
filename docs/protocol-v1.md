@@ -138,7 +138,7 @@ A rate, voice or engine change applies to chunks synthesized from then on. Out-o
 
 ### `subscribe` (TCP)
 
-`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an extension's stream (`earcons` of `agent`) is asked for by name and is `E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current state.
+`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an extension's stream (`earcons` of `agent`, `cues` of `system`) is asked for by name and is `E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current state.
 
 A client that does not read its events never slows the reader: past 256 unread events, events are dropped for that client. Each `state` event is a full snapshot, so the next one brings a player up to date.
 
@@ -180,13 +180,13 @@ A change of `engine_status` alone (download progress, about four times a second 
 | `E_UNKNOWN_TYPE` | a `type` this protocol does not define |
 | `E_UNSUPPORTED` | an unmet `require`, an unknown event stream, or a message, action or key of an extension that is not enabled |
 | `E_INCOMPATIBLE` | `hello` with another protocol major |
-| `E_BUSY` | `hello` with `takeover: true` while something is playing or queued; `speak` or `control` after a takeover was accepted |
+| `E_BUSY` | `hello` with `takeover: true` while something is playing or queued; `speak` or `control` after a takeover was accepted or the idle exit was decided; any request while the runtime is exiting |
 | `E_ENGINE` | the engine or the reader failed |
 | `E_NOT_FOUND` | an unknown voice or engine |
 
 ## Lifetime
 
-A client is a TCP connection that completed `hello`, or an open SSE stream; a plain HTTP request only counts as activity. The runtime exits 30 s (`--idle-exit <seconds>`) after the last client left and nothing is being read (a paused item does not count), unless a client sent `keep_alive: true` or it runs with `--standalone`. Ctrl+C ends it cleanly. On every clean exit it stops speech and removes `runtime.json`.
+A client is a TCP connection that completed `hello`, or an open SSE stream; a plain HTTP request only counts as activity. The runtime exits 30 s (`--idle-exit <seconds>`) after the last client left and nothing is being read (a paused item does not count), unless a client sent `keep_alive: true` or it runs with `--standalone`. The countdown starts when `runtime.json` is written, so a slow start never uses it up before the first client can connect. The exit is decided atomically with the requests that start speech: a `speak` or `control` either comes first (and keeps the runtime while it is read) or is answered `E_BUSY`, never accepted and then lost; any request that reaches the runtime while it exits is `E_BUSY` (#194). Ctrl+C ends it cleanly. On every clean exit it stops speech and removes `runtime.json`.
 
 ## Takeover
 
@@ -206,14 +206,14 @@ Every setting a client changes with `set` is saved in the home and applies again
 
 | file in the home | holds |
 |---|---|
-| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `minqueue`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`. A `_migrated` key records the migration below |
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`. A `_migrated` key records the migration below |
 | `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
 | `logs\sonarad.log` | notes worth keeping: the migration, saved values that could not be applied |
 
 Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it. A value out of range is not applied (and logged), the others still apply; it stays in the file, like a key this runtime does not know (from a newer release), until a client sets that key. A saved value the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies once it is available; the default is used meanwhile. `--engine` on the command line wins over a saved `engine`, which wins over the default choice below; a saved engine that cannot start is logged and the default choice is used. Setting `engine` to another engine replaces a saved voice that engine lacks with the voice in force; setting the same engine again keeps it.
 
-**Migration from the Python plugin.** The first runtime on the default home (`%LOCALAPPDATA%\Sonara`) that has no `config.json` imports the plugin's settings from `%USERPROFILE%\.sonara` (another folder, or another home: `--migrate-from <dir>`): its `config.json` (voice, rate, speech volume, audio mode, duck level, mute level, verbosity, minimum queue, summary mode, command, model, timeout, settle time, style and custom prompts), `keymap.json` (`nav_start` becomes `restart`, `next_session` becomes `next_channel`; only when the home has no `keymap.json`) and `session_prefs.json` (the session `name` becomes `label`; only when the home has none). A value equal to the runtime's default is not saved; a Chatterbox voice speaks as `af_heart`, `audio_control: true` is `audio_mode: duck`, a speech volume above 100 is 100, and in a file from before the plugin's format 2 the old defaults `duck_level: 20` and `summary_timeout: 20` count as unset. The cue voice and fast cues are not imported (the runtime has no spoken control cues yet). The plugin's folder is only read. The migration writes `config.json` with the `_migrated` marker, so it runs once; what it did is in `logs\sonarad.log`.
+**Migration from the Python plugin.** The first runtime on the default home (`%LOCALAPPDATA%\Sonara`) that has no `config.json` imports the plugin's settings from `%USERPROFILE%\.sonara` (another folder, or another home: `--migrate-from <dir>`): its `config.json` (voice, rate, speech volume, audio mode, duck level, mute level, verbosity, minimum queue, background policy (`earcon_only`, or any other value as `all`), summary mode, command, model, timeout, settle time, style and custom prompts), `keymap.json` (`nav_start` becomes `restart`, `next_session` becomes `next_channel`; only when the home has no `keymap.json`) and `session_prefs.json` (the session `name` becomes `label`; only when the home has none). A value equal to the runtime's default is not saved; a Chatterbox voice speaks as `af_heart`, `audio_control: true` is `audio_mode: duck`, a speech volume above 100 is 100, and in a file from before the plugin's format 2 the old defaults `duck_level: 20` and `summary_timeout: 20` count as unset. The cue voice and fast cues are not imported (the runtime speaks its control cues in the voice in force). The plugin's folder is only read. The migration writes `config.json` with the `_migrated` marker, so it runs once; what it did is in `logs\sonarad.log`.
 
 ## Testing aids
 
@@ -260,6 +260,7 @@ Spec section 4.2, L2 (`crates/sonara-channels`). Several named sources (terminal
 
 - **Policy** `latest` (the default): a new message replaces the channel's unread messages, so the newest one is always read and never dropped ("one message, always the last"). `queue`: every message is read, in order.
 - **Who reads next:** the channel being read keeps the floor until its batch is read; then the focused channel; then the first channel (in opening order) with something unread. A channel you left with `next_channel` is not resumed on its own until it gets a new message.
+- **Muted channels** (`channel_prefs` `muted`): a muted channel's messages wait, unread, and it never takes the floor (muting the channel being read cuts its item); `next_channel` skips it unless every channel is muted. Unmuted, its waiting messages are read.
 - **Announcements:** a switch to another channel is announced by a short item before its first message: `"<label>."`, or `"<label>, reading again."` when the batch is replayed from the top. An automatic hand-off is announced when the channel differs from the one that read last (never for the first channel to read); `next_channel` is always announced. A channel without a `label` is not announced. `set channel_announce "off"` turns announcements off.
 
 ### Messages
@@ -290,7 +291,7 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 | key | value |
 |---|---|
 | `channel_announce` | `"on"` (default) or `"off"`: switch announcements |
-| `channel_prefs` | the user's preferences per channel, for a settings page. `get`: a list of `{channel, open, reading, client_label, host_tab, label, voice, muted}`, the open channels first (in opening order), then channels with saved preferences only (most recent first). `set {channel, label?, voice?, muted?}` changes the fields given (`null` or `""` clears a label or voice) and replies with the list. A `label` replaces the one the client sends in `channel_open` (also for a channel opened by its first text), so switch announcements say it; `client_label` is the client's. `voice` and `muted` are saved for the page; the agent layer applies them in a later release (#196) |
+| `channel_prefs` | the user's preferences per channel, for a settings page. `get`: a list of `{channel, open, reading, client_label, host_tab, label, voice, muted}`, the open channels first (in opening order), then channels with saved preferences only (most recent first). `set {channel, label?, voice?, muted?}` changes the fields given (`null` or `""` clears a label or voice) and replies with the list. A `label` replaces the one the client sends in `channel_open` (also for a channel opened by its first text), so switch announcements say it; `client_label` is the client's. `muted: true` mutes the channel at once and in every later run (see Muted channels, #196); `voice` is saved for the page and not applied yet. `set {channel, forget: true}` forgets a channel that is not the focused one (`E_BAD_REQUEST`): its preferences, and its messages and turn (it is closed if open; a session that died without ending) |
 
 ### State
 
@@ -305,6 +306,10 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat assistants on top of [`channels`](#extension-channels): one channel per agent session, with streamed text, turns, decisions spoken with priority, earcons, three mute levels and optional summaries. Enable it with `hello` `extensions: ["agent"]`; it needs `channels`, which is enabled with it (the reply lists both). Black-box tests: `conformance/agent/`.
 
 **Model.** Each channel has a current **turn**. The agent's text is streamed into it (`stream`), split into sentences and added to the channel's batch as it completes, whatever the channel's policy (a turn is many messages). A new turn (`turn_start`) drops what is left of the previous one: its unread sentences, and its item if it is being read ("one message, always the last"). Text that arrives late from an earlier turn is dropped (see `t`). Decisions (`ask`) are read before the other channels as soon as the item playing ends (the batch reading now waits), and play an earcon.
+
+**Background sessions (`background_policy`, #195).** With `"earcon_only"` (the default, as the Python plugin) only the focused channel (the session the user prompted last: the Claude hooks `focus` on every prompt) is read automatically; the other channels play their earcons, and their text and decisions wait until the user prompts that session (`focus`), switches to it (`next_channel`) or replays it (`restart`). Exceptions, as in the Python plugin: the channel focused before keeps the right to finish what it had unread when the focus moved, a summary (or the raw text standing in for one) is read whatever the focus, and text a host speaks into a channel (`speak` with `channel`) is always read. With no channel focused nothing is held back. `"all"` reads every channel in turn.
+
+**Dead sessions.** A channel with no agent message for 6 hours has its turn state freed (as `channel_close` does for the turn); its channel is closed too when it is neither focused nor being read and has nothing unread. `channel_prefs` `forget` does it at once.
 
 **Late text (`t` and `turn`).** Senders that run as separate processes (hooks) can deliver the old turn's last text after the new prompt. Every agent message may carry `t`, the sender's start time in seconds (any clock, the same one for all senders of a channel, such as Unix time). A `stream`, `turn_start` or `turn_end` whose `t` is older than the channel's last accepted `turn_start` is dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id that a later `turn_start` replaced. Messages without `t` and `turn` are never stale.
 
@@ -331,6 +336,7 @@ Earcons are mixed over the speech (they never pause or cut it) and follow the ou
 | `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Setting 1 or 2 stops everything queued and playing, core `speak` and channel `speak` items included (as the Python daemon's global mute); text spoken without the extension afterwards is read as usual |
 | `verbosity` | `"everything"` (default): text, decisions, tool announcements and hints; `"medium"`: no tool announcements or hints; `"quiet"`: decisions only |
 | `minqueue` | `0` to `10` (default 1): a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
+| `background_policy` | `"earcon_only"` (default) or `"all"`: see Background sessions |
 | `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt, prompts, default_prompts}`: see below. `set` merges the fields given; `get` returns them all |
 
 **Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer or `stop` drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
@@ -354,7 +360,7 @@ Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the e
 
 ## Extension `system`
 
-Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other apps' audio while Sonara speaks, global hotkeys and the settings page. Enable it with `hello` `extensions: ["system"]`. Black-box tests: `conformance/system/` (with `--system fake`).
+Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other apps' audio while Sonara speaks, global hotkeys, spoken control cues and the settings page. Enable it with `hello` `extensions: ["system"]`. Black-box tests: `conformance/system/` (with `--system fake`).
 
 **Armed while needed.** Like every extension, `system` is enabled for the whole runtime once a client asks for it, and its keys and the settings page work from then on. It acts on the PC (ducks or pauses other apps, holds the hotkeys) only while it is **armed**: while a TCP client whose `hello` asked for it is connected, or for good once a client asked for it with `keep_alive: true` (over TCP or HTTP). When the last client that needed it disconnects, other apps are restored at once and the hotkeys are released, even if the reader goes on reading. A plain HTTP request (the settings page) never arms it.
 
@@ -378,6 +384,10 @@ These settings are saved like the others (see [Saved settings](#saved-settings))
 
 `{"type": "preview", "voice"?: "<id or name>", "text"?: "<text>"}` says a short sample (default: `"Hello. This is how Sonara sounds with this voice."`, at most 300 characters) with a voice of the current engine (default: the voice in force) at the current rate, and replies `{engine, voice}` once it is playing. The sample is synthesized on engines of its own (its own `onecore`; Kokoro's loaded model is shared with the reader, so a Kokoro sample waits at most for the sentence being synthesized, and a skip on the reader cancels it) and played as a clip mixed over whatever is being read, like an earcon: nothing is paused, cut or queued again, and the output volume applies (a muted reader plays it silently). An unknown voice is `E_NOT_FOUND`; before a client enabled `system` it is `E_UNSUPPORTED`.
 
+### Spoken cues
+
+Short confirmations, as the Python plugin spoke them (#197): the hotkeys say `"Paused."` / `"Resumed."` (pause, only while an item is loaded), `"Muted."`, `"Super muted."`, `"Unmuted."` (mute cycle; without `agent`, `"Muted."` / `"Unmuted."`), `"Rate 225."` (faster, slower) and `"No session."` (`next_channel` with no channel open); a `set` of `mute_level` that changes it, of `audio_mode` (`"Audio off."`, `"Audio ducking."`, `"Media pause."`) and of `duck_level` (`"Duck level 40 percent."`) say theirs whoever sent it. A `rate` set from a page is not announced. A cue is synthesized on the extension's own engines in the voice and at the rate in force and played as a clip mixed over whatever is read, like a voice preview: it is heard while the reader is paused and at every `mute_level`, never touches the queue, and a muted reader (core `mute`) plays it silently. Cues are spoken in order; a rate, duck-level or audio-mode cue still waiting when a newer one of the same kind comes is skipped. Stream `cues` (ask for it by name in `subscribe`, or `GET /v1/events?events=cues`; `E_UNSUPPORTED` over TCP while the extension is off): `{"event": "cue", "text": "Muted."}` for every cue spoken. The Python plugin's setup-guide cue ("run slash sonara install") is not carried over: the runtime needs no install step (the hook starts it).
+
 ### Hotkeys
 
 Actions and what they do (the same as the protocol request named):
@@ -386,10 +396,10 @@ Actions and what they do (the same as the protocol request named):
 |---|---|---|
 | `restart` | Ctrl+Alt+Up | `control restart` |
 | `flush` | Ctrl+Alt+Down | `control stop` (everything queued or playing); with `agent`, plays `nav` (or `nav_edge` when there was nothing) |
-| `pause` | unbound | `control toggle` |
-| `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute` |
-| `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` (or `nav_edge`) |
-| `faster` / `slower` | unbound | `rate` plus or minus 25 |
+| `pause` | unbound | `control toggle`, then the cue `"Paused."` or `"Resumed."` |
+| `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute`; then its cue |
+| `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change`; with no channel open, the cue `"No session."` |
+| `faster` / `slower` | unbound | `rate` plus or minus 25, then `"Rate N."` |
 
 A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A hotkey must hold Ctrl, Alt or Win (`E_BAD_REQUEST` otherwise: it would take that key away from every app); an unknown key, modifier or action is `E_BAD_REQUEST`, and nothing is written. Holding a key does not repeat an action, and a second press of `pause` or `mute` within 0.3 s is ignored. Hotkeys do nothing once a takeover was accepted.
 
@@ -409,7 +419,7 @@ The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a h
 
 ### Settings page
 
-`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves the settings page of the Python plugin, on this API: Speech (engine, voice with previews, rate, mute level, verbosity), Summary (mode Off, Tidy, Natural or Brief, the instruction of each style, the model, the minimum queue), Audio (speech volume, other apps, duck level), Sessions (`channel_prefs`: name, audio, voice per session; switch announcements), Hotkeys (capture, unbind, reset, AltGr and ownership warnings), Advanced (summary timeout and settle time) and System (version, protocol, process, uptime, port, extensions, engines, the settings file). The agent sections say so while no client enabled `agent`. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
+`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves the settings page of the Python plugin, on this API: Speech (engine, voice with previews, rate, mute level, verbosity, background sessions), Summary (mode Off, Tidy, Natural or Brief, the instruction of each style, the model, the minimum queue), Audio (speech volume, other apps, duck level), Sessions (`channel_prefs`: name, audio, voice per session; switch announcements), Hotkeys (capture, unbind, reset, AltGr and ownership warnings), Advanced (summary timeout and settle time) and System (version, protocol, process, uptime, port, extensions, engines, the settings file). The agent sections say so while no client enabled `agent`. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
 
 ```json
 > {"type": "hello", "token": "...", "extensions": ["agent", "system"]}

@@ -875,3 +875,48 @@ fn a_summary_landing_while_muted_is_not_spoken() {
     r.set_mute_level(1);
     assert!(spoken(&r.digest_done(&job, Some("Digest.".into()))).is_empty());
 }
+
+/// Whether each spoken text is a summary release (read past the
+/// background policy).
+fn releases(actions: &[Action]) -> Vec<bool> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Speak { release, .. } => Some(*release),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_summary_and_its_raw_fallback_are_releases_live_prose_is_not() {
+    // #195: pipeline.py authorizes a digest delivery past earcon_only.
+    let mut r = rules();
+    let a = r.stream("bg", None, "Live prose.", 0, true, None).unwrap();
+    assert_eq!(releases(&a), [false]);
+    let a = r.ask("bg", &Ask::new(AskKind::Plan, "x"));
+    assert_eq!(releases(&a), [false]);
+    let mut r = summary_rules();
+    let long = "This is substantive content the user must hear. ".repeat(8);
+    prose(&mut r, "bg", &long, 0, true);
+    let a = end_and_settle(&mut r, "bg", Some("fg"));
+    let job = jobs(&a).remove(0);
+    assert_eq!(
+        releases(&r.digest_done(&job, Some("Recap.".into()))),
+        [true]
+    );
+    prose(&mut r, "bg", &long, 0, true);
+    let a = end_and_settle(&mut r, "bg", Some("fg"));
+    let job = jobs(&a).remove(0);
+    assert_eq!(releases(&r.digest_done(&job, None)), [true]);
+}
+
+#[test]
+fn closing_a_channel_frees_its_turn_state() {
+    let mut r = rules();
+    r.turn_start("a", None, Some(5.0)).unwrap();
+    assert!(r.tracks("a"));
+    r.close("a");
+    assert!(!r.tracks("a"));
+    assert!(r.stream("a", None, "Again.", 0, true, Some(1.0)).is_ok());
+}

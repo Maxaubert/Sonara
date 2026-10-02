@@ -510,3 +510,137 @@ fn prioritized_channels_are_read_oldest_first_and_closing_forgets_them() {
     assert_eq!(r.prioritized(), ["B"]);
     assert_eq!(drain(&mut r), ["b1"]);
 }
+
+// -- per-channel mute (#196) and the focus-only gate (#195) ---------------
+
+#[test]
+fn a_muted_channel_waits_and_is_read_once_unmuted() {
+    let mut r = router(&["A", "B"]);
+    r.set_muted("A", true);
+    push(&mut r, "A", &["a1"]);
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(drain(&mut r), ["b1"]);
+    assert_eq!(r.channel("A").unwrap().pending(), 1, "kept, unread");
+    r.set_muted("A", false);
+    assert_eq!(drain(&mut r), ["[a]", "a1"]);
+}
+
+#[test]
+fn a_muted_channel_loses_the_floor_mid_batch() {
+    let mut r = router(&["A"]);
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r.set_muted("A", true);
+    assert_eq!(next(&mut r), None);
+}
+
+#[test]
+fn mute_is_kept_by_id_for_a_channel_opened_later() {
+    let mut r = Router::new();
+    r.set_muted("late", true);
+    assert!(r.is_muted("late"));
+    r.open("late", None, None, Some(Policy::Queue));
+    assert!(r.channel("late").unwrap().muted());
+    push(&mut r, "late", &["x"]);
+    assert_eq!(next(&mut r), None);
+}
+
+#[test]
+fn a_muted_decision_does_not_preempt() {
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "B", &["question"]);
+    r.set_muted("B", true);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["a2"]);
+}
+
+#[test]
+fn next_channel_skips_a_muted_channel_unless_all_are_muted() {
+    // router.py: a muted session never takes the floor on a manual cycle;
+    // with every session muted the plain ring is used (never a dead end).
+    let mut r = router(&["A", "B", "C"]);
+    push(&mut r, "A", &["a1"]);
+    push(&mut r, "B", &["b1"]);
+    push(&mut r, "C", &["c1"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r.set_muted("B", true);
+    assert_eq!(r.next_channel().unwrap().0, "C");
+    r.set_muted("A", true);
+    r.set_muted("C", true);
+    assert_eq!(r.next_channel().unwrap().0, "A", "plain ring");
+}
+
+#[test]
+fn focus_only_reads_the_focused_channel_and_holds_the_others() {
+    // sessions.py earcon_only: only the foreground session gets voice time.
+    let mut r = router(&["A", "B"]);
+    r.set_focus_only(true);
+    r.focus("A");
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(next(&mut r), None, "B waits");
+    push(&mut r, "A", &["a1"]);
+    assert_eq!(drain(&mut r), ["a1"]);
+    assert_eq!(r.channel("B").unwrap().pending(), 1);
+    // Focusing B (its prompt) reads it.
+    r.focus("B");
+    assert_eq!(drain(&mut r), ["[b]", "b1"]);
+}
+
+#[test]
+fn focus_only_holds_a_background_decision_too() {
+    let mut r = router(&["A", "B"]);
+    r.set_focus_only(true);
+    r.focus("A");
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(next(&mut r), None);
+}
+
+#[test]
+fn focus_only_without_a_focus_holds_nothing_back() {
+    let mut r = router(&["A", "B"]);
+    r.set_focus_only(true);
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(drain(&mut r), ["b1"]);
+}
+
+#[test]
+fn an_authorized_channel_is_read_until_it_drains() {
+    let mut r = router(&["A", "B"]);
+    r.set_focus_only(true);
+    r.focus("A");
+    push(&mut r, "B", &["summary"]);
+    assert!(r.authorize("B"));
+    assert_eq!(drain(&mut r), ["summary"]);
+    assert!(!r.is_authorized("B"), "spent once drained");
+    push(&mut r, "B", &["later"]);
+    assert_eq!(next(&mut r), None, "held again");
+    assert!(!r.authorize("zz"));
+}
+
+#[test]
+fn the_previous_focus_finishes_what_it_had_when_the_focus_moves() {
+    // ingest.py cooperative hand-off: the old foreground drains first.
+    let mut r = router(&["A", "B"]);
+    r.set_focus_only(true);
+    r.focus("A");
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r.focus("B");
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(drain(&mut r), ["a2", "[b]", "b1"]);
+}
+
+#[test]
+fn a_replay_and_next_channel_read_a_background_channel() {
+    let mut r = router(&["A", "B"]);
+    r.set_focus_only(true);
+    r.focus("A");
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(r.next_channel().unwrap().0, "B");
+    assert_eq!(drain(&mut r), ["[b manual]", "b1"]);
+    assert!(r.replay("B"));
+    assert_eq!(drain(&mut r), ["b1"]);
+}

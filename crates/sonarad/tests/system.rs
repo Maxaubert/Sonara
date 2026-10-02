@@ -541,6 +541,7 @@ fn the_schema_defaults_are_the_layers_defaults() {
         "mute_level",
         "verbosity",
         "minqueue",
+        "background_policy",
         "audio_mode",
         "duck_level",
     ] {
@@ -763,6 +764,281 @@ fn a_preview_plays_a_clip_and_leaves_the_queue_alone() {
     let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
     assert_eq!(g["value"]["pid"], std::process::id());
     assert_eq!(g["value"]["previews"], true);
+}
+
+// -- spoken control cues, per-channel mute, background policy (#195-#197) --
+
+/// The next cues spoken, as texts (waits for `n`).
+fn cues_heard(stream: &sonarad::cues::CueStream, n: usize) -> Vec<String> {
+    let mut got = Vec::new();
+    let end = Instant::now() + Duration::from_secs(10);
+    while got.len() < n && Instant::now() < end {
+        if let Ok(t) = stream.recv_timeout(Duration::from_millis(50)) {
+            got.push(t);
+        }
+    }
+    got
+}
+
+fn settle_debounce() {
+    std::thread::sleep(sonara_system::hotkeys::DEBOUNCE + Duration::from_millis(50));
+}
+
+fn is_clip(c: &sonara_audio::OutputCall) -> bool {
+    matches!(c, sonara_audio::OutputCall::PlayClip { samples, .. } if *samples > 0)
+}
+
+#[test]
+fn hotkeys_speak_their_cues_over_a_paused_reader() {
+    // Python controls.py / settings.py: "Paused.", "Resumed.", the mute
+    // cycle and "Rate N." are spoken (mute and pause exempt).
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    bind_rate_keys(s);
+    // Pause ships unbound.
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "hotkeys",
+               "value": {"action": "pause", "key": "k", "mods": ["ctrl", "alt"]}}),
+    );
+    let cues = s.system().unwrap().cues().subscribe();
+    ok(s, &mut h, json!({"type": "speak", "text": "One. Two."}));
+    start_playing(&r.out);
+    let before = r.out.calls().len();
+    r.fake.press(Action::Pause.id());
+    assert_eq!(cues_heard(&cues, 1), ["Paused."]);
+    assert!(s.reader().state().unwrap().paused);
+    assert!(
+        r.out.calls()[before..].iter().any(is_clip),
+        "the cue is played as a clip while paused"
+    );
+    settle_debounce();
+    r.fake.press(Action::Pause.id());
+    assert_eq!(cues_heard(&cues, 1), ["Resumed."]);
+    for want in ["Muted.", "Super muted.", "Unmuted."] {
+        settle_debounce();
+        r.fake.press(Action::Mute.id());
+        assert_eq!(cues_heard(&cues, 1), [want]);
+    }
+    r.fake.press(Action::Faster.id());
+    assert_eq!(cues_heard(&cues, 1), ["Rate 225."]);
+    r.fake.press(Action::NextChannel.id());
+    assert_eq!(cues_heard(&cues, 1), ["No session."]);
+}
+
+#[test]
+fn setting_changes_speak_their_cues() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system", "agent"]}),
+    );
+    let cues = s.system().unwrap().cues().subscribe();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "audio_mode", "value": "duck"}),
+    );
+    assert_eq!(cues_heard(&cues, 1), ["Audio ducking."]);
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "duck_level", "value": 40}),
+    );
+    assert_eq!(cues_heard(&cues, 1), ["Duck level 40 percent."]);
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "mute_level", "value": 1}),
+    );
+    assert_eq!(cues_heard(&cues, 1), ["Muted."]);
+    // Unchanged: no cue.
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "mute_level", "value": 1}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "mute_level", "value": 0}),
+    );
+    assert_eq!(cues_heard(&cues, 1), ["Unmuted."]);
+    // A rate set from a page is not announced (Python: only the keys).
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "rate", "value": 300}),
+    );
+    assert!(cues.recv_timeout(Duration::from_millis(300)).is_err());
+}
+
+#[test]
+fn the_cues_event_stream_needs_the_system_extension() {
+    let r = rig();
+    let s = &r.server;
+    let mut t = Session::tcp();
+    ok(s, &mut t, json!({"type": "hello", "token": TOKEN}));
+    let e = call(s, &mut t, json!({"type": "subscribe", "events": ["cues"]}));
+    assert_eq!(e["error"]["code"], "E_UNSUPPORTED");
+    ok(
+        s,
+        &mut t,
+        json!({"type": "hello", "token": TOKEN, "extensions": ["system"]}),
+    );
+    let o = s.handle(&mut t, &json!({"type": "subscribe", "events": ["cues"]}));
+    assert_eq!(o.reply["events"], json!(["cues"]));
+    let sonarad::protocol::After::Subscribe(mut rx) = o.after else {
+        panic!("expected a subscription");
+    };
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "audio_mode", "value": "pause"}),
+    );
+    let w = rx.blocking_recv().unwrap();
+    assert_eq!(w.name, "cue");
+    let v: Value = serde_json::from_str(&w.json).unwrap();
+    assert_eq!(v, json!({"event": "cue", "text": "Media pause."}));
+}
+
+#[test]
+fn a_muted_channel_pref_holds_the_channels_speech() {
+    // #196: session_prefs muted is enforced, also after a restart.
+    let home = tmp();
+    {
+        let r = rig_on(home.clone());
+        let s = &r.server;
+        let mut h = Session::http();
+        ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+        ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "channel_prefs", "value": {"channel": "m", "muted": true}}),
+        );
+        let channels = s.channels().unwrap().clone();
+        assert!(channels.is_muted("m"));
+        ok(
+            s,
+            &mut h,
+            json!({"type": "stream", "channel": "m", "delta": "Held.", "final": true}),
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(s.reader().state().unwrap().now_playing.is_none());
+        ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "channel_prefs", "value": {"channel": "m", "muted": false}}),
+        );
+        assert!(eventually(|| s
+            .reader()
+            .state()
+            .unwrap()
+            .now_playing
+            .is_some()));
+        ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "channel_prefs", "value": {"channel": "m", "muted": true}}),
+        );
+    }
+    let r = rig_on(home);
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["channels"]}),
+    );
+    assert!(s.channels().unwrap().is_muted("m"), "kept across a restart");
+}
+
+#[test]
+fn forgetting_a_channel_drops_its_prefs_channel_and_turn() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+    ok(
+        s,
+        &mut h,
+        json!({"type": "channel_open", "channel": "dead", "label": "x"}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "channel_open", "channel": "live"}),
+    );
+    ok(s, &mut h, json!({"type": "focus", "channel": "live"}));
+    ok(
+        s,
+        &mut h,
+        json!({"type": "turn_start", "channel": "dead", "t": 50.0}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "channel_prefs", "value": {"channel": "dead", "label": "Old"}}),
+    );
+    let e = call(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "channel_prefs", "value": {"channel": "live", "forget": true}}),
+    );
+    assert_eq!(
+        e["error"]["code"], "E_BAD_REQUEST",
+        "the focused channel stays"
+    );
+    let g = ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "channel_prefs", "value": {"channel": "dead", "forget": true}}),
+    );
+    let ids: Vec<&str> = g["value"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["channel"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["live"]);
+    assert!(s.channels().unwrap().channel("dead").is_none());
+    assert!(s.agent().unwrap().tracked().is_empty());
+}
+
+#[test]
+fn the_background_policy_is_a_persisted_agent_key() {
+    let home = tmp();
+    {
+        let r = rig_on(home.clone());
+        let s = &r.server;
+        let mut h = Session::http();
+        ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+        assert!(s.channels().unwrap().focus_only(), "earcon_only by default");
+        let g = ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "background_policy", "value": "all"}),
+        );
+        assert_eq!(g["value"], "all");
+        assert!(!s.channels().unwrap().focus_only());
+        assert_eq!(saved(&home)["background_policy"], "all");
+    }
+    let r = rig_on(home);
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+    assert!(!s.channels().unwrap().focus_only(), "applied at start");
 }
 
 /// Kokoro as `sonarad` builds it, but without downloads, ONNX Runtime or a

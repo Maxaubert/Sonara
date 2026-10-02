@@ -17,9 +17,9 @@
 //!   and reported, never fatal.
 //! - **Per-channel preferences** (`session_prefs.json`): `label`, `voice`
 //!   and `muted` per channel id (the Claude session id), the most recent
-//!   [`PREFS_CAP`] kept. The label replaces the one the client sends; voice
-//!   and mute are stored for the settings page and enforced by the agent
-//!   layer in a later release (#196).
+//!   [`PREFS_CAP`] kept. The label replaces the one the client sends; a
+//!   muted channel is held unread (L2 `set_muted`, #196); the voice is
+//!   stored for the settings page.
 //!
 //! Keys starting with `_` (the migration marker) are kept as they are.
 use serde_json::{json, Map, Value};
@@ -72,6 +72,7 @@ pub const AUDIO_MODES: &[&str] = &["off", "duck", "pause"];
 pub const VERBOSITY: &[&str] = &["everything", "medium", "quiet"];
 pub const STYLES: &[&str] = &["tidy", "natural", "brief"];
 pub const COMMANDS: &[&str] = &["claude", "codex"];
+pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
 const ON_OFF: &[&str] = &["on", "off"];
 
 /// Every persisted setting, its layer, validation and default (as JSON).
@@ -123,6 +124,12 @@ pub const SCHEMA: &[Setting] = &[
         layer: Layer::Agent,
         kind: Kind::Range(0, 10),
         default: "1",
+    },
+    Setting {
+        key: "background_policy",
+        layer: Layer::Agent,
+        kind: Kind::OneOf(BACKGROUND),
+        default: "\"earcon_only\"",
     },
     Setting {
         key: "summaries",
@@ -263,9 +270,10 @@ pub fn validate_summaries(v: &Value) -> Result<Map<String, Value>, String> {
 pub struct Prefs {
     /// The name read on a switch; replaces the client's label.
     pub label: Option<String>,
-    /// A voice for this channel (stored; enforced with #196).
+    /// A voice for this channel (stored for the settings page; not applied
+    /// yet).
     pub voice: Option<String>,
-    /// The channel is silenced (stored; enforced with #196).
+    /// The channel's speech is held unread (#196).
     pub muted: bool,
 }
 
@@ -653,6 +661,17 @@ impl Store {
         p
     }
 
+    /// Forget one channel's preferences (the settings page's forget).
+    pub fn forget_prefs(&self, channel: &str) {
+        let mut inner = self.lock();
+        let before = inner.prefs.len();
+        inner.prefs.retain(|(id, _, _)| id != channel);
+        inner.client_labels.remove(channel);
+        if inner.prefs.len() != before {
+            self.save_prefs(&inner);
+        }
+    }
+
     /// The label a client gave a channel (`channel_open`).
     pub fn note_client_label(&self, channel: &str, label: Option<&str>) {
         let mut inner = self.lock();
@@ -765,6 +784,7 @@ mod tests {
             ("mute_level", json!(3)),
             ("verbosity", json!("all")),
             ("minqueue", json!(11)),
+            ("background_policy", json!("silent")),
             ("channel_announce", json!(true)),
             ("summaries", json!({"timeout": 5})),
             ("summaries", json!({"style": "long"})),

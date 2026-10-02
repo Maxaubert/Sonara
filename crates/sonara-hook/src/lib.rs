@@ -6,6 +6,18 @@
 //! one batch on one connection, so they apply in order. It never fails the
 //! Claude session: every error is swallowed and the exit code is 0.
 //!
+//! The Claude product's runtime: `hello` asks for `agent` and `system`
+//! (hotkeys, ducking, the settings page, spoken cues) with `keep_alive`,
+//! so the runtime stays up and armed like the Python daemon did. When no
+//! runtime answers, the hook **starts** `sonarad.exe` from its own folder
+//! (detached, no window; the home comes from the same environment), waits
+//! briefly for its `runtime.json` and sends then (`deliver`). The whole
+//! start is bounded (`START_BUDGET`): a hook never holds up Claude Code for
+//! long, and an event that misses the budget is dropped (the runtime keeps
+//! starting for the next one). `SONARA_NO_START` (non-empty) turns the
+//! start off, and so does the stop sentinel `<home>/stopped` (`STOPPED`); `SONARA_RUNTIME_ARGS` adds arguments to the runtime's
+//! command line (a testing aid: `--engine fake --system fake`).
+//!
 //! One Claude session is one channel (its `session_id`). Each message is
 //! stamped with `t`, the hook process's start time, so text of a turn that
 //! arrives after the next prompt is dropped by the runtime (#174).
@@ -28,7 +40,23 @@ use serde_json::{json, Map, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+/// How long a hook may spend starting the runtime and waiting for it.
+pub const START_BUDGET: Duration = Duration::from_secs(1);
+/// How long a connection attempt to a runtime named in `runtime.json` may
+/// take (a live runtime on loopback answers at once; a dead one's port can
+/// take seconds to refuse on Windows).
+pub const PROBE: Duration = Duration::from_millis(300);
+/// How often the hook looks for the new runtime's `runtime.json`.
+const POLL: Duration = Duration::from_millis(25);
+/// The runtime's file name next to `sonara-hook.exe`.
+pub const RUNTIME_EXE: &str = "sonarad.exe";
+/// The stop sentinel in the home: while it exists the hook never starts
+/// the runtime (the user shut Sonara down), like the Python plugin's
+/// `stopped` file. Events still reach a runtime that is running.
+pub const STOPPED: &str = "stopped";
 
 /// Spoken after a decision at verbosity `everything`: how to answer in the
 /// Claude Code TUI.
@@ -283,6 +311,7 @@ pub fn home(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
 pub struct Runtime {
     pub port: u16,
     pub token: String,
+    pub pid: Option<u64>,
 }
 
 pub fn read_runtime(home: &Path) -> Option<Runtime> {
@@ -291,22 +320,44 @@ pub fn read_runtime(home: &Path) -> Option<Runtime> {
     Some(Runtime {
         port: u16::try_from(v.get("port")?.as_u64()?).ok()?,
         token: v.get("token")?.as_str()?.to_string(),
+        pid: v.get("pid").and_then(Value::as_u64),
     })
 }
 
-/// Send `hello` (enabling `agent`) and `msgs` on one connection, then read
-/// the replies so the runtime has applied them all before the connection
-/// closes. Returns the replies (hello first).
-pub fn send(rt: &Runtime, msgs: &[Value], timeout: Duration) -> std::io::Result<Vec<Value>> {
+/// Connect to the runtime.
+pub fn connect(rt: &Runtime, timeout: Duration) -> std::io::Result<TcpStream> {
     let addr = SocketAddr::from(([127, 0, 0, 1], rt.port));
-    let mut s = TcpStream::connect_timeout(&addr, timeout)?;
-    s.set_nodelay(true)?;
-    let hello = json!({
+    TcpStream::connect_timeout(&addr, timeout)
+}
+
+/// The `hello` of the Claude product: `agent` and `system`, kept alive.
+pub fn hello(token: &str) -> Value {
+    json!({
         "type": "hello",
-        "token": rt.token,
+        "token": token,
         "client": {"name": "sonara-hook", "version": env!("CARGO_PKG_VERSION")},
-        "extensions": ["agent"],
-    });
+        "extensions": ["agent", "system"],
+        "keep_alive": true,
+    })
+}
+
+/// Send `hello` and `msgs` on one connection, then read the replies so the
+/// runtime has applied them all before the connection closes. Returns the
+/// replies (hello first).
+pub fn send(rt: &Runtime, msgs: &[Value], timeout: Duration) -> std::io::Result<Vec<Value>> {
+    let s = connect(rt, timeout)?;
+    send_on(s, rt, msgs, timeout)
+}
+
+/// `send` on a connection already made.
+pub fn send_on(
+    mut s: TcpStream,
+    rt: &Runtime,
+    msgs: &[Value],
+    timeout: Duration,
+) -> std::io::Result<Vec<Value>> {
+    s.set_nodelay(true)?;
+    let hello = hello(&rt.token);
     let mut batch = Vec::new();
     for m in std::iter::once(&hello).chain(msgs) {
         serde_json::to_writer(&mut batch, m)?;
@@ -334,6 +385,146 @@ pub fn send(rt: &Runtime, msgs: &[Value], timeout: Duration) -> std::io::Result<
         }
     }
     Ok(replies)
+}
+
+/// `sonarad.exe` next to the running hook, if it is there.
+pub fn runtime_exe(hook_exe: &Path) -> Option<PathBuf> {
+    let exe = hook_exe.parent()?.join(RUNTIME_EXE);
+    exe.is_file().then_some(exe)
+}
+
+/// The extra runtime arguments of `SONARA_RUNTIME_ARGS` (split on
+/// whitespace).
+pub fn runtime_args(env: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+    env("SONARA_RUNTIME_ARGS")
+        .map(|a| a.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// Keep the hook's standard handles out of the runtime it starts. Windows
+/// gives a child every inheritable handle of its parent, and the hook's
+/// stdin, stdout and stderr are Claude Code's pipes: a runtime holding
+/// them would keep Claude Code waiting for the hook's output to end for as
+/// long as the runtime lives.
+#[cfg(windows)]
+fn keep_std_handles_to_self() {
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
+    }
+    const HANDLE_FLAG_INHERIT: u32 = 1;
+    let handles = [
+        std::io::stdin().as_raw_handle(),
+        std::io::stdout().as_raw_handle(),
+        std::io::stderr().as_raw_handle(),
+    ];
+    for h in handles {
+        if !h.is_null() && h as isize != -1 {
+            // SAFETY: a handle of this process; clearing its inherit flag
+            // changes nothing else (a failure leaves it as it was).
+            unsafe {
+                SetHandleInformation(h.cast(), HANDLE_FLAG_INHERIT, 0);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn keep_std_handles_to_self() {}
+
+/// Start the runtime detached, with no window and none of the hook's
+/// handles, out of Claude Code's job when the job allows it (so it outlives
+/// the hook).
+pub fn start_runtime(exe: &Path, args: &[String]) -> std::io::Result<Child> {
+    keep_std_handles_to_self();
+    let spawn = |flags: u32| {
+        let mut cmd = Command::new(exe);
+        cmd.args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(flags);
+        }
+        #[cfg(not(windows))]
+        let _ = flags;
+        cmd.spawn()
+    };
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let base = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
+    spawn(base | CREATE_BREAKAWAY_FROM_JOB).or_else(|_| spawn(base))
+}
+
+/// What `deliver` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    /// Sent to the runtime that was running.
+    Sent,
+    /// Started the runtime, then sent.
+    Started,
+    /// Nothing reached a runtime (none running and none started in time,
+    /// or the start is off).
+    Dropped,
+}
+
+/// Whether the user shut Sonara down in `home` (`STOPPED`).
+pub fn stopped(home: &Path) -> bool {
+    home.join(STOPPED).exists()
+}
+
+/// Whether the wait after a start should try `rt` (the `runtime.json` now
+/// in the home): a runtime other than the `stale` one that did not answer,
+/// or the stale one again once the start has exited (a second runtime
+/// exits at once on the single-instance mutex, so the one named is alive,
+/// only slow to answer the first probe).
+pub fn worth_trying(rt: &Runtime, stale: Option<u64>, start_exited: bool) -> bool {
+    start_exited || rt.pid.is_none() || rt.pid != stale
+}
+
+/// Send `msgs` to the runtime of `home`, starting `exe` (with `args`) when
+/// none answers and `exe` is given; the start and the wait for it end by
+/// `deadline`. Never blocks past the deadline for the start, nor past
+/// `timeout` for the replies.
+pub fn deliver(
+    home: &Path,
+    msgs: &[Value],
+    exe: Option<&Path>,
+    args: &[String],
+    deadline: Instant,
+    timeout: Duration,
+) -> Delivery {
+    let before = read_runtime(home);
+    if let Some(rt) = &before {
+        if let Ok(s) = connect(rt, PROBE) {
+            let _ = send_on(s, rt, msgs, timeout);
+            return Delivery::Sent;
+        }
+    }
+    let Some(exe) = exe.filter(|_| !stopped(home)) else {
+        return Delivery::Dropped;
+    };
+    let Ok(mut child) = start_runtime(exe, args) else {
+        return Delivery::Dropped;
+    };
+    let stale = before.and_then(|r| r.pid);
+    while Instant::now() < deadline {
+        std::thread::sleep(POLL);
+        let exited = matches!(child.try_wait(), Ok(Some(_)));
+        let Some(rt) = read_runtime(home).filter(|r| worth_trying(r, stale, exited)) else {
+            continue;
+        };
+        let left = deadline.saturating_duration_since(Instant::now());
+        if let Ok(s) = connect(&rt, left.min(PROBE)) {
+            let _ = send_on(s, &rt, msgs, timeout);
+            return Delivery::Started;
+        }
+    }
+    Delivery::Dropped
 }
 
 #[cfg(test)]
@@ -386,11 +577,94 @@ mod tests {
             read_runtime(&dir),
             Some(Runtime {
                 port: 5000,
-                token: "abc".into()
+                token: "abc".into(),
+                pid: None,
             })
         );
         std::fs::write(dir.join("runtime.json"), "{not json").unwrap();
         assert_eq!(read_runtime(&dir), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_product_hello_asks_for_agent_and_system_kept_alive() {
+        let h = hello("tok");
+        assert_eq!(h["extensions"], json!(["agent", "system"]));
+        assert_eq!(h["keep_alive"], true);
+        assert_eq!(h["token"], "tok");
+    }
+
+    #[test]
+    fn runtime_args_and_exe() {
+        let env = |k: &str| (k == "SONARA_RUNTIME_ARGS").then(|| " --engine  fake ".to_string());
+        assert_eq!(runtime_args(&env), ["--engine", "fake"]);
+        assert!(runtime_args(&|_| None).is_empty());
+        let dir = std::env::temp_dir().join(format!("sonara-hook-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hook = dir.join("sonara-hook.exe");
+        assert_eq!(runtime_exe(&hook), None, "no runtime next to it");
+        std::fs::write(dir.join(RUNTIME_EXE), b"").unwrap();
+        assert_eq!(runtime_exe(&hook), Some(dir.join(RUNTIME_EXE)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_runtime_or_an_exe_nothing_is_delivered_at_once() {
+        let dir = std::env::temp_dir().join(format!("sonara-hook-none-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let t = Instant::now();
+        let d = deliver(
+            &dir,
+            &[json!({"type": "stream"})],
+            None,
+            &[],
+            t + START_BUDGET,
+            Duration::from_secs(2),
+        );
+        assert_eq!(d, Delivery::Dropped);
+        assert!(t.elapsed() < Duration::from_millis(500));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_wait_takes_a_new_runtime_or_the_old_one_once_the_start_is_gone() {
+        let rt = |pid| Runtime {
+            port: 1,
+            token: "t".into(),
+            pid,
+        };
+        assert!(worth_trying(&rt(Some(2)), Some(1), false), "a new runtime");
+        assert!(worth_trying(&rt(None), Some(1), false), "no pid to compare");
+        assert!(
+            !worth_trying(&rt(Some(1)), Some(1), false),
+            "the stale one while the start may still replace it"
+        );
+        assert!(
+            worth_trying(&rt(Some(1)), Some(1), true),
+            "the start exited (the mutex: the old runtime is alive), so retry it"
+        );
+    }
+
+    #[test]
+    fn a_stopped_home_is_not_started() {
+        let dir = std::env::temp_dir().join(format!("sonara-hook-stop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!stopped(&dir));
+        std::fs::write(dir.join(STOPPED), b"").unwrap();
+        assert!(stopped(&dir));
+        // A start is not even tried: a missing exe would be Dropped at once
+        // too, so use an exe path that would fail loudly if spawned.
+        let t = Instant::now();
+        let d = deliver(
+            &dir,
+            &[json!({"type": "stream"})],
+            Some(&dir.join("no-such-sonarad.exe")),
+            &[],
+            t + START_BUDGET,
+            Duration::from_secs(2),
+        );
+        assert_eq!(d, Delivery::Dropped);
+        assert!(t.elapsed() < Duration::from_millis(500));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

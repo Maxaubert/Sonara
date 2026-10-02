@@ -1,5 +1,11 @@
 """Core: discovery, loopback binding, single instance, idle exit and
-takeover (spec section 3)."""
+takeover (spec section 3).
+
+The idle-exit cases are deterministic (#194): the idle countdown starts
+when ``runtime.json`` is written (a slow start never uses it up before the
+first client), the exit is decided atomically with requests that start
+speech (one is never accepted and then lost), and a request that arrives
+while the runtime exits is ``E_BUSY``, never an HTTP 500."""
 from __future__ import annotations
 
 import socket
@@ -73,11 +79,13 @@ def test_keep_alive_survives_the_last_client(start):
 
 def test_playing_keeps_it_alive_without_clients(start):
     rt = start("--idle-exit", "0.5")
-    status, _ = rt.post("speak", {"text": long_text(1)})
+    status, _ = rt.post("speak", {"text": long_text(2)})
     assert status == 200
-    time.sleep(1.5)
+    # The item lasts about 6 s: well past the idle time, and well before
+    # its end, it must still be reading.
+    time.sleep(2.0)
     assert rt.alive(), "it reads to the end first"
-    assert rt.wait_exit(15) == 0
+    assert rt.wait_exit(20) == 0
 
 
 def test_a_paused_item_does_not_keep_it_alive(start):
@@ -91,10 +99,47 @@ def test_a_paused_item_does_not_keep_it_alive(start):
 def test_an_open_event_stream_counts_as_a_client(start):
     rt = start("--idle-exit", "0.5")
     sse = rt.sse("state")
+    assert sse.status == 200
+    assert sse.next_event(lambda name, e: name == "state")[1]["now_playing"] is None
     time.sleep(1.5)
     assert rt.alive()
     sse.close()
     assert rt.wait_exit() == 0
+
+
+def test_the_idle_time_starts_when_clients_can_find_it(start):
+    # #194: the countdown started before runtime.json was written, so a
+    # slow start could use it up and the runtime left right after a client
+    # arrived. Many quick starts with a short idle time: each first request
+    # finds the runtime alive and is served.
+    for _ in range(5):
+        rt = start("--idle-exit", "0.3")
+        status, r = rt.post("speak", {"text": long_text(1)})
+        assert status == 200, r
+        assert r["item_id"] == 1
+        time.sleep(0.5)
+        assert rt.alive(), "the accepted item is being read"
+        rt.close()
+
+
+def test_a_request_while_it_exits_is_busy_not_an_error(start):
+    # #194: an SSE subscription racing the idle exit got HTTP 500 (the
+    # reader was already shut down). Hammer the window: every reply is a
+    # success or E_BUSY until the process is gone.
+    rt = start("--idle-exit", "0.2")
+    statuses = set()
+    end = time.monotonic() + 10
+    while rt.alive() and time.monotonic() < end:
+        try:
+            status, body = rt.post("get", {"key": "volume"})
+        except OSError:
+            break
+        statuses.add(status)
+        if status != 200:
+            assert body["error"]["code"] == "E_BUSY", body
+        time.sleep(0.3)
+    assert rt.wait_exit() == 0
+    assert statuses <= {200, 409}, statuses  # 409: E_BUSY
 
 
 def test_standalone_never_idles_out(start):

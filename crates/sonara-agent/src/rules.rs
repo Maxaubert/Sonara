@@ -55,11 +55,14 @@ const RETIRED_TURNS: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     /// Speak `text` in `channel` (appended to its batch). A decision is read
-    /// before the other channels.
+    /// before the other channels. A `release` (a summary, or the raw text
+    /// standing in for one) is read whatever the background policy (the
+    /// Python digest delivery's `authorize_replay`).
     Speak {
         channel: String,
         text: String,
         decision: bool,
+        release: bool,
     },
     /// Play an earcon.
     Earcon(Earcon),
@@ -283,11 +286,23 @@ impl Rules {
     }
 
     fn speak(&self, out: &mut Vec<Action>, channel: &str, text: String, decision: bool) {
+        self.say(out, channel, text, decision, false);
+    }
+
+    fn say(
+        &self,
+        out: &mut Vec<Action>,
+        channel: &str,
+        text: String,
+        decision: bool,
+        release: bool,
+    ) {
         if self.settings.mute_level == 0 && !text.trim().is_empty() {
             out.push(Action::Speak {
                 channel: channel.to_string(),
                 text,
                 decision,
+                release,
             });
         }
     }
@@ -530,9 +545,18 @@ impl Rules {
         }
     }
 
-    /// The channel closed: forget it. Summary work still out lands dead.
+    /// The channel closed (or was forgotten): free its turn state. Summary
+    /// work still out lands dead.
     pub fn close(&mut self, channel: &str) {
         self.turns.remove(channel);
+        // Turn-end slots of the channel still waiting land dead too, so a
+        // watchdog that fires later finds nothing to speak.
+        self.watched.retain(|_, r| r.channel != channel);
+    }
+
+    /// The channel has turn state.
+    pub fn tracks(&self, channel: &str) -> bool {
+        self.turns.contains_key(channel)
     }
 
     /// `earcon {kind}`.
@@ -790,11 +814,11 @@ impl Rules {
         match r.summary.filter(|s| !s.trim().is_empty()) {
             Some(s) => {
                 let text = normalize_for_speech(&s);
-                self.speak(out, &r.channel, text, false);
+                self.say(out, &r.channel, text, false, true);
             }
             None if r.leadin => {}
             None if r.text.trim().is_empty() => self.earcon(out, Earcon::SummaryFailed),
-            None => self.speak(out, &r.channel, r.text, false),
+            None => self.say(out, &r.channel, r.text, false, true),
         }
     }
 

@@ -352,3 +352,55 @@ def test_the_api_sends_no_cors_headers(rt):
     assert r.status == 200
     assert r.getheader("Access-Control-Allow-Origin") is None
     conn.close()
+
+
+# -- spoken control cues (#197) --------------------------------------------
+
+
+def cue(c, timeout=5.0):
+    return c.next_event(lambda e: e.get("event") == "cue", timeout)["text"]
+
+
+def test_setting_changes_speak_their_cues(rt):
+    c = rt.tcp(extensions=["system", "agent"])
+    ok(c, {"type": "subscribe", "events": ["cues"]})
+    set_key(c, "audio_mode", "duck")
+    assert cue(c) == "Audio ducking."
+    set_key(c, "duck_level", 45)
+    assert cue(c) == "Duck level 45 percent."
+    set_key(c, "mute_level", 2)
+    assert cue(c) == "Super muted."
+    set_key(c, "mute_level", 0)
+    assert cue(c) == "Unmuted."
+
+
+def test_resending_a_setting_unchanged_speaks_no_cue(rt):
+    c = rt.tcp(extensions=["system", "agent"])
+    ok(c, {"type": "subscribe", "events": ["cues"]})
+    set_key(c, "audio_mode", "pause")
+    assert cue(c) == "Media pause."
+    set_key(c, "duck_level", 45)
+    assert cue(c) == "Duck level 45 percent."
+    set_key(c, "audio_mode", "pause")
+    set_key(c, "duck_level", 45)
+    set_key(c, "mute_level", 1)
+    assert cue(c) == "Muted.", "an unchanged audio_mode or duck_level is silent"
+
+
+def test_cues_need_the_system_extension(rt):
+    c = rt.tcp()
+    r = c.request({"type": "subscribe", "events": ["cues"]})
+    assert r["error"]["code"] == "E_UNSUPPORTED"
+
+
+def test_a_cue_over_a_paused_reader_leaves_it_paused(rt):
+    c = rt.tcp(extensions=["system", "agent"])
+    ok(c, {"type": "subscribe", "events": ["state", "cues"]})
+    ok(c, {"type": "speak", "text": LONG})
+    c.state(lambda s: s["now_playing"] is not None)
+    ok(c, {"type": "control", "action": "pause"})
+    c.state(lambda s: s["paused"] is True)
+    set_key(c, "mute_level", 1)
+    assert cue(c) == "Muted."
+    set_key(c, "mute_level", 0)
+    assert cue(c) == "Unmuted."

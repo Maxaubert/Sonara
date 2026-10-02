@@ -138,6 +138,8 @@ def test_channel_prefs_survive_a_restart_and_rename_the_channel(start):
         ("s1", False, "Build", True)]
     ok(c, {"type": "set", "key": "channel_announce", "value": "on"})
     ok(c, {"type": "subscribe", "events": ["state"]})
+    # A muted channel is held and never switched to (#196): unmute it.
+    set_key(c, "channel_prefs", {"channel": "s1", "muted": False})
     ok(c, {"type": "channel_open", "channel": "s1", "label": "repo"})
     ok(c, {"type": "channel_open", "channel": "s0", "label": "other"})
     ok(c, {"type": "speak", "channel": "s1", "text": "Hello."})

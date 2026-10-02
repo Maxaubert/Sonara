@@ -90,6 +90,46 @@ def test_a_question_chimes_and_its_permission_prompt_is_suppressed(hook_exe, rt)
     c.state(lambda s: s["now_playing"] is None)
 
 
+def test_the_hook_asks_for_system_and_keeps_the_runtime(hook_exe, rt):
+    hook(hook_exe, rt, "SessionStart", {"session_id": SESSION, "cwd": "/w/proj"})
+    assert "system" in rt.tcp().request({"type": "hello", "token": rt.token})["extensions"]
+
+
+def test_the_hook_starts_the_runtime_when_none_runs(hook_exe, tmp_path):
+    # #197: no runtime yet -> the hook starts sonarad.exe from its own
+    # folder (the fake engine and system through SONARA_RUNTIME_ARGS), and
+    # the event reaches it.
+    exe = hook_exe.parent / "sonarad.exe"
+    if not exe.is_file():
+        pytest.fail(f"{exe} not found: build sonarad next to sonara-hook")
+    home = tmp_path / "home"
+    home.mkdir()
+    env = {"SONARA_RUNTIME_ARGS": "--engine fake --system fake"}
+    rt = None
+    try:
+        t0 = time.monotonic()
+        # With pipes, as Claude Code runs it: the started runtime must not
+        # hold the hook's output pipes open (communicate waits for their end).
+        code = harness.Hook(hook_exe, home, "SessionStart", env, pipes=True).send(
+            {"session_id": SESSION, "cwd": "/w/proj"})
+        took = time.monotonic() - t0
+        assert harness.wait_until(lambda: (home / "runtime.json").exists())
+        info = json.loads((home / "runtime.json").read_text(encoding="utf-8"))
+        rt = harness.Runtime.attach(exe, home, info)
+        assert code == 0
+        assert took < 5, f"the hook took {took:.1f} s"
+        c = rt.tcp(extensions=["agent"])
+        assert c.request({"type": "focus", "channel": SESSION})["ok"] is True
+        r = c.request({"type": "get", "key": "settings_url"})
+        assert r["ok"] is True, "system is enabled for the Claude product"
+    finally:
+        if rt is None and (home / "runtime.json").exists():
+            info = json.loads((home / "runtime.json").read_text(encoding="utf-8"))
+            rt = harness.Runtime.attach(exe, home, info)
+        if rt is not None:
+            rt.kill()
+
+
 def test_a_session_end_closes_the_channel(hook_exe, rt):
     c = listener(rt)
     hook(hook_exe, rt, "SessionStart", {"session_id": SESSION, "cwd": "/w/proj"})

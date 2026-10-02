@@ -1,5 +1,6 @@
-//! L3 settings: mute level, verbosity, prose batching and summaries. Ranges
-//! and defaults are the Python plugin's (`config_schema.py`).
+//! L3 settings: mute level, verbosity, prose batching, the background
+//! speech policy and summaries. Ranges and defaults are the Python
+//! plugin's (`config_schema.py`).
 use std::time::Duration;
 
 /// `set mute_level`: 0 speaks, 1 silences agent speech (earcons still
@@ -37,6 +38,37 @@ impl Verbosity {
             Verbosity::Everything => "everything",
             Verbosity::Medium => "medium",
             Verbosity::Quiet => "quiet",
+        }
+    }
+}
+
+/// Which channels may speak (`background_policy`, the Python plugin's
+/// `sessions.py`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundPolicy {
+    /// Every channel's prose and decisions are read, one channel at a
+    /// time.
+    All,
+    /// Only the focused channel (the session the user last prompted) is
+    /// read; the others play their earcons and their text waits until
+    /// the user switches to them, replays them or prompts them (the
+    /// Python default). A summary delivery is read whatever the focus.
+    EarconOnly,
+}
+
+impl BackgroundPolicy {
+    pub fn parse(name: &str) -> Option<BackgroundPolicy> {
+        match name {
+            "all" => Some(BackgroundPolicy::All),
+            "earcon_only" => Some(BackgroundPolicy::EarconOnly),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BackgroundPolicy::All => "all",
+            BackgroundPolicy::EarconOnly => "earcon_only",
         }
     }
 }
@@ -159,6 +191,7 @@ pub struct Settings {
     pub mute_level: u8,
     pub verbosity: Verbosity,
     pub minqueue: usize,
+    pub background: BackgroundPolicy,
     pub summaries: SummarySettings,
 }
 
@@ -168,6 +201,7 @@ impl Default for Settings {
             mute_level: 0,
             verbosity: Verbosity::Everything,
             minqueue: 1,
+            background: BackgroundPolicy::EarconOnly,
             summaries: SummarySettings::default(),
         }
     }

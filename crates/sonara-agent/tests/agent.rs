@@ -4,7 +4,8 @@
 //! text after a new turn dropped, the pause stays on when another channel
 //! gets a new turn, decisions read with priority, earcons and mute levels.
 use sonara_agent::{
-    Agent, Ask, AskKind, Channels, Config, Earcon, Settings, Summarizer, SummarySettings,
+    Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, Settings, Summarizer,
+    SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Policy};
@@ -22,6 +23,14 @@ struct Rig {
 
 impl Rig {
     fn with(settings: Settings, summarizer: Option<Arc<dyn Summarizer>>) -> Rig {
+        Self::forgetting(settings, summarizer, sonara_agent::FORGET_AFTER)
+    }
+
+    fn forgetting(
+        settings: Settings,
+        summarizer: Option<Arc<dyn Summarizer>>,
+        forget_after: Duration,
+    ) -> Rig {
         let mut registry = Registry::default();
         registry.register(Arc::new(FakeEngine::new())).unwrap();
         let (out, rx) = TestOutput::new();
@@ -46,6 +55,7 @@ impl Rig {
             Config {
                 settings,
                 summarizer,
+                forget_after,
             },
         )
         .unwrap();
@@ -359,4 +369,171 @@ fn summaries_cannot_be_turned_on_without_a_summarizer() {
         ..SummarySettings::default()
     };
     assert!(r.agent.set_summaries(bad).is_err());
+}
+
+// -- background policy (#195), per-channel mute (#196), dead sessions and
+// -- earcon subscribers (#197) ------------------------------------------
+
+fn policy(p: BackgroundPolicy) -> Settings {
+    Settings {
+        background: p,
+        ..Settings::default()
+    }
+}
+
+#[test]
+fn earcon_only_reads_the_focused_session_and_chimes_for_the_others() {
+    // sessions.py earcon_only (the Python default): a background session's
+    // prose and decisions are not read; its earcons play.
+    let r = Rig::with(policy(BackgroundPolicy::EarconOnly), None);
+    assert!(r.agent.channels().focus_only());
+    let earcons = r.agent.subscribe();
+    r.agent.channels().focus("a").unwrap();
+    r.stream("b", "Background prose.", 0, None);
+    r.agent
+        .ask("b", &Ask::new(AskKind::Question, "Background question?"))
+        .unwrap();
+    assert_eq!(earcons.recv_timeout(TIMEOUT).unwrap(), Earcon::Choice);
+    r.agent.turn_end("b", None, None).unwrap();
+    assert_eq!(earcons.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    r.stays_idle();
+    r.stream("a", "Foreground prose.", 0, None);
+    r.read("Foreground prose.");
+    r.stays_idle();
+    // The user prompts the other session: its waiting text is read.
+    r.agent.channels().focus("b").unwrap();
+    r.read("Background prose.");
+    r.read("Background question?");
+    r.stays_idle();
+}
+
+#[test]
+fn policy_all_reads_every_session() {
+    let r = Rig::with(policy(BackgroundPolicy::All), None);
+    assert!(!r.agent.channels().focus_only());
+    r.agent.channels().focus("a").unwrap();
+    r.stream("b", "Background prose.", 0, None);
+    r.read("Background prose.");
+    r.stays_idle();
+}
+
+#[test]
+fn switching_the_policy_to_all_releases_waiting_text() {
+    let r = Rig::new();
+    assert_eq!(r.agent.settings().background, BackgroundPolicy::EarconOnly);
+    r.agent.channels().focus("a").unwrap();
+    r.stream("b", "Was waiting.", 0, None);
+    r.stays_idle();
+    r.agent
+        .set_background_policy(BackgroundPolicy::All)
+        .unwrap();
+    assert_eq!(r.agent.settings().background, BackgroundPolicy::All);
+    r.read("Was waiting.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_background_sessions_summary_is_read_under_earcon_only() {
+    // pipeline.py: a digest delivery is authorized past the policy.
+    let fake = Arc::new(Fake {
+        answer: Some("Background recap.".into()),
+        seen: Mutex::new(Vec::new()),
+    });
+    let settings = Settings {
+        background: BackgroundPolicy::EarconOnly,
+        summaries: SummarySettings {
+            enabled: true,
+            settle_ms: 0,
+            ..SummarySettings::default()
+        },
+        ..Settings::default()
+    };
+    let r = Rig::with(settings, Some(fake as Arc<dyn Summarizer>));
+    r.agent.channels().focus("a").unwrap();
+    r.stream("b", LONG, 0, None);
+    r.agent.turn_end("b", None, None).unwrap();
+    r.read("Background recap.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_muted_session_is_not_read_but_still_chimes() {
+    // session_prefs muted (router.py): its items wait unread; earcons play.
+    let r = Rig::new();
+    let earcons = r.agent.subscribe();
+    r.agent.set_channel_muted("a", true).unwrap();
+    r.stream("a", "Muted text.", 0, None);
+    r.agent.turn_end("a", None, None).unwrap();
+    assert_eq!(earcons.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    r.stays_idle();
+    r.stream("b", "Other session.", 0, None);
+    r.read("Other session.");
+    r.stays_idle();
+    r.agent.set_channel_muted("a", false).unwrap();
+    r.read("Muted text.");
+    r.stays_idle();
+    assert!(r.agent.set_channel_muted("", true).is_err());
+}
+
+#[test]
+fn muting_the_session_being_read_cuts_it() {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    r.wait_for("One is here.");
+    r.agent.set_channel_muted("a", true).unwrap();
+    r.stays_idle();
+}
+
+#[test]
+fn forget_frees_a_dead_sessions_turn_at_once() {
+    let r = Rig::new();
+    r.agent.turn_start("a", None, Some(10.0)).unwrap();
+    assert_eq!(r.agent.tracked(), ["a"]);
+    r.agent.forget("a").unwrap();
+    assert!(r.agent.tracked().is_empty());
+    assert!(r.agent.channels().channel("a").is_none());
+    r.agent.forget("never-seen").unwrap();
+    // A new session with that id starts clean (no old turn start time).
+    assert!(r.stream("a", "Fresh.", 0, Some(1.0)));
+    r.read("Fresh.");
+}
+
+#[test]
+fn a_silent_session_is_forgotten_after_the_timeout() {
+    // A session that died without SessionEnd: its turn state is freed and
+    // its idle channel closed by a later message (Python forget_session).
+    let r = Rig::forgetting(Settings::default(), None, Duration::from_millis(100));
+    r.agent.turn_start("a", None, Some(10.0)).unwrap();
+    r.agent.turn_start("b", None, Some(10.0)).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    r.agent.turn_start("b", None, Some(11.0)).unwrap();
+    assert_eq!(r.agent.tracked(), ["b"], "a was forgotten");
+    assert!(r.agent.channels().channel("a").is_none());
+    assert!(r.agent.channels().channel("b").is_some());
+}
+
+#[test]
+fn the_focused_sessions_channel_is_kept_when_its_turn_is_freed() {
+    let r = Rig::forgetting(Settings::default(), None, Duration::from_millis(100));
+    r.agent.channels().focus("a").unwrap();
+    r.agent.turn_start("a", None, None).unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    r.agent.turn_start("b", None, None).unwrap();
+    assert_eq!(r.agent.tracked(), ["b"]);
+    assert!(r.agent.channels().channel("a").is_some(), "focused: kept");
+}
+
+#[test]
+fn earcon_subscribers_that_went_away_are_pruned() {
+    let r = Rig::new();
+    let kept = r.agent.subscribe();
+    for _ in 0..5 {
+        drop(r.agent.subscribe());
+    }
+    let _last = r.agent.subscribe();
+    assert_eq!(r.agent.subscribers(), 2, "pruned at subscription");
+    drop(_last);
+    r.agent.earcon(Earcon::Nav).unwrap();
+    assert_eq!(r.agent.subscribers(), 1, "pruned at the earcon");
+    assert_eq!(kept.recv_timeout(TIMEOUT).unwrap(), Earcon::Nav);
 }
