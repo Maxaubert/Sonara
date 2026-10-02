@@ -28,7 +28,7 @@ jobs:
       - run: python -m pip install -e ".[dev,windows]"
       - name: Lint
         if: matrix.python == '3.12'
-        run: ruff check src tests conformance
+        run: ruff check src tests conformance clients/python packaging
       - name: Unit tests
         run: python -m pytest -q
       # The daemon's lock-discipline asserts (daemon/core.py) are off in
@@ -59,6 +59,54 @@ jobs:
       - run: cargo build -p sonarad
       - name: Conformance (core)
         run: python -m pytest conformance -q
+      # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
+      # dependency change must regenerate it (spec R6).
+      - name: Notices up to date
+        run: python packaging/notices/gen_notices.py --check
+
+  # The SDKs and the npm runtime package against a real sonarad.exe (fake
+  # engine), on the oldest Node and Python they support.
+  clients:
+    runs-on: windows-latest
+    # bash -e: a failing command fails the step (pwsh only checks the last one).
+    defaults:
+      run:
+        shell: bash
+    env:
+      SONARAD: ${{ github.workspace }}\target\release\sonarad.exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: cargo build -p sonarad --release
+      - name: "@sonara/client: typecheck, build, test"
+        working-directory: clients/ts
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
+      - name: "@sonara/runtime-win32-x64: build, test"
+        working-directory: packaging/npm-runtime
+        run: |
+          npm run build
+          npm test
+      - name: Example Node host via the packed packages
+        run: node packaging/smoke/run-node.mjs
+      - name: "sonara-client: tests"
+        run: |
+          python -m pip install pytest ./clients/python
+          python -m pytest clients/python/tests -q
+      - name: Example Python host via the installed package
+        env:
+          SONARA_RUNTIME: ${{ github.workspace }}\target\release\sonarad.exe
+        run: python packaging/smoke/python_host.py
 
   # cargo-deny-action is a Docker action, which GitHub runs only on Linux
   # runners. deny.toml pins the graph to the Windows target, so Windows-only

@@ -1,0 +1,32 @@
+{
+  "name": "@sonara/runtime-win32-x64",
+  "version": "0.9.8",
+  "description": "The Sonara runtime (sonarad.exe) for Windows x64, to bundle with an app (electron-builder extraResources). Use with @sonara/client.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maxaubert/Sonara.git",
+    "directory": "packaging/npm-runtime"
+  },
+  "keywords": ["sonara", "tts", "text-to-speech", "runtime", "electron"],
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bin/",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/runtime-path.test.cjs",
+    "prepack": "node scripts/build.mjs"
+  }
+}

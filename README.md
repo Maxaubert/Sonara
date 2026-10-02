@@ -257,4 +257,6 @@ for how Sonara is built. Embedding hosts talk to the daemon over the protocol in
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Apps that bundle the new runtime may sell, close-source, relicense and sign;
+they ship [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) ([LICENSING.md](LICENSING.md)). How to bundle it:
+[docs/bundling.md](docs/bundling.md).

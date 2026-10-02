@@ -116,8 +116,26 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_9_4():
-    assert _pyproject_version() == "0.9.4"
+def test_pyproject_version_is_0_9_8():
+    assert _pyproject_version() == "0.9.8"
+
+
+def test_sdk_package_versions_match_pyproject():
+    # The SDKs and the npm runtime package ship from the same release tag
+    # as the runtime they talk to and bundle (runtime plan, M9).
+    import re
+    version = _pyproject_version()
+    for rel in ("clients/ts/package.json", "packaging/npm-runtime/package.json"):
+        assert _load(REPO_ROOT / rel).get("version") == version, rel
+    ts_version = (REPO_ROOT / "clients" / "ts" / "src" / "version.ts").read_text(encoding="utf-8")
+    m = re.search(r'^export const VERSION = "([^"]+)";', ts_version, re.M)
+    assert m and m.group(1) == version, "clients/ts/src/version.ts"
+    py_client = REPO_ROOT / "clients" / "python"
+    m = re.search(r'^version = "([^"]+)"', (py_client / "pyproject.toml").read_text(encoding="utf-8"), re.M)
+    assert m and m.group(1) == version, "clients/python/pyproject.toml"
+    init = (py_client / "src" / "sonara_client" / "version.py").read_text(encoding="utf-8")
+    m = re.search(r'^__version__ = "([^"]+)"', init, re.M)
+    assert m and m.group(1) == version, "clients/python/src/sonara_client/version.py"
 
 
 def test_cargo_workspace_version_matches_pyproject():
