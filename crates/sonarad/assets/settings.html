@@ -1,235 +1,404 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f7f7fa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#14151a" media="(prefers-color-scheme: dark)">
   <title>Sonara Settings</title>
   <script>
+    // The theme: the user's choice on this page, else the system's.
     (function () {
-      try {
-        var t = localStorage.getItem("sonara-theme");
-        if (t) document.documentElement.dataset.theme = t;
-      } catch (e) {}
+      var t = null;
+      try { t = localStorage.getItem("sonara-theme"); } catch (e) {}
+      if (t !== "light" && t !== "dark") {
+        t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.dataset.theme = t;
     })();
   </script>
   <style>
-    /* The design of the Python plugin's settings page (src/sonara/settings.html), adapted to protocol v1. */
+    /* The Python plugin's settings page (src/sonara/settings.html): same
+       sections and layout, on protocol v1 and the public HTTP API only. */
     :root {
       color-scheme: light;
-      --nav: rgba(242,243,247,.93);
+      --nav: #eff0f4;
       --content: #f7f7fa;
       --group: #fff;
       --subtle: #f2f2f6;
       --text: #1c1c20;
-      --secondary: #6c6d76;
-      --tertiary: #94959e;
-      --line: rgba(28,28,32,.105);
-      --line-strong: rgba(28,28,32,.17);
-      --accent: #4F46E5;
+      --secondary: #5d5e67;
+      --tertiary: #6e6f78;
+      --line: rgba(28,28,32,.11);
+      --line-strong: rgba(28,28,32,.22);
+      --accent: #4f46e5;
+      --accent-text: #4338ca;
       --accent-wash: #e9e8ff;
-      --green: #25895f;
+      --on-accent: #fff;
+      --green: #1f7a54;
       --green-wash: #e7f6ed;
-      --red: #c43d4c;
-      --track: #d9dbe2;
+      --red: #b3263a;
+      --red-wash: #fdecee;
+      --track: #cfd1d9;
+      --focus: #4f46e5;
     }
     html[data-theme="dark"] {
       color-scheme: dark;
-      --nav: rgba(27,28,34,.94);
+      --nav: #1b1c22;
       --content: #14151a;
       --group: #202127;
       --subtle: #292a32;
       --text: #f4f4f6;
-      --secondary: #b0b1ba;
-      --tertiary: #7e808b;
-      --line: rgba(255,255,255,.09);
-      --line-strong: rgba(255,255,255,.15);
+      --secondary: #b9bac3;
+      --tertiary: #a2a3ad;
+      --line: rgba(255,255,255,.1);
+      --line-strong: rgba(255,255,255,.2);
+      --accent: #6d66f0;
+      --accent-text: #b4b0ff;
       --accent-wash: #312d65;
       --green: #66d7a3;
       --green-wash: #1d3c31;
       --red: #ff8b96;
-      --track: #3b3d46;
+      --red-wash: #45222a;
+      --track: #464852;
+      --focus: #a5a0ff;
     }
     * { box-sizing: border-box; }
     body {
-      margin: 0; min-width: 900px; height: 100vh; overflow: hidden;
+      margin: 0; height: 100vh; overflow: hidden;
       color: var(--text); background: var(--content);
-      font: 14px/1.35 'Segoe UI Variable','Segoe UI',-apple-system,sans-serif;
+      font: 14px/1.4 'Segoe UI Variable','Segoe UI',system-ui,-apple-system,sans-serif;
       -webkit-font-smoothing: antialiased;
     }
-    button, input, select { font: inherit; color: inherit; }
+    button, input, select, textarea { font: inherit; color: inherit; }
     button { cursor: pointer; }
-    button:disabled, select:disabled, input:disabled { opacity: .5; cursor: not-allowed; }
-    .window { width: 100vw; height: 100vh; display: grid; grid-template-columns: 260px 1fr; overflow: hidden; background: var(--content); }
-    .nav-pane { background: var(--nav); border-right: 1px solid var(--line); padding: 22px 12px 18px; backdrop-filter: blur(26px); display: flex; flex-direction: column; overflow: hidden; }
-    .brand { display: flex; align-items: center; gap: 10px; padding: 11px 8px 16px; }
-    .brand-icon { width: 33px; height: 33px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(145deg,#746cf4,#4338ca); color:#fff; box-shadow: 0 6px 15px rgba(79,70,229,.25); }
-    .brand-icon svg { width: 20px; }
-    .brand strong { display:block; font-size:15px; letter-spacing:-.25px; }
+    button:disabled, select:disabled, input:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+    .skip { position:absolute; left:8px; top:-40px; z-index:100; padding:8px 12px; border-radius:8px; background:var(--accent); color:var(--on-accent); text-decoration:none; }
+    .skip:focus { top:8px; }
+    .window { width:100vw; height:100vh; display:grid; grid-template-columns:260px minmax(0,1fr); overflow:hidden; }
+    .nav-pane { background:var(--nav); border-right:1px solid var(--line); padding:22px 12px 18px; display:flex; flex-direction:column; overflow:auto; }
+    .brand { display:flex; align-items:center; gap:10px; padding:8px 8px 16px; }
+    .brand-icon { width:33px; height:33px; border-radius:10px; display:grid; place-items:center; background:linear-gradient(145deg,#746cf4,#4338ca); color:#fff; }
+    .brand-icon svg { width:20px; }
+    .brand strong { font-size:15px; letter-spacing:-.25px; }
+    .search { position:relative; display:block; margin:0 2px 16px; }
+    .search svg { position:absolute; width:14px; height:14px; left:10px; top:10px; fill:none; stroke:var(--tertiary); stroke-width:2; }
+    .search input { width:100%; height:34px; padding:0 10px 0 31px; border:1px solid var(--line-strong); border-radius:9px; background:var(--group); font-size:13px; }
     .side-nav { display:grid; gap:2px; }
-    .side-nav button { display:flex; align-items:center; gap:10px; width:100%; height:35px; padding:0 8px; border:0; border-radius:9px; background:transparent; color:var(--text); text-align:left; font-size:12.5px; }
+    .side-nav button { display:flex; align-items:center; gap:10px; width:100%; min-height:36px; padding:0 8px; border:0; border-radius:9px; background:transparent; color:var(--text); text-align:left; font-size:13px; }
     .side-nav button:hover { background:var(--subtle); }
-    .side-nav button.active { background:var(--accent); color:#fff; box-shadow:0 3px 9px rgba(79,70,229,.22); }
+    .side-nav button[aria-current="page"] { background:var(--accent); color:var(--on-accent); }
     .side-nav button[hidden] { display:none; }
-    .side-icon { width:24px; height:24px; display:grid; place-items:center; border-radius:7px; color:#fff; background:#6c65dd; }
+    .side-icon { width:24px; height:24px; display:grid; place-items:center; border-radius:7px; color:#fff; background:#5b54d6; flex:0 0 auto; }
     .side-icon svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    [data-page="audio"] .side-icon{background:#3da880}[data-page="hotkeys"] .side-icon{background:#707783}[data-page="agent"] .side-icon{background:#f09a48}[data-page="runtime"] .side-icon{background:#7a7f8b}
-    .side-nav button.active .side-icon { background:rgba(255,255,255,.19); }
-    .nav-footer { margin-top:auto; padding:10px 9px 0; display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--line); color:var(--secondary); font-size:10.5px; }
-    .theme { width:34px; height:21px; border:0; border-radius:99px; padding:2px; background:var(--track); }
-    .theme::after { content:''; display:block; width:17px; height:17px; border-radius:50%; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.25); transition:.2s; }
-    html[data-theme="dark"] .theme { background:var(--accent); } html[data-theme="dark"] .theme::after { transform:translateX(13px); }
-    .content-pane { position:relative; overflow-y:auto; scrollbar-width:thin; background:var(--content); }
-    .page { display:none; max-width:1120px; margin:0 auto; padding:48px 60px 80px; animation:fade .22s ease; }.page.active{display:block}
-    @keyframes fade { from{opacity:0;transform:translateX(4px)} }
-    @media (prefers-reduced-motion: reduce) { .page { animation:none; } .theme::after, .switch, .switch::after { transition:none; } }
-    .title-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:30px; }
-    h1 { margin:0; font-size:34px; line-height:1.1; letter-spacing:-.7px; font-weight:720; }
+    [data-page="summary"] .side-icon{background:#c46a14}[data-page="audio"] .side-icon{background:#23805b}[data-page="sessions"] .side-icon{background:#2f6fae}[data-page="hotkeys"] .side-icon{background:#5c6370}[data-page="advanced"] .side-icon{background:#7d4fb5}[data-page="system"] .side-icon{background:#5f6470}
+    .side-nav button[aria-current="page"] .side-icon { background:rgba(255,255,255,.2); }
+    .empty-search { padding:10px; color:var(--secondary); font-size:13px; }
+    .nav-footer { margin-top:auto; padding:12px 9px 0; display:flex; align-items:center; justify-content:space-between; gap:8px; border-top:1px solid var(--line); color:var(--secondary); font-size:12.5px; }
+    .content-pane { position:relative; overflow-y:auto; background:var(--content); }
+    .page { display:none; max-width:1080px; margin:0 auto; padding:44px 56px 80px; animation:fade .2s ease; }
+    .page.active { display:block; }
+    @keyframes fade { from { opacity:0; transform:translateX(4px); } }
+    .title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:26px; }
+    h1 { text-wrap:balance; margin:0; font-size:32px; line-height:1.1; letter-spacing:-.6px; font-weight:700; }
     .title-row p { margin:8px 0 0; color:var(--secondary); font-size:14.5px; }
-    .state { display:flex; align-items:center; gap:6px; color:var(--secondary); font-size:12.5px; opacity:0; transition:opacity .25s; }
-    .state.flash,.state.error { opacity:1; }.state i{width:7px;height:7px;border-radius:50%;background:#31ad77;box-shadow:0 0 0 3px rgba(49,173,119,.12)}
-    .state.error{color:var(--red);font-weight:650}.state.error i{background:var(--red);box-shadow:0 0 0 3px rgba(196,61,76,.18)}
-    body.offline .kbd{pointer-events:none;opacity:.5}
-    .segments{display:inline-flex;background:var(--subtle);border:1px solid var(--line);border-radius:99px;padding:4px;gap:4px}
-    .segments button{border:0;background:transparent;padding:9px 20px;border-radius:99px;font-size:14px;font-weight:600;color:var(--secondary)}
-    .segments button.active{background:var(--accent);color:#fff;box-shadow:0 3px 9px rgba(79,70,229,.28)}
-    .pref.dim{opacity:.45}
-    .pref.dim input,.pref.dim .segments button{pointer-events:none}
-    .group-label { display:flex; justify-content:space-between; align-items:baseline; margin:30px 3px 10px; color:var(--secondary); font-size:13px; font-weight:650; }
-    .inset { background:var(--group); border:1px solid var(--line); border-radius:15px; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.025); }
-    .pref { display:grid; grid-template-columns:minmax(220px,.9fr) minmax(320px,1.15fr); gap:34px; align-items:center; margin-left:20px; padding:21px 21px 21px 0; border-top:1px solid var(--line); }
+    .state { display:flex; align-items:center; gap:6px; color:var(--secondary); font-size:13px; opacity:0; transition:opacity .25s; white-space:nowrap; }
+    .state.flash, .state.error { opacity:1; }
+    .state i { width:7px; height:7px; border-radius:50%; background:var(--green); }
+    .state.error { color:var(--red); font-weight:600; white-space:normal; max-width:420px; }
+    .state.error i { background:var(--red); }
+    .group-label { margin:28px 3px 10px; color:var(--secondary); font-size:13px; font-weight:650; }
+    .inset { background:var(--group); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+    .pref { display:grid; grid-template-columns:minmax(200px,.9fr) minmax(280px,1.15fr); gap:30px; align-items:center; margin-left:20px; padding:20px 20px 20px 0; border-top:1px solid var(--line); }
     .pref:first-child { border-top:0; }
-    .pref-copy strong { display:block; font-size:15px; font-weight:650; margin-bottom:5px; }.pref-copy .hint,.hint{color:var(--secondary);font-size:12.5px;line-height:1.45}.control .hint{margin-top:8px}
-    select { width:100%; height:43px; border:1px solid var(--line-strong); border-radius:10px; padding:0 13px; background:var(--subtle); outline:none; font-size:14px; }
-    select:focus,button:focus-visible,input:focus-visible,.kbd:focus-visible{outline:3px solid rgba(79,70,229,.18);outline-offset:1px}
-    .range-head { display:flex;justify-content:space-between;align-items:center;margin-bottom:9px;color:var(--secondary);font-size:12px}.range-head output{font-weight:700;color:var(--text);font-size:14.5px}
-    input[type="range"]{width:100%;height:4px;appearance:none;border-radius:99px;background:linear-gradient(90deg,var(--accent) 0 var(--fill,50%),var(--track) var(--fill,50%) 100%);cursor:pointer;display:block}
-    input[type="range"]::-webkit-slider-thumb{appearance:none;width:17px;height:17px;border-radius:50%;background:#fff;border:1px solid rgba(0,0,0,.12);box-shadow:0 1px 5px rgba(0,0,0,.22)}
-    .ends{display:flex;justify-content:space-between;margin-top:7px;color:var(--tertiary);font-size:11px}
-    .stepper{display:inline-flex;height:41px;border:1px solid var(--line-strong);border-radius:10px;overflow:hidden;background:var(--subtle)}.stepper button{width:41px;border:0;background:transparent;color:var(--secondary);font-size:19px}.stepper button:hover{color:var(--accent);background:var(--accent-wash)}.stepper output{width:54px;display:grid;place-items:center;border-inline:1px solid var(--line);font-size:14px;font-weight:700}
-    .toggle-line{display:flex;align-items:center;justify-content:space-between;gap:12px}.toggle-status{font-size:10.5px;color:var(--secondary)}
-    .switch{width:48px;height:28px;border:0;border-radius:99px;padding:3px;background:var(--track);flex:0 0 auto;transition:.2s}.switch::after{content:'';display:block;width:22px;height:22px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,.25);transition:.2s}.switch[aria-checked="true"]{background:var(--accent)}.switch[aria-checked="true"]::after{transform:translateX(20px)}
-    .key-list .key-row{display:grid;grid-template-columns:1fr auto;gap:20px;align-items:center;margin-left:17px;padding:15px 17px 15px 0;border-top:1px solid var(--line)}.key-list .key-row:first-child{border-top:0}.key-copy strong{display:block;font-size:12.5px;margin-bottom:3px}.key-copy span{display:block;color:var(--secondary);font-size:10px}.keys{display:flex;align-items:center;gap:4px}
-    .kbd{display:inline-flex;gap:4px;min-height:22px;align-items:center;cursor:pointer}
-    .kbd i{font-style:normal;min-width:34px;padding:7px 10px;border:1px solid var(--line-strong);border-bottom-width:2px;border-radius:7px;background:var(--subtle);text-align:center;font-size:12px;font-weight:650}
-    .kbd .unbound{opacity:.5;font-style:italic}
-    .key-row.listen .kbd{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-    .key-copy .warn{margin-top:5px;color:var(--red);font-size:10.5px;line-height:1.4}.key-copy .warn[hidden]{display:none}
-    .key-actions{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 4px}.key-actions .btn{flex-shrink:0;white-space:nowrap}
-    .unbind{width:22px;height:22px;margin-left:2px;border:0;border-radius:6px;background:transparent;color:var(--tertiary);font-size:15px}.unbind:hover{background:rgba(196,61,76,.09);color:var(--red)}
-    .btn{height:32px;padding:0 12px;border:1px solid var(--line-strong);border-radius:8px;background:var(--subtle);font-size:10.5px;font-weight:650}.btn:hover{color:var(--accent);border-color:rgba(79,70,229,.38)}
-    .notice{margin:0 0 14px;padding:12px 14px;border-radius:12px;background:var(--accent-wash);color:var(--text);font-size:12.5px;line-height:1.45}.notice[hidden]{display:none}
-    .info{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--group)}.metric{padding:12px 14px}.metric+.metric{border-left:1px solid var(--line)}.metric span{display:block;color:var(--secondary);font-size:9px;text-transform:uppercase;letter-spacing:.07em}.metric b{display:block;margin-top:4px;font-size:12.5px;overflow-wrap:anywhere}
-    .footer{display:flex;justify-content:space-between;padding:16px 3px 0;color:var(--tertiary);font-size:9.5px}
-    .banner{position:fixed;top:0;left:0;right:0;z-index:99;background:#c43d4c;color:#fff;padding:10px 16px;display:flex;gap:8px;font-size:13px;justify-content:center}
-    @media(max-height:760px){.page{padding-top:32px}.title-row{margin-bottom:22px}.pref{padding-block:14px}.group-label{margin-top:18px}}
+    .pref-copy strong, .pref-copy label.title { display:block; font-size:15px; font-weight:650; margin-bottom:4px; }
+    .hint { color:var(--secondary); font-size:13px; line-height:1.45; }
+    .control .hint { margin-top:8px; }
+    .pref.dim { opacity:.55; }
+    .notice { margin:0 0 14px; padding:12px 14px; border-radius:12px; background:var(--accent-wash); color:var(--text); font-size:13.5px; line-height:1.45; }
+    .notice[hidden] { display:none; }
+    select, .field { width:100%; min-height:42px; border:1px solid var(--line-strong); border-radius:10px; padding:0 12px; background:var(--subtle); font-size:14px; }
+    .voice { display:grid; grid-template-columns:1fr 42px; gap:9px; }
+    .play { width:42px; height:42px; border:1px solid var(--line-strong); border-radius:10px; background:var(--subtle); display:grid; place-items:center; color:var(--text); }
+    .play svg { width:16px; fill:currentColor; }
+    .play:hover { color:var(--accent-text); border-color:var(--accent); }
+    .play[aria-busy="true"] { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
+    .range-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:9px; color:var(--secondary); font-size:13px; }
+    .range-head output { font-weight:700; color:var(--text); font-size:14.5px; }
+    input[type="range"] { width:100%; height:24px; margin:0; appearance:none; background:transparent; cursor:pointer; display:block; }
+    input[type="range"]::-webkit-slider-runnable-track { height:4px; border-radius:99px; background:linear-gradient(90deg,var(--accent) 0 var(--fill,50%),var(--track) var(--fill,50%) 100%); }
+    input[type="range"]::-webkit-slider-thumb { appearance:none; width:18px; height:18px; margin-top:-7px; border-radius:50%; background:#fff; border:1px solid rgba(0,0,0,.25); box-shadow:0 1px 4px rgba(0,0,0,.25); }
+    input[type="range"]::-moz-range-track { height:4px; border-radius:99px; background:var(--track); }
+    input[type="range"]::-moz-range-progress { height:4px; border-radius:99px; background:var(--accent); }
+    input[type="range"]::-moz-range-thumb { width:18px; height:18px; border-radius:50%; background:#fff; border:1px solid rgba(0,0,0,.25); }
+    .ends { display:flex; justify-content:space-between; margin-top:6px; color:var(--tertiary); font-size:12px; }
+    .segments { display:inline-flex; flex-wrap:wrap; background:var(--subtle); border:1px solid var(--line); border-radius:99px; padding:4px; gap:4px; }
+    .segments button { border:0; background:transparent; min-height:36px; padding:0 18px; border-radius:99px; font-size:14px; font-weight:600; color:var(--secondary); }
+    .segments button:hover { color:var(--text); }
+    .segments button[aria-checked="true"] { background:var(--accent); color:var(--on-accent); }
+    .stepper { display:inline-flex; height:42px; border:1px solid var(--line-strong); border-radius:10px; overflow:hidden; background:var(--subtle); }
+    .stepper button { width:42px; border:0; background:transparent; color:var(--text); font-size:19px; }
+    .stepper button:hover { background:var(--accent-wash); }
+    .stepper output { width:54px; display:grid; place-items:center; border-inline:1px solid var(--line); font-weight:700; }
+    .toggle-line { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .switch { width:48px; height:28px; border:0; border-radius:99px; padding:3px; background:var(--track); flex:0 0 auto; transition:background .2s; }
+    .switch::after { content:''; display:block; width:22px; height:22px; border-radius:50%; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.3); transition:transform .2s; }
+    .switch[aria-checked="true"] { background:var(--accent); }
+    .switch[aria-checked="true"]::after { transform:translateX(20px); }
+    .theme { width:38px; height:22px; padding:2px; }
+    .theme::after { width:18px; height:18px; }
+    .theme[aria-checked="true"]::after { transform:translateX(16px); }
+    .combo-body { padding:4px 20px 18px; }
+    #prompt-text { width:100%; min-height:200px; resize:vertical; font:12.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace; background:var(--subtle); border:1px solid var(--line-strong); border-radius:10px; padding:10px 12px; }
+    .prompt-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:8px; }
+    .btn { min-height:34px; padding:0 14px; border:1px solid var(--line-strong); border-radius:9px; background:var(--subtle); font-size:13px; font-weight:600; }
+    .btn:hover { color:var(--accent-text); border-color:var(--accent); }
+    .unit { position:relative; }
+    .unit .field { padding-right:56px; }
+    .unit span { position:absolute; right:12px; top:11px; color:var(--secondary); font-size:13px; }
+    .sess-head, .sess-row { display:grid; grid-template-columns:minmax(0,1fr) 64px 190px; gap:14px; align-items:center; }
+    .sess-head { padding:12px 0 4px; color:var(--secondary); font-size:12px; font-weight:650; }
+    .sess-head span:nth-child(2) { text-align:center; }
+    .sess-row { padding:12px 0; border-bottom:1px solid var(--line); }
+    .sess-row:last-child { border-bottom:0; }
+    .sess-row .field { max-width:300px; }
+    .sess-row .switch { justify-self:center; }
+    .sess-sub { color:var(--secondary); font-size:12px; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .badge { display:inline-block; padding:1px 8px; border-radius:99px; background:var(--accent); color:var(--on-accent); font-size:11.5px; margin-left:6px; }
+    .badge.quiet { background:var(--subtle); color:var(--secondary); border:1px solid var(--line); }
+    details.older { border-top:1px solid var(--line); margin-top:4px; }
+    details.older summary { cursor:pointer; color:var(--secondary); font-size:13px; padding:10px 0 6px; }
+    .key-list .key-row { display:grid; grid-template-columns:1fr auto; gap:20px; align-items:center; margin-left:18px; padding:14px 18px 14px 0; border-top:1px solid var(--line); }
+    .key-list .key-row:first-child { border-top:0; }
+    .key-copy strong { display:block; font-size:14px; margin-bottom:3px; }
+    .key-copy span { display:block; color:var(--secondary); font-size:12.5px; }
+    .key-copy .warn { margin-top:5px; color:var(--red); font-size:12.5px; line-height:1.4; }
+    .key-copy .warn[hidden] { display:none; }
+    .keys { display:flex; align-items:center; gap:4px; }
+    .kbd { display:inline-flex; gap:4px; min-height:34px; align-items:center; padding:2px; border:0; background:transparent; border-radius:8px; }
+    .kbd i { font-style:normal; min-width:34px; padding:6px 10px; border:1px solid var(--line-strong); border-bottom-width:2px; border-radius:7px; background:var(--subtle); text-align:center; font-size:12.5px; font-weight:650; }
+    .kbd .unbound { opacity:.7; font-style:italic; }
+    .key-row.listen .kbd { outline:2px solid var(--accent); outline-offset:2px; }
+    .unbind { width:30px; height:30px; border:0; border-radius:7px; background:transparent; color:var(--secondary); font-size:17px; }
+    .unbind:hover { background:var(--red-wash); color:var(--red); }
+    .key-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:10px 4px; }
+    .key-actions .btn { flex-shrink:0; white-space:nowrap; }
+    .info { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--group); }
+    .metric { padding:12px 14px; border-top:1px solid var(--line); }
+    .metric:nth-child(-n+3) { border-top:0; }
+    .metric:not(:nth-child(3n+1)) { border-left:1px solid var(--line); }
+    .metric span { display:block; color:var(--secondary); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; }
+    .metric b { display:block; margin-top:4px; font-size:13.5px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+    .engine-row { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-left:18px; padding:14px 18px 14px 0; border-top:1px solid var(--line); }
+    .engine-row:first-child { border-top:0; }
+    .engine-row strong { display:block; font-size:14px; margin-bottom:3px; }
+    .pill { padding:4px 10px; border-radius:99px; background:var(--green-wash); color:var(--green); font-size:12px; font-weight:700; white-space:nowrap; }
+    .path { font:12.5px ui-monospace,"Cascadia Mono",Consolas,monospace; overflow-wrap:anywhere; }
+    .footer { display:flex; justify-content:space-between; padding:16px 3px 0; color:var(--secondary); font-size:12.5px; }
+    .banner { position:fixed; top:0; left:0; right:0; z-index:99; background:var(--red); color:#fff; padding:10px 16px; display:flex; gap:8px; font-size:13.5px; justify-content:center; }
+    html[data-theme="dark"] .banner { color:#1c1c20; }
+    .banner[hidden] { display:none; }
+    @media (max-width: 860px) {
+      body { overflow:auto; height:auto; }
+      .window { grid-template-columns:1fr; height:auto; }
+      .nav-pane { border-right:0; border-bottom:1px solid var(--line); }
+      .page { padding:28px 18px 60px; }
+      .pref { grid-template-columns:1fr; gap:12px; }
+      .sess-head { display:none; }
+      .sess-row { grid-template-columns:1fr auto; }
+      .sess-row select { grid-column:1 / -1; }
+      .info { grid-template-columns:1fr 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation:none !important; transition:none !important; }
+    }
+    @media (forced-colors: active) {
+      .segments button[aria-checked="true"], .switch[aria-checked="true"] { outline:2px solid CanvasText; }
+    }
   </style>
 </head>
 <body>
-  <div id="offline-banner" style="display:none" class="banner" role="alert">
-    The Sonara runtime is not reachable. It may have exited; this page works again once its app starts it. Reconnecting&hellip;
+  <a class="skip" href="#main">Skip to settings</a>
+  <div id="offline-banner" class="banner" role="alert" hidden>
+    The Sonara runtime is not reachable. It may have exited; this page reconnects once its app starts it again.
   </div>
+  <div id="live" class="sr-only" role="status" aria-live="polite"></div>
   <div class="window">
     <aside class="nav-pane">
-      <div class="brand"><div class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13h2m2-5v9m4-14v18m4-14v10m4-7v4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></div><div><strong>Sonara</strong></div></div>
+      <div class="brand"><div class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h2m2-5v9m4-14v18m4-14v10m4-7v4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></div><strong translate="no">Sonara</strong></div>
+      <label class="search"><span class="sr-only">Search settings</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="settings-search" type="search" placeholder="Search settings…" autocomplete="off" spellcheck="false"></label>
       <nav class="side-nav" aria-label="Settings sections">
-        <button class="active" data-page="speech"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg></span>Speech</button>
-        <button data-page="audio"><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6"/></svg></span>Audio</button>
-        <button data-page="hotkeys"><span class="side-icon"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h10"/></svg></span>Hotkeys</button>
-        <button data-page="agent" hidden><span class="side-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>Agent</button>
-        <button data-page="runtime"><span class="side-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 3.1h5l.4-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg></span>Runtime</button>
+        <button data-page="speech" aria-current="page"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg></span>Speech</button>
+        <button data-page="summary"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>Summary</button>
+        <button data-page="audio"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6"/></svg></span>Audio</button>
+        <button data-page="sessions"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><rect x="3" y="11" width="18" height="5" rx="1.5"/><path d="M3 20h12"/></svg></span>Sessions</button>
+        <button data-page="hotkeys"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h10"/></svg></span>Hotkeys</button>
+        <button data-page="advanced"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></span>Advanced</button>
+        <button data-page="system"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 3.1h5l.4-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg></span>System</button>
       </nav>
-      <div class="nav-footer"><span>Dark appearance</span><button class="theme" id="themeToggle" aria-label="Toggle dark appearance"></button></div>
+      <div class="empty-search" id="empty-search" hidden>No settings found</div>
+      <div class="nav-footer"><span id="theme-label">Dark appearance</span><button class="switch theme" id="theme-toggle" role="switch" aria-checked="false" aria-labelledby="theme-label"></button></div>
     </aside>
 
-    <main class="content-pane">
-      <section class="page active" id="speech">
-        <div class="title-row"><div><h1>Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" role="status"><i></i>Saved</span></div>
-        <div class="group-label"><span>Voice</span></div>
+    <main class="content-pane" id="main" tabindex="-1">
+      <section class="page active" id="speech" aria-labelledby="h-speech">
+        <div class="title-row"><div><h1 id="h-speech">Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <h2 class="group-label">Voice</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Engine</strong><div class="hint">Which speech engine reads.</div></div><div class="control"><select id="engine-select" aria-label="Speech engine"></select></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Voice</strong><div class="hint">A voice of the engine above.</div></div><div class="control"><select id="voice-select" aria-label="Voice"></select><div class="hint" id="voice-hint"></div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Speaking rate</strong></div><div class="control"><div class="range-head"><span>Words per minute</span><output id="rate-out">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-label="Speaking rate"><div class="ends"><span>100</span><span>400</span></div><div class="hint">Applies from the next sentence.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Speech volume</strong><div class="hint">How loud Sonara speaks.</div></div><div class="control"><div class="range-head"><span>Volume</span><output id="volume-out">100 %</output></div><input id="volume" type="range" min="0" max="100" step="5" value="100" aria-label="Speech volume"><div class="ends"><span>Silent</span><span>Full</span></div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="engine-select">Engine</label><div class="hint">Which speech engine reads.</div></div><div class="control"><select id="engine-select"></select></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">A voice of the engine above.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
+        </div>
+        <h2 class="group-label">Delivery</h2>
+        <p class="notice agent-off" hidden>Mute and verbosity are for agent sessions. They appear once an app that uses them (such as the Claude Code plugin) is connected.</p>
+        <div class="inset">
+          <div class="pref agent-pref"><div class="pref-copy"><strong id="mute-label">Mute</strong><div class="hint">Muted keeps the attention sounds; super muted silences them too. The mute hotkey cycles through these.</div></div><div class="control"><div class="segments" id="mute-seg" role="radiogroup" aria-labelledby="mute-label"><button type="button" role="radio" data-value="0">Unmuted</button><button type="button" role="radio" data-value="1">Muted</button><button type="button" role="radio" data-value="2">Super muted</button></div></div></div>
+          <div class="pref agent-pref"><div class="pref-copy"><strong id="verbosity-label">Verbosity</strong><div class="hint">What is read besides the agent's answer.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="quiet">Quiet</button></div><div class="hint" id="verbosity-hint"></div></div></div>
         </div>
       </section>
 
-      <section class="page" id="audio">
-        <div class="title-row"><div><h1>Audio</h1><p>Balance spoken output with the rest of Windows.</p></div><span class="state" role="status"><i></i>Saved</span></div>
-        <div class="group-label"><span>Other apps while Sonara speaks</span></div>
+      <section class="page" id="summary" aria-labelledby="h-summary">
+        <div class="title-row"><div><h1 id="h-summary">Summary</h1><p>Turn long responses into focused spoken briefings.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <p class="notice agent-off" hidden>Summaries are for agent sessions. They appear once an app that uses them (such as the Claude Code plugin) is connected.</p>
+        <h2 class="group-label">Spoken summaries</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Audio</strong><div class="hint">What happens to other apps while Sonara speaks.</div></div><div class="control"><div class="segments" id="audio-seg" role="radiogroup" aria-label="Audio mode"><button data-mode="off" role="radio">Off</button><button data-mode="duck" role="radio">Duck</button><button data-mode="pause" role="radio">Pause</button></div><div class="hint" id="audio-mode-hint">Other apps play at full volume.</div></div></div>
-          <div class="pref" id="duck-row"><div class="pref-copy"><strong>Duck level</strong><div class="hint">Volume other apps keep.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out">30%</output></div><input id="duck" type="range" min="0" max="100" value="30" aria-label="Duck level"><div class="ends"><span>Silent</span><span>Full</span></div><div class="hint">Lower values keep context without competing with speech.</div></div></div>
+          <div class="pref agent-pref"><div class="pref-copy"><strong id="mode-label">Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="radiogroup" aria-labelledby="mode-label" aria-describedby="summary-mode-hint"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="tidy">Tidy</button><button type="button" role="radio" data-value="natural">Natural</button><button type="button" role="radio" data-value="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
+          <div class="combo-body agent-pref" id="prompt-card"><label class="sr-only" for="prompt-text">Summary instruction</label><textarea id="prompt-text" spellcheck="false" aria-describedby="prompt-state"></textarea><div class="prompt-actions"><span class="hint" id="prompt-state"></span><button class="btn" id="prompt-reset" type="button">Reset to default</button></div></div>
         </div>
-        <div class="hint" style="padding:12px 4px">Other apps always come back: when speech pauses or ends, when the app that turned this on closes, and after a crash at the next start.</div>
+        <h2 class="group-label">Engine</h2>
+        <div class="inset">
+          <div class="pref agent-pref" id="model-row"><div class="pref-copy"><label class="title" for="model-select">Model</label><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select"></select><div class="hint">Fastest first. Every model runs headless and never touches your session.</div></div></div>
+        </div>
+        <h2 class="group-label">Live reading</h2>
+        <div class="inset">
+          <div class="pref agent-pref" id="minqueue-row"><div class="pref-copy"><strong id="mq-label">Minimum queue</strong><div class="hint">Sentences Sonara waits for before it starts reading.</div></div><div class="control"><div class="stepper" role="group" aria-labelledby="mq-label"><button id="mq-minus" type="button" aria-label="Fewer sentences">&minus;</button><output id="minqueue-out" aria-live="polite">1</output><button id="mq-plus" type="button" aria-label="More sentences">+</button></div><div class="hint">0 and 1 start speaking immediately. Applies while the mode above is Off.</div></div></div>
+        </div>
       </section>
 
-      <section class="page" id="hotkeys">
-        <div class="title-row"><div><h1>Hotkeys</h1><p>Global speech controls that work from any application.</p></div><span class="state" role="status"><i></i>Saved</span></div>
+      <section class="page" id="audio" aria-labelledby="h-audio">
+        <div class="title-row"><div><h1 id="h-audio">Audio</h1><p>Balance spoken output with the rest of Windows.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <h2 class="group-label">Background sound</h2>
+        <div class="inset">
+          <div class="pref"><div class="pref-copy"><label class="title" for="volume">Speech volume</label><div class="hint">How loud Sonara speaks.</div></div><div class="control"><div class="range-head"><span>Volume</span><output id="volume-out" for="volume">100 %</output></div><input id="volume" type="range" min="0" max="100" step="5" value="100"><div class="ends" aria-hidden="true"><span>Silent</span><span>Full</span></div><div class="hint">Attention sounds follow it.</div></div></div>
+          <div class="pref"><div class="pref-copy"><strong id="audio-label">Other apps</strong><div class="hint">What happens to other apps while Sonara speaks.</div></div><div class="control"><div class="segments" id="audio-seg" role="radiogroup" aria-labelledby="audio-label" aria-describedby="audio-mode-hint"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="duck">Duck</button><button type="button" role="radio" data-value="pause">Pause</button></div><div class="hint" id="audio-mode-hint">Other apps play at full volume.</div></div></div>
+          <div class="pref" id="duck-row"><div class="pref-copy"><label class="title" for="duck">Duck level</label><div class="hint">Volume other apps keep while ducked.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out" for="duck">30 %</output></div><input id="duck" type="range" min="0" max="100" value="30"><div class="ends" aria-hidden="true"><span>Silent</span><span>Full</span></div><div class="hint">Lower values keep context without competing with speech.</div></div></div>
+        </div>
+        <p class="hint" style="padding:12px 4px">Other apps always come back: when speech pauses or ends, when the app that turned this on closes, and after a crash at the next start.</p>
+      </section>
+
+      <section class="page" id="sessions" aria-labelledby="h-sessions">
+        <div class="title-row"><div><h1 id="h-sessions">Sessions</h1><p>Name each session, switch its audio, or give it a voice.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <p class="notice" id="sessions-off" hidden>Sessions appear once an app that reads several sessions or tabs (such as the Claude Code plugin) is connected.</p>
+        <h2 class="group-label">Switching</h2>
+        <div class="inset">
+          <div class="pref channels-pref"><div class="pref-copy"><strong id="announce-label">Announce switches</strong><div class="hint">Say the session's name when reading moves to it.</div></div><div class="control"><div class="toggle-line"><span class="hint" id="announce-status" aria-hidden="true">On</span><button class="switch" id="announce-switch" type="button" role="switch" aria-checked="true" aria-labelledby="announce-label"></button></div></div></div>
+        </div>
+        <h2 class="group-label">Sessions</h2>
+        <div class="inset">
+          <div style="padding:4px 20px">
+            <div class="sess-head" id="sessions-head" aria-hidden="true" hidden><span>Name</span><span>Audio</span><span>Voice</span></div>
+            <div id="session-rows" role="list" aria-label="Open sessions"></div>
+            <p class="hint" id="sessions-empty" style="padding:14px 0;margin:0">No sessions yet. Start an agent session and it appears here.</p>
+            <details class="older" id="sessions-older" hidden><summary id="sessions-older-sum">Earlier sessions</summary><div id="session-rows-older" role="list" aria-label="Earlier sessions"></div></details>
+          </div>
+        </div>
+        <p class="hint" style="padding:12px 4px">A name you give a session is what Sonara says when it switches to it. Audio and voice are saved per session; the agent layer applies them from its next update.</p>
+      </section>
+
+      <section class="page" id="hotkeys" aria-labelledby="h-hotkeys">
+        <div class="title-row"><div><h1 id="h-hotkeys">Hotkeys</h1><p>Global speech controls that work from any application.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
         <p class="notice" id="hotkeys-inactive" hidden>Hotkeys are registered while an app that uses them is connected. Changes here apply the next time they are.</p>
-        <div class="group-label"><span>Keyboard shortcuts</span></div>
+        <h2 class="group-label">Keyboard shortcuts</h2>
         <div class="inset key-list">
-          <div class="key-row" data-action="restart"><div class="key-copy"><strong>Restart</strong><span>Read the current message again from the top.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Restart">&times;</button></div></div>
-          <div class="key-row" data-action="flush"><div class="key-copy"><strong>Flush to end</strong><span>Stop everything queued or playing.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Flush to end">&times;</button></div></div>
-          <div class="key-row" data-action="pause"><div class="key-copy"><strong>Pause / resume</strong><span>Pause or resume what is being read.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Pause / resume">&times;</button></div></div>
-          <div class="key-row" data-action="mute"><div class="key-copy"><strong>Mute cycle</strong><span>Muted, super muted (earcons too), unmuted.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Mute cycle">&times;</button></div></div>
-          <div class="key-row" data-action="next_channel"><div class="key-copy"><strong>Next channel</strong><span>Switch to the next session or tab.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Next channel">&times;</button></div></div>
-          <div class="key-row" data-action="faster"><div class="key-copy"><strong>Faster</strong><span>Increase the speaking rate.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Faster">&times;</button></div></div>
-          <div class="key-row" data-action="slower"><div class="key-copy"><strong>Slower</strong><span>Decrease the speaking rate.</span></div><div class="keys"><span class="kbd"></span><button class="unbind" aria-label="Unbind Slower">&times;</button></div></div>
+          <div class="key-row" data-action="restart"><div class="key-copy"><strong>Restart / re-read</strong><span>Read the latest message again from the top.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Restart">&times;</button></div></div>
+          <div class="key-row" data-action="flush"><div class="key-copy"><strong>Flush to end</strong><span>Stop everything queued or playing.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Flush to end">&times;</button></div></div>
+          <div class="key-row" data-action="pause"><div class="key-copy"><strong>Pause / resume</strong><span>Pause or resume what is being read.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Pause / resume">&times;</button></div></div>
+          <div class="key-row" data-action="mute"><div class="key-copy"><strong>Mute cycle</strong><span>Muted, super muted, unmuted.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Mute cycle">&times;</button></div></div>
+          <div class="key-row" data-action="next_channel"><div class="key-copy"><strong>Next session</strong><span>Move to the next session or tab.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Next session">&times;</button></div></div>
+          <div class="key-row" data-action="faster"><div class="key-copy"><strong>Faster</strong><span>Increase the speaking rate.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Faster">&times;</button></div></div>
+          <div class="key-row" data-action="slower"><div class="key-copy"><strong>Slower</strong><span>Decrease the speaking rate.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Slower">&times;</button></div></div>
         </div>
-        <div class="key-actions"><div class="hint">Click a shortcut to capture a new key, or use &times; to unbind it. The defaults use Ctrl+Alt, which is AltGr on many European keyboards: if a shortcut warns that it eats a character, rebind it with Win. A shortcut another program owns has to be changed.</div><button class="btn" id="keymap-reset">Reset hotkeys to defaults</button></div>
+        <div class="key-actions"><p class="hint" style="margin:0">Select a shortcut and press the new keys (Escape cancels), or use &times; to unbind it. The defaults use Ctrl+Alt, which is AltGr on many European keyboards: if a shortcut warns that it takes a character away, rebind it with Win. A shortcut another program owns has to be changed.</p><button class="btn" id="keymap-reset" type="button">Reset hotkeys to defaults</button></div>
       </section>
 
-      <section class="page" id="agent">
-        <div class="title-row"><div><h1>Agent</h1><p>Reading coding agents and chat sessions.</p></div><span class="state" role="status"><i></i>Saved</span></div>
-        <div class="group-label"><span>Listening</span></div>
+      <section class="page" id="advanced" aria-labelledby="h-advanced">
+        <div class="title-row"><div><h1 id="h-advanced">Advanced</h1><p>Tuning you rarely need to touch.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <p class="notice agent-off" hidden>These settings are for agent sessions and appear once an app that uses them is connected.</p>
+        <h2 class="group-label">Summaries</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong>Mute</strong><div class="hint">Muted keeps the earcons; super muted silences them too.</div></div><div class="control"><div class="segments" id="mute-seg" role="radiogroup" aria-label="Mute level"><button data-level="0" role="radio">Unmuted</button><button data-level="1" role="radio">Muted</button><button data-level="2" role="radio">Super muted</button></div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Verbosity</strong><div class="hint">What is read besides the agent's text.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-label="Verbosity"><button data-v="everything" role="radio">Everything</button><button data-v="medium" role="radio">Medium</button><button data-v="quiet" role="radio">Quiet</button></div><div class="hint" id="verbosity-hint"></div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Minimum queue</strong><div class="hint">Sentences to wait for before reading starts.</div></div><div class="control"><div class="stepper"><button id="mq-minus" aria-label="Decrease minimum queue">&minus;</button><output id="minqueue-out">1</output><button id="mq-plus" aria-label="Increase minimum queue">+</button></div><div class="hint">0 and 1 start speaking immediately.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong>Announce switches</strong><div class="hint">Say the session's name when reading moves to it.</div></div><div class="control"><div class="toggle-line"><span class="toggle-status" id="announce-status">On</span><button class="switch" id="announce-switch" role="switch" aria-checked="true" aria-label="Announce channel switches"></button></div></div></div>
+          <div class="pref agent-pref" id="timeout-row"><div class="pref-copy"><label class="title" for="timeout">Timeout</label><div class="hint">Longest wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" inputmode="numeric" min="15" max="300" step="1" aria-describedby="timeout-hint"><span aria-hidden="true">s</span></div><div class="hint" id="timeout-hint">15 to 300 seconds. After it, Sonara reads the original response instead.</div></div></div>
+          <div class="pref agent-pref" id="settle-row"><div class="pref-copy"><label class="title" for="settle">Settle time</label><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" inputmode="numeric" min="0" max="5000" step="100" aria-describedby="settle-hint"><span aria-hidden="true">ms</span></div><div class="hint" id="settle-hint">0 to 5000 milliseconds. Keeps unfinished sentences out of summaries.</div></div></div>
         </div>
       </section>
 
-      <section class="page" id="runtime">
-        <div class="title-row"><div><h1>Runtime</h1><p>The Sonara runtime this page talks to.</p></div></div>
+      <section class="page" id="system" aria-labelledby="h-system">
+        <div class="title-row"><div><h1 id="h-system">System</h1><p>The Sonara runtime this page talks to.</p></div></div>
+        <h2 class="group-label">Runtime</h2>
         <div class="info">
-          <div class="metric"><span>Version</span><b id="rt-version">&mdash;</b></div>
-          <div class="metric"><span>Protocol</span><b id="rt-protocol">&mdash;</b></div>
-          <div class="metric"><span>Extensions</span><b id="rt-extensions">&mdash;</b></div>
-          <div class="metric"><span>Port</span><b id="rt-port">&mdash;</b></div>
+          <div class="metric"><span>Version</span><b id="rt-version">&ndash;</b></div>
+          <div class="metric"><span>Protocol</span><b id="rt-protocol">&ndash;</b></div>
+          <div class="metric"><span>Process ID</span><b id="rt-pid">&ndash;</b></div>
+          <div class="metric"><span>Uptime</span><b id="rt-uptime">&ndash;</b></div>
+          <div class="metric"><span>Port</span><b id="rt-port">&ndash;</b></div>
+          <div class="metric"><span>Extensions</span><b id="rt-extensions">&ndash;</b></div>
         </div>
+        <h2 class="group-label">Speech engines</h2>
+        <div class="inset" id="engine-rows"></div>
+        <h2 class="group-label">Settings file</h2>
+        <div class="inset"><div class="engine-row"><div><strong>Saved settings</strong><div class="hint path" id="rt-config">&ndash;</div></div></div></div>
         <footer class="footer"><span>Sonara for Windows</span><span id="app-version"></span></footer>
       </section>
     </main>
   </div>
 
   <script>
-    // Navigation and theme.
-    const navButtons = [...document.querySelectorAll(".side-nav button")];
-    function showPage(name) {
-      const btn = navButtons.find(b => b.dataset.page === name && !b.hidden) || navButtons[0];
-      navButtons.forEach(b => b.classList.toggle("active", b === btn));
-      document.querySelectorAll(".page").forEach(p => p.classList.toggle("active", p.id === btn.dataset.page));
-      document.querySelector(".content-pane").scrollTop = 0;
-      try { localStorage.setItem("sonara-page", btn.dataset.page); } catch (e) {}
-    }
-    navButtons.forEach(b => b.addEventListener("click", () => showPage(b.dataset.page)));
-    document.getElementById("themeToggle").addEventListener("click", () => {
-      const root = document.documentElement;
-      const t = root.dataset.theme === "dark" ? "light" : "dark";
-      root.dataset.theme = t;
-      try { localStorage.setItem("sonara-theme", t); } catch (e) {}
-    });
-  </script>
-
-  <script>
 // The runtime fills in its token when it serves this page (settings_page.rs).
 const TOKEN = "__SONARA_TOKEN__";
 
+const $ = id => document.getElementById(id);
 class ApiError extends Error {}
 
-// Every change goes through the public protocol v1 HTTP API.
+// ---- navigation, search and theme -------------------------------------
+const navButtons = [...document.querySelectorAll(".side-nav button")];
+function showPage(name, focus) {
+  const btn = navButtons.find(b => b.dataset.page === name && !b.hidden) || navButtons[0];
+  navButtons.forEach(b => b === btn ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
+  document.querySelectorAll(".page").forEach(p => p.classList.toggle("active", p.id === btn.dataset.page));
+  $("main").scrollTop = 0;
+  if (focus) $(btn.dataset.page).querySelector("h1").focus({preventScroll: true});
+  try { localStorage.setItem("sonara-page", btn.dataset.page); } catch (e) {}
+}
+document.querySelectorAll("h1").forEach(h => h.tabIndex = -1);
+navButtons.forEach(b => b.addEventListener("click", () => showPage(b.dataset.page, true)));
+$("settings-search").addEventListener("input", e => {
+  const q = e.target.value.trim().toLowerCase();
+  let matches = 0;
+  for (const b of navButtons) {
+    const page = $(b.dataset.page);
+    const hit = !q || page.textContent.toLowerCase().includes(q) || b.textContent.toLowerCase().includes(q);
+    b.hidden = !hit;
+    if (hit) matches++;
+  }
+  $("empty-search").hidden = matches > 0;
+  const current = navButtons.find(b => b.getAttribute("aria-current") === "page");
+  if (current && current.hidden) { const first = navButtons.find(b => !b.hidden); if (first) showPage(first.dataset.page); }
+});
+function syncTheme() {
+  $("theme-toggle").setAttribute("aria-checked", document.documentElement.dataset.theme === "dark" ? "true" : "false");
+}
+$("theme-toggle").addEventListener("click", () => {
+  const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("sonara-theme", t); } catch (e) {}
+  syncTheme();
+});
+syncTheme();
+
+// ---- the API: protocol v1 over HTTP ------------------------------------
 async function call(type, body) {
   let r;
   try {
@@ -248,99 +417,100 @@ async function call(type, body) {
   let j = null;
   try { j = await r.json(); } catch (e) {}
   if (!r.ok || !j || !j.ok) {
-    throw new ApiError(j && j.error ? j.error.message : "HTTP " + r.status);
+    const err = new ApiError(j && j.error ? j.error.message : "HTTP " + r.status);
+    err.code = j && j.error ? j.error.code : null;
+    throw err;
   }
   return j;
 }
 const get = key => call("get", {key}).then(j => j.value);
-const set = (key, value) => call("set", {key, value}).then(j => j.value);
+const put = (key, value) => call("set", {key, value}).then(j => j.value);
+
+function setOffline(down) {
+  const b = $("offline-banner");
+  if (b.hidden === !down) return;
+  b.hidden = !down;
+}
+
+// ---- status: a visual chip per page plus one polite live region ---------
+function announce(msg) {
+  const live = $("live");
+  live.textContent = "";
+  setTimeout(() => { live.textContent = msg; }, 30);
+}
+let stateT;
+function showState(msg, error) {
+  document.querySelectorAll(".state").forEach(el => {
+    el.classList.toggle("error", !!error);
+    el.classList.add("flash");
+    el.lastChild.textContent = msg;
+  });
+  announce(msg);
+  clearTimeout(stateT);
+  stateT = setTimeout(() => document.querySelectorAll(".state").forEach(el => {
+    el.classList.remove("flash", "error");
+    el.lastChild.textContent = "Saved";
+  }), error ? 5000 : 1500);
+}
 
 let state = {};
 let mutationSeq = 0;   // a poll that started before a change never overwrites it
 
-function setOffline(down) {
-  document.getElementById("offline-banner").style.display = down ? "flex" : "none";
-  document.body.classList.toggle("offline", down);
-}
-
-let errT;
-function flashError(msg) {
-  document.querySelectorAll(".state").forEach(el => {
-    el.classList.add("error");
-    el.lastChild.textContent = msg;
-  });
-  clearTimeout(errT);
-  errT = setTimeout(() => document.querySelectorAll(".state").forEach(el => {
-    el.classList.remove("error");
-    el.lastChild.textContent = "Saved";
-  }), 3500);
-}
-let savedT;
-function pulseSaved() {
-  document.querySelectorAll(".state").forEach(el => el.classList.add("flash"));
-  clearTimeout(savedT);
-  savedT = setTimeout(() => document.querySelectorAll(".state").forEach(el => el.classList.remove("flash")), 1200);
-}
-
-async function change(key, value) {
+async function change(key, value, label) {
   try {
-    const v = await set(key, value);
+    const v = await put(key, value);
     mutationSeq++;
     state[key] = v;
     render();
-    pulseSaved();
+    showState(label ? label + " saved" : "Saved");
+    return v;
   } catch (e) {
-    if (e instanceof ApiError) flashError(e.message);
+    showState(e instanceof ApiError ? e.message : "Could not reach the runtime", true);
     refresh();
+    return undefined;
   }
 }
 
-const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys",
-              "mute_level", "verbosity", "minqueue", "channel_announce"];
+const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
+              "mute_level", "verbosity", "minqueue", "summaries", "channel_announce", "channel_prefs"];
 let voices = [];
-let voicesEngine = null;
 
 async function refresh() {
   const seq = mutationSeq;
-  let hello = null;
+  let hello;
   try { hello = await call("hello", {}); } catch (e) { return; }
   const got = await Promise.allSettled(KEYS.map(get));
-  if (state.engine !== voicesEngine || !voices.length) {
-    try { voices = (await call("voices", {})).voices; } catch (e) {}
-  }
+  let vs = voices;
+  try { vs = (await call("voices", {})).voices; } catch (e) {}
   if (seq !== mutationSeq) return;
   const fresh = {hello};
   KEYS.forEach((k, i) => { fresh[k] = got[i].status === "fulfilled" ? got[i].value : undefined; });
   state = fresh;
-  voicesEngine = state.engine;
+  voices = vs;
   render();
 }
 
+// ---- rendering helpers (never move a control the user is holding) ------
 function updateFill(el) {
   const pct = (el.value - el.min) / (el.max - el.min) * 100;
   el.style.setProperty("--fill", pct + "%");
 }
 function setVal(id, v) {
-  // Never move a control the user is holding.
-  const el = document.getElementById(id);
+  const el = $(id);
   if (!el || v === undefined) return;
   if (document.activeElement !== el && String(el.value) !== String(v)) el.value = v;
-  updateFill(el);
+  if (el.type === "range") updateFill(el);
 }
 function setText(id, t) {
-  const el = document.getElementById(id);
+  const el = $(id);
   if (el && el.textContent !== t) el.textContent = t;
 }
-function setSegments(id, attr, value) {
-  document.querySelectorAll("#" + id + " button").forEach(b => {
-    const on = String(b.dataset[attr]) === String(value);
-    b.classList.toggle("active", on);
-    b.setAttribute("aria-checked", on ? "true" : "false");
-  });
+function setDisabled(el, off) {
+  if (el.disabled !== off) el.disabled = off;
 }
-
 function fillSelect(sel, options, selected) {
-  // Options are built with createElement and textContent, never HTML.
+  // Options are built with createElement and textContent, never HTML. A
+  // rebuild only on change and never while the list is in use (#38).
   const sig = JSON.stringify([options, selected]);
   if (sel.dataset.sig === sig || document.activeElement === sel) return;
   sel.dataset.sig = sig;
@@ -354,68 +524,287 @@ function fillSelect(sel, options, selected) {
   }
 }
 
+// Segmented controls are radio groups: one tab stop, arrow keys move.
+function setSegments(id, value) {
+  const btns = [...document.querySelectorAll("#" + id + " [role=radio]")];
+  const any = btns.some(b => String(b.dataset.value) === String(value));
+  btns.forEach((b, i) => {
+    const on = String(b.dataset.value) === String(value);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+    b.tabIndex = on || (!any && i === 0) ? 0 : -1;
+  });
+}
+function wireSegments(id, onPick) {
+  const group = $(id);
+  const btns = [...group.querySelectorAll("[role=radio]")];
+  btns.forEach(b => b.addEventListener("click", () => {
+    if (b.getAttribute("aria-checked") === "true") return;
+    onPick(b.dataset.value);
+  }));
+  group.addEventListener("keydown", e => {
+    const i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    let j = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") j = (i + 1) % btns.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") j = (i - 1 + btns.length) % btns.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = btns.length - 1;
+    if (j === null) return;
+    e.preventDefault();
+    btns[j].focus();
+    btns[j].click();
+  });
+}
+function setSwitch(id, on) {
+  $(id).setAttribute("aria-checked", on ? "true" : "false");
+}
+function gate(el, off) {
+  // A control whose setting does not apply now is dimmed and locked.
+  el.classList.toggle("dim", off);
+  el.querySelectorAll("input,select,button,textarea").forEach(c => setDisabled(c, off));
+}
+
 const AUDIO_HINTS = {
   off: "Other apps play at full volume.",
   duck: "Other apps get quieter while Sonara speaks.",
-  pause: "Playing media pauses while Sonara speaks, then resumes.",
+  pause: "Playing music and video pause while Sonara speaks, then resume.",
 };
 const VERBOSITY_HINTS = {
-  everything: "Text, decisions, tool announcements and hints.",
-  medium: "Text and decisions, no tool announcements or hints.",
+  everything: "The answer, decisions, tool announcements and hints.",
+  medium: "The answer and decisions, no tool announcements or hints.",
   quiet: "Decisions only.",
 };
+const MODE_HINTS = {
+  off: "Read everything live, as it streams.",
+  tidy: "Everything, rewritten for the ear at the end of the turn.",
+  natural: "The full story, minus the noise.",
+  brief: "Just the outcome.",
+};
+// The summary models, fastest first; picking one also picks the command.
+const SUMMARY_MODELS = [
+  {cmd: "codex", model: "gpt-5.6-luna", label: "GPT-5.6 Luna (fastest)"},
+  {cmd: "codex", model: "gpt-5.4-mini", label: "GPT-5.4 Mini (faster)"},
+  {cmd: "claude", model: "haiku", label: "Haiku (fast)"},
+];
+
+const SUMMARY_GATED = new Set(["model-row", "timeout-row", "settle-row", "minqueue-row"]);
+
+function voiceOptions(engine, withDefault) {
+  const own = voices.filter(v => v.engine === engine);
+  const opts = withDefault ? [["", "Default"]] : [];
+  return opts.concat(own.map(v => [v.id, v.name + (v.language ? " (" + v.language + ")" : "") + (v.installed ? "" : ", not installed")]));
+}
 
 function render() {
   const s = state;
   const ext = (s.hello && s.hello.extensions) || [];
+  const agentOn = ext.includes("agent") && s.summaries !== undefined;
+  const channelsOn = ext.includes("channels") && s.channel_prefs !== undefined;
+
   // Speech
   const engines = [...new Set(voices.map(v => v.engine))];
   if (s.engine && !engines.includes(s.engine)) engines.unshift(s.engine);
-  fillSelect(document.getElementById("engine-select"), engines.map(e => [e, e]), s.engine);
-  const own = voices.filter(v => v.engine === s.engine);
-  const opts = [["", "Default"]].concat(own.map(v => [v.id, v.name + (v.language ? " (" + v.language + ")" : "") + (v.installed ? "" : ", not installed")]));
-  fillSelect(document.getElementById("voice-select"), opts, s.voice || "");
-  setText("voice-hint", own.length ? "" : "This engine lists no voices yet.");
+  fillSelect($("engine-select"), engines.map(e => [e, e === "onecore" ? "Windows (OneCore)" : e]), s.engine);
+  const vopts = voiceOptions(s.engine, true);
+  if (s.voice && !vopts.some(o => o[0] === s.voice)) vopts.push([s.voice, s.voice]);
+  fillSelect($("voice-select"), vopts, s.voice || "");
   if (s.rate !== undefined) { setVal("rate", s.rate); setText("rate-out", s.rate + " wpm"); }
-  if (s.volume !== undefined) { setVal("volume", s.volume); setText("volume-out", s.volume + " %"); }
-  // Audio
-  if (s.audio_mode !== undefined) {
-    setSegments("audio-seg", "mode", s.audio_mode);
-    setText("audio-mode-hint", AUDIO_HINTS[s.audio_mode] || "");
-    const off = s.audio_mode !== "duck";
-    document.getElementById("duck-row").classList.toggle("dim", off);
-    document.getElementById("duck").disabled = off;
+  document.querySelectorAll(".agent-off").forEach(n => { n.hidden = agentOn; });
+  // Rows the summary mode gates are left to renderSummary while the agent is on.
+  document.querySelectorAll(".agent-pref").forEach(p => {
+    if (!agentOn || !SUMMARY_GATED.has(p.id)) gate(p, !agentOn);
+  });
+  if (agentOn) {
+    setSegments("mute-seg", s.mute_level);
+    setSegments("verbosity-seg", s.verbosity);
+    setText("verbosity-hint", VERBOSITY_HINTS[s.verbosity] || "");
+    renderSummary(s.summaries);
+    setText("minqueue-out", String(s.minqueue));
   }
-  if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setText("duck-out", s.duck_level + "%"); }
+
+  // Audio
+  if (s.volume !== undefined) { setVal("volume", s.volume); setText("volume-out", s.volume + " %"); }
+  if (s.audio_mode !== undefined) {
+    setSegments("audio-seg", s.audio_mode);
+    setText("audio-mode-hint", AUDIO_HINTS[s.audio_mode] || "");
+    gate($("duck-row"), s.audio_mode !== "duck");
+  }
+  if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setText("duck-out", s.duck_level + " %"); }
+
+  // Sessions
+  $("sessions-off").hidden = channelsOn;
+  document.querySelectorAll(".channels-pref").forEach(p => gate(p, !channelsOn));
+  if (s.channel_announce !== undefined) {
+    setSwitch("announce-switch", s.channel_announce === "on");
+    setText("announce-status", s.channel_announce === "on" ? "On" : "Off");
+  }
+  renderSessions(channelsOn ? s.channel_prefs : []);
+
   // Hotkeys
   if (s.hotkeys) renderHotkeys(s.hotkeys);
-  // Agent (only when a client enabled the agent extension)
-  const agentOn = ext.includes("agent");
-  const agentBtn = navButtons.find(b => b.dataset.page === "agent");
-  if (agentBtn.hidden === agentOn) {
-    agentBtn.hidden = !agentOn;
-    if (!agentOn && agentBtn.classList.contains("active")) showPage("speech");
-  }
-  if (s.mute_level !== undefined) setSegments("mute-seg", "level", s.mute_level);
-  if (s.verbosity !== undefined) { setSegments("verbosity-seg", "v", s.verbosity); setText("verbosity-hint", VERBOSITY_HINTS[s.verbosity] || ""); }
-  if (s.minqueue !== undefined) setText("minqueue-out", String(s.minqueue));
-  if (s.channel_announce !== undefined) {
-    const on = s.channel_announce === "on";
-    document.getElementById("announce-switch").setAttribute("aria-checked", on ? "true" : "false");
-    setText("announce-status", on ? "On" : "Off");
-  }
-  // Runtime
+
+  // System
   if (s.hello) {
     setText("rt-version", s.hello.version);
     setText("rt-protocol", s.hello.protocol.major + "." + s.hello.protocol.minor);
     setText("rt-extensions", ext.length ? ext.join(", ") : "none");
-    setText("rt-port", location.port);
-    setText("app-version", "Sonara " + s.hello.version);
+    setText("app-version", "Version " + s.hello.version);
+  }
+  if (s.runtime) {
+    setText("rt-pid", String(s.runtime.pid));
+    setText("rt-uptime", fmtUptime(s.runtime.uptime_s));
+    setText("rt-port", String(s.runtime.http_port));
+    setText("rt-config", s.runtime.config || "Not saved (this runtime keeps settings in memory)");
+    setDisabled($("voice-preview"), !s.runtime.previews);
+  }
+  renderEngines();
+}
+
+function renderSummary(sm) {
+  if (!sm) return;
+  const active = sm.enabled ? sm.style : "off";
+  setSegments("summary-seg", active);
+  setText("summary-mode-hint", MODE_HINTS[active] || "");
+  // Model list: a model picks its command too ("command|model").
+  const opts = SUMMARY_MODELS.map(m => [m.cmd + "|" + m.model, m.label]);
+  const cur = sm.command + "|" + sm.model;
+  if (!opts.some(o => o[0] === cur)) opts.push([cur, sm.model + " (" + sm.command + ")"]);
+  fillSelect($("model-select"), opts, cur);
+  // The prompt of the style in force: the user's, else the built-in one.
+  const style = sm.style;
+  const custom = (sm.prompts || {})[style];
+  const effective = custom != null ? custom : ((sm.default_prompts || {})[style] || "");
+  const ta = $("prompt-text");
+  const sig = style + "|" + effective;
+  if (document.activeElement !== ta && ta.dataset.sig !== sig) { ta.value = effective; ta.dataset.sig = sig; }
+  ta.dataset.style = style;
+  setText("prompt-state", custom != null ? "Customized for " + style + " mode." : "Default " + style + " instruction.");
+  setDisabled($("prompt-reset"), custom == null);
+  gate($("model-row"), active === "off");
+  gate($("timeout-row"), active === "off");
+  gate($("settle-row"), active === "off");
+  gate($("minqueue-row"), active !== "off");
+  setVal("timeout", sm.timeout);
+  setVal("settle", sm.settle_ms);
+}
+
+function fmtUptime(sec) {
+  if (sec == null) return "–";
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h ? h + " h " + m + " min" : m + " min";
+}
+
+function renderEngines() {
+  const box = $("engine-rows");
+  const by = {};
+  for (const v of voices) (by[v.engine] = by[v.engine] || []).push(v);
+  const sig = JSON.stringify(Object.keys(by).map(k => [k, by[k].length, by[k].filter(v => v.installed).length]));
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.textContent = "";
+  for (const [engine, list] of Object.entries(by)) {
+    const row = document.createElement("div");
+    row.className = "engine-row";
+    const left = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = engine === "onecore" ? "Windows (OneCore)" : engine;
+    const desc = document.createElement("div");
+    desc.className = "hint";
+    const lic = list[0].license_class === "os" ? "Part of Windows." : "Permissive licence.";
+    desc.textContent = list.length + " voice" + (list.length === 1 ? "" : "s") + ". " + lic;
+    left.append(name, desc);
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    const ready = list.filter(v => v.installed).length;
+    pill.textContent = ready ? "Ready" : "Not installed";
+    row.append(left, pill);
+    box.appendChild(row);
+  }
+  if (!box.children.length) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.style.padding = "14px 18px";
+    p.style.margin = "0";
+    p.textContent = "No engine lists any voices yet.";
+    box.appendChild(p);
   }
 }
 
+// ---- sessions ---------------------------------------------------------
+let sessionsSig = "";
+function buildSessionRow(sess) {
+  const row = document.createElement("div");
+  row.className = "sess-row";
+  row.setAttribute("role", "listitem");
+  const id = document.createElement("div");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "field";
+  input.maxLength = 60;
+  input.value = sess.label || "";
+  input.placeholder = sess.client_label || "Name this session…";
+  input.autocomplete = "off";
+  const shown = sess.label || sess.client_label || sess.channel.slice(0, 8);
+  input.setAttribute("aria-label", "Name of session " + shown);
+  const sub = document.createElement("div");
+  sub.className = "sess-sub";
+  sub.textContent = (sess.client_label || "unknown folder") + " · " + sess.channel.slice(0, 8);
+  if (sess.reading) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "Reading"; sub.appendChild(b); }
+  else if (sess.open) { const b = document.createElement("span"); b.className = "badge quiet"; b.textContent = "Open"; sub.appendChild(b); }
+  id.append(input, sub);
+  input.addEventListener("change", () => changePrefs({channel: sess.channel, label: input.value.trim() || null}, "Name"));
+  input.addEventListener("keydown", e => { if (e.key === "Enter") input.blur(); });
+  // An Audio switch (on = heard); the stored preference is `muted`.
+  const audio = document.createElement("button");
+  audio.type = "button";
+  audio.className = "switch";
+  audio.setAttribute("role", "switch");
+  audio.setAttribute("aria-checked", sess.muted ? "false" : "true");
+  audio.setAttribute("aria-label", "Audio for session " + shown);
+  audio.addEventListener("click", () => changePrefs({channel: sess.channel, muted: audio.getAttribute("aria-checked") === "true"}, "Audio"));
+  const sel = document.createElement("select");
+  sel.setAttribute("aria-label", "Voice for session " + shown);
+  const opts = voiceOptions(state.engine, true);
+  if (sess.voice && !opts.some(o => o[0] === sess.voice)) opts.push([sess.voice, sess.voice]);
+  fillSelect(sel, opts, sess.voice || "");
+  sel.addEventListener("change", () => changePrefs({channel: sess.channel, voice: sel.value || null}, "Voice"));
+  row.append(id, audio, sel);
+  return row;
+}
+async function changePrefs(update, label) {
+  const v = await change("channel_prefs", update, label);
+  if (v !== undefined) sessionsSig = "";
+  render();
+}
+function renderSessions(list) {
+  const rows = $("session-rows"), older = $("session-rows-older");
+  const open = list.filter(x => x.open), closed = list.filter(x => !x.open);
+  const sig = JSON.stringify([list, state.engine, voices.length]);
+  $("sessions-empty").hidden = list.length > 0;
+  $("sessions-head").hidden = open.length === 0;
+  if (sig === sessionsSig) return;
+  // Never rebuild under a field the user is editing.
+  const ae = document.activeElement;
+  if ((rows.contains(ae) || older.contains(ae)) && ae.matches("input, select")) return;
+  const refocus = ae && (rows.contains(ae) || older.contains(ae)) ? ae.getAttribute("aria-label") : null;
+  sessionsSig = sig;
+  rows.textContent = "";
+  for (const s of open) rows.appendChild(buildSessionRow(s));
+  $("sessions-older").hidden = closed.length === 0;
+  setText("sessions-older-sum", "Earlier sessions (" + closed.length + ")");
+  older.textContent = "";
+  for (const s of closed) older.appendChild(buildSessionRow(s));
+  if (refocus) {
+    const again = [...document.querySelectorAll("#sessions [aria-label]")].find(n => n.getAttribute("aria-label") === refocus);
+    if (again) again.focus();
+  }
+}
+
+// ---- hotkeys ------------------------------------------------------------
+const ACTION_NAMES = {restart: "Restart", flush: "Flush to end", pause: "Pause / resume", mute: "Mute cycle",
+                      next_channel: "Next session", faster: "Faster", slower: "Slower"};
 function renderHotkeys(h) {
-  document.getElementById("hotkeys-inactive").hidden = !!h.active;
+  $("hotkeys-inactive").hidden = !!h.active;
   for (const b of h.bindings) {
     const row = document.querySelector('[data-action="' + b.action + '"]');
     if (!row || row.classList.contains("listen")) continue;
@@ -431,6 +820,7 @@ function renderHotkeys(h) {
         if (!parts) i.className = "unbound";
         kbd.appendChild(i);
       }
+      kbd.setAttribute("aria-label", (ACTION_NAMES[b.action] || b.action) + ": " + (b.combo || "unbound") + ". Press to change.");
     }
     // AltGr (E16, #160) and chords another program owns.
     let text = "";
@@ -447,33 +837,12 @@ function renderHotkeys(h) {
     if (!warn) {
       warn = document.createElement("span");
       warn.className = "warn";
-      warn.setAttribute("role", "note");
       copy.appendChild(warn);
     }
     if (warn.textContent !== text) warn.textContent = text;
     warn.hidden = !text;
   }
 }
-
-// Speech controls
-document.getElementById("engine-select").addEventListener("change", e => change("engine", e.target.value));
-document.getElementById("voice-select").addEventListener("change", e => change("voice", e.target.value || null));
-for (const [id, out, unit] of [["rate", "rate-out", " wpm"], ["volume", "volume-out", " %"], ["duck", "duck-out", "%"]]) {
-  const el = document.getElementById(id);
-  el.addEventListener("input", () => { updateFill(el); setText(out, el.value + unit); });
-}
-document.getElementById("rate").addEventListener("change", e => change("rate", Number(e.target.value)));
-document.getElementById("volume").addEventListener("change", e => change("volume", Number(e.target.value)));
-document.getElementById("duck").addEventListener("change", e => change("duck_level", Number(e.target.value)));
-document.querySelectorAll("#audio-seg button").forEach(b => b.addEventListener("click", () => change("audio_mode", b.dataset.mode)));
-// Agent controls
-document.querySelectorAll("#mute-seg button").forEach(b => b.addEventListener("click", () => change("mute_level", Number(b.dataset.level))));
-document.querySelectorAll("#verbosity-seg button").forEach(b => b.addEventListener("click", () => change("verbosity", b.dataset.v)));
-document.getElementById("mq-minus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.max(0, state.minqueue - 1)); });
-document.getElementById("mq-plus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.min(10, state.minqueue + 1)); });
-document.getElementById("announce-switch").addEventListener("click", () => change("channel_announce", state.channel_announce === "on" ? "off" : "on"));
-
-// Hotkey capture: browser key names to Sonara key names.
 const KEY_ALIASES = {arrowup: "up", arrowdown: "down", arrowleft: "left", arrowright: "right",
                      ".": "period", "[": "leftbracket", "]": "rightbracket"};
 let activeCapture = null;   // one capture at a time (#38)
@@ -481,17 +850,20 @@ function cancelCapture() {
   if (!activeCapture) return;
   removeEventListener("keydown", activeCapture.handler, true);
   activeCapture.row.classList.remove("listen");
+  activeCapture.row.querySelector(".kbd").removeAttribute("aria-pressed");
   activeCapture = null;
 }
 function armCapture(row, action) {
   cancelCapture();
   row.classList.add("listen");
-  const h = async (e) => {
+  row.querySelector(".kbd").setAttribute("aria-pressed", "true");
+  announce("Press the new shortcut for " + (ACTION_NAMES[action] || action) + ", or Escape to cancel.");
+  const h = e => {
     e.preventDefault();
     e.stopPropagation();
     if (["Control", "Alt", "Shift", "Meta", "AltGraph"].includes(e.key)) return;
     cancelCapture();
-    if (e.key === "Escape") return;
+    if (e.key === "Escape") { announce("Unchanged."); return; }
     const mods = [];
     if (e.ctrlKey) mods.push("ctrl");
     if (e.altKey) mods.push("alt");
@@ -499,7 +871,7 @@ function armCapture(row, action) {
     if (e.metaKey) mods.push("win");
     if (!mods.some(m => m === "ctrl" || m === "alt" || m === "win")) {
       // E13: without Ctrl, Alt or Win a global hotkey takes the key away from every app.
-      flashError("Add Ctrl, Alt or Win: a hotkey without one would block that key in every app");
+      showState("Add Ctrl, Alt or Win: a hotkey without one would block that key in every app", true);
       return;
     }
     let key = e.key.toLowerCase();
@@ -507,12 +879,12 @@ function armCapture(row, action) {
     else if (/^Digit[0-9]$/.test(e.code)) key = e.code.slice(5);
     key = KEY_ALIASES[key] || key;
     const valid = state.hotkeys && state.hotkeys.keys;
-    if (valid && !valid.includes(key)) { flashError('Key "' + e.key + '" is not supported'); return; }
+    if (valid && !valid.includes(key)) { showState('Key "' + e.key + '" is not supported', true); return; }
     const sorted = JSON.stringify([...mods].sort());
     const other = state.hotkeys && state.hotkeys.bindings.find(b =>
       b.action !== action && b.key === key && JSON.stringify([...(b.mods || [])].sort()) === sorted);
-    if (other && !confirm("Also bound to " + other.action.replace(/_/g, " ") + ". Rebind anyway?")) return;
-    change("hotkeys", {action, key, mods});
+    if (other && !confirm("Also bound to " + (ACTION_NAMES[other.action] || other.action) + ". Rebind anyway?")) return;
+    change("hotkeys", {action, key, mods}, "Shortcut");
   };
   activeCapture = {row, handler: h};
   addEventListener("keydown", h, true);
@@ -520,24 +892,91 @@ function armCapture(row, action) {
 document.querySelectorAll("[data-action]").forEach(row => {
   const action = row.dataset.action;
   const kbd = row.querySelector(".kbd");
-  kbd.tabIndex = 0;
-  kbd.setAttribute("role", "button");
-  kbd.setAttribute("aria-label", "Change hotkey for " + action.replace(/_/g, " "));
-  kbd.addEventListener("click", () => {
+  // A click (pointer, or Enter/Space on keyup) arms the capture; the key
+  // press that activated it never becomes the shortcut.
+  kbd.addEventListener("click", e => {
+    if (e.detail === 0) return;   // keyboard activation: handled on keyup
     if (activeCapture && activeCapture.row === row) { cancelCapture(); return; }
     armCapture(row, action);
   });
-  kbd.addEventListener("keyup", e => {   // keyup: the activating press is not the captured chord
+  kbd.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") e.preventDefault(); });
+  kbd.addEventListener("keyup", e => {
     if (activeCapture) return;
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); armCapture(row, action); }
   });
-  row.querySelector(".unbind").addEventListener("click", () => change("hotkeys", {action, key: null}));
+  row.querySelector(".unbind").addEventListener("click", () => change("hotkeys", {action, key: null}, "Shortcut"));
 });
-document.getElementById("keymap-reset").addEventListener("click", () => {
+$("keymap-reset").addEventListener("click", () => {
   if (!confirm("Reset every hotkey to the Ctrl+Alt defaults?")) return;
   cancelCapture();
-  change("hotkeys", "reset");
+  change("hotkeys", "reset", "Hotkeys");
 });
+
+// ---- wiring ---------------------------------------------------------------
+$("engine-select").addEventListener("change", e => change("engine", e.target.value, "Engine"));
+$("voice-select").addEventListener("change", e => change("voice", e.target.value || null, "Voice"));
+$("voice-preview").addEventListener("click", async () => {
+  const btn = $("voice-preview");
+  if (btn.getAttribute("aria-busy") === "true") return;
+  btn.setAttribute("aria-busy", "true");
+  try {
+    const v = $("voice-select").value;
+    await call("preview", v ? {voice: v} : {});
+    announce("Playing a sample.");
+  } catch (e) {
+    showState(e instanceof ApiError ? e.message : "Could not reach the runtime", true);
+  } finally {
+    setTimeout(() => btn.removeAttribute("aria-busy"), 600);
+  }
+});
+for (const [id, out, unit] of [["rate", "rate-out", " wpm"], ["volume", "volume-out", " %"], ["duck", "duck-out", " %"]]) {
+  const el = $(id);
+  el.addEventListener("input", () => { updateFill(el); setText(out, el.value + unit); });
+}
+$("rate").addEventListener("change", e => change("rate", Number(e.target.value), "Rate"));
+$("volume").addEventListener("change", e => change("volume", Number(e.target.value), "Volume"));
+$("duck").addEventListener("change", e => change("duck_level", Number(e.target.value), "Duck level"));
+wireSegments("audio-seg", v => change("audio_mode", v, "Audio mode"));
+wireSegments("mute-seg", v => change("mute_level", Number(v), "Mute"));
+wireSegments("verbosity-seg", v => change("verbosity", v, "Verbosity"));
+wireSegments("summary-seg", v => change("summaries", v === "off" ? {enabled: false} : {enabled: true, style: v}, "Summary mode"));
+$("model-select").addEventListener("change", e => {
+  const [command, model] = e.target.value.split("|");
+  change("summaries", {command, model}, "Model");
+});
+$("prompt-text").addEventListener("change", function () {
+  const sm = state.summaries;
+  if (!sm) return;
+  const style = this.dataset.style || sm.style;
+  const builtIn = (sm.default_prompts || {})[style];
+  const text = this.value.trim() && this.value !== builtIn ? this.value : null;
+  this.dataset.sig = "";
+  change("summaries", {prompts: {[style]: text}}, "Instruction");
+});
+$("prompt-reset").addEventListener("click", () => {
+  const sm = state.summaries;
+  if (!sm) return;
+  $("prompt-text").dataset.sig = "";
+  change("summaries", {prompts: {[sm.style]: null}}, "Instruction");
+});
+function numberField(id, field, lo, hi, label) {
+  $(id).addEventListener("change", e => {
+    const n = Number(e.target.value);
+    if (!Number.isInteger(n) || n < lo || n > hi) {
+      showState(label + " is " + lo + " to " + hi, true);
+      e.target.setAttribute("aria-invalid", "true");
+      refresh();
+      return;
+    }
+    e.target.removeAttribute("aria-invalid");
+    change("summaries", {[field]: n}, label);
+  });
+}
+numberField("timeout", "timeout", 15, 300, "Timeout");
+numberField("settle", "settle_ms", 0, 5000, "Settle time");
+$("mq-minus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.max(0, state.minqueue - 1), "Minimum queue"); });
+$("mq-plus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.min(10, state.minqueue + 1), "Minimum queue"); });
+$("announce-switch").addEventListener("click", () => change("channel_announce", state.channel_announce === "on" ? "off" : "on", "Announcements"));
 
 try { const p = localStorage.getItem("sonara-page"); if (p) showPage(p); } catch (e) {}
 refresh();

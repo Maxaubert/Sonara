@@ -3,6 +3,7 @@
 //! `channel`, `control next_channel`, the `channel_announce` setting and
 //! the `state` additions. `protocol` calls in here once a client enabled
 //! the extension; before that its messages are `E_UNSUPPORTED`.
+use crate::config::{PrefsUpdate, Store};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
@@ -16,6 +17,9 @@ pub const NAME: &str = "channels";
 
 /// The setting that turns switch announcements on and off.
 pub const ANNOUNCE_KEY: &str = "channel_announce";
+
+/// The per-channel preferences (label, voice, muted) of the settings page.
+pub const PREFS_KEY: &str = "channel_prefs";
 
 fn failure(e: Error) -> Failure {
     match e {
@@ -37,9 +41,16 @@ fn channel(m: &Map<String, Value>) -> Result<&str, Failure> {
     }
 }
 
-pub fn open(ch: &Channels, m: &Map<String, Value>) -> Handled {
+/// `channel_open`. A label the user gave the channel (`channel_prefs`)
+/// replaces the client's; the client's is remembered for the page.
+pub fn open(ch: &Channels, store: &Store, m: &Map<String, Value>) -> Handled {
     let id = channel(m)?;
-    let label = opt_str(m, "label")?.map(str::to_string);
+    let client_label = opt_str(m, "label")?;
+    store.note_client_label(id, client_label);
+    let label = store
+        .prefs(id)
+        .label
+        .or_else(|| client_label.map(str::to_string));
     let host_tab = opt_str(m, "host_tab")?.map(str::to_string);
     let policy = match opt_str(m, "policy")? {
         None => None,
@@ -122,6 +133,105 @@ pub fn announce(ch: &Channels, value: Option<&Value>) -> Handled {
         "value".into(),
         json!(if ch.announce() { "on" } else { "off" }),
     );
+    ok(f)
+}
+
+/// A channel opened implicitly (by its first text) with a label the user
+/// gave it: open it with that label first, so switches announce it.
+pub fn apply_label(ch: &Channels, store: &Store, id: &str) {
+    if id.is_empty() {
+        return;
+    }
+    if let Some(label) = store.prefs(id).label {
+        if !ch.channel_ids().iter().any(|c| c == id) {
+            let _ = ch.open(id, Some(label), None, None);
+        }
+    }
+}
+
+/// The page's list: open channels in opening order, then channels with
+/// stored preferences only, the most recently changed first.
+fn prefs_list(ch: &Channels, store: &Store) -> Value {
+    let reading = ch.engaged();
+    let mut rows: Vec<Value> = Vec::new();
+    let open = ch.channel_ids();
+    for id in &open {
+        let c = ch.channel(id);
+        let p = store.prefs(id);
+        rows.push(json!({
+            "channel": id,
+            "open": true,
+            "reading": reading.as_deref() == Some(id.as_str()),
+            "client_label": store.client_label(id).or_else(|| c.as_ref().and_then(|c| c.label.clone())),
+            "host_tab": c.and_then(|c| c.host_tab),
+            "label": p.label,
+            "voice": p.voice,
+            "muted": p.muted,
+        }));
+    }
+    for (id, p) in store.all_prefs().into_iter().rev() {
+        if open.contains(&id) {
+            continue;
+        }
+        rows.push(json!({
+            "channel": id,
+            "open": false,
+            "reading": false,
+            "client_label": store.client_label(&id),
+            "host_tab": null,
+            "label": p.label,
+            "voice": p.voice,
+            "muted": p.muted,
+        }));
+    }
+    Value::Array(rows)
+}
+
+/// An optional text field of a prefs update: absent leaves it, `null` or
+/// `""` clears it.
+fn text_update(m: &Map<String, Value>, field: &str) -> Result<Option<Option<String>>, Failure> {
+    match m.get(field) {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(s)) => Ok(Some(Some(s.clone()))),
+        Some(_) => Err(bad(format!(
+            "'channel_prefs.{field}' must be a string or null"
+        ))),
+    }
+}
+
+/// `get channel_prefs` (the list) and `set channel_prefs {channel, label?,
+/// voice?, muted?}` (stored at once; a new label renames an open channel's
+/// announcements). Voice and mute are stored for the page; the agent layer
+/// enforces them in a later release (#196).
+pub fn prefs_setting(ch: &Channels, store: &Store, value: Option<&Value>) -> Handled {
+    if let Some(v) = value {
+        let m = v
+            .as_object()
+            .ok_or_else(|| bad("'channel_prefs' is {channel, label?, voice?, muted?}"))?;
+        let id = channel(m)?;
+        let muted = match m.get("muted") {
+            None | Some(Value::Null) => None,
+            Some(Value::Bool(b)) => Some(*b),
+            Some(_) => return Err(bad("'channel_prefs.muted' must be true or false")),
+        };
+        let update = PrefsUpdate {
+            label: text_update(m, "label")?,
+            voice: text_update(m, "voice")?,
+            muted,
+        };
+        let relabel = update.label.is_some();
+        let p = store.set_prefs(id, update);
+        if relabel {
+            if let Some(c) = ch.channel(id) {
+                let label = p.label.or_else(|| store.client_label(id));
+                let _ = ch.open(id, label, c.host_tab, None);
+            }
+        }
+    }
+    let mut f = Map::new();
+    f.insert("key".into(), json!(PREFS_KEY));
+    f.insert("value".into(), prefs_list(ch, store));
     ok(f)
 }
 

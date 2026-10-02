@@ -1,7 +1,8 @@
 //! The `system` extension (spec 4.4) on top of `sonara_system` (L4): other
 //! apps' audio while speech plays (`audio_mode` `off`, `duck` or `pause`,
 //! `duck_level`), global hotkeys (`hotkeys`) and the settings page
-//! (`settings_url`).
+//! (`settings_url`), with voice previews (`preview`) and the runtime's
+//! details (`runtime`) for the page.
 //!
 //! **Enabled** (instance-wide, like the other extensions) once a client
 //! asks for it: its keys answer and the settings page is served. **Armed**
@@ -13,11 +14,12 @@
 //! whatever the state (never leave other apps ducked or paused).
 use crate::agent_ext;
 use crate::channels_ext;
-use crate::protocol::{bad, After, Handled};
+use crate::config::Store;
+use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_agent::Earcon;
-use sonara_reader::{Control, Key, ReaderHandle, RATE_MAX, RATE_MIN};
+use sonara_reader::{Control, Key, ReaderHandle, Registry, RATE_MAX, RATE_MIN};
 use sonara_system::audio::{AudioConfig, AudioControl, AudioMode};
 use sonara_system::hotkeys::Hotkeys;
 use sonara_system::keymap::{self, Action};
@@ -29,7 +31,21 @@ use std::sync::{Arc, Mutex};
 pub const NAME: &str = "system";
 
 /// `set`/`get` keys of the extension.
-pub const KEYS: &[&str] = &["audio_mode", "duck_level", "hotkeys", "settings_url"];
+pub const KEYS: &[&str] = &[
+    "audio_mode",
+    "duck_level",
+    "hotkeys",
+    "settings_url",
+    "runtime",
+];
+
+/// Message types of the extension.
+pub const TYPES: &[&str] = &["preview"];
+
+/// What a voice preview says unless the request gives a text.
+pub const PREVIEW_TEXT: &str = "Hello. This is how Sonara sounds with this voice.";
+/// Longest preview text, in characters.
+pub const PREVIEW_MAX: usize = 300;
 
 /// One rate step of the faster and slower hotkeys (words per minute).
 pub const RATE_STEP: u32 = 25;
@@ -41,6 +57,10 @@ pub struct SystemHost {
     pub home: PathBuf,
     pub http_port: u16,
     pub token: String,
+    /// Engines for voice previews: a registry of their own (built like the
+    /// reader's), so a preview never cancels or waits for the reader's
+    /// synthesis. `None`: `preview` is `E_UNSUPPORTED`.
+    pub previews: Option<Registry>,
 }
 
 /// What a hotkey acts on: the same layers a client drives.
@@ -50,6 +70,9 @@ pub struct HotkeyTarget {
     pub agent: agent_ext::Slot,
     /// The server's takeover flag: nothing starts once it is set.
     pub retiring: Arc<Mutex<bool>>,
+    /// Hotkeys that change a setting (mute cycle, faster, slower) persist
+    /// it like a `set`.
+    pub store: Arc<Store>,
 }
 
 impl HotkeyTarget {
@@ -105,7 +128,9 @@ impl HotkeyTarget {
                 // The mute cycle: unmuted, muted (earcons on), super muted.
                 Some(a) => {
                     let next = (a.settings().mute_level + 1) % 3;
-                    a.set_mute_level(next).map_err(|e| e.to_string())
+                    a.set_mute_level(next).map_err(|e| e.to_string())?;
+                    self.store.record("mute_level", &json!(next));
+                    Ok(())
                 }
                 None => {
                     let muted = self.reader.state().map(|s| s.muted).unwrap_or(false);
@@ -139,7 +164,9 @@ impl HotkeyTarget {
                 };
                 self.reader
                     .set(Key::Rate, sonara_reader::Value::Number(u64::from(next)))
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string())?;
+                self.store.record("rate", &json!(next));
+                Ok(())
             }
         }
     }
@@ -169,11 +196,30 @@ pub struct SystemExt {
     /// extension ends up armed with ducking off and no hotkeys.
     transition: Mutex<()>,
     hotkeys: Mutex<Option<Hotkeys>>,
+    previews: Option<Registry>,
+    /// One preview at a time.
+    previewing: Mutex<()>,
+    started: std::time::Instant,
+    store: Arc<Store>,
 }
 
 impl SystemExt {
+    /// The extension on this host; the persisted `audio_mode` and
+    /// `duck_level` apply from the start (nothing is ducked or paused
+    /// before the extension is armed).
     pub fn new(host: SystemHost, target: HotkeyTarget) -> SystemExt {
         let audio = AudioControl::new(&host.platform, AudioConfig::new(host.home.join("state")));
+        let store = target.store.clone();
+        if let Some(mode) = store
+            .value("audio_mode")
+            .as_str()
+            .and_then(AudioMode::parse)
+        {
+            audio.set_mode(mode);
+        }
+        if let Some(level) = store.value("duck_level").as_u64() {
+            audio.set_duck_level(level.min(100) as u8);
+        }
         SystemExt {
             audio: Arc::new(audio),
             platform: host.platform,
@@ -189,6 +235,10 @@ impl SystemExt {
             holds: Mutex::new(Holds::default()),
             transition: Mutex::new(()),
             hotkeys: Mutex::new(None),
+            previews: host.previews,
+            previewing: Mutex::new(()),
+            started: std::time::Instant::now(),
+            store,
         }
     }
 
@@ -421,7 +471,7 @@ impl SystemExt {
                     self.set_hotkeys(v)?;
                     self.reload_hotkeys();
                 }
-                _ => return Err(bad("'settings_url' is read-only")),
+                _ => return Err(bad(format!("'{key}' is read-only"))),
             }
         }
         let s = self.audio.status();
@@ -429,11 +479,100 @@ impl SystemExt {
             "audio_mode" => json!(s.mode.as_str()),
             "duck_level" => json!(s.duck_level),
             "hotkeys" => self.hotkeys_json(),
+            "runtime" => self.runtime_json(),
             _ => json!(self.settings_url),
         };
         let mut f = Map::new();
         f.insert("key".into(), json!(key));
         f.insert("value".into(), value);
+        Ok((f, After::Nothing))
+    }
+
+    /// `get runtime`: the process and where its settings live.
+    fn runtime_json(&self) -> Value {
+        json!({
+            "pid": std::process::id(),
+            "uptime_s": self.started.elapsed().as_secs(),
+            "http_port": self.http_port,
+            "config": self.store.config_path().map(|p| p.display().to_string()),
+            "previews": self.previews.is_some(),
+        })
+    }
+
+    /// `preview {voice?, text?}`: say a short sample with a voice of the
+    /// current engine (default: the voice in force) at the current rate,
+    /// without touching the queue. It is synthesized on the extension's
+    /// own engines and played as a clip mixed over whatever is reading
+    /// (`ReaderHandle::play_clip`, like an earcon): nothing is paused,
+    /// skipped or queued again, and a muted reader plays it silently.
+    pub fn preview(&self, reader: &ReaderHandle, m: &Map<String, Value>) -> Handled {
+        let engines = self
+            .previews
+            .as_ref()
+            .ok_or_else(|| Failure::new(Code::Unsupported, "this runtime has no voice previews"))?;
+        let text = opt_str(m, "text")?
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or(PREVIEW_TEXT);
+        let text: String = text.chars().take(PREVIEW_MAX).collect();
+        let engine_id = match reader.get(Key::Engine).map_err(reader_failure)? {
+            sonara_reader::Value::Text(t) => t,
+            _ => return Err(Failure::new(Code::Engine, "no engine")),
+        };
+        let engine = engines
+            .get(&engine_id)
+            .map_err(|e| reader_failure(sonara_reader::Error::Engine(e)))?;
+        let wanted = match opt_str(m, "voice")? {
+            Some(v) if !v.is_empty() => Some(v.to_string()),
+            _ => match reader.get(Key::Voice).map_err(reader_failure)? {
+                sonara_reader::Value::Text(t) => Some(t),
+                _ => None,
+            },
+        };
+        let voice = match &wanted {
+            None => String::new(),
+            Some(w) => engine
+                .voices()
+                .into_iter()
+                .find(|v| v.id == *w || v.name == *w)
+                .map(|v| v.id)
+                .ok_or_else(|| {
+                    Failure::new(
+                        Code::NotFound,
+                        format!("engine '{engine_id}' has no voice '{w}'"),
+                    )
+                })?,
+        };
+        let rate = match reader.get(Key::Rate).map_err(reader_failure)? {
+            sonara_reader::Value::Number(n) => n as u32,
+            _ => 200,
+        };
+        let _one = self.previewing.lock().unwrap_or_else(|p| p.into_inner());
+        let engine_err = |e| reader_failure(sonara_reader::Error::Engine(e));
+        let chunks = engine
+            .synthesize(&text, &voice, rate)
+            .map_err(engine_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(engine_err)?;
+        let sample_rate = chunks.first().map(|c| c.sample_rate).unwrap_or(16_000);
+        let mut samples: Vec<i16> = Vec::new();
+        for c in &chunks {
+            if c.channels <= 1 {
+                samples.extend_from_slice(&c.samples);
+            } else {
+                // Down-mix to mono: play_clip takes one channel.
+                let n = usize::from(c.channels);
+                samples.extend(c.samples.chunks(n).map(|f| {
+                    (f.iter().map(|&x| i32::from(x)).sum::<i32>() / f.len() as i32) as i16
+                }));
+            }
+        }
+        reader
+            .play_clip(samples, sample_rate)
+            .map_err(reader_failure)?;
+        let mut f = Map::new();
+        f.insert("engine".into(), json!(engine_id));
+        f.insert("voice".into(), json!((!voice.is_empty()).then_some(voice)));
         Ok((f, After::Nothing))
     }
 

@@ -36,8 +36,9 @@ def start(sonarad_exe, tmp_path):
     """Start sonarad processes; all are killed at teardown."""
     started = []
 
-    def _start(*args: str, home: Path | None = None, wait: bool = True) -> harness.Runtime:
-        rt = harness.Runtime(sonarad_exe, home or (tmp_path / "home"), *args, wait=wait)
+    def _start(*args: str, home: Path | None = None, wait: bool = True,
+               env: dict | None = None) -> harness.Runtime:
+        rt = harness.Runtime(sonarad_exe, home or (tmp_path / "home"), *args, wait=wait, env=env)
         started.append(rt)
         return rt
 

@@ -5,9 +5,11 @@
 //! home.
 use sonara_reader::{Config, ReaderHandle, Registry};
 use sonarad::args::{self, Command, OutputKind, SystemKind};
+use sonarad::config::{self, Store};
 use sonarad::home::{self, Home};
 use sonarad::instance::{self, AcquireError};
 use sonarad::lifetime::{self, ExitReason, Lifetime};
+use sonarad::migrate;
 use sonarad::protocol::{self, Server};
 use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
@@ -51,15 +53,21 @@ fn main() -> ExitCode {
     }
 }
 
-fn build_reader(engine: &str, output: OutputKind) -> Result<ReaderHandle, String> {
-    let registry = if engine == "fake" {
+/// The engines of a run: the fake engine for `--engine fake`, else the
+/// default ones (OneCore on Windows).
+fn build_registry(engine: &str) -> Result<Registry, String> {
+    Ok(if engine == "fake" {
         let mut r = Registry::default();
         r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
             .map_err(|e| e.to_string())?;
         r
     } else {
         sonara_reader::default_registry()
-    };
+    })
+}
+
+fn build_reader(engine: &str, output: OutputKind) -> Result<ReaderHandle, String> {
+    let registry = build_registry(engine)?;
     let mut config = Config::new(registry);
     config.engine = Some(engine.to_string());
     if output == OutputKind::Null {
@@ -110,12 +118,59 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Err(AcquireError::Os(e)) => return Err(fail(e)),
     };
     let token = instance::new_token().map_err(fail)?;
-    let reader = build_reader(&args.engine, args.output).map_err(fail)?;
+    // The Python plugin's settings, once, for the default home (or the
+    // folder given with --migrate-from).
+    let legacy = args
+        .migrate_from
+        .clone()
+        .or_else(|| home.is_default.then(migrate::default_legacy_dir).flatten());
+    if let Some(dir) = legacy {
+        for note in migrate::run(&home.dir, &dir).unwrap_or_default() {
+            home.log(&format!("migration: {note}"));
+        }
+    }
+    let (store, problems) = Store::load(&home.dir);
+    for p in problems {
+        home.log(&p);
+    }
+    // The saved engine starts the reader unless --engine chose one.
+    let engine = if args.engine_given {
+        args.engine.clone()
+    } else {
+        store
+            .user("engine")
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_else(|| args.engine.clone())
+    };
+    let reader = match build_reader(&engine, args.output) {
+        Ok(r) => r,
+        Err(e) if engine != args.engine => {
+            home.log(&format!(
+                "config.json: engine '{engine}' not available ({e}); using '{}'",
+                args.engine
+            ));
+            build_reader(&args.engine, args.output).map_err(fail)?
+        }
+        Err(e) => return Err(fail(e)),
+    };
+    // Before the first client: nothing speaks with the defaults first.
+    for p in config::apply_reader(&store, &reader, false) {
+        home.log(&p);
+    }
+    let previews = build_registry(&engine).ok();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| fail(format!("cannot start the runtime: {e}")))?;
-    let result = rt.block_on(run(&args, &home, &sid, token, reader.clone()));
+    let result = rt.block_on(run(
+        &args,
+        &home,
+        &sid,
+        token,
+        reader.clone(),
+        store,
+        previews,
+    ));
     reader.shutdown();
     rt.shutdown_timeout(Duration::from_millis(500));
     // Release the instance lock before runtime.json goes: a client that
@@ -133,6 +188,8 @@ async fn run(
     sid: &str,
     token: String,
     reader: ReaderHandle,
+    store: Arc<Store>,
+    previews: Option<Registry>,
 ) -> Result<(), String> {
     // Loopback only, never another address (spec section 4).
     let tcp_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -148,13 +205,14 @@ async fn run(
         .port();
 
     let life = Lifetime::new(args.idle_exit, args.standalone);
-    let mut server = Server::new(reader.clone(), token.clone(), life.clone());
+    let mut server = Server::new(reader.clone(), token.clone(), life.clone()).with_config(store);
     if let Some(platform) = system_platform(args.system, home) {
         server = server.with_system(SystemHost {
             platform,
             home: home.dir.clone(),
             http_port,
             token: token.clone(),
+            previews,
         });
     }
     let server = Arc::new(server);

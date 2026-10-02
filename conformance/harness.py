@@ -94,13 +94,15 @@ def wait_until(pred, timeout: float = TIMEOUT, step: float = 0.02) -> bool:
 class Runtime:
     """One sonarad process on one home."""
 
-    def __init__(self, exe: Path, home: Path, *args: str, wait: bool = True):
+    def __init__(self, exe: Path, home: Path, *args: str, wait: bool = True, env: dict | None = None):
         self.exe = exe
         self.home = home
         self.home.mkdir(parents=True, exist_ok=True)
         self.stderr_path = home.parent / f"{home.name}-stderr-{time.monotonic_ns()}.log"
+        extra = env or {}
         env = dict(os.environ)
         env["SONARA_HOME"] = str(home)
+        env.update(extra)
         self._stderr = open(self.stderr_path, "wb")
         self.proc = subprocess.Popen(
             [str(exe), "--engine", "fake", "--system", "fake", *args],
