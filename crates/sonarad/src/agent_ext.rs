@@ -1,8 +1,9 @@
 //! The `agent` extension (spec 4.3) on top of `sonara_agent`: `stream`,
 //! `turn_start`, `turn_end`, `ask`, `earcon`, `tool`, `answered`, the
 //! settings `mute_level`, `verbosity`, `minqueue`, `background_policy` and
-//! `summaries`, and the `earcons` event stream. It needs `channels`, which enabling it enables
-//! too. `protocol` calls in here once a client enabled it; before that its
+//! `summaries`, the read-only key `earcons` (the custom earcons folder and
+//! the kinds it overrides), and the `earcons` event stream. It needs
+//! `channels`, which enabling it enables too. `protocol` calls in here once a client enabled it; before that its
 //! messages are `E_UNSUPPORTED`.
 use crate::config::Store;
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
@@ -37,6 +38,7 @@ pub const KEYS: &[&str] = &[
     "minqueue",
     "background_policy",
     "summaries",
+    "earcons",
 ];
 
 pub(crate) fn failure(e: Error) -> Failure {
@@ -331,6 +333,7 @@ pub fn settings_from(store: &Store) -> Settings {
 pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Handled {
     if let Some(v) = value {
         match key {
+            "earcons" => return Err(bad("'earcons' is read-only")),
             "mute_level" => {
                 let n = v
                     .as_u64()
@@ -385,12 +388,24 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
         "verbosity" => json!(s.verbosity.as_str()),
         "minqueue" => json!(s.minqueue),
         "background_policy" => json!(s.background.as_str()),
+        "earcons" => earcons_json(a.earcons()),
         _ => summaries_json(&s.summaries, &store.prompts()),
     };
     let mut f = Map::new();
     f.insert("key".into(), json!(key));
     f.insert("value".into(), value);
     ok(f)
+}
+
+/// `get earcons`: the folder whose `<kind>.wav` files replace the bundled
+/// clips (`null`: none), every kind, and the kinds a usable file replaces
+/// now.
+pub fn earcons_json(lib: &sonara_agent::Library) -> Value {
+    json!({
+        "folder": lib.dir().map(|d| d.display().to_string()),
+        "kinds": Earcon::ALL.iter().map(Earcon::as_str).collect::<Vec<_>>(),
+        "custom": lib.custom().iter().map(Earcon::as_str).collect::<Vec<_>>(),
+    })
 }
 
 /// The `earcon` event.

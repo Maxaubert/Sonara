@@ -1,13 +1,17 @@
 //! Decode the WAV container WinRT synthesis returns into PCM.
 //!
-//! Only what engines produce is accepted: RIFF/WAVE with 8- or 16-bit integer
-//! PCM (plain or WAVE_FORMAT_EXTENSIBLE with the PCM subformat). Unknown
+//! Accepted: RIFF/WAVE with 8-, 16-, 24- or 32-bit integer PCM or 32- or
+//! 64-bit IEEE float (plain or WAVE_FORMAT_EXTENSIBLE with the PCM or float
+//! subformat), any channel count and sample rate. Every format is converted
+//! to 16-bit samples (engines write 16-bit; user earcons may be anything a
+//! sound editor saves). Unknown
 //! chunks (LIST, fact...) are skipped. A `data` size larger than the bytes
 //! present (streamed WAVs write 0 or 0xFFFFFFFF there) is clamped to what is
 //! there, and a trailing partial sample is dropped.
 use crate::{Error, PcmChunk, Result};
 
 const FORMAT_PCM: u16 = 1;
+const FORMAT_FLOAT: u16 = 3;
 const FORMAT_EXTENSIBLE: u16 = 0xFFFE;
 
 fn u16_at(b: &[u8], at: usize) -> Option<u16> {
@@ -27,6 +31,7 @@ struct Format {
     channels: u16,
     sample_rate: u32,
     bits: u16,
+    float: bool,
 }
 
 fn parse_fmt(body: &[u8]) -> Result<Format> {
@@ -34,25 +39,32 @@ fn parse_fmt(body: &[u8]) -> Result<Format> {
     let channels = u16_at(body, 2).ok_or_else(|| bad("fmt chunk too short"))?;
     let sample_rate = u32_at(body, 4).ok_or_else(|| bad("fmt chunk too short"))?;
     let bits = u16_at(body, 14).ok_or_else(|| bad("fmt chunk too short"))?;
-    let pcm = match tag {
-        FORMAT_PCM => true,
+    let kind = match tag {
         // The subformat GUID starts with the format tag (offset 24).
-        FORMAT_EXTENSIBLE => u16_at(body, 24) == Some(FORMAT_PCM),
-        _ => false,
+        FORMAT_EXTENSIBLE => u16_at(body, 24).unwrap_or(0),
+        other => other,
     };
-    if !pcm {
-        return Err(Error::Wav(format!("unsupported format tag {tag:#06x}")));
-    }
+    let float = match kind {
+        FORMAT_PCM => false,
+        FORMAT_FLOAT => true,
+        _ => return Err(Error::Wav(format!("unsupported format tag {tag:#06x}"))),
+    };
     if channels == 0 || sample_rate == 0 {
         return Err(bad("zero channels or sample rate"));
     }
-    if bits != 8 && bits != 16 {
+    let supported = if float {
+        bits == 32 || bits == 64
+    } else {
+        matches!(bits, 8 | 16 | 24 | 32)
+    };
+    if !supported {
         return Err(Error::Wav(format!("unsupported sample size {bits} bits")));
     }
     Ok(Format {
         channels,
         sample_rate,
         bits,
+        float,
     })
 }
 
@@ -81,14 +93,56 @@ pub fn decode(bytes: &[u8]) -> Result<PcmChunk> {
     Err(bad("no data chunk"))
 }
 
+/// A float sample (full scale -1.0 to 1.0) as 16-bit, clamped.
+fn from_float(x: f64) -> i16 {
+    if x.is_nan() {
+        return 0;
+    }
+    (x * 32768.0)
+        .round()
+        .clamp(i16::MIN as f64, i16::MAX as f64) as i16
+}
+
 fn to_pcm(f: &Format, body: &[u8]) -> PcmChunk {
-    let samples = if f.bits == 16 {
-        // A trailing odd byte is half a sample: dropped.
-        let (pairs, _) = body.as_chunks::<2>();
-        pairs.iter().map(|p| i16::from_le_bytes(*p)).collect()
-    } else {
-        // 8-bit WAV is unsigned with 128 as silence.
-        body.iter().map(|&s| (s as i16 - 128) << 8).collect()
+    // A trailing partial sample is dropped (`as_chunks` leaves it out).
+    let samples = match (f.float, f.bits) {
+        (false, 8) => {
+            // 8-bit WAV is unsigned with 128 as silence.
+            body.iter().map(|&s| (s as i16 - 128) << 8).collect()
+        }
+        (false, 16) => {
+            let (pairs, _) = body.as_chunks::<2>();
+            pairs.iter().map(|p| i16::from_le_bytes(*p)).collect()
+        }
+        (false, 24) => {
+            // The top two bytes of a little-endian 24-bit sample.
+            let (triples, _) = body.as_chunks::<3>();
+            triples
+                .iter()
+                .map(|t| i16::from_le_bytes([t[1], t[2]]))
+                .collect()
+        }
+        (false, _) => {
+            let (quads, _) = body.as_chunks::<4>();
+            quads
+                .iter()
+                .map(|q| i16::from_le_bytes([q[2], q[3]]))
+                .collect()
+        }
+        (true, 32) => {
+            let (quads, _) = body.as_chunks::<4>();
+            quads
+                .iter()
+                .map(|q| from_float(f64::from(f32::from_le_bytes(*q))))
+                .collect()
+        }
+        (true, _) => {
+            let (eights, _) = body.as_chunks::<8>();
+            eights
+                .iter()
+                .map(|e| from_float(f64::from_le_bytes(*e)))
+                .collect()
+        }
     };
     PcmChunk {
         samples,
@@ -187,6 +241,46 @@ mod tests {
         assert_eq!(pcm.samples, vec![7]);
     }
 
+    /// A mono 8000 Hz WAV of `tag` and `bits` around `data`.
+    fn wav_of(tag: u16, bits: u16, data: &[u8]) -> Vec<u8> {
+        let mut b = ONECORE_MONO[..44].to_vec();
+        b[20..22].copy_from_slice(&tag.to_le_bytes());
+        b[34..36].copy_from_slice(&bits.to_le_bytes());
+        b[40..44].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        b.extend_from_slice(data);
+        b
+    }
+
+    #[test]
+    fn decodes_24_and_32_bit_integer_to_16_bit() {
+        // 0x123456 and -1 (24-bit), then 0x7FFFFFFF and i32::MIN (32-bit).
+        let pcm = decode(&wav_of(1, 24, &[0x56, 0x34, 0x12, 0xFF, 0xFF, 0xFF])).unwrap();
+        assert_eq!(pcm.samples, vec![0x1234, -1]);
+        let mut d = 0x7FFF_FFFFi32.to_le_bytes().to_vec();
+        d.extend_from_slice(&i32::MIN.to_le_bytes());
+        assert_eq!(
+            decode(&wav_of(1, 32, &d)).unwrap().samples,
+            vec![i16::MAX, i16::MIN]
+        );
+    }
+
+    #[test]
+    fn decodes_float_32_and_64_clamped() {
+        let mut d = Vec::new();
+        for x in [0.0f32, 0.5, -1.0, 2.0] {
+            d.extend_from_slice(&x.to_le_bytes());
+        }
+        assert_eq!(
+            decode(&wav_of(3, 32, &d)).unwrap().samples,
+            vec![0, 16384, i16::MIN, i16::MAX]
+        );
+        let mut d = Vec::new();
+        for x in [-0.25f64, f64::NAN] {
+            d.extend_from_slice(&x.to_le_bytes());
+        }
+        assert_eq!(decode(&wav_of(3, 64, &d)).unwrap().samples, vec![-8192, 0]);
+    }
+
     #[test]
     fn decodes_8_bit_unsigned() {
         let mut b = ONECORE_MONO[..44].to_vec();
@@ -223,13 +317,17 @@ mod tests {
         assert_eq!(err(&ONECORE_MONO[..36]), "no data chunk");
         assert_eq!(err(&ONECORE_MONO[..26]), "fmt chunk too short");
 
-        let mut float = ONECORE_MONO.to_vec();
-        float[20] = 3; // IEEE float
-        assert_eq!(err(&float), "unsupported format tag 0x0003");
+        let mut alaw = ONECORE_MONO.to_vec();
+        alaw[20] = 6; // A-law
+        assert_eq!(err(&alaw), "unsupported format tag 0x0006");
 
-        let mut b24 = ONECORE_MONO.to_vec();
-        b24[34] = 24;
-        assert_eq!(err(&b24), "unsupported sample size 24 bits");
+        let mut b12 = ONECORE_MONO.to_vec();
+        b12[34] = 12;
+        assert_eq!(err(&b12), "unsupported sample size 12 bits");
+
+        let mut f16 = ONECORE_MONO.to_vec();
+        f16[20] = 3; // IEEE float, but 16 bits
+        assert_eq!(err(&f16), "unsupported sample size 16 bits");
 
         let mut no_fmt = b"RIFF\0\0\0\0WAVE".to_vec();
         no_fmt.extend_from_slice(&ONECORE_MONO[36..]);

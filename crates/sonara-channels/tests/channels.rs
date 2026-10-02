@@ -1,11 +1,13 @@
 //! `Channels` over a real `ReaderHandle` (fake engine, `TestOutput`): the
 //! test decides when each chunk ends, and the helpers wait for the reader
 //! and the channels thread with a timeout.
+use sonara_audio::OutputCall;
 use sonara_audio::TestOutput;
-use sonara_channels::{Channels, Config, Control, Policy, QueueMode};
+use sonara_channels::{Announced, Channels, Config, Control, Policy, QueueMode};
 use sonara_engine::fake::FakeEngine;
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -188,6 +190,94 @@ fn announcement_text_is_configurable() {
     r.read("From alpha.");
     r.read("Now Beta.");
     r.read("From beta.");
+}
+
+#[test]
+fn announcement_texts_can_be_changed_on_a_running_driver() {
+    let r = Rig::two();
+    r.ch.set_announce_texts(
+        "Session changed: {label}.",
+        "Session changed: {label}, reading again.",
+    );
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    r.read("From alpha.");
+    r.read("Session changed: Beta.");
+    r.read("From beta.");
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("a"));
+    r.read("Session changed: Alpha, reading again.");
+    r.read("From alpha.");
+}
+
+/// The hook records each announcement and the output calls made so far,
+/// so a test can tell whether the hook ran before the announcement was
+/// handed to the output.
+fn hooked(r: &Rig) -> Arc<Mutex<Vec<(Announced, usize)>>> {
+    let seen: Arc<Mutex<Vec<(Announced, usize)>>> = Arc::default();
+    let s = seen.clone();
+    let out = r.out.clone();
+    r.ch.on_announce(Some(Arc::new(move |a: &Announced| {
+        let plays = out
+            .calls()
+            .iter()
+            .filter(|c| matches!(c, OutputCall::Play { .. }))
+            .count();
+        s.lock().unwrap().push((a.clone(), plays));
+    })));
+    seen
+}
+
+fn plays(r: &Rig) -> usize {
+    r.out
+        .calls()
+        .iter()
+        .filter(|c| matches!(c, OutputCall::Play { .. }))
+        .count()
+}
+
+#[test]
+fn the_announce_hook_runs_for_automatic_and_manual_switches_before_the_announcement() {
+    let r = Rig::two();
+    let seen = hooked(&r);
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    r.read("From alpha.");
+    let before = plays(&r);
+    r.read("Beta.");
+    {
+        let s = seen.lock().unwrap();
+        assert_eq!(s.len(), 1, "the automatic hand-off");
+        assert_eq!(s[0].0.channel, "b");
+        assert_eq!(s[0].0.label, "Beta");
+        assert!(!s[0].0.replay && !s[0].0.manual);
+        assert_eq!(
+            s[0].1, before,
+            "the hook runs before the announcement plays"
+        );
+    }
+    r.read("From beta.");
+    let before = plays(&r);
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("a"));
+    r.read("Alpha, reading again.");
+    let s = seen.lock().unwrap();
+    assert_eq!(s.len(), 2, "the manual switch");
+    assert_eq!(s[1].0.channel, "a");
+    assert!(s[1].0.replay && s[1].0.manual);
+    assert_eq!(s[1].1, before);
+}
+
+#[test]
+fn the_announce_hook_is_quiet_when_announcements_are_off() {
+    let r = Rig::two();
+    let seen = hooked(&r);
+    r.ch.set_announce(false);
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    r.read("From alpha.");
+    r.read("From beta.");
+    r.ch.next_channel().unwrap();
+    r.read("From alpha.");
+    assert!(seen.lock().unwrap().is_empty());
 }
 
 #[test]

@@ -3,6 +3,7 @@
 //! rules from the Python daemon tests: one message always the last, late
 //! text after a new turn dropped, the pause stays on when another channel
 //! gets a new turn, decisions read with priority, earcons and mute levels.
+use sonara_agent::earcon::Library;
 use sonara_agent::{
     Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, Settings, Summarizer,
     SummarySettings,
@@ -10,6 +11,7 @@ use sonara_agent::{
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Policy};
 use sonara_engine::fake::FakeEngine;
+use sonara_engine::{wav, PcmChunk};
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -31,6 +33,28 @@ impl Rig {
         summarizer: Option<Arc<dyn Summarizer>>,
         forget_after: Duration,
     ) -> Rig {
+        Self::build(settings, summarizer, forget_after, false, None)
+    }
+
+    /// Switch announcements on (the Python plugin's), with `earcons` as
+    /// the earcon library (default: the bundled clips).
+    fn announcing(earcons: Option<Arc<Library>>) -> Rig {
+        Self::build(
+            Settings::default(),
+            None,
+            sonara_agent::FORGET_AFTER,
+            true,
+            earcons,
+        )
+    }
+
+    fn build(
+        settings: Settings,
+        summarizer: Option<Arc<dyn Summarizer>>,
+        forget_after: Duration,
+        announce: bool,
+        earcons: Option<Arc<Library>>,
+    ) -> Rig {
         let mut registry = Registry::default();
         registry.register(Arc::new(FakeEngine::new())).unwrap();
         let (out, rx) = TestOutput::new();
@@ -40,7 +64,7 @@ impl Rig {
         let channels = Channels::new(
             reader,
             ChannelsConfig {
-                announce: false,
+                announce,
                 ..ChannelsConfig::default()
             },
         )
@@ -56,6 +80,7 @@ impl Rig {
                 settings,
                 summarizer,
                 forget_after,
+                earcons: earcons.unwrap_or_else(|| Arc::new(Library::bundled())),
             },
         )
         .unwrap();
@@ -222,6 +247,114 @@ fn earcons_are_mixed_over_speech_and_reported() {
     assert_eq!(r.playing().as_deref(), Some("Speaking now."), "not cut");
     r.agent.earcon(Earcon::Nav).unwrap();
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::Nav);
+}
+
+/// The index of the first clip and of the last `Play` in the output calls.
+fn first_clip_and_last_play(out: &TestOutput) -> (usize, usize) {
+    let calls = out.calls();
+    let clip = calls
+        .iter()
+        .position(|c| matches!(c, OutputCall::PlayClip { .. }))
+        .expect("a clip played");
+    let play = calls
+        .iter()
+        .rposition(|c| matches!(c, OutputCall::Play { .. }))
+        .expect("an item played");
+    (clip, play)
+}
+
+#[test]
+fn an_automatic_session_switch_chimes_then_says_session_changed() {
+    // Python daemon/__init__.py "Session changed: {0}." and the router's
+    // session_change item: the chime first, then the announcement.
+    let r = Rig::announcing(None);
+    let heard = r.agent.subscribe();
+    r.stream("a", "From alpha.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.read("From alpha.");
+    assert!(heard.try_recv().is_err(), "no chime before the switch");
+    r.wait_for("Session changed: Beta.");
+    let (clip, play) = first_clip_and_last_play(&r.out);
+    assert!(clip < play, "the earcon goes before the announcement");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    let c = Earcon::SessionChange.clip();
+    assert!(r.out.calls().contains(&OutputCall::PlayClip {
+        samples: c.samples.len(),
+        sample_rate: c.sample_rate,
+    }));
+    r.out.start();
+    r.out.finish();
+    r.read("From beta.");
+    r.stays_idle();
+    assert!(heard.try_recv().is_err(), "one chime per switch");
+}
+
+#[test]
+fn a_manual_session_switch_chimes_then_says_session_changed_reading_again() {
+    let r = Rig::announcing(None);
+    let heard = r.agent.subscribe();
+    r.stream("a", "From alpha.", 0, None);
+    r.read("From alpha.");
+    r.stays_idle();
+    r.stream("b", "From beta.", 0, None);
+    r.read("Session changed: Beta.");
+    r.read("From beta.");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    r.stays_idle();
+    let before = r.clips();
+    assert_eq!(
+        r.agent.channels().next_channel().unwrap().as_deref(),
+        Some("a")
+    );
+    r.wait_for("Session changed: Alpha, reading again.");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    assert_eq!(r.clips(), before + 1);
+    r.out.start();
+    r.out.finish();
+    r.read("From alpha.");
+}
+
+#[test]
+fn custom_earcons_replace_the_bundled_clips() {
+    let dir = std::env::temp_dir().join(format!("sonara-agent-earcons-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, rate) in [("session_change", 8_000), ("turn_done", 12_000)] {
+        let pcm = PcmChunk {
+            samples: (0..rate / 10)
+                .map(|i| if i % 16 < 8 { 9000 } else { -9000 })
+                .collect(),
+            sample_rate: rate,
+            channels: 1,
+        };
+        std::fs::write(dir.join(format!("{name}.wav")), wav::encode(&pcm)).unwrap();
+    }
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _cleanup = Cleanup(dir.clone());
+    let lib = Arc::new(Library::new(dir.clone(), None));
+    let r = Rig::announcing(Some(lib));
+    r.stream("a", "From alpha.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.read("From alpha.");
+    r.wait_for("Session changed: Beta.");
+    assert!(r.out.calls().contains(&OutputCall::PlayClip {
+        samples: 800,
+        sample_rate: 8_000,
+    }));
+    r.agent.turn_end("b", None, None).unwrap();
+    assert!(r.out.calls().contains(&OutputCall::PlayClip {
+        samples: 1200,
+        sample_rate: 12_000,
+    }));
+    assert_eq!(
+        r.agent.earcons().custom(),
+        [Earcon::TurnDone, Earcon::SessionChange]
+    );
 }
 
 #[test]

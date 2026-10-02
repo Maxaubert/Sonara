@@ -14,7 +14,7 @@ use sonarad::migrate;
 use sonarad::protocol::{self, Server};
 use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
-use sonarad::{http, null_output::NullOutput, tcp, VERSION};
+use sonarad::{http, null_output::NullOutput, support_log, tcp, VERSION};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -220,6 +220,9 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     for p in config::apply_reader(&store, &reader, false) {
         home.log(&p);
     }
+    // One line per start for support, then the model's readiness changes.
+    support_log::log_startup(&home, VERSION, &reader, &engine);
+    support_log::watch_engine(&home, &reader);
     // Previews use the engines of the reader actually started.
     let previews = preview_registry(&engine, kokoro.as_ref());
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -272,7 +275,16 @@ async fn run(
         .port();
 
     let life = Lifetime::new(args.idle_exit, args.standalone);
-    let mut server = Server::new(reader.clone(), token.clone(), life.clone()).with_config(store);
+    // Custom earcons: the folder is created so the user can drop WAVs in.
+    let _ = std::fs::create_dir_all(home.earcons());
+    let log_home = home.clone();
+    let earcons = sonara_agent::Library::new(
+        home.earcons(),
+        Some(Arc::new(move |line: &str| log_home.log(line))),
+    );
+    let mut server = Server::new(reader.clone(), token.clone(), life.clone())
+        .with_config(store)
+        .with_earcons(Arc::new(earcons));
     if let Some(platform) = system_platform(args.system, home) {
         server = server.with_system(SystemHost {
             platform,

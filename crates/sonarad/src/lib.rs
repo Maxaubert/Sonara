@@ -28,6 +28,7 @@ pub mod null_output;
 pub mod protocol;
 pub mod runtime_file;
 pub mod settings_page;
+pub mod support_log;
 pub mod system_ext;
 pub mod tcp;
 pub mod wire;

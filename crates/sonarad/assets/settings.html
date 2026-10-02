@@ -289,6 +289,9 @@
           <div class="pref" id="duck-row"><div class="pref-copy"><label class="title" for="duck">Duck level</label><div class="hint">Volume other apps keep while ducked.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out" for="duck">30 %</output></div><input id="duck" type="range" min="0" max="100" value="30"><div class="ends" aria-hidden="true"><span>Silent</span><span>Full</span></div><div class="hint">Lower values keep context without competing with speech.</div></div></div>
         </div>
         <p class="hint" style="padding:12px 4px">Other apps always come back: when speech pauses or ends, when the app that turned this on closes, and after a crash at the next start.</p>
+        <h2 class="group-label">Attention sounds</h2>
+        <div class="inset"><div class="engine-row"><div><strong>Your own chimes</strong><div class="hint path" id="earcons-folder">&ndash;</div><div class="hint" id="earcons-custom" aria-live="polite">&ndash;</div></div></div></div>
+        <p class="hint" style="padding:12px 4px">To replace a chime, paste this folder into File Explorer's address bar and put a WAV file there named after the chime: <span class="path">session_change.wav</span>, <span class="path">turn_done.wav</span>, <span class="path">choice.wav</span>, <span class="path">permission.wav</span>, <span class="path">summary_failed.wav</span>, <span class="path">error.wav</span>, <span class="path">nav.wav</span> or <span class="path">nav_edge.wav</span>. Any WAV works (mono or stereo, any sample rate, up to 10 seconds). It plays from the next time that chime sounds; delete the file to get the built-in sound back.</p>
       </section>
 
       <section class="page" id="sessions" aria-labelledby="h-sessions">
@@ -474,7 +477,7 @@ async function change(key, value, label) {
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
               "mute_level", "verbosity", "minqueue", "background_policy", "summaries", "channel_announce",
-              "channel_prefs"];
+              "channel_prefs", "earcons"];
 let voices = [];
 
 async function refresh() {
@@ -633,6 +636,14 @@ function render() {
     gate($("duck-row"), s.audio_mode !== "duck");
   }
   if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setText("duck-out", s.duck_level + " %"); }
+  if (s.earcons) {
+    setText("earcons-folder", s.earcons.folder || "This runtime has no folder for your own chimes");
+    setText("earcons-custom", s.earcons.custom.length
+      ? "Your own: " + s.earcons.custom.join(", ") + ". The others are built in."
+      : "None yet: the built-in sounds play.");
+  } else {
+    setText("earcons-custom", "Shown once an app that plays chimes (such as the Claude Code plugin) is connected.");
+  }
 
   // Sessions
   $("sessions-off").hidden = channelsOn;
