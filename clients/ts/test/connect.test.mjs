@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { startRuntime } from "../dist/esm/discovery.js";
 import { connect, SonaraError, VERSION } from "../dist/esm/index.js";
 import { alive, removeHome, startFake, tmpHome, waitFor } from "./helpers.mjs";
 
@@ -146,6 +147,38 @@ describe("connect", () => {
   });
 });
 
+// cmd.exe stands in for a sonarad that exits at once: it ignores the
+// leading "--home <home>" and runs what follows /c.
+const CMD = process.env.ComSpec || "cmd.exe";
+
+describe("starting the runtime", () => {
+  it("uses the other client's runtime when the started one exits with code 3", async () => {
+    fake = await startFake(home);
+    const info = await startRuntime(CMD, home, ["/d", "/c", "exit 3"], 5000);
+    assert.equal(info.pid, fake.pid);
+  });
+
+  it("is E_START_FAILED when the started runtime exits with another code", async () => {
+    await rejectsWith(
+      connect({ clientName: "unit", home, runtimePath: CMD, runtimeArgs: ["/d", "/c", "exit 1"] }),
+      "E_START_FAILED",
+    );
+  });
+
+  it("is E_START_FAILED when the started runtime writes no runtime.json in time", async () => {
+    await rejectsWith(
+      connect({
+        clientName: "unit",
+        home,
+        runtimePath: CMD,
+        runtimeArgs: ["/d", "/c", "ping -n 3 127.0.0.1 >nul"],
+        startTimeoutMs: 300,
+      }),
+      "E_START_FAILED",
+    );
+  });
+});
+
 describe("core API", () => {
   it("sends speak, control, set, get and voices as protocol messages", async () => {
     fake = await startFake(home);
@@ -221,6 +254,23 @@ describe("events", () => {
     c.onState(() => undefined);
     await rejectsWith(c.eventsReady(), "E_CLOSED");
     assert.equal(logs.length, 2, "the second listener made a second attempt");
+  });
+
+  it("reports an event connection that drops, and reopens it on the next listener", async () => {
+    fake = await startFake(home);
+    const c = await open();
+    const logs = [];
+    c.onLog((l) => logs.push(l));
+    await c.eventsReady();
+    // Drop only the event connection; the request connection stays open.
+    await rejectsWith(c["eventConn"].request("close_me"), "E_CLOSED");
+    assert.ok(await waitFor(() => logs.some((l) => /event stream closed/.test(l.message)), 3000));
+    assert.ok(!c.closed, "the request connection is still open");
+    const states = [];
+    c.onState((s) => states.push(s));
+    await c.eventsReady();
+    assert.ok(await waitFor(() => states.length > 0, 3000), "a new event connection was opened");
+    assert.equal(fake.requests().filter((r) => r.type === "subscribe").length, 2);
   });
 
   it("stops calling a listener after unsubscribe", async () => {

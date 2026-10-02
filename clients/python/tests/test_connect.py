@@ -3,6 +3,7 @@ shapes, subscriptions and the extension namespaces."""
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import pytest
@@ -10,7 +11,7 @@ from conftest import wait_until
 
 import sonara_client
 from sonara_client import SonaraError, connect
-from sonara_client.discovery import pid_alive, resolve_home
+from sonara_client.discovery import pid_alive, resolve_home, start_runtime
 
 
 def _open(home, **kw):
@@ -117,6 +118,35 @@ def test_gives_up_when_the_instance_stays_busy(home, fake):
     assert e.value.code == "E_INCOMPATIBLE"
     assert time.monotonic() - t0 >= 0.4
     assert pid_alive(f.pid), "a busy instance is never stopped"
+
+
+# cmd.exe stands in for a sonarad that exits at once: it ignores the leading
+# "--home <home>" and runs what follows /c.
+CMD = os.environ.get("ComSpec", "cmd.exe")
+
+
+def test_uses_the_other_clients_runtime_when_the_started_one_exits_3(home, fake):
+    f = fake()
+    info = start_runtime(CMD, str(home), ["/d", "/c", "exit 3"], 5.0)
+    assert info["pid"] == f.pid
+
+
+def test_start_failed_when_the_started_runtime_exits_with_another_code(home):
+    with pytest.raises(SonaraError) as e:
+        connect("unit", home=str(home), runtime_path=CMD, runtime_args=["/d", "/c", "exit 1"])
+    assert e.value.code == "E_START_FAILED"
+
+
+def test_start_failed_when_no_runtime_json_appears_in_time(home):
+    with pytest.raises(SonaraError) as e:
+        connect(
+            "unit",
+            home=str(home),
+            runtime_path=CMD,
+            runtime_args=["/d", "/c", "ping -n 3 127.0.0.1 >nul"],
+            start_timeout=0.3,
+        )
+    assert e.value.code == "E_START_FAILED"
 
 
 def test_a_wrong_token_is_e_auth(home, fake):

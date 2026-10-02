@@ -122,7 +122,11 @@ export class SonaraClient {
     return this.listen(this.logListeners, cb);
   }
 
-  /** Call `cb` once the connection closes for any reason. */
+  /**
+   * Call `cb` once the request connection closes for any reason. A drop of
+   * the event connection alone is reported to `onLog` ("event stream
+   * closed"); the next listener added opens a new one.
+   */
   onClose(cb: () => void): Unsubscribe {
     this.closeListeners.add(cb);
     return () => {
@@ -170,6 +174,15 @@ export class SonaraClient {
       this.eventConn = conn;
       conn.onEvent = (e) => this.dispatch(e);
       await conn.request("subscribe", { events: ["state", "items", "log"] });
+      // The event connection can drop on its own (the request connection
+      // reports through onClose). Once subscribed, tell log listeners, and
+      // let the next listener open a new one.
+      conn.onClose = () => {
+        if (this.eventConn === conn) this.eventConn = null;
+        if (this.closing || this.conn.closed) return;
+        this.eventsFailed = true;
+        for (const cb of [...this.logListeners]) cb({ message: "event stream closed" });
+      };
     } catch (err) {
       this.eventsFailed = true;
       const message = `event stream failed: ${(err as Error).message}`;
