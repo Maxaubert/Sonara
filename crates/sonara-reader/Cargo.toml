@@ -1,0 +1,24 @@
+[package]
+name = "sonara-reader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["onecore"]
+# Register the Windows OneCore engine in `default_registry`.
+onecore = ["sonara-engine/onecore"]
+# The fake engine and `TestOutput`, for tests of this crate and of hosts.
+test-util = ["sonara-engine/test-util", "sonara-audio/test-util"]
+
+[dependencies]
+sonara-core.workspace = true
+sonara-engine.workspace = true
+sonara-audio.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Tests and the `say` example use the fake engine and TestOutput.
+sonara-reader = { path = ".", features = ["test-util"] }
+sonara-engine = { workspace = true, features = ["test-util"] }
+sonara-audio = { workspace = true, features = ["test-util"] }

@@ -14,6 +14,5 @@ sonara-engine.workspace = true
 rodio.workspace = true
 
 [dev-dependencies]
-# Tests use TestOutput; tests and the `say` example use the fake engine.
+# Builds TestOutput with the crate's own tests and lints.
 sonara-audio = { path = ".", features = ["test-util"] }
-sonara-engine = { workspace = true, features = ["test-util"] }

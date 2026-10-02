@@ -1,0 +1,254 @@
+//! Sonara L1 facade: the reader as an in-process library.
+//!
+//! `ReaderHandle::new` starts one worker thread that owns the reader state
+//! machine (`sonara_core::reader::Reader`) and carries out its effects with
+//! an engine and an audio output; the handle sends it requests. L2+ crates
+//! and `sonarad` use only this facade.
+//!
+//! - Synthesis runs on its own thread, never on the control path: a slow
+//!   engine never delays `control` or `speak`. The state machine decides
+//!   what to synthesize (the playing chunk and one ahead); a chunk whose
+//!   item ends is dropped from the queue, or cancelled while in flight.
+//! - A failed synthesis is reported to the reader as `AudioEvent::Failed`
+//!   under the `gen` of the chunk's `PlayChunk` (the rule documented on
+//!   `Effect::Synthesize`), so the chunk is skipped, and to subscribers as
+//!   `Event::Log`.
+//! - `subscribe` gives every subscriber every event from then on. Sending
+//!   never waits (the channels are unbounded), so a slow subscriber never
+//!   blocks the reader; a dropped one is forgotten on the next event.
+//! - The handle is `Clone + Send + Sync`. Each call is answered by the
+//!   worker after its effects were carried out, so calls from one thread
+//!   apply in order. `shutdown` (or dropping the last handle) stops speech,
+//!   cancels synthesis and joins the threads; later calls return
+//!   `Error::Closed`.
+mod error;
+mod settings;
+mod synth;
+mod worker;
+
+pub use error::{Error, Result};
+pub use settings::{Key, Value, RATE_MAX, RATE_MIN, VOLUME_MAX};
+
+pub use sonara_audio::{AudioEvent, Output};
+pub use sonara_core::reader::{Control, ItemId, ItemPhase, NowPlaying, QueueMode, State};
+pub use sonara_engine::{Engine, EngineId, Registry, Voice};
+
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use worker::Msg;
+
+/// What subscribers are told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// The reader state changed (`seq` strictly increasing).
+    State(State),
+    /// An item started or ended.
+    Item { item_id: ItemId, phase: ItemPhase },
+    /// Something worth a log line: a failed synthesis, an engine that is not
+    /// ready.
+    Log { message: String },
+}
+
+impl From<sonara_core::reader::Event> for Event {
+    fn from(e: sonara_core::reader::Event) -> Self {
+        match e {
+            sonara_core::reader::Event::State(s) => Event::State(s),
+            sonara_core::reader::Event::Item { item_id, phase } => Event::Item { item_id, phase },
+        }
+    }
+}
+
+/// How to build a reader.
+pub struct Config {
+    /// The engines this host allows (R6 is enforced by the registry).
+    pub registry: Registry,
+    /// Engine id to start with; `None` takes the first one registered.
+    pub engine: Option<String>,
+    /// Voice id or name of that engine; `None` is the engine default.
+    pub voice: Option<String>,
+    /// Words per minute, `RATE_MIN..=RATE_MAX`.
+    pub rate: u32,
+    /// Percent, `0..=VOLUME_MAX`.
+    pub volume: u8,
+    /// The audio output and its event channel; `None` opens the default
+    /// device (`RodioOutput`).
+    pub output: Option<(Box<dyn Output>, Receiver<AudioEvent>)>,
+}
+
+impl Config {
+    /// The defaults of the Python reader: first engine, its default voice,
+    /// rate 200, volume 100, the default audio device.
+    pub fn new(registry: Registry) -> Self {
+        Config {
+            registry,
+            engine: None,
+            voice: None,
+            rate: 200,
+            volume: 100,
+            output: None,
+        }
+    }
+
+    /// Use this output instead of the default device (tests use
+    /// `TestOutput`).
+    pub fn with_output(mut self, output: Box<dyn Output>, events: Receiver<AudioEvent>) -> Self {
+        self.output = Some((output, events));
+        self
+    }
+}
+
+/// The engines this build can offer, under the default licence policy
+/// (permissive and OS engines): OneCore on Windows with feature `onecore`.
+pub fn default_registry() -> Registry {
+    #[allow(unused_mut)]
+    let mut registry = Registry::default();
+    #[cfg(all(windows, feature = "onecore"))]
+    registry
+        .register(Arc::new(sonara_engine::onecore::OneCore::new()))
+        .expect("the default registry allows OS engines");
+    registry
+}
+
+struct Shared {
+    tx: Sender<Msg>,
+    registry: Arc<Registry>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Shared {
+    fn shutdown(&self) {
+        let worker = self.worker.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(worker) = worker {
+            let _ = self.tx.send(Msg::Shutdown);
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+/// A running reader. Clones share it; it shuts down with the last clone or
+/// on `shutdown`.
+#[derive(Clone)]
+pub struct ReaderHandle {
+    shared: Arc<Shared>,
+}
+
+impl ReaderHandle {
+    /// Check the config and start the reader. Fails on an unknown engine or
+    /// voice, an out-of-range rate or volume, or an empty registry.
+    pub fn new(config: Config) -> Result<ReaderHandle> {
+        let registry = Arc::new(config.registry);
+        let engine = match &config.engine {
+            Some(id) => registry.get(id)?,
+            None => {
+                let first = registry.ids().first().copied().ok_or(Error::NoEngine)?;
+                registry.get(first.as_str())?
+            }
+        };
+        let voice = settings::resolve_voice(engine.as_ref(), config.voice.as_deref())?;
+        settings::check_rate(config.rate)?;
+        settings::check_volume(config.volume as u64)?;
+        let (output, events) = match config.output {
+            Some(o) => o,
+            None => {
+                let (out, events) = sonara_audio::RodioOutput::new();
+                (Box::new(out) as Box<dyn Output>, events)
+            }
+        };
+        let (tx, rx) = channel();
+        let start = worker::Start {
+            registry: registry.clone(),
+            engine,
+            voice,
+            rate: config.rate,
+            volume: config.volume,
+            output,
+            events,
+        };
+        let worker = worker::spawn(start, tx.clone(), rx)?;
+        Ok(ReaderHandle {
+            shared: Arc::new(Shared {
+                tx,
+                registry,
+                worker: Mutex::new(Some(worker)),
+            }),
+        })
+    }
+
+    fn call<T>(&self, make: impl FnOnce(Sender<T>) -> Msg) -> Result<T> {
+        let (reply, rx) = channel();
+        self.shared
+            .tx
+            .send(make(reply))
+            .map_err(|_| Error::Closed)?;
+        rx.recv().map_err(|_| Error::Closed)
+    }
+
+    /// Add `text` as one item (see `sonara_core::reader` for `mode` and
+    /// `interrupt`). Returns its id.
+    pub fn speak(
+        &self,
+        text: &str,
+        mode: QueueMode,
+        interrupt: bool,
+        label: Option<String>,
+    ) -> Result<ItemId> {
+        let text = text.to_string();
+        self.call(|reply| Msg::Speak {
+            text,
+            mode,
+            interrupt,
+            label,
+            reply,
+        })
+    }
+
+    /// A playback control; returns once the reader has carried it out.
+    pub fn control(&self, c: Control) -> Result<()> {
+        self.call(|reply| Msg::Control(c, reply))
+    }
+
+    /// Change a setting (`volume` 0..=100, `rate` 100..=400 words per
+    /// minute, `voice` id or name of the current engine or `Null` for its
+    /// default, `engine` id). A rate, voice or engine applies to chunks
+    /// synthesized from now on.
+    pub fn set(&self, key: Key, value: Value) -> Result<()> {
+        self.call(|reply| Msg::Set { key, value, reply })?
+    }
+
+    /// Read a setting: numbers for `volume` and `rate`, the voice id (or
+    /// `Null` for the default) and the engine id as text.
+    pub fn get(&self, key: Key) -> Result<Value> {
+        self.call(|reply| Msg::Get { key, reply })
+    }
+
+    /// The current state snapshot.
+    pub fn state(&self) -> Result<State> {
+        self.call(Msg::State)
+    }
+
+    /// Voices of one engine, or of every registered engine.
+    pub fn voices(&self, engine: Option<&str>) -> Result<Vec<Voice>> {
+        match engine {
+            Some(id) => Ok(self.shared.registry.get(id)?.voices()),
+            None => Ok(self.shared.registry.voices()),
+        }
+    }
+
+    /// Every event from now on. Dropping the receiver unsubscribes.
+    pub fn subscribe(&self) -> Result<Receiver<Event>> {
+        self.call(Msg::Subscribe)
+    }
+
+    /// Stop speech, cancel synthesis and stop the threads. Subscribers see
+    /// the final events, then their channel closes. Idempotent.
+    pub fn shutdown(&self) {
+        self.shared.shutdown();
+    }
+}

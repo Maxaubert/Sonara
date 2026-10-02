@@ -599,7 +599,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "sonara-audio"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "rodio",
  "sonara-audio",
@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-core"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "once_cell",
  "regex",
@@ -619,12 +619,23 @@ dependencies = [
 
 [[package]]
 name = "sonara-engine"
-version = "0.9.2"
+version = "0.9.3"
 dependencies = [
  "sonara-engine",
  "thiserror 2.0.21",
  "windows 0.62.2",
  "windows-future",
+]
+
+[[package]]
+name = "sonara-reader"
+version = "0.9.3"
+dependencies = [
+ "sonara-audio",
+ "sonara-core",
+ "sonara-engine",
+ "sonara-reader",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
