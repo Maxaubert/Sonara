@@ -1,0 +1,14 @@
+[package]
+name = "sonara-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+regex.workspace = true
+fancy-regex.workspace = true
+once_cell.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
