@@ -121,7 +121,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "once_cell",
  "regex",
