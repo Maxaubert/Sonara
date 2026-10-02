@@ -85,6 +85,11 @@ jobs:
         with:
           python-version: "3.9"
       - run: cargo build -p sonarad --release
+      # Microsoft's official ONNX Runtime CPU build (fetched by URL, pinned
+      # SHA-256) and the VC++ runtime DLLs it imports, next to sonarad.exe,
+      # so the npm runtime package below is built as it ships.
+      - name: Stage onnxruntime.dll and the VC++ runtime
+        run: python packaging/runtime_dlls.py stage target/release
       - name: "@sonara/client: typecheck, build, test"
         working-directory: clients/ts
         run: |

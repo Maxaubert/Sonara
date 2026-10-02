@@ -1040,3 +1040,79 @@ fn the_background_policy_is_a_persisted_agent_key() {
     ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
     assert!(!s.channels().unwrap().focus_only(), "applied at start");
 }
+
+/// Kokoro as `sonarad` builds it, but without downloads, ONNX Runtime or a
+/// model: it speaks with its fallback (the fake engine) and lists its voices.
+fn offline_kokoro(home: &std::path::Path) -> sonara_engine::kokoro::Kokoro {
+    use sonara_engine::kokoro::{self, download};
+    let mut c = kokoro::Config::new(
+        home.join("models").join(download::MODEL_SUBDIR),
+        home.join("no-onnxruntime.dll"),
+    );
+    c.download = false;
+    c.fallback = Some(Arc::new(FakeEngine::new()));
+    kokoro::Kokoro::new(c)
+}
+
+#[test]
+fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
+    use sonara_reader::{Key, Value as V};
+    let home = tmp();
+    std::fs::write(
+        home.join("config.json"),
+        r#"{"engine": "kokoro", "voice": "af_sarah", "rate": 250}"#,
+    )
+    .unwrap();
+    let k = offline_kokoro(&home);
+    let mut registry = Registry::default();
+    registry.register(Arc::new(k.clone())).unwrap();
+    let mut config = Config::new(registry);
+    config.engine = Some("kokoro".into());
+    let (out, rx) = TestOutput::new();
+    let reader = ReaderHandle::new(config.with_output(Box::new(out.clone()), rx)).unwrap();
+    let (store, problems) = Store::load(&home);
+    assert!(problems.is_empty(), "{problems:?}");
+    let problems = config::apply_reader(&store, &reader, false);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(reader.get(Key::Voice).unwrap(), V::Text("af_sarah".into()));
+    assert_eq!(reader.get(Key::Rate).unwrap(), V::Number(250));
+    // The previews share the reader's Kokoro (one model, one download).
+    let mut previews = Registry::default();
+    previews.register(Arc::new(k)).unwrap();
+    let server = Server::new(
+        reader,
+        TOKEN.into(),
+        Lifetime::new(Duration::from_secs(30), false),
+    )
+    .with_config(store)
+    .with_system(SystemHost {
+        platform: Fake::new().platform(),
+        home: home.clone(),
+        http_port: 4321,
+        token: TOKEN.into(),
+        previews: Some(previews),
+    });
+    let s = &server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system"]}),
+    );
+    let p = ok(s, &mut h, json!({"type": "preview"}));
+    assert_eq!(p["engine"], "kokoro");
+    assert_eq!(
+        p["voice"], "af_sarah",
+        "the saved voice is the one in force"
+    );
+    let p = ok(s, &mut h, json!({"type": "preview", "voice": "bm_george"}));
+    assert_eq!(p["voice"], "bm_george");
+    assert!(
+        out.take_calls().iter().any(
+            |c| matches!(c, sonara_audio::OutputCall::PlayClip { samples, .. } if *samples > 0)
+        ),
+        "the previews played"
+    );
+    let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
+    assert_eq!(g["value"]["saved_voice"], "af_sarah");
+}

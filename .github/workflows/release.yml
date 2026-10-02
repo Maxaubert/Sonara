@@ -3,8 +3,10 @@
 #   .claude-plugin/plugin.json or marketplace.json disagree.
 # - REFUSES to run if release v<version> already exists: bump the version in the PR.
 # - Publishes v<version> with GitHub-generated notes and one asset,
-#   sonara-runtime-win-x64-<version>.zip (sonarad.exe release build, LICENSE,
-#   LICENSING.md, THIRD_PARTY_NOTICES.md) for apps that bundle the runtime.
+#   sonara-runtime-win-x64-<version>.zip (sonarad.exe release build,
+#   onnxruntime.dll with its licence files, the VC++ runtime DLLs it imports,
+#   LICENSE, LICENSING.md, THIRD_PARTY_NOTICES.md) for apps that bundle the
+#   runtime.
 #   The Claude Code plugin still ships from the repo itself. Unsigned until
 #   SignPath enrolment.
 # - Nothing goes to npm or PyPI: publish-packages runs only once the
@@ -73,6 +75,10 @@ jobs:
         run: |
           cargo build -p sonarad --release
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          # onnxruntime.dll (official CPU build, pinned SHA-256) and the VC++
+          # runtime DLLs it imports, next to sonarad.exe.
+          python packaging/runtime_dlls.py stage target/release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           python packaging/notices/gen_notices.py --check
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $zip = python packaging/release_zip.py --out dist
@@ -117,6 +123,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           cargo build -p sonarad --release
+          python packaging/runtime_dlls.py stage target/release
           (cd clients/ts && npm ci && npm run build && npm publish --access public)
           (cd packaging/npm-runtime && npm publish --access public)
       - uses: actions/setup-python@v5

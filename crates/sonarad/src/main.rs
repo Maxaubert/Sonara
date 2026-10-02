@@ -3,6 +3,7 @@
 //! Exit codes: 0 clean exit (idle, takeover, Ctrl+C), 1 startup failure,
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
+use sonara_engine::kokoro::{self, Kokoro};
 use sonara_reader::{Config, ReaderHandle, Registry};
 use sonarad::args::{self, Command, OutputKind, SystemKind};
 use sonarad::config::{self, Store};
@@ -15,6 +16,7 @@ use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
 use sonarad::{http, null_output::NullOutput, tcp, VERSION};
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -53,28 +55,92 @@ fn main() -> ExitCode {
     }
 }
 
-/// The engines of a run: the fake engine for `--engine fake`, else the
-/// default ones (OneCore on Windows).
-fn build_registry(engine: &str) -> Result<Registry, String> {
-    Ok(if engine == "fake" {
+/// `onnxruntime.dll` next to `sonarad.exe`; `SONARA_ORT_DYLIB` overrides
+/// it (a development aid: `cargo run` builds have no DLL next to them).
+fn onnxruntime_dll() -> PathBuf {
+    if let Some(p) = std::env::var_os("SONARA_ORT_DYLIB").filter(|p| !p.is_empty()) {
+        return PathBuf::from(p);
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("onnxruntime.dll")))
+        .unwrap_or_else(|| PathBuf::from("onnxruntime.dll"))
+}
+
+/// The engines and the one to start with. `fake` runs alone (tests,
+/// conformance: no Kokoro, so nothing is ever downloaded). Otherwise OneCore
+/// and Kokoro, with OneCore speaking while Kokoro is not ready; without a
+/// named engine, Kokoro when ONNX Runtime is installed, else OneCore.
+fn build_registry(
+    engine: Option<&str>,
+    home: &Home,
+) -> Result<(Registry, String, Option<Kokoro>), String> {
+    if engine == Some("fake") {
         let mut r = Registry::default();
         r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
             .map_err(|e| e.to_string())?;
-        r
-    } else {
-        sonara_reader::default_registry()
-    })
+        return Ok((r, "fake".into(), None));
+    }
+    let mut registry = sonara_reader::default_registry();
+    let runtime = onnxruntime_dll();
+    let mut config = kokoro::Config::new(
+        home.models().join(kokoro::download::MODEL_SUBDIR),
+        runtime.clone(),
+    );
+    config.fallback = registry.get(sonara_engine::onecore::ID.as_str()).ok();
+    let has_onecore = config.fallback.is_some();
+    let k = Kokoro::new(config);
+    registry
+        .register(Arc::new(k.clone()))
+        .map_err(|e| e.to_string())?;
+    let chosen = match engine {
+        Some(e) => e.to_string(),
+        None if runtime.is_file() || !has_onecore => kokoro::ID.to_string(),
+        None => sonara_engine::onecore::ID.to_string(),
+    };
+    Ok((registry, chosen, Some(k)))
 }
 
-fn build_reader(engine: &str, output: OutputKind) -> Result<ReaderHandle, String> {
-    let registry = build_registry(engine)?;
+/// Engines for voice previews: their own OneCore (a preview never waits
+/// for or cancels the reader's OneCore synthesis), and the reader's Kokoro
+/// itself rather than a second copy: one model in memory and one download
+/// manager per model folder. A preview on Kokoro waits at most for the
+/// sentence the reader is synthesizing, and a skip on the reader cancels it.
+fn preview_registry(engine: &str, kokoro: Option<&Kokoro>) -> Option<Registry> {
+    if engine == "fake" {
+        let mut r = Registry::default();
+        r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
+            .ok()?;
+        return Some(r);
+    }
+    let mut r = sonara_reader::default_registry();
+    if let Some(k) = kokoro {
+        r.register(Arc::new(k.clone())).ok()?;
+    }
+    Some(r)
+}
+
+/// The reader, the Kokoro engine (unless `fake`) and the id of the engine
+/// it started with.
+fn build_reader(
+    engine: Option<&str>,
+    output: OutputKind,
+    home: &Home,
+) -> Result<(ReaderHandle, Option<Kokoro>, String), String> {
+    let (registry, engine, kokoro) = build_registry(engine, home)?;
     let mut config = Config::new(registry);
-    config.engine = Some(engine.to_string());
+    config.engine = Some(engine.clone());
     if output == OutputKind::Null {
         let (out, events) = NullOutput::new();
         config = config.with_output(Box::new(out), events);
     }
-    ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))
+    let reader = ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))?;
+    // Prefetch: verify, download (in the background) and load the model now,
+    // so the first sentence is soon Kokoro's.
+    if let (Some(k), true) = (&kokoro, engine == kokoro::ID.as_str()) {
+        k.prepare();
+    }
+    Ok((reader, kokoro, engine))
 }
 
 /// The platform of the `system` extension.
@@ -133,24 +199,20 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     for p in problems {
         home.log(&p);
     }
-    // The saved engine starts the reader unless --engine chose one.
-    let engine = if args.engine_given {
-        args.engine.clone()
-    } else {
-        store
-            .user("engine")
-            .and_then(|v| v.as_str().map(str::to_string))
-            .unwrap_or_else(|| args.engine.clone())
-    };
-    let (reader, engine) = match build_reader(&engine, args.output) {
-        Ok(r) => (r, engine),
-        Err(e) if engine != args.engine => {
+    // --engine, else the saved engine, else the default choice (Kokoro
+    // when ONNX Runtime is installed, else OneCore).
+    let saved = store
+        .user("engine")
+        .and_then(|v| v.as_str().map(str::to_string));
+    let wanted = args.engine.clone().or(saved);
+    let (reader, kokoro, engine) = match build_reader(wanted.as_deref(), args.output, &home) {
+        Ok(r) => r,
+        Err(e) if args.engine.is_none() && wanted.is_some() => {
             home.log(&format!(
-                "config.json: engine '{engine}' not available ({e}); using '{}'",
-                args.engine
+                "config.json: engine '{}' not available ({e}); using the default",
+                wanted.as_deref().unwrap_or_default()
             ));
-            let r = build_reader(&args.engine, args.output).map_err(fail)?;
-            (r, args.engine.clone())
+            build_reader(None, args.output, &home).map_err(fail)?
         }
         Err(e) => return Err(fail(e)),
     };
@@ -159,7 +221,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         home.log(&p);
     }
     // Previews use the engines of the reader actually started.
-    let previews = build_registry(&engine).ok();
+    let previews = preview_registry(&engine, kokoro.as_ref());
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -172,6 +234,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         reader.clone(),
         store,
         previews,
+        kokoro,
     ));
     reader.shutdown();
     rt.shutdown_timeout(Duration::from_millis(500));
@@ -184,6 +247,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     result.map_err(fail)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     args: &args::Args,
     home: &Home,
@@ -192,6 +256,7 @@ async fn run(
     reader: ReaderHandle,
     store: Arc<Store>,
     previews: Option<Registry>,
+    kokoro: Option<Kokoro>,
 ) -> Result<(), String> {
     // Loopback only, never another address (spec section 4).
     let tcp_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -247,12 +312,14 @@ async fn run(
     // start (the startup sweep, the migration) must not use up the idle
     // time before the first client could connect (#194).
     life.touch();
+    // Reading, or fetching the Kokoro model: an idle exit mid-download
+    // would leave the first install without Kokoro for longer.
     let busy_server = server.clone();
     let retire_server = server.clone();
     tokio::spawn(lifetime::monitor(
         life.clone(),
         Duration::from_millis(100),
-        move || busy_server.is_reading(),
+        move || busy_server.is_reading() || kokoro.as_ref().is_some_and(Kokoro::is_preparing),
         move || retire_server.retire_if_idle(),
     ));
     eprintln!(

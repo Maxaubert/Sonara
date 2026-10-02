@@ -1,6 +1,6 @@
 # Sonara protocol v1
 
-The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels`](#extension-channels), [`agent`](#extension-agent) and [`system`](#extension-system) extensions.
+The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.1), which every runtime offers, and the [`channels`](#extension-channels), [`agent`](#extension-agent) and [`system`](#extension-system) extensions.
 
 Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension), `crates/sonara-agent` (`agent`), `crates/sonara-system` (`system`). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
@@ -19,8 +19,8 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "http_port": 50312,
   "token": "64 hex characters",
   "version": "0.9.7",
-  "protocol": {"major": 1, "minor": 0},
-  "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log"],
+  "protocol": {"major": 1, "minor": 1},
+  "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log", "engine_status"],
   "extensions": ["channels", "agent", "system"],
   "started_at": "2026-10-02T10:40:45Z"
 }
@@ -73,12 +73,12 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 
 ```json
 > {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.9.7", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
+< {"id": 1, "ok": true, "version": "0.10.0", "protocol": {"major": 1, "minor": 1}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
 
 The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.
 
-**Capabilities** of protocol 1.0: `core`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`, `events.state`, `events.items`, `events.log`. A later minor adds capability strings for what it adds, so a client can `require` them.
+**Capabilities** of protocol 1.0: `core`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`, `events.state`, `events.items`, `events.log`. Protocol 1.1 adds `engine_status` (readiness and model download progress in `state.engine_status`). A later minor adds capability strings for what it adds, so a client can `require` them.
 
 ### `speak`
 
@@ -120,7 +120,7 @@ Item ids start at 1 and never repeat within one runtime.
 | `volume` | integer 0..=100 (percent) |
 | `rate` | integer 100..=400 (words per minute) |
 | `voice` | a voice `id` or `name` of the current engine; `null` for the engine default. `get` returns the id or `null` |
-| `engine` | an engine id (`onecore`; `fake` in test runs). Switching resets a voice the new engine lacks |
+| `engine` | an engine id: `kokoro` or `onecore` (`fake` in test runs). Switching resets a voice the new engine lacks |
 
 A rate, voice or engine change applies to chunks synthesized from then on. Out-of-range or wrongly typed values are `E_BAD_REQUEST`; an unknown voice or engine is `E_NOT_FOUND`; an unknown key is `E_BAD_REQUEST` (an extension's key, such as `audio_mode`, is `E_UNSUPPORTED`).
 
@@ -134,6 +134,8 @@ A rate, voice or engine change applies to chunks synthesized from then on. Out-o
 
 `license_class` is `permissive` or `os`. `installed: false` means listed but not yet able to speak (voice data missing, a model still to download). An unknown engine is `E_NOT_FOUND`.
 
+**Engines.** `onecore` is Windows' own speech: zero download, licence class `os`. `kokoro` is Kokoro-82M v1.0 (Apache-2.0 weights) on Microsoft's ONNX Runtime with GPL-free phonemes, licence class `permissive`, 28 English voices (`af_heart`, the default, `af_sarah`, `bm_george`, ...; ids also accept the `kokoro:` prefix and display names such as `Heart (Kokoro)`). Its model (about 354 MB) is downloaded on first use into `<home>\models\kokoro\v1.0\` from pinned URLs with pinned SHA-256 values, resumed after an interruption (a download in progress is `<file>.part`), and checked before use (`verified.json` there remembers checked files by size and time); a host may pre-seed that folder with the two files (`kokoro-v1.0.onnx`, `voices-v1.0.bin`). Until Kokoro is ready (downloading, a failed download waiting to retry, no ONNX Runtime) it speaks with `onecore` at once, and `state.engine_status` says so. Where `onecore` cannot speak (its warm-up fails or it lists no voices), there is no fallback: `engine_status` names none, and each item waits for Kokoro while the model downloads or loads (up to 5 minutes), so no speech is dropped. The runtime does not idle out while the model downloads or loads. A failed download is retried after 30 s, then after twice as long each time up to 30 minutes, never on every sentence. The rate maps to Kokoro's speed as `rate / 200`, from 0.5 to 2.0.
+
 ### `subscribe` (TCP)
 
 `{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an extension's stream (`earcons` of `agent`, `cues` of `system`) is asked for by name and is `E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current state.
@@ -143,14 +145,31 @@ A client that does not read its events never slows the reader: past 256 unread e
 ## Events
 
 ```json
-{"event": "state", "seq": 12, "now_playing": {"item_id": 7, "label": "build", "text": "Build finished.", "chunk": 0, "chunks": 2}, "queued": 0, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore"}}
+{"event": "state", "seq": 12, "now_playing": {"item_id": 7, "label": "build", "text": "Build finished.", "chunk": 0, "chunks": 2}, "queued": 0, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "kokoro", "ready": true, "status": "ready"}}
 {"event": "item", "item_id": 7, "phase": "started"}
 {"event": "log", "message": "synthesis failed: ..."}
 ```
 
-- `state` (stream `state`): sent on change only, `seq` strictly increasing. `now_playing` is `null` when idle; its `text` is the chunk being read. `queued` counts items after the current one. `engine_status` names the current engine; readiness and model download progress are added by a later minor.
+- `state` (stream `state`): sent on change only, `seq` strictly increasing. `now_playing` is `null` when idle; its `text` is the chunk being read. `queued` counts items after the current one. `engine_status` (below) says whether the current engine speaks with its own voice yet.
 - `item` (stream `items`): `phase` is `started`, `finished`, `skipped` or `failed`. An item ends `failed` only when none of its chunks could be played; a failed chunk is skipped and logged.
-- `log` (stream `log`): a line worth showing in a log, such as a failed synthesis or an engine that is not ready.
+- `log` (stream `log`): a line worth showing in a log, such as a failed synthesis or an engine that is not ready. A change of the engine's readiness is logged too (`engine 'kokoro' is downloading its model; speaking with onecore meanwhile`, `engine 'kokoro' is ready`), not each bit of download progress.
+
+**`engine_status`** (protocol 1.1; a 1.0 runtime sends only `engine`):
+
+| field | meaning |
+|---|---|
+| `engine` | the current engine id |
+| `ready` | `true` when it speaks with its own voice |
+| `status` | `ready`, `loading` (its model, a few seconds), `downloading`, `waiting` (the last download or load failed; it retries later) or `unavailable` (it cannot run in this install, for Kokoro: no `onnxruntime.dll`) |
+| `progress` | `{done, total}` bytes, while `downloading` |
+| `fallback` | the engine speaking meanwhile (`onecore`), while not ready |
+| `message` | why it is not ready, after a failure |
+
+```json
+"engine_status": {"engine": "kokoro", "ready": false, "status": "downloading", "progress": {"done": 104873984, "total": 353746785}, "fallback": "onecore"}
+```
+
+A change of `engine_status` alone (download progress, about four times a second at most) is a new `state` event with a new `seq`. The runtime counts these changes once, so every client sees the same `seq` for the same state, however long it has been subscribed.
 
 ## Errors
 
@@ -179,7 +198,7 @@ When a client finds an instance it cannot use (another protocol major, a missing
 
 ## Versioning
 
-Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
+Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
 
 ## Saved settings
 
@@ -192,13 +211,13 @@ Every setting a client changes with `set` is saved in the home and applies again
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
 | `logs\sonarad.log` | notes worth keeping: the migration, saved values that could not be applied |
 
-Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it. A value out of range is not applied (and logged), the others still apply; it stays in the file, like a key this runtime does not know (from a newer release), until a client sets that key. A saved value the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies once it is available; the default is used meanwhile. `--engine` on the command line wins over a saved `engine`. Setting `engine` to another engine replaces a saved voice that engine lacks with the voice in force; setting the same engine again keeps it.
+Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it. A value out of range is not applied (and logged), the others still apply; it stays in the file, like a key this runtime does not know (from a newer release), until a client sets that key. A saved value the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies once it is available; the default is used meanwhile. `--engine` on the command line wins over a saved `engine`, which wins over the default choice below; a saved engine that cannot start is logged and the default choice is used. Setting `engine` to another engine replaces a saved voice that engine lacks with the voice in force; setting the same engine again keeps it.
 
 **Migration from the Python plugin.** The first runtime on the default home (`%LOCALAPPDATA%\Sonara`) that has no `config.json` imports the plugin's settings from `%USERPROFILE%\.sonara` (another folder, or another home: `--migrate-from <dir>`): its `config.json` (voice, rate, speech volume, audio mode, duck level, mute level, verbosity, minimum queue, background policy (`earcon_only`, or any other value as `all`), summary mode, command, model, timeout, settle time, style and custom prompts), `keymap.json` (`nav_start` becomes `restart`, `next_session` becomes `next_channel`; only when the home has no `keymap.json`) and `session_prefs.json` (the session `name` becomes `label`; only when the home has none). A value equal to the runtime's default is not saved; a Chatterbox voice speaks as `af_heart`, `audio_control: true` is `audio_mode: duck`, a speech volume above 100 is 100, and in a file from before the plugin's format 2 the old defaults `duck_level: 20` and `summary_timeout: 20` count as unset. The cue voice and fast cues are not imported (the runtime speaks its control cues in the voice in force). The plugin's folder is only read. The migration writes `config.json` with the `_migrated` marker, so it runs once; what it did is in `logs\sonarad.log`.
 
 ## Testing aids
 
-`sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. They are meant for tests and the conformance suite, not for apps.
+`sonarad --engine kokoro|onecore` picks the engine to start with; without it, the saved `engine`, else `kokoro` when `onnxruntime.dll` is next to `sonarad.exe` (`SONARA_ORT_DYLIB` names another copy, a development aid), else `onecore`. A Kokoro start verifies or downloads and loads the model in the background right away. `sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. They are meant for tests and the conformance suite, not for apps. With `--engine fake` there is no Kokoro engine, so nothing is ever downloaded.
 
 ## Examples
 
@@ -279,7 +298,7 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 `state.now_playing` gains `channel` and `host_tab` (both `null` for text spoken without a channel; an announcement belongs to the channel it announces), and `queued` also counts the channels' unread messages. A `state` event is sent when the reader's state changes, so `queued` catches up with a new channel message at the next change.
 
 ```json
-{"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore"}}
+{"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore", "ready": true, "status": "ready"}}
 ```
 
 ## Extension `agent`
@@ -322,7 +341,7 @@ Earcons are mixed over the speech (they never pause or cut it) and follow the ou
 
 **Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer or `stop` drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
 
-**Custom prompts.** Each style can have its own instruction: `prompts` is `{style: text}` (`set` changes the styles given; `null` or a blank text goes back to the built-in one), and `prompt` is the custom instruction of the style in force (`set` with `prompt` changes that style's). Before #201 `prompt` was one instruction for every style; no runtime with that meaning shipped, so the protocol stays 1.0. `get` also returns `default_prompts`, the built-in instruction of each style (read-only), so a page can show and edit it.
+**Custom prompts.** Each style can have its own instruction: `prompts` is `{style: text}` (`set` changes the styles given; `null` or a blank text goes back to the built-in one), and `prompt` is the custom instruction of the style in force (`set` with `prompt` changes that style's). Before #201 `prompt` was one instruction for every style; no runtime with that meaning shipped, so the protocol minor was not bumped for it. `get` also returns `default_prompts`, the built-in instruction of each style (read-only), so a page can show and edit it.
 
 ### Events
 
@@ -363,7 +382,7 @@ These settings are saved like the others (see [Saved settings](#saved-settings))
 
 ### Voice previews
 
-`{"type": "preview", "voice"?: "<id or name>", "text"?: "<text>"}` says a short sample (default: `"Hello. This is how Sonara sounds with this voice."`, at most 300 characters) with a voice of the current engine (default: the voice in force) at the current rate, and replies `{engine, voice}` once it is playing. The sample is synthesized on engines of its own and played as a clip mixed over whatever is being read, like an earcon: nothing is paused, cut or queued again, and the output volume applies (a muted reader plays it silently). An unknown voice is `E_NOT_FOUND`; before a client enabled `system` it is `E_UNSUPPORTED`.
+`{"type": "preview", "voice"?: "<id or name>", "text"?: "<text>"}` says a short sample (default: `"Hello. This is how Sonara sounds with this voice."`, at most 300 characters) with a voice of the current engine (default: the voice in force) at the current rate, and replies `{engine, voice}` once it is playing. The sample is synthesized on engines of its own (its own `onecore`; Kokoro's loaded model is shared with the reader, so a Kokoro sample waits at most for the sentence being synthesized, and a skip on the reader cancels it) and played as a clip mixed over whatever is being read, like an earcon: nothing is paused, cut or queued again, and the output volume applies (a muted reader plays it silently). An unknown voice is `E_NOT_FOUND`; before a client enabled `system` it is `E_UNSUPPORTED`.
 
 ### Spoken cues
 

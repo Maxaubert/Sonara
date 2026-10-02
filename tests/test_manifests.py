@@ -116,7 +116,7 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_10_1():
+def test_pyproject_version_is_0_10_2():
     assert _pyproject_version() == "0.10.2"
 
 

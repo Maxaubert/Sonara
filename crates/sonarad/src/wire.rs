@@ -1,7 +1,7 @@
 //! JSON shapes of protocol v1 core: replies, errors and events. Field names
 //! are exactly those of spec section 4.1.
 use serde_json::{json, Map, Value};
-use sonara_engine::LicenseClass;
+use sonara_engine::{EngineStatus, LicenseClass, Readiness};
 use sonara_reader::{ItemPhase, State, Value as SettingValue, Voice};
 
 /// Error codes (spec section 4).
@@ -93,9 +93,15 @@ pub fn phase_str(p: ItemPhase) -> &'static str {
     }
 }
 
-/// The `state` event. `engine_status` names the current engine; readiness
-/// and download progress are added by a later minor (spec section 5).
+/// The `state` event, its engine ready (tests and hosts without a status).
 pub fn state_event(s: &State, engine: &str) -> Value {
+    state_event_with(s, s.seq, engine, &EngineStatus::ready())
+}
+
+/// The `state` event. `seq` is the reader's state sequence plus the number
+/// of engine status changes seen by this stream (`events.rs`), so it stays
+/// strictly increasing when only `engine_status` moved.
+pub fn state_event_with(s: &State, seq: u64, engine: &str, status: &EngineStatus) -> Value {
     let now_playing = match &s.now_playing {
         None => Value::Null,
         Some(n) => json!({
@@ -108,7 +114,7 @@ pub fn state_event(s: &State, engine: &str) -> Value {
     };
     json!({
         "event": "state",
-        "seq": s.seq,
+        "seq": seq,
         "now_playing": now_playing,
         "queued": s.queued,
         "paused": s.paused,
@@ -116,8 +122,30 @@ pub fn state_event(s: &State, engine: &str) -> Value {
         "volume": s.volume,
         "rate": s.rate,
         "voice": s.voice,
-        "engine_status": {"engine": engine},
+        "engine_status": engine_status_json(engine, status),
     })
+}
+
+/// `state.engine_status` (protocol 1.1): `{engine, ready, status}` plus
+/// `progress {done, total}` while a model downloads, `fallback` (the engine
+/// speaking meanwhile) and `message` (why it is not ready) when they apply.
+pub fn engine_status_json(engine: &str, status: &EngineStatus) -> Value {
+    let mut v = json!({
+        "engine": engine,
+        "ready": status.readiness == Readiness::Ready,
+        "status": status.readiness.as_str(),
+    });
+    let m = v.as_object_mut().expect("an object");
+    if let Some((done, total)) = status.progress {
+        m.insert("progress".into(), json!({"done": done, "total": total}));
+    }
+    if let Some(f) = status.fallback {
+        m.insert("fallback".into(), json!(f.as_str()));
+    }
+    if let Some(msg) = &status.message {
+        m.insert("message".into(), json!(msg));
+    }
+    v
 }
 
 pub fn item_event(item_id: u64, phase: ItemPhase) -> Value {

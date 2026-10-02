@@ -48,6 +48,15 @@ def test_settings_show_in_state(client):
     assert s["engine_status"]["engine"] == "fake"
 
 
+def test_engine_status_says_the_engine_is_ready(client, rt):
+    # Protocol 1.1: readiness in every state event. The fake engine is
+    # always ready, so there is no progress, fallback or message.
+    assert "engine_status" in rt.info["capabilities"]
+    client.request({"type": "subscribe", "events": ["state"]})
+    s = client.state()
+    assert s["engine_status"] == {"engine": "fake", "ready": True, "status": "ready"}
+
+
 def test_voices(client):
     r = client.request({"type": "voices"})
     assert r["ok"] is True

@@ -18,6 +18,7 @@ export { readRuntime, resolveHome } from "./discovery.js";
 export { PROTOCOL, VERSION } from "./version.js";
 export type {
   ControlAction,
+  EngineStatus,
   HelloInfo,
   ItemEvent,
   ItemPhase,

@@ -114,6 +114,9 @@ pub fn fmt(e: &Event) -> String {
             None => format!("state idle{}", if st.muted { " muted" } else { "" }),
         },
         Event::Log { message } => format!("log {message}"),
+        Event::EngineStatus { engine, status, .. } => {
+            format!("engine {engine} {}", status.readiness.as_str())
+        }
     }
 }
 

@@ -8,16 +8,31 @@ license.workspace = true
 default = ["onecore"]
 # The Windows OneCore engine (Windows.Media.SpeechSynthesis).
 onecore = ["dep:windows", "dep:windows-future"]
+# The Kokoro engine: vendored misaki G2P, ONNX Runtime loaded at run time
+# (Microsoft's onnxruntime.dll next to the exe), and the model manager.
+kokoro = ["dep:misaki", "dep:ort", "dep:ureq", "dep:sha2", "dep:regex", "dep:serde_json"]
 # The deterministic `fake` engine for tests of higher crates.
 test-util = []
 
 [dependencies]
 thiserror.workspace = true
+misaki = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+# Pinned: a release candidate (spec section 12). `load-dynamic` loads
+# onnxruntime.dll from a full path at run time; no build-time download.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-24"], optional = true }
+# HTTP for the model download; TLS through Windows (SChannel), no bundled
+# root certificates.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier", "win-system-proxy"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, optional = true }
 windows-future = { workspace = true, optional = true }
 
 [dev-dependencies]
-# The crate's own tests use the fake engine.
-sonara-engine = { path = ".", features = ["test-util"] }
+# The crate's own tests use the fake engine and test the Kokoro engine.
+sonara-engine = { path = ".", features = ["test-util", "kokoro"] }
+sha2.workspace = true
+serde_json.workspace = true
