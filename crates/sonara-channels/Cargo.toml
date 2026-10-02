@@ -1,0 +1,17 @@
+[package]
+name = "sonara-channels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sonara L2: named channels (tabs, chats) feeding one L1 reader"
+
+[dependencies]
+# L2 builds only on the L1 facade (R7, checked by tests/layering.rs).
+sonara-reader.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sonara-reader = { workspace = true, features = ["test-util"] }
+sonara-engine = { workspace = true, features = ["test-util"] }
+sonara-audio = { workspace = true, features = ["test-util"] }
+serde_json.workspace = true

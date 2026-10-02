@@ -1,0 +1,13 @@
+{
+  "event": "Stop",
+  "payload": {
+    "session_id": "sess-1"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "turn_end",
+      "channel": "sess-1"
+    }
+  ]
+}

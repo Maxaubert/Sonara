@@ -1,0 +1,17 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "sess-1",
+    "tool_name": "WebFetch",
+    "tool_input": {}
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "tool",
+      "channel": "sess-1",
+      "name": "WebFetch",
+      "summary": "WebFetch"
+    }
+  ]
+}

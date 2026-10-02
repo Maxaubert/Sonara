@@ -62,20 +62,25 @@ def test_hello_reply(rt):
 
 def test_hello_require_unmet_is_e_unsupported(rt):
     c = rt.tcp(hello=False)
-    r = c.hello(rt.token, require=["core", "channels"])
+    r = c.hello(rt.token, require=["core", "no-such-extension"])
     assert r["error"]["code"] == "E_UNSUPPORTED"
-    assert "channels" in r["error"]["message"]
+    assert "no-such-extension" in r["error"]["message"]
     # Not authenticated: the client may retry hello.
     r = c.hello(rt.token, require=["core"])
     assert r["ok"] is True
 
 
 def test_requested_extensions_are_listed_unavailable(rt):
+    # Host-agnostic: whatever this host offers is enabled, the rest is
+    # listed unavailable; an extension it does not know is never an error.
     c = rt.tcp(hello=False)
-    r = c.hello(rt.token, extensions=["channels", "agent"])
+    asked = ["channels", "no-such-extension"]
+    r = c.hello(rt.token, extensions=asked)
     assert r["ok"] is True
-    assert r["extensions"] == []
-    assert r["unavailable"] == ["channels", "agent"]
+    assert "no-such-extension" in r["unavailable"]
+    assert set(r["unavailable"]) <= set(asked)
+    assert not set(r["unavailable"]) & set(r["extensions"])
+    assert set(asked) <= set(r["unavailable"]) | set(r["extensions"])
 
 
 def test_another_protocol_major_is_e_incompatible(rt):

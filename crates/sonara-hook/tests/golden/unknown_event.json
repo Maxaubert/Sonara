@@ -1,0 +1,8 @@
+{
+  "event": "TotallyMadeUp",
+  "payload": {
+    "session_id": "sess-1"
+  },
+  "env": {},
+  "messages": []
+}

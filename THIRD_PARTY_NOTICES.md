@@ -8,7 +8,7 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 
 ## Rust crates in sonarad.exe (x86_64-pc-windows-msvc)
 
-58 crates. Where a crate offers a choice of licences, Sonara uses it under the one in the "used under" column. Copyright belongs to the authors listed.
+60 crates. Where a crate offers a choice of licences, Sonara uses it under the one in the "used under" column. Copyright belongs to the authors listed.
 
 | crate | version | licence | used under | authors | source |
 |---|---|---|---|---|---|
@@ -41,7 +41,9 @@ The npm packages `@sonara/client` and `@sonara/runtime-win32-x64` and the Python
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | MIT | The Rust Project Developers, Andrew Gallant | https://github.com/rust-lang/regex |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | MIT | The Rust Project Developers, Andrew Gallant | https://github.com/rust-lang/regex |
 | rodio | 0.21.1 | MIT OR Apache-2.0 | MIT | the rodio authors | https://github.com/RustAudio/rodio |
+| serde | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
+| serde_derive | 1.0.229 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/serde |
 | serde_json | 1.0.151 | MIT OR Apache-2.0 | MIT | Erick Tryzelaar, David Tolnay | https://github.com/serde-rs/json |
 | smallvec | 1.16.2 | MIT OR Apache-2.0 | MIT | The Servo Project Developers | https://github.com/servo/rust-smallvec |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | MIT | Alex Crichton, Thomas de Zeeuw | https://github.com/rust-lang/socket2 |

@@ -1,0 +1,26 @@
+{
+  "event": "UserPromptSubmit",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "/x/proj/"
+  },
+  "env": {
+    "PRISM_TAB_ID": "p-1"
+  },
+  "messages": [
+    {
+      "type": "channel_open",
+      "channel": "s1",
+      "label": "proj",
+      "host_tab": "p-1"
+    },
+    {
+      "type": "focus",
+      "channel": "s1"
+    },
+    {
+      "type": "turn_start",
+      "channel": "s1"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "event": "SessionStart",
+  "payload": {},
+  "env": {},
+  "messages": [
+    {
+      "type": "channel_open",
+      "channel": "default"
+    },
+    {
+      "type": "focus",
+      "channel": "default"
+    }
+  ]
+}

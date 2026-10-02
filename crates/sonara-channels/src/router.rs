@@ -1,0 +1,624 @@
+//! The pure L2 router: channels, their read cursors, which channel reads,
+//! and the switch announcements. No threads, no reader: `Channels` asks it
+//! what to feed next and carries that out. Ported from the Python daemon's
+//! `router.py` and `channel.py` without the agent parts (turns, decisions,
+//! digests, minimum batches, background speech policy), which are L3.
+//!
+//! Rules (binding for `Channels` and the `channels` protocol extension):
+//! - A channel keeps its current **batch**: the entries pushed since it was
+//!   last caught up, with a cursor over them. Read entries stay, so a manual
+//!   return can replay the batch; a push into a caught-up channel whose
+//!   last entry is no longer being read starts a new batch. Policy `latest` (or a push with `replace`) drops the
+//!   channel's unread entries first, so the newest entry is never dropped
+//!   and the batch is just that entry ("one message, always the last").
+//! - Auto pick: a **prioritized** channel first (`prioritize`, oldest
+//!   first, until its batch drains: L3 decisions preempt); then the channel
+//!   that is reading keeps the floor until its batch drains; then the
+//!   focused channel; then the first channel (in opening order) with
+//!   something unread. A channel the user switched away from with
+//!   `next_channel` is skipped until it gets new content.
+//! - Switching from one channel to another is announced before the new
+//!   channel's first entry: automatically when the channel that read last
+//!   differs (never for the first reader), always on `next_channel`. A
+//!   channel without a label is not announced.
+//! - `next_channel` is a round robin over the channels in opening order,
+//!   skipping channels with nothing to hear (unless all are empty), from the
+//!   channel reading or, after an idle gap, the one that read last. A fully
+//!   heard target, landing on yourself, or re-landing on a replay in
+//!   progress replays the batch from the top; unread content resumes.
+use std::collections::HashMap;
+
+/// How a channel treats a new entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Policy {
+    /// The new entry replaces the channel's unread entries.
+    Latest,
+    /// The new entry is read after the channel's unread entries.
+    Queue,
+}
+
+impl Policy {
+    /// The protocol names `latest` and `queue`.
+    pub fn parse(name: &str) -> Option<Policy> {
+        match name {
+            "latest" => Some(Policy::Latest),
+            "queue" => Some(Policy::Queue),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Policy::Latest => "latest",
+            Policy::Queue => "queue",
+        }
+    }
+}
+
+/// One text pushed into a channel. `id` is unique within one router.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub id: u64,
+    pub text: String,
+    pub label: Option<String>,
+}
+
+/// One named source and its current batch.
+#[derive(Debug, Clone)]
+pub struct Channel {
+    pub id: String,
+    pub label: Option<String>,
+    pub host_tab: Option<String>,
+    pub policy: Policy,
+    entries: Vec<Entry>,
+    cursor: usize,
+    /// Content generation: bumped by every push, so "changed since" checks
+    /// survive a batch that lands back on the same length (#115).
+    gen: u64,
+    /// A manual replay is in progress: re-landing on it restarts from the
+    /// top (#118). New content ends it.
+    replaying: bool,
+}
+
+impl Channel {
+    fn new(id: &str, label: Option<String>, host_tab: Option<String>, policy: Policy) -> Self {
+        Channel {
+            id: id.to_string(),
+            label,
+            host_tab,
+            policy,
+            entries: Vec::new(),
+            cursor: 0,
+            gen: 0,
+            replaying: false,
+        }
+    }
+
+    /// The batch, read and unread.
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    /// Index of the next entry to read.
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Unread entries.
+    pub fn pending(&self) -> usize {
+        self.entries.len() - self.cursor
+    }
+
+    pub fn caught_up(&self) -> bool {
+        self.cursor >= self.entries.len()
+    }
+
+    /// Add `entry`. A caught-up channel starts a new batch unless its last
+    /// entry is still being read (`reading`); `replace` drops the unread
+    /// entries first; `front` puts the entry before the unread ones (it is
+    /// read next).
+    fn push(&mut self, entry: Entry, replace: bool, front: bool, reading: bool) {
+        if replace || (self.caught_up() && !reading) {
+            self.entries.clear();
+            self.cursor = 0;
+        }
+        let at = if front {
+            self.cursor
+        } else {
+            self.entries.len()
+        };
+        self.entries.insert(at, entry);
+        self.gen += 1;
+        self.replaying = false;
+    }
+
+    fn take(&mut self) -> Option<Entry> {
+        let e = self.entries.get(self.cursor)?.clone();
+        self.cursor += 1;
+        Some(e)
+    }
+
+    /// Mark every unread entry read (they stay replayable). Returns how many.
+    fn skip_to_end(&mut self) -> usize {
+        let n = self.pending();
+        self.cursor = self.entries.len();
+        n
+    }
+
+    /// Step back over `entry` if it is the one just taken (it was cut off).
+    fn rewind(&mut self, entry: u64) -> bool {
+        if self.cursor > 0 && self.entries[self.cursor - 1].id == entry {
+            self.cursor -= 1;
+            return true;
+        }
+        false
+    }
+}
+
+/// What to feed the reader next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Feed {
+    /// Announce a switch to `channel` (its label is set).
+    Announce {
+        channel: String,
+        label: String,
+        /// The batch is read again from the top.
+        replay: bool,
+        /// Armed by `next_channel` (a key press), not by an auto hand-off.
+        manual: bool,
+    },
+    /// Read this entry of `channel`.
+    Entry { channel: String, entry: Entry },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Switch {
+    channel: String,
+    replay: bool,
+    manual: bool,
+}
+
+/// See the module docs.
+#[derive(Debug, Default)]
+pub struct Router {
+    /// In opening order.
+    channels: Vec<Channel>,
+    next_entry: u64,
+    /// The channel reading now (cleared when nothing is left to pick).
+    active: Option<String>,
+    /// The channel that read last; survives idle gaps.
+    last_active: Option<String>,
+    focus: Option<String>,
+    /// An armed switch announcement, fed before the next entry.
+    announce: Option<Switch>,
+    /// The entry fed last, until the next feed or `done`: (channel, entry).
+    reading: Option<(String, u64)>,
+    /// Channels switched away from by `next_channel`: channel -> its `gen`
+    /// at the time. A different `gen` (new content) lifts it.
+    suppressed: HashMap<String, u64>,
+    /// Channels to read before anything else, oldest first; one leaves the
+    /// list once it has nothing unread.
+    priority: Vec<String>,
+}
+
+impl Router {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn index(&self, id: &str) -> Option<usize> {
+        self.channels.iter().position(|c| c.id == id)
+    }
+
+    pub fn channel(&self, id: &str) -> Option<&Channel> {
+        self.channels.iter().find(|c| c.id == id)
+    }
+
+    fn channel_mut(&mut self, id: &str) -> Option<&mut Channel> {
+        self.channels.iter_mut().find(|c| c.id == id)
+    }
+
+    /// Every channel, in opening order.
+    pub fn channels(&self) -> &[Channel] {
+        &self.channels
+    }
+
+    pub fn active(&self) -> Option<&str> {
+        self.active.as_deref()
+    }
+
+    pub fn last_active(&self) -> Option<&str> {
+        self.last_active.as_deref()
+    }
+
+    pub fn focused(&self) -> Option<&str> {
+        self.focus.as_deref()
+    }
+
+    /// The channel the user is engaged with: the one reading, else the one
+    /// that read last.
+    pub fn engaged(&self) -> Option<&str> {
+        self.active().or(self.last_active())
+    }
+
+    /// Open `id`, or update an open channel's label, host tab and (when
+    /// given) policy; its entries stay. Returns true when it was created.
+    pub fn open(
+        &mut self,
+        id: &str,
+        label: Option<String>,
+        host_tab: Option<String>,
+        policy: Option<Policy>,
+    ) -> bool {
+        if let Some(c) = self.channel_mut(id) {
+            c.label = label;
+            c.host_tab = host_tab;
+            if let Some(p) = policy {
+                c.policy = p;
+            }
+            return false;
+        }
+        let policy = policy.unwrap_or(Policy::Latest);
+        self.channels
+            .push(Channel::new(id, label, host_tab, policy));
+        true
+    }
+
+    /// Forget `id` and everything about it. Returns false if it was not open.
+    pub fn close(&mut self, id: &str) -> bool {
+        let Some(i) = self.index(id) else {
+            return false;
+        };
+        self.channels.remove(i);
+        let is = |o: &Option<String>| o.as_deref() == Some(id);
+        if is(&self.active) {
+            self.active = None;
+        }
+        if is(&self.last_active) {
+            self.last_active = None;
+        }
+        if is(&self.focus) {
+            self.focus = None;
+        }
+        if self.announce.as_ref().map(|s| s.channel.as_str()) == Some(id) {
+            self.announce = None;
+        }
+        if self.reading.as_ref().is_some_and(|(c, _)| c == id) {
+            self.reading = None;
+        }
+        self.suppressed.remove(id);
+        self.priority.retain(|p| p != id);
+        true
+    }
+
+    /// Put `id` in front for the auto pick. False if it is not open.
+    pub fn focus(&mut self, id: &str) -> bool {
+        if self.index(id).is_none() {
+            return false;
+        }
+        self.focus = Some(id.to_string());
+        true
+    }
+
+    /// Push `text` into an open channel by its policy: `latest` drops the
+    /// unread entries, `queue` appends. Returns the entry id, or `None` if
+    /// the channel is not open.
+    pub fn push(&mut self, id: &str, text: &str, label: Option<String>) -> Option<u64> {
+        let replace = self.channel(id)?.policy == Policy::Latest;
+        self.push_with(id, text, label, replace, false)
+    }
+
+    /// Push `text` into an open channel, ignoring its policy: `replace`
+    /// drops its unread entries; `front` makes it the next entry read.
+    pub fn push_with(
+        &mut self,
+        id: &str,
+        text: &str,
+        label: Option<String>,
+        replace: bool,
+        front: bool,
+    ) -> Option<u64> {
+        let next = self.next_entry + 1;
+        let reading = self.reading.as_ref().is_some_and(|(c, _)| c == id);
+        let c = self.channel_mut(id)?;
+        c.push(
+            Entry {
+                id: next,
+                text: text.to_string(),
+                label,
+            },
+            replace,
+            front,
+            reading,
+        );
+        self.next_entry = next;
+        Some(next)
+    }
+
+    /// True if `id` was switched away from and has not changed since. New
+    /// content (or a closed channel) lifts it.
+    pub fn is_suppressed(&mut self, id: &str) -> bool {
+        let Some(&gen) = self.suppressed.get(id) else {
+            return false;
+        };
+        match self.channel(id) {
+            Some(c) if c.gen == gen => true,
+            _ => {
+                self.suppressed.remove(id);
+                false
+            }
+        }
+    }
+
+    fn ready(&self, id: &str) -> bool {
+        self.channel(id).is_some_and(|c| c.pending() > 0)
+    }
+
+    /// Read `id` before every other channel (after the item being read)
+    /// until its unread entries are read: an L3 decision preempts the batch
+    /// reading now. False if it is not open.
+    pub fn prioritize(&mut self, id: &str) -> bool {
+        if self.index(id).is_none() {
+            return false;
+        }
+        if !self.priority.iter().any(|p| p == id) {
+            self.priority.push(id.to_string());
+        }
+        true
+    }
+
+    /// Channels prioritized and not yet drained, oldest first.
+    pub fn prioritized(&self) -> &[String] {
+        &self.priority
+    }
+
+    /// The channel to read next, by the auto rules (module docs).
+    pub fn pick(&mut self) -> Option<String> {
+        let drained: Vec<String> = self
+            .priority
+            .iter()
+            .filter(|p| !self.ready(p))
+            .cloned()
+            .collect();
+        self.priority.retain(|p| !drained.contains(p));
+        let first = self
+            .priority
+            .clone()
+            .into_iter()
+            .find(|p| !self.is_suppressed(p));
+        if first.is_some() {
+            return first;
+        }
+        if let Some(a) = self.active.clone() {
+            if self.ready(&a) {
+                return Some(a);
+            }
+        }
+        if let Some(f) = self.focus.clone() {
+            if self.ready(&f) && !self.is_suppressed(&f) {
+                return Some(f);
+            }
+        }
+        let ids: Vec<String> = self.channels.iter().map(|c| c.id.clone()).collect();
+        ids.into_iter()
+            .find(|id| self.ready(id) && !self.is_suppressed(id))
+    }
+
+    fn arm(&mut self, id: &str, replay: bool, manual: bool) {
+        self.announce = Some(Switch {
+            channel: id.to_string(),
+            replay,
+            manual,
+        });
+    }
+
+    /// Drop an armed announcement that was not fed yet.
+    pub fn clear_announce(&mut self) {
+        self.announce = None;
+    }
+
+    /// Whether an announcement is armed.
+    pub fn announce_armed(&self) -> bool {
+        self.announce.is_some()
+    }
+
+    /// The next thing to read: an armed announcement, else the next entry of
+    /// the picked channel (arming an auto hand-off announcement first when
+    /// the channel differs from the one that read last). `None` when
+    /// nothing is left; the reading channel is then cleared.
+    pub fn next_feed(&mut self) -> Option<Feed> {
+        self.reading = None;
+        if let Some(sw) = self.announce.take() {
+            let label = self.channel(&sw.channel).and_then(|c| c.label.clone());
+            if let Some(label) = label {
+                return Some(Feed::Announce {
+                    channel: sw.channel,
+                    label,
+                    replay: sw.replay,
+                    manual: sw.manual,
+                });
+            }
+        }
+        let Some(target) = self.pick() else {
+            self.active = None;
+            return None;
+        };
+        if self.active.as_deref() != Some(target.as_str()) {
+            self.active = Some(target.clone());
+            let handoff = self
+                .last_active
+                .as_ref()
+                .is_some_and(|last| *last != target);
+            self.last_active = Some(target.clone());
+            if handoff {
+                self.arm(&target, false, false);
+                return self.next_feed();
+            }
+        }
+        let entry = self.channel_mut(&target)?.take()?;
+        self.reading = Some((target.clone(), entry.id));
+        Some(Feed::Entry {
+            channel: target,
+            entry,
+        })
+    }
+
+    /// The entry fed last has ended (read, skipped or cut). Also implied
+    /// by the next `next_feed`.
+    pub fn done(&mut self) {
+        self.reading = None;
+    }
+
+    /// Manual switch: move the reading channel one step around the ring
+    /// (module docs) and arm its announcement. Returns the target and
+    /// whether its batch is replayed, or `None` when no channel is open.
+    pub fn next_channel(&mut self) -> Option<(String, bool)> {
+        let all: Vec<String> = self.channels.iter().map(|c| c.id.clone()).collect();
+        if all.is_empty() {
+            return None;
+        }
+        // A channel with nothing to hear is skipped, unless all are empty
+        // (never dead-end; #117).
+        let nonempty: Vec<String> = all
+            .iter()
+            .filter(|id| self.channel(id).is_some_and(|c| !c.entries.is_empty()))
+            .cloned()
+            .collect();
+        let ring = if nonempty.is_empty() { &all } else { &nonempty };
+        let old = self.active.clone();
+        // The ring position survives idle gaps (#111).
+        let cur = self.active.clone().or_else(|| self.last_active.clone());
+        let pos = |list: &[String], id: &Option<String>| {
+            id.as_ref().and_then(|id| list.iter().position(|x| x == id))
+        };
+        let target = if let Some(i) = pos(ring, &cur) {
+            ring[(i + 1) % ring.len()].clone()
+        } else if let Some(i) = pos(&all, &cur) {
+            // The position is filtered out of the ring: advance from its
+            // slot in the full order to the next ring member.
+            (1..=all.len())
+                .map(|j| &all[(i + j) % all.len()])
+                .find(|c| ring.contains(c))
+                .cloned()
+                .unwrap_or_else(|| ring[0].clone())
+        } else {
+            ring[0].clone()
+        };
+        if let Some(old) = old.filter(|o| *o != target) {
+            if let Some(c) = self.channel(&old) {
+                self.suppressed.insert(old, c.gen);
+            }
+        }
+        self.suppressed.remove(&target);
+        let landing_on_self = cur.as_deref() == Some(target.as_str());
+        let c = self.channel_mut(&target)?;
+        let replay = c.caught_up() || landing_on_self || c.replaying;
+        if replay {
+            c.cursor = 0;
+            c.replaying = true;
+        }
+        self.active = Some(target.clone());
+        self.last_active = Some(target.clone());
+        self.arm(&target, replay, true);
+        Some((target, replay))
+    }
+
+    /// Make `id` the reading channel now (a `speak` with `interrupt`):
+    /// announced when another channel read last. False if not open.
+    pub fn take_floor(&mut self, id: &str) -> bool {
+        if self.index(id).is_none() {
+            return false;
+        }
+        let handoff = self.last_active.as_ref().is_some_and(|last| last != id);
+        self.active = Some(id.to_string());
+        self.last_active = Some(id.to_string());
+        self.suppressed.remove(id);
+        if handoff {
+            self.arm(id, false, false);
+        } else if self.announce.as_ref().is_some_and(|s| s.channel != id) {
+            self.announce = None;
+        }
+        true
+    }
+
+    /// Read `id`'s batch again from the top and make it the reading channel
+    /// (restart when idle). Announced when another channel read last.
+    /// False if it is not open or has nothing to replay.
+    pub fn replay(&mut self, id: &str) -> bool {
+        let Some(c) = self.channel_mut(id) else {
+            return false;
+        };
+        if c.entries.is_empty() {
+            return false;
+        }
+        c.cursor = 0;
+        c.replaying = true;
+        let handoff = self.last_active.as_ref().is_some_and(|last| last != id);
+        self.active = Some(id.to_string());
+        self.last_active = Some(id.to_string());
+        self.suppressed.remove(id);
+        if handoff {
+            self.arm(id, true, true);
+        }
+        true
+    }
+
+    /// Skip to the end of one channel, or of all (also dropping an armed
+    /// announcement). Entries stay replayable. Returns how many were
+    /// unread.
+    pub fn flush(&mut self, id: Option<&str>) -> usize {
+        match id {
+            Some(id) => {
+                if self.announce.as_ref().map(|s| s.channel.as_str()) == Some(id) {
+                    self.announce = None;
+                }
+                self.channel_mut(id).map_or(0, Channel::skip_to_end)
+            }
+            None => {
+                self.announce = None;
+                self.channels.iter_mut().map(Channel::skip_to_end).sum()
+            }
+        }
+    }
+
+    /// Step `id` back over `entry` if it was the entry just taken (it was
+    /// cut off before its end).
+    pub fn rewind(&mut self, id: &str, entry: u64) -> bool {
+        self.channel_mut(id).is_some_and(|c| c.rewind(entry))
+    }
+
+    /// Unread entries over all channels.
+    pub fn pending(&self) -> usize {
+        self.channels.iter().map(Channel::pending).sum()
+    }
+
+    /// Something would be fed now (an armed announcement or a pick).
+    pub fn has_work(&mut self) -> bool {
+        self.announce.is_some() || self.pick().is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_names() {
+        assert_eq!(Policy::parse("latest"), Some(Policy::Latest));
+        assert_eq!(Policy::parse("queue"), Some(Policy::Queue));
+        assert_eq!(Policy::parse("LATEST"), None);
+        assert_eq!(Policy::Queue.as_str(), "queue");
+    }
+
+    #[test]
+    fn rewind_only_steps_over_the_entry_just_taken() {
+        let mut r = Router::new();
+        r.open("a", None, None, Some(Policy::Queue));
+        let one = r.push("a", "One.", None).unwrap();
+        let two = r.push("a", "Two.", None).unwrap();
+        assert!(matches!(r.next_feed(), Some(Feed::Entry { .. })));
+        assert!(!r.rewind("a", two));
+        assert!(r.rewind("a", one));
+        assert_eq!(r.channel("a").unwrap().cursor(), 0);
+    }
+}

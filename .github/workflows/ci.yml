@@ -56,8 +56,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install pytest
-      - run: cargo build -p sonarad
-      - name: Conformance (core)
+      - run: cargo build -p sonarad -p sonara-hook
+      - name: Conformance (core, channels, agent)
         run: python -m pytest conformance -q
       # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
       # dependency change must regenerate it (spec R6).

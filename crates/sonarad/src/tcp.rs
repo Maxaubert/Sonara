@@ -93,6 +93,8 @@ async fn connection(
     let mut session = Session::tcp();
     let mut events: Option<mpsc::Receiver<crate::events::WireEvent>> = None;
     let mut client = None;
+    // Keeps the `system` extension armed while this connection lives.
+    let mut system_hold = None;
     let hello_deadline = tokio::time::sleep(hello_timeout);
     tokio::pin!(hello_deadline);
     let result = loop {
@@ -144,6 +146,13 @@ async fn connection(
                 if session.authed && client.is_none() {
                     client = Some(server.lifetime().client());
                 }
+                if session.system && system_hold.is_none() {
+                    let srv = server.clone();
+                    system_hold = tokio::task::spawn_blocking(move || srv.hold_system())
+                        .await
+                        .ok()
+                        .flatten();
+                }
                 if let Err(e) = send(&mut wr, &outcome.reply.to_string()).await {
                     break Err(e);
                 }
@@ -177,6 +186,11 @@ async fn connection(
     };
     reader_task.abort();
     let _ = wr.shutdown().await;
+    if let Some(hold) = system_hold {
+        // The last client that needed `system` left: other apps are
+        // restored and the hotkeys released (joins their threads).
+        let _ = tokio::task::spawn_blocking(move || drop(hold)).await;
+    }
     drop(client);
     result
 }

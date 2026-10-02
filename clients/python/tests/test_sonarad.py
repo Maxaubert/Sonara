@@ -93,21 +93,22 @@ def test_set_get_voices_and_coded_errors(runtime):
 
 
 def test_extension_namespaces_reach_the_runtime(runtime):
-    c = runtime(extensions=["channels"])
-    assert c.info["unavailable"] == ["channels"]
+    c = runtime(extensions=["channels", "made-up"])
+    assert c.info["unavailable"] == ["made-up"]
+    c.channels.open("tab")                     # enabled: the runtime accepts it
     with pytest.raises(SonaraError) as e:
-        c.channels.open("tab")
+        c.system.set_audio_mode("duck")        # not requested: still unsupported
     assert e.value.code == "E_UNSUPPORTED"
 
 
 def test_takes_over_an_idle_incompatible_instance(runtime, home, sonarad):
     a = runtime()
     old = a.runtime["pid"]
-    # The bundled runtime is the same build and lacks `channels` too: the old
+    # The bundled runtime is the same build and lacks `engine.kokoro` too: the old
     # one steps down, a new one starts, and the client then gives up.
     with pytest.raises(SonaraError) as e:
-        connect("needs-channels", home=str(home), runtime_path=str(sonarad), runtime_args=ARGS,
-                require=["channels"])
+        connect("needs-kokoro", home=str(home), runtime_path=str(sonarad), runtime_args=ARGS,
+                require=["engine.kokoro"])
     assert e.value.code == "E_INCOMPATIBLE"
     assert wait_until(lambda: not pid_alive(old), 5)
     fresh = read_json(home / "runtime.json")
@@ -120,7 +121,7 @@ def test_never_takes_over_a_busy_instance(runtime, home, sonarad):
     a.speak(LONG)
     time.sleep(0.1)
     with pytest.raises(SonaraError) as e:
-        connect("needs-channels", home=str(home), runtime_path=str(sonarad), require=["channels"],
+        connect("needs-kokoro", home=str(home), runtime_path=str(sonarad), require=["engine.kokoro"],
                 takeover_timeout=0.8)
     assert e.value.code == "E_INCOMPATIBLE"
     assert pid_alive(a.runtime["pid"])

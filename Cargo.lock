@@ -739,6 +739,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonara-agent"
+version = "0.9.8"
+dependencies = [
+ "serde_json",
+ "sonara-audio",
+ "sonara-channels",
+ "sonara-core",
+ "sonara-engine",
+ "sonara-reader",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sonara-audio"
 version = "0.9.8"
 dependencies = [
@@ -746,6 +759,17 @@ dependencies = [
  "sonara-audio",
  "sonara-core",
  "sonara-engine",
+]
+
+[[package]]
+name = "sonara-channels"
+version = "0.9.8"
+dependencies = [
+ "serde_json",
+ "sonara-audio",
+ "sonara-engine",
+ "sonara-reader",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -769,6 +793,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonara-hook"
+version = "0.9.8"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "sonara-reader"
 version = "0.9.8"
 dependencies = [
@@ -780,6 +811,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonara-system"
+version = "0.9.8"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sonara-audio",
+ "sonara-engine",
+ "sonara-reader",
+ "windows 0.62.2",
+ "windows-future",
+]
+
+[[package]]
 name = "sonarad"
 version = "0.9.8"
 dependencies = [
@@ -788,9 +832,12 @@ dependencies = [
  "hyper",
  "hyper-util",
  "serde_json",
+ "sonara-agent",
  "sonara-audio",
+ "sonara-channels",
  "sonara-engine",
  "sonara-reader",
+ "sonara-system",
  "tokio",
  "windows 0.62.2",
 ]

@@ -1,0 +1,19 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "sess-1",
+    "tool_name": "AskUserQuestion",
+    "tool_input": {}
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "sess-1",
+      "kind": "question",
+      "text": "",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate."
+    }
+  ]
+}

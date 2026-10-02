@@ -4,12 +4,13 @@
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
 use sonara_reader::{Config, ReaderHandle, Registry};
-use sonarad::args::{self, Command, OutputKind};
+use sonarad::args::{self, Command, OutputKind, SystemKind};
 use sonarad::home::{self, Home};
 use sonarad::instance::{self, AcquireError};
 use sonarad::lifetime::{self, ExitReason, Lifetime};
 use sonarad::protocol::{self, Server};
 use sonarad::runtime_file::{self, RuntimeInfo};
+use sonarad::system_ext::SystemHost;
 use sonarad::{http, null_output::NullOutput, tcp, VERSION};
 use std::net::Ipv4Addr;
 use std::process::ExitCode;
@@ -66,6 +67,19 @@ fn build_reader(engine: &str, output: OutputKind) -> Result<ReaderHandle, String
         config = config.with_output(Box::new(out), events);
     }
     ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))
+}
+
+/// The platform of the `system` extension.
+fn system_platform(kind: SystemKind, home: &Home) -> Option<sonara_system::Platform> {
+    match kind {
+        SystemKind::Fake => {
+            Some(sonara_system::fake::Fake::file(home.dir.join("fake-system.json")).platform())
+        }
+        #[cfg(windows)]
+        SystemKind::Windows => Some(sonara_system::win::platform()),
+        #[cfg(not(windows))]
+        SystemKind::Windows => None,
+    }
 }
 
 fn start(args: args::Args) -> Result<(), (u8, String)> {
@@ -134,7 +148,21 @@ async fn run(
         .port();
 
     let life = Lifetime::new(args.idle_exit, args.standalone);
-    let server = Arc::new(Server::new(reader.clone(), token.clone(), life.clone()));
+    let mut server = Server::new(reader.clone(), token.clone(), life.clone());
+    if let Some(platform) = system_platform(args.system, home) {
+        server = server.with_system(SystemHost {
+            platform,
+            home: home.dir.clone(),
+            http_port,
+            token: token.clone(),
+        });
+    }
+    let server = Arc::new(server);
+    // The startup sweep: restore what a previous runtime that died left
+    // ducked or paused (never strand other apps, #131).
+    if let Some(s) = server.system().cloned() {
+        let _ = tokio::task::spawn_blocking(move || s.recover()).await;
+    }
     tokio::spawn(tcp::serve(tcp_listener, server.clone()));
     tokio::spawn(http::serve(http_listener, server.clone()));
     let busy_server = server.clone();
@@ -155,6 +183,7 @@ async fn run(
             .iter()
             .map(|s| s.to_string())
             .collect(),
+        extensions: server.offered().iter().map(|s| s.to_string()).collect(),
         started_at: runtime_file::rfc3339(SystemTime::now()),
     };
     runtime_file::write(&home.runtime_json(), &info, |p| {
@@ -173,5 +202,9 @@ async fn run(
     // `start` removes runtime.json once speech stopped and the instance
     // lock is released.
     eprintln!("sonarad: exiting ({why:?})");
+    // Release the hotkeys and put other apps' audio back before exiting.
+    if let Some(s) = server.system().cloned() {
+        let _ = tokio::task::spawn_blocking(move || s.shutdown()).await;
+    }
     Ok(())
 }

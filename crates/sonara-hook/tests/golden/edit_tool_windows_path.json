@@ -1,0 +1,19 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "sess-1",
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "C:\\proj\\README.md"
+    }
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "tool",
+      "channel": "sess-1",
+      "name": "Edit",
+      "summary": "README.md"
+    }
+  ]
+}

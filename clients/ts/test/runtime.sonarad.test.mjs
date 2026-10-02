@@ -97,25 +97,25 @@ describe("against sonarad", { skip }, () => {
     await assert.rejects(c.set("volume", 101), (e) => e instanceof SonaraError && e.code === "E_BAD_REQUEST");
   });
 
-  it("extension namespaces reach the runtime, which answers E_UNSUPPORTED until it offers them", async () => {
-    const c = await open({ extensions: ["channels"] });
-    assert.deepEqual(c.info.unavailable, ["channels"]);
-    await assert.rejects(c.channels.open("tab"), (e) => e.code === "E_UNSUPPORTED");
+  it("extension namespaces reach the runtime; a namespace not requested answers E_UNSUPPORTED", async () => {
+    const c = await open({ extensions: ["channels", "made-up"] });
+    assert.deepEqual(c.info.unavailable, ["made-up"]);
+    await c.channels.open("tab");
     await assert.rejects(c.system.setAudioMode("duck"), (e) => e.code === "E_UNSUPPORTED");
   });
 
   it("takes over an idle incompatible instance and starts the bundled one", async () => {
     const a = await open();
     const oldPid = a.runtime.pid;
-    // The bundled runtime is the same build, so it lacks `channels` too: the
+    // The bundled runtime is the same build, so it lacks `engine.kokoro` too: the
     // old one steps down, a new one starts, and the client then gives up.
     await assert.rejects(
       connect({
-        clientName: "needs-channels",
+        clientName: "needs-kokoro",
         home,
         runtimePath: SONARAD,
         runtimeArgs: ["--engine", "fake", "--idle-exit", "5"],
-        require: ["channels"],
+        require: ["engine.kokoro"],
       }),
       (e) => e.code === "E_INCOMPATIBLE",
     );
@@ -132,10 +132,10 @@ describe("against sonarad", { skip }, () => {
     await sleep(100);
     await assert.rejects(
       connect({
-        clientName: "needs-channels",
+        clientName: "needs-kokoro",
         home,
         runtimePath: SONARAD,
-        require: ["channels"],
+        require: ["engine.kokoro"],
         takeoverTimeoutMs: 800,
       }),
       (e) => e.code === "E_INCOMPATIBLE",

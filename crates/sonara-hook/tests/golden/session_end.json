@@ -1,0 +1,13 @@
+{
+  "event": "SessionEnd",
+  "payload": {
+    "session_id": "sess-9"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "channel_close",
+      "channel": "sess-9"
+    }
+  ]
+}

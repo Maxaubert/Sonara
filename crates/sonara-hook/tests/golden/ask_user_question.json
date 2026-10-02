@@ -1,0 +1,25 @@
+{
+  "event": "PreToolUse",
+  "fixture": "PreToolUse-AskUserQuestion.json",
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "11111111-2222-3333-4444-555555555555",
+      "kind": "question",
+      "text": "Which color do you prefer?",
+      "options": [
+        {
+          "label": "Red",
+          "description": "warm"
+        },
+        {
+          "label": "Blue",
+          "description": "cool"
+        }
+      ],
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate."
+    }
+  ]
+}

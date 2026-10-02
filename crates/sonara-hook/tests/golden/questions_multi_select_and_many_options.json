@@ -1,0 +1,124 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "sess-1",
+    "tool_name": "AskUserQuestion",
+    "tool_input": {
+      "questions": [
+        {
+          "question": "Which features?",
+          "multiSelect": true,
+          "options": [
+            {
+              "label": "Logs",
+              "description": "  "
+            },
+            {
+              "label": "",
+              "description": "unnamed"
+            },
+            "Metrics"
+          ]
+        },
+        {
+          "question": "Which port?",
+          "options": [
+            {
+              "label": "8000"
+            },
+            {
+              "label": "8001"
+            },
+            {
+              "label": "8002"
+            },
+            {
+              "label": "8003"
+            },
+            {
+              "label": "8004"
+            },
+            {
+              "label": "8005"
+            },
+            {
+              "label": "8006"
+            },
+            {
+              "label": "8007"
+            },
+            {
+              "label": "8008"
+            },
+            {
+              "label": "8009"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "sess-1",
+      "kind": "question",
+      "text": "Which features?",
+      "options": [
+        {
+          "label": "Logs"
+        },
+        {
+          "label": "",
+          "description": "unnamed"
+        },
+        {
+          "label": "Metrics"
+        }
+      ],
+      "multi_select": true
+    },
+    {
+      "type": "ask",
+      "channel": "sess-1",
+      "kind": "question",
+      "text": "Which port?",
+      "options": [
+        {
+          "label": "8000"
+        },
+        {
+          "label": "8001"
+        },
+        {
+          "label": "8002"
+        },
+        {
+          "label": "8003"
+        },
+        {
+          "label": "8004"
+        },
+        {
+          "label": "8005"
+        },
+        {
+          "label": "8006"
+        },
+        {
+          "label": "8007"
+        },
+        {
+          "label": "8008"
+        },
+        {
+          "label": "8009"
+        }
+      ],
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate.",
+      "notes": "Select multiple: press each number, or Space on the highlighted item, then Enter to confirm. More than nine options; use arrow keys for ten and up."
+    }
+  ]
+}

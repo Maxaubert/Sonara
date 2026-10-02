@@ -1,0 +1,26 @@
+{
+  "event": "UserPromptSubmit",
+  "payload": {
+    "session_id": "sess-9",
+    "cwd": "C:\\work\\proj"
+  },
+  "env": {
+    "SONARA_HOST_TAB": "tab-7"
+  },
+  "messages": [
+    {
+      "type": "channel_open",
+      "channel": "sess-9",
+      "label": "proj",
+      "host_tab": "tab-7"
+    },
+    {
+      "type": "focus",
+      "channel": "sess-9"
+    },
+    {
+      "type": "turn_start",
+      "channel": "sess-9"
+    }
+  ]
+}

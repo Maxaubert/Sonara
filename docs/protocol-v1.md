@@ -1,8 +1,8 @@
 # Sonara protocol v1
 
-The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers. Extensions (`channels`, `agent`, `system`) are reserved and listed at the end; until a runtime offers them, their messages return `E_UNSUPPORTED`.
+The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels`](#extension-channels), [`agent`](#extension-agent) and [`system`](#extension-system) extensions.
 
-Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
+Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension), `crates/sonara-agent` (`agent`), `crates/sonara-system` (`system`). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
 The Python daemon of the Claude Code plugin still speaks the older protocol in `docs/protocol.md` until the cutover (M11).
 
@@ -18,9 +18,10 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "port": 50311,
   "http_port": 50312,
   "token": "64 hex characters",
-  "version": "0.9.4",
+  "version": "0.9.7",
   "protocol": {"major": 1, "minor": 0},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log"],
+  "extensions": ["channels", "agent", "system"],
   "started_at": "2026-10-02T10:40:45Z"
 }
 ```
@@ -65,15 +66,17 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 | `token` | from `runtime.json` (TCP: required) |
 | `client` | `{name, version}`, informational |
 | `protocol` | `{major, minor}` the client speaks; a major other than 1 is `E_INCOMPATIBLE` (omitted: 1.0) |
-| `require[]` | capabilities or extensions the client cannot work without; any missing is `E_UNSUPPORTED` |
+| `require[]` | capabilities or extensions the client cannot work without; any missing is `E_UNSUPPORTED`. A required extension is also enabled |
 | `extensions[]` | extensions the client would like enabled; those this runtime lacks are listed in `unavailable`, not an error |
 | `takeover?` | `true`: ask the runtime to exit for a newer one (see [Takeover](#takeover)) |
 | `keep_alive?` | `true`: the runtime keeps running after the last client left (until a takeover or the process is ended) |
 
 ```json
 > {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.9.4", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": [], "unavailable": ["channels"]}
+< {"id": 1, "ok": true, "version": "0.9.7", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
+
+The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.
 
 **Capabilities** of protocol 1.0: `core`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`, `events.state`, `events.items`, `events.log`. A later minor adds capability strings for what it adds, so a client can `require` them.
 
@@ -133,7 +136,7 @@ A rate, voice or engine change applies to chunks synthesized from then on. Out-o
 
 ### `subscribe` (TCP)
 
-`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`. When `state` is included, the first event is the current state.
+`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an extension's stream (`earcons` of `agent`) is asked for by name and is `E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current state.
 
 A client that does not read its events never slows the reader: past 256 unread events, events are dropped for that client. Each `state` event is a full snapshot, so the next one brings a player up to date.
 
@@ -180,7 +183,7 @@ Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fi
 
 ## Testing aids
 
-`sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. They are meant for tests and the conformance suite, not for apps.
+`sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. They are meant for tests and the conformance suite, not for apps.
 
 ## Examples
 
@@ -215,12 +218,164 @@ for line in f:
         break
 ```
 
-## Extensions (reserved)
+## Extension `channels`
 
-Spec sections 4.2 to 4.4. A client asks for them in `hello.extensions`; this runtime offers none yet, so their messages return `E_UNSUPPORTED`.
+Spec section 4.2, L2 (`crates/sonara-channels`). Several named sources (terminal tabs, chats) share the one reader: each **channel** keeps its own messages and policy, and one channel is read at a time. Enable it with `hello` `extensions: ["channels"]`. Black-box tests: `conformance/channels/`.
 
-| extension | adds |
+**Model.** A channel holds its current **batch**: the messages sent to it since it was last caught up, with a read position. Messages wait in their channel and go to the reader one at a time, only when the reader is idle, so text spoken without a `channel` (core `speak`) is read first. Heard messages stay, so a manual return can replay the batch; a message sent to a channel that is caught up (and not still reading its last message) starts a new batch.
+
+- **Policy** `latest` (the default): a new message replaces the channel's unread messages, so the newest one is always read and never dropped ("one message, always the last"). `queue`: every message is read, in order.
+- **Who reads next:** the channel being read keeps the floor until its batch is read; then the focused channel; then the first channel (in opening order) with something unread. A channel you left with `next_channel` is not resumed on its own until it gets a new message.
+- **Announcements:** a switch to another channel is announced by a short item before its first message: `"<label>."`, or `"<label>, reading again."` when the batch is replayed from the top. An automatic hand-off is announced when the channel differs from the one that read last (never for the first channel to read); `next_channel` is always announced. A channel without a `label` is not announced. `set channel_announce "off"` turns announcements off.
+
+### Messages
+
+| type | fields | effect |
+|---|---|---|
+| `channel_open` | `channel`, `label?`, `host_tab?`, `policy?: latest\|queue` | open a channel, or update an open one (its messages stay; `policy` omitted keeps the current one). Reply `{channel, created, policy}` |
+| `channel_close` | `channel` | close it and forget its messages; if it is being read, its item is cut and the next channel follows (not announced) |
+| `focus` | `channel` | read this channel next once the channel being read has finished its batch (does not cut) |
+| `speak` | `channel?` plus the core fields | with `channel`: add a message to it (opened with the defaults if needed). `mode` overrides the policy for this message (`replace` drops the channel's unread messages, `append` keeps them). `interrupt: true` reads it now: it goes before the channel's unread messages, the current item is cut and the switch is announced; another channel's message cut this way is read again once this channel's batch is read. Reply `{item_id, channel, dropped}`: `item_id` is the reader item when the message went to the reader at once, `null` while it waits in its channel (behind other messages or an announcement); `dropped` counts the unread messages it replaced |
+| `control` | `channel?` plus the core `action`, or `action: next_channel` | see below |
+
+`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); an unknown channel in `channel_close`, `focus` or `control` is `E_NOT_FOUND`.
+
+**`control` once `channels` is enabled.** Without `channel` the actions are the core ones, except:
+
+- `stop` also skips every channel to its end (nothing more is read until a new message; heard messages stay replayable).
+- `restart` while nothing is playing replays the batch of the channel being read or read last (the Claude plugin's Up key), not only its last item.
+
+With `channel`: `stop` skips that channel to its end and cuts its item if it is being read; `restart` goes back to the start of its item if that channel is being read, else replays the channel's batch from the top and switches to it (cutting the current item, announced); any other action applies only while that channel is being read, and is a no-op otherwise.
+
+`next_channel` (reply `{channel}`, `null` when no channel is open) switches now: it moves around the channels in opening order, skipping channels with nothing to hear (unless all are empty), starting from the channel being read or the one that read last. It cuts the current item and announces the target. A fully heard target, landing on the same channel, or returning to a replay in progress replays the batch from the top; unread messages resume where they stopped (a message cut by the switch is read again).
+
+A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) only cuts the current item: text spoken without a `channel` that is already waiting in the reader still plays first, so it comes between the announcement and the channel's message. A channel item ended from outside the extension (a core `speak` with `interrupt`, or `skip`) counts as heard: the extension cannot tell it apart from a user skip, so that message is not read again on its own (`restart` with the channel replays it).
+
+### Setting
+
+| key | value |
 |---|---|
-| `channels` | `channel?` on `speak`/`control`; `channel_open`, `channel_close`, `focus`; `control` `next_channel`; `state.now_playing.channel`, `host_tab` |
-| `agent` (needs `channels`) | `stream`, `turn_start`, `turn_end`, `ask`, `earcon`; `set mute_level`, `set summaries` |
-| `system` | `set audio_mode`, `set duck_level`, `set hotkeys`, `get settings_url` |
+| `channel_announce` | `"on"` (default) or `"off"`: switch announcements |
+
+### State
+
+`state.now_playing` gains `channel` and `host_tab` (both `null` for text spoken without a channel; an announcement belongs to the channel it announces), and `queued` also counts the channels' unread messages. A `state` event is sent when the reader's state changes, so `queued` catches up with a new channel message at the next change.
+
+```json
+{"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore"}}
+```
+
+## Extension `agent`
+
+Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat assistants on top of [`channels`](#extension-channels): one channel per agent session, with streamed text, turns, decisions spoken with priority, earcons, three mute levels and optional summaries. Enable it with `hello` `extensions: ["agent"]`; it needs `channels`, which is enabled with it (the reply lists both). Black-box tests: `conformance/agent/`.
+
+**Model.** Each channel has a current **turn**. The agent's text is streamed into it (`stream`), split into sentences and added to the channel's batch as it completes, whatever the channel's policy (a turn is many messages). A new turn (`turn_start`) drops what is left of the previous one: its unread sentences, and its item if it is being read ("one message, always the last"). Text that arrives late from an earlier turn is dropped (see `t`). Decisions (`ask`) are read before the other channels as soon as the item playing ends (the batch reading now waits), and play an earcon.
+
+**Late text (`t` and `turn`).** Senders that run as separate processes (hooks) can deliver the old turn's last text after the new prompt. Every agent message may carry `t`, the sender's start time in seconds (any clock, the same one for all senders of a channel, such as Unix time). A `stream`, `turn_start` or `turn_end` whose `t` is older than the channel's last accepted `turn_start` is dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id that a later `turn_start` replaced. Messages without `t` and `turn` are never stale.
+
+### Messages
+
+| type | fields | effect |
+|---|---|---|
+| `stream` | `channel`, `delta`, `index?` (default 0), `final?`, `turn?`, `t?` | a piece of the agent's text. `index` numbers the deltas of one block (a new block may restart at 0); `final` ends the block and flushes an unfinished sentence. Reply `{stale}` |
+| `turn_start` | `channel`, `turn?`, `t?` | a new turn: the channel's unread text is dropped and its item cut; a question waiting for an answer and summary work of the old turn are dropped. If the channel is the one being read or read last and the reader is paused, it resumes; **a new turn in another channel keeps the pause on**. Reply `{stale}` |
+| `turn_end` | `channel`, `turn?`, `t?` | the agent finished: plays `turn_done` and reads text held by `minqueue`. Reply `{stale}` |
+| `ask` | `channel`, `kind: question\|permission\|plan`, `text?`, `options?`, `multi_select?`, `notes?`, `hint?`, `hint_once?` | a decision, read with priority (after the item playing, before the other channels). `question`: the text, then `Option n: label.` and its description for each of `options` (strings or `{label, description?}`; an option without a label keeps its number), plays `choice`, and marks the channel as waiting for an answer. `permission`: the pending action, plays `permission`; while a question waits, the permission prompt it fires itself is dropped (no earcon, no text) and clears the mark. `plan`: `"Plan ready. <text>"`, no earcon. `notes` is read after the decision; `hint` too at verbosity `everything`, and `hint_once` after it the first time a channel gets one |
+| `tool` | `channel`, `name`, `summary?` | the agent runs a tool: clears a waiting question; at verbosity `everything` it reads `summary` (else `"Running <name>."`) after the text held so far |
+| `answered` | `channel` | the user answered the question: everything queued for the channel is stale, so its unread text is dropped and its item cut, summary work and held decisions are dropped; the turn goes on |
+| `earcon` | `kind` | play an earcon: `choice`, `permission`, `error`, `turn_done`, `nav`, `nav_edge`, `session_change`, `summary_failed` |
+
+`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); a channel is opened with the defaults when it gets its first text (open it with `channel_open` to give it a label for announcements). With the extension on, `channel_close` also forgets the channel's turn, and `control stop` without a channel also drops every channel's summary work and held decisions.
+
+Earcons are mixed over the speech (they never pause or cut it) and follow the output volume.
+
+### Settings
+
+| key | value |
+|---|---|
+| `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Setting 1 or 2 stops everything queued and playing, core `speak` and channel `speak` items included (as the Python daemon's global mute); text spoken without the extension afterwards is read as usual |
+| `verbosity` | `"everything"` (default): text, decisions, tool announcements and hints; `"medium"`: no tool announcements or hints; `"quiet"`: decisions only |
+| `minqueue` | `0` to `10` (default 1): a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
+| `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt}`: see below. `set` merges the fields given; `get` returns them all |
+
+**Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer or `stop` drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
+
+### Events
+
+Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the extension is off): `{"event": "earcon", "kind": "turn_done"}` for every earcon played.
+
+```json
+> {"type": "hello", "token": "...", "extensions": ["agent"]}
+< {"ok": true, "extensions": ["channels", "agent"], ...}
+> {"type": "turn_start", "channel": "s1", "t": 1759400000.25}
+< {"ok": true, "stale": false}
+> {"type": "stream", "channel": "s1", "delta": "Done. All tests pass.", "index": 0, "final": true, "t": 1759400003.5}
+< {"ok": true, "stale": false}
+> {"type": "ask", "channel": "s1", "kind": "question", "text": "Deploy now?", "options": [{"label": "Yes"}, "No"]}
+< {"ok": true}
+```
+
+## Extension `system`
+
+Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other apps' audio while Sonara speaks, global hotkeys and the settings page. Enable it with `hello` `extensions: ["system"]`. Black-box tests: `conformance/system/` (with `--system fake`).
+
+**Armed while needed.** Like every extension, `system` is enabled for the whole runtime once a client asks for it, and its keys and the settings page work from then on. It acts on the PC (ducks or pauses other apps, holds the hotkeys) only while it is **armed**: while a TCP client whose `hello` asked for it is connected, or for good once a client asked for it with `keep_alive: true` (over TCP or HTTP). When the last client that needed it disconnects, other apps are restored at once and the hotkeys are released, even if the reader goes on reading. A plain HTTP request (the settings page) never arms it.
+
+**Other apps' audio.** With `audio_mode` `duck`, every other app's audio session on every active output device is lowered to `duck_level` percent while an item is being read (playing, not paused, not muted); with `pause`, media apps that are playing (Windows media transport controls) are paused and later resumed. Never touched: the runtime's own process, the Windows audio engine (`audiodg.exe`) and virtual mixers whose session is the whole mix (SteelSeries Sonar, VoiceMeeter); an app already at or below the level is left alone. Other apps come back at once on `pause`, `mute`, a mode change and when the extension is disarmed, about 0.4 s after the reader goes idle (so the gap between two messages does not bring them up and down), and when the runtime exits.
+
+**Crash restore.** Before an app is lowered or paused it is recorded in `state\duck_state.json` or `state\pause_state.json` in the home, and the files are removed once everything is back. A runtime that starts finds these files and restores the apps before it accepts clients; what still fails stays recorded and is retried by the next restore.
+
+### Settings
+
+| key | value |
+|---|---|
+| `audio_mode` | `"off"` (default), `"duck"` or `"pause"` |
+| `duck_level` | integer 0 to 100 (default 30): the volume other apps keep while ducked. A change applies at once while ducked |
+| `hotkeys` | `get`: the keymap (below). `set`: `{"action", "key", "mods"}` binds an action, `{"action", "key": null}` unbinds it, `"reset"` restores the defaults; the reply is the keymap now in force |
+| `settings_url` | read-only (`set` is `E_BAD_REQUEST`): `http://127.0.0.1:<http_port>/settings?token=<token>`, the settings page |
+
+Settings are not persisted across runtimes yet, except the hotkeys (`keymap.json` in the home).
+
+### Hotkeys
+
+Actions and what they do (the same as the protocol request named):
+
+| action | default | effect |
+|---|---|---|
+| `restart` | Ctrl+Alt+Up | `control restart` |
+| `flush` | Ctrl+Alt+Down | `control stop` (everything queued or playing); with `agent`, plays `nav` (or `nav_edge` when there was nothing) |
+| `pause` | unbound | `control toggle` |
+| `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute` |
+| `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` (or `nav_edge`) |
+| `faster` / `slower` | unbound | `rate` plus or minus 25 |
+
+A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A hotkey must hold Ctrl, Alt or Win (`E_BAD_REQUEST` otherwise: it would take that key away from every app); an unknown key, modifier or action is `E_BAD_REQUEST`, and nothing is written. Holding a key does not repeat an action, and a second press of `pause` or `mute` within 0.3 s is ignored. Hotkeys do nothing once a takeover was accepted.
+
+The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a hotkey that is AltGr typing a character is reported in `altgr`, and the fix is a binding with Win (Windows itself owns Win+Alt+Up/Down/M/P). The user's bindings are kept in `keymap.json` in the home (only the overrides; `nav_start` and `next_session` from the Python plugin's keymap are read as `restart` and `next_channel`).
+
+`get hotkeys` value:
+
+```json
+{"active": true,
+ "bindings": [{"action": "restart", "key": "up", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+Up", "registered": true, "error": null, "altgr": null},
+              {"action": "mute", "key": "m", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+M", "registered": true, "error": null, "altgr": "µ"},
+              {"action": "pause", "key": null, "mods": [], "combo": null, "registered": false, "error": null, "altgr": null}],
+ "keys": ["0", "1", "...", "up"], "mods": ["alt", "cmd", "control", "ctrl", "shift", "win"], "problems": []}
+```
+
+`active`: the hotkeys are registered now (the extension is armed). `registered: false` with `error: "already_owned"` means another program owns that chord. `problems` lists entries of `keymap.json` that were skipped: an unknown key or modifier never disables the other hotkeys.
+
+### Settings page
+
+`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves a page for speech (engine, voice, rate, volume), other apps' audio, the hotkeys (capture, unbind, reset, AltGr and ownership warnings), the agent settings when `agent` is on, and the runtime's version. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
+
+```json
+> {"type": "hello", "token": "...", "extensions": ["agent", "system"]}
+< {"ok": true, "extensions": ["channels", "agent", "system"], ...}
+> {"type": "set", "key": "audio_mode", "value": "duck"}
+< {"ok": true, "key": "audio_mode", "value": "duck"}
+> {"type": "set", "key": "hotkeys", "value": {"action": "mute", "key": "m", "mods": ["win", "alt"]}}
+< {"ok": true, "key": "hotkeys", "value": {"active": true, "bindings": [...], ...}}
+> {"type": "get", "key": "settings_url"}
+< {"ok": true, "key": "settings_url", "value": "http://127.0.0.1:50312/settings?token=..."}
+```

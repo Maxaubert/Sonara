@@ -1,0 +1,21 @@
+{
+  "event": "UserPromptSubmit",
+  "payload": {
+    "session_id": "s1"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "channel_open",
+      "channel": "s1"
+    },
+    {
+      "type": "focus",
+      "channel": "s1"
+    },
+    {
+      "type": "turn_start",
+      "channel": "s1"
+    }
+  ]
+}
