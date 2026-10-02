@@ -254,7 +254,7 @@ pub fn convert_config(
     }
     if py.contains_key("cue_voice") || py.contains_key("fast_cues") {
         notes.push(
-            "cue voice and fast cues are not imported: the runtime speaks its control cues in the              voice in force"
+            "cue voice and fast cues are not imported: the runtime speaks its control cues in the voice in force"
                 .into(),
         );
     }

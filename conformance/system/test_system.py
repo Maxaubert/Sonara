@@ -374,6 +374,19 @@ def test_setting_changes_speak_their_cues(rt):
     assert cue(c) == "Unmuted."
 
 
+def test_resending_a_setting_unchanged_speaks_no_cue(rt):
+    c = rt.tcp(extensions=["system", "agent"])
+    ok(c, {"type": "subscribe", "events": ["cues"]})
+    set_key(c, "audio_mode", "pause")
+    assert cue(c) == "Media pause."
+    set_key(c, "duck_level", 45)
+    assert cue(c) == "Duck level 45 percent."
+    set_key(c, "audio_mode", "pause")
+    set_key(c, "duck_level", 45)
+    set_key(c, "mute_level", 1)
+    assert cue(c) == "Muted.", "an unchanged audio_mode or duck_level is silent"
+
+
 def test_cues_need_the_system_extension(rt):
     c = rt.tcp()
     r = c.request({"type": "subscribe", "events": ["cues"]})

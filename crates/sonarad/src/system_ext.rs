@@ -511,8 +511,9 @@ impl SystemExt {
                         .as_str()
                         .and_then(AudioMode::parse)
                         .ok_or_else(|| bad("'audio_mode' is \"off\", \"duck\" or \"pause\""))?;
+                    let changed = self.audio.status().mode != mode;
                     self.audio.set_mode(mode);
-                    if let Some(c) = cues::audio_mode_cue(mode.as_str()) {
+                    if let Some(c) = cues::audio_mode_cue(mode.as_str()).filter(|_| changed) {
                         self.cue(c, Some("audio_mode"));
                     }
                 }
@@ -521,8 +522,11 @@ impl SystemExt {
                         .as_u64()
                         .filter(|n| *n <= 100)
                         .ok_or_else(|| bad("'duck_level' is an integer 0 to 100"))?;
+                    let changed = u64::from(self.audio.status().duck_level) != n;
                     self.audio.set_duck_level(n as u8);
-                    self.cue(&cues::duck_level_cue(n), Some("duck_level"));
+                    if changed {
+                        self.cue(&cues::duck_level_cue(n), Some("duck_level"));
+                    }
                 }
                 "hotkeys" => {
                     self.set_hotkeys(v)?;
