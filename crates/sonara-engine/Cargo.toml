@@ -1,0 +1,23 @@
+[package]
+name = "sonara-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["onecore"]
+# The Windows OneCore engine (Windows.Media.SpeechSynthesis).
+onecore = ["dep:windows", "dep:windows-future"]
+# The deterministic `fake` engine for tests of higher crates.
+test-util = []
+
+[dependencies]
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, optional = true }
+windows-future = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The crate's own tests use the fake engine.
+sonara-engine = { path = ".", features = ["test-util"] }

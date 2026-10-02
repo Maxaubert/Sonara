@@ -1,0 +1,19 @@
+[package]
+name = "sonara-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# `TestOutput`, an output that records calls and lets tests drive events.
+test-util = []
+
+[dependencies]
+sonara-core.workspace = true
+sonara-engine.workspace = true
+rodio.workspace = true
+
+[dev-dependencies]
+# Tests use TestOutput; tests and the `say` example use the fake engine.
+sonara-audio = { path = ".", features = ["test-util"] }
+sonara-engine = { workspace = true, features = ["test-util"] }
