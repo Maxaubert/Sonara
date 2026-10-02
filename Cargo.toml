@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["crates/sonara-core", "crates/sonara-engine", "crates/sonara-audio", "crates/sonara-reader", "crates/sonara-channels", "crates/sonara-agent", "crates/sonarad", "crates/sonara-hook"]
+members = ["crates/sonara-core", "crates/sonara-engine", "crates/sonara-audio", "crates/sonara-reader", "crates/sonara-channels", "crates/sonara-agent", "crates/sonara-system", "crates/sonarad", "crates/sonara-hook"]
 
 [workspace.package]
-version = "0.9.6"
+version = "0.9.7"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Maxaubert/Sonara"
@@ -23,6 +23,7 @@ sonara-audio = { path = "crates/sonara-audio" }
 sonara-reader = { path = "crates/sonara-reader", default-features = false }
 sonara-channels = { path = "crates/sonara-channels" }
 sonara-agent = { path = "crates/sonara-agent", default-features = false }
+sonara-system = { path = "crates/sonara-system" }
 tokio = { version = "1", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
