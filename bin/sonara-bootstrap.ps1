@@ -14,7 +14,8 @@
     4. start it (`sonara.exe start`, unless -NoStart or
        SONARA_BOOTSTRAP_START=0), which replaces a runtime of an older
        release that is still running,
-    5. remove the folders of older releases (current only).
+    5. remove the folders of older releases (newer ones stay: upgrades
+       go one way).
   bin/sonara-hook-launch runs it in the background from a hook (with -Lock,
   the lock folder it took, removed here when done); bin/sonara runs it in
   the foreground before a slash command. A failure is logged to
@@ -59,6 +60,14 @@ function Get-Expected([string]$SumsPath, [string]$FileName) {
     }
   }
   return $null
+}
+
+function Test-OlderVersion([string]$Name, [string]$Than) {
+  # Both "major.minor.patch"; anything else (dot folders, other names) is
+  # not an older release.
+  $pattern = '^\d+\.\d+\.\d+$'
+  if ($Name -notmatch $pattern -or $Than -notmatch $pattern) { return $false }
+  return ([version]$Name) -lt ([version]$Than)
 }
 
 function Save-Url([string]$Url, [string]$Path) {
@@ -122,12 +131,13 @@ try {
       $started = $false
     }
   }
-  # Current only: remove older releases once this one runs (a runtime of
-  # an older release that is still up keeps its folder; a folder still in
-  # use stays and the next `sonara start` removes it).
+  # Remove older releases once this one runs (a folder still in use stays
+  # and the next `sonara start` removes it). Upgrades go one way: a newer
+  # release's folder stays, since a session of an older plugin can run
+  # this while a newer plugin's sessions use that runtime.
   $dirs = if ($started) { Get-ChildItem -Path $Root -Directory } else { @() }
   foreach ($old in $dirs) {
-    if ($old.Name -eq $Version -or $old.Name.StartsWith(".")) { continue }
+    if (-not (Test-OlderVersion $old.Name $Version)) { continue }
     try {
       Remove-Item -Recurse -Force $old.FullName
       Write-Log "Removed the old runtime $($old.Name)"

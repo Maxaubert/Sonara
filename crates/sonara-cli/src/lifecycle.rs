@@ -14,19 +14,49 @@ pub const START_WAIT: Duration = Duration::from_secs(20);
 pub const STOP_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(50);
 
-/// A runtime of this release, connected and armed (`keep_alive`).
+/// A runtime of this release or a newer one, connected and armed
+/// (`keep_alive`).
 pub struct Running {
     pub rt: Runtime,
     pub conn: Conn,
     pub version: String,
     /// Started by this command (it was not running).
     pub started: bool,
-    /// The version of another release's runtime that was replaced.
+    /// The version of an older release's runtime that was replaced.
     pub replaced: Option<String>,
 }
 
 fn version_of(hello: &serde_json::Value) -> String {
     hello["version"].as_str().unwrap_or("").to_string()
+}
+
+/// `major.minor.patch` of a release version (a `-` or `+` suffix is
+/// ignored); `None` for anything else.
+pub fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
+    let core = v.split(['-', '+']).next()?;
+    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
+    let out = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(out)
+}
+
+/// `v` is a release older than `than` (both must parse).
+pub fn is_older(v: &str, than: &str) -> bool {
+    matches!((parse_version(v), parse_version(than)), (Some(a), Some(b)) if a < b)
+}
+
+/// A running runtime of version `running` is replaced by release `ours`
+/// only when it is older (or names no version). Upgrades go one way:
+/// sessions of an older plugin keep running after a plugin update, and
+/// their `start` attaches to the newer runtime instead of replacing it.
+pub fn replaces(running: &str, ours: &str) -> bool {
+    running != ours && (parse_version(running).is_none() || is_older(running, ours))
+}
+
+/// A runtime of release `ours` serves a plugin that needs `wanted`: the
+/// same release or a newer one (the plugin's launcher uses the newest
+/// runtime installed).
+pub fn serves(wanted: &str, ours: &str) -> bool {
+    wanted == ours || is_older(wanted, ours)
 }
 
 /// Ask the runtime on `conn` to exit (`shutdown`, extension `system`).
@@ -64,15 +94,16 @@ pub fn wait_gone(home: &Path, rt: &Runtime, timeout: Duration) -> Result<(), Str
     }
 }
 
-/// Make sure this release's runtime runs and is armed: clear the stop
-/// sentinel, replace a runtime of another release, start `sonarad.exe`
-/// from `exe_dir` (`--standalone` plus `extra`) when none answers.
+/// Make sure a runtime of this release or a newer one runs and is armed:
+/// clear the stop sentinel, replace a runtime of an older release, start
+/// `sonarad.exe` from `exe_dir` (`--standalone` plus `extra`) when none
+/// answers.
 pub fn ensure_running(home: &Path, exe_dir: &Path, extra: &[String]) -> Result<Running, String> {
     let _ = std::fs::remove_file(home.join(STOPPED));
     let mut replaced = None;
     if let Some((rt, mut conn, h)) = attach(home, PRODUCT, true) {
         let version = version_of(&h);
-        if version == VERSION {
+        if !replaces(&version, VERSION) {
             return Ok(Running {
                 rt,
                 conn,
@@ -81,7 +112,7 @@ pub fn ensure_running(home: &Path, exe_dir: &Path, extra: &[String]) -> Result<R
                 replaced: None,
             });
         }
-        // An upgrade: the runtime of the previous release is still up.
+        // An upgrade: the runtime of an older release is still up.
         shutdown(&mut conn)
             .map_err(|e| format!("Sonara {version} is running and did not stop: {e}"))?;
         drop(conn);
@@ -149,19 +180,24 @@ pub fn stop(home: &Path) -> Result<Stopped, String> {
     Ok(Stopped::Exited(rt.pid))
 }
 
-/// The version folders in `root` other than `keep` (temporary folders,
-/// whose names start with a dot, are the bootstrap's).
+/// The version folders in `root` of releases older than `keep`'s (or
+/// this release, when `keep` is not named after a version). Newer folders
+/// stay: an older plugin's session may still run beside a newer one, and
+/// other names (the bootstrap's dot folders) are not ours to remove.
 pub fn old_versions(root: &Path, keep: &Path) -> Vec<PathBuf> {
-    let keep = canonical(keep);
+    let ours = keep
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| parse_version(n).is_some())
+        .unwrap_or_else(|| VERSION.to_string());
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
     };
     let mut out: Vec<PathBuf> = entries
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .filter(|e| is_older(&e.file_name().to_string_lossy(), &ours))
         .map(|e| e.path())
-        .filter(|p| canonical(p) != keep)
         .collect();
     out.sort();
     out
@@ -234,6 +270,61 @@ mod tests {
         assert!(failed.is_empty());
         assert!(root.join("0.11.0").is_dir());
         assert!(root.join(".staging-1").is_dir());
+    }
+
+    #[test]
+    fn newer_version_folders_and_other_names_are_kept() {
+        // An older plugin's `sonara start` must not remove the runtime a
+        // newer plugin installed (sessions of both run side by side).
+        let lad = tmp();
+        let root = lad.join("Sonara").join("runtime");
+        for v in ["0.9.9", "0.11.0", "0.12.0", "1.0.0", "notes"] {
+            std::fs::create_dir_all(root.join(v)).unwrap();
+        }
+        let paths = Paths {
+            home: lad.join("Sonara"),
+            runtime_root: Some(root.clone()),
+            exe_dir: root.join("0.11.0"),
+        };
+        let (removed, failed) = remove_old_versions(&paths);
+        assert_eq!(removed, vec![root.join("0.9.9")]);
+        assert!(failed.is_empty());
+        for v in ["0.11.0", "0.12.0", "1.0.0", "notes"] {
+            assert!(root.join(v).is_dir(), "{v} kept");
+        }
+    }
+
+    #[test]
+    fn versions_compare_numerically() {
+        assert!(is_older("0.9.0", "0.11.0"));
+        assert!(is_older("0.11.0", "0.11.1"));
+        assert!(is_older("0.11.9", "1.0.0"));
+        assert!(!is_older("0.11.0", "0.11.0"));
+        assert!(!is_older("0.12.0", "0.11.0"));
+        assert!(!is_older("0.11.0-dev", "0.11.0"), "a suffix is ignored");
+        assert_eq!(parse_version("0.11"), None);
+        assert_eq!(parse_version("x.1.2"), None);
+    }
+
+    #[test]
+    fn only_an_older_or_unknown_runtime_is_replaced() {
+        // Upgrades go one way: a newer runtime is attached to, never shut
+        // down by an older plugin's start.
+        assert!(replaces("0.10.0", "0.11.0"));
+        assert!(replaces("", "0.11.0"));
+        assert!(!replaces("0.11.0", "0.11.0"));
+        assert!(!replaces("0.12.0", "0.11.0"));
+    }
+
+    #[test]
+    fn a_newer_runtime_serves_an_older_plugin() {
+        assert!(serves("0.11.0", "0.11.0"));
+        assert!(
+            !serves("0.11.0", "0.10.0"),
+            "this runtime is older than the plugin's"
+        );
+        assert!(serves("0.11.0", "0.12.0"));
+        assert!(!serves("garbage", "0.12.0"));
     }
 
     #[test]

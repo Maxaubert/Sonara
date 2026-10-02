@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The plugin's slash commands run `bin/sonara <command>` (#202): sonara.exe
-# of the runtime this plugin version needs (bin/runtime-version), from
-# %LOCALAPPDATA%\Sonara\runtime\<version>\. When it is missing, the
+# of the runtime this plugin version needs (bin/runtime-version), or of the
+# newest newer one installed (bin/sonara-runtime.sh), from
+# %LOCALAPPDATA%\Sonara\runtime\<version>\. When none is installed, the
 # runtime is installed first, in the foreground, with
 # bin/sonara-bootstrap.ps1 (download, SHA-256 check, install).
 here="$(cd "${0%/*}" 2>/dev/null && pwd)" || here="${0%/*}"
@@ -15,6 +16,10 @@ if [ -z "$ver" ] || [ -z "$lad" ]; then
 fi
 root="$lad/Sonara/runtime"
 exe="$root/$ver/sonara.exe"
+if . "$here/sonara-runtime.sh" 2>/dev/null; then
+    sonara_pick_runtime "$root" "$ver" sonara.exe
+    [ -n "$sonara_rt" ] && exe="$root/$sonara_rt/sonara.exe"
+fi
 # `sonara doctor` checks the plugin's hooks; a slash command's Bash tool may
 # not have the variable set.
 if [ -z "$CLAUDE_PLUGIN_ROOT" ]; then
@@ -32,21 +37,20 @@ if [ ! -f "$exe" ]; then
     echo "Installing the Sonara runtime $ver (about 15 MB) from GitHub..."
     mkdir -p "$root" || exit 1
     lock="$root/.bootstrap.lock"
-    # A hook may be installing it already: wait for it (up to 5 minutes).
-    waited=0
+    # A hook may be installing it already: wait for it. As in the hook
+    # launcher, only a lock older than 15 minutes (a killed bootstrap) is
+    # taken over; a slow download keeps its lock.
     own=""
     while [ ! -f "$exe" ]; do
         if mkdir "$lock" 2>/dev/null; then
             own=1
             break
         fi
-        if [ "$waited" -ge 300 ]; then
+        if [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then
             rm -rf "$lock"
-            waited=0
             continue
         fi
         sleep 1
-        waited=$((waited + 1))
     done
     if [ -n "$own" ] && [ ! -f "$exe" ]; then
         ps1="$here/sonara-bootstrap.ps1"

@@ -5,10 +5,11 @@
 //! `bin/sonara`, which installs the runtime first when it is missing.
 //!
 //! - `start`: clear the stop sentinel (`<home>\stopped`) and make sure
-//!   this release's `sonarad` runs, standalone and armed (`hello` with
-//!   `agent`, `system` and `keep_alive`, like the hook). A runtime of
-//!   another release (an upgrade) is shut down and replaced, and older
-//!   folders in `%LOCALAPPDATA%\Sonara\runtime\` are removed.
+//!   this release's `sonarad` (or a newer one) runs, standalone and armed
+//!   (`hello` with `agent`, `system` and `keep_alive`, like the hook). A
+//!   runtime of an older release (an upgrade) is shut down and replaced, a
+//!   newer one is kept (upgrades go one way), and folders of older releases
+//!   in `%LOCALAPPDATA%\Sonara\runtime\` are removed.
 //! - `stop`: write the stop sentinel (the hooks then never start the
 //!   runtime) and ask the runtime to exit (`shutdown`, extension `system`),
 //!   which restores other apps first.

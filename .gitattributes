@@ -2,6 +2,7 @@ src/sonara/**/*.py text eol=lf
 bin/sonara text eol=lf
 bin/sonara-hook-launch text eol=lf
 bin/runtime-version text eol=lf
+bin/sonara-runtime.sh text eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 # Vendored misaki data: embedded byte for byte (tests/data.rs checks hashes).

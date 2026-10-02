@@ -200,7 +200,7 @@ fn hooks_row() -> Row {
     let wanted = std::fs::read_to_string(root.join("bin").join("runtime-version"))
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
-    if !wanted.is_empty() && wanted != VERSION {
+    if !wanted.is_empty() && !lifecycle::serves(&wanted, VERSION) {
         return Row::new(
             Status::Warn,
             "hooks",

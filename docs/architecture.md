@@ -24,6 +24,19 @@ updates never change code under a running daemon. `/sonara:install` refreshes th
 
 ## Data flow
 
+The Claude Code plugin (0.11+, #202) no longer takes this path. Its hook chain is:
+
+```
+Claude Code hook event
+  -> hooks/hooks.json
+  -> bin/sonara-hook-launch       Git Bash; picks the runtime in %LOCALAPPDATA%\Sonara\runtime\
+                                  (bin/sonara-runtime.sh), or starts bin/sonara-bootstrap.ps1
+  -> sonara-hook.exe              event -> protocol v1 messages; starts sonarad.exe if needed
+  -> sonarad.exe                  the Rust runtime (crates/), contract docs/protocol-v1.md
+```
+
+The rest of this section, and of this document, is the legacy Python package:
+
 ```
 Claude Code hook event
   -> hooks/hooks.json

@@ -5,6 +5,7 @@ a Claude session."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 
@@ -13,6 +14,9 @@ import plugin_harness as ph
 # A hook may take at most about a second (Claude Code waits for it).
 QUICK = 1.5
 NO_START = {"SONARA_BOOTSTRAP_START": "0"}
+# A release newer than the plugin's (bin/runtime-version), as a newer plugin
+# installs it while sessions of this one keep running.
+NEWER = "99.0.0"
 
 
 def serve_good_release(box, releases, exes):
@@ -138,3 +142,76 @@ def test_the_wrapper_names_the_plugin_for_the_doctor(box, exes):
     p = box.wrapper("doctor")
     assert p.returncode == 0, p.stdout + p.stderr
     assert "[ OK ] hooks:" in p.stdout, p.stdout
+
+
+def run_bootstrap(box, *args):
+    """bin/sonara-bootstrap.ps1 in the foreground, as bin/sonara runs it."""
+    env = {k: v for k, v in box.env.items() if k.upper() != "PSMODULEPATH"}
+    return subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(ph.BIN / "sonara-bootstrap.ps1"), "-Version", ph.VERSION, *args],
+        capture_output=True, text=True, env=env, timeout=180,
+        creationflags=0x08000000)
+
+
+def test_an_older_plugin_uses_a_newer_installed_runtime(box, releases, exes, tmp_path):
+    # Sessions started before a plugin update keep the old plugin folder:
+    # their hooks must use the newer runtime, not download their own
+    # release again (which would replace the newer one, and so on).
+    r = serve_good_release(box, releases, exes)
+    newer = box.install(exes, NEWER)
+    capture = tmp_path / "capture"
+    code, took = box.launch("MessageDisplay", {"session_id": "s1"},
+                            {"SONARA_CAPTURE": str(capture), "SONARA_NO_START": "1"})
+    assert code == 0
+    assert took < QUICK
+    assert list(capture.glob("MessageDisplay-*.json")), "the newer runtime got the event"
+    assert r.hits == {}, "nothing downloaded"
+    assert not box.dest.exists()
+    assert not (box.root / ".bootstrap.lock").exists()
+    assert newer.is_dir()
+
+
+def test_an_older_runtime_does_not_serve_the_plugin(box, releases, exes):
+    serve_good_release(box, releases, exes)
+    box.install(exes, "0.0.1")
+    code, _ = box.launch("SessionStart", {}, NO_START)
+    assert code == 0
+    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_bootstrap()
+
+
+def test_the_wrapper_of_an_older_plugin_uses_a_newer_runtime(box, releases, exes):
+    r = serve_good_release(box, releases, exes)
+    newer = box.install(exes, NEWER)
+    p = box.wrapper("version")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "Installing" not in p.stdout
+    assert r.hits == {}
+    assert not box.dest.exists()
+    assert newer.is_dir()
+
+
+def test_the_bootstrap_removes_older_runtimes_only(box, releases, exes):
+    serve_good_release(box, releases, exes)
+    old = box.install(exes, "0.0.1")
+    newer = box.install(exes, NEWER)
+    p = run_bootstrap(box, "-NoStart")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert (box.dest / "sonara-hook.exe").is_file()
+    assert not old.exists()
+    assert newer.is_dir(), "a newer plugin's runtime stays"
+
+
+def test_the_wrapper_takes_over_a_stale_lock_only(box, releases, exes):
+    # The same rule as the hook launcher: a lock older than 15 minutes
+    # belongs to a bootstrap that was killed.
+    serve_good_release(box, releases, exes)
+    lock = box.root / ".bootstrap.lock"
+    lock.mkdir(parents=True)
+    old = time.time() - 20 * 60
+    os.utime(lock, (old, old))
+    p = box.wrapper("version", timeout=60)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert (box.dest / "sonara.exe").is_file()
+    assert not lock.exists()

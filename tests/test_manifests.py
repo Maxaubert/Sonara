@@ -83,7 +83,7 @@ def test_no_plugin_file_runs_python():
 
 def test_bash_scripts_keep_lf_line_endings():
     # Git Bash runs these: a CR would end up in every command.
-    for name in ("sonara-hook-launch", "sonara", "runtime-version"):
+    for name in ("sonara-hook-launch", "sonara", "sonara-runtime.sh", "runtime-version"):
         assert b"\r" not in (REPO_ROOT / "bin" / name).read_bytes(), name
 
 

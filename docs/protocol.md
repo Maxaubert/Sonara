@@ -106,7 +106,7 @@ Python: `for event in client.subscribe(): ...` (a generator; closing it closes t
 
 Every hook message carries `"t"`, the hook process start time (seconds since the epoch). Each hook event is its own process on its own connection, so the previous turn's `prose` or `turn_done` can arrive after a new prompt's `flush`; the daemon drops `prose` and `turn_done` whose `t` is older than that session's last `flush` (#174). Messages without `t` are handled as before.
 
-Sent by `bin/sonara-hook` from Claude Code hook events, all messages of one event on one connection. `session` is the Claude Code session id.
+Sent by the legacy Python hook (`bin/sonara-hook` before 0.11; the 0.11+ plugin speaks [protocol v1](protocol-v1.md) instead) from Claude Code hook events, all messages of one event on one connection. `session` is the Claude Code session id.
 
 | Type | Fields | Meaning |
 |---|---|---|
