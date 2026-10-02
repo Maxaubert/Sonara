@@ -18,7 +18,7 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "port": 50311,
   "http_port": 50312,
   "token": "64 hex characters",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "protocol": {"major": 1, "minor": 0},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log"],
   "extensions": ["channels", "agent"],
@@ -73,7 +73,7 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 
 ```json
 > {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.9.5", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
+< {"id": 1, "ok": true, "version": "0.9.6", "protocol": {"major": 1, "minor": 0}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
 
 The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.

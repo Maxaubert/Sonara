@@ -9,7 +9,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 ## Build, test, release
 - Typecheck/lint: `ruff check src tests conformance` (no typechecker)
 - Rust (`crates/`, needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. Live OneCore (opt-in): `cargo test -p sonara-engine --test onecore_live -- --ignored`. End to end: `cargo run -p sonara-reader --example say -- --engine onecore|fake "Hello."`
-- Protocol v1 conformance (black box, CI rust job): `cargo build -p sonarad; python -m pytest conformance -q` (`--engine fake`, temp `SONARA_HOME`; contract `docs/protocol-v1.md`)
+- Protocol v1 conformance (black box, CI rust job): `cargo build -p sonarad -p sonara-hook; python -m pytest conformance -q` (`--engine fake`, temp `SONARA_HOME`; contract `docs/protocol-v1.md`)
 - Unit: `python -m pytest -q` (system Python with `.[dev,windows]`; conftest adds `src/` to `sys.path`). Live OneCore checks: `-m live_windows` (opt-in)
 - E2E (headless): `python -m pytest tests/e2e -q` (needs `pip install -e ".[e2e]"` and `playwright install chromium`)   Run when: `src/sonara/settings.html`, `src/sonara/webui.py`
 - Build / package: none (plugin, no build step)   Artifact: n/a
@@ -52,5 +52,5 @@ Map, threads, lock contract, module owners and how to add a setting/message/hotk
 - Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
 - No em-dashes anywhere (code, comments, docs, commit messages).
-- Text rules exist in Python and Rust until M9; change both together with the golden fixtures.
+- Text rules exist in Python and Rust until M9; change both together with the golden fixtures. Likewise until M11: the summarizer prompts (`crates/sonara-agent/prompts/`, `test_agent_prompts.py`) and the hook mapping (`crates/sonara-hook/tests/golden/`, `test_hook_golden.py`).
 - Current work: the Rust reader runtime, spec `docs/plans/2026-10-02-sonara-runtime-spec.md`, plan `docs/plans/2026-10-02-sonara-runtime-plan.md` (Phase 0 is done: `docs/plans/phase0-plan.md`). Research: `docs/plans/2026-10-02-distribution-research.md`, `docs/plans/embedding-research.md`. Historical specs, plans and audits: `docs/history/`.
