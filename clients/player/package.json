@@ -1,19 +1,19 @@
 {
-  "name": "@sonara/client",
+  "name": "@sonara/player",
   "version": "0.9.9",
-  "description": "Client for the Sonara text-to-speech runtime (protocol v1): connect, speak, control, live state. Zero dependencies.",
+  "description": "Player for the Sonara text-to-speech runtime: a headless controller and a React player bar on the core API of @sonara/client.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Maxaubert/Sonara.git",
-    "directory": "clients/ts"
+    "directory": "clients/player"
   },
   "keywords": [
     "sonara",
     "tts",
     "text-to-speech",
-    "electron",
-    "speech"
+    "player",
+    "react"
   ],
   "engines": {
     "node": ">=18"
@@ -32,7 +32,24 @@
         "default": "./dist/cjs/index.js"
       }
     },
+    "./react": {
+      "import": {
+        "types": "./dist/esm/react/index.d.ts",
+        "default": "./dist/esm/react/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/react/index.d.ts",
+        "default": "./dist/cjs/react/index.js"
+      }
+    },
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "react": [
+        "./dist/cjs/react/index.d.ts"
+      ]
+    }
   },
   "files": [
     "dist/",
@@ -43,13 +60,27 @@
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build": "node scripts/clean.mjs && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/mark-dist.mjs",
-    "typecheck": "tsc -p tsconfig.esm.json --noEmit",
+    "typecheck": "tsc -p tsconfig.esm.json --noEmit && tsc -p tsconfig.compat.json",
     "test": "node scripts/test.mjs",
-    "test:unit": "node scripts/test.mjs unit",
     "prepack": "npm run build"
   },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
     "@types/node": "18.19.130",
+    "@types/react": "19.3.0",
+    "jsdom": "26.1.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
     "typescript": "5.9.3"
   }
 }

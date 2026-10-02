@@ -18,7 +18,7 @@ await sonara.close();
 - `speak(text, { mode: "append" | "replace", interrupt, label })` resolves with the item id.
 - `control(action)`: `play`, `pause`, `toggle`, `stop`, `skip`, `previous`, `next`, `restart`, `mute`, `unmute`.
 - `set(key, value)` / `get(key)` for `volume` (0..100), `rate` (100..400 wpm), `voice`, `engine`; `voices(engine?)`.
-- `onState`, `onItem`, `onLog` return an unsubscribe function; events arrive on a second connection opened by the first listener. `onClose` fires when the runtime goes away.
+- `onState`, `onItem`, `onLog` return an unsubscribe function; events arrive on a second connection opened by the first listener. Every state listener, also one added later, gets the current state first. `onClose` fires when the runtime goes away.
 - `channels`, `agent`, `system`: extension namespaces that send the protocol's extension messages as they are.
 - Errors are `SonaraError` with a `code` (`E_BUSY`, `E_NOT_RUNNING`, ...).
 

@@ -1,0 +1,21 @@
+{
+  "name": "sonara-player-demo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Example app: <SonaraPlayer/> in a browser page, driven through a small Node server that holds the @sonara/client connection.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node build.mjs && node server.mjs"
+  },
+  "dependencies": {
+    "@sonara/client": "file:../../clients/ts",
+    "@sonara/player": "file:../../clients/player",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

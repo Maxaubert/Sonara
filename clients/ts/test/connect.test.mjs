@@ -273,6 +273,27 @@ describe("events", () => {
     assert.equal(fake.requests().filter((r) => r.type === "subscribe").length, 2);
   });
 
+  it("gives a state listener added later the current state first", async () => {
+    // The runtime sends state on change only, so a second listener (a player
+    // mounted after the app subscribed) would otherwise wait for a change.
+    fake = await startFake(home);
+    const c = await open();
+    const first = [];
+    c.onState((s) => first.push(s));
+    await c.eventsReady();
+    assert.ok(await waitFor(() => first.length > 0, 3000));
+    const late = [];
+    const off = c.onState((s) => late.push(s));
+    assert.equal(late.length, 0, "never called synchronously from onState");
+    assert.ok(await waitFor(() => late.length > 0, 1000), "the late listener got the current state");
+    assert.equal(late[0].seq, first[first.length - 1].seq);
+    off();
+    const again = [];
+    c.onState((s) => again.push(s));
+    assert.ok(await waitFor(() => again.length > 0, 1000));
+    assert.equal(late.length, 1, "an unsubscribed listener is not called");
+  });
+
   it("stops calling a listener after unsubscribe", async () => {
     fake = await startFake(home);
     const c = await open();

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f3f3f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)" />
+    <title>Sonara player demo</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        padding: 32px 16px;
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: light-dark(#f3f3f1, #121214);
+        color: light-dark(#1c1c1f, #ececf0);
+      }
+      main { max-width: 760px; margin: 0 auto; display: grid; gap: 20px; }
+      h1 { margin: 0; font-size: 1.4rem; }
+      p { margin: 0; }
+      label { display: grid; gap: 6px; font-weight: 600; }
+      textarea {
+        min-height: 9rem;
+        padding: 10px;
+        font: inherit;
+        font-weight: 400;
+        border: 1px solid light-dark(#c9c9d0, #3a3a42);
+        border-radius: 8px;
+        background: light-dark(#ffffff, #1c1c20);
+        color: inherit;
+        resize: vertical;
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .actions button {
+        min-height: 36px;
+        padding: 0 14px;
+        font: inherit;
+        border: 1px solid light-dark(#c9c9d0, #3a3a42);
+        border-radius: 8px;
+        background: light-dark(#ffffff, #1c1c20);
+        color: inherit;
+        cursor: pointer;
+      }
+      .actions button:focus-visible, textarea:focus-visible { outline: 2px solid #2f56c9; outline-offset: 2px; }
+      .note { color: light-dark(#5d5d66, #a4a4ae); font-size: 0.9em; }
+    </style>
+  </head>
+  <body>
+    <main id="root"></main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

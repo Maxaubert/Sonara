@@ -116,8 +116,8 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_9_8():
-    assert _pyproject_version() == "0.9.8"
+def test_pyproject_version_is_0_9_9():
+    assert _pyproject_version() == "0.9.9"
 
 
 def test_sdk_package_versions_match_pyproject():
@@ -125,7 +125,7 @@ def test_sdk_package_versions_match_pyproject():
     # as the runtime they talk to and bundle (runtime plan, M9).
     import re
     version = _pyproject_version()
-    for rel in ("clients/ts/package.json", "packaging/npm-runtime/package.json"):
+    for rel in ("clients/ts/package.json", "clients/player/package.json", "packaging/npm-runtime/package.json"):
         assert _load(REPO_ROOT / rel).get("version") == version, rel
     ts_version = (REPO_ROOT / "clients" / "ts" / "src" / "version.ts").read_text(encoding="utf-8")
     m = re.search(r'^export const VERSION = "([^"]+)";', ts_version, re.M)
@@ -142,12 +142,22 @@ def test_sdk_packages_ship_the_mit_licence():
     # The published clients carry Sonara's MIT text: npm takes LICENSE from
     # `files`, setuptools picks up a LICENSE next to pyproject.toml.
     root = (REPO_ROOT / "LICENSE").read_text(encoding="utf-8").splitlines()
-    for rel in ("clients/ts", "clients/python"):
+    for rel in ("clients/ts", "clients/player", "clients/python"):
         copy = REPO_ROOT / rel / "LICENSE"
         assert copy.is_file(), f"{rel}/LICENSE missing"
         assert copy.read_text(encoding="utf-8").splitlines() == root, f"{rel}/LICENSE differs from LICENSE"
-    files = _load(REPO_ROOT / "clients" / "ts" / "package.json")["files"]
-    assert "LICENSE" in files
+    for rel in ("clients/ts", "clients/player"):
+        files = _load(REPO_ROOT / rel / "package.json")["files"]
+        assert "LICENSE" in files, rel
+
+
+def test_player_has_no_runtime_dependencies():
+    # Spec R6: the JS packages ship without runtime dependencies; the player
+    # only asks for React as a peer (the headless controller needs nothing).
+    pkg = _load(REPO_ROOT / "clients" / "player" / "package.json")
+    assert not pkg.get("dependencies")
+    assert set(pkg.get("peerDependencies", {})) == {"react"}
+    assert pkg["peerDependenciesMeta"]["react"]["optional"] is True
 
 
 def test_cargo_workspace_version_matches_pyproject():

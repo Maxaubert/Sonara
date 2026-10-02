@@ -43,6 +43,8 @@ export class SonaraClient {
   private eventConn: Connection | null = null;
   private eventsOpening: Promise<void> | null = null;
   private eventsFailed = false;
+  /** The newest `state` snapshot, handed to a state listener added later. */
+  private lastState: State | null = null;
   private closing = false;
   private readonly stateListeners = new Set<Listener<State>>();
   private readonly itemListeners = new Set<Listener<ItemEvent>>();
@@ -107,9 +109,21 @@ export class SonaraClient {
     return r.voices as Voice[];
   }
 
-  /** Call `cb` with every `state` snapshot (the first is the current state). */
+  /**
+   * Call `cb` with every `state` snapshot. The first is the current state,
+   * also for a listener added after others: the runtime sends state on
+   * change only, so the latest snapshot is replayed to it (asynchronously).
+   */
   onState(cb: Listener<State>): Unsubscribe {
-    return this.listen(this.stateListeners, cb);
+    const off = this.listen(this.stateListeners, cb);
+    const last = this.lastState;
+    if (last) {
+      queueMicrotask(() => {
+        // Skip it when unsubscribed meanwhile or a newer state already came.
+        if (this.stateListeners.has(cb) && this.lastState === last) cb(last);
+      });
+    }
+    return off;
   }
 
   /** Call `cb` with every `item` event (started, finished, skipped, failed). */
@@ -179,6 +193,8 @@ export class SonaraClient {
       // let the next listener open a new one.
       conn.onClose = () => {
         if (this.eventConn === conn) this.eventConn = null;
+        // A new event connection starts with the then current state.
+        this.lastState = null;
         if (this.closing || this.conn.closed) return;
         this.eventsFailed = true;
         for (const cb of [...this.logListeners]) cb({ message: "event stream closed" });
@@ -193,7 +209,11 @@ export class SonaraClient {
 
   private dispatch(e: Record<string, unknown>): void {
     const { event, ...body } = e;
-    if (event === "state") for (const cb of [...this.stateListeners]) cb(body as unknown as State);
+    if (event === "state") {
+      const state = body as unknown as State;
+      this.lastState = state;
+      for (const cb of [...this.stateListeners]) cb(state);
+    }
     else if (event === "item") for (const cb of [...this.itemListeners]) cb(body as unknown as ItemEvent);
     else if (event === "log") for (const cb of [...this.logListeners]) cb(body as unknown as LogEvent);
   }
