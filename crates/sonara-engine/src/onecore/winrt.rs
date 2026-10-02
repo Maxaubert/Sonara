@@ -20,8 +20,8 @@ pub struct OneCore {
     /// Bumped by `cancel`; a synthesis that sees a newer epoch is abandoned.
     epoch: AtomicU64,
     next_op: AtomicU64,
-    /// Syntheses in flight, as agile references so `cancel` may run on
-    /// any thread.
+    /// WinRT operations in flight (the synthesis and the stream load), as
+    /// agile references so `cancel` may run on any thread.
     in_flight: Mutex<HashMap<u64, AgileReference<IAsyncInfo>>>,
     /// Set once a synthesis found the voice data missing (D7), so `voices`
     /// reports them as not installed.
@@ -120,7 +120,11 @@ impl OneCore {
             .LoadAsync(size)
             .and_then(|l| l.cast())
             .map_err(fail)?;
-        let loaded = load.join().map_err(fail)?;
+        let key = self.track(&load);
+        let loaded = load.join();
+        self.untrack(key);
+        self.check_cancel(epoch)?;
+        let loaded = loaded.map_err(fail)?;
         let mut buf = vec![0u8; loaded as usize];
         reader.ReadBytes(&mut buf).map_err(fail)?;
         self.check_cancel(epoch)?;
