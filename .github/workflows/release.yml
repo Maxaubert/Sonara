@@ -2,8 +2,13 @@
 # - Reads the version from pyproject.toml and refuses to run if
 #   .claude-plugin/plugin.json or marketplace.json disagree.
 # - REFUSES to run if release v<version> already exists: bump the version in the PR.
-# - Publishes v<version> with GitHub-generated notes. No asset: Sonara ships as a
-#   Claude Code plugin from the repo itself, so there is no binary to sign.
+# - Publishes v<version> with GitHub-generated notes and one asset,
+#   sonara-runtime-win-x64-<version>.zip (sonarad.exe release build, LICENSE,
+#   LICENSING.md, THIRD_PARTY_NOTICES.md) for apps that bundle the runtime.
+#   The Claude Code plugin still ships from the repo itself. Unsigned until
+#   SignPath enrolment.
+# - Nothing goes to npm or PyPI: publish-packages runs only once the
+#   NPM_TOKEN / PYPI_TOKEN secrets exist (manual steps: docs/bundling.md).
 # Docs-only pushes are skipped by paths-ignore.
 name: release
 
@@ -61,10 +66,70 @@ jobs:
           # wrapper propagates a lingering $LASTEXITCODE as the step result.
           exit 0
 
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the runtime zip
+        id: zip
+        shell: pwsh
+        run: |
+          cargo build -p sonarad --release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python packaging/notices/gen_notices.py --check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $zip = python packaging/release_zip.py --out dist
+          if ($LASTEXITCODE -ne 0 -or -not $zip) { Write-Error "release_zip.py failed"; exit 1 }
+          $expected = "sonara-runtime-win-x64-${{ steps.ver.outputs.version }}.zip"
+          if ((Split-Path $zip -Leaf) -ne $expected) { Write-Error "zip is $zip, expected $expected (Cargo.toml version drift)"; exit 1 }
+          "path=$zip" >> $env:GITHUB_OUTPUT
+
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          gh release create $tag --title $tag --generate-notes --latest --target $env:GITHUB_SHA
+          gh release create $tag "${{ steps.zip.outputs.path }}" --title $tag --generate-notes --latest --target $env:GITHUB_SHA
+
+  # Disabled until registry tokens exist: every step is skipped while the
+  # secrets are empty, so the job passes without publishing. Manual
+  # publishing: docs/bundling.md.
+  publish-packages:
+    needs: release
+    runs-on: windows-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        if: env.NPM_TOKEN != '' || env.PYPI_TOKEN != ''
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.NPM_TOKEN != ''
+      - uses: actions/setup-node@v4
+        if: env.NPM_TOKEN != ''
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish @sonara/client and @sonara/runtime-win32-x64
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cargo build -p sonarad --release
+          (cd clients/ts && npm ci && npm run build && npm publish --access public)
+          (cd packaging/npm-runtime && npm publish --access public)
+      - uses: actions/setup-python@v5
+        if: env.PYPI_TOKEN != ''
+        with:
+          python-version: "3.12"
+      - name: Publish sonara-client
+        if: env.PYPI_TOKEN != ''
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          python -m pip install build twine
+          cd clients/python
+          python -m build
+          python -m twine upload dist/*

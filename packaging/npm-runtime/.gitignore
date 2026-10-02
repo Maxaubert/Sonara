@@ -1,0 +1,5 @@
+# Filled by scripts/build.mjs from the release build and the repo root.
+bin/
+LICENSE
+THIRD_PARTY_NOTICES.md
+*.tgz
