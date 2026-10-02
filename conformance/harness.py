@@ -1,8 +1,10 @@
 """Black-box harness for protocol v1 conformance (stdlib only).
 
-Starts a built ``sonarad.exe`` with a temporary home, the fake engine and
-the silent timed output, and talks to it over TCP JSON lines and HTTP/SSE
-exactly as a client would. The binary is ``$SONARAD`` if set, else the
+Starts a built ``sonarad.exe`` with a temporary home, the fake engine, the
+silent timed output and the fake ``system`` platform (fake apps, media and
+hotkeys in ``<home>/fake-system.json``, so no test touches this PC's audio
+or hotkeys), and talks to it over TCP JSON lines and HTTP/SSE exactly as a
+client would. The binary is ``$SONARAD`` if set, else the
 newest of ``target/release/sonarad.exe`` and ``target/debug/sonarad.exe``.
 """
 from __future__ import annotations
@@ -101,7 +103,7 @@ class Runtime:
         env["SONARA_HOME"] = str(home)
         self._stderr = open(self.stderr_path, "wb")
         self.proc = subprocess.Popen(
-            [str(exe), "--engine", "fake", *args],
+            [str(exe), "--engine", "fake", "--system", "fake", *args],
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -115,6 +117,10 @@ class Runtime:
     @property
     def runtime_json(self) -> Path:
         return self.home / "runtime.json"
+
+    @property
+    def fake_system(self) -> Path:
+        return self.home / "fake-system.json"
 
     def read_runtime(self) -> dict | None:
         try:

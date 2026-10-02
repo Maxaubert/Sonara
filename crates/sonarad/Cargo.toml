@@ -17,6 +17,7 @@ sonara-engine = { workspace = true, features = ["test-util"] }
 sonara-audio.workspace = true
 sonara-channels.workspace = true
 sonara-agent = { workspace = true, features = ["summaries"] }
+sonara-system.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal"] }
 hyper = { workspace = true, features = ["server", "http1"] }
@@ -36,3 +37,4 @@ windows = { workspace = true, features = [
 
 [dev-dependencies]
 sonara-audio = { workspace = true, features = ["test-util"] }
+sonara-reader = { workspace = true, features = ["test-util"] }

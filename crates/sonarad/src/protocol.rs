@@ -8,6 +8,7 @@ use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
+use crate::system_ext::{self, HotkeyTarget, SystemExt, SystemHold, SystemHost};
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_agent::Agent;
@@ -35,8 +36,9 @@ pub const CAPABILITIES: &[&str] = &[
     "events.log",
 ];
 
-/// Extensions this host implements (M8 adds `system`).
-pub const EXTENSIONS: &[&str] = &[channels_ext::NAME, agent_ext::NAME];
+/// Extensions this host implements. `system` is offered only by a server
+/// built `with_system` (see `Server::offered`).
+pub const EXTENSIONS: &[&str] = &[channels_ext::NAME, agent_ext::NAME, system_ext::NAME];
 
 /// Message types of the extensions (spec 4.2 to 4.4). They are known, so a
 /// client gets `E_UNSUPPORTED` (extension not enabled) rather than
@@ -80,6 +82,9 @@ pub enum Transport {
 pub struct Session {
     pub transport: Transport,
     pub authed: bool,
+    /// A `hello` on this connection asked for the `system` extension: the
+    /// TCP transport holds it armed while the connection lives.
+    pub system: bool,
 }
 
 impl Session {
@@ -87,6 +92,7 @@ impl Session {
         Session {
             transport: Transport::Tcp,
             authed: false,
+            system: false,
         }
     }
 
@@ -94,6 +100,7 @@ impl Session {
         Session {
             transport: Transport::Http,
             authed: true,
+            system: false,
         }
     }
 }
@@ -125,12 +132,14 @@ pub struct Server {
     /// while they reach the reader, so the idle check of a takeover and
     /// setting it are atomic with respect to them: nothing is accepted
     /// after the takeover and then silently dropped by the exit.
-    retiring: Mutex<bool>,
+    retiring: Arc<Mutex<bool>>,
     /// The `channels` extension, once a client enabled it (it stays
     /// enabled for the life of the process).
     channels: Slot,
     /// The `agent` extension (needs `channels`), once a client enabled it.
     agent: agent_ext::Slot,
+    /// The `system` extension, when this host offers it (`with_system`).
+    system: Option<Arc<SystemExt>>,
     /// Serializes enabling an extension.
     enabling: Mutex<()>,
 }
@@ -222,11 +231,43 @@ impl Server {
             token,
             engine: Arc::new(Mutex::new(engine)),
             lifetime,
-            retiring: Mutex::new(false),
+            retiring: Arc::new(Mutex::new(false)),
             channels: Arc::new(OnceLock::new()),
             agent: Arc::new(OnceLock::new()),
+            system: None,
             enabling: Mutex::new(()),
         }
+    }
+
+    /// Offer the `system` extension on this platform and home.
+    pub fn with_system(mut self, host: SystemHost) -> Self {
+        let target = HotkeyTarget {
+            reader: self.reader.clone(),
+            channels: self.channels.clone(),
+            agent: self.agent.clone(),
+            retiring: self.retiring.clone(),
+        };
+        self.system = Some(Arc::new(SystemExt::new(host, target)));
+        self
+    }
+
+    /// The `system` extension, if this host offers it (enabled or not).
+    pub fn system(&self) -> Option<&Arc<SystemExt>> {
+        self.system.as_ref()
+    }
+
+    /// Hold `system` armed for a connection whose `hello` asked for it.
+    pub fn hold_system(&self) -> Option<SystemHold> {
+        self.system.as_ref().map(|s| s.hold())
+    }
+
+    /// The extensions this host offers (`runtime.json`, `require`).
+    pub fn offered(&self) -> Vec<&'static str> {
+        EXTENSIONS
+            .iter()
+            .copied()
+            .filter(|e| *e != system_ext::NAME || self.system.is_some())
+            .collect()
     }
 
     /// The `channels` extension, if a client enabled it.
@@ -256,6 +297,11 @@ impl Server {
                 .map_err(|e| engine(e.to_string()))?;
             let _ = self.agent.set(agent);
         }
+        if name == system_ext::NAME {
+            if let Some(s) = &self.system {
+                s.enable(&self.reader)?;
+            }
+        }
         Ok(())
     }
 
@@ -267,6 +313,9 @@ impl Server {
         }
         if self.agent.get().is_some() {
             v.push(agent_ext::NAME);
+        }
+        if self.system.as_ref().is_some_and(|s| s.is_enabled()) {
+            v.push(system_ext::NAME);
         }
         v
     }
@@ -462,11 +511,12 @@ impl Server {
                 None => return Err(bad("'protocol.major' must be a number")),
             }
         }
+        let offered = self.offered();
         let require = str_list(m, "require")?.unwrap_or_default();
         let missing: Vec<&str> = require
             .iter()
             .copied()
-            .filter(|r| !CAPABILITIES.contains(r) && !EXTENSIONS.contains(r))
+            .filter(|r| !CAPABILITIES.contains(r) && !offered.contains(r))
             .collect();
         if !missing.is_empty() {
             return Err(Failure::new(
@@ -478,17 +528,32 @@ impl Server {
         let unavailable: Vec<&str> = wanted
             .iter()
             .copied()
-            .filter(|e| !EXTENSIONS.contains(e))
+            .filter(|e| !offered.contains(e))
             .collect();
         // An extension is enabled for the instance when any client asks for
         // it (or requires it) and stays enabled (spec section 3).
         for e in wanted.iter().chain(require.iter()) {
-            if EXTENSIONS.contains(e) {
+            if offered.contains(e) {
                 self.enable(e)?;
             }
         }
-        if opt_bool(m, "keep_alive")? {
+        let keep_alive = opt_bool(m, "keep_alive")?;
+        if keep_alive {
             self.lifetime.set_keep_alive();
+        }
+        // `system` is armed (ducking, hotkeys) while it is needed: for this
+        // TCP connection, or for good with keep_alive.
+        let wants_system = wanted
+            .iter()
+            .chain(require.iter())
+            .any(|e| *e == system_ext::NAME);
+        if let (true, Some(s)) = (wants_system, &self.system) {
+            if keep_alive {
+                s.keep();
+            }
+            if session.transport == Transport::Tcp {
+                session.system = true;
+            }
         }
         session.authed = true;
         Ok((self.hello_fields(unavailable), After::Nothing))
@@ -588,6 +653,11 @@ impl Server {
         };
         if let (Some(a), true) = (self.agent.get(), agent_ext::KEYS.contains(&name)) {
             return Some(agent_ext::setting(a, name, value));
+        }
+        if let Some(s) = self.system.as_ref().filter(|s| s.is_enabled()) {
+            if system_ext::KEYS.contains(&name) {
+                return Some(s.setting(name, value));
+            }
         }
         let ch = self.channels.get()?;
         if name != channels_ext::ANNOUNCE_KEY {
