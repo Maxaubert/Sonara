@@ -4,3 +4,6 @@ bin/sonara-hook text eol=lf
 bin/sonara-hook-run text eol=lf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+# Vendored misaki data: embedded byte for byte (tests/data.rs checks hashes).
+crates/misaki/data/*.xz binary
+crates/misaki/data/*.txt text eol=lf

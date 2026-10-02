@@ -3,6 +3,7 @@
 //! Exit codes: 0 clean exit (idle, takeover, Ctrl+C), 1 startup failure,
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
+use sonara_engine::kokoro::{self, Kokoro};
 use sonara_reader::{Config, ReaderHandle, Registry};
 use sonarad::args::{self, Command, OutputKind, SystemKind};
 use sonarad::home::{self, Home};
@@ -13,6 +14,7 @@ use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
 use sonarad::{http, null_output::NullOutput, tcp, VERSION};
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -51,22 +53,71 @@ fn main() -> ExitCode {
     }
 }
 
-fn build_reader(engine: &str, output: OutputKind) -> Result<ReaderHandle, String> {
-    let registry = if engine == "fake" {
+/// `onnxruntime.dll` next to `sonarad.exe`; `SONARA_ORT_DYLIB` overrides
+/// it (a development aid: `cargo run` builds have no DLL next to them).
+fn onnxruntime_dll() -> PathBuf {
+    if let Some(p) = std::env::var_os("SONARA_ORT_DYLIB").filter(|p| !p.is_empty()) {
+        return PathBuf::from(p);
+    }
+    std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|d| d.join("onnxruntime.dll")))
+        .unwrap_or_else(|| PathBuf::from("onnxruntime.dll"))
+}
+
+/// The engines and the one to start with. `fake` runs alone (tests,
+/// conformance: no Kokoro, so nothing is ever downloaded). Otherwise OneCore
+/// and Kokoro, with OneCore speaking while Kokoro is not ready; without a
+/// named engine, Kokoro when ONNX Runtime is installed, else OneCore.
+fn build_registry(
+    engine: Option<&str>,
+    home: &Home,
+) -> Result<(Registry, String, Option<Kokoro>), String> {
+    if engine == Some("fake") {
         let mut r = Registry::default();
         r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
             .map_err(|e| e.to_string())?;
-        r
-    } else {
-        sonara_reader::default_registry()
+        return Ok((r, "fake".into(), None));
+    }
+    let mut registry = sonara_reader::default_registry();
+    let runtime = onnxruntime_dll();
+    let mut config = kokoro::Config::new(
+        home.models().join(kokoro::download::MODEL_SUBDIR),
+        runtime.clone(),
+    );
+    config.fallback = registry.get(sonara_engine::onecore::ID.as_str()).ok();
+    let has_onecore = config.fallback.is_some();
+    let k = Kokoro::new(config);
+    registry
+        .register(Arc::new(k.clone()))
+        .map_err(|e| e.to_string())?;
+    let chosen = match engine {
+        Some(e) => e.to_string(),
+        None if runtime.is_file() || !has_onecore => kokoro::ID.to_string(),
+        None => sonara_engine::onecore::ID.to_string(),
     };
+    Ok((registry, chosen, Some(k)))
+}
+
+fn build_reader(
+    engine: Option<&str>,
+    output: OutputKind,
+    home: &Home,
+) -> Result<ReaderHandle, String> {
+    let (registry, engine, kokoro) = build_registry(engine, home)?;
     let mut config = Config::new(registry);
-    config.engine = Some(engine.to_string());
+    config.engine = Some(engine.clone());
     if output == OutputKind::Null {
         let (out, events) = NullOutput::new();
         config = config.with_output(Box::new(out), events);
     }
-    ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))
+    let reader = ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))?;
+    // Prefetch: verify, download (in the background) and load the model now,
+    // so the first sentence is soon Kokoro's.
+    if let (Some(k), true) = (kokoro, engine == kokoro::ID.as_str()) {
+        k.prepare();
+    }
+    Ok(reader)
 }
 
 /// The platform of the `system` extension.
@@ -110,7 +161,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Err(AcquireError::Os(e)) => return Err(fail(e)),
     };
     let token = instance::new_token().map_err(fail)?;
-    let reader = build_reader(&args.engine, args.output).map_err(fail)?;
+    let reader = build_reader(args.engine.as_deref(), args.output, &home).map_err(fail)?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

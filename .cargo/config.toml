@@ -1,0 +1,6 @@
+# Link the C runtime statically into sonarad.exe and sonara-hook.exe, so
+# they need no Visual C++ redistributable (runtime M4, #200). The Universal
+# CRT (api-ms-win-crt-*) is part of Windows 10 and 11. onnxruntime.dll still
+# imports the VC++ runtime; packaging/runtime_dlls.py ships it app-locally.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

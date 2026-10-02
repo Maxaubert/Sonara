@@ -18,11 +18,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 0;
+pub const PROTOCOL_MINOR: u64 = 1;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
-/// and a client can `require` it.
+/// and a client can `require` it. 1.1 added `engine_status` (readiness and
+/// model download progress in `state.engine_status`).
 pub const CAPABILITIES: &[&str] = &[
     "core",
     "speak",
@@ -34,6 +35,7 @@ pub const CAPABILITIES: &[&str] = &[
     "events.state",
     "events.items",
     "events.log",
+    "engine_status",
 ];
 
 /// Extensions this host implements. `system` is offered only by a server
@@ -794,7 +796,7 @@ mod tests {
         let r = &o.reply;
         assert_eq!(r["id"], "h1");
         assert_eq!(r["version"], crate::VERSION);
-        assert_eq!(r["protocol"], json!({"major": 1, "minor": 0}));
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 1}));
         assert!(r["capabilities"]
             .as_array()
             .unwrap()

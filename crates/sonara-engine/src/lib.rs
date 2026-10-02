@@ -1,6 +1,7 @@
 //! Sonara L1 engines: the `Engine` trait every speech engine implements, the
 //! types it speaks in, a `Registry` that enforces the licence rule (R6), and
-//! the engines themselves (`onecore`; `fake` for tests).
+//! the engines themselves (`onecore`; `kokoro` behind its feature; `fake`
+//! for tests).
 //!
 //! An engine turns one chunk of text into PCM. It knows nothing about items,
 //! queues or playback: the reader state machine (`sonara_core::reader`) asks
@@ -12,12 +13,15 @@ pub mod wav;
 
 pub mod onecore;
 
+#[cfg(feature = "kokoro")]
+pub mod kokoro;
+
 #[cfg(feature = "test-util")]
 pub mod fake;
 
 pub use error::{Error, Result, MISSING_VOICE_DATA_FIX};
 pub use registry::Registry;
-pub use types::{EngineId, LicenseClass, PcmChunk, Voice};
+pub use types::{EngineId, EngineStatus, LicenseClass, PcmChunk, Readiness, Voice};
 
 /// The PCM chunks of one synthesis, in playback order.
 pub type PcmStream = Box<dyn Iterator<Item = Result<PcmChunk>> + Send>;
@@ -38,4 +42,8 @@ pub trait Engine: Send + Sync {
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream>;
     /// Abandon every synthesis in flight; each ends with `Error::Cancelled`.
     fn cancel(&self);
+    /// Readiness (spec 4.1 `engine_status`); cheap, polled by the reader.
+    fn status(&self) -> EngineStatus {
+        EngineStatus::ready()
+    }
 }

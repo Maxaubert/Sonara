@@ -10,7 +10,7 @@ const sonara = await connect({ clientName: "my-app", runtimePath: runtimePath() 
 ```
 
 - `runtimePath()`: absolute path of `bin/sonarad.exe` (a path inside `app.asar` becomes `app.asar.unpacked`).
-- `runtimeDir()`: the `bin` folder.
+- `runtimeDir()`: the `bin` folder: `sonarad.exe` and the files it needs next to it (`onnxruntime.dll` and the Visual C++ runtime DLLs for the Kokoro voice). Keep them together.
 
 With electron-builder, copy `bin/` with `extraResources` and pass `path.join(process.resourcesPath, "sonara", "sonarad.exe")` in a packaged app; see [Bundle Sonara in your app](https://github.com/Maxaubert/Sonara/blob/main/docs/bundling.md).
 
@@ -20,4 +20,4 @@ MIT. You may sell, close-source, relicense and code-sign your app; ship `THIRD_P
 
 ## Building this package (maintainers)
 
-`npm run build` (also run by `npm pack`/`npm publish`) copies `target/release/sonarad.exe` (from `cargo build -p sonarad --release`), any `onnxruntime*.dll` next to it, `LICENSE` and `THIRD_PARTY_NOTICES.md` from the repository, and refuses a version that differs from the Cargo workspace.
+`npm run build` (also run by `npm pack`/`npm publish`) copies `target/release/sonarad.exe` (from `cargo build -p sonarad --release`), the runtime files next to it (staged by `python packaging/runtime_dlls.py stage target/release`: `onnxruntime.dll` with its licence files for the Kokoro engine, and the Visual C++ runtime DLLs it imports), `LICENSE` and `THIRD_PARTY_NOTICES.md` from the repository, and refuses a version that differs from the Cargo workspace.

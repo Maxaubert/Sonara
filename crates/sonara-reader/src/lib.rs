@@ -33,7 +33,7 @@ pub use settings::{Key, Value, RATE_MAX, RATE_MIN, VOLUME_MAX};
 
 pub use sonara_audio::{AudioEvent, Output};
 pub use sonara_core::reader::{Control, ItemId, ItemPhase, NowPlaying, QueueMode, State};
-pub use sonara_engine::{Engine, EngineId, Registry, Voice};
+pub use sonara_engine::{Engine, EngineId, EngineStatus, Readiness, Registry, Voice};
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -50,6 +50,14 @@ pub enum Event {
     /// Something worth a log line: a failed synthesis, an engine that is not
     /// ready.
     Log { message: String },
+    /// The current engine's readiness changed (Kokoro loading or
+    /// downloading its model, speaking with its fallback meanwhile). Polled
+    /// about four times a second; engines that are always ready never send
+    /// it.
+    EngineStatus {
+        engine: EngineId,
+        status: EngineStatus,
+    },
 }
 
 impl From<sonara_core::reader::Event> for Event {
@@ -244,6 +252,11 @@ impl ReaderHandle {
     /// The current state snapshot.
     pub fn state(&self) -> Result<State> {
         self.call(Msg::State)
+    }
+
+    /// The current engine's readiness (spec 4.1 `engine_status`).
+    pub fn engine_status(&self) -> Result<EngineStatus> {
+        self.call(Msg::EngineStatus)
     }
 
     /// Voices of one engine, or of every registered engine.

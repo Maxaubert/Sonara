@@ -1,0 +1,19 @@
+[package]
+name = "misaki"
+# Vendored from misaki-rs 0.6.0 (see src/lib.rs for the changes).
+version = "0.6.0-sonara.1"
+edition = "2024"
+license = "MIT"
+description = "Vendored misaki-rs G2P (US English, no espeak) for Sonara's Kokoro engine"
+publish = false
+
+[dependencies]
+lzma-rust2 = { version = "0.15", default-features = false, features = ["std", "xz", "optimization"] }
+num2words = "0.4"
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true

@@ -6,4 +6,9 @@ allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", 
 confidence-threshold = 0.9
 
 [bans]
-deny = [{ name = "espeak-rs" }, { name = "espeak-ng-sys" }, { name = "piper-phonemize" }]
+# Spec R2/R6: no espeak or piper code, whatever the crate is called.
+deny = [
+    { name = "espeak-rs" }, { name = "espeak-rs-sys" }, { name = "espeak-ng" }, { name = "espeak-ng-sys" },
+    { name = "espeakng" }, { name = "espeakng-sys" }, { name = "espeak-sys" },
+    { name = "piper-phonemize" }, { name = "piper-phonemize-sys" },
+]
