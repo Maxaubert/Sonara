@@ -209,7 +209,7 @@ fn activity_follows_the_reader_state() {
     let c = Arc::new(c);
     c.set_mode(AudioMode::Duck);
     c.arm(true);
-    c.follow(reader.subscribe().unwrap());
+    c.follow(reader.subscribe().unwrap(), None);
     reader
         .speak("One. Two.", QueueMode::Append, false, None)
         .unwrap();
@@ -225,5 +225,33 @@ fn activity_follows_the_reader_state() {
     reader.control(Control::Stop).unwrap();
     assert!(eventually(|| !c.status().ducked));
     assert!((vol(&fake, 100) - 0.8).abs() < 1e-4);
+    reader.shutdown();
+}
+
+#[test]
+fn following_mid_item_engages_at_once() {
+    // The system extension may be enabled while an item is already being
+    // read: the current state counts, not only the next change.
+    let mut registry = Registry::default();
+    registry.register(Arc::new(FakeEngine::new())).unwrap();
+    let (out, rx) = TestOutput::new();
+    let reader =
+        ReaderHandle::new(Config::new(registry).with_output(Box::new(out.clone()), rx)).unwrap();
+    reader
+        .speak("One. Two.", QueueMode::Append, false, None)
+        .unwrap();
+    assert!(eventually(|| reader
+        .state()
+        .is_ok_and(|s| s.now_playing.is_some())));
+    let fake = Fake::new();
+    fake.add_audio(100, "vlc.exe", 0.8);
+    let (c, _) = control(&fake, Duration::ZERO);
+    let c = Arc::new(c);
+    c.set_mode(AudioMode::Duck);
+    c.arm(true);
+    c.follow(reader.subscribe().unwrap(), reader.state().ok().as_ref());
+    assert!(eventually(|| c.status().ducked), "{:?}", c.status());
+    reader.control(Control::Stop).unwrap();
+    assert!(eventually(|| !c.status().ducked));
     reader.shutdown();
 }

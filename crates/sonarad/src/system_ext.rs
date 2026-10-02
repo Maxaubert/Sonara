@@ -164,6 +164,10 @@ pub struct SystemExt {
     target: Arc<HotkeyTarget>,
     enabled: AtomicBool,
     holds: Mutex<Holds>,
+    /// Held across an arm or disarm, the flag change and its side effects
+    /// together: a release and a new hold never interleave so that the
+    /// extension ends up armed with ducking off and no hotkeys.
+    transition: Mutex<()>,
     hotkeys: Mutex<Option<Hotkeys>>,
 }
 
@@ -183,6 +187,7 @@ impl SystemExt {
             target: Arc::new(target),
             enabled: AtomicBool::new(false),
             holds: Mutex::new(Holds::default()),
+            transition: Mutex::new(()),
             hotkeys: Mutex::new(None),
         }
     }
@@ -221,6 +226,10 @@ impl SystemExt {
         self.holds.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    fn lock_transition(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.transition.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Enable the extension (idempotent): from now on it follows the
     /// reader's state.
     pub fn enable(&self, reader: &ReaderHandle) -> Result<(), Failure> {
@@ -229,7 +238,9 @@ impl SystemExt {
         }
         match reader.subscribe() {
             Ok(rx) => {
-                self.audio.follow(rx);
+                // Read after subscribing: enabled mid-item engages at once.
+                let now = reader.state().ok();
+                self.audio.follow(rx, now.as_ref());
                 Ok(())
             }
             Err(e) => {
@@ -241,6 +252,7 @@ impl SystemExt {
 
     /// A TCP client that asked for the extension: armed while it lives.
     pub fn hold(self: &Arc<Self>) -> SystemHold {
+        let _t = self.lock_transition();
         let arm = {
             let mut h = self.lock_holds();
             h.clients += 1;
@@ -254,6 +266,7 @@ impl SystemExt {
 
     /// A client asked with `keep_alive`: armed until the runtime exits.
     pub fn keep(&self) {
+        let _t = self.lock_transition();
         let arm = {
             let mut h = self.lock_holds();
             h.sticky = true;
@@ -265,6 +278,7 @@ impl SystemExt {
     }
 
     fn release(&self) {
+        let _t = self.lock_transition();
         let disarm = {
             let mut h = self.lock_holds();
             h.clients = h.clients.saturating_sub(1);
@@ -330,6 +344,7 @@ impl SystemExt {
 
     /// The keymap changed: register again while armed.
     fn reload_hotkeys(&self) {
+        let _t = self.lock_transition();
         if self.is_armed() {
             self.start_hotkeys();
         }

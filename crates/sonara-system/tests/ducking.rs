@@ -334,3 +334,49 @@ fn what_the_sweep_could_not_restore_survives_the_next_duck() {
     assert!(approx(fake.volume(100), 0.8));
     assert!(!state.exists());
 }
+
+fn volumes(fake: &Fake) -> Vec<f32> {
+    fake.world().audio.iter().map(|a| a.volume).collect()
+}
+
+#[test]
+fn the_sweep_restores_every_session_of_one_app() {
+    // One app on two render devices: two sessions with the same pid and
+    // name, each with its own original. A runtime killed while ducked must
+    // get both back, not only the first one (#131).
+    let (fake, mut d, state) = setup("twodev");
+    fake.add_audio(100, "zen.exe", 1.0);
+    fake.add_audio(100, "zen.exe", 0.6);
+    d.duck(&[], 20);
+    std::mem::forget(d);
+    assert_eq!(volumes(&fake), vec![0.2, 0.2]);
+    restore_from_state_file((fake.platform().audio)().as_ref(), &state);
+    let v = volumes(&fake);
+    assert!(
+        (v[0] - 1.0).abs() < 1e-4 && (v[1] - 0.6).abs() < 1e-4,
+        "{v:?}"
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+fn a_fresh_duck_keeps_the_original_of_a_pending_record() {
+    // zen is still at an old duck level (its restore failed): a deeper
+    // duck must not save that level as the original (stuck-at-30%).
+    let (fake, mut d, state) = setup("pendlower");
+    write_state(
+        &state,
+        json!({"sessions": [{"pid": 100, "name": "zen.exe", "original": 1.0}]}),
+    );
+    fake.add_audio(100, "zen.exe", 0.3);
+    fake.edit(|w| w.audio[0].broken = true);
+    d.recover();
+    assert_eq!(d.pending().len(), 1);
+    fake.edit(|w| w.audio[0].broken = false);
+    d.duck(&[], 20);
+    assert!(approx(fake.volume(100), 0.2));
+    assert_eq!(read_json(&state)["sessions"][0]["original"], 1.0);
+    d.restore();
+    assert!(approx(fake.volume(100), 1.0));
+    assert!(!state.exists());
+}

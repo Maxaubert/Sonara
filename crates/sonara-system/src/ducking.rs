@@ -12,6 +12,9 @@
 //! - A restore that fails on the session object is retried by a fresh
 //!   lookup (pid, then process name); what still fails stays recorded
 //!   (`pending`, and the file) for the next restore and the startup sweep.
+//!   A fresh duck of an app with a pending record keeps that record's
+//!   original. Each recorded session gets its own original back, also when
+//!   one app has several sessions (one per render device).
 //! - The audio engine and virtual routers are never ducked: their session
 //!   is the whole mix, Sonara's own speech included.
 //!
@@ -129,6 +132,8 @@ impl Ducker {
         }
         let target = f32::from(level.min(100)) / 100.0;
         let mut saved: Vec<(Box<dyn AudioSession>, Record)> = Vec::new();
+        // Pending records a fresh duck of the same session took over.
+        let mut taken: HashSet<usize> = HashSet::new();
         let enumerated = match self.sessions.sessions() {
             Ok(list) => {
                 for s in list {
@@ -151,20 +156,31 @@ impl Ducker {
                         // level as the original.
                         continue;
                     }
+                    // An app with a pending record is still at an old duck
+                    // level: its true original is the pending one, never
+                    // the level it is stuck at (the stuck-at-30% bug).
+                    let carried = (0..self.pending.len())
+                        .find(|i| !taken.contains(i) && same_app(&self.pending[*i], pid, &name));
                     let rec = Record {
                         pid: Some(pid),
                         name: if name.is_empty() { None } else { Some(name) },
-                        original,
+                        original: carried.map_or(original, |i| self.pending[i].original),
                     };
                     // On disk before the volume moves: a runtime killed
                     // right after lowering it never strands this app.
-                    let mut records = self.pending.clone();
+                    let mut records: Vec<Record> = (0..self.pending.len())
+                        .filter(|i| !taken.contains(i) && Some(*i) != carried)
+                        .map(|i| self.pending[i].clone())
+                        .collect();
                     records.extend(saved.iter().map(|(_, r)| r.clone()));
                     records.push(rec.clone());
                     write_state(&self.state, &records);
                     if let Err(e) = s.set_volume(target) {
                         log(&format!("session error while ducking: {e}"));
                         continue;
+                    }
+                    if let Some(i) = carried {
+                        taken.insert(i);
                     }
                     saved.push((s, rec));
                 }
@@ -178,12 +194,12 @@ impl Ducker {
         // Enumeration failed and nothing was lowered: stay un-ducked so the
         // next call retries.
         self.ducked = enumerated || !saved.is_empty();
-        // A pending record superseded by a fresh duck of the same app is
-        // dropped: the fresh original reflects any change made since.
-        self.pending.retain(|p| {
-            !saved.iter().any(|(_, r)| {
-                same_app(p, r.pid.unwrap_or(0), r.name.as_deref().unwrap_or_default())
-            })
+        // A pending record a fresh duck took over now lives in `saved`,
+        // with its original carried along.
+        let mut i = 0;
+        self.pending.retain(|_| {
+            i += 1;
+            !taken.contains(&(i - 1))
         });
         let records: Vec<Record> = self
             .pending
@@ -258,7 +274,12 @@ pub fn restore_records(
     for s in live {
         let pid = s.pid();
         let name = s.name();
-        let by_pid = records.iter().position(|r| {
+        // Each live session takes a record no earlier session used: one
+        // app with several sessions (one per render device) has a record
+        // per session, each with its own original.
+        let unused = |i: &usize| !done.contains(i) && !failed.contains(i);
+        let by_pid = (0..records.len()).filter(unused).find(|&i| {
+            let r = &records[i];
             r.pid == Some(pid)
                 && match (&r.name, name.is_empty()) {
                     // L-duck-pid: a reused pid belongs to another app now.
@@ -270,14 +291,11 @@ pub fn restore_records(
             if name.is_empty() {
                 return None;
             }
-            records
-                .iter()
-                .position(|r| r.name.as_deref() == Some(name.as_str()))
+            (0..records.len())
+                .filter(unused)
+                .find(|&i| records[i].name.as_deref() == Some(name.as_str()))
         });
         let Some(i) = idx else { continue };
-        if done.contains(&i) {
-            continue;
-        }
         match s.set_volume(records[i].original) {
             Ok(()) => {
                 done.insert(i);

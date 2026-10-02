@@ -217,14 +217,29 @@ impl AudioControl {
         self.call(Cmd::Sync);
     }
 
-    /// Follow a reader's events: each `State` sets the activity. The thread
-    /// ends with the event stream or this control.
-    pub fn follow(self: &Arc<Self>, events: Receiver<sonara_reader::Event>) {
+    /// Follow a reader's events: each `State` sets the activity. `initial`
+    /// is the reader's state read after subscribing (a subscription sends
+    /// none), so following mid-item engages at once. The thread ends with
+    /// the event stream or this control.
+    pub fn follow(
+        self: &Arc<Self>,
+        events: Receiver<sonara_reader::Event>,
+        initial: Option<&sonara_reader::State>,
+    ) {
         let me = Arc::downgrade(self);
+        let first = initial.map(Activity::of);
         let _ = std::thread::Builder::new()
             .name("sonara-system-events".into())
             .spawn(move || {
-                let mut last = None;
+                // Sent from this thread before any event, so a newer event
+                // queued meanwhile still has the last word.
+                if let Some(a) = first {
+                    match me.upgrade() {
+                        Some(c) => c.set_activity(a),
+                        None => return,
+                    }
+                }
+                let mut last = first;
                 while let Ok(e) = events.recv() {
                     let sonara_reader::Event::State(s) = e else {
                         continue;
