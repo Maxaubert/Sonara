@@ -1,0 +1,26 @@
+[package]
+name = "sonara-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sonara L3: streamed text, turns, decisions, earcons, mute levels and summaries over L2 channels"
+
+[features]
+default = ["summaries"]
+# Offer the real summarizer (a headless `claude -p` or `codex exec` child
+# process) as the default; without it summaries cannot be turned on.
+summaries = []
+
+[dependencies]
+# L3 builds on L2 and L1 only (R7, checked by tests/layering.rs).
+sonara-channels.workspace = true
+sonara-reader.workspace = true
+sonara-core.workspace = true
+sonara-engine.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+sonara-reader = { workspace = true, features = ["test-util"] }
+sonara-engine = { workspace = true, features = ["test-util"] }
+sonara-audio = { workspace = true, features = ["test-util"] }
+serde_json.workspace = true

@@ -739,6 +739,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonara-agent"
+version = "0.9.5"
+dependencies = [
+ "serde_json",
+ "sonara-audio",
+ "sonara-channels",
+ "sonara-core",
+ "sonara-engine",
+ "sonara-reader",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sonara-audio"
 version = "0.9.5"
 dependencies = [
