@@ -15,3 +15,6 @@ graphify-out/
 .claire/
 .claude/worktrees/
 .claude/settings.local.json
+
+# Rust build output
+/target/

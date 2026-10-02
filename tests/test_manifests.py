@@ -116,8 +116,19 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_8_5():
-    assert _pyproject_version() == "0.8.5"
+def test_pyproject_version_is_0_9_0():
+    assert _pyproject_version() == "0.9.0"
+
+
+def test_cargo_workspace_version_matches_pyproject():
+    # The Rust runtime (crates/) ships from the same release tag, so the
+    # [workspace.package] version moves with pyproject (runtime plan, M1).
+    import re
+    text = (REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    section = re.search(r"^\[workspace\.package\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    assert section, "Cargo.toml declares no [workspace.package]"
+    m = re.search(r'^version = "([^"]+)"', section.group(1), re.M)
+    assert m and m.group(1) == _pyproject_version()
 
 
 def test_manifests_have_no_em_dash():
