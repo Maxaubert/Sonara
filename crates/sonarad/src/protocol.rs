@@ -70,6 +70,7 @@ const EXTENSION_KEYS: &[&str] = &[
     "minqueue",
     "background_policy",
     "summaries",
+    "earcons",
     "audio_mode",
     "duck_level",
     "hotkeys",
@@ -147,6 +148,9 @@ pub struct Server {
     channels: Slot,
     /// The `agent` extension (needs `channels`), once a client enabled it.
     agent: agent_ext::Slot,
+    /// The earcon clips the agent plays (bundled, or a custom folder in
+    /// front: `with_earcons`).
+    earcons: Arc<sonara_agent::Library>,
     /// The `system` extension, when this host offers it (`with_system`).
     system: Option<Arc<SystemExt>>,
     /// Serializes enabling an extension.
@@ -250,6 +254,7 @@ impl Server {
             retiring: Arc::new(Mutex::new(false)),
             channels: Arc::new(OnceLock::new()),
             agent: Arc::new(OnceLock::new()),
+            earcons: Arc::new(sonara_agent::Library::bundled()),
             system: None,
             enabling: Mutex::new(()),
             store: Store::memory(),
@@ -262,6 +267,13 @@ impl Server {
     pub fn with_config(mut self, store: Arc<Store>) -> Self {
         debug_assert!(self.system.is_none(), "with_config before with_system");
         self.store = store;
+        self
+    }
+
+    /// Play `earcons` (custom WAVs in front of the bundled clips) once the
+    /// agent extension is enabled.
+    pub fn with_earcons(mut self, earcons: Arc<sonara_agent::Library>) -> Self {
+        self.earcons = earcons;
         self
     }
 
@@ -335,6 +347,7 @@ impl Server {
             let ch = self.channels.get().expect("enabled above").clone();
             let config = sonara_agent::Config {
                 settings: agent_ext::settings_from(&self.store),
+                earcons: self.earcons.clone(),
                 ..Default::default()
             };
             let agent = match Agent::new(ch.clone(), config) {
@@ -345,6 +358,7 @@ impl Server {
                     settings.summaries.enabled = false;
                     let config = sonara_agent::Config {
                         settings,
+                        earcons: self.earcons.clone(),
                         ..Default::default()
                     };
                     Agent::new(ch, config).map_err(|e| engine(e.to_string()))?

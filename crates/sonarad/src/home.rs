@@ -88,6 +88,12 @@ impl Home {
         }
     }
 
+    /// `earcons\`: `<kind>.wav` files that replace the bundled earcons
+    /// (`sonara_agent::earcon::Library`).
+    pub fn earcons(&self) -> PathBuf {
+        self.dir.join("earcons")
+    }
+
     /// `models\<engine>\<version>\` (spec section 3).
     pub fn models(&self) -> PathBuf {
         self.dir.join("models")

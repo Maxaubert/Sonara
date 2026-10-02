@@ -13,7 +13,12 @@
 //!   channel fed is always the reader's current item.
 //! - A switch between channels is announced by a short item (`"<label>."`,
 //!   or `"<label>, reading again."` for a replay) fed before the new
-//!   channel's first entry. `Config::announce` turns it off.
+//!   channel's first entry. `Config::announce` turns it off;
+//!   `set_announce_texts` changes the texts (L3 says "Session changed:
+//!   <label>."). `on_announce` runs a hook right before an announcement
+//!   is handed to the reader (L3 plays its session-change earcon there,
+//!   so the chime comes first); it runs under the driver's lock and must
+//!   not call back into `Channels`.
 //! - `next_channel` and `speak` with `interrupt` cut the current item (the
 //!   reader's `interrupt`); another channel's message cut that way is read
 //!   again later. The cut only replaces the current item: text already
@@ -80,6 +85,20 @@ impl Default for Config {
     }
 }
 
+/// A switch announcement about to be read (`Channels::on_announce`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Announced {
+    pub channel: String,
+    pub label: String,
+    /// The batch is read again from the top.
+    pub replay: bool,
+    /// A manual switch (`next_channel`, `restart` with a channel).
+    pub manual: bool,
+}
+
+/// The hook of `Channels::on_announce`.
+pub type AnnounceHook = Arc<dyn Fn(&Announced) + Send + Sync>;
+
 /// Which channel an item came from (`state.now_playing.channel`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tag {
@@ -101,6 +120,7 @@ struct InFlight {
 struct State {
     router: Router,
     config: Config,
+    on_announce: Option<AnnounceHook>,
     in_flight: Option<InFlight>,
     tags: VecDeque<(ItemId, Tag)>,
 }
@@ -143,6 +163,7 @@ impl Channels {
             state: Mutex::new(State {
                 router: Router::new(),
                 config,
+                on_announce: None,
                 in_flight: None,
                 tags: VecDeque::new(),
             }),
@@ -416,6 +437,21 @@ impl Channels {
         self.lock().config.announce
     }
 
+    /// Replace the announcement texts (`{label}` is the channel's label):
+    /// `text` for a switch, `replay` for a batch read again from the top.
+    pub fn set_announce_texts(&self, text: &str, replay: &str) {
+        let mut st = self.lock();
+        st.config.announce_text = text.to_string();
+        st.config.replay_text = replay.to_string();
+    }
+
+    /// Run `hook` right before each spoken switch announcement is handed
+    /// to the reader (`None` removes it). It runs under the driver's lock:
+    /// it must not call back into `Channels`.
+    pub fn on_announce(&self, hook: Option<AnnounceHook>) {
+        self.lock().on_announce = hook;
+    }
+
     /// The channel an item came from, if a channel fed it (recent items).
     pub fn tag(&self, item: ItemId) -> Option<Tag> {
         let st = self.lock();
@@ -507,7 +543,7 @@ impl Inner {
                     channel,
                     label,
                     replay,
-                    ..
+                    manual,
                 } => {
                     if !st.config.announce {
                         continue;
@@ -518,6 +554,14 @@ impl Inner {
                         &st.config.announce_text
                     };
                     let text = template.replace("{label}", &label);
+                    if let Some(hook) = &st.on_announce {
+                        hook(&Announced {
+                            channel: channel.clone(),
+                            label: label.clone(),
+                            replay,
+                            manual,
+                        });
+                    }
                     (channel, None, text, Some(label))
                 }
                 Feed::Entry { channel, entry } => {

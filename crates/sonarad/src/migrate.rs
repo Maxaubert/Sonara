@@ -19,6 +19,10 @@
 //!   left out (and noted). Only when the home has no `keymap.json` yet.
 //! - `session_prefs.json`: per-session `name` (as `label`), `voice` and
 //!   `muted`. Only when the home has none yet.
+//! - The user's own earcons (`config.json` `earcons`: `{kind: path}`):
+//!   each file that exists is copied to `<home>\earcons\<kind>.wav` (the
+//!   runtime's custom earcons folder), unless one is there already. Paths
+//!   to the plugin's bundled WAVs (older versions saved them) are skipped.
 //!
 //! The plugin's folder is only read, never changed. `config.json` gets the
 //! marker key `_migrated` (written even when nothing was imported), so the
@@ -346,6 +350,51 @@ pub fn convert_prefs(py: &Map<String, Value>, legacy_dir: &Path) -> Map<String, 
         .collect()
 }
 
+/// A path to one of the Python plugin's own earcon WAVs (older versions
+/// froze them into `config.json`): in its package folder or its app copy.
+fn bundled_earcon(path: &str, legacy_dir: &Path) -> bool {
+    let p = path.replace('/', "\\").to_lowercase();
+    let app = legacy_dir.join("app").to_string_lossy().to_lowercase();
+    p.contains(r"sonara\platform\windows\earcons\") || p.starts_with(&app)
+}
+
+/// Copy the plugin's custom earcons (`earcons: {kind: path}`) into
+/// `<home>\earcons\<kind>.wav`. Returns the notes for the log.
+pub fn import_earcons(py: &Map<String, Value>, home: &Path, legacy_dir: &Path) -> Vec<String> {
+    let mut notes = Vec::new();
+    let Some(Value::Object(map)) = py.get("earcons") else {
+        return notes;
+    };
+    for (kind, path) in map {
+        let Some(path) = path.as_str().filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        if bundled_earcon(path, legacy_dir) {
+            continue;
+        }
+        if sonara_agent::Earcon::parse(kind).is_none() {
+            notes.push(format!("earcons: unknown kind '{kind}' not imported"));
+            continue;
+        }
+        let src = Path::new(path);
+        if !src.is_file() {
+            notes.push(format!("earcons: {kind}: {path} is missing; not imported"));
+            continue;
+        }
+        let dir = home.join("earcons");
+        let dest = dir.join(format!("{kind}.wav"));
+        if dest.exists() {
+            continue;
+        }
+        let copied = std::fs::create_dir_all(&dir).and_then(|_| std::fs::copy(src, &dest));
+        notes.push(match copied {
+            Ok(_) => format!("earcons: {kind} imported from {path}"),
+            Err(e) => format!("earcons: cannot copy {path} to {}: {e}", dest.display()),
+        });
+    }
+    notes
+}
+
 /// Migrate `legacy_dir` into `home` if `home` has no `config.json` and the
 /// plugin left files. Returns the notes for the log, or `None` when there
 /// was nothing to do.
@@ -392,6 +441,9 @@ pub fn run(home: &Path, legacy_dir: &Path) -> Option<Vec<String>> {
             }
         }
     }
+    if let Some(c) = &py_config {
+        notes.extend(import_earcons(c, home, legacy_dir));
+    }
     let (mut user, n) = py_config
         .map(|c| convert_config(&c, legacy_dir))
         .unwrap_or_default();
@@ -431,6 +483,46 @@ mod tests {
 
     fn obj(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn the_plugins_own_earcons_are_copied_to_the_earcons_folder() {
+        let legacy = tmp();
+        let home = tmp();
+        let mine = legacy.join("my-chime.wav");
+        std::fs::write(&mine, b"RIFF mine").unwrap();
+        let bundled = legacy
+            .join("app")
+            .join("sonara")
+            .join("platform")
+            .join("windows")
+            .join("earcons")
+            .join("nav.wav");
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        std::fs::write(&bundled, b"RIFF bundled").unwrap();
+        let py = obj(json!({"earcons": {
+            "session_change": mine.display().to_string(),
+            "nav": bundled.display().to_string(),
+            "turn_done": legacy.join("gone.wav").display().to_string(),
+            "ready": mine.display().to_string(),
+        }}));
+        let notes = import_earcons(&py, &home, &legacy);
+        let dir = home.join("earcons");
+        assert_eq!(
+            std::fs::read(dir.join("session_change.wav")).unwrap(),
+            b"RIFF mine"
+        );
+        assert!(!dir.join("nav.wav").exists(), "bundled paths are skipped");
+        assert!(!dir.join("turn_done.wav").exists());
+        assert!(notes.iter().any(|n| n.contains("missing")), "{notes:?}");
+        assert!(notes.iter().any(|n| n.contains("'ready'")), "{notes:?}");
+        // A file already in the folder is kept.
+        std::fs::write(dir.join("session_change.wav"), b"RIFF kept").unwrap();
+        import_earcons(&py, &home, &legacy);
+        assert_eq!(
+            std::fs::read(dir.join("session_change.wav")).unwrap(),
+            b"RIFF kept"
+        );
     }
 
     #[test]

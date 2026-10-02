@@ -66,6 +66,7 @@ fn rig_on(home: PathBuf) -> Rig {
         Lifetime::new(Duration::from_secs(30), false),
     )
     .with_config(store)
+    .with_earcons(earcons_of(&home))
     .with_system(SystemHost {
         platform: fake.platform(),
         home: home.clone(),
@@ -79,6 +80,18 @@ fn rig_on(home: PathBuf) -> Rig {
         out,
         home,
     }
+}
+
+/// The custom earcons of `home`, logged to its `sonarad.log` (as `main`).
+fn earcons_of(home: &std::path::Path) -> Arc<sonara_agent::Library> {
+    let h = sonarad::home::Home {
+        dir: home.to_path_buf(),
+        is_default: false,
+    };
+    Arc::new(sonara_agent::Library::new(
+        h.earcons(),
+        Some(Arc::new(move |line: &str| h.log(line))),
+    ))
 }
 
 fn call(s: &Server, session: &mut Session, req: Value) -> Value {
@@ -477,6 +490,177 @@ fn hotkeys_drive_the_agent_mute_cycle_and_channel_switches() {
     assert!(eventually(|| channels.engaged().as_deref() == Some("a")));
     r.fake.press(Action::NextChannel.id());
     assert!(eventually(|| channels.engaged().as_deref() == Some("b")));
+}
+
+/// Open labelled channels `a` and `b` (as the Claude hook does, with the
+/// session's folder) and give each a message; wait until `a` reads.
+fn two_sessions(r: &Rig, session: &mut Session) {
+    let s = &r.server;
+    for (id, label) in [("a", "alpha-repo"), ("b", "beta-repo")] {
+        ok(
+            s,
+            session,
+            json!({"type": "channel_open", "channel": id, "label": label}),
+        );
+    }
+    ok(
+        s,
+        session,
+        json!({"type": "speak", "channel": "a", "text": "Alpha words."}),
+    );
+    ok(
+        s,
+        session,
+        json!({"type": "speak", "channel": "b", "text": "Beta words."}),
+    );
+    let reader = s.reader().clone();
+    assert!(eventually(|| reader
+        .state()
+        .unwrap()
+        .now_playing
+        .is_some_and(|n| n.text == "Alpha words.")));
+}
+
+fn playing(s: &Server) -> Option<String> {
+    s.reader().state().unwrap().now_playing.map(|n| n.text)
+}
+
+/// The last `PlayClip` comes before the last `Play` (the earcon was handed
+/// to the output before the announcement).
+fn clip_before_last_play(out: &TestOutput) -> bool {
+    let calls = out.calls();
+    let clip = calls
+        .iter()
+        .rposition(|c| matches!(c, sonara_audio::OutputCall::PlayClip { .. }));
+    let play = calls
+        .iter()
+        .rposition(|c| matches!(c, sonara_audio::OutputCall::Play { .. }));
+    matches!((clip, play), (Some(c), Some(p)) if c < p)
+}
+
+#[test]
+fn the_next_session_hotkey_chimes_then_says_session_changed() {
+    // Python controls.py on_next_session + "Session changed: {0}." (#209).
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    let chimes = s.agent().unwrap().subscribe();
+    two_sessions(&r, &mut session);
+    r.fake.press(Action::NextChannel.id());
+    assert!(
+        eventually(|| playing(s).as_deref() == Some("Session changed: beta-repo.")),
+        "playing {:?}",
+        playing(s)
+    );
+    assert!(eventually(|| r.out.loaded().is_some()));
+    assert!(clip_before_last_play(&r.out), "{:?}", r.out.calls());
+    assert_eq!(
+        chimes.recv_timeout(Duration::from_secs(5)).unwrap(),
+        sonara_agent::Earcon::SessionChange
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(chimes.try_recv().is_err(), "one chime per press");
+    // Announcements off: the press still chimes, nothing is said.
+    ok(
+        s,
+        &mut session,
+        json!({"type": "set", "key": "channel_announce", "value": "off"}),
+    );
+    settle_debounce();
+    r.fake.press(Action::NextChannel.id());
+    assert_eq!(
+        chimes.recv_timeout(Duration::from_secs(5)).unwrap(),
+        sonara_agent::Earcon::SessionChange
+    );
+    assert!(eventually(
+        || playing(s).is_some_and(|t| !t.starts_with("Session changed"))
+    ));
+}
+
+#[test]
+fn an_automatic_session_switch_chimes_then_says_session_changed() {
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    let chimes = s.agent().unwrap().subscribe();
+    two_sessions(&r, &mut session);
+    assert!(chimes.try_recv().is_err());
+    r.out.start();
+    r.out.finish();
+    assert!(eventually(
+        || playing(s).as_deref() == Some("Session changed: beta-repo.")
+    ));
+    assert_eq!(
+        chimes.recv_timeout(Duration::from_secs(5)).unwrap(),
+        sonara_agent::Earcon::SessionChange
+    );
+    assert!(eventually(|| r.out.loaded().is_some()));
+    assert!(clip_before_last_play(&r.out), "{:?}", r.out.calls());
+}
+
+#[test]
+fn custom_earcons_are_listed_played_and_bad_files_logged() {
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["agent"]}),
+    );
+    let v = ok(s, &mut session, json!({"type": "get", "key": "earcons"}))["value"].clone();
+    assert_eq!(v["custom"], json!([]));
+    assert_eq!(v["kinds"].as_array().unwrap().len(), 8);
+    let folder = r.home.join("earcons");
+    assert_eq!(v["folder"], json!(folder.display().to_string()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let pcm = sonara_engine::PcmChunk {
+        samples: (0..800)
+            .map(|i| if i % 16 < 8 { 8000 } else { -8000 })
+            .collect(),
+        sample_rate: 8000,
+        channels: 1,
+    };
+    std::fs::write(
+        folder.join("turn_done.wav"),
+        sonara_engine::wav::encode(&pcm),
+    )
+    .unwrap();
+    std::fs::write(folder.join("choice.wav"), b"not a wav").unwrap();
+    let v = ok(s, &mut session, json!({"type": "get", "key": "earcons"}))["value"].clone();
+    assert_eq!(v["custom"], json!(["turn_done"]));
+    let r2 = call(
+        s,
+        &mut session,
+        json!({"type": "set", "key": "earcons", "value": {}}),
+    );
+    assert_eq!(r2["error"]["code"], "E_BAD_REQUEST", "{r2}");
+    ok(
+        s,
+        &mut session,
+        json!({"type": "earcon", "kind": "turn_done"}),
+    );
+    assert!(eventually(|| r.out.calls().contains(
+        &sonara_audio::OutputCall::PlayClip {
+            samples: 800,
+            sample_rate: 8000
+        }
+    )));
+    let log = std::fs::read_to_string(r.home.join("logs").join("sonarad.log")).unwrap();
+    assert!(
+        log.contains("choice.wav") && log.contains("using the bundled choice clip"),
+        "{log}"
+    );
 }
 
 #[test]

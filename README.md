@@ -101,15 +101,19 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   has no earcon; it is read in its place.
 - **Other earcons** come from the runtime: `turn_done` when a reply ends, `nav` and `nav_edge`
   for a restart or flush (`nav_edge`: nothing to restart or flush), `session_change` when the
-  voice moves to another session, `error` when speech fails, and `summary_failed` when a
-  summary-mode turn had no text to read.
+  voice moves to another session (followed by "Session changed: *folder*."), `error` when
+  speech fails, and `summary_failed` when a summary-mode turn had no text to read. You can
+  replace any of them with your own sound: see [Custom chimes](#custom-chimes).
 - **A new prompt starts fresh.** When you send the next prompt, the previous reply is dropped
   and Sonara follows the new one.
 - **Restart, never rewind.** Ctrl+Alt+Up restarts the latest reply from the top (in summary
   mode it re-reads the last summary). There is no stepping back through older replies.
 - **Several sessions.** Every session's latest reply is read, one after another. With *Background sessions: earcons only* on the settings page, only that
   session is read; the others play their earcons and their latest reply waits. Ctrl+Alt+P moves
-  the voice to the next session; an unread reply resumes, a read one starts over.
+  the voice to the next session; an unread reply resumes, a read one starts over. Every move to
+  another session, by the hotkey or because another session's reply is next, plays the
+  `session_change` chime and then says "Session changed: *folder*." ("..., reading again." when
+  it starts over). Give a session another name on the Sessions page.
 
 ### Answering prompts
 
@@ -164,7 +168,7 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 |---|---|
 | Speech | Engine (Kokoro or Windows), voice (with a preview button), speaking rate, mute level, verbosity, background sessions |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and the minimum queue before live reading starts |
-| Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause) and the duck level |
+| Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
 | Sessions | A name, mute and voice per Claude Code session, and switch announcements |
 | Hotkeys | Every binding, with AltGr and conflict warnings, and a reset to defaults |
 | Advanced | Summary timeout and settle time |
@@ -173,6 +177,18 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 **Audio mode.** *Duck* lowers other apps to the duck level while Sonara speaks; *Pause* pauses
 media that Windows can control (music, video players) and resumes it afterwards. Either way
 Sonara restores them when it stops, and on the next start if it was killed mid-sentence.
+
+### Custom chimes
+
+Put a WAV file named after a chime in `%LOCALAPPDATA%\Sonara\earcons\` and Sonara plays it
+instead of the built-in sound: `session_change.wav`, `turn_done.wav`, `choice.wav`,
+`permission.wav`, `summary_failed.wav`, `error.wav`, `nav.wav` or `nav_edge.wav`. Any WAV works
+(8 to 32-bit or float, mono or stereo, any sample rate, up to 10 seconds). It is used from the
+next time that chime plays, with no restart; delete the file to get the built-in sound back. The
+Audio page shows the folder and which chimes are your own. A file Sonara cannot play is skipped
+(the built-in sound plays) and `logs\sonarad.log` says why. Chimes you set up in the Python
+version (`~/.sonara`) are copied there when Sonara imports its settings (the runtime's first
+start; from 0.11.1).
 
 **Summary mode.** Instead of reading a whole reply, Sonara waits for it to finish and speaks a
 short recap. Questions, plans and permission prompts are still read in full and every earcon

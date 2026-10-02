@@ -5,7 +5,7 @@ description: Uninstall Sonara (stops it; removes its runtime and files, keeping 
 First ask the user, with the AskUserQuestion tool (multiple choice, all optional), what
 to keep:
 
-- **Settings**: voice, speed, hotkeys and session names (`settings`)
+- **Settings**: voice, speed, hotkeys, session names and your own chimes (`settings`)
 - **Voice model**: the downloaded Kokoro voice model, about 350 MB (`models`)
 - **Logs** (`logs`)
 

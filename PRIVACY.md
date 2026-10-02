@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-02 (0.11: the Rust runtime in `%LOCALAPPDATA%\Sonara`)_
+_Last updated: 2026-10-03 (0.11.1: your own chimes in `earcons`, the start line in `sonarad.log`)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -70,6 +70,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 | `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, summary options and your own summary instructions), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
 | `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
+| `earcons\` | Your own chimes, if you put any there: `<kind>.wav` files (for example `session_change.wav`) that Sonara plays instead of its built-in sounds. Created empty at start; Sonara only reads it |
 
 **Runtime state**
 
@@ -84,7 +85,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 
 | File | What it holds |
 |---|---|
-| `logs\sonarad.log` | What the settings import did and settings that could not be applied. No session text |
+| `logs\sonarad.log` | One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. No session text |
 | `logs\bootstrap.log` | Each runtime download and install, with its address and result |
 
 **The Python plugin's folder.** Up to 0.10 Sonara kept its files in `~/.sonara`

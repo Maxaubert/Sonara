@@ -31,7 +31,15 @@
 //!   channel gets a new turn.
 //! - `Silence` (muting) is `control(Stop)` over every channel.
 //! - Earcons are played with `ReaderHandle::play_clip` and reported to
-//!   `subscribe`rs.
+//!   `subscribe`rs. The clips come from `Config::earcons` (the bundled
+//!   ones, or a folder of custom WAVs in front: `earcon::Library`).
+//! - **Session switches** (the Python daemon's "Session changed"): the
+//!   agent sets L2's announcement texts to `SESSION_CHANGED` /
+//!   `SESSION_CHANGED_AGAIN` and plays the `session_change` earcon right
+//!   before each announcement is handed to the reader (L2's
+//!   `on_announce`), so every switch the user hears, automatic or manual,
+//!   chimes first and then says "Session changed: <label>.". Not at mute
+//!   level 2.
 //! - Timers and summarizer jobs run on their own threads, which hold the
 //!   agent weakly and end with it.
 pub mod decision;
@@ -41,13 +49,14 @@ pub mod settings;
 pub mod summarizer;
 
 pub use decision::{AskKind, Choice};
-pub use earcon::Earcon;
+pub use earcon::{Earcon, Library};
 pub use rules::{Action, Ask, Job, Rules, Stale, Timer};
 pub use settings::{BackgroundPolicy, Settings, Style, SummaryCommand, SummarySettings, Verbosity};
 pub use sonara_channels::{Channels, Control, QueueMode};
 pub use summarizer::Summarizer;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
@@ -56,6 +65,12 @@ use std::time::{Duration, Instant};
 /// (`Config::forget_after`): far longer than any turn, so only a session
 /// that died without `SessionEnd` is affected.
 pub const FORGET_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// The switch announcement (`{label}`: the session's label), as the Python
+/// plugin said it.
+pub const SESSION_CHANGED: &str = "Session changed: {label}.";
+/// The switch announcement when the session is read again from the top.
+pub const SESSION_CHANGED_AGAIN: &str = "Session changed: {label}, reading again.";
 
 /// How often the dead-session sweep runs at most.
 const SWEEP_EVERY: Duration = Duration::from_secs(60);
@@ -98,6 +113,8 @@ pub struct Config {
     pub summarizer: Option<Arc<dyn Summarizer>>,
     /// A channel silent this long has its turn state freed (module docs).
     pub forget_after: Duration,
+    /// The earcon clips (default: the bundled ones).
+    pub earcons: Arc<Library>,
 }
 
 impl Default for Config {
@@ -106,6 +123,7 @@ impl Default for Config {
             settings: Settings::default(),
             summarizer: default_summarizer(),
             forget_after: FORGET_AFTER,
+            earcons: Arc::new(Library::bundled()),
         }
     }
 }
@@ -144,6 +162,10 @@ struct Inner {
     forget_after: Duration,
     /// Locked only while `rules` is held.
     seen: Mutex<Seen>,
+    earcons: Arc<Library>,
+    /// The mute level, readable without the rules' lock (the
+    /// session-change earcon is played under L2's lock).
+    mute_level: AtomicU8,
 }
 
 /// L3 over L2. Clones share it.
@@ -166,19 +188,38 @@ impl Agent {
             return Err(Error::NoSummarizer);
         }
         channels.set_focus_only(config.settings.background == BackgroundPolicy::EarconOnly)?;
-        Ok(Agent {
-            inner: Arc::new(Inner {
-                channels,
-                rules: Mutex::new(Rules::new(config.settings)),
-                summarizer: config.summarizer,
-                subscribers: Mutex::new(Vec::new()),
-                forget_after: config.forget_after,
-                seen: Mutex::new(Seen {
-                    at: HashMap::new(),
-                    swept: Instant::now(),
-                }),
+        channels.set_announce_texts(SESSION_CHANGED, SESSION_CHANGED_AGAIN);
+        let mute_level = AtomicU8::new(config.settings.mute_level);
+        let inner = Arc::new(Inner {
+            channels: channels.clone(),
+            rules: Mutex::new(Rules::new(config.settings)),
+            summarizer: config.summarizer,
+            subscribers: Mutex::new(Vec::new()),
+            forget_after: config.forget_after,
+            seen: Mutex::new(Seen {
+                at: HashMap::new(),
+                swept: Instant::now(),
             }),
-        })
+            earcons: config.earcons,
+            mute_level,
+        });
+        // Called under L2's lock: it only plays a clip and reports it.
+        let weak = Arc::downgrade(&inner);
+        channels.on_announce(Some(Arc::new(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                if inner.mute_level.load(Ordering::SeqCst) < 2 {
+                    if let Err(e) = inner.play(Earcon::SessionChange) {
+                        eprintln!("[agent] session_change earcon: {e}");
+                    }
+                }
+            }
+        })));
+        Ok(Agent { inner })
+    }
+
+    /// The earcon clips in force (bundled, or custom files in front).
+    pub fn earcons(&self) -> &Arc<Library> {
+        &self.inner.earcons
     }
 
     /// The channels underneath.
@@ -332,8 +373,9 @@ impl Agent {
                 settings::MUTE_LEVEL_MAX
             )));
         }
-        self.apply(None, |r| Ok(r.set_mute_level(level)))
-            .map(|_| ())
+        let done = self.apply(None, |r| Ok(r.set_mute_level(level)));
+        self.inner.mute_level.store(level, Ordering::SeqCst);
+        done.map(|_| ())
     }
 
     pub fn set_verbosity(&self, v: Verbosity) {
@@ -420,6 +462,19 @@ impl Inner {
         self.seen.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Play an earcon now and report it to the subscribers.
+    fn play(&self, e: Earcon) -> Result<()> {
+        let clip = self.earcons.clip(e);
+        self.channels
+            .reader()
+            .play_clip(clip.samples.clone(), clip.sample_rate)?;
+        self.subscribers
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .retain(|s| s.alive.strong_count() > 0 && s.tx.send(e).is_ok());
+        Ok(())
+    }
+
     fn forget_seen(&self, channel: &str) {
         self.lock_seen().at.remove(channel);
     }
@@ -495,15 +550,7 @@ impl Inner {
                     ch.authorize(&channel)?;
                 }
             }
-            Action::Earcon(e) => {
-                let clip = e.clip();
-                ch.reader()
-                    .play_clip(clip.samples.clone(), clip.sample_rate)?;
-                self.subscribers
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .retain(|s| s.alive.strong_count() > 0 && s.tx.send(e).is_ok());
-            }
+            Action::Earcon(e) => self.play(e)?,
             Action::Wipe { channel, resume } => {
                 if ch.channel(&channel).is_none() {
                     return Ok(());

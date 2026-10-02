@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 /// What the user may keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keep {
-    /// `config.json`, `keymap.json`, `session_prefs.json`.
+    /// `config.json`, `keymap.json`, `session_prefs.json` and the custom
+    /// earcons (`earcons\`).
     Settings,
     /// `models\` (the Kokoro voice model, about 350 MB).
     Models,
@@ -20,7 +21,12 @@ pub const DEFAULT_KEEP: &[Keep] = &[Keep::Settings];
 impl Keep {
     fn names(self) -> &'static [&'static str] {
         match self {
-            Keep::Settings => &["config.json", "keymap.json", "session_prefs.json"],
+            Keep::Settings => &[
+                "config.json",
+                "keymap.json",
+                "session_prefs.json",
+                "earcons",
+            ],
             Keep::Models => &["models"],
             Keep::Logs => &["logs"],
         }
@@ -177,6 +183,7 @@ mod tests {
         std::fs::create_dir_all(home.join("models").join("kokoro")).unwrap();
         std::fs::create_dir_all(home.join("logs")).unwrap();
         std::fs::create_dir_all(home.join("state")).unwrap();
+        std::fs::create_dir_all(home.join("earcons")).unwrap();
         for f in [
             "config.json",
             "keymap.json",
@@ -190,11 +197,17 @@ mod tests {
         assert!(r.failed.is_empty(), "{:?}", r.failed);
         assert!(!root.exists() && !home.join("models").exists() && !home.join("state").exists());
         assert!(!home.join("runtime.json").exists());
-        for kept in ["config.json", "keymap.json", "session_prefs.json", "logs"] {
+        for kept in [
+            "config.json",
+            "keymap.json",
+            "session_prefs.json",
+            "earcons",
+            "logs",
+        ] {
             assert!(home.join(kept).exists(), "{kept}");
         }
         assert!(home.join(STOPPED).is_file());
         assert!(r.removed.contains(&root));
-        assert_eq!(r.kept.len(), 4);
+        assert_eq!(r.kept.len(), 5);
     }
 }

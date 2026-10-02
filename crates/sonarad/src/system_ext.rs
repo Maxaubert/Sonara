@@ -174,7 +174,17 @@ impl HotkeyTarget {
                     return Ok(());
                 };
                 match ch.next_channel().map_err(|e| e.to_string())? {
-                    Some(_) => self.earcon(Earcon::SessionChange),
+                    // An announced switch chimes as its "Session changed"
+                    // announcement is fed (the agent's L2 hook: earcon
+                    // first); a switch that is not announced (announcements
+                    // off, a channel without a label) still chimes here.
+                    Some(t) => {
+                        let announced =
+                            ch.announce() && ch.channel(&t).is_some_and(|c| c.label.is_some());
+                        if !announced {
+                            self.earcon(Earcon::SessionChange);
+                        }
+                    }
                     // Python controls.py: a spoken "No session." (it had no
                     // earcon for it).
                     None => self.cue("No session.", None),

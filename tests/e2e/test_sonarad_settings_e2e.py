@@ -260,3 +260,23 @@ def test_no_saved_voice_note_when_the_voice_applies(live, browser):
     page = open_page(browser, lv.url)
     pw.expect(page.locator("#voice-saved")).to_be_hidden()
     page.close()
+
+
+def test_the_audio_page_shows_the_custom_chimes_folder(live, browser):
+    # #209: <home>/earcons/<kind>.wav replaces a built-in chime.
+    lv = live()
+    folder = lv.home / "earcons"
+    page = open_page(browser, lv.url)
+    page.click("[data-page=audio]")
+    pw.expect(page.locator("#earcons-folder")).to_have_text(str(folder))
+    pw.expect(page.locator("#earcons-custom")).to_contain_text("None yet")
+    page.close()
+    pcm = b"".join((8000 if i % 16 < 8 else -8000).to_bytes(2, "little", signed=True) for i in range(800))
+    fmt = (1).to_bytes(2, "little") + (1).to_bytes(2, "little") + (8000).to_bytes(4, "little") \
+        + (16000).to_bytes(4, "little") + (2).to_bytes(2, "little") + (16).to_bytes(2, "little")
+    body = b"WAVEfmt " + len(fmt).to_bytes(4, "little") + fmt + b"data" + len(pcm).to_bytes(4, "little") + pcm
+    (folder / "turn_done.wav").write_bytes(b"RIFF" + len(body).to_bytes(4, "little") + body)
+    page = open_page(browser, lv.url)
+    page.click("[data-page=audio]")
+    pw.expect(page.locator("#earcons-custom")).to_contain_text("Your own: turn_done")
+    page.close()

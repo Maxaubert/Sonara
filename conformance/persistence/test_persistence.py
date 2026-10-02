@@ -145,7 +145,9 @@ def test_channel_prefs_survive_a_restart_and_rename_the_channel(start):
     ok(c, {"type": "speak", "channel": "s1", "text": "Hello."})
     ok(c, {"type": "control", "action": "next_channel"})
     ok(c, {"type": "control", "action": "next_channel"})
-    s = c.state(lambda s: (s["now_playing"] or {}).get("text") in ("Build.", "Build, reading again."))
+    # With the agent on, switches say the Python plugin's "Session changed" (#209).
+    said = ("Session changed: Build.", "Session changed: Build, reading again.")
+    s = c.state(lambda s: (s["now_playing"] or {}).get("text") in said)
     assert s["now_playing"]["channel"] == "s1"
 
 
