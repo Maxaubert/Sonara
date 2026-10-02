@@ -10,7 +10,6 @@
   [![Release](https://img.shields.io/github/v/release/Maxaubert/Sonara?color=5B4BDB)](https://github.com/Maxaubert/Sonara/releases)
   [![License: MIT](https://img.shields.io/badge/license-MIT-5B4BDB)](LICENSE)
   ![Windows 10/11](https://img.shields.io/badge/Windows_10%2F11-0078D6?logo=windows&logoColor=white)
-  ![Python 3.9+](https://img.shields.io/badge/Python_3.9%2B-3776AB?logo=python&logoColor=white)
 
 </div>
 
@@ -33,8 +32,8 @@ answer by number, and global hotkeys control the voice from any window.
 - **Answer by number.** Questions and permission prompts are read with their options; press the
   option's number in Claude Code. No key injection.
 - **Global hotkeys.** Restart, flush, mute and switch sessions without leaving your editor.
-- **Natural voices.** Optional Kokoro neural voices run fully offline; the built-in Windows voices
-  work out of the box.
+- **Natural voices.** Kokoro neural voices (`af_sarah` by default) run fully offline once their
+  model is downloaded; the built-in Windows voices speak while it downloads.
 - **Spoken summaries.** Optionally hear a short recap of each reply instead of the whole text,
   written by Claude (Haiku) or Codex.
 - **Several sessions.** Each Claude Code session gets its own queue, name, mute and voice. Switch
@@ -44,36 +43,53 @@ answer by number, and global hotkeys control the voice from any window.
 
 ## Requirements
 
-- Windows 10 or 11.
-- Claude Code with plugin support.
-- Python 3.9 or newer is used when present. If none is found, `/sonara:install` provisions a
-  private CPython 3.12 with [uv](https://github.com/astral-sh/uv); the Microsoft Store
-  `python` stub is never used.
+- Windows 10 or 11 (x64).
+- Claude Code with plugin support. On Windows Claude Code needs Git for Windows; Sonara's hooks
+  run through its Git Bash too.
+- An internet connection on first use, for the one-time downloads below. Nothing else: no
+  Python, no installer, no administrator rights.
 
 ## Install
 
-1. Add the marketplace in Claude Code:
-   ```
-   /plugin marketplace add Maxaubert/Sonara
-   ```
-2. Install the plugin (the marketplace and the plugin are both named `sonara`):
-   ```
-   /plugin install sonara@sonara
-   ```
-3. Run the one-time setup:
-   ```
-   /sonara:install
-   ```
-   It finds or provisions Python, installs the Windows speech engine (PyWinRT), copies the
-   runtime to `~/.sonara/app` (so plugin updates never pull files out from under a running
-   daemon), registers autostart as a per-user scheduled task, wires up the hooks, and puts a
-   `sonara` command in `~/.local/bin`. If that folder is not on your PATH, install says so and
-   how to add it. Each step is printed. The first run can take a couple of minutes.
-4. Start a new Claude Code session, then run `/sonara:doctor`. No row should say `FAIL`
-   (`warn` rows are advice, such as the AltGr warning below).
+In Claude Code:
 
-After a plugin update Sonara says once: "Sonara was updated. Run /sonara:install to apply."
-Running it refreshes the copy in `~/.sonara/app`.
+```
+/plugin marketplace add Maxaubert/Sonara
+/plugin install sonara@sonara
+```
+
+Then restart Claude Code. That is all: there is no setup step.
+
+**What happens on first use.** The first hook of the new session finds that Sonara's runtime is
+missing and installs it in the background, without holding up Claude Code:
+
+1. It downloads `sonara-runtime-win-x64-<version>.zip` (about 15 MB) and `SHA256SUMS` from the
+   matching [GitHub release](https://github.com/Maxaubert/Sonara/releases), checks the zip's
+   SHA-256 and unpacks it into `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
+2. It starts the runtime (`sonarad.exe`), which arms the hotkeys and then downloads the Kokoro
+   voice model (about 350 MB, once, checked against pinned hashes) into
+   `%LOCALAPPDATA%\Sonara\models\`. Until it is ready Sonara speaks with a Windows voice.
+
+Speech starts with the next event, usually a few seconds later. `/sonara:doctor` shows the
+progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
+
+**Defaults** are the voice `af_sarah` at 250 words per minute, medium verbosity (no tool
+announcements), every session read, media paused while Sonara speaks, summaries off. Change
+them on the settings page (`/sonara:settings`).
+
+**Updates.** A plugin update names a new runtime release; the next hook installs it the same way,
+replaces the running runtime and removes the old version. Your settings stay.
+
+<details>
+<summary>Upgrading from the Python plugin (0.10 and older)</summary>
+
+The first start imports your settings from `~/.sonara` (voice, speed, audio mode, summaries,
+hotkeys, session names) into `%LOCALAPPDATA%\Sonara` and never changes `~/.sonara`. The old
+Python daemon is not stopped for you: if `/sonara:doctor` shows a `python sonara` warning, remove
+it once from Git Bash with `PYTHONPATH=~/.sonara/app python -m sonara.cli uninstall` (best before
+updating the plugin), so two programs do not hold the hotkeys or speak twice.
+
+</details>
 
 ## How it reads
 
@@ -83,7 +99,7 @@ Running it refreshes the copy in `~/.sonara/app`.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.
-- **Other earcons** come from the daemon: `turn_done` when a reply ends, `nav` and `nav_edge`
+- **Other earcons** come from the runtime: `turn_done` when a reply ends, `nav` and `nav_edge`
   for a restart or flush (`nav_edge`: nothing to restart or flush), `session_change` when the
   voice moves to another session, `error` when speech fails, and `summary_failed` when a
   summary-mode turn had no text to read.
@@ -91,9 +107,9 @@ Running it refreshes the copy in `~/.sonara/app`.
   and Sonara follows the new one.
 - **Restart, never rewind.** Ctrl+Alt+Up restarts the latest reply from the top (in summary
   mode it re-reads the last summary). There is no stepping back through older replies.
-- **Several sessions.** The session you last prompted owns the voice. Other sessions still play
-  their earcons, and their latest reply waits. Ctrl+Alt+P moves the voice to the next session
-  and says "Session changed: &lt;folder&gt;"; an unread reply resumes, a read one starts over.
+- **Several sessions.** Every session's latest reply is read, one after another. With *Background sessions: earcons only* on the settings page, only that
+  session is read; the others play their earcons and their latest reply waits. Ctrl+Alt+P moves
+  the voice to the next session; an unread reply resumes, a read one starts over.
 
 ### Answering prompts
 
@@ -104,8 +120,8 @@ and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
 
 ## Hotkeys
 
-The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab or in
-`~/.sonara/keymap.json`. A hotkey must include Ctrl, Alt or Win.
+The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab (it is
+saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt or Win.
 
 | Hotkey | Action |
 |---|---|
@@ -114,15 +130,15 @@ The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotk
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |
 
-`pause`, `faster` and `slower` are also actions; they ship unbound. Stop, skip and repeat are
-CLI commands (below).
+`pause`, `faster` and `slower` are also actions; they ship unbound. Each hotkey confirms itself
+with a short spoken cue ("Muted.", "Rate 275.").
 
 <details>
 <summary>European keyboards (AltGr), and which keys to avoid</summary>
 
 Windows sends AltGr as Ctrl+Alt, so on keyboard layouts with AltGr characters (German,
 Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character away: Ctrl+Alt+M bound to
-mute stops AltGr+M from typing µ. `sonara doctor` names each clashing hotkey in an **AltGr**
+mute stops AltGr+M from typing µ. `/sonara:doctor` names each clashing hotkey in its hotkeys
 warning row, and the settings page warns next to the binding. The fix is to rebind that key
 with Win, for example to Win+Alt+Home/End or Ctrl+Win+Up/Down; a Win chord never matches
 AltGr. Resetting to the defaults does not help, since they use Ctrl+Alt.
@@ -130,28 +146,29 @@ AltGr. Resetting to the defaults does not help, since they use Ctrl+Alt.
 Win+Alt is not the default because Windows 11 already owns Win+Alt+Up/Down (snap a window),
 Win+Alt+M and Win+Alt+P, plus Win+Alt+B (HDR), Win+Alt+D (date and time), Win+Alt+H (voice
 typing), Win+Alt+K (microphone mute), Win+Alt+Enter and the Game Bar chords
-Win+Alt+G/R/T/PrtScn. If another app holds a chord, `sonara doctor` reports it in its hotkey
+Win+Alt+G/R/T/PrtScn. If another app holds a chord, `/sonara:doctor` reports it in its hotkeys
 row.
 
-The defaults are unchanged from 0.6.x. **Reset hotkeys to defaults** on the Hotkeys tab, or
-`sonara keymap --reset`, puts every binding back on them.
+The defaults are unchanged from 0.6.x. **Reset hotkeys to defaults** on the Hotkeys tab puts
+every binding back on them.
 
 </details>
 
 ## Settings page
 
-Run `/sonara:settings` (or `sonara settings`) to open the settings page in your browser. It is
-served by the daemon on `127.0.0.1` and protected by a token. Changes apply immediately.
+Run `/sonara:settings` to open the settings page in your browser. It is served by the runtime on
+`127.0.0.1` and protected by a token. Changes apply immediately and are saved in
+`%LOCALAPPDATA%\Sonara\config.json`.
 
 | Page | What you can set |
 |---|---|
-| Speech | Voice (with a preview button), speaking rate, instant cues and the cue voice |
+| Speech | Engine (Kokoro or Windows), voice (with a preview button), speaking rate, mute level, verbosity, background sessions |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and the minimum queue before live reading starts |
-| Audio | Speech volume (25 to 200 percent), what other apps do while Sonara speaks (Off, Duck, Pause) and the duck level |
-| Sessions | A name, mute and voice per Claude Code session |
+| Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause) and the duck level |
+| Sessions | A name, mute and voice per Claude Code session, and switch announcements |
 | Hotkeys | Every binding, with AltGr and conflict warnings, and a reset to defaults |
 | Advanced | Summary timeout and settle time |
-| System | Daemon status, restart and shut down, Kokoro status, the version |
+| System | Runtime version, process and uptime, engines and the Kokoro download, the settings file |
 
 **Audio mode.** *Duck* lowers other apps to the duck level while Sonara speaks; *Pause* pauses
 media that Windows can control (music, video players) and resumes it afterwards. Either way
@@ -172,75 +189,59 @@ when the turn had no text at all. See [PRIVACY.md](PRIVACY.md) for what is sent.
 
 ## Voices
 
-**Windows voices** work out of the box through the built-in OneCore engine. Natural voices sound
-better: open *Settings > Time & language > Speech > Add voices* and add an English voice.
+**Kokoro** (the default) gives 28 natural English voices such as `af_sarah` and `af_heart`. Its
+model (about 350 MB) is downloaded once on first use, checked against pinned SHA-256 values,
+and then runs fully offline (Microsoft's ONNX Runtime, shipped in the runtime zip). An
+interrupted download resumes; a failed one is retried later. Until it is ready Sonara speaks
+with a Windows voice. Pick a voice on the settings page.
 
-**Kokoro neural voices** (optional) are 28 offline voices, such as `af_heart`, that sound far
-more natural:
-
-```
-sonara voices install
-```
-
-This builds a private Python environment for Kokoro under `~/.sonara/venv` (about a 316 MB
-download, once); after that, synthesis is fully local. Pick a voice on the settings page or with
-`sonara voice af_heart`. If Kokoro cannot speak (still downloading, or a broken install), Sonara
-falls back to the best Windows voice and says why once. `sonara voices uninstall` removes it
-again.
+**Windows voices** (OneCore) need no download. Natural ones sound better: open *Settings > Time &
+language > Speech > Add voices* and add an English voice.
 
 **Windows voices listed but silent?** On some PCs the voices are listed while their data files
-are missing, so synthesis fails with "file not found". `sonara doctor` detects this and prints
-the repair: remove and re-add *English (United States)* under *Settings > Time & language >
-Speech > Manage voices*, or in an elevated prompt run
-`DISM /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0`. Kokoro
-voices are unaffected.
+are missing, so synthesis fails with "file not found". The repair: remove and re-add *English
+(United States)* under *Settings > Time & language > Speech > Manage voices*, or in an elevated
+prompt run `DISM /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0`.
+Kokoro voices are unaffected.
 
 ## Commands
 
-| Slash command | CLI | What it does |
-|---|---|---|
-| `/sonara:install` | `sonara install` | One-time setup (above); re-run after an update |
-| `/sonara:settings` | `sonara settings` | Open the settings page |
-| `/sonara:start` | `sonara start` | Start the daemon and clear a previous shutdown |
-| `/sonara:doctor` | `sonara doctor` | Run every health check |
-| `/sonara:uninstall` | `sonara uninstall` | Remove Sonara (see *Uninstall*) |
+| Slash command | What it does |
+|---|---|
+| `/sonara:settings` | Open the settings page |
+| `/sonara:doctor` | Check the runtime, the voice engine and its download, voices, hotkeys, audio mode and hooks |
+| `/sonara:start` | Start Sonara (installs the runtime if needed) and clear a previous stop |
+| `/sonara:uninstall` | Remove Sonara, keeping what you choose (see *Uninstall*) |
 
-CLI only: `sonara status`, `stop` (clear everything), `skip`, `repeat`, `shutdown` (stays off
-until `sonara start`), `voice [name]` (no name lists voices), `voices install|uninstall`,
-`rate <wpm>`, `verbosity everything|medium|quiet`, `summary on|off`, `audio-mode off|duck|pause`,
-`duck-level <0-100>`, `minqueue <n>`, `keymap` (`--reset` for the defaults), `cleanup`.
-
-**Verbosity** (CLI only): `everything` (default) reads prose, decisions and short tool
-announcements such as "Running git status"; `medium` drops the tool announcements; `quiet`
-reads decisions only. Earcons play at every level.
+They run `sonara.exe` from the runtime folder through `bin/sonara`, which you can also call from
+Git Bash: `bash <plugin folder>/bin/sonara <command>`. Besides the four above it has `stop`
+(Sonara stays off, and the hooks do not start it, until `start`) and `version`.
 
 ## Troubleshooting
 
-Run `sonara doctor` first: it checks the speech engine and a real Windows voice synthesis, the
-daemon, autostart, the hooks, the hotkeys, Kokoro, the summary engine and the install.
+Run `/sonara:doctor` first. Each row is `OK`, `INFO` (worth knowing, such as the voice model
+still downloading), `WARN` (worth fixing) or `FAIL`.
 
-- **No speech at all.** Run `/sonara:start` (a shutdown keeps Sonara off until then), then
-  `sonara doctor`. The daemon log is `~/.sonara/speechd.log`.
+- **No speech at all.** Run `/sonara:start` (`sonara stop` and `/sonara:uninstall` keep Sonara
+  off until then), then `/sonara:doctor`. The runtime's log is
+  `%LOCALAPPDATA%\Sonara\logs\sonarad.log`; the install's is `logs\bootstrap.log` there.
+- **Nothing after installing the plugin.** Restart Claude Code; the runtime installs on the first
+  hook. Offline or blocked downloads are retried every 5 minutes, or at once by `/sonara:start`.
 - **Hooks not firing.** Make sure the `sonara` plugin is enabled in `/plugin`, start a new
-  session, and check the hooks row in `sonara doctor`.
-- **Too fast or too slow.** Change the speaking rate on the settings page, or
-  `sonara rate 180` (default 200 words per minute).
-- **Too chatty.** `sonara verbosity medium`, or turn on summary mode.
-- **Something is stuck.** `sonara stop` clears every queue and cuts the current sentence.
-- **Disk space after upgrading.** Sonara 0.6.1 removed the Chatterbox engine. If you had it,
-  `sonara doctor` lists the leftover environment and model cache (several GB) and
-  `sonara cleanup` deletes them. Your own voice clips in `~/.sonara/voices/` are kept, and a
-  saved Chatterbox voice now speaks as Kokoro's `af_heart`.
+  session, and check the hooks row of `/sonara:doctor`.
+- **Too fast or too slow.** Change the speaking rate on the settings page (default 250 words per
+  minute), or bind the `faster` and `slower` hotkeys.
+- **Too chatty.** Set verbosity to quiet, or turn on summary mode, on the settings page.
 
 ## Uninstall
 
-1. Run `/sonara:uninstall` (or `sonara uninstall`). It stops the daemon, removes the autostart
-   task, the hotkeys, the `sonara` launcher, the hooks it added and the runtime copy in
-   `~/.sonara/app`, and keeps Sonara off. Your `config.json` and `keymap.json` stay, so a
-   reinstall restores your settings.
-2. Disable or remove the `sonara` plugin in `/plugin`.
-3. Optional: delete the `~/.sonara` folder to remove everything else (Kokoro voices, session
-   data, logs). [PRIVACY.md](PRIVACY.md) lists what is in it.
+1. Run `/sonara:uninstall`. Claude asks what to keep (settings, the voice model, logs), then
+   Sonara stops (other apps' audio is restored first), removes its runtime
+   (`%LOCALAPPDATA%\Sonara\runtime`) and everything else in `%LOCALAPPDATA%\Sonara`, and stays
+   off: the hooks do nothing until `/sonara:start`.
+2. Remove the plugin: `/plugin uninstall sonara@sonara`.
+3. Optional: delete `%LOCALAPPDATA%\Sonara` to remove what you kept. [PRIVACY.md](PRIVACY.md)
+   lists every file.
 
 ## Privacy
 
@@ -252,8 +253,8 @@ are in [PRIVACY.md](PRIVACY.md).
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [docs/architecture.md](docs/architecture.md)
-for how Sonara is built. Embedding hosts talk to the daemon over the protocol in
-[docs/protocol.md](docs/protocol.md). Bugs and ideas: [GitHub issues](https://github.com/Maxaubert/Sonara/issues).
+for how Sonara is built. Embedding hosts talk to the runtime over the protocol in
+[docs/protocol-v1.md](docs/protocol-v1.md). Bugs and ideas: [GitHub issues](https://github.com/Maxaubert/Sonara/issues).
 
 ## License
 

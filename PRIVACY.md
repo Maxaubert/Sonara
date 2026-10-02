@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-02_
+_Last updated: 2026-10-02 (0.11: the Rust runtime in `%LOCALAPPDATA%\Sonara`)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -15,7 +15,10 @@ your computer and what, if anything, leaves it.
   to **Anthropic** through `claude -p`, or to **OpenAI** through `codex exec`, depending on the
   summary engine you chose. Short replies are read as they are and never sent. Nothing else
   leaves the machine.
-- Sonara keeps a few small files in `~/.sonara`, listed below. Some of them hold session text.
+- Sonara keeps its runtime and a few small files in `%LOCALAPPDATA%\Sonara`, listed below.
+  None of them holds session text.
+- It downloads software, never your data: its runtime from Sonara's GitHub releases and the
+  Kokoro voice model, once each (see Downloads).
 
 ## What Sonara processes
 
@@ -25,8 +28,8 @@ with the Windows speech engine or the Kokoro engine, both running locally. Its p
 other over a loopback connection (`127.0.0.1`) protected by a token stored in your profile. The
 settings page is served on the same loopback address and needs that token too.
 
-The reading history Sonara uses for restart and repeat is held in memory and is gone when the
-daemon stops.
+The reading history Sonara uses for restart, summaries waiting to be read and each session's
+turn state are held in memory and are gone when the runtime stops.
 
 ## Summary mode (opt-in)
 
@@ -43,71 +46,70 @@ so its recap can be read before the question:
   turned off for the call. It runs on your own Codex login, so the text goes to **OpenAI** under
   your Codex terms.
 
-The recap that comes back is spoken, and the latest one per session is stored locally (see
-`session_digests.json`). Sonara itself operates no service and receives nothing.
+The recap that comes back is spoken and kept in memory only. Sonara itself operates no service
+and receives nothing.
 
 ## What Sonara stores on your computer
 
-Everything lives under `~/.sonara` (`C:\Users\<you>\.sonara`). None of it is sent anywhere.
+Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
+(`C:\Users\<you>\AppData\Local\Sonara`). None of it is sent anywhere.
 
-**Settings and install**
+**The runtime**
+
+| Path | What it holds |
+|---|---|
+| `runtime\<version>\` | Sonara's programs (`sonarad.exe`, `sonara-hook.exe`, `sonara.exe`), Microsoft's ONNX Runtime and the Visual C++ runtime DLLs it needs, and the licence notices, from the release zip. Only the current version is kept |
+| `runtime\.bootstrap.lock` | Present while the runtime is being installed |
+| `runtime\.bootstrap.failed` | The time and reason of the last failed install (a download error or a checksum mismatch), so hooks wait a few minutes before trying again |
+| `models\kokoro\v1.0\` | The Kokoro voice model (`kokoro-v1.0.onnx`, `voices-v1.0.bin`; a download in progress is `*.part`) and `verified.json` (size, time and hash of the checked files) |
+
+**Settings**
 
 | File | What it holds |
 |---|---|
-| `config.json` | The settings you changed (voice, rate, volume, audio mode, summary options and your own summary instructions, mute state) |
+| `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, summary options and your own summary instructions), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
-| `install.json` | Paths of the Python interpreter, the plugin and the app copy, plus their versions |
-| `python.path`, `pythonw.path` | The Python interpreter the hooks and the daemon use |
-| `app/` | The copy of Sonara's own code that the daemon runs |
-
-**Session data** (this is where session content is kept)
-
-| File | What it holds |
-|---|---|
-| `sessions.json` | Each Claude Code session id and the name of its working folder, plus the sessions an embedding host opened with `speak` (`<source>:<tab>`) (up to 200 sessions) |
-| `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, and the label an embedding host gave a `speak` session (forgotten when the host ends that session) |
-| `session_seen.json` | When each session was last active |
-| `session_digests.json` | **The text of each session's latest spoken digest** (up to 4,000 characters each, 200 sessions), so a restarted daemon can still read a session's last message |
+| `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
 
 **Runtime state**
 
 | File | What it holds |
 |---|---|
-| `daemon.lock` | The daemon's local port, process id and access token (removed when the daemon stops) |
-| `webui.token` | The token for the settings page and the daemon, kept across restarts |
-| `daemon.singleton` | The running daemon's process id |
-| `stopped` | Present while you have shut Sonara down |
-| `duck_state.json` | Which apps Sonara lowered and their original volume, so they are restored after a crash |
-| `pause_state.json` | Which media apps Sonara paused, so they are resumed after a crash |
-| `hotkeys.state.json` | Hotkey conflicts and whether the daemon runs elevated, for `sonara doctor` |
-| `no_hotkeys` | Present only if you created it to turn global hotkeys off |
-| `previews/` | Short voice samples for the settings page ("Hi! This is the ... voice.") |
+| `runtime.json` | The running runtime's process id, local ports and access token, readable only by you (removed when it stops) |
+| `stopped` | Present while Sonara is stopped (`sonara stop`, `/sonara:uninstall`): the hooks then do not start or install it |
+| `state\duck_state.json` | Which apps Sonara lowered and their original volume, so they are restored after a crash |
+| `state\pause_state.json` | Which media apps Sonara paused, so they are resumed after a crash |
 
 **Logs**
 
 | File | What it holds |
 |---|---|
-| `speechd.log`, `speechd.old.log` | Daemon startup, warnings and errors. It can contain short snippets of session text: the first 120 characters of each spoken summary, the start of a sentence dropped while muted, a summary engine's error output, and text inside an error trace |
-| `faulthandler.log`, `faulthandler.prev.log` | Thread stacks if the daemon crashes natively |
+| `logs\sonarad.log` | What the settings import did and settings that could not be applied. No session text |
+| `logs\bootstrap.log` | Each runtime download and install, with its address and result |
 
-**Voices and tools** (only when you installed them)
+**The Python plugin's folder.** Up to 0.10 Sonara kept its files in `~/.sonara`
+(`C:\Users\<you>\.sonara`). The first start of 0.11 reads the settings there (`config.json`,
+`keymap.json`, `session_prefs.json`) once to import them, and never changes or deletes that
+folder. What the old version stored there is described in this file's history, and the old
+version's own uninstall removes it.
 
-| Folder | What it holds |
-|---|---|
-| `venv/`, `kokoro/` | The Kokoro neural voice environment and model |
-| `tools/` | `uv.exe`, used to set up Python and Kokoro |
-| `chatterbox-venv/`, `chatterbox/` | The environment and model cache of the removed Chatterbox engine, left on upgraded installs until you run `sonara cleanup` |
-| `voices/chatterbox/` | Voice clips you recorded for the removed Chatterbox engine. Sonara never deletes them |
-
-Outside `~/.sonara`, setup adds a per-user Task Scheduler task (autostart), a `sonara.cmd`
-launcher in `~/.local/bin`, and, when needed, Sonara's hooks in `~/.claude/settings.json`. If it
-provisioned Python, that Python lives in uv's own folder.
+Outside `%LOCALAPPDATA%\Sonara` Sonara writes nothing: the plugin itself lives where Claude Code
+keeps plugins, and there is no autostart task, launcher or settings.json change.
 
 ## Downloads
 
-Setup and optional voices download software, never your data: PyWinRT and the Kokoro packages
-from PyPI, `uv` and the Kokoro model from GitHub, and (only when no Python is found) a CPython build through uv. After
-that, speech synthesis is fully local.
+Sonara downloads software, never your data, over HTTPS from GitHub:
+
+- **The runtime**, on first use and after a plugin update:
+  `https://github.com/Maxaubert/Sonara/releases/download/v<version>/sonara-runtime-win-x64-<version>.zip`
+  (about 15 MB) and `SHA256SUMS` of the same release. The zip is installed only when its SHA-256
+  matches.
+- **The Kokoro voice model**, once, by the runtime: two files (about 350 MB) from
+  `https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0`, each checked
+  against a SHA-256 value built into Sonara.
+
+Like any download, these requests show GitHub your IP address. After that, speech synthesis is
+fully local.
 
 ## Diagnostic capture (off by default)
 
@@ -117,12 +119,10 @@ troubleshooting. It is off unless you set it. Delete the folder to remove what i
 
 ## Removing your data
 
-Run `sonara uninstall` (or `/sonara:uninstall`) to remove the autostart task, the launcher,
-Sonara's hooks in `~/.claude/settings.json`, the app copy (`app/`), and `daemon.lock`,
-`install.json`, `hotkeys.state.json`, `speechd.log`, `speechd.old.log` and `faulthandler.log`.
-It then writes the `stopped` file so Sonara stays off. Everything else stays, including
-`faulthandler.prev.log`, `daemon.singleton`, `webui.token`, the state files, session data, voices
-and your settings: delete the `~/.sonara` folder to remove it all.
+Run `/sonara:uninstall`. It asks what to keep (your settings, the voice model, the logs), stops
+Sonara, and removes `runtime\` and every other file in `%LOCALAPPDATA%\Sonara` except those,
+then writes the `stopped` file so Sonara stays off. Remove the plugin with
+`/plugin uninstall sonara@sonara`, and delete `%LOCALAPPDATA%\Sonara` to remove what you kept.
 
 ## Changes to this policy
 

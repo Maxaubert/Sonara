@@ -117,11 +117,11 @@ def test_background_sessions_choice_is_saved(live, browser):
     lv = live()
     page = open_page(browser, lv.url)
     seg = "#background-seg [data-value=%s]"
+    pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")  # #202 default
+    page.click(seg % "earcon_only")
     pw.expect(page.locator(seg % "earcon_only")).to_have_attribute("aria-checked", "true")
-    page.click(seg % "all")
-    pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")
-    assert eventually(lambda: lv.saved().get("background_policy") == "all")
-    assert lv.get("background_policy") == "all"
+    assert eventually(lambda: lv.saved().get("background_policy") == "earcon_only")
+    assert lv.get("background_policy") == "earcon_only"
     page.close()
 
 
@@ -139,7 +139,7 @@ def test_summary_mode_style_and_prompt(live, browser):
     page.locator("#prompt-text").fill("Say it in one line.")
     page.locator("#prompt-text").blur()
     assert eventually(lambda: lv.get("summaries")["prompt"] == "Say it in one line.")
-    assert lv.saved()["summaries"]["prompts"] == {"brief": "Say it in one line."}
+    assert eventually(lambda: lv.saved().get("summaries", {}).get("prompts") == {"brief": "Say it in one line."})
     page.click("#prompt-reset")
     assert eventually(lambda: lv.get("summaries")["prompts"] == {})
     # Model picks its command too.

@@ -95,7 +95,7 @@ def test_the_plugin_settings_are_imported(start, tmp_path, profile):
     cfg = json.loads((rt.home / "config.json").read_text(encoding="utf-8"))
     assert cfg["voice"] == "af_sarah"
     assert cfg["_migrated"]["from"] == str(legacy)
-    assert "volume" not in cfg, "100 is the default: not a choice to keep"
+    assert cfg["volume"] == 100, "a key of a format 2 file is the user's choice"
     assert "settings_port" not in cfg and "cue_voice" not in cfg
     # Hotkeys under the runtime's names.
     by_action = {b["action"]: b for b in get(c, "hotkeys")["bindings"]}
@@ -164,14 +164,14 @@ def test_no_flag_and_a_non_default_home_never_migrate(start, tmp_path, profile):
     plugin_tree(tmp_path / "profile")
     rt = start(env=profile)
     c = rt.tcp()
-    assert get(c, "rate") == 200
+    assert get(c, "rate") == 250, "the default"
     assert not (rt.home / "config.json").exists()
 
 
 def test_nothing_to_migrate_writes_nothing(start, tmp_path, profile):
     rt = start("--migrate-from", str(tmp_path / "missing"), env=profile)
     c = rt.tcp()
-    assert get(c, "rate") == 200
+    assert get(c, "rate") == 250, "the default"
     assert not (rt.home / "config.json").exists()
 
 

@@ -32,8 +32,8 @@ mkdir -p /tmp/sonara-capture
 export SONARA_CAPTURE=/tmp/sonara-capture
 ```
 
-2. Ensure `hooks/hooks.json` is installed/linked so `${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run <Event>`
-   (which runs `bin/sonara-hook`) fires for each event. Launch `claude` in the same shell so hook subprocesses inherit `SONARA_CAPTURE`.
+2. Ensure `hooks/hooks.json` is installed/linked so `${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-launch <Event>`
+   (which runs the runtime's `sonara-hook.exe`) fires for each event. Launch `claude` in the same shell so hook subprocesses inherit `SONARA_CAPTURE`.
 
 3. Trigger each event exactly once:
    - **MessageDisplay**: let Claude stream any normal prose reply

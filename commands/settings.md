@@ -8,7 +8,7 @@ Run the Sonara settings command with the Bash tool:
 bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" settings
 ```
 
-It opens the local settings page in the user's default browser and prints the
-URL. If it reports the daemon is not running, tell the user to run
-`/sonara:start` first. Do not print the token-bearing URL back to the user
-beyond what the command already printed.
+It installs and starts Sonara's runtime if needed, then opens the local settings page
+(voice, speed, summary mode, sessions, audio, hotkeys) in the user's default browser and
+prints its address. Tell the user the page is open. Do not repeat the address: it carries
+a private token.

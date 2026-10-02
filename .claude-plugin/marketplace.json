@@ -9,14 +9,14 @@
   "plugins": [
     {
       "name": "sonara",
-      "version": "0.10.2",
-      "description": "Eyes-free text-to-speech layer for Claude Code (Windows): narrates prose, options, plans, and permissions per session with per-type earcons.",
+      "version": "0.11.0",
+      "description": "Eyes-free text-to-speech for Claude Code (Windows): reads replies, options, plans and permissions per session with a Kokoro voice, earcons and global hotkeys. No Python needed: the runtime installs itself on first use.",
       "author": {
         "name": "Max Aubert"
       },
       "category": "accessibility",
-      "homepage": "https://github.com/Maxaubert/sonara",
-      "repository": "https://github.com/Maxaubert/sonara",
+      "homepage": "https://github.com/Maxaubert/Sonara",
+      "repository": "https://github.com/Maxaubert/Sonara",
       "source": "./"
     }
   ]

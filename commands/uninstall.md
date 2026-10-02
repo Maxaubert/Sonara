@@ -1,21 +1,25 @@
 ---
-description: Uninstall Sonara (stops it; removes autostart, hooks, launcher and ~/.sonara/app; keeps settings)
+description: Uninstall Sonara (stops it; removes its runtime and files, keeping what you choose)
 ---
 
-Run the Sonara uninstall command with the Bash tool:
+First ask the user, with the AskUserQuestion tool (multiple choice, all optional), what
+to keep:
+
+- **Settings**: voice, speed, hotkeys and session names (`settings`)
+- **Voice model**: the downloaded Kokoro voice model, about 350 MB (`models`)
+- **Logs** (`logs`)
+
+Then run the Sonara uninstall command with the Bash tool, passing the chosen items
+comma-separated (or `none` when the user keeps nothing):
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" uninstall
+bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" uninstall --keep <items>
 ```
 
-This stops Sonara and removes the autostart task, Sonara's hooks in
-`~/.claude/settings.json`, the `sonara` launcher in `~/.local/bin`, `~/.sonara/app`, and
-the runtime files in `~/.sonara` (`daemon.lock`, `install.json`, `hotkeys.state.json` and
-the logs). Sonara then stays off (a `stopped` marker) until the next install or
-`/sonara:start`. It keeps your settings (`config.json`, `keymap.json`), session names,
-neural voices (`~/.sonara/venv`, `~/.sonara/kokoro`) and voice clips, and says how to
-remove them. If Sonara does not stop, nothing is removed. To silence the hooks
-completely, also disable the `sonara` plugin via `/plugin`.
+for example `--keep settings,models`. It stops Sonara (other apps' audio is restored
+first), removes its runtime (`%LOCALAPPDATA%\Sonara\runtime`) and the files in its home
+(`%LOCALAPPDATA%\Sonara`) except the kept ones, and prints what it removed and kept.
+Sonara then stays off: the plugin's hooks do nothing until `/sonara:start`.
 
-Print the command's output to the user verbatim. Do not add commentary beyond the raw
-output.
+Print the command's output to the user verbatim. Then tell the user that the plugin itself
+is removed with `/plugin uninstall sonara@sonara`.

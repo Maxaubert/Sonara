@@ -16,7 +16,8 @@
 //! long, and an event that misses the budget is dropped (the runtime keeps
 //! starting for the next one). `SONARA_NO_START` (non-empty) turns the
 //! start off, and so does the stop sentinel `<home>/stopped` (`STOPPED`); `SONARA_RUNTIME_ARGS` adds arguments to the runtime's
-//! command line (a testing aid: `--engine fake --system fake`).
+//! command line (the plugin's `bin/sonara-hook-launch` passes `--standalone`;
+//! tests `--engine fake --system fake`).
 //!
 //! One Claude session is one channel (its `session_id`). Each message is
 //! stamped with `t`, the hook process's start time, so text of a turn that

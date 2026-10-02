@@ -44,7 +44,7 @@ pub const KEYS: &[&str] = &[
 ];
 
 /// Message types of the extension.
-pub const TYPES: &[&str] = &["preview"];
+pub const TYPES: &[&str] = &["preview", "shutdown"];
 
 /// What a voice preview says unless the request gives a text.
 pub const PREVIEW_TEXT: &str = "Hello. This is how Sonara sounds with this voice.";

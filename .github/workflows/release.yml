@@ -2,13 +2,19 @@
 # - Reads the version from pyproject.toml and refuses to run if
 #   .claude-plugin/plugin.json or marketplace.json disagree.
 # - REFUSES to run if release v<version> already exists: bump the version in the PR.
-# - Publishes v<version> with GitHub-generated notes and one asset,
-#   sonara-runtime-win-x64-<version>.zip (sonarad.exe release build,
-#   onnxruntime.dll with its licence files, the VC++ runtime DLLs it imports,
-#   LICENSE, LICENSING.md, THIRD_PARTY_NOTICES.md) for apps that bundle the
-#   runtime.
-#   The Claude Code plugin still ships from the repo itself. Unsigned until
-#   SignPath enrolment.
+# - Publishes v<version> with GitHub-generated notes and two assets:
+#   sonara-runtime-win-x64-<version>.zip (sonarad.exe, sonara-hook.exe and
+#   sonara.exe release builds with the CRT linked statically, onnxruntime.dll
+#   with its licence files, the VC++ runtime DLLs it imports, LICENSE,
+#   LICENSING.md, THIRD_PARTY_NOTICES.md) and SHA256SUMS.
+#   The Claude Code plugin ships from the repo itself (the marketplace in
+#   .claude-plugin/), and on first use its bin/sonara-hook-launch downloads
+#   the zip of the release named in bin/runtime-version and checks it against
+#   SHA256SUMS (#202). So the release must exist before users install or
+#   update the plugin: merge -> this workflow publishes v<version> -> users
+#   install or update. A plugin update whose release is missing stays silent
+#   (each hook retries the download every 5 minutes) until it is published.
+#   Unsigned until SignPath enrolment.
 # - Nothing goes to npm or PyPI: publish-packages runs only once the
 #   NPM_TOKEN / PYPI_TOKEN secrets exist (manual steps: docs/bundling.md).
 # Docs-only pushes are skipped by paths-ignore.
@@ -73,7 +79,7 @@ jobs:
         id: zip
         shell: pwsh
         run: |
-          cargo build -p sonarad --release
+          cargo build -p sonarad -p sonara-hook -p sonara-cli --release
           if ($LASTEXITCODE -ne 0) { exit 1 }
           # onnxruntime.dll (official CPU build, pinned SHA-256) and the VC++
           # runtime DLLs it imports, next to sonarad.exe.
@@ -85,7 +91,12 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or -not $zip) { Write-Error "release_zip.py failed"; exit 1 }
           $expected = "sonara-runtime-win-x64-${{ steps.ver.outputs.version }}.zip"
           if ((Split-Path $zip -Leaf) -ne $expected) { Write-Error "zip is $zip, expected $expected (Cargo.toml version drift)"; exit 1 }
+          $runtimeVersion = (Get-Content bin/runtime-version -Raw).Trim()
+          if ($runtimeVersion -ne "${{ steps.ver.outputs.version }}") { Write-Error "bin/runtime-version is $runtimeVersion: the plugin would download another release"; exit 1 }
+          $sums = Join-Path (Split-Path $zip -Parent) "SHA256SUMS"
+          if (-not (Test-Path $sums)) { Write-Error "release_zip.py wrote no SHA256SUMS"; exit 1 }
           "path=$zip" >> $env:GITHUB_OUTPUT
+          "sums=$sums" >> $env:GITHUB_OUTPUT
 
       - name: Publish release
         shell: pwsh
@@ -93,7 +104,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          gh release create $tag "${{ steps.zip.outputs.path }}" --title $tag --generate-notes --latest --target $env:GITHUB_SHA
+          gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --latest --target $env:GITHUB_SHA
 
   # Disabled until registry tokens exist: every step is skipped while the
   # secrets are empty, so the job passes without publishing. Manual

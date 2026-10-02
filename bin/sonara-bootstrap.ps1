@@ -1,99 +1,148 @@
 #Requires -Version 5
 <#
-  Sonara zero-prerequisite setup.
-  Ensures a usable Python (provisioning a uv-managed CPython 3.12 if none is
-  found), records the interpreter paths, then runs `sonara install`. PowerShell
-  needs no Python, so this breaks the no-Python chicken-and-egg.
+  Sonara runtime bootstrap (#202): needs only Windows PowerShell 5.1.
+
+  Installs the runtime the plugin needs into
+  %LOCALAPPDATA%\Sonara\runtime\<Version>\ :
+    1. download sonara-runtime-win-x64-<Version>.zip and SHA256SUMS from the
+       v<Version> GitHub release (SONARA_RELEASE_BASE_URL overrides the base
+       URL, for tests),
+    2. check the zip's SHA-256 against SHA256SUMS (a mismatch installs
+       nothing),
+    3. extract it into a staging folder next to the destination, then move
+       it into place in one rename (a half-extracted runtime is never seen),
+    4. start it (`sonara.exe start`, unless -NoStart or
+       SONARA_BOOTSTRAP_START=0), which replaces a runtime of an older
+       release that is still running,
+    5. remove the folders of older releases (current only).
+  bin/sonara-hook-launch runs it in the background from a hook (with -Lock,
+  the lock folder it took, removed here when done); bin/sonara runs it in
+  the foreground before a slash command. A failure is logged to
+  <home>\logs\bootstrap.log and recorded in runtime\.bootstrap.failed, so
+  hooks retry only after a few minutes.
 #>
+param(
+  [Parameter(Mandatory = $true)][string]$Version,
+  [string]$Lock = "",
+  [switch]$NoStart
+)
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+# .NET only for the download, the hash and the unzip: Get-FileHash and
+# Expand-Archive are script modules that Windows PowerShell fails to load
+# when a PowerShell 7 parent left its PSModulePath behind.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$SonaraDir  = Join-Path $env:USERPROFILE ".sonara"
-$ToolsDir   = Join-Path $SonaraDir "tools"
-$PluginRoot = Split-Path -Parent $PSScriptRoot          # ...\bin -> plugin root
-$PySrc      = Join-Path $PluginRoot "src"
-$UvVersion  = "0.11.23"                                  # pinned (Task 3 Step 1)
-New-Item -ItemType Directory -Force -Path $SonaraDir | Out-Null
+$BaseUrl = "https://github.com/Maxaubert/Sonara/releases/download"
+if ($env:SONARA_RELEASE_BASE_URL) { $BaseUrl = $env:SONARA_RELEASE_BASE_URL.TrimEnd("/") }
+$Root    = Join-Path $env:LOCALAPPDATA "Sonara\runtime"
+$Dest    = Join-Path $Root $Version
+$Failed  = Join-Path $Root ".bootstrap.failed"
+$HomeDir = if ($env:SONARA_HOME) { $env:SONARA_HOME } else { Join-Path $env:LOCALAPPDATA "Sonara" }
+$LogPath = Join-Path $HomeDir "logs\bootstrap.log"
+$Name    = "sonara-runtime-win-x64-$Version.zip"
 
-function Test-RealPython([string]$exe) {
-  # True if $exe is a real CPython >= 3.9 (not a Microsoft Store stub).
-  try { $real = & $exe -c "import sys; print(sys.executable)" 2>$null } catch { return $false }
-  if (-not $real) { return $false }
-  if ($real -match "WindowsApps") { return $false }      # Store stub
-  try { $ok = & $exe -c "import sys; print(1 if sys.version_info[:2] >= (3,9) else 0)" 2>$null } catch { return $false }
-  return ($ok -eq "1")
+function Write-Log([string]$Message) {
+  Write-Host $Message
+  try {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogPath) | Out-Null
+    $line = "{0} {1}" -f (Get-Date).ToString("o"), $Message
+    [IO.File]::AppendAllText($LogPath, $line + [Environment]::NewLine)
+  } catch { }
 }
 
-function Find-SystemPython {
-  # Returns a console python.exe path, or $null. Prefers the py launcher.
-  $cands = @()
-  if (Get-Command py -ErrorAction SilentlyContinue) {
-    # In a try: under PowerShell 5.1 with EAP=Stop, a py.exe left behind with no
-    # Python 3 writes to stderr, which becomes a terminating error and killed
-    # the script before the uv provisioning below could run (E5).
-    try { $real = & py -3 -c "import sys; print(sys.executable)" 2>$null } catch { $real = $null }
-    if ($real) { $cands += $real }
+function Get-Expected([string]$SumsPath, [string]$FileName) {
+  # SHA256SUMS lines: "<64 hex>  <file name>" (sha256sum format; "*" marks binary mode).
+  foreach ($line in [IO.File]::ReadAllLines($SumsPath)) {
+    if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $FileName) {
+      return $Matches[1].ToLowerInvariant()
+    }
   }
-  foreach ($n in @("python","python3")) {
-    $c = Get-Command $n -ErrorAction SilentlyContinue
-    if ($c) { $cands += $c.Source }
-  }
-  foreach ($c in $cands) { if (Test-RealPython $c) { return $c } }
   return $null
 }
 
-function Get-Uv {
-  # Returns the path to uv.exe, downloading it to $ToolsDir if needed.
-  $onPath = Get-Command uv -ErrorAction SilentlyContinue
-  if ($onPath) { return $onPath.Source }
-  $local = Join-Path $ToolsDir "uv.exe"
-  if (Test-Path $local) { return $local }
-  New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null
-  $zip = Join-Path $ToolsDir "uv.zip"
-  $url = "https://github.com/astral-sh/uv/releases/download/$UvVersion/uv-x86_64-pc-windows-msvc.zip"
-  Write-Host "Downloading uv $UvVersion..."
-  Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
-  Expand-Archive -Path $zip -DestinationPath $ToolsDir -Force
-  Remove-Item $zip -Force
-  if (-not (Test-Path $local)) { throw "uv.exe not found after extracting $url" }
-  return $local
+function Save-Url([string]$Url, [string]$Path) {
+  $client = New-Object System.Net.WebClient
+  try { $client.DownloadFile($Url, $Path) } finally { $client.Dispose() }
 }
 
-function Install-UvPython {
-  # Installs a uv-managed CPython 3.12 and returns its python.exe path.
-  $uv = Get-Uv
-  Write-Host "Installing Python 3.12 via uv (this can take a minute)..."
-  & $uv python install 3.12
-  if ($LASTEXITCODE -ne 0) { throw "uv python install 3.12 failed" }
-  $pyexe = & $uv python find 3.12 2>$null
-  if (-not $pyexe -or -not (Test-Path $pyexe)) { throw "could not locate the uv-managed Python 3.12" }
-  return $pyexe
-}
-
-# --- main -----------------------------------------------------------------
-$python = Find-SystemPython
-if (-not $python) {
-  Write-Host "No usable Python found. Provisioning one for Sonara..."
+function Get-Sha256([string]$Path) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $stream = [IO.File]::OpenRead($Path)
   try {
-    $python = Install-UvPython
-  } catch {
-    Write-Host "Could not provision Python automatically: $_"
-    Write-Host "Install Python 3.9+ from https://www.python.org/downloads/windows/ and re-run /sonara:install."
-    exit 1
+    return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToLowerInvariant()
+  } finally {
+    $stream.Dispose()
+    $sha.Dispose()
   }
 }
 
-# Derive the windowless interpreter (pythonw.exe alongside python.exe).
-$pythonw = Join-Path (Split-Path -Parent $python) "pythonw.exe"
-if (-not (Test-Path $pythonw)) { $pythonw = $python }
+function Install-Runtime {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  New-Item -ItemType Directory -Force -Path $Root | Out-Null
+  $staging = Join-Path $Root (".staging-" + [guid]::NewGuid().ToString("N"))
+  New-Item -ItemType Directory -Path $staging | Out-Null
+  try {
+    $zip  = Join-Path $staging $Name
+    $sums = Join-Path $staging "SHA256SUMS"
+    $url  = "$BaseUrl/v$Version"
+    Write-Log "Downloading $url/$Name"
+    Save-Url "$url/SHA256SUMS" $sums
+    Save-Url "$url/$Name" $zip
+    $want = Get-Expected $sums $Name
+    if (-not $want) { throw "SHA256SUMS of v$Version lists no $Name" }
+    $got = Get-Sha256 $zip
+    if ($got -ne $want) { throw "checksum mismatch for ${Name}: expected $want, got $got" }
+    $unpacked = Join-Path $staging "unpacked"
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $unpacked)
+    $hook = Get-ChildItem -Path $unpacked -Recurse -Filter "sonara-hook.exe" | Select-Object -First 1
+    if (-not $hook) { throw "$Name holds no sonara-hook.exe" }
+    if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }   # a broken earlier install
+    [IO.Directory]::Move($hook.Directory.FullName, $Dest)
+    Write-Log "Installed the Sonara runtime $Version in $Dest"
+  } finally {
+    Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+  }
+}
 
-# Record both for the shims + the daemon resolver. UTF-8 without a BOM: ASCII
-# turned any non-ASCII letter in the path into '?', and PowerShell 5.1's UTF8
-# adds a BOM that cmd's `set /p` reads as part of the path (M14).
-$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[IO.File]::WriteAllText((Join-Path $SonaraDir "python.path"),  $python,  $Utf8NoBom)
-[IO.File]::WriteAllText((Join-Path $SonaraDir "pythonw.path"), $pythonw, $Utf8NoBom)
-
-# Hand off to the real installer under that interpreter.
-$env:PYTHONPATH = $PySrc + ";" + $env:PYTHONPATH
-& $python -m sonara.cli install
-exit $LASTEXITCODE
+$code = 0
+try {
+  if (-not (Test-Path (Join-Path $Dest "sonara-hook.exe"))) { Install-Runtime }
+  Remove-Item -Force $Failed -ErrorAction SilentlyContinue
+  $started = $true
+  if (-not $NoStart -and $env:SONARA_BOOTSTRAP_START -ne "0") {
+    # Native stderr lines are error records in Windows PowerShell: with
+    # "Stop" in force the first one would end the script.
+    $ErrorActionPreference = "Continue"
+    $out = & (Join-Path $Dest "sonara.exe") start 2>&1
+    $ErrorActionPreference = "Stop"
+    foreach ($line in $out) { Write-Log "$line" }
+    if ($LASTEXITCODE -ne 0) {
+      Write-Log "sonara start exited with $LASTEXITCODE"
+      $started = $false
+    }
+  }
+  # Current only: remove older releases once this one runs (a runtime of
+  # an older release that is still up keeps its folder; a folder still in
+  # use stays and the next `sonara start` removes it).
+  $dirs = if ($started) { Get-ChildItem -Path $Root -Directory } else { @() }
+  foreach ($old in $dirs) {
+    if ($old.Name -eq $Version -or $old.Name.StartsWith(".")) { continue }
+    try {
+      Remove-Item -Recurse -Force $old.FullName
+      Write-Log "Removed the old runtime $($old.Name)"
+    } catch {
+      Write-Log "Could not remove the old runtime $($old.Name) yet: $_"
+    }
+  }
+} catch {
+  $code = 1
+  Write-Log "Sonara runtime $Version not installed: $_"
+  try {
+    New-Item -ItemType Directory -Force -Path $Root | Out-Null
+    [IO.File]::WriteAllText($Failed, (Get-Date).ToString("o") + " $_")
+  } catch { }
+} finally {
+  if ($Lock) { Remove-Item -Recurse -Force $Lock -ErrorAction SilentlyContinue }
+}
+exit $code

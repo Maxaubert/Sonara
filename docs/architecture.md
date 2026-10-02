@@ -4,6 +4,11 @@ How Sonara is put together, for contributors. Current as of 0.8.3 (2026-10-02). 
 behaviour is in the [README](../README.md); the wire contract for embedding hosts is
 [protocol.md](protocol.md).
 
+> Since 0.11 (#202) the Claude Code plugin runs the Rust runtime (`crates/`) and no longer uses
+> the Python package described here; it stays until a follow-up removes it. The runtime's
+> contract is [protocol-v1.md](protocol-v1.md), its design the runtime spec and plan in
+> `docs/plans/`.
+
 ## Big picture
 
 Sonara is two kinds of process:

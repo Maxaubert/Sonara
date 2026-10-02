@@ -1,6 +1,6 @@
 # Sonara
 
-Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sonara`), shipped as a Claude Code plugin.
+Eyes-free text-to-speech for Claude Code, Windows only. Since 0.11 (#202) the Claude Code plugin runs the Rust runtime (`crates/`) with no Python: `hooks/hooks.json` -> `bin/sonara-hook-launch` (Git Bash) -> `sonara-hook.exe` -> `sonarad.exe`; `commands/*.md` -> `bin/sonara` -> `sonara.exe` (`crates/sonara-cli`). The Python package `src/sonara` (>= 3.9) stays until a follow-up removes it; the plugin does not use it.
 
 ## Remotes
 - `origin` = the fork `Maxaubert/Sonara` (PRs go here). `upstream` = `nimkimi/sonari`: never push there.
@@ -10,27 +10,28 @@ Eyes-free text-to-speech for Claude Code, Windows only. Python >= 3.9 (`src/sona
 - Typecheck/lint: `ruff check src tests conformance clients/python packaging` (no Python typechecker; TS: `npm run typecheck` in `clients/ts`)
 - Rust (`crates/`, needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. Live OneCore (opt-in): `cargo test -p sonara-engine --test onecore_live -- --ignored`. Live L4 checks on this PC's audio, media and hotkeys (opt-in): `cargo test -p sonara-system --test win_live -- --ignored`. End to end: `cargo run -p sonara-reader --example say -- --engine onecore|fake "Hello."`
 - Kokoro engine (M4): `python packaging/runtime_dlls.py stage target/<debug|release>` puts `onnxruntime.dll` (pinned SHA-256) and the VC++ DLLs it needs next to `sonarad.exe` (without them sonarad falls back to OneCore). Live check: `SONARA_KOKORO_MODELS=<folder with the two model files> cargo test -p sonara-engine --release --test kokoro_live -- --ignored --nocapture`. G2P golden changes: `SONARA_BLESS=1 cargo test -p sonara-engine --test kokoro_g2p`, then review the diff. Vendored G2P data: `crates/misaki/tools/pack_data.py`. The CRT is linked statically (`.cargo/config.toml`).
-- Protocol v1 conformance (black box, CI rust job): `cargo build -p sonarad -p sonara-hook; python -m pytest conformance -q` (`--engine fake --system fake`, temp `SONARA_HOME`; contract `docs/protocol-v1.md`)
+- Protocol v1 conformance (black box, CI rust job): `cargo build -p sonarad -p sonara-hook -p sonara-cli; python -m pytest conformance -q` (`--engine fake --system fake`, temp `SONARA_HOME`; contract `docs/protocol-v1.md`). `conformance/plugin/` drives `bin/` in Git Bash and the PowerShell bootstrap against a local release server, `sonara.exe`, and a release zip installed into a temp `LOCALAPPDATA`
 - SDKs (CI clients job, Node 18 + Python 3.9): `cargo build -p sonarad --release`, then `cd clients/ts && npm ci && npm run build && npm test` (`test:unit` needs no sonarad), `cd clients/player && npm ci && npm run typecheck && npm run build && npm test` (demo: `examples/player-demo`, see `clients/player/README.md`), `python -m pytest clients/python/tests -q`, `cd packaging/npm-runtime && npm run build && npm test`, `node packaging/smoke/run-node.mjs`. Bundling guide: `docs/bundling.md`
 - Notices (R6): after any Rust dependency change run `python packaging/notices/gen_notices.py` (CI `--check`); models/data notices are hand-kept in `packaging/notices/models-and-data.md`
 - Unit: `python -m pytest -q` (system Python with `.[dev,windows]`; conftest adds `src/` to `sys.path`). Live OneCore checks: `-m live_windows` (opt-in)
 - E2E (headless): `python -m pytest tests/e2e -q` (needs `pip install -e ".[e2e]"` and `playwright install chromium`)   Run when: `src/sonara/settings.html`, `src/sonara/webui.py`
-- Build / package: plugin has no build step; runtime zip `python packaging/release_zip.py` (release.yml attaches it)   Artifact: `sonara-runtime-win-x64-<version>.zip`; npm/PyPI publishing is manual (`docs/bundling.md`)
+- Build / package: the plugin is the repo (marketplace `.claude-plugin/`); runtime zip `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py` (zip + `SHA256SUMS`, both attached by release.yml)   Artifact: `sonara-runtime-win-x64-<version>.zip`; npm/PyPI publishing is manual (`docs/bundling.md`). Order: merge -> release.yml publishes `v<version>` -> users install or update (the launcher downloads the release named in `bin/runtime-version`)
 - Known failures to tolerate: none
-- Version source: `pyproject.toml` + `src/sonara/__init__.py` + `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` + `Cargo.toml` `[workspace.package]` + `clients/ts/package.json` + `clients/player/package.json` + `clients/ts/src/version.ts` + `packaging/npm-runtime/package.json` + `clients/python/pyproject.toml` + `clients/python/src/sonara_client/version.py` (keep equal, `test_manifests.py`)   Release: release.yml on push to main (CI: ci.yml, Python 3.9 + 3.12)
-- Install locally after merge: safe redeploy below   Confirm version: `sonara doctor` (its `version` row)
+- Version source: `pyproject.toml` + `src/sonara/__init__.py` + `.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` + `bin/runtime-version` + `Cargo.toml` `[workspace.package]` + `clients/ts/package.json` + `clients/player/package.json` + `clients/ts/src/version.ts` + `packaging/npm-runtime/package.json` + `clients/python/pyproject.toml` + `clients/python/src/sonara_client/version.py` (keep equal, `test_manifests.py`)   Release: release.yml on push to main (CI: ci.yml, Python 3.9 + 3.12)
+- Install locally after merge: `/plugin update sonara@sonara` once the release exists, restart Claude Code   Confirm version: `/sonara:doctor` (its `version` row)
 - Deploy: plugin marketplace
 - Signing: unsigned
 
 ## Runtime deploy drift (the biggest gotcha)
-- The daemon runs the deployed copy in `~/.sonara/app/sonara`, NOT the repo. Before diagnosing behaviour: `diff -rq ~/.sonara/app/sonara src/sonara`. Python caches modules, so a redeploy needs a daemon restart.
-- Safe redeploy (from the repo or a worktree):
-  1. `PYTHONPATH=src python -m sonara.cli shutdown`, then wait until no `pythonw.exe` remains.
-  2. `PYTHONPATH=src python -c "from sonara.install.app_copy import copy_app; copy_app(r'<repo>')"`
-  3. If only `sonara.old` / `sonara.new` remain (#127), rename `sonara.new` to `sonara`.
-  4. `PYTHONPATH=~/.sonara/app python -m sonara.cli start` (starting with `PYTHONPATH=src` runs the REPO copy).
-- Hooks run through Git Bash: `bin/sonara-hook-run` picks the interpreter (`~/.sonara/python.path`, then a non-Store PATH python, then `py -3`) and runs `bin/sonara-hook` on it. `bin/sonara-hook.cmd` is not used by `hooks/hooks.json`. settings.json installs get exec-form hooks generated from `hooks/hooks.json`.
-- Logs: `~/.sonara/speechd.log`, `~/.sonara/faulthandler.log`. Config: `~/.sonara/config.json`; change keys live with POST `http://127.0.0.1:27431/api/set` and the token in `~/.sonara/webui.token`.
+- The plugin runs the runtime in `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`, NOT the repo or `target/`. Before diagnosing behaviour: `sonara.exe version` there vs the branch. The home (settings, logs, `runtime.json`) is `%LOCALAPPDATA%\Sonara` (`SONARA_HOME` overrides).
+- Safe redeploy of a branch build (same version folder; never during someone's session):
+  1. `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release`
+  2. `"$LOCALAPPDATA/Sonara/runtime/<ver>/sonara.exe" stop` (writes `stopped`, restores ducked apps, waits for the exit).
+  3. Copy `target/release/{sonarad,sonara-hook,sonara}.exe` and the staged DLLs into that folder.
+  4. `"$LOCALAPPDATA/Sonara/runtime/<ver>/sonara.exe" start` (clears `stopped`).
+- Hooks run through Git Bash: `bin/sonara-hook-launch` reads `bin/runtime-version`, execs `sonara-hook.exe` (adds `--standalone` to `SONARA_RUNTIME_ARGS`), else starts `bin/sonara-bootstrap.ps1` once in the background (lock `runtime\.bootstrap.lock`, retry marker `.bootstrap.failed`, 5 min). Test overrides: `SONARA_RELEASE_BASE_URL`, `SONARA_BOOTSTRAP_START=0`, `SONARA_NO_BROWSER`.
+- Logs: `%LOCALAPPDATA%\Sonara\logs\sonarad.log`, `logs\bootstrap.log`. Settings: `config.json` there (only user-set keys; product defaults in `sonarad::config::SCHEMA`); change keys live through the settings page (`sonara.exe settings`) or protocol `set`.
+- The Python product (until removed): daemon copy in `~/.sonara/app`, redeploy with `from sonara.install.app_copy import copy_app`; it is no longer installed by the plugin.
 
 ## Architecture
 Map, threads, lock contract, module owners and how to add a setting/message/hotkey: `docs/architecture.md`. Rules that prevent mistakes:
@@ -41,7 +42,7 @@ Map, threads, lock contract, module owners and how to add a setting/message/hotk
 - Feature modules keep daemon state by reference: never rebind it on the daemon, mutate in place. Persist via `daemon._persist()`. Never block under the daemon lock.
 - Tests patch names on the module that owns them (`install/` modules call each other via module attributes; the platform via `sonara.platform.get_platform`).
 - Settings: one table in `config_schema.py` feeds DEFAULTS, the daemon, webui and CLI. `config.json` stores only user-set keys; bundled earcons resolve at runtime, never stored.
-- PRIVACY.md lists every `~/.sonara` file: update it when adding one.
+- PRIVACY.md lists every file in `%LOCALAPPDATA%\Sonara`: update it when adding one.
 - `cli.py`: argparse + thin command functions only.
 
 ## Product rules
@@ -55,5 +56,5 @@ Map, threads, lock contract, module owners and how to add a setting/message/hotk
 - Every `~/.sonara` path goes through `paths.py` (conftest isolates it per test). conftest also points `~/.claude/settings.json` and the launcher dir at tmp and refuses mutating `schtasks`: a test that misses a platform patch reaches the real supervisor.
 - Bug fixes are test-first, with a regression test named after the behaviour.
 - No em-dashes anywhere (code, comments, docs, commit messages).
-- Text rules exist in Python and Rust until M9; change both together with the golden fixtures. Likewise until M11: the summarizer prompts (`crates/sonara-agent/prompts/`, `test_agent_prompts.py`) and the hook mapping (`crates/sonara-hook/tests/golden/`, `test_hook_golden.py`).
+- Text rules exist in Python and Rust until M9; change both together with the golden fixtures. Likewise until `src/sonara` is removed (the follow-up to M11, #202): the summarizer prompts (`crates/sonara-agent/prompts/`, `test_agent_prompts.py`) and the hook mapping (`crates/sonara-hook/tests/golden/`, `test_hook_golden.py`).
 - Current work: the Rust reader runtime, spec `docs/plans/2026-10-02-sonara-runtime-spec.md`, plan `docs/plans/2026-10-02-sonara-runtime-plan.md` (Phase 0 is done: `docs/plans/phase0-plan.md`). Research: `docs/plans/2026-10-02-distribution-research.md`, `docs/plans/embedding-research.md`. Historical specs, plans and audits: `docs/history/`.

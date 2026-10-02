@@ -76,6 +76,13 @@ pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
 const ON_OFF: &[&str] = &["on", "off"];
 
 /// Every persisted setting, its layer, validation and default (as JSON).
+///
+/// The defaults are the product's (#202, the maintainer's settings of the
+/// Python plugin): Kokoro's `af_sarah` at 250 words per minute, medium
+/// verbosity, prose held until five chunks wait, every session read, media
+/// paused while Sonara speaks, summaries off, unmuted. `sonarad` applies
+/// them to the layers (L1 in `apply_reader`), so they differ from the
+/// library crates' own defaults on purpose.
 pub const SCHEMA: &[Setting] = &[
     Setting {
         key: "engine",
@@ -87,13 +94,13 @@ pub const SCHEMA: &[Setting] = &[
         key: "voice",
         layer: Layer::Reader,
         kind: Kind::TextOrNull,
-        default: "null",
+        default: "\"af_sarah\"",
     },
     Setting {
         key: "rate",
         layer: Layer::Reader,
         kind: Kind::Range(100, 400),
-        default: "200",
+        default: "250",
     },
     Setting {
         key: "volume",
@@ -117,19 +124,19 @@ pub const SCHEMA: &[Setting] = &[
         key: "verbosity",
         layer: Layer::Agent,
         kind: Kind::OneOf(VERBOSITY),
-        default: "\"everything\"",
+        default: "\"medium\"",
     },
     Setting {
         key: "minqueue",
         layer: Layer::Agent,
         kind: Kind::Range(0, 10),
-        default: "1",
+        default: "5",
     },
     Setting {
         key: "background_policy",
         layer: Layer::Agent,
         kind: Kind::OneOf(BACKGROUND),
-        default: "\"earcon_only\"",
+        default: "\"all\"",
     },
     Setting {
         key: "summaries",
@@ -142,7 +149,7 @@ pub const SCHEMA: &[Setting] = &[
         key: "audio_mode",
         layer: Layer::System,
         kind: Kind::OneOf(AUDIO_MODES),
-        default: "\"off\"",
+        default: "\"pause\"",
     },
     Setting {
         key: "duck_level",
@@ -695,10 +702,12 @@ impl Store {
 /// Apply the persisted L1 settings to a new reader, before the runtime
 /// accepts clients (so before the first speech): the engine (unless
 /// `apply_engine` is false: the command line chose one), the voice, the
-/// rate and the volume. A value the reader refuses (a voice this engine
-/// lacks, such as a Kokoro voice from the Python plugin while only OneCore
-/// is installed) is reported and left in `config.json`, so it applies
-/// once it is available; the reader keeps its default meanwhile.
+/// rate and the volume, each the user's value or else the schema default.
+/// A user's value the reader refuses (a voice this engine lacks, such as
+/// a Kokoro voice from the Python plugin while only OneCore is installed)
+/// is reported and left in `config.json`, so it applies once it is
+/// available; the reader keeps its default meanwhile. A default the
+/// engine lacks (`af_sarah` on OneCore) is skipped silently.
 pub fn apply_reader(
     store: &Store,
     reader: &sonara_reader::ReaderHandle,
@@ -711,7 +720,13 @@ pub fn apply_reader(
         keys.insert(0, Key::Engine);
     }
     for key in keys {
-        let Some(v) = store.user(key.as_str()) else {
+        let user = store.user(key.as_str());
+        let from_user = user.is_some();
+        let Some(v) = user.or_else(|| {
+            (key != Key::Engine)
+                .then(|| default(key.as_str()))
+                .flatten()
+        }) else {
             continue;
         };
         let value = match &v {
@@ -723,6 +738,9 @@ pub fn apply_reader(
             },
         };
         if let Err(e) = reader.set(key, value) {
+            if !from_user {
+                continue;
+            }
             let engine = match reader.get(Key::Engine) {
                 Ok(V::Text(t)) => t,
                 _ => String::new(),
@@ -764,8 +782,50 @@ mod tests {
             let d = default(s.key).unwrap();
             assert_eq!(validate(s.key, &d).unwrap(), d, "{}", s.key);
         }
-        assert_eq!(default("rate"), Some(json!(200)));
+        assert_eq!(default("rate"), Some(json!(250)));
         assert_eq!(default("nope"), None);
+    }
+
+    #[test]
+    fn the_defaults_are_the_product_defaults() {
+        // #202: the maintainer's Python settings, except the mute level.
+        for (key, v) in [
+            ("voice", json!("af_sarah")),
+            ("rate", json!(250)),
+            ("volume", json!(100)),
+            ("mute_level", json!(0)),
+            ("verbosity", json!("medium")),
+            ("minqueue", json!(5)),
+            ("background_policy", json!("all")),
+            ("audio_mode", json!("pause")),
+            ("duck_level", json!(30)),
+        ] {
+            assert_eq!(default(key), Some(v), "{key}");
+        }
+        assert_eq!(default("summaries").unwrap()["enabled"], json!(false));
+    }
+
+    #[test]
+    fn the_reader_starts_with_the_defaults_and_skips_a_default_voice_it_lacks() {
+        use sonara_reader::{Config, Key, ReaderHandle, Registry, Value as V};
+        let mut registry = Registry::default();
+        registry
+            .register(Arc::new(sonara_engine::fake::FakeEngine::new()))
+            .unwrap();
+        let (out, rx) = sonara_audio::TestOutput::new();
+        let reader =
+            ReaderHandle::new(Config::new(registry).with_output(Box::new(out), rx)).unwrap();
+        let (store, _) = Store::load(&tmp());
+        let problems = apply_reader(&store, &reader, true);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(reader.get(Key::Rate).unwrap(), V::Number(250));
+        assert_eq!(
+            reader.get(Key::Voice).unwrap(),
+            V::Null,
+            "the fake has no af_sarah"
+        );
+        assert!(store.user_keys().is_empty(), "defaults are not the user's");
+        reader.shutdown();
     }
 
     #[test]
@@ -815,7 +875,7 @@ mod tests {
             !dir.join(CONFIG_FILE).exists(),
             "nothing set, nothing written"
         );
-        assert_eq!(store.value("rate"), json!(200));
+        assert_eq!(store.value("rate"), json!(250));
         store.record("rate", &json!(250));
         store.record("volume", &json!(100));
         assert_eq!(

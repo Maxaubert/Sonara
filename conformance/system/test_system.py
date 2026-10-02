@@ -93,7 +93,7 @@ def test_system_is_offered_and_enabled_by_hello(rt):
     assert r["error"]["code"] == "E_UNSUPPORTED"
     r = c.hello(rt.token, extensions=["system"])
     assert r["ok"] and "system" in r["extensions"]
-    assert ok(c, {"type": "get", "key": "audio_mode"})["value"] == "off"
+    assert ok(c, {"type": "get", "key": "audio_mode"})["value"] == "pause", "the default (#202)"
     assert ok(c, {"type": "get", "key": "duck_level"})["value"] == 30
 
 
@@ -377,11 +377,11 @@ def test_setting_changes_speak_their_cues(rt):
 def test_resending_a_setting_unchanged_speaks_no_cue(rt):
     c = rt.tcp(extensions=["system", "agent"])
     ok(c, {"type": "subscribe", "events": ["cues"]})
-    set_key(c, "audio_mode", "pause")
-    assert cue(c) == "Media pause."
+    set_key(c, "audio_mode", "duck")
+    assert cue(c) == "Audio ducking."
     set_key(c, "duck_level", 45)
     assert cue(c) == "Duck level 45 percent."
-    set_key(c, "audio_mode", "pause")
+    set_key(c, "audio_mode", "duck")
     set_key(c, "duck_level", 45)
     set_key(c, "mute_level", 1)
     assert cue(c) == "Muted.", "an unchanged audio_mode or duck_level is silent"
@@ -404,3 +404,20 @@ def test_a_cue_over_a_paused_reader_leaves_it_paused(rt):
     assert cue(c) == "Muted."
     set_key(c, "mute_level", 0)
     assert cue(c) == "Unmuted."
+
+
+def test_shutdown_restores_the_apps_and_ends_the_runtime(start, tmp_path):
+    # #202: `sonara stop`, uninstall and upgrades end the runtime this way.
+    rt = start_with_apps(start, tmp_path)
+    plain = rt.tcp()
+    r = plain.request({"type": "shutdown"})
+    assert r["error"]["code"] == "E_UNSUPPORTED", "only with the system extension"
+    c = system_client(rt)
+    set_key(c, "audio_mode", "duck")
+    set_key(c, "duck_level", 20)
+    speak_long(c)
+    assert wait_until(lambda: near(volume(rt, 100), 0.2))
+    ok(c, {"type": "shutdown"})
+    assert rt.wait_exit() == 0
+    assert near(volume(rt, 100), 0.8), "other apps are restored before the exit"
+    assert not rt.runtime_json.exists()

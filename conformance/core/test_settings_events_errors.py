@@ -43,8 +43,8 @@ def test_settings_show_in_state(client):
     client.state()
     client.request({"type": "set", "key": "volume", "value": 55})
     client.state(lambda s: s["volume"] == 55)
-    client.request({"type": "set", "key": "rate", "value": 250})
-    s = client.state(lambda s: s["rate"] == 250)
+    client.request({"type": "set", "key": "rate", "value": 300})
+    s = client.state(lambda s: s["rate"] == 300)
     assert s["engine_status"]["engine"] == "fake"
 
 

@@ -1,13 +1,16 @@
 """Validate the shipped plugin manifests as real JSON and assert every
-hooks.json command points at the bin/sonara-hook-run launcher under the repo root."""
+hooks.json command points at the bin/sonara-hook-launch launcher under the
+repo root (#202: the Rust runtime, no Python)."""
 import json
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
+MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
-SONARA_HOOK = REPO_ROOT / "bin" / "sonara-hook"
-SONARA_HOOK_RUN = REPO_ROOT / "bin" / "sonara-hook-run"
+LAUNCHER = REPO_ROOT / "bin" / "sonara-hook-launch"
+RUNTIME_VERSION = REPO_ROOT / "bin" / "runtime-version"
 
 
 def _load(path: Path) -> dict:
@@ -21,8 +24,8 @@ def test_plugin_json_is_valid_and_named():
     assert data.get("name"), "plugin.json must declare a non-empty name"
 
 
-def test_sonara_hook_shim_exists():
-    assert SONARA_HOOK.is_file(), f"missing hook shim: {SONARA_HOOK}"
+def test_the_hook_launcher_exists():
+    assert LAUNCHER.is_file(), f"missing hook launcher: {LAUNCHER}"
 
 
 def _iter_hook_commands(data: dict):
@@ -52,20 +55,53 @@ def test_hooks_json_commands_point_at_the_hook_launcher():
     assert commands, "hooks.json declares no commands"
 
     for cmd in commands:
-        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-run <Event>.
+        # Commands use ${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-launch <Event>.
         assert "${CLAUDE_PLUGIN_ROOT}" in cmd, (
             f"command must use ${{CLAUDE_PLUGIN_ROOT}}: {cmd!r}"
         )
         # Resolve the plugin-root-relative path to this repo and assert it
-        # points at the existing interpreter launcher, which runs
-        # bin/sonara-hook on a real Python (E3).
+        # points at the bash launcher, which execs the runtime's
+        # sonara-hook.exe (or installs the runtime first).
         rel = cmd.split("${CLAUDE_PLUGIN_ROOT}", 1)[1].lstrip("/")
-        # rel looks like 'bin/sonara-hook-run" MessageDisplay' -> the path token.
+        # rel looks like 'bin/sonara-hook-launch" MessageDisplay' -> the path token.
         path_token = rel.split()[0].rstrip('"')
         resolved = REPO_ROOT / path_token
-        assert resolved == SONARA_HOOK_RUN, f"command path {path_token!r} != bin/sonara-hook-run"
+        assert resolved == LAUNCHER, f"command path {path_token!r} != bin/sonara-hook-launch"
         assert resolved.is_file(), f"hook command target does not exist: {resolved}"
-        assert SONARA_HOOK.is_file()
+        event = rel.split()[1]
+        assert cmd == '"${CLAUDE_PLUGIN_ROOT}/bin/sonara-hook-launch" ' + event
+
+
+def test_no_plugin_file_runs_python():
+    # #202: hooks.json, bin/* and commands/*.md must not need Python.
+    files = [HOOKS_JSON, *sorted((REPO_ROOT / "bin").iterdir()),
+             *sorted((REPO_ROOT / "commands").glob("*.md"))]
+    for f in files:
+        text = f.read_text(encoding="utf-8").lower()
+        assert not re.search(r"\bpython[w3]?(\.exe)?\b|\bpy -3\b|#!.*python", text), f.name
+
+
+def test_bash_scripts_keep_lf_line_endings():
+    # Git Bash runs these: a CR would end up in every command.
+    for name in ("sonara-hook-launch", "sonara", "runtime-version"):
+        assert b"\r" not in (REPO_ROOT / "bin" / name).read_bytes(), name
+
+
+def test_the_runtime_version_is_the_release_version():
+    # The launcher downloads the release named here: it must be the one
+    # release.yml publishes for this commit.
+    assert RUNTIME_VERSION.read_bytes() == (_pyproject_version() + "\n").encode()
+
+
+def test_the_marketplace_serves_the_plugin_from_the_repo():
+    # `/plugin marketplace add Maxaubert/Sonara`, then `/plugin install sonara@sonara`.
+    data = _load(MARKETPLACE_JSON)
+    assert data["name"] == "sonara"
+    assert data["owner"]["name"]
+    (plugin,) = data["plugins"]
+    assert plugin["name"] == "sonara" == _load(PLUGIN_JSON)["name"]
+    assert plugin["source"] == "./"
+    assert plugin["repository"] == "https://github.com/Maxaubert/Sonara"
 
 
 def test_every_phase1_event_is_hooked():
@@ -116,8 +152,8 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_10_2():
-    assert _pyproject_version() == "0.10.2"
+def test_pyproject_version_is_0_11_0():
+    assert _pyproject_version() == "0.11.0"
 
 
 def test_sdk_package_versions_match_pyproject():
