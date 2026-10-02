@@ -1,0 +1,145 @@
+"""Core: discovery, loopback binding, single instance, idle exit and
+takeover (spec section 3)."""
+from __future__ import annotations
+
+import socket
+import time
+
+import pytest
+from harness import long_text, non_loopback_addresses, wait_until
+
+
+def test_runtime_json_describes_the_instance(rt):
+    info = rt.info
+    assert info["pid"] == rt.proc.pid
+    assert isinstance(info["port"], int) and isinstance(info["http_port"], int)
+    assert info["port"] != info["http_port"]
+    assert len(info["token"]) >= 32
+    assert info["protocol"] == {"major": 1, "minor": 0}
+    assert "core" in info["capabilities"]
+    assert info["version"]
+    assert info["started_at"].endswith("Z")
+    assert not [p for p in rt.home.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_only_loopback_is_bound(rt):
+    addrs = non_loopback_addresses()
+    if not addrs:
+        pytest.skip("this machine has no non-loopback IPv4 address")
+    for addr in addrs:
+        for port in (rt.info["port"], rt.info["http_port"]):
+            with pytest.raises(OSError):
+                socket.create_connection((addr, port), timeout=2).close()
+
+
+def test_a_second_instance_on_the_same_home_exits(start, rt):
+    second = start(home=rt.home, wait=False)
+    code = second.wait_exit()
+    assert code == 3
+    assert "already running" in second.stderr()
+    assert rt.alive()
+    assert rt.read_runtime()["pid"] == rt.proc.pid
+
+
+def test_instances_on_other_homes_are_independent(start, rt, tmp_path):
+    other = start(home=tmp_path / "other")
+    assert other.alive() and rt.alive()
+    assert other.info["port"] != rt.info["port"]
+
+
+def test_idle_exit_after_the_last_client_leaves(start):
+    rt = start("--idle-exit", "1")
+    c = rt.tcp()
+    time.sleep(2)
+    assert rt.alive(), "a connected client keeps it alive"
+    c.close()
+    assert rt.wait_exit() == 0
+    assert not rt.runtime_json.exists()
+
+
+def test_idle_exit_with_no_client_at_all(start):
+    rt = start("--idle-exit", "0.5")
+    assert rt.wait_exit() == 0
+    assert not rt.runtime_json.exists()
+
+
+def test_keep_alive_survives_the_last_client(start):
+    rt = start("--idle-exit", "0.5")
+    c = rt.tcp(keep_alive=True)
+    c.close()
+    time.sleep(2)
+    assert rt.alive()
+
+
+def test_playing_keeps_it_alive_without_clients(start):
+    rt = start("--idle-exit", "0.5")
+    status, _ = rt.post("speak", {"text": long_text(1)})
+    assert status == 200
+    time.sleep(1.5)
+    assert rt.alive(), "it reads to the end first"
+    assert rt.wait_exit(15) == 0
+
+
+def test_a_paused_item_does_not_keep_it_alive(start):
+    rt = start("--idle-exit", "0.5")
+    rt.post("speak", {"text": long_text(2)})
+    status, _ = rt.post("control", {"action": "pause"})
+    assert status == 200
+    assert rt.wait_exit(10) == 0
+
+
+def test_an_open_event_stream_counts_as_a_client(start):
+    rt = start("--idle-exit", "0.5")
+    sse = rt.sse("state")
+    time.sleep(1.5)
+    assert rt.alive()
+    sse.close()
+    assert rt.wait_exit() == 0
+
+
+def test_standalone_never_idles_out(start):
+    rt = start("--idle-exit", "0.2", "--standalone")
+    time.sleep(1.5)
+    assert rt.alive()
+
+
+def test_takeover_when_idle(rt):
+    c = rt.tcp(hello=False)
+    r = c.hello(rt.token, takeover=True, protocol={"major": 2, "minor": 0})
+    assert r["ok"] is True
+    assert r["takeover"] is True
+    assert c.closed()
+    assert rt.wait_exit() == 0
+    assert not rt.runtime_json.exists()
+
+
+def test_takeover_when_busy_is_e_busy_then_succeeds_once_idle(rt, client):
+    client.request({"type": "speak", "text": long_text(2)})
+    other = rt.tcp(hello=False)
+    r = other.hello(rt.token, takeover=True)
+    assert r["error"]["code"] == "E_BUSY"
+    assert rt.alive()
+    client.request({"type": "control", "action": "pause"})
+    assert other.hello(rt.token, takeover=True)["error"]["code"] == "E_BUSY"
+    client.request({"type": "control", "action": "stop"})
+    r = other.hello(rt.token, takeover=True)
+    assert r["ok"] is True
+    assert rt.wait_exit() == 0
+    assert not rt.runtime_json.exists()
+
+
+def test_takeover_needs_the_token(rt):
+    c = rt.tcp(hello=False)
+    r = c.hello("wrong", takeover=True)
+    assert r["error"]["code"] == "E_AUTH"
+    time.sleep(0.3)
+    assert rt.alive()
+
+
+def test_a_new_instance_starts_after_a_takeover(start, rt):
+    c = rt.tcp(hello=False)
+    assert c.hello(rt.token, takeover=True)["ok"]
+    assert rt.wait_exit() == 0
+    new = start(home=rt.home)
+    assert new.info["pid"] != rt.info["pid"]
+    assert wait_until(lambda: new.read_runtime() is not None)
