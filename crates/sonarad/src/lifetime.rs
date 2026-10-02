@@ -3,7 +3,8 @@
 //! A client is a TCP connection that completed `hello`, or an open SSE event
 //! stream; a plain HTTP request only counts as activity. The process exits
 //! once it has had no client and nothing being read (a paused item does not
-//! count) for the idle timeout (30 s by default), unless it runs standalone
+//! count) and no Kokoro model download or load running (`sonarad` passes
+//! both as `busy`) for the idle timeout (30 s by default), unless it runs standalone
 //! or a client said `keep_alive: true` (sticky until the process ends). An
 //! idle takeover or Ctrl+C end it at once.
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -117,7 +118,8 @@ impl Lifetime {
 }
 
 /// Check the idle rule every `tick`. `busy` says whether the reader is
-/// reading right now (that restarts the countdown).
+/// reading or the engine fetching its model right now (that restarts the
+/// countdown).
 pub async fn monitor<F>(life: Arc<Lifetime>, tick: Duration, busy: F)
 where
     F: Fn() -> bool + Send + Sync + Clone + 'static,

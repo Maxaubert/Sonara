@@ -2,14 +2,17 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine onecore|fake] \
+pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake] \
 [--output device|null] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
        [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
-  --engine ID         engine to start with (default: the saved one, else
-                      onecore). 'fake' is a deterministic tone engine for
-                      tests and conformance runs
+  --engine ID         engine to start with (default: the saved one, else kokoro
+                      when onnxruntime.dll is next to sonarad.exe, else
+                      onecore). Kokoro downloads its model on first use and
+                      speaks with onecore until it is ready. 'fake' is a
+                      deterministic tone engine for tests and conformance runs
+                      (no Kokoro, no download)
   --output KIND       'device' (default; 'null' with --engine fake) or 'null',
                       a silent output that keeps real time
   --system KIND       platform of the 'system' extension: 'windows' (default)
@@ -39,9 +42,9 @@ pub enum SystemKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Args {
     pub home: Option<PathBuf>,
-    pub engine: String,
-    /// `--engine` was given: it wins over the saved engine.
-    pub engine_given: bool,
+    /// `--engine`: wins over the saved engine. `None`: the saved one, else
+    /// kokoro if ONNX Runtime is installed, else onecore.
+    pub engine: Option<String>,
     /// `--migrate-from DIR`.
     pub migrate_from: Option<PathBuf>,
     pub output: OutputKind,
@@ -60,8 +63,7 @@ pub enum Command {
 
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String> {
     let mut home = None;
-    let mut engine = "onecore".to_string();
-    let mut engine_given = false;
+    let mut engine = None;
     let mut migrate_from = None;
     let mut output = None;
     let mut system = SystemKind::Windows;
@@ -72,10 +74,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
         let mut value = |name: &str| it.next().ok_or(format!("{name} needs a value"));
         match a.as_str() {
             "--home" => home = Some(PathBuf::from(value("--home")?)),
-            "--engine" => {
-                engine = value("--engine")?;
-                engine_given = true;
-            }
+            "--engine" => engine = Some(value("--engine")?),
             "--migrate-from" => migrate_from = Some(PathBuf::from(value("--migrate-from")?)),
             "--output" => {
                 output = Some(match value("--output")?.as_str() {
@@ -106,7 +105,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             other => return Err(format!("unknown argument '{other}'")),
         }
     }
-    let output = output.unwrap_or(if engine == "fake" {
+    let output = output.unwrap_or(if engine.as_deref() == Some("fake") {
         OutputKind::Null
     } else {
         OutputKind::Device
@@ -114,7 +113,6 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     Ok(Command::Run(Args {
         home,
         engine,
-        engine_given,
         migrate_from,
         output,
         system,
@@ -137,21 +135,29 @@ mod tests {
     #[test]
     fn defaults() {
         let a = run(&[]);
-        assert_eq!(a.engine, "onecore");
+        assert_eq!(a.engine, None);
         assert_eq!(a.output, OutputKind::Device);
         assert_eq!(a.idle_exit, Duration::from_secs(30));
         assert!(!a.standalone);
         assert_eq!(a.system, SystemKind::Windows);
-        assert!(!a.engine_given);
         assert_eq!(a.migrate_from, None);
     }
 
     #[test]
     fn engine_and_migration_flags() {
         let a = run(&["--engine", "fake", "--migrate-from", "old"]);
-        assert!(a.engine_given);
+        assert_eq!(a.engine.as_deref(), Some("fake"));
         assert_eq!(a.migrate_from, Some(PathBuf::from("old")));
         assert!(parse(["--migrate-from".to_string()]).is_err());
+    }
+
+    #[test]
+    fn the_engine_can_be_named() {
+        assert_eq!(
+            run(&["--engine", "kokoro"]).engine.as_deref(),
+            Some("kokoro")
+        );
+        assert_eq!(run(&["--engine", "onecore"]).output, OutputKind::Device);
     }
 
     #[test]

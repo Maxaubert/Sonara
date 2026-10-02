@@ -1,0 +1,116 @@
+[
+  {
+    "batches": 1,
+    "normalized": "Call get user id before you open the Session Channel, otherwise the router drops the event.",
+    "phonemes": "kˈɔːl ɡɛt jˈuːzɚ Idˈiː bᵻfˌɔːɹ juː ˈOpən ðə sˈɛʃən ʧˈænəl, ˈʌðɚwˌIz ðə ɹˈWɾɚ dɹˈɑːps ði ᵻvˈɛnt.",
+    "text": "Call get user id before you open the SessionChannel, otherwise the router drops the event."
+  },
+  {
+    "batches": 1,
+    "normalized": "I changed src slash sonara slash daemon slash ingest dot P Y and tests slash test_router dot P Y, then reran the suite.",
+    "phonemes": "ˌI ʧˈAnʤd ˈɛs ˈɑɹ sˈi slˈæʃ sənˈɑɹə slˈæʃ dˈiːmən slˈæʃ ɪnʤˈɛst dˈɑːt pˈi wˈI ænd tˈɛsts slˈæʃ tˈɛst ɹˈWɾɚ dˈɑːt pˈi wˈI, ðˈɛn ɹᵻɹˈæn ðə swˈiːt.",
+    "text": "I changed src/sonara/daemon/ingest.py and tests/test_router.py, then reran the suite."
+  },
+  {
+    "batches": 1,
+    "normalized": "CI is green on the PR, and the API now returns JSON instead of XML.",
+    "phonemes": "sˌiˈI ɪz ɡɹˈiːn ˌɔn ðə pˌiˈɑɹ, ænd ði ˌApˌiˈI nˈW ɹᵻtˈɜːnz ʤˌAˌɛsˌOˈɛn ɪnstˈɛd ʌv ˌɛksˌɛmˈɛl.",
+    "text": "CI is green on the PR, and the API now returns JSON instead of XML."
+  },
+  {
+    "batches": 1,
+    "normalized": "Pi is roughly 3 point one four, and the plugin is now at version 0 point 8 point 5 after 1689 tests passed.",
+    "phonemes": "pˈI ɪz ɹˈʌfli θɹˈiː pˈYnt wˈʌn fˈɔːɹ, ænd ðə plˈʌɡˈɪn ɪz nˈW æɾ vˈɜːʒən zˈiəɹO pˈYnt ˈAt pˈYnt fˈIv ˈæftɚɹ wˈʌn θˈWzənd sˈɪks hˈʌndɹɪd ænd ˈAɾi nˈIn tˈɛsts pˈæst.",
+    "text": "Pi is roughly 3.14, and the plugin is now at v0.8.5 after 1689 tests passed."
+  },
+  {
+    "batches": 1,
+    "normalized": "The docs live at link if you want the details.",
+    "phonemes": "ðə dˈɑks lˈɪv æɾ lˈɪŋk ɪf juː wˈɔnt ðə diːtˈAlz.",
+    "text": "The docs live at link if you want the details."
+  },
+  {
+    "batches": 1,
+    "normalized": "1: Run sonara keymap dash dash reset, then press Control Alt M once to check the mute cycle.",
+    "phonemes": "wˈʌn: ɹˈʌn sənˈɑɹə kˈiːmˈæp dˈæʃ dˈæʃ ɹᵻsˈɛt, ðˈɛn pɹˈɛs kəntɹˈOl ˈɔlt ˈɛm wˈʌns tə ʧˈɛk ðə mjˈuːt sˈIkəl.",
+    "text": "1: Run sonara keymap --reset, then press Ctrl+Alt+M once to check the mute cycle."
+  },
+  {
+    "batches": 1,
+    "normalized": "The Kokoro Engine calls normalize for speech, and the wasapi output thread uses cpal.",
+    "phonemes": "ðə kˈOkəɹˌO ˈɛnʤɪn kˈɔːlz nˈɔːɹməlˌIz fɔːɹ spˈiːʧ, ænd ðə wəsˈɑpi ˈWtpʊt θɹˈɛd jˈuːsᵻz sˈipˌæl.",
+    "text": "The KokoroEngine calls normalize for speech, and the WASAPI output thread uses cpal."
+  },
+  {
+    "batches": 1,
+    "normalized": "Set SONARA_HOME to localappdata slash Sonara and restart sonarad dot E X E on port 8765.",
+    "phonemes": "sˈɛt sənˈɑɹə hˈOm tə lˈOkəlˈæpdˈAɾə slˈæʃ sənˈɑɹə ænd ɹᵻstˈɑːɹt sənˈɑɹə dˈi dˈɑːt ˈi ˈɛks ˈi ˌɔn pˈɔːɹt ˈAt θˈWzənd sˈɛvən hˈʌndɹɪd ænd sˈɪksti fˈIv.",
+    "text": "Set SONARA_HOME to %LOCALAPPDATA%\\Sonara and restart sonarad.exe on port 8765."
+  },
+  {
+    "batches": 1,
+    "normalized": "Use npm i at sonara slash client, then call connect and on State from the Electron main process.",
+    "phonemes": "jˈuːs ˌɛnpˌiˈɛm ˈI æɾ sənˈɑɹə slˈæʃ klˈIənt, ðˈɛn kˈɔːl kənˈɛkt ænd ˌɔn stˈAt fɹʌm ði ᵻlˈɛktɹɑːn mˈAn pɹˈɑːsɛs.",
+    "text": "Use npm i @sonara/client, then call connect() and onState() from the Electron main process."
+  },
+  {
+    "batches": 1,
+    "normalized": "The ort 2 point zero rc crate wraps onyx runtime dot D L L, and cargo-deny bans espeak NG and piper-phonemize.",
+    "phonemes": "ði ˈɔːɹt tˈuː pˈYnt zˈiəɹO ˌɑːɹsˈiː kɹˈAt ɹˈæps ˈɑnɪks ɹˈʌntIm dˈɑːt dˈi ˈɛl ˈɛl, ænd kˈɑːɹɡO dᵻnˈI bˈænz ˈɛspik ˌɛnʤˈi ænd pˈIpɚ fˈOnmˈIz.",
+    "text": "The ort 2.0 rc crate wraps onnxruntime.dll, and cargo-deny bans espeak-ng and piper-phonemize."
+  },
+  {
+    "batches": 1,
+    "normalized": "It took 42 seconds, 1,024 bytes and 3 retries.",
+    "phonemes": "ˌɪɾ tˈʊk fˈɔːɹɾi tˈuː sˈɛkəndz, wˈʌn θˈWzənd ænd twˈɛnti fˈɔːɹ bˈIts ænd θɹˈiː ɹˈiːtɹIz.",
+    "text": "It took 42 seconds, 1,024 bytes and 3 retries."
+  },
+  {
+    "batches": 1,
+    "normalized": "Python 3 point one four replaced 3 point one two; Sonara 0 point 10 point 0 ships today.",
+    "phonemes": "pˈIθən θɹˈiː pˈYnt wˈʌn fˈɔːɹ ɹᵻplˈAst θɹˈiː pˈYnt wˈʌn tˈuː; sənˈɑɹə zˈiəɹO pˈYnt tˈɛn pˈYnt zˈiəɹO ʃˈɪps tədˈA.",
+    "text": "Python 3.14 replaced 3.12; Sonara 0.10.0 ships today."
+  },
+  {
+    "batches": 1,
+    "normalized": "Version version 1 point 28 point 2 of ONNX Runtime, on the twenty first of May.",
+    "phonemes": "vˈɜːʒən vˈɜːʒən wˈʌn pˈYnt twˈɛnti ˈAt pˈYnt tˈuː ʌv ˈɑnɪks ɹˈʌntIm, ˌɔn ðə twˈɛnti fˈɜːst ʌv mˈA.",
+    "text": "Version v1.28.2 of ONNX Runtime, on the 21st of May."
+  },
+  {
+    "batches": 1,
+    "normalized": "Open C drive slash Users slash me slash App Data slash Local slash Sonara slash models slash kokoro slash version 1 point 0.",
+    "phonemes": "ˈOpən sˈi dɹˈIv slˈæʃ jˈuːzɚz slˈæʃ mˌiː slˈæʃ ˈæp dˈAɾə slˈæʃ lˈOkəl slˈæʃ sənˈɑɹə slˈæʃ mˈɑːdəlz slˈæʃ kˈOkəɹˌO slˈæʃ vˈɜːʒən wˈʌn pˈYnt zˈiəɹO.",
+    "text": "Open C:\\Users\\me\\AppData\\Local\\Sonara\\models\\kokoro\\v1.0."
+  },
+  {
+    "batches": 1,
+    "normalized": "Edit Cargo dot toml, readme dot M D and settings dot Jason.",
+    "phonemes": "ˈɛdɪt kˈɑːɹɡO dˈɑːt tˈɑməl, ɹˈiːdmˌiː dˈɑːt ˈɛm dˈi ænd sˈɛɾɪŋz dˈɑːt ʤˈAsᵊn.",
+    "text": "Edit Cargo.toml, README.md and settings.json."
+  },
+  {
+    "batches": 1,
+    "normalized": "The GUID's, ID's and URL's come from the HTTP Server.",
+    "phonemes": "ðə ɡˈuːɪdz, Idˈiːz ænd jˈu ˈɑɹ ˈɛl ˈɛs kˈʌm fɹʌm ðə ˌAʧtˌitˌipˈi sˈɜːvɚ.",
+    "text": "The GUIDs, IDs and URLs come from the HTTPServer."
+  },
+  {
+    "batches": 1,
+    "normalized": "Call fetch Model Files then use State in the React component.",
+    "phonemes": "kˈɔːl fˈɛʧ mˈɑːdəl fˈIlz ðˈɛn jˈuːs stˈAt ɪn ðə ɹɪˈækt kəmpˈOnənt.",
+    "text": "Call fetchModelFiles() then useState in the React component."
+  },
+  {
+    "batches": 1,
+    "normalized": "Sonara uses Kokoro and Claude, not Codex.",
+    "phonemes": "sənˈɑɹə jˈuːsᵻz kˈOkəɹˌO ænd klˈɔd, nˌɑːt kˈOdɛks.",
+    "text": "Sonara uses Kokoro and Claude, not Codex."
+  },
+  {
+    "batches": 1,
+    "normalized": "Hello, world!",
+    "phonemes": "həlˈO, wˈɜːld!",
+    "text": "Hello, world!"
+  }
+]

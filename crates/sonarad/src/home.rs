@@ -87,6 +87,11 @@ impl Home {
             let _ = writeln!(f, "{now} {line}");
         }
     }
+
+    /// `models\<engine>\<version>\` (spec section 3).
+    pub fn models(&self) -> PathBuf {
+        self.dir.join("models")
+    }
 }
 
 #[cfg(test)]

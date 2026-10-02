@@ -1,8 +1,12 @@
-// Fill this package from the repository: the release sonarad.exe, any
-// runtime DLLs built next to it (onnxruntime*.dll, once the Kokoro engine
-// ships), LICENSE and THIRD_PARTY_NOTICES.md.
+// Fill this package from the repository: the release sonarad.exe, the
+// runtime files staged next to it by packaging/runtime_dlls.py
+// (onnxruntime.dll and its licence files for the Kokoro engine, the Visual
+// C++ runtime DLLs it imports), LICENSE and THIRD_PARTY_NOTICES.md.
+// Without onnxruntime.dll the package still builds (CI tests use the fake
+// engine) but its runtime has no Kokoro; the build warns.
 //
 //   cargo build -p sonarad --release
+//   python packaging/runtime_dlls.py stage target/release
 //   node scripts/build.mjs [--exe path\to\sonarad.exe]
 //
 // Earcon sounds are not copied: they belong to the agent extension, which
@@ -35,8 +39,20 @@ rmSync(bin, { recursive: true, force: true });
 mkdirSync(bin, { recursive: true });
 copyFileSync(exe, join(bin, "sonarad.exe"));
 const exeDir = dirname(exe);
-for (const f of readdirSync(exeDir)) {
-  if (/^onnxruntime.*\.dll$/i.test(f)) copyFileSync(join(exeDir, f), join(bin, f));
+const RUNTIME_FILES = [
+  "onnxruntime.dll",
+  "onnxruntime-LICENSE.txt",
+  "onnxruntime-ThirdPartyNotices.txt",
+  "msvcp140.dll",
+  "msvcp140_1.dll",
+  "vcruntime140.dll",
+  "vcruntime140_1.dll",
+];
+for (const f of RUNTIME_FILES) {
+  if (existsSync(join(exeDir, f))) copyFileSync(join(exeDir, f), join(bin, f));
+}
+if (!existsSync(join(bin, "onnxruntime.dll"))) {
+  console.warn("build: no onnxruntime.dll next to sonarad.exe, so this package has no Kokoro engine");
 }
 for (const f of ["LICENSE", "THIRD_PARTY_NOTICES.md"]) {
   const src = join(repo, f);

@@ -341,6 +341,7 @@ fn rapid_control_storms_from_several_threads_leave_a_consistent_reader() {
                 }
             }
             Event::Log { message } => panic!("unexpected log: {message}"),
+            Event::EngineStatus { .. } => panic!("the fake engine is always ready"),
         }
     }
     assert!(ended.values().all(|n| *n == 1), "{ended:?}");

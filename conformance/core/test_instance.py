@@ -15,7 +15,7 @@ def test_runtime_json_describes_the_instance(rt):
     assert isinstance(info["port"], int) and isinstance(info["http_port"], int)
     assert info["port"] != info["http_port"]
     assert len(info["token"]) >= 32
-    assert info["protocol"] == {"major": 1, "minor": 0}
+    assert info["protocol"] == {"major": 1, "minor": 1}
     assert "core" in info["capabilities"]
     assert info["version"]
     assert info["started_at"].endswith("Z")

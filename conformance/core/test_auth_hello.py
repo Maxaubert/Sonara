@@ -54,7 +54,7 @@ def test_hello_reply(rt):
     assert r["ok"] is True
     assert r["id"] == "h"
     assert r["version"] == rt.info["version"]
-    assert r["protocol"] == {"major": 1, "minor": 0}
+    assert r["protocol"] == {"major": 1, "minor": 1}
     assert "core" in r["capabilities"]
     assert set(r["capabilities"]) == set(rt.info["capabilities"])
     assert r["extensions"] == []

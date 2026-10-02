@@ -200,3 +200,51 @@ impl Engine for OtherEngine {
         self.inner.cancel()
     }
 }
+
+/// The fake engine with a status the test sets (a model downloading, then
+/// ready), as Kokoro reports it.
+pub struct StatusEngine {
+    pub inner: FakeEngine,
+    pub status: Mutex<sonara_engine::EngineStatus>,
+}
+
+impl StatusEngine {
+    pub fn new(status: sonara_engine::EngineStatus) -> Self {
+        StatusEngine {
+            inner: FakeEngine::new(),
+            status: Mutex::new(status),
+        }
+    }
+
+    pub fn set(&self, status: sonara_engine::EngineStatus) {
+        *self.status.lock().unwrap() = status;
+    }
+}
+
+impl Engine for StatusEngine {
+    fn id(&self) -> EngineId {
+        EngineId("status")
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Permissive
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
+        self.inner.synthesize(text, voice, rate)
+    }
+
+    fn cancel(&self) {}
+
+    fn status(&self) -> sonara_engine::EngineStatus {
+        self.status.lock().unwrap().clone()
+    }
+}
