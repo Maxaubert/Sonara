@@ -1,0 +1,54 @@
+{
+  "name": "@sonara/client",
+  "version": "0.9.8",
+  "description": "Client for the Sonara text-to-speech runtime (protocol v1): connect, speak, control, live state. Zero dependencies.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maxaubert/Sonara.git",
+    "directory": "clients/ts"
+  },
+  "keywords": [
+    "sonara",
+    "tts",
+    "text-to-speech",
+    "electron",
+    "speech"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.esm.json && tsc -p tsconfig.cjs.json && node scripts/mark-dist.mjs",
+    "typecheck": "tsc -p tsconfig.esm.json --noEmit",
+    "test": "node scripts/test.mjs",
+    "test:unit": "node scripts/test.mjs unit",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "18.19.130",
+    "typescript": "5.9.3"
+  }
+}
