@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sonara-core", "crates/sonara-engine", "crates/sonara-audio", "crates/sonara-reader", "crates/sonara-channels", "crates/sonara-agent", "crates/sonarad"]
+members = ["crates/sonara-core", "crates/sonara-engine", "crates/sonara-audio", "crates/sonara-reader", "crates/sonara-channels", "crates/sonara-agent", "crates/sonarad", "crates/sonara-hook"]
 
 [workspace.package]
 version = "0.9.5"

@@ -1,0 +1,19 @@
+{
+  "event": "Notification",
+  "payload": {
+    "session_id": "sess-1",
+    "matcher": "permission_prompt",
+    "action": "Edit file cli.py"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "sess-1",
+      "kind": "permission",
+      "text": "Edit file cli.py",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate."
+    }
+  ]
+}

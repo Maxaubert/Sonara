@@ -1,0 +1,20 @@
+{
+  "event": "Notification",
+  "payload": {
+    "session_id": "sess-1",
+    "notification_type": "permission_prompt",
+    "action": "  ",
+    "message": "Claude needs your permission"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "sess-1",
+      "kind": "permission",
+      "text": "Claude needs your permission",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate."
+    }
+  ]
+}

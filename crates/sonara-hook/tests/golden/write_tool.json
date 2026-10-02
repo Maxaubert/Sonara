@@ -1,0 +1,19 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "sess-1",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/me/proj/src/sonara/cli.py"
+    }
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "tool",
+      "channel": "sess-1",
+      "name": "Write",
+      "summary": "cli.py"
+    }
+  ]
+}

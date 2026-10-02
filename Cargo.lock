@@ -793,6 +793,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "sonara-hook"
+version = "0.9.5"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "sonara-reader"
 version = "0.9.5"
 dependencies = [

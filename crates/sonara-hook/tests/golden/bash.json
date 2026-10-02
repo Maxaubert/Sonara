@@ -1,0 +1,13 @@
+{
+  "event": "PreToolUse",
+  "fixture": "PreToolUse-Bash.json",
+  "env": {},
+  "messages": [
+    {
+      "type": "tool",
+      "channel": "11111111-2222-3333-4444-555555555555",
+      "name": "Bash",
+      "summary": "git status"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "event": "Notification",
+  "fixture": "Notification-permission_prompt.json",
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "11111111-2222-3333-4444-555555555555",
+      "kind": "permission",
+      "text": "Run git status",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate."
+    }
+  ]
+}
