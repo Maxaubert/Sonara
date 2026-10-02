@@ -48,10 +48,37 @@ fn restart_when_idle_replays_the_last_item() {
     let a = h.speak(THREE);
     h.play_out();
     h.ctl(Control::Restart);
-    assert_eq!(h.item_events_in_last(), vec![(a, ItemPhase::Started)]);
-    assert_eq!(h.plays_in_last(), vec![(a, 0)]);
+    let b = h.state().now_playing.expect("replaying").item_id;
+    assert_eq!(h.item_events_in_last(), vec![(b, ItemPhase::Started)]);
+    assert_eq!(h.plays_in_last(), vec![(b, 0)]);
     h.play_out();
     assert_eq!(h.heard.len(), 6);
+    assert_eq!(h.heard[3..], [(b, 0), (b, 1), (b, 2)]);
+    assert_ne!(a, b);
+}
+
+#[test]
+fn restart_when_idle_replays_as_a_new_item_and_ids_never_repeat() {
+    let mut h = Host::new();
+    let a = h.speak(THREE);
+    h.play_out();
+    h.ctl(Control::Restart);
+    let b = h.state().now_playing.expect("replaying").item_id;
+    h.play_out();
+    let c = h.speak("Later.");
+    assert!(b > a && c > b, "ids {:?} {:?} {:?}", a, b, c);
+    h.play_out();
+    assert_eq!(
+        h.items,
+        vec![
+            (a, ItemPhase::Started),
+            (a, ItemPhase::Finished),
+            (b, ItemPhase::Started),
+            (b, ItemPhase::Finished),
+            (c, ItemPhase::Started),
+            (c, ItemPhase::Finished),
+        ]
+    );
 }
 
 #[test]
@@ -61,7 +88,10 @@ fn restart_when_idle_after_skip_replays_the_skipped_item() {
     h.ctl(Control::Skip);
     assert!(h.state().now_playing.is_none());
     h.ctl(Control::Restart);
-    assert_eq!(h.plays_in_last(), vec![(a, 0)]);
+    let b = h.state().now_playing.expect("replaying").item_id;
+    assert_ne!(a, b);
+    assert_eq!(h.plays_in_last(), vec![(b, 0)]);
+    assert_eq!(h.item_events_in_last(), vec![(b, ItemPhase::Started)]);
 }
 
 #[test]
@@ -359,6 +389,21 @@ fn mute_keeps_playback_moving_silently() {
     assert!(!h.state().muted);
     h.ctl(Control::Unmute);
     assert!(h.last.is_empty());
+}
+
+#[test]
+fn set_volume_while_muted_stores_the_level_and_stays_muted() {
+    let mut h = Host::new();
+    h.speak(THREE);
+    h.ctl(Control::Mute);
+    let fx = h.reader.set_volume(40);
+    assert_eq!(fx[0], Effect::SetVolume(40));
+    assert!(!fx.contains(&Effect::Unmute));
+    assert!(h.reader.state().muted);
+    assert_eq!(h.reader.state().volume, 40);
+    h.ctl(Control::Unmute);
+    assert_eq!(h.last[0], Effect::Unmute);
+    assert_eq!(h.state().volume, 40);
 }
 
 #[test]

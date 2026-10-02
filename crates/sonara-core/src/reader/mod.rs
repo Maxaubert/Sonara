@@ -21,7 +21,7 @@
 //! - `Previous`/`Next` move one chunk within the current item; `Previous` on
 //!   the first chunk restarts it and `Next` on the last chunk is `Skip`.
 //!   `Restart` goes to chunk 0; when idle it replays the last item that ended
-//!   (not after `Stop`). `Skip` ends the current item (`Skipped`) and starts
+//!   (not after `Stop`) as a new item with a fresh id. `Skip` ends the current item (`Skipped`) and starts
 //!   the next. `Stop` clears the current item and the queue (all `Skipped`).
 //! - `Mute`/`Unmute` emit `Effect::Mute`/`Effect::Unmute`; the host sets the
 //!   output volume to zero and back. Playback keeps moving while muted, and
@@ -195,7 +195,11 @@ impl Reader {
             Control::Restart => {
                 if self.current.is_some() {
                     self.move_to(&mut fx, 0);
-                } else if let Some(item) = self.last.take() {
+                } else if let Some(mut item) = self.last.take() {
+                    // A replay is a new item: the old id already got its
+                    // final Event::Item and ids never repeat.
+                    item.id = ItemId(self.next_id);
+                    self.next_id += 1;
                     self.queue.push_front(item);
                     self.start_next(&mut fx);
                 }

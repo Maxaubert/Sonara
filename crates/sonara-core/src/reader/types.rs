@@ -2,7 +2,8 @@
 //! snapshot. Field names follow protocol v1 (spec section 4.1).
 
 /// Identifies one item for its whole life. Ids start at 1 and never repeat
-/// within one `Reader`.
+/// within one `Reader`; a `Restart` replay when idle is a new item with a
+/// fresh id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ItemId(pub u64);
 
@@ -99,7 +100,10 @@ pub enum Event {
 pub enum Effect {
     /// Produce audio for this chunk and keep it until the item's final
     /// `Event::Item` (Finished, Skipped or Failed). Emitted at most once per
-    /// chunk while the item is alive.
+    /// chunk while the item is alive. It carries no `gen`: if synthesis
+    /// fails (also for a prefetched chunk), the host keeps the failure and
+    /// reports it as `AudioEvent::Failed` with the `gen` of the `PlayChunk`
+    /// for that chunk.
     Synthesize {
         item: ItemId,
         chunk: usize,
@@ -119,9 +123,11 @@ pub enum Effect {
     StopOutput,
     /// Set the output volume to zero (state.muted). Playback keeps moving.
     Mute,
-    /// Restore the output volume to `state.volume`.
+    /// Restore the output volume to the latest `SetVolume` level
+    /// (`state.volume`).
     Unmute,
-    /// Apply a new output volume (percent).
+    /// Store a new output volume (percent). While muted the output stays
+    /// silent; the level takes effect on `Unmute`.
     SetVolume(u8),
     Emit(Event),
 }
@@ -135,7 +141,8 @@ pub enum AudioEvent {
     ChunkFinished {
         gen: u64,
     },
-    /// Synthesis or playback of the chunk failed.
+    /// Synthesis or playback of the chunk failed. A synthesis failure is
+    /// reported when the chunk's `PlayChunk` arrives, under that `gen`.
     Failed {
         gen: u64,
         reason: String,
