@@ -23,6 +23,9 @@
 //!   cannot tell it from a user skip. `Stop` without a channel flushes every channel,
 //!   with a channel only that one. `Restart` while idle replays the engaged
 //!   channel's batch (the Python plugin's Up key).
+//! - `prioritize` puts a channel ahead of the others (and of the batch
+//!   reading now) from the next item on, until it has nothing unread: L3
+//!   uses it so a decision preempts (the Python router's decision rule).
 //! - A thread drains the reader's events; it holds the driver weakly and
 //!   ends with the reader.
 pub mod router;
@@ -196,6 +199,17 @@ impl Channels {
     pub fn focus(&self, channel: &str) -> Result<()> {
         let mut st = self.lock();
         if !st.router.focus(channel) {
+            return Err(Error::UnknownChannel(channel.to_string()));
+        }
+        self.inner.pump(&mut st)
+    }
+
+    /// Read `channel` before the other channels once the item playing ends
+    /// (it does not cut), until its unread entries are read: the batch
+    /// reading now waits. L3 uses it so a decision preempts.
+    pub fn prioritize(&self, channel: &str) -> Result<()> {
+        let mut st = self.lock();
+        if !st.router.prioritize(channel) {
             return Err(Error::UnknownChannel(channel.to_string()));
         }
         self.inner.pump(&mut st)

@@ -263,6 +263,18 @@ impl ReaderHandle {
         self.call(Msg::Subscribe)
     }
 
+    /// Play a short mono clip (an earcon, L3) over the speech through the
+    /// output's mixer: it neither pauses nor cuts the item playing and does
+    /// not touch the reader state. The output volume applies, so a reader
+    /// muted with `Control::Mute` plays it silently.
+    pub fn play_clip(&self, samples: Vec<i16>, sample_rate: u32) -> Result<()> {
+        self.call(|reply| Msg::Clip {
+            samples,
+            sample_rate,
+            reply,
+        })
+    }
+
     /// Stop speech, cancel synthesis and stop the threads. Subscribers see
     /// the final events, then their channel closes. Idempotent.
     pub fn shutdown(&self) {

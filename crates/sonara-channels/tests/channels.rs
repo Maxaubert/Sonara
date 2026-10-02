@@ -413,3 +413,23 @@ fn the_reader_shutting_down_ends_the_channels() {
     r.reader().shutdown();
     assert!(r.ch.speak("a", "Late.", None, false, None).is_err());
 }
+
+#[test]
+fn prioritize_reads_a_channel_after_the_current_item_without_cutting_it() {
+    let r = Rig::two();
+    r.ch.set_announce(false);
+    r.speak("a", "One is here.");
+    r.speak("a", "Two is here.");
+    r.wait_for("One is here.");
+    r.speak("b", "A question.");
+    r.ch.prioritize("b").unwrap();
+    assert_eq!(r.playing().as_deref(), Some("One is here."), "not cut");
+    r.read("One is here.");
+    r.read("A question.");
+    r.read("Two is here.");
+    r.stays_idle();
+    assert!(matches!(
+        r.ch.prioritize("zz"),
+        Err(sonara_channels::Error::UnknownChannel(_))
+    ));
+}

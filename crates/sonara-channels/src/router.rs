@@ -11,10 +11,12 @@
 //!   last entry is no longer being read starts a new batch. Policy `latest` (or a push with `replace`) drops the
 //!   channel's unread entries first, so the newest entry is never dropped
 //!   and the batch is just that entry ("one message, always the last").
-//! - Auto pick: the channel that is reading keeps the floor until its batch
-//!   drains; then the focused channel; then the first channel (in opening
-//!   order) with something unread. A channel the user switched away from
-//!   with `next_channel` is skipped until it gets new content.
+//! - Auto pick: a **prioritized** channel first (`prioritize`, oldest
+//!   first, until its batch drains: L3 decisions preempt); then the channel
+//!   that is reading keeps the floor until its batch drains; then the
+//!   focused channel; then the first channel (in opening order) with
+//!   something unread. A channel the user switched away from with
+//!   `next_channel` is skipped until it gets new content.
 //! - Switching from one channel to another is announced before the new
 //!   channel's first entry: automatically when the channel that read last
 //!   differs (never for the first reader), always on `next_channel`. A
@@ -194,6 +196,9 @@ pub struct Router {
     /// Channels switched away from by `next_channel`: channel -> its `gen`
     /// at the time. A different `gen` (new content) lifts it.
     suppressed: HashMap<String, u64>,
+    /// Channels to read before anything else, oldest first; one leaves the
+    /// list once it has nothing unread.
+    priority: Vec<String>,
 }
 
 impl Router {
@@ -282,6 +287,7 @@ impl Router {
             self.reading = None;
         }
         self.suppressed.remove(id);
+        self.priority.retain(|p| p != id);
         true
     }
 
@@ -348,8 +354,41 @@ impl Router {
         self.channel(id).is_some_and(|c| c.pending() > 0)
     }
 
+    /// Read `id` before every other channel (after the item being read)
+    /// until its unread entries are read: an L3 decision preempts the batch
+    /// reading now. False if it is not open.
+    pub fn prioritize(&mut self, id: &str) -> bool {
+        if self.index(id).is_none() {
+            return false;
+        }
+        if !self.priority.iter().any(|p| p == id) {
+            self.priority.push(id.to_string());
+        }
+        true
+    }
+
+    /// Channels prioritized and not yet drained, oldest first.
+    pub fn prioritized(&self) -> &[String] {
+        &self.priority
+    }
+
     /// The channel to read next, by the auto rules (module docs).
     pub fn pick(&mut self) -> Option<String> {
+        let drained: Vec<String> = self
+            .priority
+            .iter()
+            .filter(|p| !self.ready(p))
+            .cloned()
+            .collect();
+        self.priority.retain(|p| !drained.contains(p));
+        let first = self
+            .priority
+            .clone()
+            .into_iter()
+            .find(|p| !self.is_suppressed(p));
+        if first.is_some() {
+            return first;
+        }
         if let Some(a) = self.active.clone() {
             if self.ready(&a) {
                 return Some(a);
