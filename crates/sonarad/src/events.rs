@@ -5,7 +5,10 @@
 //! a client: when a client does not read and its queue is full, events are
 //! dropped for it (each `state` event is a full snapshot, so the next one
 //! brings it up to date). The thread ends with the reader, or at the first
-//! event after the client went away.
+//! event after the client went away. The `agent` extension's `earcon`
+//! events come from the agent's own subscription, drained by a second
+//! thread into the same queue.
+use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
 use crate::wire;
 use sonara_reader::{Event, ReaderHandle, State};
@@ -21,17 +24,21 @@ pub struct EventSet {
     pub state: bool,
     pub items: bool,
     pub log: bool,
+    /// `earcon` events (extension `agent`).
+    pub earcons: bool,
 }
 
 impl EventSet {
+    /// The core streams (a subscription without `events`).
     pub const ALL: EventSet = EventSet {
         state: true,
         items: true,
         log: true,
+        earcons: false,
     };
 
-    /// Parse protocol names (`state`, `items`, `log`); the unknown name on
-    /// error.
+    /// Parse protocol names (`state`, `items`, `log`, and `earcons` of the
+    /// agent extension); the unknown name on error.
     pub fn parse<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<EventSet, String> {
         let mut set = EventSet::default();
         for n in names {
@@ -39,6 +46,7 @@ impl EventSet {
                 "state" => set.state = true,
                 "items" => set.items = true,
                 "log" => set.log = true,
+                "earcons" => set.earcons = true,
                 other => return Err(other.to_string()),
             }
         }
@@ -55,6 +63,9 @@ impl EventSet {
         }
         if self.log {
             v.push("log");
+        }
+        if self.earcons {
+            v.push("earcons");
         }
         v
     }
@@ -106,10 +117,29 @@ pub fn subscribe(
     reader: &ReaderHandle,
     engine: EngineName,
     channels: Slot,
+    agent: agent_ext::Slot,
     set: EventSet,
 ) -> sonara_reader::Result<mpsc::Receiver<WireEvent>> {
     let events = reader.subscribe()?;
     let (tx, rx) = mpsc::channel(QUEUE);
+    if let (true, Some(a)) = (set.earcons, agent.get()) {
+        let earcons = a.subscribe();
+        let tx = tx.clone();
+        std::thread::Builder::new()
+            .name("sonarad-earcons".into())
+            .spawn(move || {
+                while let Ok(e) = earcons.recv() {
+                    let w = WireEvent {
+                        name: "earcon",
+                        json: agent_ext::earcon_event(e).to_string(),
+                    };
+                    if let Err(mpsc::error::TrySendError::Closed(_)) = tx.try_send(w) {
+                        return;
+                    }
+                }
+            })
+            .map_err(|e| sonara_reader::Error::Start(e.to_string()))?;
+    }
     if set.state {
         let s = reader.state()?;
         let _ = tx.try_send(WireEvent {
@@ -144,6 +174,11 @@ mod tests {
             ["state", "log"]
         );
         assert_eq!(EventSet::parse(["items", "bogus"]), Err("bogus".into()));
+        assert_eq!(
+            EventSet::parse(["earcons", "state"]).unwrap().names(),
+            ["state", "earcons"]
+        );
+        assert_eq!(EventSet::ALL.names(), ["state", "items", "log"]);
         assert_eq!(EventSet::parse([]).unwrap(), EventSet::default());
     }
 }

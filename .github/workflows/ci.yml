@@ -57,7 +57,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install pytest
       - run: cargo build -p sonarad
-      - name: Conformance (core)
+      - name: Conformance (core, channels, agent)
         run: python -m pytest conformance -q
 
   # cargo-deny-action is a Docker action, which GitHub runs only on Linux

@@ -203,10 +203,10 @@ mod tests {
         let r = call(
             &s,
             &mut b,
-            json!({"type": "hello", "token": "secret", "extensions": ["channels", "agent"]}),
+            json!({"type": "hello", "token": "secret", "extensions": ["channels", "system"]}),
         );
         assert_eq!(r["extensions"], json!(["channels"]));
-        assert_eq!(r["unavailable"], json!(["agent"]));
+        assert_eq!(r["unavailable"], json!(["system"]));
         let r = call(&s, &mut a, open);
         assert_eq!(r["ok"], true);
         assert_eq!(r["created"], true);

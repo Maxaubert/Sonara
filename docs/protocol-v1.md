@@ -1,6 +1,6 @@
 # Sonara protocol v1
 
-The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels` extension](#extension-channels). The `agent` and `system` extensions are reserved and listed at the end; until a runtime offers them, their messages return `E_UNSUPPORTED`.
+The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.0), which every runtime offers, and the [`channels`](#extension-channels) and [`agent`](#extension-agent) extensions. The `system` extension is reserved and listed at the end; until a runtime offers it, its messages return `E_UNSUPPORTED`.
 
 Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
@@ -21,7 +21,7 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "version": "0.9.5",
   "protocol": {"major": 1, "minor": 0},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log"],
-  "extensions": ["channels"],
+  "extensions": ["channels", "agent"],
   "started_at": "2026-10-02T10:40:45Z"
 }
 ```
@@ -136,7 +136,7 @@ A rate, voice or engine change applies to chunks synthesized from then on. Out-o
 
 ### `subscribe` (TCP)
 
-`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`. When `state` is included, the first event is the current state.
+`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an extension's stream (`earcons` of `agent`) is asked for by name and is `E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current state.
 
 A client that does not read its events never slows the reader: past 256 unread events, events are dropped for that client. Each `state` event is a full snapshot, so the next one brings a player up to date.
 
@@ -265,11 +265,60 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 {"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore"}}
 ```
 
+## Extension `agent`
+
+Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat assistants on top of [`channels`](#extension-channels): one channel per agent session, with streamed text, turns, decisions spoken with priority, earcons, three mute levels and optional summaries. Enable it with `hello` `extensions: ["agent"]`; it needs `channels`, which is enabled with it (the reply lists both). Black-box tests: `conformance/agent/`.
+
+**Model.** Each channel has a current **turn**. The agent's text is streamed into it (`stream`), split into sentences and added to the channel's batch as it completes, whatever the channel's policy (a turn is many messages). A new turn (`turn_start`) drops what is left of the previous one: its unread sentences, and its item if it is being read ("one message, always the last"). Text that arrives late from an earlier turn is dropped (see `t`). Decisions (`ask`) are read before the other channels as soon as the item playing ends (the batch reading now waits), and play an earcon.
+
+**Late text (`t` and `turn`).** Senders that run as separate processes (hooks) can deliver the old turn's last text after the new prompt. Every agent message may carry `t`, the sender's start time in seconds (any clock, the same one for all senders of a channel, such as Unix time). A `stream`, `turn_start` or `turn_end` whose `t` is older than the channel's last accepted `turn_start` is dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id that a later `turn_start` replaced. Messages without `t` and `turn` are never stale.
+
+### Messages
+
+| type | fields | effect |
+|---|---|---|
+| `stream` | `channel`, `delta`, `index?` (default 0), `final?`, `turn?`, `t?` | a piece of the agent's text. `index` numbers the deltas of one block (a new block may restart at 0); `final` ends the block and flushes an unfinished sentence. Reply `{stale}` |
+| `turn_start` | `channel`, `turn?`, `t?` | a new turn: the channel's unread text is dropped and its item cut; a question waiting for an answer and summary work of the old turn are dropped. If the channel is the one being read or read last and the reader is paused, it resumes; **a new turn in another channel keeps the pause on**. Reply `{stale}` |
+| `turn_end` | `channel`, `turn?`, `t?` | the agent finished: plays `turn_done` and reads text held by `minqueue`. Reply `{stale}` |
+| `ask` | `channel`, `kind: question\|permission\|plan`, `text?`, `options?`, `multi_select?`, `notes?`, `hint?`, `hint_once?` | a decision, read with priority (after the item playing, before the other channels). `question`: the text, then `Option n: label.` and its description for each of `options` (strings or `{label, description?}`; an option without a label keeps its number), plays `choice`, and marks the channel as waiting for an answer. `permission`: the pending action, plays `permission`; while a question waits, the permission prompt it fires itself is dropped (no earcon, no text) and clears the mark. `plan`: `"Plan ready. <text>"`, no earcon. `notes` is read after the decision; `hint` too at verbosity `everything`, and `hint_once` after it the first time a channel gets one |
+| `tool` | `channel`, `name`, `summary?` | the agent runs a tool: clears a waiting question; at verbosity `everything` it reads `summary` (else `"Running <name>."`) after the text held so far |
+| `answered` | `channel` | the user answered the question: everything queued for the channel is stale, so its unread text is dropped and its item cut, summary work and held decisions are dropped; the turn goes on |
+| `earcon` | `kind` | play an earcon: `choice`, `permission`, `error`, `turn_done`, `nav`, `nav_edge`, `session_change`, `summary_failed` |
+
+`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); a channel is opened with the defaults when it gets its first text (open it with `channel_open` to give it a label for announcements). With the extension on, `channel_close` also forgets the channel's turn, and `control stop` without a channel also drops every channel's summary work and held decisions.
+
+Earcons are mixed over the speech (they never pause or cut it) and follow the output volume.
+
+### Settings
+
+| key | value |
+|---|---|
+| `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Text spoken without the extension (core `speak`, channel `speak`) is not affected |
+| `verbosity` | `"everything"` (default): text, decisions, tool announcements and hints; `"medium"`: no tool announcements or hints; `"quiet"`: decisions only |
+| `minqueue` | `0` to `10` (default 1): a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
+| `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt}`: see below. `set` merges the fields given; `get` returns them all |
+
+**Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer or `stop` drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
+
+### Events
+
+Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the extension is off): `{"event": "earcon", "kind": "turn_done"}` for every earcon played.
+
+```json
+> {"type": "hello", "token": "...", "extensions": ["agent"]}
+< {"ok": true, "extensions": ["channels", "agent"], ...}
+> {"type": "turn_start", "channel": "s1", "t": 1759400000.25}
+< {"ok": true, "stale": false}
+> {"type": "stream", "channel": "s1", "delta": "Done. All tests pass.", "index": 0, "final": true, "t": 1759400003.5}
+< {"ok": true, "stale": false}
+> {"type": "ask", "channel": "s1", "kind": "question", "text": "Deploy now?", "options": [{"label": "Yes"}, "No"]}
+< {"ok": true}
+```
+
 ## Extensions (reserved)
 
-Spec sections 4.3 and 4.4. A client asks for them in `hello.extensions`; this runtime does not offer them yet, so their messages return `E_UNSUPPORTED`.
+Spec section 4.4. A client asks for it in `hello.extensions`; this runtime does not offer it yet, so its messages return `E_UNSUPPORTED`.
 
 | extension | adds |
 |---|---|
-| `agent` (needs `channels`) | `stream`, `turn_start`, `turn_end`, `ask`, `earcon`; `set mute_level`, `set summaries` |
 | `system` | `set audio_mode`, `set duck_level`, `set hotkeys`, `get settings_url` |

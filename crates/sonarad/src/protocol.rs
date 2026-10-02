@@ -4,11 +4,13 @@
 //! and the connection's `Session`, calls the reader facade, and returns the
 //! reply plus what the transport must do next (close, start an event
 //! stream, end the process). Unknown fields are ignored everywhere.
+use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
+use sonara_agent::Agent;
 use sonara_channels::Channels;
 use sonara_reader::{Control, Key, QueueMode, ReaderHandle};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -33,8 +35,8 @@ pub const CAPABILITIES: &[&str] = &[
     "events.log",
 ];
 
-/// Extensions this host implements (M7 and M8 add `agent` and `system`).
-pub const EXTENSIONS: &[&str] = &[channels_ext::NAME];
+/// Extensions this host implements (M8 adds `system`).
+pub const EXTENSIONS: &[&str] = &[channels_ext::NAME, agent_ext::NAME];
 
 /// Message types of the extensions (spec 4.2 to 4.4). They are known, so a
 /// client gets `E_UNSUPPORTED` (extension not enabled) rather than
@@ -48,12 +50,16 @@ const EXTENSION_TYPES: &[&str] = &[
     "turn_end",
     "ask",
     "earcon",
+    "tool",
+    "answered",
 ];
 
 /// Extension keys of `set`/`get` and actions of `control`.
 const EXTENSION_KEYS: &[&str] = &[
     channels_ext::ANNOUNCE_KEY,
     "mute_level",
+    "verbosity",
+    "minqueue",
     "summaries",
     "audio_mode",
     "duck_level",
@@ -123,6 +129,8 @@ pub struct Server {
     /// The `channels` extension, once a client enabled it (it stays
     /// enabled for the life of the process).
     channels: Slot,
+    /// The `agent` extension (needs `channels`), once a client enabled it.
+    agent: agent_ext::Slot,
     /// Serializes enabling an extension.
     enabling: Mutex<()>,
 }
@@ -216,6 +224,7 @@ impl Server {
             lifetime,
             retiring: Mutex::new(false),
             channels: Arc::new(OnceLock::new()),
+            agent: Arc::new(OnceLock::new()),
             enabling: Mutex::new(()),
         }
     }
@@ -225,13 +234,27 @@ impl Server {
         self.channels.get()
     }
 
-    /// Enable an extension this host offers (idempotent).
+    /// The `agent` extension, if a client enabled it.
+    pub fn agent(&self) -> Option<&Agent> {
+        self.agent.get()
+    }
+
+    /// Enable an extension this host offers (idempotent). `agent` needs
+    /// `channels` and enables it first.
     fn enable(&self, name: &str) -> Result<(), Failure> {
         let _one = self.enabling.lock().unwrap_or_else(|p| p.into_inner());
-        if name == channels_ext::NAME && self.channels.get().is_none() {
+        let engine = |e: String| Failure::new(Code::Engine, e);
+        if (name == channels_ext::NAME || name == agent_ext::NAME) && self.channels.get().is_none()
+        {
             let ch = Channels::new(self.reader.clone(), sonara_channels::Config::default())
-                .map_err(|e| Failure::new(Code::Engine, e.to_string()))?;
+                .map_err(|e| engine(e.to_string()))?;
             let _ = self.channels.set(ch);
+        }
+        if name == agent_ext::NAME && self.agent.get().is_none() {
+            let ch = self.channels.get().expect("enabled above").clone();
+            let agent = Agent::new(ch, sonara_agent::Config::default())
+                .map_err(|e| engine(e.to_string()))?;
+            let _ = self.agent.set(agent);
         }
         Ok(())
     }
@@ -241,6 +264,9 @@ impl Server {
         let mut v = Vec::new();
         if self.channels.get().is_some() {
             v.push(channels_ext::NAME);
+        }
+        if self.agent.get().is_some() {
+            v.push(agent_ext::NAME);
         }
         v
     }
@@ -295,6 +321,7 @@ impl Server {
             &self.reader,
             self.engine.clone(),
             self.channels.clone(),
+            self.agent.clone(),
             set,
         )
         .map_err(reader_failure)
@@ -355,10 +382,24 @@ impl Server {
             "channel_open" | "channel_close" | "focus" if self.channels.get().is_some() => {
                 let ch = self.channels.get().expect("checked");
                 let _admitted = self.admit()?;
-                match kind {
-                    "channel_open" => channels_ext::open(ch, m),
-                    "channel_close" => channels_ext::close(ch, m),
+                match (kind, self.agent.get()) {
+                    ("channel_open", _) => channels_ext::open(ch, m),
+                    ("channel_close", Some(a)) => agent_ext::close(a, m),
+                    ("channel_close", None) => channels_ext::close(ch, m),
                     _ => channels_ext::focus(ch, m),
+                }
+            }
+            k if agent_ext::TYPES.contains(&k) && self.agent.get().is_some() => {
+                let a = self.agent.get().expect("checked");
+                let _admitted = self.admit()?;
+                match k {
+                    "stream" => agent_ext::stream(a, m),
+                    "turn_start" => agent_ext::turn_start(a, m),
+                    "turn_end" => agent_ext::turn_end(a, m),
+                    "ask" => agent_ext::ask(a, m),
+                    "earcon" => agent_ext::earcon(a, m),
+                    "tool" => agent_ext::tool(a, m),
+                    _ => agent_ext::answered(a, m),
                 }
             }
             k if EXTENSION_TYPES.contains(&k) => Err(Failure::new(
@@ -492,6 +533,14 @@ impl Server {
                 None => return Err(bad(format!("unknown action '{action}'"))),
             };
             let _admitted = self.admit()?;
+            // With the agent on, a stop without a channel also drops the
+            // summaries cooking and the held decisions.
+            if let (Some(a), Some(Control::Stop), None) =
+                (self.agent.get(), c, opt_str(m, "channel")?)
+            {
+                a.stop().map_err(agent_ext::failure)?;
+                return Ok((Map::new(), After::Nothing));
+            }
             return channels_ext::control(ch, c, m);
         }
         let c = match parse_control(action) {
@@ -532,15 +581,18 @@ impl Server {
     /// `set`/`get` of an enabled extension's key, if `m` names one.
     fn extension_setting(&self, m: &Map<String, Value>, set: bool) -> Option<Handled> {
         let name = opt_str(m, "key").ok().flatten()?;
-        let ch = self.channels.get()?;
-        if name != channels_ext::ANNOUNCE_KEY {
-            return None;
-        }
         let value = if set {
             Some(m.get("value").unwrap_or(&Value::Null))
         } else {
             None
         };
+        if let (Some(a), true) = (self.agent.get(), agent_ext::KEYS.contains(&name)) {
+            return Some(agent_ext::setting(a, name, value));
+        }
+        let ch = self.channels.get()?;
+        if name != channels_ext::ANNOUNCE_KEY {
+            return None;
+        }
         Some(channels_ext::announce(ch, value))
     }
 
@@ -590,6 +642,12 @@ impl Server {
                 Failure::new(Code::Unsupported, format!("unknown event stream '{n}'"))
             })?,
         };
+        if set.earcons && self.agent.get().is_none() {
+            return Err(Failure::new(
+                Code::Unsupported,
+                "the 'earcons' events belong to the agent extension",
+            ));
+        }
         let rx = self.events(set)?;
         let mut f = Map::new();
         f.insert("events".into(), json!(set.names()));
@@ -683,7 +741,7 @@ mod tests {
         let o = call(
             &s,
             &mut session,
-            json!({"type": "hello", "token": "secret", "require": ["core", "agent"]}),
+            json!({"type": "hello", "token": "secret", "require": ["core", "system"]}),
         );
         assert_eq!(code(&o), "E_UNSUPPORTED");
         assert!(!session.authed);
