@@ -1,53 +1,55 @@
 # Sonara runtime Implementation Plan
 
-> **For agentic workers:** execute milestone by milestone with the Workflow tool (one implementer per PR in its own worktree, an independent reviewer, then a finalize step), as in Phase 0. Steps use checkbox (`- [ ]`) syntax for tracking. Milestones M2 to M10 are specified here by deliverables, interfaces and tests; their bite-sized steps are written by the executor at the start of each milestone, inside the milestone's PR, from this plan and the spec. A milestone plan needs no separate sign-off unless it deviates from the spec.
+> **For agentic workers:** execute milestone by milestone with the Workflow tool (one implementer per PR in its own worktree, an independent reviewer, then a finalize step), as in Phase 0. Steps use checkbox (`- [ ]`) syntax for tracking. Milestones M2 onward are specified here by deliverables, interfaces and tests; their bite-sized steps are written by the executor at the start of each milestone, inside the milestone's PR, from this plan and the spec. A milestone plan needs no separate sign-off unless it deviates from the spec.
 
-**Goal:** Turn Sonara into a Rust reader runtime that apps bundle (PrismTerminal first) and control through a versioned local protocol, then move the Claude Code plugin onto it and retire the Python daemon.
+**Goal:** Turn Sonara into a layered Rust reader that apps bundle (PrismTerminal first): a minimal reader core with optional channels, agent, system, adapter and UI layers, served in-process or by a shared `sonarad.exe`; then move the Claude Code plugin onto it and retire the Python daemon.
 
-**Architecture:** One per-user `sonarad.exe` shared by every host; thin MIT clients (TypeScript, Python, raw protocol) talk to it over loopback TCP JSON lines or HTTP+SSE. Pure `sonara-core` (text rules, sessions, queue policy, state) under engine, audio and Windows platform crates. GPL-free engines: Windows OneCore and Kokoro with a lexicon G2P.
+**Architecture:** L1 reader core (`sonara-core` pure state machine and text rules, `sonara-engine`, `sonara-audio`, facade `sonara-reader`) knows only items, chunks and playback controls. L2 `sonara-channels`, L3 `sonara-agent`, L4 `sonara-system`, L5 `sonara-hook`, L6 `@sonara/player` each build only on the public API below them. `sonarad.exe` hosts L1 plus enabled layers and serves protocol v1 (a small core plus extensions) to thin MIT clients over loopback TCP JSON lines or HTTP+SSE.
 
-**Tech Stack:** Rust stable (MSVC x64), `regex` + `fancy-regex`, `serde`/`serde_json`, `tokio` (server), `windows` crate (OneCore, WASAPI session volume, GSMTC), `cpal` or `rodio` (output), `ort` or sherpa-onnx C API (chosen in M0), `cargo-deny`; TypeScript (Node 18+, zero deps) for `@sonara/client`; Python 3.9+ stdlib for `sonara-client` and the pytest conformance suite.
+**Tech Stack:** Rust stable (MSVC x64), `regex`, `serde`/`serde_json`, `tokio` (server), `windows` crate (OneCore, WASAPI session volume, GSMTC), `rodio`/`cpal` (output), `ort` 2.0 rc with Microsoft's official CPU ONNX Runtime and a vendored `misaki-rs` (per M0), `cargo-deny`; TypeScript (Node 18+, zero deps) for `@sonara/client` and `@sonara/player`; Python 3.9+ stdlib for `sonara-client` and the pytest conformance suite.
 
 **Spec:** `docs/plans/2026-10-02-sonara-runtime-spec.md`
 
 ## Global Constraints
 
 - Windows x64 only; build target `x86_64-pc-windows-msvc`.
-- No GPL code in any shipped artifact: `cargo deny check licenses bans` passes in CI; banned crates `espeak*`, `piper-phonemize*`; JS clients have zero runtime dependencies.
+- R6: every shipped component is permissively licensed so bundlers may sell, close-source, relicense and sign their products; `cargo deny check licenses bans` passes in CI (allowlist MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unicode-3.0; banned `espeak*`, `piper-phonemize*`); JS and Python clients have zero runtime dependencies; `THIRD_PARTY_NOTICES.md` ships with every release.
+- R7 layering: an L1 crate never depends on an L2+ crate (checked by a workspace test over `cargo metadata`); every layer uses only the public API of the layers below; the core protocol works with no extension enabled.
 - Text rules must equal `tests/fixtures/text_rules/*.json` byte for byte.
-- Protocol: JSON lines over `127.0.0.1` TCP, token required in `hello`; HTTP `POST /v1/<type>` with `Authorization: Bearer <token>`; events over SSE `GET /v1/events`. Never bind non-loopback addresses.
+- Protocol: JSON lines over `127.0.0.1` TCP, token required in `hello`; HTTP `POST /v1/<type>` with `Authorization: Bearer <token>`; events over SSE `GET /v1/events`. Never bind non-loopback addresses. Field names and error codes exactly as in spec section 4.
 - Home `%LOCALAPPDATA%\Sonara` (override `SONARA_HOME`); every path goes through one `paths` module.
-- Embedded mode: no hotkeys, no settings page, no tray. Standalone mode (Claude plugin) enables them.
-- Queue policy default `latest` ("one message, always the last"). Pause stays on when another session gets a prompt. Never strand other apps ducked or paused.
-- Default hotkeys in standalone mode: Ctrl+Alt+Up (restart), Ctrl+Alt+Down (skip to end), Ctrl+Alt+M (mute cycle), Ctrl+Alt+P (next session).
+- Hotkeys, ducking/media pausing and the settings page exist only in L4 and run only when a client enables the `system` extension.
+- Claude product rules (L2/L3): channel policy `latest` ("one message, always the last"); pause stays on when another channel gets a new turn; late text from a previous turn is dropped; never strand other apps ducked or paused. Default Claude hotkeys: Ctrl+Alt+Up (restart), Ctrl+Alt+Down (skip to end), Ctrl+Alt+M (mute cycle), Ctrl+Alt+P (next channel).
 - Every PR: issue, `type/<issue>-slug` branch, version bump (Cargo workspace version = pyproject = plugin manifests), CI green, no em-dashes anywhere, `Co-Authored-By` trailer. User-facing milestones are installed on this PC before "merge?".
-- The Python plugin stays the shipped product until M9.
+- The Python plugin stays the shipped product until cutover (M11).
 
 ## Review Focus
 
-1. **Non-ASCII and multi-byte text** (emoji, CJK, curly quotes, `→`) in every text path: no panics on byte-index slicing, output equal to the Python rules. Owned by M1 Task 3 and Task 4 (`unicode_text_never_panics` tests).
-2. **A second app bundling an older or newer runtime** while one is running: share, take over only when idle, or report `E_INCOMPATIBLE`; never two instances fighting over ducking. Owned by M5 (`takeover_*` conformance cases).
-3. **Kokoro model download interrupted, offline, or hash mismatch:** speech falls back to OneCore immediately, download resumes later, no retry storm. Owned by M4 (`model_download_*` tests).
-4. **Host crashes or is killed mid-utterance while other apps are ducked or paused:** audio restored by the runtime when the client disconnects, and by the crash-restore file if the runtime itself dies. Owned by M6 (`restore_on_client_drop`, `restore_after_runtime_kill`).
-5. **Rapid controls** (restart, next, pause pressed many times quickly, as in the #128 report): correct sound, no stuck pause, no duplicate speech. Owned by M2 (`rapid_restart_*`) and M5 conformance.
+1. **Non-ASCII and multi-byte text** (emoji, CJK, curly quotes, `→`) in every text path: no panics on byte-index slicing, output equal to the Python rules. Owned by M1 (`unicode_text_never_panics`, `long_input_never_panics`).
+2. **Rapid controls** (restart, previous/next, pause pressed many times quickly, as in the #128 report): no stuck pause, no lost or duplicated chunk. Owned by M2 (`rapid_controls_*` state-machine tests) and M5 conformance core.
+3. **Kokoro model download interrupted, offline, or hash mismatch:** speech falls back to OneCore immediately, download resumes later, no retry storm. Owned by M4 (`model_download_*`).
+4. **A second app bundling an older or newer runtime** while one is running: share, take over only when idle, or `E_INCOMPATIBLE`; never two instances fighting over audio. Owned by M5 (`takeover_*` conformance cases).
+5. **Host crashes or is killed mid-utterance while other apps are ducked or paused:** restored on client disconnect and by the crash-restore file if the runtime dies. Owned by M8 (`restore_on_client_drop`, `restore_after_runtime_kill`).
 
 ---
 
 ## Milestones (one or more PRs each)
 
-| M | Deliverable | Exit test |
-|---|---|---|
-| M0 | Engine and audio spike (throwaway code in `spikes/`, report kept) | report answers the exit criteria; user A/B listening check passed |
-| M1 | Rust toolchain, Cargo workspace, CI, `sonara-core` text rules | golden fixtures pass in Rust; CI green |
-| M2 | `sonara-core` sessions: queue policy, history, items, controls, state model | ported router/channel/history tests pass |
-| M3 | `sonara-audio` + `onecore` engine + earcons | speaks via OneCore with true pause/resume; earcons mix |
-| M4 | `kokoro` engine (per M0) + model manager | GPL-free Kokoro speech; download/resume/fallback tests |
-| M5 | `sonarad` server: protocol v1, discovery, single instance, takeover, events; `docs/protocol-v1.md`; `conformance/` | conformance suite green in CI |
-| M6 | `sonara-platform`: ducking, media pausing, crash restore, hotkeys (standalone), settings page on v1 | ported ducking/pausing tests; hands-on check |
-| M7 | Claude adapter: `sonara-hook.exe`, ask/turn mapping, summaries feature, behaviour parity cases | parity conformance subset green on both daemons |
-| M8 | `@sonara/client`, `@sonara/runtime-win32-x64`, `sonara-client`, release zip, `THIRD_PARTY_NOTICES.md`, "Bundle Sonara" guide | example Electron and Python hosts speak via the packages in CI |
-| M9 | Cutover: plugin uses `sonarad` + `sonara-hook`; config migration from `~/.sonara`; Python daemon removed | fresh install and upgrade from 0.8.x on this PC |
-| M10 | PrismTerminal integration (PrismTerminal repo, own plan): bundled runtime, Audio mode setting, player pill, text from agent tabs | hands-on in PrismTerminal |
+| M | Layer | Deliverable | Exit test |
+|---|---|---|---|
+| M0 | L1 | Engine and audio spike (throwaway code, report kept) | report answers the exit criteria; user blind A/B listening check passed |
+| M1 | L1 | Rust toolchain, Cargo workspace, CI, `sonara-core` text rules | golden fixtures pass in Rust; CI green (PR #176) |
+| M2 | L1 | `sonara-core` reader state machine: items, chunks, queue modes append/replace, controls, state and item events; layering test | state-machine tests incl. rapid controls; no I/O in the crate |
+| M3 | L1 | `sonara-audio` output + `sonara-engine` trait + `onecore` engine | speaks via OneCore with true pause/resume, volume, rate |
+| M4 | L1 | `kokoro` engine (M0 stack, vendored misaki-rs, custom lexicon) + model manager | GPL-free Kokoro speech; download/resume/fallback tests; `cargo deny` clean |
+| M5 | L1 | `sonara-reader` in-process facade + `sonarad` serving core protocol v1: discovery, single instance, takeover, events; `docs/protocol-v1.md` (core); `conformance/core` | Rust example speaks in-process; conformance core green |
+| M6 | L2 | `sonara-channels` + `channels` extension (protocol, conformance) | ported router/channel tests; `latest`/`queue` policies |
+| M7 | L3 + L5 | `sonara-agent` (stream, turns incl. the #174 rule, ask, earcons, mute levels, summaries) + `agent` extension + `sonara-hook.exe` Claude adapter | parity conformance on both daemons |
+| M8 | L4 | `sonara-system`: ducking, media pausing, crash restore, hotkeys, settings page; `system` extension | ported ducking/pausing tests; hands-on check |
+| M9 | SDK | `@sonara/client` (core + extension namespaces), `@sonara/runtime-win32-x64`, `sonara-client`, release zip, `THIRD_PARTY_NOTICES.md`, "Bundle Sonara" guide | example Electron and Python hosts speak via the packages in CI |
+| M10 | L6 | `@sonara/player`: headless `PlayerController` + React `<SonaraPlayer/>` on the core API | example app plays, pauses, steps chunks, mutes; component tests |
+| M11 | product | Cutover: Claude plugin = `sonarad` + channels + agent + system + `sonara-hook`; config migration from `~/.sonara`; Python daemon removed | fresh install and upgrade from 0.8.x on this PC |
+| M12 | host | PrismTerminal integration (PrismTerminal repo, own plan): bundled runtime, Audio mode, `@sonara/player`, text per tab | hands-on in PrismTerminal |
 
 ### M0 exit criteria (decide the Kokoro stack)
 
@@ -57,13 +59,15 @@ Measured on this PC, short English sentences and three real Claude replies with 
 3. Release size of runtime plus engine (without model) under 60 MB.
 4. User A/B listening: 10 pairs (today's Python Kokoro vs candidate). The candidate is acceptable if the user rates it "same or better" on at least 7 of 10. If neither candidate passes, stop and ask the user (options: accept OneCore-only default for bundles; accept a GPL pack opt-in; continue tuning the fallback).
 
-### M2 to M10 interface notes (binding for milestone plans)
+### Interface notes (binding for milestone plans)
 
-- `sonara_core::text::{clean_markdown, normalize_for_speech, stabilize_ordinals}` and `sonara_core::assembler::{ProseAssembler, Chunk}` (M1) are the only text entry points.
-- `sonara_core::session::{SessionId, Source, Policy, Item, ItemId}`, `sonara_core::player::Player` with `fn control(&mut self, Control) -> Effect` and `fn state(&self) -> State` (M2). The runtime is a loop that applies `Effect`s to audio and platform.
-- `sonara_engine::{Engine, EngineId, LicenseClass, Voice, PcmChunk}` with `trait Engine { fn id(&self) -> EngineId; fn license_class(&self) -> LicenseClass; fn voices(&self) -> Vec<Voice>; fn warm(&self) -> Result<()>; fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<Box<dyn Iterator<Item = Result<PcmChunk>> + Send>>; fn cancel(&self); }` (M3).
-- `sonara_audio::Output` with `play(PcmChunk stream, ItemId)`, `pause()`, `resume()`, `stop()`, `set_volume(u8)`, `earcon(Earcon)` and an event channel of `Played{item}`/`Finished{item}` (M3).
-- Protocol message and event field names exactly as in spec section 4 (M5). Error codes exactly as listed there.
+- L1 text: `sonara_core::text::{clean_markdown, normalize_for_speech, stabilize_ordinals}` and `sonara_core::assembler::{ProseAssembler, Chunk}` (M1) are the only text entry points.
+- L1 state machine (M2), pure: `sonara_core::reader::{Reader, ItemId, Item, QueueMode, Control, Effect, State, Event, AudioEvent}`; `Reader::speak(&mut self, text: &str, mode: QueueMode, interrupt: bool, label: Option<String>) -> (ItemId, Vec<Effect>)`, `Reader::control(&mut self, c: Control) -> Vec<Effect>`, `Reader::on_audio(&mut self, e: AudioEvent) -> Vec<Effect>`, `Reader::state(&self) -> State`. `Control` = `Play | Pause | Toggle | Stop | Skip | Previous | Next | Restart | Mute | Unmute`. `Effect` = `Synthesize{item, chunk, text} | PlayChunk{item, chunk} | PauseOutput | ResumeOutput | StopOutput | Emit(Event)`. No sessions, channels, turns or earcons in L1.
+- L1 engine (M3): `sonara_engine::{Engine, EngineId, LicenseClass, Voice, PcmChunk}` with `trait Engine { fn id(&self) -> EngineId; fn license_class(&self) -> LicenseClass; fn voices(&self) -> Vec<Voice>; fn warm(&self) -> Result<()>; fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<Box<dyn Iterator<Item = Result<PcmChunk>> + Send>>; fn cancel(&self); }`.
+- L1 audio (M3): `sonara_audio::Output` with `play(chunks, ItemId, chunk_index)`, `pause()`, `resume()`, `stop()`, `set_volume(u8)`, `play_clip(&[i16], sample_rate)` (mixed, used by L3 earcons), and an event channel of `AudioEvent::{ChunkStarted, ChunkFinished, Failed}`.
+- L1 facade (M5): `sonara_reader::ReaderHandle::{new(Config), speak, control, set, get, voices, subscribe() -> Receiver<Event>}`; L2+ crates and `sonarad` use only this facade.
+- L2 (M6): `sonara_channels::Channels` wraps a `ReaderHandle`; channels feed it with a `QueueMode` per policy and switch focus with `Control::Stop` then `speak`. L3 (M7) wraps `Channels`. L4 (M8) subscribes to L1 events to duck and restore, and maps hotkeys to `control`.
+- Protocol message and event field names exactly as in spec section 4; error codes exactly as listed there.
 
 ---
 
@@ -439,7 +443,7 @@ mod tests {
 
 ### Task 5: Docs, version, PR
 
-- [ ] **Step 1:** CLAUDE.md build block: add `Rust: cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. One line under Conventions: "Text rules exist in Python and Rust until M9; change both together with the golden fixtures."
+- [ ] **Step 1:** CLAUDE.md build block: add `Rust: cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. One line under Conventions: "Text rules exist in Python and Rust until the cutover (M11); change both together with the golden fixtures."
 - [ ] **Step 2:** Version 0.9.0 in `pyproject.toml`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `src/sonara/__init__.py`, `Cargo.toml`; extend `tests/test_manifests.py` to also assert the `[workspace.package] version` equals pyproject's.
 - [ ] **Step 3:** Run the full Python suite and the Rust job commands locally. Expected: all green.
 - [ ] **Step 4:** Commit, push, open the PR (`Closes #170`, `Part of #168`).
@@ -448,6 +452,6 @@ mod tests {
 
 ## Execution
 
-- Branching: M0 and M1 can run in parallel (M1 does not depend on the engine choice). From M2 on, milestones stack in order; each PR opens against `main` once its predecessor is merged, or stacks on it if not yet merged.
+- Branching: M0 and M1 run in parallel (done). From M2 on, milestones run in order; M6 to M10 depend only on M5's facade and protocol, so M8 (system) and M9/M10 (SDKs, player) may run in parallel with M6/M7. Each PR opens against `main` once its predecessor is merged, or stacks on it if not yet merged.
 - Each milestone: Workflow with implementer, reviewer and finalize agents (as in Phase 0), then hands-on install on this PC for M3 onward, then "merge?".
 - Stop points that need the user: M0 listening check; M0 "no candidate passes"; any deviation from the spec; every merge.
