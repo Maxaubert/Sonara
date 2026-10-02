@@ -1,0 +1,790 @@
+//! Protocol v1 core (spec section 4.1): one request in, one reply out.
+//!
+//! Synchronous and transport-free: `Server::handle` takes a parsed request
+//! and the connection's `Session`, calls the reader facade, and returns the
+//! reply plus what the transport must do next (close, start an event
+//! stream, end the process). Unknown fields are ignored everywhere.
+use crate::events::{self, EngineName, EventSet, WireEvent};
+use crate::lifetime::{ExitReason, Lifetime};
+use crate::wire::{self, Code, Failure};
+use serde_json::{json, Map, Value};
+use sonara_reader::{Control, Key, QueueMode, ReaderHandle};
+use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
+
+pub const PROTOCOL_MAJOR: u64 = 1;
+pub const PROTOCOL_MINOR: u64 = 0;
+
+/// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
+/// each core message type and event stream, so a later minor can add one
+/// and a client can `require` it.
+pub const CAPABILITIES: &[&str] = &[
+    "core",
+    "speak",
+    "control",
+    "set",
+    "get",
+    "voices",
+    "subscribe",
+    "events.state",
+    "events.items",
+    "events.log",
+];
+
+/// Extensions this host implements (none yet: M6 to M8 add them).
+pub const EXTENSIONS: &[&str] = &[];
+
+/// Message types of the extensions (spec 4.2 to 4.4). They are known, so a
+/// client gets `E_UNSUPPORTED` (extension not enabled) rather than
+/// `E_UNKNOWN_TYPE`.
+const EXTENSION_TYPES: &[&str] = &[
+    "channel_open",
+    "channel_close",
+    "focus",
+    "stream",
+    "turn_start",
+    "turn_end",
+    "ask",
+    "earcon",
+];
+
+/// Extension keys of `set`/`get` and actions of `control`.
+const EXTENSION_KEYS: &[&str] = &[
+    "mute_level",
+    "summaries",
+    "audio_mode",
+    "duck_level",
+    "hotkeys",
+    "settings_url",
+];
+const EXTENSION_ACTIONS: &[&str] = &["next_channel"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    Tcp,
+    Http,
+}
+
+/// Per-connection state. HTTP requests are authenticated by their bearer
+/// token, so an HTTP session starts authenticated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Session {
+    pub transport: Transport,
+    pub authed: bool,
+}
+
+impl Session {
+    pub fn tcp() -> Self {
+        Session {
+            transport: Transport::Tcp,
+            authed: false,
+        }
+    }
+
+    pub fn http() -> Self {
+        Session {
+            transport: Transport::Http,
+            authed: true,
+        }
+    }
+}
+
+/// What the transport does after sending the reply.
+pub enum After {
+    Nothing,
+    /// Close the connection (failed authentication).
+    Close,
+    /// Replace this connection's event stream with this one.
+    Subscribe(mpsc::Receiver<WireEvent>),
+    /// End the process (an accepted takeover).
+    Exit,
+}
+
+pub struct Outcome {
+    pub reply: Value,
+    /// The error code when the reply is an error (for HTTP statuses).
+    pub code: Option<Code>,
+    pub after: After,
+}
+
+pub struct Server {
+    reader: ReaderHandle,
+    token: String,
+    engine: EngineName,
+    lifetime: Arc<Lifetime>,
+    /// Set once a takeover is accepted. `speak` and `control` hold this lock
+    /// while they reach the reader, so the idle check of a takeover and
+    /// setting it are atomic with respect to them: nothing is accepted
+    /// after the takeover and then silently dropped by the exit.
+    retiring: Mutex<bool>,
+}
+
+type Handled = Result<(Map<String, Value>, After), Failure>;
+
+fn bad(message: impl Into<String>) -> Failure {
+    Failure::new(Code::BadRequest, message)
+}
+
+fn reader_failure(e: sonara_reader::Error) -> Failure {
+    use sonara_engine::Error as E;
+    use sonara_reader::Error as R;
+    let code = match &e {
+        R::BadValue { .. } => Code::BadRequest,
+        R::Engine(E::UnknownEngine(_)) | R::Engine(E::UnknownVoice(_)) => Code::NotFound,
+        _ => Code::Engine,
+    };
+    Failure::new(code, e.to_string())
+}
+
+/// Constant-time comparison, so the token cannot be guessed byte by byte.
+pub fn token_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.bytes()
+            .zip(b.bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+fn opt_str<'a>(m: &'a Map<String, Value>, field: &str) -> Result<Option<&'a str>, Failure> {
+    match m.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s)),
+        Some(_) => Err(bad(format!("'{field}' must be a string"))),
+    }
+}
+
+fn opt_bool(m: &Map<String, Value>, field: &str) -> Result<bool, Failure> {
+    match m.get(field) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(bad(format!("'{field}' must be true or false"))),
+    }
+}
+
+fn str_list<'a>(m: &'a Map<String, Value>, field: &str) -> Result<Option<Vec<&'a str>>, Failure> {
+    match m.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Array(a)) => a
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .ok_or_else(|| bad(format!("'{field}' must be a list of strings")))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        Some(_) => Err(bad(format!("'{field}' must be a list of strings"))),
+    }
+}
+
+fn parse_control(action: &str) -> Option<Control> {
+    Some(match action {
+        "play" => Control::Play,
+        "pause" => Control::Pause,
+        "toggle" => Control::Toggle,
+        "stop" => Control::Stop,
+        "skip" => Control::Skip,
+        "previous" => Control::Previous,
+        "next" => Control::Next,
+        "restart" => Control::Restart,
+        "mute" => Control::Mute,
+        "unmute" => Control::Unmute,
+        _ => return None,
+    })
+}
+
+impl Server {
+    pub fn new(reader: ReaderHandle, token: String, lifetime: Arc<Lifetime>) -> Self {
+        let engine = match reader.get(Key::Engine) {
+            Ok(sonara_reader::Value::Text(t)) => t,
+            _ => String::new(),
+        };
+        Server {
+            reader,
+            token,
+            engine: Arc::new(Mutex::new(engine)),
+            lifetime,
+            retiring: Mutex::new(false),
+        }
+    }
+
+    pub fn reader(&self) -> &ReaderHandle {
+        &self.reader
+    }
+
+    pub fn lifetime(&self) -> &Arc<Lifetime> {
+        &self.lifetime
+    }
+
+    pub fn token_ok(&self, token: &str) -> bool {
+        token_eq(token, &self.token)
+    }
+
+    /// Nothing playing and nothing queued (a paused item is not idle).
+    pub fn is_idle(&self) -> bool {
+        match self.reader.state() {
+            Ok(s) => s.now_playing.is_none() && s.queued == 0,
+            Err(_) => true,
+        }
+    }
+
+    /// Something is being read right now (an item playing, not paused): the
+    /// idle exit waits for it. A paused item does not hold the process.
+    pub fn is_reading(&self) -> bool {
+        match self.reader.state() {
+            Ok(s) => s.now_playing.is_some() && !s.paused,
+            Err(_) => false,
+        }
+    }
+
+    /// Hold the admission lock for a request that could start speech, or
+    /// `E_BUSY` once a takeover was accepted.
+    fn admit(&self) -> Result<std::sync::MutexGuard<'_, bool>, Failure> {
+        let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
+        if *retiring {
+            return Err(Failure::new(
+                Code::Busy,
+                "this runtime is exiting for a takeover",
+            ));
+        }
+        Ok(retiring)
+    }
+
+    /// Start an event stream (used by `subscribe` and `GET /v1/events`).
+    pub fn events(&self, set: EventSet) -> Result<mpsc::Receiver<WireEvent>, Failure> {
+        events::subscribe(&self.reader, self.engine.clone(), set).map_err(reader_failure)
+    }
+
+    /// Handle one request. A request that is not a JSON object, or has no
+    /// `type`, is `E_BAD_REQUEST` (or `E_AUTH` before `hello` on TCP).
+    pub fn handle(&self, session: &mut Session, request: &Value) -> Outcome {
+        let empty = Map::new();
+        let (m, id) = match request {
+            Value::Object(m) => (m, m.get("id")),
+            _ => (&empty, None),
+        };
+        let kind = m.get("type").and_then(Value::as_str);
+        let result = if !session.authed && kind != Some("hello") {
+            Err(Failure::new(
+                Code::Auth,
+                "the first message must be hello with the token",
+            ))
+        } else if !request.is_object() {
+            Err(bad("a request is a JSON object"))
+        } else {
+            match kind {
+                None => Err(bad("missing 'type'")),
+                Some(k) => self.dispatch(session, k, m),
+            }
+        };
+        match result {
+            Ok((fields, after)) => Outcome {
+                reply: wire::ok_reply(id, fields),
+                code: None,
+                after,
+            },
+            Err(f) => {
+                let after = if f.code == Code::Auth && session.transport == Transport::Tcp {
+                    After::Close
+                } else {
+                    After::Nothing
+                };
+                Outcome {
+                    reply: wire::error_reply(id, &f),
+                    code: Some(f.code),
+                    after,
+                }
+            }
+        }
+    }
+
+    fn dispatch(&self, session: &mut Session, kind: &str, m: &Map<String, Value>) -> Handled {
+        match kind {
+            "hello" => self.hello(session, m),
+            "speak" => self.speak(m),
+            "control" => self.control(m),
+            "set" => self.set(m),
+            "get" => self.get(m),
+            "voices" => self.voices(m),
+            "subscribe" => self.subscribe(session, m),
+            k if EXTENSION_TYPES.contains(&k) => Err(Failure::new(
+                Code::Unsupported,
+                format!("'{k}' belongs to an extension this host does not offer"),
+            )),
+            k => Err(Failure::new(
+                Code::UnknownType,
+                format!("unknown message type '{k}'"),
+            )),
+        }
+    }
+
+    fn hello_fields(&self, unavailable: Vec<&str>) -> Map<String, Value> {
+        let mut f = Map::new();
+        f.insert("version".into(), json!(crate::VERSION));
+        f.insert(
+            "protocol".into(),
+            json!({"major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR}),
+        );
+        f.insert("capabilities".into(), json!(CAPABILITIES));
+        f.insert("extensions".into(), json!(EXTENSIONS));
+        f.insert("unavailable".into(), json!(unavailable));
+        f
+    }
+
+    fn hello(&self, session: &mut Session, m: &Map<String, Value>) -> Handled {
+        if !session.authed {
+            let token = m.get("token").and_then(Value::as_str).unwrap_or("");
+            if !self.token_ok(token) {
+                return Err(Failure::new(Code::Auth, "wrong or missing token"));
+            }
+        }
+        if opt_bool(m, "takeover")? {
+            let mut retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
+            if !*retiring && !self.is_idle() {
+                return Err(Failure::new(
+                    Code::Busy,
+                    "something is playing or queued; retry after the current item",
+                ));
+            }
+            *retiring = true;
+            let mut f = self.hello_fields(Vec::new());
+            f.insert("takeover".into(), Value::Bool(true));
+            return Ok((f, After::Exit));
+        }
+        if let Some(p) = m.get("protocol").filter(|p| !p.is_null()) {
+            let major = p.get("major").and_then(Value::as_u64);
+            match major {
+                Some(PROTOCOL_MAJOR) => {}
+                Some(other) => {
+                    return Err(Failure::new(
+                        Code::Incompatible,
+                        format!(
+                            "this host speaks protocol {PROTOCOL_MAJOR}.{PROTOCOL_MINOR}, \
+                             not {other}.x"
+                        ),
+                    ))
+                }
+                None => return Err(bad("'protocol.major' must be a number")),
+            }
+        }
+        let require = str_list(m, "require")?.unwrap_or_default();
+        let missing: Vec<&str> = require
+            .iter()
+            .copied()
+            .filter(|r| !CAPABILITIES.contains(r) && !EXTENSIONS.contains(r))
+            .collect();
+        if !missing.is_empty() {
+            return Err(Failure::new(
+                Code::Unsupported,
+                format!("this host does not offer: {}", missing.join(", ")),
+            ));
+        }
+        let wanted = str_list(m, "extensions")?.unwrap_or_default();
+        let unavailable: Vec<&str> = wanted
+            .into_iter()
+            .filter(|e| !EXTENSIONS.contains(e))
+            .collect();
+        if opt_bool(m, "keep_alive")? {
+            self.lifetime.set_keep_alive();
+        }
+        session.authed = true;
+        Ok((self.hello_fields(unavailable), After::Nothing))
+    }
+
+    fn speak(&self, m: &Map<String, Value>) -> Handled {
+        let text = match m.get("text") {
+            Some(Value::String(t)) => t,
+            _ => return Err(bad("'text' must be a string")),
+        };
+        let mode = match opt_str(m, "mode")? {
+            None | Some("append") => QueueMode::Append,
+            Some("replace") => QueueMode::Replace,
+            Some(other) => return Err(bad(format!("unknown mode '{other}'"))),
+        };
+        let interrupt = opt_bool(m, "interrupt")?;
+        let label = opt_str(m, "label")?.map(str::to_string);
+        let _admitted = self.admit()?;
+        let id = self
+            .reader
+            .speak(text, mode, interrupt, label)
+            .map_err(reader_failure)?;
+        let mut f = Map::new();
+        f.insert("item_id".into(), json!(id.0));
+        Ok((f, After::Nothing))
+    }
+
+    fn control(&self, m: &Map<String, Value>) -> Handled {
+        let action = opt_str(m, "action")?.ok_or_else(|| bad("missing 'action'"))?;
+        let c = match parse_control(action) {
+            Some(c) => c,
+            None if EXTENSION_ACTIONS.contains(&action) => {
+                return Err(Failure::new(
+                    Code::Unsupported,
+                    format!("action '{action}' belongs to an extension"),
+                ))
+            }
+            None => return Err(bad(format!("unknown action '{action}'"))),
+        };
+        let _admitted = self.admit()?;
+        self.reader.control(c).map_err(reader_failure)?;
+        Ok((Map::new(), After::Nothing))
+    }
+
+    fn key(&self, m: &Map<String, Value>) -> Result<Key, Failure> {
+        let name = opt_str(m, "key")?.ok_or_else(|| bad("missing 'key'"))?;
+        match Key::parse(name) {
+            Some(k) => Ok(k),
+            None if EXTENSION_KEYS.contains(&name) => Err(Failure::new(
+                Code::Unsupported,
+                format!("setting '{name}' belongs to an extension"),
+            )),
+            None => Err(bad(format!("unknown setting '{name}'"))),
+        }
+    }
+
+    fn key_value(&self, key: Key) -> Handled {
+        let value = self.reader.get(key).map_err(reader_failure)?;
+        let mut f = Map::new();
+        f.insert("key".into(), json!(key.as_str()));
+        f.insert("value".into(), wire::setting_to_json(&value));
+        Ok((f, After::Nothing))
+    }
+
+    fn set(&self, m: &Map<String, Value>) -> Handled {
+        let key = self.key(m)?;
+        let raw = m.get("value").unwrap_or(&Value::Null);
+        let value = wire::setting_from_json(raw)
+            .ok_or_else(|| bad("'value' must be a non-negative integer, a string or null"))?;
+        self.reader.set(key, value).map_err(reader_failure)?;
+        if key == Key::Engine {
+            if let Ok(sonara_reader::Value::Text(t)) = self.reader.get(Key::Engine) {
+                *self.engine.lock().unwrap_or_else(|p| p.into_inner()) = t;
+            }
+        }
+        self.key_value(key)
+    }
+
+    fn get(&self, m: &Map<String, Value>) -> Handled {
+        let key = self.key(m)?;
+        self.key_value(key)
+    }
+
+    fn voices(&self, m: &Map<String, Value>) -> Handled {
+        let engine = opt_str(m, "engine")?;
+        let voices = self.reader.voices(engine).map_err(reader_failure)?;
+        let mut f = Map::new();
+        f.insert(
+            "voices".into(),
+            Value::Array(voices.iter().map(wire::voice_json).collect()),
+        );
+        Ok((f, After::Nothing))
+    }
+
+    fn subscribe(&self, session: &Session, m: &Map<String, Value>) -> Handled {
+        if session.transport == Transport::Http {
+            return Err(bad("over HTTP, subscribe with GET /v1/events?events=..."));
+        }
+        let set = match str_list(m, "events")? {
+            None => EventSet::ALL,
+            Some(names) => EventSet::parse(names).map_err(|n| {
+                Failure::new(Code::Unsupported, format!("unknown event stream '{n}'"))
+            })?,
+        };
+        let rx = self.events(set)?;
+        let mut f = Map::new();
+        f.insert("events".into(), json!(set.names()));
+        Ok((f, After::Subscribe(rx)))
+    }
+
+    /// Carry out an accepted takeover: called by the transport after the
+    /// reply went out.
+    pub fn exit_for_takeover(&self) {
+        self.lifetime.request_exit(ExitReason::Takeover);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sonara_audio::TestOutput;
+    use sonara_engine::fake::FakeEngine;
+    use sonara_reader::{Config, Registry};
+    use std::time::Duration;
+
+    fn server() -> (Server, TestOutput) {
+        let mut registry = Registry::default();
+        registry.register(Arc::new(FakeEngine::new())).unwrap();
+        let (out, rx) = TestOutput::new();
+        let reader =
+            ReaderHandle::new(Config::new(registry).with_output(Box::new(out.clone()), rx))
+                .unwrap();
+        let life = Lifetime::new(Duration::from_secs(30), false);
+        (Server::new(reader, "secret".into(), life), out)
+    }
+
+    fn call(s: &Server, session: &mut Session, req: Value) -> Outcome {
+        s.handle(session, &req)
+    }
+
+    fn authed(s: &Server) -> Session {
+        let mut session = Session::tcp();
+        let o = call(s, &mut session, json!({"type": "hello", "token": "secret"}));
+        assert_eq!(o.reply["ok"], true);
+        session
+    }
+
+    fn code(o: &Outcome) -> &str {
+        o.reply["error"]["code"].as_str().unwrap_or("")
+    }
+
+    #[test]
+    fn tcp_needs_hello_with_the_token_first() {
+        let (s, _) = server();
+        let mut session = Session::tcp();
+        let o = call(&s, &mut session, json!({"type": "speak", "text": "Hi."}));
+        assert_eq!(code(&o), "E_AUTH");
+        assert!(matches!(o.after, After::Close));
+        let o = call(&s, &mut session, json!({"type": "hello", "token": "nope"}));
+        assert_eq!(code(&o), "E_AUTH");
+        assert!(!session.authed);
+        let o = call(&s, &mut session, json!("not an object"));
+        assert_eq!(code(&o), "E_AUTH");
+    }
+
+    #[test]
+    fn hello_reports_version_protocol_and_capabilities() {
+        let (s, _) = server();
+        let mut session = Session::tcp();
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "hello", "token": "secret", "id": "h1",
+                   "client": {"name": "t", "version": "1"},
+                   "protocol": {"major": 1, "minor": 0},
+                   "extensions": ["channels"], "future_field": 1}),
+        );
+        let r = &o.reply;
+        assert_eq!(r["id"], "h1");
+        assert_eq!(r["version"], crate::VERSION);
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 0}));
+        assert!(r["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("core")));
+        assert_eq!(r["extensions"], json!([]));
+        assert_eq!(r["unavailable"], json!(["channels"]));
+        assert!(session.authed);
+    }
+
+    #[test]
+    fn hello_rejects_an_unmet_require_and_another_major() {
+        let (s, _) = server();
+        let mut session = Session::tcp();
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "hello", "token": "secret", "require": ["core", "channels"]}),
+        );
+        assert_eq!(code(&o), "E_UNSUPPORTED");
+        assert!(!session.authed);
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "hello", "token": "secret", "protocol": {"major": 2, "minor": 0}}),
+        );
+        assert_eq!(code(&o), "E_INCOMPATIBLE");
+    }
+
+    #[test]
+    fn takeover_is_accepted_only_when_idle() {
+        let (s, out) = server();
+        let mut session = authed(&s);
+        call(
+            &s,
+            &mut session,
+            json!({"type": "speak", "text": "One. Two."}),
+        );
+        let mut other = Session::tcp();
+        let hello = json!({"type": "hello", "token": "secret", "takeover": true});
+        let o = call(&s, &mut other, hello.clone());
+        assert_eq!(code(&o), "E_BUSY");
+        call(
+            &s,
+            &mut session,
+            json!({"type": "control", "action": "pause"}),
+        );
+        let o = call(&s, &mut other, hello.clone());
+        assert_eq!(code(&o), "E_BUSY", "a paused item is not idle");
+        call(
+            &s,
+            &mut session,
+            json!({"type": "control", "action": "stop"}),
+        );
+        let _ = out.take_calls();
+        let o = call(&s, &mut other, hello);
+        assert_eq!(o.reply["ok"], true);
+        assert_eq!(o.reply["takeover"], true);
+        assert!(matches!(o.after, After::Exit));
+    }
+
+    #[test]
+    fn after_an_accepted_takeover_speak_and_control_are_busy() {
+        let (s, _) = server();
+        let mut session = authed(&s);
+        let mut other = Session::tcp();
+        let o = call(
+            &s,
+            &mut other,
+            json!({"type": "hello", "token": "secret", "takeover": true}),
+        );
+        assert_eq!(o.reply["ok"], true);
+        let o = call(&s, &mut session, json!({"type": "speak", "text": "Late."}));
+        assert_eq!(
+            code(&o),
+            "E_BUSY",
+            "a speak after the takeover would be dropped"
+        );
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "control", "action": "play"}),
+        );
+        assert_eq!(code(&o), "E_BUSY");
+        assert!(s.is_idle());
+    }
+
+    #[test]
+    fn unknown_types_extension_types_and_bad_fields() {
+        let (s, _) = server();
+        let mut session = authed(&s);
+        let o = call(&s, &mut session, json!({"type": "dance", "id": 3}));
+        assert_eq!(code(&o), "E_UNKNOWN_TYPE");
+        assert_eq!(o.reply["id"], 3);
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "channel_open", "channel": "a"}),
+        );
+        assert_eq!(code(&o), "E_UNSUPPORTED");
+        let o = call(&s, &mut session, json!({"type": "speak"}));
+        assert_eq!(code(&o), "E_BAD_REQUEST");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "speak", "text": "a", "mode": "x"}),
+        );
+        assert_eq!(code(&o), "E_BAD_REQUEST");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "control", "action": "fly"}),
+        );
+        assert_eq!(code(&o), "E_BAD_REQUEST");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "control", "action": "next_channel"}),
+        );
+        assert_eq!(code(&o), "E_UNSUPPORTED");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "set", "key": "volume", "value": 101}),
+        );
+        assert_eq!(code(&o), "E_BAD_REQUEST");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "set", "key": "voice", "value": "nobody"}),
+        );
+        assert_eq!(code(&o), "E_NOT_FOUND");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "get", "key": "audio_mode"}),
+        );
+        assert_eq!(code(&o), "E_UNSUPPORTED");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "voices", "engine": "nope"}),
+        );
+        assert_eq!(code(&o), "E_NOT_FOUND");
+        let o = call(&s, &mut session, json!({"no": "type"}));
+        assert_eq!(code(&o), "E_BAD_REQUEST");
+    }
+
+    #[test]
+    fn speak_set_get_and_voices() {
+        let (s, _) = server();
+        let mut session = authed(&s);
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "speak", "text": "Hello.", "label": "x", "extra": [1]}),
+        );
+        assert_eq!(o.reply["item_id"], 1);
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "set", "key": "volume", "value": 40}),
+        );
+        assert_eq!(o.reply["value"], 40);
+        let o = call(&s, &mut session, json!({"type": "get", "key": "engine"}));
+        assert_eq!(o.reply["value"], "fake");
+        let o = call(&s, &mut session, json!({"type": "voices"}));
+        let voices = o.reply["voices"].as_array().unwrap();
+        assert_eq!(voices[0]["engine"], "fake");
+        assert_eq!(voices[0]["license_class"], "permissive");
+    }
+
+    #[test]
+    fn subscribe_is_tcp_only_and_checks_names() {
+        let (s, _) = server();
+        let mut http = Session::http();
+        let o = call(
+            &s,
+            &mut http,
+            json!({"type": "subscribe", "events": ["state"]}),
+        );
+        assert_eq!(code(&o), "E_BAD_REQUEST");
+        let mut session = authed(&s);
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "subscribe", "events": ["bogus"]}),
+        );
+        assert_eq!(code(&o), "E_UNSUPPORTED");
+        let o = call(
+            &s,
+            &mut session,
+            json!({"type": "subscribe", "events": ["state"]}),
+        );
+        assert_eq!(o.reply["events"], json!(["state"]));
+        let After::Subscribe(mut rx) = o.after else {
+            panic!("expected a subscription");
+        };
+        let first = rx.blocking_recv().unwrap();
+        assert_eq!(first.name, "state");
+        let v: Value = serde_json::from_str(&first.json).unwrap();
+        assert_eq!(v["engine_status"]["engine"], "fake");
+    }
+
+    #[test]
+    fn keep_alive_in_hello_is_sticky() {
+        let (s, _) = server();
+        let mut session = Session::tcp();
+        call(
+            &s,
+            &mut session,
+            json!({"type": "hello", "token": "secret", "keep_alive": true}),
+        );
+        assert!(!s.lifetime().may_idle_exit());
+    }
+
+    #[test]
+    fn token_comparison() {
+        assert!(token_eq("abc", "abc"));
+        assert!(!token_eq("abc", "abd"));
+        assert!(!token_eq("abc", "abcd"));
+    }
+}
