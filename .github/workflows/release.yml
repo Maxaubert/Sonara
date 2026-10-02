@@ -92,7 +92,7 @@ jobs:
           $expected = "sonara-runtime-win-x64-${{ steps.ver.outputs.version }}.zip"
           if ((Split-Path $zip -Leaf) -ne $expected) { Write-Error "zip is $zip, expected $expected (Cargo.toml version drift)"; exit 1 }
           $runtimeVersion = (Get-Content bin/runtime-version -Raw).Trim()
-          if ($runtimeVersion -ne "${{ steps.ver.outputs.version }}") { Write-Error "bin/runtime-version is $runtimeVersion: the plugin would download another release"; exit 1 }
+          if ($runtimeVersion -ne "${{ steps.ver.outputs.version }}") { Write-Error "bin/runtime-version is ${runtimeVersion}: the plugin would download another release"; exit 1 }
           $sums = Join-Path (Split-Path $zip -Parent) "SHA256SUMS"
           if (-not (Test-Path $sums)) { Write-Error "release_zip.py wrote no SHA256SUMS"; exit 1 }
           "path=$zip" >> $env:GITHUB_OUTPUT
