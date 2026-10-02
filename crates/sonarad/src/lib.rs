@@ -16,11 +16,13 @@
 pub mod agent_ext;
 pub mod args;
 pub mod channels_ext;
+pub mod config;
 pub mod events;
 pub mod home;
 pub mod http;
 pub mod instance;
 pub mod lifetime;
+pub mod migrate;
 pub mod null_output;
 pub mod protocol;
 pub mod runtime_file;

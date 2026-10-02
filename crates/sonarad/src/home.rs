@@ -63,6 +63,31 @@ impl Home {
         self.dir.join("runtime.json")
     }
 
+    /// `logs\sonarad.log`: notes worth keeping after the process is gone
+    /// (the migration, settings that could not be applied).
+    pub fn log_path(&self) -> PathBuf {
+        self.dir.join("logs").join("sonarad.log")
+    }
+
+    /// Print a note on stderr and append it, timestamped, to the log file
+    /// (best effort).
+    pub fn log(&self, line: &str) {
+        use std::io::Write;
+        eprintln!("sonarad: {line}");
+        let path = self.log_path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let now = crate::runtime_file::rfc3339(std::time::SystemTime::now());
+            let _ = writeln!(f, "{now} {line}");
+        }
+    }
+
     /// `models\<engine>\<version>\` (spec section 3).
     pub fn models(&self) -> PathBuf {
         self.dir.join("models")

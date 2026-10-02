@@ -6,6 +6,7 @@
 //! stream, end the process). Unknown fields are ignored everywhere.
 use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
+use crate::config::{self, Store};
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
 use crate::system_ext::{self, HotkeyTarget, SystemExt, SystemHold, SystemHost};
@@ -56,11 +57,13 @@ const EXTENSION_TYPES: &[&str] = &[
     "earcon",
     "tool",
     "answered",
+    "preview",
 ];
 
 /// Extension keys of `set`/`get` and actions of `control`.
 const EXTENSION_KEYS: &[&str] = &[
     channels_ext::ANNOUNCE_KEY,
+    channels_ext::PREFS_KEY,
     "mute_level",
     "verbosity",
     "minqueue",
@@ -69,6 +72,7 @@ const EXTENSION_KEYS: &[&str] = &[
     "duck_level",
     "hotkeys",
     "settings_url",
+    "runtime",
 ];
 const EXTENSION_ACTIONS: &[&str] = &["next_channel"];
 
@@ -144,6 +148,11 @@ pub struct Server {
     system: Option<Arc<SystemExt>>,
     /// Serializes enabling an extension.
     enabling: Mutex<()>,
+    /// The persisted settings (`config.json`, `session_prefs.json`).
+    store: Arc<Store>,
+    /// Serializes `set`: the change and its record in `config.json`, so two
+    /// clients setting one key leave the file holding the value in force.
+    setting: Mutex<()>,
 }
 
 pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -238,7 +247,22 @@ impl Server {
             agent: Arc::new(OnceLock::new()),
             system: None,
             enabling: Mutex::new(()),
+            store: Store::memory(),
+            setting: Mutex::new(()),
         }
+    }
+
+    /// Persist settings in `store` (default: in memory only). Call it
+    /// before `with_system`, which applies the stored audio settings.
+    pub fn with_config(mut self, store: Arc<Store>) -> Self {
+        debug_assert!(self.system.is_none(), "with_config before with_system");
+        self.store = store;
+        self
+    }
+
+    /// The persisted settings.
+    pub fn store(&self) -> &Arc<Store> {
+        &self.store
     }
 
     /// Offer the `system` extension on this platform and home.
@@ -248,6 +272,7 @@ impl Server {
             channels: self.channels.clone(),
             agent: self.agent.clone(),
             retiring: self.retiring.clone(),
+            store: self.store.clone(),
         };
         self.system = Some(Arc::new(SystemExt::new(host, target)));
         self
@@ -283,20 +308,41 @@ impl Server {
     }
 
     /// Enable an extension this host offers (idempotent). `agent` needs
-    /// `channels` and enables it first.
+    /// `channels` and enables it first. The layer starts with the persisted
+    /// settings.
     fn enable(&self, name: &str) -> Result<(), Failure> {
         let _one = self.enabling.lock().unwrap_or_else(|p| p.into_inner());
         let engine = |e: String| Failure::new(Code::Engine, e);
         if (name == channels_ext::NAME || name == agent_ext::NAME) && self.channels.get().is_none()
         {
-            let ch = Channels::new(self.reader.clone(), sonara_channels::Config::default())
-                .map_err(|e| engine(e.to_string()))?;
+            let config = sonara_channels::Config {
+                announce: self.store.value(channels_ext::ANNOUNCE_KEY) != "off",
+                ..Default::default()
+            };
+            let ch =
+                Channels::new(self.reader.clone(), config).map_err(|e| engine(e.to_string()))?;
             let _ = self.channels.set(ch);
         }
         if name == agent_ext::NAME && self.agent.get().is_none() {
             let ch = self.channels.get().expect("enabled above").clone();
-            let agent = Agent::new(ch, sonara_agent::Config::default())
-                .map_err(|e| engine(e.to_string()))?;
+            let config = sonara_agent::Config {
+                settings: agent_ext::settings_from(&self.store),
+                ..Default::default()
+            };
+            let agent = match Agent::new(ch.clone(), config) {
+                Ok(a) => a,
+                // A runtime without the summarizer: start with summaries off.
+                Err(sonara_agent::Error::NoSummarizer) => {
+                    let mut settings = agent_ext::settings_from(&self.store);
+                    settings.summaries.enabled = false;
+                    let config = sonara_agent::Config {
+                        settings,
+                        ..Default::default()
+                    };
+                    Agent::new(ch, config).map_err(|e| engine(e.to_string()))?
+                }
+                Err(e) => return Err(engine(e.to_string())),
+            };
             let _ = self.agent.set(agent);
         }
         if name == system_ext::NAME {
@@ -434,7 +480,7 @@ impl Server {
                 let ch = self.channels.get().expect("checked");
                 let _admitted = self.admit()?;
                 match (kind, self.agent.get()) {
-                    ("channel_open", _) => channels_ext::open(ch, m),
+                    ("channel_open", _) => channels_ext::open(ch, &self.store, m),
                     ("channel_close", Some(a)) => agent_ext::close(a, m),
                     ("channel_close", None) => channels_ext::close(ch, m),
                     _ => channels_ext::focus(ch, m),
@@ -443,6 +489,9 @@ impl Server {
             k if agent_ext::TYPES.contains(&k) && self.agent.get().is_some() => {
                 let a = self.agent.get().expect("checked");
                 let _admitted = self.admit()?;
+                if let Some(id) = m.get("channel").and_then(Value::as_str) {
+                    channels_ext::apply_label(a.channels(), &self.store, id);
+                }
                 match k {
                     "stream" => agent_ext::stream(a, m),
                     "turn_start" => agent_ext::turn_start(a, m),
@@ -452,6 +501,12 @@ impl Server {
                     "tool" => agent_ext::tool(a, m),
                     _ => agent_ext::answered(a, m),
                 }
+            }
+            k if system_ext::TYPES.contains(&k)
+                && self.system.as_ref().is_some_and(|s| s.is_enabled()) =>
+            {
+                let s = self.system.as_ref().expect("checked");
+                s.preview(&self.reader, m)
             }
             k if EXTENSION_TYPES.contains(&k) => Err(Failure::new(
                 Code::Unsupported,
@@ -654,7 +709,7 @@ impl Server {
             None
         };
         if let (Some(a), true) = (self.agent.get(), agent_ext::KEYS.contains(&name)) {
-            return Some(agent_ext::setting(a, name, value));
+            return Some(agent_ext::setting(a, &self.store, name, value));
         }
         if let Some(s) = self.system.as_ref().filter(|s| s.is_enabled()) {
             if system_ext::KEYS.contains(&name) {
@@ -662,13 +717,66 @@ impl Server {
             }
         }
         let ch = self.channels.get()?;
-        if name != channels_ext::ANNOUNCE_KEY {
-            return None;
+        match name {
+            channels_ext::ANNOUNCE_KEY => Some(channels_ext::announce(ch, value)),
+            channels_ext::PREFS_KEY => Some(channels_ext::prefs_setting(ch, &self.store, value)),
+            _ => None,
         }
-        Some(channels_ext::announce(ch, value))
     }
 
+    /// `set`, persisted once it took effect: the value now in force is
+    /// stored for every key of the schema (`summaries` is stored by the
+    /// agent extension, field by field; the keymap and channel preferences
+    /// have files of their own).
     fn set(&self, m: &Map<String, Value>) -> Handled {
+        let _one_at_a_time = self.setting.lock().unwrap_or_else(|p| p.into_inner());
+        let engine_before = self
+            .engine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let result = self.set_now(m);
+        if let (Ok((fields, _)), Some(name)) = (&result, opt_str(m, "key").ok().flatten()) {
+            if name != "summaries" && config::setting(name).is_some() {
+                if let Some(v) = fields.get("value") {
+                    self.store.record(name, v);
+                }
+                if name == "engine" {
+                    self.engine_switched(&engine_before);
+                }
+            }
+        }
+        result
+    }
+
+    /// After `set engine`: a saved voice the new engine lacks is replaced by
+    /// the voice the reader now uses. Picking the same engine again keeps a
+    /// saved voice that could not apply (it waits until it is available).
+    fn engine_switched(&self, before: &str) {
+        let now = self
+            .engine
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let Some(Value::String(saved)) = self.store.user("voice") else {
+            return;
+        };
+        if now == before {
+            return;
+        }
+        let offered = self
+            .reader
+            .voices(Some(&now))
+            .map(|vs| vs.iter().any(|v| v.id == saved || v.name == saved))
+            .unwrap_or(false);
+        if !offered {
+            if let Ok(v) = self.reader.get(Key::Voice) {
+                self.store.record("voice", &wire::setting_to_json(&v));
+            }
+        }
+    }
+
+    fn set_now(&self, m: &Map<String, Value>) -> Handled {
         if let Some(done) = self.extension_setting(m, true) {
             return done;
         }

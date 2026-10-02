@@ -200,9 +200,24 @@ When a client finds an instance it cannot use (another protocol major, a missing
 
 Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
 
+## Saved settings
+
+Every setting a client changes with `set` is saved in the home and applies again when the next runtime starts (#201): the core keys before the runtime accepts its first client (so before the first speech), an extension's keys when a client enables that extension. Hotkeys that change a setting (the mute cycle, faster, slower) save it too.
+
+| file in the home | holds |
+|---|---|
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `minqueue`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`. A `_migrated` key records the migration below |
+| `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
+| `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
+| `logs\sonarad.log` | notes worth keeping: the migration, saved values that could not be applied |
+
+Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it. A value out of range is not applied (and logged), the others still apply; it stays in the file, like a key this runtime does not know (from a newer release), until a client sets that key. A saved value the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies once it is available; the default is used meanwhile. `--engine` on the command line wins over a saved `engine`, which wins over the default choice below; a saved engine that cannot start is logged and the default choice is used. Setting `engine` to another engine replaces a saved voice that engine lacks with the voice in force; setting the same engine again keeps it.
+
+**Migration from the Python plugin.** The first runtime on the default home (`%LOCALAPPDATA%\Sonara`) that has no `config.json` imports the plugin's settings from `%USERPROFILE%\.sonara` (another folder, or another home: `--migrate-from <dir>`): its `config.json` (voice, rate, speech volume, audio mode, duck level, mute level, verbosity, minimum queue, summary mode, command, model, timeout, settle time, style and custom prompts), `keymap.json` (`nav_start` becomes `restart`, `next_session` becomes `next_channel`; only when the home has no `keymap.json`) and `session_prefs.json` (the session `name` becomes `label`; only when the home has none). A value equal to the runtime's default is not saved; a Chatterbox voice speaks as `af_heart`, `audio_control: true` is `audio_mode: duck`, a speech volume above 100 is 100, and in a file from before the plugin's format 2 the old defaults `duck_level: 20` and `summary_timeout: 20` count as unset. The cue voice and fast cues are not imported (the runtime has no spoken control cues yet). The plugin's folder is only read. The migration writes `config.json` with the `_migrated` marker, so it runs once; what it did is in `logs\sonarad.log`.
+
 ## Testing aids
 
-`sonarad --engine kokoro|onecore` picks the engine to start with; without it, `kokoro` when `onnxruntime.dll` is next to `sonarad.exe` (`SONARA_ORT_DYLIB` names another copy, a development aid), else `onecore`. A Kokoro start verifies or downloads and loads the model in the background right away. `sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. They are meant for tests and the conformance suite, not for apps. With `--engine fake` there is no Kokoro engine, so nothing is ever downloaded.
+`sonarad --engine kokoro|onecore` picks the engine to start with; without it, the saved `engine`, else `kokoro` when `onnxruntime.dll` is next to `sonarad.exe` (`SONARA_ORT_DYLIB` names another copy, a development aid), else `onecore`. A Kokoro start verifies or downloads and loads the model in the background right away. `sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. They are meant for tests and the conformance suite, not for apps. With `--engine fake` there is no Kokoro engine, so nothing is ever downloaded.
 
 ## Examples
 
@@ -275,6 +290,7 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 | key | value |
 |---|---|
 | `channel_announce` | `"on"` (default) or `"off"`: switch announcements |
+| `channel_prefs` | the user's preferences per channel, for a settings page. `get`: a list of `{channel, open, reading, client_label, host_tab, label, voice, muted}`, the open channels first (in opening order), then channels with saved preferences only (most recent first). `set {channel, label?, voice?, muted?}` changes the fields given (`null` or `""` clears a label or voice) and replies with the list. A `label` replaces the one the client sends in `channel_open` (also for a channel opened by its first text), so switch announcements say it; `client_label` is the client's. `voice` and `muted` are saved for the page; the agent layer applies them in a later release (#196) |
 
 ### State
 
@@ -315,9 +331,11 @@ Earcons are mixed over the speech (they never pause or cut it) and follow the ou
 | `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Setting 1 or 2 stops everything queued and playing, core `speak` and channel `speak` items included (as the Python daemon's global mute); text spoken without the extension afterwards is read as usual |
 | `verbosity` | `"everything"` (default): text, decisions, tool announcements and hints; `"medium"`: no tool announcements or hints; `"quiet"`: decisions only |
 | `minqueue` | `0` to `10` (default 1): a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
-| `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt}`: see below. `set` merges the fields given; `get` returns them all |
+| `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt, prompts, default_prompts}`: see below. `set` merges the fields given; `get` returns them all |
 
 **Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer or `stop` drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
+
+**Custom prompts.** Each style can have its own instruction: `prompts` is `{style: text}` (`set` changes the styles given; `null` or a blank text goes back to the built-in one), and `prompt` is the custom instruction of the style in force (`set` with `prompt` changes that style's). Before #201 `prompt` was one instruction for every style; no runtime with that meaning shipped, so the protocol minor was not bumped for it. `get` also returns `default_prompts`, the built-in instruction of each style (read-only), so a page can show and edit it.
 
 ### Events
 
@@ -352,8 +370,13 @@ Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other ap
 | `duck_level` | integer 0 to 100 (default 30): the volume other apps keep while ducked. A change applies at once while ducked |
 | `hotkeys` | `get`: the keymap (below). `set`: `{"action", "key", "mods"}` binds an action, `{"action", "key": null}` unbinds it, `"reset"` restores the defaults; the reply is the keymap now in force |
 | `settings_url` | read-only (`set` is `E_BAD_REQUEST`): `http://127.0.0.1:<http_port>/settings?token=<token>`, the settings page |
+| `runtime` | read-only: `{pid, uptime_s, http_port, config, previews, saved_voice}`; `config` is the path of the saved settings (`null` when the runtime saves none), `previews` whether `preview` works, `saved_voice` the voice saved in `config.json` (`null`: none), which differs from `voice` while the engine lacks it |
 
-Settings are not persisted across runtimes yet, except the hotkeys (`keymap.json` in the home).
+These settings are saved like the others (see [Saved settings](#saved-settings)).
+
+### Voice previews
+
+`{"type": "preview", "voice"?: "<id or name>", "text"?: "<text>"}` says a short sample (default: `"Hello. This is how Sonara sounds with this voice."`, at most 300 characters) with a voice of the current engine (default: the voice in force) at the current rate, and replies `{engine, voice}` once it is playing. The sample is synthesized on engines of its own (its own `onecore`; Kokoro's loaded model is shared with the reader, so a Kokoro sample waits at most for the sentence being synthesized, and a skip on the reader cancels it) and played as a clip mixed over whatever is being read, like an earcon: nothing is paused, cut or queued again, and the output volume applies (a muted reader plays it silently). An unknown voice is `E_NOT_FOUND`; before a client enabled `system` it is `E_UNSUPPORTED`.
 
 ### Hotkeys
 
@@ -386,7 +409,7 @@ The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a h
 
 ### Settings page
 
-`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves a page for speech (engine, voice, rate, volume), other apps' audio, the hotkeys (capture, unbind, reset, AltGr and ownership warnings), the agent settings when `agent` is on, and the runtime's version. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
+`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves the settings page of the Python plugin, on this API: Speech (engine, voice with previews, rate, mute level, verbosity), Summary (mode Off, Tidy, Natural or Brief, the instruction of each style, the model, the minimum queue), Audio (speech volume, other apps, duck level), Sessions (`channel_prefs`: name, audio, voice per session; switch announcements), Hotkeys (capture, unbind, reset, AltGr and ownership warnings), Advanced (summary timeout and settle time) and System (version, protocol, process, uptime, port, extensions, engines, the settings file). The agent sections say so while no client enabled `agent`. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
 
 ```json
 > {"type": "hello", "token": "...", "extensions": ["agent", "system"]}

@@ -4,11 +4,14 @@
 //! `earcons` event stream. It needs `channels`, which enabling it enables
 //! too. `protocol` calls in here once a client enabled it; before that its
 //! messages are `E_UNSUPPORTED`.
+use crate::config::Store;
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_agent::settings::{SummaryCommand, Verbosity};
+use sonara_agent::settings::{Settings, SummaryCommand, Verbosity};
+use sonara_agent::summarizer::instruction;
 use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Style, SummarySettings};
+use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
 /// The extension's state: empty until a client enables it.
@@ -192,7 +195,13 @@ pub fn close(a: &Agent, m: &Map<String, Value>) -> Handled {
     ok(Map::new())
 }
 
-fn summaries_json(s: &SummarySettings) -> Value {
+const STYLES: [Style; 3] = [Style::Tidy, Style::Natural, Style::Brief];
+
+fn summaries_json(s: &SummarySettings, prompts: &BTreeMap<String, String>) -> Value {
+    let defaults: Map<String, Value> = STYLES
+        .iter()
+        .map(|st| (st.as_str().to_string(), json!(instruction(*st))))
+        .collect();
     json!({
         "enabled": s.enabled,
         "command": s.command.as_str(),
@@ -201,10 +210,13 @@ fn summaries_json(s: &SummarySettings) -> Value {
         "settle_ms": s.settle_ms,
         "style": s.style.as_str(),
         "prompt": s.prompt,
+        "prompts": prompts,
+        "default_prompts": defaults,
     })
 }
 
-/// Merge the fields given in `v` into `s`.
+/// Merge the fields given in `v` into `s` (not the prompts: see
+/// `merge_prompts`).
 fn merge_summaries(mut s: SummarySettings, v: &Value) -> Result<SummarySettings, Failure> {
     let Value::Object(o) = v else {
         return Err(bad("'summaries' is an object"));
@@ -235,16 +247,75 @@ fn merge_summaries(mut s: SummarySettings, v: &Value) -> Result<SummarySettings,
         s.style = Style::parse(st)
             .ok_or_else(|| bad("'summaries.style' is \"tidy\", \"natural\" or \"brief\""))?;
     }
-    if o.contains_key("prompt") {
-        s.prompt = opt_str(o, "prompt")?
-            .map(str::to_string)
-            .filter(|p| !p.trim().is_empty());
-    }
     Ok(s)
 }
 
-/// `set`/`get` of an extension key (`value` is `None` for `get`).
-pub fn setting(a: &Agent, key: &str, value: Option<&Value>) -> Handled {
+/// The custom prompts after `v`: `prompts` sets (a string) or resets
+/// (`null` or blank) each style given; `prompt` does the same for the
+/// style in force after this request.
+fn merge_prompts(
+    mut prompts: BTreeMap<String, String>,
+    v: &Value,
+    style: Style,
+) -> Result<BTreeMap<String, String>, Failure> {
+    let mut apply = |style: &str, text: &Value| -> Result<(), Failure> {
+        match text {
+            Value::Null => {
+                prompts.remove(style);
+            }
+            Value::String(t) if t.trim().is_empty() => {
+                prompts.remove(style);
+            }
+            Value::String(t) => {
+                prompts.insert(style.to_string(), t.clone());
+            }
+            _ => return Err(bad("a summary prompt is a string or null")),
+        }
+        Ok(())
+    };
+    if let Some(p) = v.get("prompts").filter(|p| !p.is_null()) {
+        let o = p
+            .as_object()
+            .ok_or_else(|| bad("'summaries.prompts' is an object of style: prompt"))?;
+        for (st, text) in o {
+            if Style::parse(st).is_none() {
+                return Err(bad(format!(
+                    "'summaries.prompts' has an unknown style '{st}'"
+                )));
+            }
+            apply(st, text)?;
+        }
+    }
+    if let Some(text) = v.get("prompt") {
+        apply(style.as_str(), text)?;
+    }
+    Ok(prompts)
+}
+
+/// The agent's settings from the persisted ones (applied when a client
+/// enables the extension). Stored values were validated when loaded.
+pub fn settings_from(store: &Store) -> Settings {
+    let mut s = Settings::default();
+    if let Some(n) = store.value("mute_level").as_u64() {
+        s.mute_level = n as u8;
+    }
+    if let Some(v) = store.value("verbosity").as_str().and_then(Verbosity::parse) {
+        s.verbosity = v;
+    }
+    if let Some(n) = store.value("minqueue").as_u64() {
+        s.minqueue = n as usize;
+    }
+    if let Ok(merged) = merge_summaries(s.summaries.clone(), &Value::Object(store.summaries())) {
+        s.summaries = merged;
+    }
+    s.summaries.prompt = store.prompts().get(s.summaries.style.as_str()).cloned();
+    s
+}
+
+/// `set`/`get` of an extension key (`value` is `None` for `get`). A `set`
+/// that succeeds is persisted (`summaries`: only the fields given, and the
+/// custom prompts).
+pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Handled {
     if let Some(v) = value {
         match key {
             "mute_level" => {
@@ -267,8 +338,24 @@ pub fn setting(a: &Agent, key: &str, value: Option<&Value>) -> Handled {
                 a.set_minqueue(n as usize).map_err(failure)?;
             }
             _ => {
-                let merged = merge_summaries(a.settings().summaries, v)?;
+                let mut merged = merge_summaries(a.settings().summaries, v)?;
+                let prompts = merge_prompts(store.prompts(), v, merged.style)?;
+                merged.prompt = prompts.get(merged.style.as_str()).cloned();
                 a.set_summaries(merged).map_err(failure)?;
+                // Persist the fields given (valid now) and the prompts.
+                let mut fields: Map<String, Value> = v
+                    .as_object()
+                    .map(|o| {
+                        o.iter()
+                            .filter(|(k, val)| !val.is_null() && *k != "prompt" && *k != "prompts")
+                            .map(|(k, val)| (k.clone(), val.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if v.get("prompt").is_some() || v.get("prompts").is_some() {
+                    fields.insert("prompts".into(), json!(prompts));
+                }
+                store.record_summaries(&fields);
             }
         }
     }
@@ -277,7 +364,7 @@ pub fn setting(a: &Agent, key: &str, value: Option<&Value>) -> Handled {
         "mute_level" => json!(s.mute_level),
         "verbosity" => json!(s.verbosity.as_str()),
         "minqueue" => json!(s.minqueue),
-        _ => summaries_json(&s.summaries),
+        _ => summaries_json(&s.summaries, &store.prompts()),
     };
     let mut f = Map::new();
     f.insert("key".into(), json!(key));
@@ -425,11 +512,20 @@ mod tests {
     fn settings_round_trip() {
         let (s, mut a) = enabled();
         let r = call(&s, &mut a, json!({"type": "get", "key": "summaries"}));
+        let mut v = r["value"].clone();
+        let defaults = v
+            .as_object_mut()
+            .unwrap()
+            .remove("default_prompts")
+            .unwrap();
         assert_eq!(
-            r["value"],
+            v,
             json!({"enabled": false, "command": "claude", "model": "haiku", "timeout": 60,
-                   "settle_ms": 600, "style": "natural", "prompt": null})
+                   "settle_ms": 600, "style": "natural", "prompt": null, "prompts": {}})
         );
+        for st in ["tidy", "natural", "brief"] {
+            assert!(!defaults[st].as_str().unwrap().is_empty(), "{st}");
+        }
         let r = call(
             &s,
             &mut a,
@@ -440,6 +536,42 @@ mod tests {
         assert_eq!(r["value"]["timeout"], 30);
         assert_eq!(r["value"]["model"], "haiku", "merged, not replaced");
         assert_eq!(r["value"]["prompt"], "Short.");
+        assert_eq!(r["value"]["prompts"], json!({"brief": "Short."}));
+        // Each style keeps its own prompt; the one in force follows the style.
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "summaries",
+                   "value": {"style": "tidy", "prompts": {"tidy": "All of it."}}}),
+        );
+        assert_eq!(r["value"]["prompt"], "All of it.");
+        assert_eq!(
+            r["value"]["prompts"],
+            json!({"brief": "Short.", "tidy": "All of it."})
+        );
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "summaries", "value": {"style": "natural"}}),
+        );
+        assert_eq!(
+            r["value"]["prompt"],
+            Value::Null,
+            "natural has no custom prompt"
+        );
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "summaries",
+                   "value": {"prompts": {"brief": null, "tidy": "  "}}}),
+        );
+        assert_eq!(r["value"]["prompts"], json!({}), "null or blank resets");
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "summaries", "value": {"prompts": {"poem": "x"}}}),
+        );
+        assert_eq!(code(&r), "E_BAD_REQUEST");
         for (key, value) in [
             ("mute_level", json!(2)),
             ("verbosity", json!("quiet")),

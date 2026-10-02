@@ -6,9 +6,11 @@
 use sonara_engine::kokoro::{self, Kokoro};
 use sonara_reader::{Config, ReaderHandle, Registry};
 use sonarad::args::{self, Command, OutputKind, SystemKind};
+use sonarad::config::{self, Store};
 use sonarad::home::{self, Home};
 use sonarad::instance::{self, AcquireError};
 use sonarad::lifetime::{self, ExitReason, Lifetime};
+use sonarad::migrate;
 use sonarad::protocol::{self, Server};
 use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
@@ -99,11 +101,32 @@ fn build_registry(
     Ok((registry, chosen, Some(k)))
 }
 
+/// Engines for voice previews: their own OneCore (a preview never waits
+/// for or cancels the reader's OneCore synthesis), and the reader's Kokoro
+/// itself rather than a second copy: one model in memory and one download
+/// manager per model folder. A preview on Kokoro waits at most for the
+/// sentence the reader is synthesizing, and a skip on the reader cancels it.
+fn preview_registry(engine: &str, kokoro: Option<&Kokoro>) -> Option<Registry> {
+    if engine == "fake" {
+        let mut r = Registry::default();
+        r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
+            .ok()?;
+        return Some(r);
+    }
+    let mut r = sonara_reader::default_registry();
+    if let Some(k) = kokoro {
+        r.register(Arc::new(k.clone())).ok()?;
+    }
+    Some(r)
+}
+
+/// The reader, the Kokoro engine (unless `fake`) and the id of the engine
+/// it started with.
 fn build_reader(
     engine: Option<&str>,
     output: OutputKind,
     home: &Home,
-) -> Result<(ReaderHandle, Option<Kokoro>), String> {
+) -> Result<(ReaderHandle, Option<Kokoro>, String), String> {
     let (registry, engine, kokoro) = build_registry(engine, home)?;
     let mut config = Config::new(registry);
     config.engine = Some(engine.clone());
@@ -117,7 +140,7 @@ fn build_reader(
     if let (Some(k), true) = (&kokoro, engine == kokoro::ID.as_str()) {
         k.prepare();
     }
-    Ok((reader, kokoro))
+    Ok((reader, kokoro, engine))
 }
 
 /// The platform of the `system` extension.
@@ -161,13 +184,58 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         Err(AcquireError::Os(e)) => return Err(fail(e)),
     };
     let token = instance::new_token().map_err(fail)?;
-    let (reader, kokoro) =
-        build_reader(args.engine.as_deref(), args.output, &home).map_err(fail)?;
+    // The Python plugin's settings, once, for the default home (or the
+    // folder given with --migrate-from).
+    let legacy = args
+        .migrate_from
+        .clone()
+        .or_else(|| home.is_default.then(migrate::default_legacy_dir).flatten());
+    if let Some(dir) = legacy {
+        for note in migrate::run(&home.dir, &dir).unwrap_or_default() {
+            home.log(&format!("migration: {note}"));
+        }
+    }
+    let (store, problems) = Store::load(&home.dir);
+    for p in problems {
+        home.log(&p);
+    }
+    // --engine, else the saved engine, else the default choice (Kokoro
+    // when ONNX Runtime is installed, else OneCore).
+    let saved = store
+        .user("engine")
+        .and_then(|v| v.as_str().map(str::to_string));
+    let wanted = args.engine.clone().or(saved);
+    let (reader, kokoro, engine) = match build_reader(wanted.as_deref(), args.output, &home) {
+        Ok(r) => r,
+        Err(e) if args.engine.is_none() && wanted.is_some() => {
+            home.log(&format!(
+                "config.json: engine '{}' not available ({e}); using the default",
+                wanted.as_deref().unwrap_or_default()
+            ));
+            build_reader(None, args.output, &home).map_err(fail)?
+        }
+        Err(e) => return Err(fail(e)),
+    };
+    // Before the first client: nothing speaks with the defaults first.
+    for p in config::apply_reader(&store, &reader, false) {
+        home.log(&p);
+    }
+    // Previews use the engines of the reader actually started.
+    let previews = preview_registry(&engine, kokoro.as_ref());
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|e| fail(format!("cannot start the runtime: {e}")))?;
-    let result = rt.block_on(run(&args, &home, &sid, token, reader.clone(), kokoro));
+    let result = rt.block_on(run(
+        &args,
+        &home,
+        &sid,
+        token,
+        reader.clone(),
+        store,
+        previews,
+        kokoro,
+    ));
     reader.shutdown();
     rt.shutdown_timeout(Duration::from_millis(500));
     // Release the instance lock before runtime.json goes: a client that
@@ -179,12 +247,15 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     result.map_err(fail)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run(
     args: &args::Args,
     home: &Home,
     sid: &str,
     token: String,
     reader: ReaderHandle,
+    store: Arc<Store>,
+    previews: Option<Registry>,
     kokoro: Option<Kokoro>,
 ) -> Result<(), String> {
     // Loopback only, never another address (spec section 4).
@@ -201,13 +272,14 @@ async fn run(
         .port();
 
     let life = Lifetime::new(args.idle_exit, args.standalone);
-    let mut server = Server::new(reader.clone(), token.clone(), life.clone());
+    let mut server = Server::new(reader.clone(), token.clone(), life.clone()).with_config(store);
     if let Some(platform) = system_platform(args.system, home) {
         server = server.with_system(SystemHost {
             platform,
             home: home.dir.clone(),
             http_port,
             token: token.clone(),
+            previews,
         });
     }
     let server = Arc::new(server);

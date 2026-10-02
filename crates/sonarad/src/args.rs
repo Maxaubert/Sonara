@@ -3,14 +3,16 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake] \
-[--output device|null] [--system windows|fake] [--idle-exit SECONDS] [--standalone] [--version]
+[--output device|null] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
+       [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
-  --engine ID         engine to start with (default: kokoro when onnxruntime.dll
-                      is next to sonarad.exe, else onecore). Kokoro downloads
-                      its model on first use and speaks with onecore until it
-                      is ready. 'fake' is a deterministic tone engine for tests
-                      and conformance runs (no Kokoro, no download)
+  --engine ID         engine to start with (default: the saved one, else kokoro
+                      when onnxruntime.dll is next to sonarad.exe, else
+                      onecore). Kokoro downloads its model on first use and
+                      speaks with onecore until it is ready. 'fake' is a
+                      deterministic tone engine for tests and conformance runs
+                      (no Kokoro, no download)
   --output KIND       'device' (default; 'null' with --engine fake) or 'null',
                       a silent output that keeps real time
   --system KIND       platform of the 'system' extension: 'windows' (default)
@@ -18,7 +20,10 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
                       and hotkeys in <home>\\fake-system.json
   --idle-exit SECONDS exit this long after the last client left and nothing is
                       playing (default 30)
-  --standalone        never exit for idleness";
+  --standalone        never exit for idleness
+  --migrate-from DIR  import the Python plugin's settings from DIR when the
+                      home has no config.json yet (default: %USERPROFILE%\\.sonara,
+                      and only for the default home)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputKind {
@@ -37,8 +42,11 @@ pub enum SystemKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Args {
     pub home: Option<PathBuf>,
-    /// `None`: choose (kokoro if ONNX Runtime is installed, else onecore).
+    /// `--engine`: wins over the saved engine. `None`: the saved one, else
+    /// kokoro if ONNX Runtime is installed, else onecore.
     pub engine: Option<String>,
+    /// `--migrate-from DIR`.
+    pub migrate_from: Option<PathBuf>,
     pub output: OutputKind,
     pub system: SystemKind,
     pub idle_exit: Duration,
@@ -56,6 +64,7 @@ pub enum Command {
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String> {
     let mut home = None;
     let mut engine = None;
+    let mut migrate_from = None;
     let mut output = None;
     let mut system = SystemKind::Windows;
     let mut idle_exit = crate::lifetime::DEFAULT_IDLE_EXIT;
@@ -66,6 +75,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
         match a.as_str() {
             "--home" => home = Some(PathBuf::from(value("--home")?)),
             "--engine" => engine = Some(value("--engine")?),
+            "--migrate-from" => migrate_from = Some(PathBuf::from(value("--migrate-from")?)),
             "--output" => {
                 output = Some(match value("--output")?.as_str() {
                     "device" => OutputKind::Device,
@@ -103,6 +113,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     Ok(Command::Run(Args {
         home,
         engine,
+        migrate_from,
         output,
         system,
         idle_exit,
@@ -129,6 +140,15 @@ mod tests {
         assert_eq!(a.idle_exit, Duration::from_secs(30));
         assert!(!a.standalone);
         assert_eq!(a.system, SystemKind::Windows);
+        assert_eq!(a.migrate_from, None);
+    }
+
+    #[test]
+    fn engine_and_migration_flags() {
+        let a = run(&["--engine", "fake", "--migrate-from", "old"]);
+        assert_eq!(a.engine.as_deref(), Some("fake"));
+        assert_eq!(a.migrate_from, Some(PathBuf::from("old")));
+        assert!(parse(["--migrate-from".to_string()]).is_err());
     }
 
     #[test]

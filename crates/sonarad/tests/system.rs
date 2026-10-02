@@ -7,6 +7,7 @@ use sonara_engine::fake::FakeEngine;
 use sonara_reader::{Config, ReaderHandle, Registry};
 use sonara_system::fake::Fake;
 use sonara_system::keymap::Action;
+use sonarad::config::{self, Store};
 use sonarad::lifetime::Lifetime;
 use sonarad::protocol::{Server, Session};
 use sonarad::system_ext::SystemHost;
@@ -38,7 +39,18 @@ struct Rig {
     home: PathBuf,
 }
 
+fn fake_registry() -> Registry {
+    let mut registry = Registry::default();
+    registry.register(Arc::new(FakeEngine::new())).unwrap();
+    registry
+}
+
 fn rig() -> Rig {
+    rig_on(tmp())
+}
+
+/// A rig on `home`, with the settings persisted there.
+fn rig_on(home: PathBuf) -> Rig {
     let mut registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     let (out, rx) = TestOutput::new();
@@ -46,17 +58,20 @@ fn rig() -> Rig {
         ReaderHandle::new(Config::new(registry).with_output(Box::new(out.clone()), rx)).unwrap();
     let fake = Fake::new();
     fake.add_audio(100, "vlc.exe", 0.8);
-    let home = tmp();
+    let (store, problems) = Store::load(&home);
+    assert!(problems.is_empty(), "{problems:?}");
     let server = Server::new(
         reader,
         TOKEN.into(),
         Lifetime::new(Duration::from_secs(30), false),
     )
+    .with_config(store)
     .with_system(SystemHost {
         platform: fake.platform(),
         home: home.clone(),
         http_port: 4321,
         token: TOKEN.into(),
+        previews: Some(fake_registry()),
     });
     Rig {
         server: Arc::new(server),
@@ -500,4 +515,328 @@ fn the_startup_sweep_restores_what_a_killed_runtime_left() {
     r.server.system().unwrap().recover();
     assert!(restored(&r.fake));
     assert!(!state.join("duck_state.json").exists());
+}
+
+fn saved(home: &std::path::Path) -> Value {
+    std::fs::read_to_string(home.join("config.json"))
+        .map(|t| serde_json::from_str(&t).unwrap())
+        .unwrap_or(Value::Null)
+}
+
+#[test]
+fn the_schema_defaults_are_the_layers_defaults() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system", "agent"]}),
+    );
+    for key in [
+        "rate",
+        "volume",
+        "voice",
+        "channel_announce",
+        "mute_level",
+        "verbosity",
+        "minqueue",
+        "audio_mode",
+        "duck_level",
+    ] {
+        let g = ok(s, &mut h, json!({"type": "get", "key": key}));
+        assert_eq!(Some(g["value"].clone()), config::default(key), "{key}");
+    }
+    let g = ok(s, &mut h, json!({"type": "get", "key": "summaries"}));
+    let d = config::default("summaries").unwrap();
+    for (field, v) in d.as_object().unwrap() {
+        assert_eq!(&g["value"][field], v, "summaries.{field}");
+    }
+    assert_eq!(saved(&r.home), Value::Null, "reading writes nothing");
+}
+
+#[test]
+fn hotkey_changes_are_persisted_like_a_set() {
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    bind_rate_keys(s);
+    r.fake.press(Action::Faster.id());
+    assert!(eventually(|| saved(&r.home)["rate"] == 225));
+    r.fake.press(Action::Mute.id());
+    assert!(eventually(|| saved(&r.home)["mute_level"] == 1));
+}
+
+#[test]
+fn persisted_settings_apply_when_each_layer_starts() {
+    let home = tmp();
+    std::fs::write(
+        home.join("config.json"),
+        r#"{"audio_mode": "duck", "duck_level": 25, "mute_level": 2, "verbosity": "quiet",
+            "channel_announce": "off", "summaries": {"style": "brief", "prompts": {"brief": "Short."}}}"#,
+    )
+    .unwrap();
+    let r = rig_on(home);
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system", "agent"]}),
+    );
+    let get = |key: &str| {
+        let mut h = Session::http();
+        s.handle(&mut h, &json!({"type": "get", "key": key})).reply["value"].clone()
+    };
+    assert_eq!(get("audio_mode"), "duck");
+    assert_eq!(get("duck_level"), 25);
+    assert_eq!(get("mute_level"), 2);
+    assert_eq!(get("verbosity"), "quiet");
+    assert_eq!(get("channel_announce"), "off");
+    assert_eq!(get("summaries")["style"], "brief");
+    assert_eq!(get("summaries")["prompt"], "Short.");
+}
+
+#[test]
+fn a_set_persists_the_value_in_force_and_only_that_key() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system", "agent"]}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "voice", "value": "Fake silence"}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "duck_level", "value": 40}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "summaries", "value": {"enabled": false, "model": "sonnet"}}),
+    );
+    let e = call(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "rate", "value": 999}),
+    );
+    assert_eq!(e["error"]["code"], "E_BAD_REQUEST");
+    assert_eq!(
+        saved(&r.home),
+        json!({"voice": "silence", "duck_level": 40,
+               "summaries": {"enabled": false, "model": "sonnet"}})
+    );
+}
+
+#[test]
+fn channel_prefs_are_stored_and_the_label_replaces_the_clients() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system", "agent"]}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "channel_open", "channel": "s1", "label": "repo"}),
+    );
+    let g = ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "channel_prefs",
+               "value": {"channel": "s1", "label": "Build", "voice": "silence", "muted": true}}),
+    );
+    let row = &g["value"][0];
+    assert_eq!(row["channel"], "s1");
+    assert_eq!(row["client_label"], "repo");
+    assert_eq!(row["label"], "Build");
+    assert_eq!(row["muted"], true);
+    let channels = s.channels().unwrap().clone();
+    assert_eq!(
+        channels.channel("s1").unwrap().label.as_deref(),
+        Some("Build")
+    );
+    // The client's next channel_open keeps the user's name.
+    ok(
+        s,
+        &mut h,
+        json!({"type": "channel_open", "channel": "s1", "label": "repo"}),
+    );
+    assert_eq!(
+        channels.channel("s1").unwrap().label.as_deref(),
+        Some("Build")
+    );
+    // A channel opened by its first text gets the user's name too.
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "channel_prefs", "value": {"channel": "s2", "label": "Docs"}}),
+    );
+    ok(
+        s,
+        &mut h,
+        json!({"type": "stream", "channel": "s2", "delta": "Hi.", "final": true}),
+    );
+    assert_eq!(
+        channels.channel("s2").unwrap().label.as_deref(),
+        Some("Docs")
+    );
+    let prefs: Value =
+        serde_json::from_str(&std::fs::read_to_string(r.home.join("session_prefs.json")).unwrap())
+            .unwrap();
+    assert_eq!(prefs["s1"]["label"], "Build");
+    assert_eq!(prefs["s1"]["voice"], "silence");
+    assert_eq!(prefs["s2"]["label"], "Docs");
+    // Clearing the label gives the client's back.
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "channel_prefs", "value": {"channel": "s1", "label": null}}),
+    );
+    assert_eq!(
+        channels.channel("s1").unwrap().label.as_deref(),
+        Some("repo")
+    );
+    for bad in [
+        json!({"label": "x"}),
+        json!({"channel": "s1", "muted": "yes"}),
+        json!({"channel": "s1", "label": 3}),
+        json!("s1"),
+    ] {
+        let e = call(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "channel_prefs", "value": bad}),
+        );
+        assert_eq!(e["error"]["code"], "E_BAD_REQUEST", "{bad}");
+    }
+}
+
+#[test]
+fn a_preview_plays_a_clip_and_leaves_the_queue_alone() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    let e = call(s, &mut h, json!({"type": "preview"}));
+    assert_eq!(e["error"]["code"], "E_UNSUPPORTED", "system not enabled");
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system"]}),
+    );
+    ok(s, &mut h, json!({"type": "speak", "text": "One. Two."}));
+    start_playing(&r.out);
+    let before = s.reader().state().unwrap();
+    let _ = r.out.take_calls();
+    let p = ok(
+        s,
+        &mut h,
+        json!({"type": "preview", "voice": "Fake silence"}),
+    );
+    assert_eq!(p["voice"], "silence");
+    assert_eq!(p["engine"], "fake");
+    let calls = r.out.take_calls();
+    assert!(
+        matches!(calls.as_slice(), [sonara_audio::OutputCall::PlayClip { samples, .. }] if *samples > 0),
+        "{calls:?}"
+    );
+    let after = s.reader().state().unwrap();
+    assert_eq!(after.now_playing, before.now_playing);
+    assert_eq!(after.queued, before.queued);
+    let e = call(s, &mut h, json!({"type": "preview", "voice": "nobody"}));
+    assert_eq!(e["error"]["code"], "E_NOT_FOUND");
+    let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
+    assert_eq!(g["value"]["pid"], std::process::id());
+    assert_eq!(g["value"]["previews"], true);
+}
+
+/// Kokoro as `sonarad` builds it, but without downloads, ONNX Runtime or a
+/// model: it speaks with its fallback (the fake engine) and lists its voices.
+fn offline_kokoro(home: &std::path::Path) -> sonara_engine::kokoro::Kokoro {
+    use sonara_engine::kokoro::{self, download};
+    let mut c = kokoro::Config::new(
+        home.join("models").join(download::MODEL_SUBDIR),
+        home.join("no-onnxruntime.dll"),
+    );
+    c.download = false;
+    c.fallback = Some(Arc::new(FakeEngine::new()));
+    kokoro::Kokoro::new(c)
+}
+
+#[test]
+fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
+    use sonara_reader::{Key, Value as V};
+    let home = tmp();
+    std::fs::write(
+        home.join("config.json"),
+        r#"{"engine": "kokoro", "voice": "af_sarah", "rate": 250}"#,
+    )
+    .unwrap();
+    let k = offline_kokoro(&home);
+    let mut registry = Registry::default();
+    registry.register(Arc::new(k.clone())).unwrap();
+    let mut config = Config::new(registry);
+    config.engine = Some("kokoro".into());
+    let (out, rx) = TestOutput::new();
+    let reader = ReaderHandle::new(config.with_output(Box::new(out.clone()), rx)).unwrap();
+    let (store, problems) = Store::load(&home);
+    assert!(problems.is_empty(), "{problems:?}");
+    let problems = config::apply_reader(&store, &reader, false);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(reader.get(Key::Voice).unwrap(), V::Text("af_sarah".into()));
+    assert_eq!(reader.get(Key::Rate).unwrap(), V::Number(250));
+    // The previews share the reader's Kokoro (one model, one download).
+    let mut previews = Registry::default();
+    previews.register(Arc::new(k)).unwrap();
+    let server = Server::new(
+        reader,
+        TOKEN.into(),
+        Lifetime::new(Duration::from_secs(30), false),
+    )
+    .with_config(store)
+    .with_system(SystemHost {
+        platform: Fake::new().platform(),
+        home: home.clone(),
+        http_port: 4321,
+        token: TOKEN.into(),
+        previews: Some(previews),
+    });
+    let s = &server;
+    let mut h = Session::http();
+    ok(
+        s,
+        &mut h,
+        json!({"type": "hello", "extensions": ["system"]}),
+    );
+    let p = ok(s, &mut h, json!({"type": "preview"}));
+    assert_eq!(p["engine"], "kokoro");
+    assert_eq!(
+        p["voice"], "af_sarah",
+        "the saved voice is the one in force"
+    );
+    let p = ok(s, &mut h, json!({"type": "preview", "voice": "bm_george"}));
+    assert_eq!(p["voice"], "bm_george");
+    assert!(
+        out.take_calls().iter().any(
+            |c| matches!(c, sonara_audio::OutputCall::PlayClip { samples, .. } if *samples > 0)
+        ),
+        "the previews played"
+    );
+    let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
+    assert_eq!(g["value"]["saved_voice"], "af_sarah");
 }
