@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sonara-client"
+version = "0.9.8"
+description = "Client for the Sonara text-to-speech runtime (protocol v1). Standard library only."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+maintainers = [{ name = "Max Aubert" }]
+# Zero runtime dependencies (spec R6): bundlers ship nothing else's licence.
+dependencies = []
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+[project.urls]
+Homepage = "https://github.com/Maxaubert/Sonara"
+Documentation = "https://github.com/Maxaubert/Sonara/blob/main/docs/bundling.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
