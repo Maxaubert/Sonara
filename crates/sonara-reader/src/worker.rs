@@ -41,6 +41,11 @@ pub(crate) enum Msg {
     },
     State(Sender<State>),
     Subscribe(Sender<Receiver<Event>>),
+    Clip {
+        samples: Vec<i16>,
+        sample_rate: u32,
+        reply: Sender<()>,
+    },
     Audio(AudioEvent),
     Synthesized(Done),
     Shutdown,
@@ -201,6 +206,14 @@ impl Loop {
                 }
                 self.subscribers.push(tx);
                 let _ = reply.send(rx);
+            }
+            Msg::Clip {
+                samples,
+                sample_rate,
+                reply,
+            } => {
+                self.output.play_clip(&samples, sample_rate);
+                let _ = reply.send(());
             }
             Msg::Audio(e) => self.audio_event(e),
             Msg::Synthesized(done) => self.synthesized(done),

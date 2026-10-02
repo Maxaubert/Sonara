@@ -1,0 +1,15 @@
+{
+  "event": "PreToolUse",
+  "fixture": "PreToolUse-ExitPlanMode.json",
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "11111111-2222-3333-4444-555555555555",
+      "kind": "plan",
+      "text": "1. Add the parser.\n2. Wire the daemon.\n3. Ship it.",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate."
+    }
+  ]
+}

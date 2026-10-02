@@ -6,11 +6,13 @@
 //!   bound to 127.0.0.1 on ephemeral ports, never to another address.
 //! - Discovery through `runtime.json` in the home folder, one instance per
 //!   user and home (a named mutex), idle exit and idle-only takeover.
-//! - The `channels` extension (L2, `sonara_channels`) once a client asks
-//!   for it in `hello`.
+//! - The `channels` extension (L2, `sonara_channels`) and the `agent`
+//!   extension (L3, `sonara_agent`, which needs `channels`) once a client
+//!   asks for them in `hello`.
 //!
 //! The protocol logic (`protocol`) is synchronous and transport-free; `tcp`
 //! and `http` only frame requests, replies and events.
+pub mod agent_ext;
 pub mod args;
 pub mod channels_ext;
 pub mod events;

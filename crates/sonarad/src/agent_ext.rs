@@ -1,0 +1,478 @@
+//! The `agent` extension (spec 4.3) on top of `sonara_agent`: `stream`,
+//! `turn_start`, `turn_end`, `ask`, `earcon`, `tool`, `answered`, the
+//! settings `mute_level`, `verbosity`, `minqueue` and `summaries`, and the
+//! `earcons` event stream. It needs `channels`, which enabling it enables
+//! too. `protocol` calls in here once a client enabled it; before that its
+//! messages are `E_UNSUPPORTED`.
+use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
+use crate::wire::{Code, Failure};
+use serde_json::{json, Map, Value};
+use sonara_agent::settings::{SummaryCommand, Verbosity};
+use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Style, SummarySettings};
+use std::sync::{Arc, OnceLock};
+
+/// The extension's state: empty until a client enables it.
+pub type Slot = Arc<OnceLock<Agent>>;
+
+pub const NAME: &str = "agent";
+
+/// Message types of the extension.
+pub const TYPES: &[&str] = &[
+    "stream",
+    "turn_start",
+    "turn_end",
+    "ask",
+    "earcon",
+    "tool",
+    "answered",
+];
+
+/// `set`/`get` keys of the extension.
+pub const KEYS: &[&str] = &["mute_level", "verbosity", "minqueue", "summaries"];
+
+pub(crate) fn failure(e: Error) -> Failure {
+    match e {
+        Error::Channels(sonara_channels::Error::UnknownChannel(_)) => {
+            Failure::new(Code::NotFound, e.to_string())
+        }
+        Error::Channels(sonara_channels::Error::EmptyChannel) => {
+            Failure::new(Code::BadRequest, e.to_string())
+        }
+        Error::Channels(sonara_channels::Error::Reader(r)) => reader_failure(r),
+        Error::BadValue(_) => Failure::new(Code::BadRequest, e.to_string()),
+        Error::NoSummarizer => Failure::new(Code::Unsupported, e.to_string()),
+    }
+}
+
+fn ok(fields: Map<String, Value>) -> Handled {
+    Ok((fields, After::Nothing))
+}
+
+fn channel(m: &Map<String, Value>) -> Result<&str, Failure> {
+    match opt_str(m, "channel")? {
+        Some(c) if !c.is_empty() => Ok(c),
+        _ => Err(bad("'channel' must be a non-empty string")),
+    }
+}
+
+/// `t`: the sender's start time in seconds (any number), optional.
+fn opt_t(m: &Map<String, Value>) -> Result<Option<f64>, Failure> {
+    match m.get("t") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => n
+            .as_f64()
+            .filter(|f| f.is_finite())
+            .map(Some)
+            .ok_or_else(|| bad("'t' must be a number")),
+        Some(_) => Err(bad("'t' must be a number")),
+    }
+}
+
+fn opt_flag(m: &Map<String, Value>, field: &str) -> Result<bool, Failure> {
+    match m.get(field) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(bad(format!("'{field}' must be true or false"))),
+    }
+}
+
+fn stale(applied: bool) -> Handled {
+    let mut f = Map::new();
+    f.insert("stale".into(), json!(!applied));
+    ok(f)
+}
+
+pub fn stream(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let ch = channel(m)?;
+    let delta = match m.get("delta") {
+        Some(Value::String(d)) => d.as_str(),
+        _ => return Err(bad("'delta' must be a string")),
+    };
+    let index = match m.get("index") {
+        None | Some(Value::Null) => 0,
+        Some(v) => v
+            .as_u64()
+            .and_then(|i| u32::try_from(i).ok())
+            .ok_or_else(|| bad("'index' must be a non-negative integer"))?,
+    };
+    let is_final = opt_flag(m, "final")?;
+    let turn = opt_str(m, "turn")?;
+    let applied = a
+        .stream(ch, turn, delta, index, is_final, opt_t(m)?)
+        .map_err(failure)?;
+    stale(applied)
+}
+
+pub fn turn_start(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let ch = channel(m)?;
+    let applied = a
+        .turn_start(ch, opt_str(m, "turn")?, opt_t(m)?)
+        .map_err(failure)?;
+    stale(applied)
+}
+
+pub fn turn_end(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let ch = channel(m)?;
+    let applied = a
+        .turn_end(ch, opt_str(m, "turn")?, opt_t(m)?)
+        .map_err(failure)?;
+    stale(applied)
+}
+
+/// `options`: strings or `{label, description?}`.
+fn options(m: &Map<String, Value>) -> Result<Vec<Choice>, Failure> {
+    let err = || bad("'options' must be a list of strings or {label, description} objects");
+    match m.get("options") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|o| match o {
+                Value::String(s) => Ok(Choice {
+                    label: s.clone(),
+                    description: None,
+                }),
+                Value::Object(o) => Ok(Choice {
+                    label: opt_str(o, "label")
+                        .map_err(|_| err())?
+                        .unwrap_or("")
+                        .to_string(),
+                    description: opt_str(o, "description")
+                        .map_err(|_| err())?
+                        .map(str::to_string),
+                }),
+                _ => Err(err()),
+            })
+            .collect(),
+        Some(_) => Err(err()),
+    }
+}
+
+pub fn ask(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let ch = channel(m)?;
+    let kind = opt_str(m, "kind")?.ok_or_else(|| bad("missing 'kind'"))?;
+    let kind = AskKind::parse(kind).ok_or_else(|| {
+        bad(format!(
+            "unknown ask kind '{kind}' (question, permission or plan)"
+        ))
+    })?;
+    let owned = |f: &str| opt_str(m, f).map(|o| o.map(str::to_string));
+    let mut ask = Ask::new(kind, opt_str(m, "text")?.unwrap_or(""));
+    ask.options = options(m)?;
+    ask.multi = opt_flag(m, "multi_select")?;
+    ask.notes = owned("notes")?;
+    ask.hint = owned("hint")?;
+    ask.hint_once = owned("hint_once")?;
+    a.ask(ch, &ask).map_err(failure)?;
+    ok(Map::new())
+}
+
+pub fn earcon(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let kind = opt_str(m, "kind")?.ok_or_else(|| bad("missing 'kind'"))?;
+    let e = Earcon::parse(kind).ok_or_else(|| bad(format!("unknown earcon '{kind}'")))?;
+    a.earcon(e).map_err(failure)?;
+    ok(Map::new())
+}
+
+pub fn tool(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let ch = channel(m)?;
+    let name = opt_str(m, "name")?.unwrap_or("");
+    let summary = opt_str(m, "summary")?.unwrap_or("");
+    a.tool(ch, name, summary).map_err(failure)?;
+    ok(Map::new())
+}
+
+pub fn answered(a: &Agent, m: &Map<String, Value>) -> Handled {
+    a.answered(channel(m)?).map_err(failure)?;
+    ok(Map::new())
+}
+
+/// `channel_close` once the extension is on: the agent forgets the turn.
+pub fn close(a: &Agent, m: &Map<String, Value>) -> Handled {
+    a.close(channel(m)?).map_err(failure)?;
+    ok(Map::new())
+}
+
+fn summaries_json(s: &SummarySettings) -> Value {
+    json!({
+        "enabled": s.enabled,
+        "command": s.command.as_str(),
+        "model": s.model,
+        "timeout": s.timeout_s,
+        "settle_ms": s.settle_ms,
+        "style": s.style.as_str(),
+        "prompt": s.prompt,
+    })
+}
+
+/// Merge the fields given in `v` into `s`.
+fn merge_summaries(mut s: SummarySettings, v: &Value) -> Result<SummarySettings, Failure> {
+    let Value::Object(o) = v else {
+        return Err(bad("'summaries' is an object"));
+    };
+    if let Some(e) = o.get("enabled") {
+        s.enabled = e
+            .as_bool()
+            .ok_or_else(|| bad("'summaries.enabled' must be true or false"))?;
+    }
+    if let Some(c) = opt_str(o, "command")? {
+        s.command = SummaryCommand::parse(c)
+            .ok_or_else(|| bad("'summaries.command' is \"claude\" or \"codex\""))?;
+    }
+    if let Some(model) = opt_str(o, "model")? {
+        s.model = model.to_string();
+    }
+    if let Some(t) = o.get("timeout").filter(|t| !t.is_null()) {
+        s.timeout_s = t
+            .as_u64()
+            .ok_or_else(|| bad("'summaries.timeout' must be whole seconds"))?;
+    }
+    if let Some(t) = o.get("settle_ms").filter(|t| !t.is_null()) {
+        s.settle_ms = t
+            .as_u64()
+            .ok_or_else(|| bad("'summaries.settle_ms' must be whole milliseconds"))?;
+    }
+    if let Some(st) = opt_str(o, "style")? {
+        s.style = Style::parse(st)
+            .ok_or_else(|| bad("'summaries.style' is \"tidy\", \"natural\" or \"brief\""))?;
+    }
+    if o.contains_key("prompt") {
+        s.prompt = opt_str(o, "prompt")?
+            .map(str::to_string)
+            .filter(|p| !p.trim().is_empty());
+    }
+    Ok(s)
+}
+
+/// `set`/`get` of an extension key (`value` is `None` for `get`).
+pub fn setting(a: &Agent, key: &str, value: Option<&Value>) -> Handled {
+    if let Some(v) = value {
+        match key {
+            "mute_level" => {
+                let n = v
+                    .as_u64()
+                    .filter(|n| *n <= 2)
+                    .ok_or_else(|| bad("'mute_level' is 0, 1 or 2"))?;
+                a.set_mute_level(n as u8).map_err(failure)?;
+            }
+            "verbosity" => {
+                let name = v.as_str().unwrap_or("");
+                let vb = Verbosity::parse(name)
+                    .ok_or_else(|| bad("'verbosity' is \"everything\", \"medium\" or \"quiet\""))?;
+                a.set_verbosity(vb);
+            }
+            "minqueue" => {
+                let n = v
+                    .as_u64()
+                    .ok_or_else(|| bad("'minqueue' must be a non-negative integer"))?;
+                a.set_minqueue(n as usize).map_err(failure)?;
+            }
+            _ => {
+                let merged = merge_summaries(a.settings().summaries, v)?;
+                a.set_summaries(merged).map_err(failure)?;
+            }
+        }
+    }
+    let s = a.settings();
+    let value = match key {
+        "mute_level" => json!(s.mute_level),
+        "verbosity" => json!(s.verbosity.as_str()),
+        "minqueue" => json!(s.minqueue),
+        _ => summaries_json(&s.summaries),
+    };
+    let mut f = Map::new();
+    f.insert("key".into(), json!(key));
+    f.insert("value".into(), value);
+    ok(f)
+}
+
+/// The `earcon` event.
+pub fn earcon_event(e: Earcon) -> Value {
+    json!({"event": "earcon", "kind": e.as_str()})
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lifetime::Lifetime;
+    use crate::protocol::{Server, Session};
+    use serde_json::{json, Value};
+    use sonara_audio::TestOutput;
+    use sonara_engine::fake::FakeEngine;
+    use sonara_reader::{Config, ReaderHandle, Registry};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn server() -> Server {
+        let mut registry = Registry::default();
+        registry.register(Arc::new(FakeEngine::new())).unwrap();
+        let (out, rx) = TestOutput::new();
+        let reader =
+            ReaderHandle::new(Config::new(registry).with_output(Box::new(out), rx)).unwrap();
+        Server::new(
+            reader,
+            "secret".into(),
+            Lifetime::new(Duration::from_secs(30), false),
+        )
+    }
+
+    fn call(s: &Server, session: &mut Session, req: Value) -> Value {
+        s.handle(session, &req).reply
+    }
+
+    fn code(r: &Value) -> &str {
+        r["error"]["code"].as_str().unwrap_or("")
+    }
+
+    fn enabled() -> (Server, Session) {
+        let s = server();
+        let mut a = Session::tcp();
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "hello", "token": "secret", "extensions": ["agent"]}),
+        );
+        assert_eq!(r["extensions"], json!(["channels", "agent"]), "{r}");
+        (s, a)
+    }
+
+    #[test]
+    fn the_extension_is_unsupported_until_enabled_and_brings_channels() {
+        let s = server();
+        let mut a = Session::tcp();
+        call(&s, &mut a, json!({"type": "hello", "token": "secret"}));
+        for req in [
+            json!({"type": "stream", "channel": "a", "delta": "x"}),
+            json!({"type": "tool", "channel": "a", "name": "Bash"}),
+            json!({"type": "get", "key": "mute_level"}),
+            json!({"type": "subscribe", "events": ["earcons"]}),
+        ] {
+            assert_eq!(
+                code(&call(&s, &mut a, req.clone())),
+                "E_UNSUPPORTED",
+                "{req}"
+            );
+        }
+        let mut b = Session::tcp();
+        call(
+            &s,
+            &mut b,
+            json!({"type": "hello", "token": "secret", "require": ["agent"]}),
+        );
+        assert!(s.channels().is_some() && s.agent().is_some());
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "stream", "channel": "a", "delta": "Hi.", "final": true}),
+        );
+        assert_eq!(r["stale"], false, "{r}");
+    }
+
+    #[test]
+    fn agent_messages_check_their_fields() {
+        let (s, mut a) = enabled();
+        let cases = [
+            json!({"type": "stream", "channel": "a"}),
+            json!({"type": "stream", "channel": "", "delta": "x"}),
+            json!({"type": "stream", "channel": "a", "delta": "x", "index": -1}),
+            json!({"type": "stream", "channel": "a", "delta": "x", "t": "soon"}),
+            json!({"type": "stream", "channel": "a", "delta": "x", "final": 1}),
+            json!({"type": "turn_start"}),
+            json!({"type": "ask", "channel": "a"}),
+            json!({"type": "ask", "channel": "a", "kind": "quiz"}),
+            json!({"type": "ask", "channel": "a", "kind": "question", "options": [1]}),
+            json!({"type": "earcon", "kind": "ready"}),
+            json!({"type": "earcon"}),
+            json!({"type": "answered"}),
+            json!({"type": "set", "key": "mute_level", "value": 3}),
+            json!({"type": "set", "key": "verbosity", "value": "loud"}),
+            json!({"type": "set", "key": "minqueue", "value": 11}),
+            json!({"type": "set", "key": "summaries", "value": {"timeout": 5}}),
+            json!({"type": "set", "key": "summaries", "value": {"style": "long"}}),
+            json!({"type": "set", "key": "summaries", "value": 1}),
+        ];
+        for req in cases {
+            assert_eq!(
+                code(&call(&s, &mut a, req.clone())),
+                "E_BAD_REQUEST",
+                "{req}"
+            );
+        }
+    }
+
+    #[test]
+    fn late_text_is_reported_stale() {
+        let (s, mut a) = enabled();
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "turn_start", "channel": "a", "t": 10.5}),
+        );
+        assert_eq!(r["stale"], false);
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "stream", "channel": "a", "delta": "Old.", "t": 9}),
+        );
+        assert_eq!(r["stale"], true);
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "turn_end", "channel": "a", "t": 9.9}),
+        );
+        assert_eq!(r["stale"], true);
+    }
+
+    #[test]
+    fn settings_round_trip() {
+        let (s, mut a) = enabled();
+        let r = call(&s, &mut a, json!({"type": "get", "key": "summaries"}));
+        assert_eq!(
+            r["value"],
+            json!({"enabled": false, "command": "claude", "model": "haiku", "timeout": 60,
+                   "settle_ms": 600, "style": "natural", "prompt": null})
+        );
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "summaries",
+                   "value": {"style": "brief", "timeout": 30, "prompt": "Short."}}),
+        );
+        assert_eq!(r["value"]["style"], "brief");
+        assert_eq!(r["value"]["timeout"], 30);
+        assert_eq!(r["value"]["model"], "haiku", "merged, not replaced");
+        assert_eq!(r["value"]["prompt"], "Short.");
+        for (key, value) in [
+            ("mute_level", json!(2)),
+            ("verbosity", json!("quiet")),
+            ("minqueue", json!(3)),
+        ] {
+            let r = call(
+                &s,
+                &mut a,
+                json!({"type": "set", "key": key, "value": value}),
+            );
+            assert_eq!(r["value"], value, "{key}");
+            let r = call(&s, &mut a, json!({"type": "get", "key": key}));
+            assert_eq!(r["value"], value, "{key}");
+        }
+    }
+
+    #[test]
+    fn ask_tool_answered_earcon_and_close() {
+        let (s, mut a) = enabled();
+        for req in [
+            json!({"type": "ask", "channel": "a", "kind": "question", "text": "Pick?",
+                   "options": ["A", {"label": "B", "description": "second"}],
+                   "multi_select": true, "notes": "n", "hint": "h", "hint_once": "o"}),
+            json!({"type": "ask", "channel": "a", "kind": "permission", "text": "Run ls"}),
+            json!({"type": "tool", "channel": "a", "name": "Bash", "summary": "ls"}),
+            json!({"type": "answered", "channel": "a"}),
+            json!({"type": "earcon", "kind": "nav_edge"}),
+            json!({"type": "channel_close", "channel": "a"}),
+        ] {
+            let r = call(&s, &mut a, req.clone());
+            assert_eq!(r["ok"], true, "{req} -> {r}");
+        }
+        let r = call(&s, &mut a, json!({"type": "channel_close", "channel": "a"}));
+        assert_eq!(code(&r), "E_NOT_FOUND");
+    }
+}

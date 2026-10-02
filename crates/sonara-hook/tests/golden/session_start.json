@@ -1,0 +1,25 @@
+{
+  "event": "SessionStart",
+  "payload": {
+    "session_id": "sess-9",
+    "cwd": "/Users/me/proj"
+  },
+  "env": {
+    "CLAUDE_PLUGIN_VERSION": "0.4.0",
+    "CLAUDE_PLUGIN_ROOT": "/plug/root",
+    "SONARA_HOST_TAB": "",
+    "PRISM_TAB_ID": "p-2"
+  },
+  "messages": [
+    {
+      "type": "channel_open",
+      "channel": "sess-9",
+      "label": "proj",
+      "host_tab": "p-2"
+    },
+    {
+      "type": "focus",
+      "channel": "sess-9"
+    }
+  ]
+}

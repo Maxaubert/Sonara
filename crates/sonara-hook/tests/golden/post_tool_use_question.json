@@ -1,0 +1,14 @@
+{
+  "event": "PostToolUse",
+  "payload": {
+    "session_id": "s1",
+    "tool_name": "AskUserQuestion"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "answered",
+      "channel": "s1"
+    }
+  ]
+}

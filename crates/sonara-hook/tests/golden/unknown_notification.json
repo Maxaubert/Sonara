@@ -1,0 +1,9 @@
+{
+  "event": "Notification",
+  "payload": {
+    "session_id": "sess-1",
+    "notification_type": "something_else"
+  },
+  "env": {},
+  "messages": []
+}

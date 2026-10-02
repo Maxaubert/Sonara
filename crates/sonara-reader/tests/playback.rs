@@ -245,3 +245,23 @@ fn text_with_nothing_to_say_is_skipped() {
     assert_eq!(r.events_now(), [format!("item {} Skipped", id.0)]);
     assert_eq!(r.calls_now(), []);
 }
+
+#[test]
+fn a_clip_is_mixed_over_the_item_playing_without_touching_it() {
+    let (r, _) = Rig::new();
+    speak(&r, "One is here.");
+    assert_eq!(r.calls(1), [play(1, 0, 1, len("One is here.", 200))]);
+    r.out.start();
+    r.events_now();
+    r.h.play_clip(vec![0; 480], 24_000).unwrap();
+    assert_eq!(
+        r.calls_now(),
+        [OutputCall::PlayClip {
+            samples: 480,
+            sample_rate: 24_000
+        }]
+    );
+    // No state change, no item event: the item keeps playing.
+    assert_eq!(r.events_now(), Vec::<String>::new());
+    assert_eq!(r.out.loaded(), Some(1));
+}

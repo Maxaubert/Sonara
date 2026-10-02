@@ -1,0 +1,14 @@
+[package]
+name = "sonara-hook"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sonara L5: the Claude Code hook adapter (hook events to protocol v1 channels and agent messages)"
+
+[[bin]]
+name = "sonara-hook"
+path = "src/main.rs"
+
+[dependencies]
+# L5 speaks the protocol only: no runtime crate (R7).
+serde_json.workspace = true

@@ -42,6 +42,44 @@ def find_sonarad() -> Path | None:
     return max(found, key=lambda p: p.stat().st_mtime)
 
 
+def find_hook() -> Path | None:
+    """``$SONARA_HOOK``, else the newest built ``sonara-hook.exe``."""
+    env = os.environ.get("SONARA_HOOK")
+    if env:
+        return Path(env)
+    found = [REPO / "target" / p / "sonara-hook.exe" for p in ("release", "debug")]
+    found = [p for p in found if p.is_file()]
+    if not found:
+        return None
+    return max(found, key=lambda p: p.stat().st_mtime)
+
+
+class Hook:
+    """One ``sonara-hook.exe <event>`` process, as Claude Code runs it: the
+    payload on stdin. Its start time (``t``) is taken when it starts, so a
+    test can hold the payload back to deliver it late."""
+
+    def __init__(self, exe: Path, home: Path, event: str, env: dict | None = None):
+        e = dict(os.environ)
+        e["SONARA_HOME"] = str(home)
+        for k in ("SONARA_SUMMARIZER", "SONARA_CAPTURE", "SONARA_HOST_TAB", "PRISM_TAB_ID"):
+            e.pop(k, None)
+        e.update(env or {})
+        self.proc = subprocess.Popen(
+            [str(exe), event],
+            env=e,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+
+    def send(self, payload: dict) -> int:
+        """Deliver the payload and wait; returns the exit code."""
+        self.proc.communicate(json.dumps(payload).encode(), timeout=TIMEOUT)
+        return self.proc.returncode
+
+
 def wait_until(pred, timeout: float = TIMEOUT, step: float = 0.02) -> bool:
     end = time.monotonic() + timeout
     while time.monotonic() < end:

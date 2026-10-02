@@ -477,3 +477,36 @@ fn pending_and_has_work() {
     assert_eq!(r.pending(), 0);
     assert!(!r.has_work());
 }
+
+#[test]
+fn a_prioritized_channel_preempts_the_batch_reading_now() {
+    // Python test_background_decision_preempts_current_reader: a decision
+    // in another channel is read right after the current entry, before the
+    // rest of the reading channel's batch, which then resumes.
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "B", &["question"]);
+    assert!(r.prioritize("B"));
+    assert_eq!(r.prioritized(), ["B"]);
+    assert_eq!(drain(&mut r), ["[b]", "question", "[a]", "a2"]);
+    assert!(
+        r.prioritized().is_empty(),
+        "drained channels leave the list"
+    );
+}
+
+#[test]
+fn prioritized_channels_are_read_oldest_first_and_closing_forgets_them() {
+    let mut r = router(&["A", "B", "C"]);
+    push(&mut r, "C", &["c1"]);
+    push(&mut r, "B", &["b1"]);
+    r.prioritize("C");
+    r.prioritize("B");
+    r.prioritize("C");
+    assert_eq!(r.prioritized(), ["C", "B"]);
+    assert!(!r.prioritize("Z"), "not open");
+    r.close("C");
+    assert_eq!(r.prioritized(), ["B"]);
+    assert_eq!(drain(&mut r), ["b1"]);
+}

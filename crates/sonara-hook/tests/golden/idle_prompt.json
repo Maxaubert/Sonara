@@ -1,0 +1,6 @@
+{
+  "event": "Notification",
+  "fixture": "Notification-idle_prompt.json",
+  "env": {},
+  "messages": []
+}
