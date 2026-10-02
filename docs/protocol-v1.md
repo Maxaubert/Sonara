@@ -293,7 +293,7 @@ Earcons are mixed over the speech (they never pause or cut it) and follow the ou
 
 | key | value |
 |---|---|
-| `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Text spoken without the extension (core `speak`, channel `speak`) is not affected |
+| `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Setting 1 or 2 stops everything queued and playing, core `speak` and channel `speak` items included (as the Python daemon's global mute); text spoken without the extension afterwards is read as usual |
 | `verbosity` | `"everything"` (default): text, decisions, tool announcements and hints; `"medium"`: no tool announcements or hints; `"quiet"`: decisions only |
 | `minqueue` | `0` to `10` (default 1): a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
 | `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt}`: see below. `set` merges the fields given; `get` returns them all |

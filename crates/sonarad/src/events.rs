@@ -7,16 +7,22 @@
 //! brings it up to date). The thread ends with the reader, or at the first
 //! event after the client went away. The `agent` extension's `earcon`
 //! events come from the agent's own subscription, drained by a second
-//! thread into the same queue.
+//! thread into the same queue; that thread also ends within a second of
+//! its client going away.
 use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
 use crate::wire;
 use sonara_reader::{Event, ReaderHandle, State};
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Events queued per client before dropping.
 pub const QUEUE: usize = 256;
+
+/// How often the earcon thread checks that its client is still there.
+const CLOSED_POLL: Duration = Duration::from_secs(1);
 
 /// Which events a client asked for (`subscribe.events`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -128,7 +134,15 @@ pub fn subscribe(
         std::thread::Builder::new()
             .name("sonarad-earcons".into())
             .spawn(move || {
-                while let Ok(e) = earcons.recv() {
+                // Earcons can be rare: wake up now and then to notice a
+                // client that went away, so its thread does not wait for
+                // the next earcon to end.
+                loop {
+                    let e = match earcons.recv_timeout(CLOSED_POLL) {
+                        Ok(e) => e,
+                        Err(RecvTimeoutError::Timeout) if !tx.is_closed() => continue,
+                        Err(_) => return,
+                    };
                     let w = WireEvent {
                         name: "earcon",
                         json: agent_ext::earcon_event(e).to_string(),
