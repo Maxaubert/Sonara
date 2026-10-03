@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-03 (0.11.1: your own chimes in `earcons`, the start line in `sonarad.log`)_
+_Last updated: 2026-10-03 (0.13.1: reading, hotkey and media activity in `sonarad.log`, kept to about 2 MB)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -85,7 +85,8 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 
 | File | What it holds |
 |---|---|
-| `logs\sonarad.log` | One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. No session text |
+| `logs\sonarad.log` | One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. Also what Sonara did and when (UTC): each message it started and finished reading (a number, the session's name, how many sentences), questions and permission prompts that arrived (their kind and session), each hotkey used, and which apps it paused, resumed, lowered or restored (their process names) and why. Never what was read or said: no session text |
+| `logs\sonarad.old.log` | The previous `sonarad.log`: when the log reaches about 1 MB it is renamed to this (replacing the older one) and a new log starts |
 | `logs\bootstrap.log` | Each runtime download and install, with its address and result |
 
 **The Python plugin's folder.** Up to 0.10 Sonara kept its files in `~/.sonara`

@@ -258,6 +258,14 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
 - **No speech at all.** Run `/sonara:start` (`sonara stop` and `/sonara:uninstall` keep Sonara
   off until then), then `/sonara:doctor`. The runtime's log is
   `%LOCALAPPDATA%\Sonara\logs\sonarad.log`; the install's is `logs\bootstrap.log` there.
+- **Music or video paused or quieter "at random".** In audio mode *Pause* (the default) or
+  *Duck*, Sonara pauses or lowers other apps while it reads, including messages from background
+  sessions. `%LOCALAPPDATA%\Sonara\logs\sonarad.log` shows each one with a UTC time:
+  `read start item=12 session=<name> chunks=3`, then `media pause apps=spotify.exe (reason:
+  reading item=12 session=<name>)`, `read end item=12 finished` and `media resume apps=...
+  (reason: idle)`; ducking logs `duck apps=... level=30` and `restore apps=...`, hotkeys
+  `hotkey <action>`. It never holds what was read. At about 1 MB it moves to `sonarad.old.log`.
+  Set audio mode to *Off* on the settings page if you do not want this.
 - **Nothing after installing the plugin.** Restart Claude Code; the runtime installs on the first
   hook. Offline or blocked downloads are retried every 5 minutes, or at once by `/sonara:start`.
 - **Hooks not firing.** Make sure the `sonara` plugin is enabled in `/plugin`, start a new

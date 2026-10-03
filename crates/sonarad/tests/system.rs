@@ -87,6 +87,7 @@ fn rig_on(home: PathBuf) -> Rig {
         Lifetime::new(Duration::from_secs(30), false),
     )
     .with_config(store)
+    .with_log(log_to(&home))
     .with_earcons(earcons_of(&home))
     .with_system(SystemHost {
         platform: fake.platform(),
@@ -102,6 +103,19 @@ fn rig_on(home: PathBuf) -> Rig {
         home,
         _tmp: None,
     }
+}
+
+/// The activity lines, to the `sonarad.log` of `home` (as `main`).
+fn log_to(home: &std::path::Path) -> sonara_system::LogFn {
+    let h = sonarad::home::Home {
+        dir: home.to_path_buf(),
+        is_default: false,
+    };
+    Arc::new(move |line: &str| h.log(line))
+}
+
+fn log_of(r: &Rig) -> String {
+    std::fs::read_to_string(r.home.join("logs").join("sonarad.log")).unwrap_or_default()
 }
 
 /// The custom earcons of `home`, logged to its `sonarad.log` (as `main`).
@@ -512,6 +526,39 @@ fn hotkeys_drive_the_agent_mute_cycle_and_channel_switches() {
     assert!(eventually(|| channels.engaged().as_deref() == Some("a")));
     r.fake.press(Action::NextChannel.id());
     assert!(eventually(|| channels.engaged().as_deref() == Some("b")));
+    // One support log line per action, saying what it did (#217).
+    assert!(eventually(
+        || log_of(&r).contains("hotkey next_channel session=b")
+    ));
+    let log = log_of(&r);
+    let at = |l: &str| log.find(l).unwrap_or_else(|| panic!("no '{l}' in {log}"));
+    assert!(at("hotkey mute level=1") < at("hotkey mute level=2"));
+    assert!(at("hotkey mute level=2") < at("hotkey mute level=0"));
+}
+
+#[test]
+fn an_ask_is_logged_with_its_kind_and_session_never_its_text() {
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["agent"]}),
+    );
+    ok(
+        s,
+        &mut session,
+        json!({"type": "channel_open", "channel": "a", "label": "Work"}),
+    );
+    ok(
+        s,
+        &mut session,
+        json!({"type": "ask", "channel": "a", "kind": "permission", "text": "Run secret command"}),
+    );
+    let log = log_of(&r);
+    assert!(log.contains("ask kind=permission session=Work"), "{log}");
+    assert!(!log.contains("secret"), "{log}");
 }
 
 /// Open labelled channels `a` and `b` (as the Claude hook does, with the

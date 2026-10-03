@@ -6,6 +6,7 @@
 //! Like ducking: a crash-restore file lists the apps paused, a resume that
 //! fails keeps those apps in the file for the startup sweep (L-pause-state,
 //! #131), and nothing here returns an error to speech.
+use crate::log::{self as activity, LogFn};
 use crate::platform::MediaSessions;
 use crate::state_file;
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,8 @@ pub struct MediaPauser {
     /// kept in the file and retried by the next resume.
     pending: Vec<String>,
     paused: bool,
+    /// Where failures and the startup sweep are reported (#217).
+    log: Option<LogFn>,
 }
 
 impl MediaPauser {
@@ -49,7 +52,18 @@ impl MediaPauser {
             paused_ids: Vec::new(),
             pending: Vec::new(),
             paused: false,
+            log: None,
         }
+    }
+
+    /// Report failures and the startup sweep to `log` (else stderr).
+    pub fn with_log(mut self, log: Option<LogFn>) -> Self {
+        self.log = log;
+        self
+    }
+
+    fn note(&self, line: &str) {
+        activity::emit(self.log.as_ref(), line);
     }
 
     pub fn is_paused(&self) -> bool {
@@ -69,12 +83,29 @@ impl MediaPauser {
     /// The startup sweep (`resume_from_state_file`); what still fails is
     /// kept as pending.
     pub fn recover(&mut self) {
+        let before = state_file::read::<StateFile>(&self.state)
+            .map(|f| f.apps)
+            .unwrap_or_default();
         resume_from_state_file(self.media.as_ref(), &self.state);
-        if let Some(file) = state_file::read::<StateFile>(&self.state) {
-            for a in file.apps {
-                if !self.pending.contains(&a) {
-                    self.pending.push(a);
-                }
+        let left = state_file::read::<StateFile>(&self.state)
+            .map(|f| f.apps)
+            .unwrap_or_default();
+        let resumed: Vec<&String> = before.iter().filter(|a| !left.contains(a)).collect();
+        if !resumed.is_empty() {
+            self.note(&format!(
+                "startup sweep: media resume apps={}",
+                activity::apps(&resumed)
+            ));
+        }
+        if !left.is_empty() {
+            self.note(&format!(
+                "startup sweep: media resume failed apps={}",
+                activity::apps(&left)
+            ));
+        }
+        for a in left {
+            if !self.pending.contains(&a) {
+                self.pending.push(a);
             }
         }
     }
@@ -99,7 +130,9 @@ impl MediaPauser {
         let list = match self.media.sessions() {
             Ok(l) => l,
             Err(e) => {
-                log(&format!("cannot list media sessions: {e}"));
+                self.note(&format!(
+                    "media pause failed: cannot list media sessions: {e}"
+                ));
                 return;
             }
         };
@@ -114,7 +147,10 @@ impl MediaPauser {
             if ids.contains(&app) {
                 // Another session of an app already recorded.
                 if let Err(e) = s.pause() {
-                    log(&format!("cannot pause {app}: {e}"));
+                    self.note(&format!(
+                        "media pause failed app={}: {e}",
+                        activity::value(&app)
+                    ));
                 }
                 continue;
             }
@@ -125,21 +161,22 @@ impl MediaPauser {
             self.record(&with);
             match s.pause() {
                 Ok(()) => ids.push(app),
-                Err(e) => log(&format!("cannot pause {app}: {e}")),
+                Err(e) => self.note(&format!(
+                    "media pause failed app={}: {e}",
+                    activity::value(&app)
+                )),
             }
         }
         self.paused = true;
         self.record(&ids);
-        if !ids.is_empty() {
-            log(&format!("paused {}", ids.join(", ")));
-        }
         self.paused_ids = ids;
     }
 
-    /// Resume the apps the pause paused (a vanished one is skipped). Apps
-    /// whose resume failed, or all of them when the sessions cannot be
-    /// listed, stay in the file for the startup sweep.
-    pub fn resume(&mut self) {
+    /// Resume the apps the pause paused (a vanished one is skipped) and
+    /// return the apps it tried. Apps whose resume failed, or all of them
+    /// when the sessions cannot be listed, stay in the file for the startup
+    /// sweep.
+    pub fn resume(&mut self) -> Vec<String> {
         let mut wanted = std::mem::take(&mut self.pending);
         for a in std::mem::take(&mut self.paused_ids) {
             if !wanted.contains(&a) {
@@ -149,19 +186,25 @@ impl MediaPauser {
         self.paused = false;
         if wanted.is_empty() {
             state_file::clear(&self.state);
-            return;
+            return wanted;
         }
         let failed = resume_apps(self.media.as_ref(), &wanted).unwrap_or_else(|e| {
-            log(&format!("cannot list media sessions to resume: {e}"));
+            self.note(&format!(
+                "media resume failed: cannot list media sessions: {e}"
+            ));
             wanted.clone()
         });
         if failed.is_empty() {
             state_file::clear(&self.state);
         } else {
-            log(&format!("resume failed for {}", failed.join(", ")));
+            self.note(&format!(
+                "media resume failed apps={}",
+                activity::apps(&failed)
+            ));
             write_state(&self.state, &failed);
         }
         self.pending = failed;
+        wanted
     }
 }
 

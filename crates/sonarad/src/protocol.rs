@@ -15,6 +15,7 @@ use serde_json::{json, Map, Value};
 use sonara_agent::Agent;
 use sonara_channels::Channels;
 use sonara_reader::{Control, Key, QueueMode, ReaderHandle};
+use sonara_system::LogFn;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
@@ -160,6 +161,8 @@ pub struct Server {
     /// Serializes `set`: the change and its record in `config.json`, so two
     /// clients setting one key leave the file holding the value in force.
     setting: Mutex<()>,
+    /// The support log's activity lines (`with_log`; else stderr).
+    log: Option<LogFn>,
 }
 
 pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -259,7 +262,20 @@ impl Server {
             enabling: Mutex::new(()),
             store: Store::memory(),
             setting: Mutex::new(()),
+            log: None,
         }
+    }
+
+    /// Write the activity lines (decisions, hotkeys, other apps' audio) to
+    /// `log` (`logs\sonarad.log`). Call it before `with_system`.
+    pub fn with_log(mut self, log: LogFn) -> Self {
+        debug_assert!(self.system.is_none(), "with_log before with_system");
+        self.log = Some(log);
+        self
+    }
+
+    fn note(&self, line: &str) {
+        sonara_system::log::emit(self.log.as_ref(), line);
     }
 
     /// Persist settings in `store` (default: in memory only). Call it
@@ -291,6 +307,7 @@ impl Server {
             retiring: self.retiring.clone(),
             store: self.store.clone(),
             cues: None,
+            log: self.log.clone(),
         };
         self.system = Some(Arc::new(SystemExt::new(host, target)));
         self
@@ -535,7 +552,13 @@ impl Server {
                     "stream" => agent_ext::stream(a, m),
                     "turn_start" => agent_ext::turn_start(a, m),
                     "turn_end" => agent_ext::turn_end(a, m),
-                    "ask" => agent_ext::ask(a, m),
+                    "ask" => {
+                        let r = agent_ext::ask(a, m);
+                        if r.is_ok() {
+                            self.note(&agent_ext::ask_line(a, m));
+                        }
+                        r
+                    }
                     "earcon" => agent_ext::earcon(a, m),
                     "tool" => agent_ext::tool(a, m),
                     _ => agent_ext::answered(a, m),

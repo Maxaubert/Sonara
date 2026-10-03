@@ -177,6 +177,18 @@ pub fn ask(a: &Agent, m: &Map<String, Value>) -> Handled {
     ok(Map::new())
 }
 
+/// The support log line of an accepted `ask`: its kind and session (the
+/// channel's label, else its id). Never the question's text.
+pub fn ask_line(a: &Agent, m: &Map<String, Value>) -> String {
+    let id = m.get("channel").and_then(Value::as_str).unwrap_or("");
+    let label = a.channels().channel(id).and_then(|c| c.label);
+    let kind = m.get("kind").and_then(Value::as_str).unwrap_or("");
+    let session = label
+        .filter(|l| !l.is_empty())
+        .unwrap_or_else(|| id.to_string());
+    crate::support_log::ask_line(kind, &session)
+}
+
 pub fn earcon(a: &Agent, m: &Map<String, Value>) -> Handled {
     let kind = opt_str(m, "kind")?.ok_or_else(|| bad("missing 'kind'"))?;
     let e = Earcon::parse(kind).ok_or_else(|| bad(format!("unknown earcon '{kind}'")))?;

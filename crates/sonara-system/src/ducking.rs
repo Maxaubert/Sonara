@@ -20,6 +20,7 @@
 //!
 //! Best-effort: nothing here returns an error to speech; failures are
 //! logged.
+use crate::log::{self as activity, LogFn};
 use crate::platform::{AudioSession, AudioSessions};
 use crate::state_file;
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,22 @@ fn names(records: &[Record]) -> String {
         .join(", ")
 }
 
+/// The app names of `records` (process name, else pid), each once.
+pub fn app_names(records: &[Record]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for r in records {
+        let n = match (&r.name, r.pid) {
+            (Some(n), _) if !n.is_empty() => n.clone(),
+            (_, Some(p)) => p.to_string(),
+            _ => "?".to_string(),
+        };
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
 fn write_state(path: &Path, records: &[Record]) {
     let file = StateFile {
         sessions: records.to_vec(),
@@ -91,6 +108,8 @@ pub struct Ducker {
     /// Records whose restore failed; retried by the next restore.
     pending: Vec<Record>,
     ducked: bool,
+    /// Where failures and the startup sweep are reported (#217).
+    log: Option<LogFn>,
 }
 
 impl Ducker {
@@ -102,7 +121,18 @@ impl Ducker {
             saved: Vec::new(),
             pending: Vec::new(),
             ducked: false,
+            log: None,
         }
+    }
+
+    /// Report failures and the startup sweep to `log` (else stderr).
+    pub fn with_log(mut self, log: Option<LogFn>) -> Self {
+        self.log = log;
+        self
+    }
+
+    fn note(&self, line: &str) {
+        activity::emit(self.log.as_ref(), line);
     }
 
     pub fn is_ducked(&self) -> bool {
@@ -146,7 +176,7 @@ impl Ducker {
                     let original = match s.volume() {
                         Ok(v) => v,
                         Err(e) => {
-                            log(&format!("session error while ducking: {e}"));
+                            self.note(&format!("duck failed app={}: {e}", activity::value(&name)));
                             continue;
                         }
                     };
@@ -176,7 +206,10 @@ impl Ducker {
                     records.push(rec.clone());
                     write_state(&self.state, &records);
                     if let Err(e) = s.set_volume(target) {
-                        log(&format!("session error while ducking: {e}"));
+                        self.note(&format!(
+                            "duck failed app={}: {e}",
+                            activity::value(rec.name.as_deref().unwrap_or(""))
+                        ));
                         continue;
                     }
                     if let Some(i) = carried {
@@ -187,7 +220,9 @@ impl Ducker {
                 true
             }
             Err(e) => {
-                log(&format!("cannot enumerate audio sessions: {e}"));
+                self.note(&format!(
+                    "duck failed: cannot enumerate audio sessions: {e}"
+                ));
                 false
             }
         };
@@ -212,10 +247,6 @@ impl Ducker {
         } else {
             write_state(&self.state, &records);
         }
-        if !saved.is_empty() {
-            let lowered: Vec<Record> = saved.iter().map(|(_, r)| r.clone()).collect();
-            log(&format!("lowered {}", names(&lowered)));
-        }
         self.saved = saved;
     }
 
@@ -223,12 +254,33 @@ impl Ducker {
     /// kept as pending, so the next restore retries it and a later duck
     /// keeps it in the file.
     pub fn recover(&mut self) {
+        let before = state_file::read::<StateFile>(&self.state)
+            .map(|f| f.sessions)
+            .unwrap_or_default();
         restore_from_state_file(self.sessions.as_ref(), &self.state);
-        if let Some(file) = state_file::read::<StateFile>(&self.state) {
-            for r in file.sessions {
-                if !self.pending.contains(&r) {
-                    self.pending.push(r);
-                }
+        let left = state_file::read::<StateFile>(&self.state)
+            .map(|f| f.sessions)
+            .unwrap_or_default();
+        let restored: Vec<Record> = before
+            .iter()
+            .filter(|r| !left.contains(r))
+            .cloned()
+            .collect();
+        if !restored.is_empty() {
+            self.note(&format!(
+                "startup sweep: restore apps={}",
+                activity::apps(&app_names(&restored))
+            ));
+        }
+        if !left.is_empty() {
+            self.note(&format!(
+                "startup sweep: restore failed apps={}",
+                activity::apps(&app_names(&left))
+            ));
+        }
+        for r in left {
+            if !self.pending.contains(&r) {
+                self.pending.push(r);
             }
         }
     }
@@ -245,7 +297,9 @@ impl Ducker {
         if !failed.is_empty() {
             match restore_records(self.sessions.as_ref(), &failed) {
                 Ok(left) => failed = left,
-                Err(e) => log(&format!("cannot enumerate audio sessions for restore: {e}")),
+                Err(e) => self.note(&format!(
+                    "restore failed: cannot enumerate audio sessions: {e}"
+                )),
             }
         }
         self.ducked = false;
@@ -253,7 +307,10 @@ impl Ducker {
             state_file::clear(&self.state);
         } else {
             write_state(&self.state, &failed);
-            log(&format!("restore failed for {}", names(&failed)));
+            self.note(&format!(
+                "restore failed apps={}",
+                activity::apps(&app_names(&failed))
+            ));
         }
         self.pending = failed;
     }

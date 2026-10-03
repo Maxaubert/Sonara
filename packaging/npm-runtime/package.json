@@ -1,6 +1,6 @@
 {
   "name": "@sonara/runtime-win32-x64",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "The Sonara runtime (sonarad.exe) for Windows x64, to bundle with an app (electron-builder extraResources). Use with @sonara/client.",
   "license": "MIT",
   "repository": {

@@ -14,7 +14,14 @@
 //! Product rule: never leave other apps ducked or paused. All platform
 //! work runs on one worker thread, where the platform objects are created
 //! (COM).
-use crate::ducking::Ducker;
+//!
+//! Every engage and restore that touched an app is reported as one line
+//! (`AudioConfig::log`, #217): `media pause apps=<names> (reason: reading
+//! item=<id> session=<label>)`, `media resume apps=<names> (reason: idle)`,
+//! `duck apps=<names> level=<n> (reason: ...)`, `restore apps=<names>
+//! (reason: ...)`, failures, and the startup sweep.
+use crate::ducking::{app_names, Ducker};
+use crate::log::{self as activity, LogFn};
 use crate::pausing::MediaPauser;
 use crate::platform::Platform;
 use std::path::PathBuf;
@@ -86,6 +93,8 @@ pub struct AudioConfig {
     /// Processes never ducked (this runtime's own pid).
     pub exclude_pids: Vec<u32>,
     pub idle_grace: Duration,
+    /// Where the activity lines go (else stderr).
+    pub log: Option<LogFn>,
 }
 
 impl AudioConfig {
@@ -94,7 +103,14 @@ impl AudioConfig {
             state_dir,
             exclude_pids: vec![std::process::id()],
             idle_grace: IDLE_GRACE,
+            log: None,
         }
+    }
+
+    /// Report the activity lines to `log`.
+    pub fn with_log(mut self, log: Option<LogFn>) -> Self {
+        self.log = log;
+        self
     }
 }
 
@@ -110,7 +126,8 @@ pub struct Status {
 }
 
 enum Cmd {
-    Activity(Activity),
+    /// The activity, with why when speaking (the item read, for the log).
+    Activity(Activity, Option<String>),
     /// The mode in the status changed.
     Mode,
     Level(u8),
@@ -148,12 +165,16 @@ impl AudioControl {
             .name("sonara-system-audio".into())
             .spawn(move || {
                 let w = Worker {
-                    ducker: Ducker::new(audio(), config.state_dir.join(DUCK_STATE)),
-                    pauser: MediaPauser::new(media(), config.state_dir.join(PAUSE_STATE)),
+                    ducker: Ducker::new(audio(), config.state_dir.join(DUCK_STATE))
+                        .with_log(config.log.clone()),
+                    pauser: MediaPauser::new(media(), config.state_dir.join(PAUSE_STATE))
+                        .with_log(config.log.clone()),
                     exclude: config.exclude_pids,
                     grace: config.idle_grace,
                     status: st,
                     idle_since: None,
+                    log: config.log,
+                    reason: None,
                 };
                 w.run(rx);
             })
@@ -192,7 +213,13 @@ impl AudioControl {
     }
 
     pub fn set_activity(&self, a: Activity) {
-        self.send(Cmd::Activity(a));
+        self.send(Cmd::Activity(a, None));
+    }
+
+    /// As `set_activity`, with why other apps would be engaged (the log
+    /// line of an engage carries it).
+    pub fn set_activity_because(&self, a: Activity, reason: Option<String>) {
+        self.send(Cmd::Activity(a, reason));
     }
 
     pub fn set_mode(&self, mode: AudioMode) {
@@ -227,30 +254,34 @@ impl AudioControl {
         initial: Option<&sonara_reader::State>,
     ) {
         let me = Arc::downgrade(self);
-        let first = initial.map(Activity::of);
+        let first = initial.map(|s| (Activity::of(s), activity::reading_reason(s)));
         let _ = std::thread::Builder::new()
             .name("sonara-system-events".into())
             .spawn(move || {
                 // Sent from this thread before any event, so a newer event
                 // queued meanwhile still has the last word.
-                if let Some(a) = first {
+                let mut last = None;
+                if let Some((a, why)) = first {
                     match me.upgrade() {
-                        Some(c) => c.set_activity(a),
+                        Some(c) => c.set_activity_because(a, why.clone()),
                         None => return,
                     }
+                    last = Some((a, why));
                 }
-                let mut last = first;
                 while let Ok(e) = events.recv() {
                     let sonara_reader::Event::State(s) = e else {
                         continue;
                     };
-                    let a = Activity::of(&s);
-                    if last == Some(a) {
+                    // A new item read without a gap keeps the activity but
+                    // changes the reason the next engage is logged with.
+                    let now = (Activity::of(&s), activity::reading_reason(&s));
+                    if last.as_ref() == Some(&now) {
                         continue;
                     }
-                    last = Some(a);
+                    let (a, why) = now.clone();
+                    last = Some(now);
                     match me.upgrade() {
-                        Some(c) => c.set_activity(a),
+                        Some(c) => c.set_activity_because(a, why),
                         None => return,
                     }
                 }
@@ -281,6 +312,9 @@ struct Worker {
     status: Arc<Mutex<Status>>,
     /// When the reader went idle while engaged (the grace runs from here).
     idle_since: Option<Instant>,
+    log: Option<LogFn>,
+    /// Why the reader speaks (the item read), for the engage lines.
+    reason: Option<String>,
 }
 
 impl Worker {
@@ -298,12 +332,60 @@ impl Worker {
         self.ducker.is_ducked() || self.pauser.is_paused()
     }
 
-    fn restore_all(&mut self) {
+    fn note(&self, line: &str) {
+        activity::emit(self.log.as_ref(), line);
+    }
+
+    fn engage_reason(&self) -> String {
+        self.reason.clone().unwrap_or_else(|| "reading".into())
+    }
+
+    fn duck(&mut self, level: u8, why: &str) {
+        self.ducker.duck(&self.exclude, level);
+        let apps = app_names(&self.ducker.saved());
+        if !apps.is_empty() {
+            self.note(&duck_line(&apps, level, why));
+        }
+    }
+
+    fn restore(&mut self, why: &str) {
+        let apps = app_names(&self.ducker.saved());
+        self.ducker.restore();
+        if !apps.is_empty() {
+            self.note(&format!(
+                "restore apps={} (reason: {why})",
+                activity::apps(&apps)
+            ));
+        }
+    }
+
+    fn pause(&mut self, why: &str) {
+        self.pauser.pause();
+        let apps = self.pauser.paused_apps().to_vec();
+        if !apps.is_empty() {
+            self.note(&format!(
+                "media pause apps={} (reason: {why})",
+                activity::apps(&apps)
+            ));
+        }
+    }
+
+    fn resume(&mut self, why: &str) {
+        let apps = self.pauser.resume();
+        if !apps.is_empty() {
+            self.note(&format!(
+                "media resume apps={} (reason: {why})",
+                activity::apps(&apps)
+            ));
+        }
+    }
+
+    fn restore_all(&mut self, why: &str) {
         if self.ducker.is_ducked() {
-            self.ducker.restore();
+            self.restore(why);
         }
         if self.pauser.is_paused() {
-            self.pauser.resume();
+            self.resume(why);
         }
         self.idle_since = None;
     }
@@ -317,18 +399,20 @@ impl Worker {
             match s.mode {
                 AudioMode::Duck => {
                     if self.pauser.is_paused() {
-                        self.pauser.resume();
+                        self.resume("mode duck");
                     }
                     if !self.ducker.is_ducked() {
-                        self.ducker.duck(&self.exclude, s.duck_level);
+                        let why = self.engage_reason();
+                        self.duck(s.duck_level, &why);
                     }
                 }
                 AudioMode::Pause => {
                     if self.ducker.is_ducked() {
-                        self.ducker.restore();
+                        self.restore("mode pause");
                     }
                     if !self.pauser.is_paused() {
-                        self.pauser.pause();
+                        let why = self.engage_reason();
+                        self.pause(&why);
                     }
                 }
                 AudioMode::Off => {}
@@ -339,11 +423,11 @@ impl Worker {
                 && s.activity == Activity::Idle
                 && !self.grace.is_zero();
             if !grace {
-                self.restore_all();
+                self.restore_all(restore_reason(&s));
             } else {
                 let since = *self.idle_since.get_or_insert_with(Instant::now);
                 if since.elapsed() >= self.grace {
-                    self.restore_all();
+                    self.restore_all("idle");
                 }
             }
         } else {
@@ -368,7 +452,7 @@ impl Worker {
                         Ok(c) => Some(c),
                         Err(RecvTimeoutError::Timeout) => None,
                         Err(RecvTimeoutError::Disconnected) => {
-                            self.restore_all();
+                            self.restore_all("shutdown");
                             return;
                         }
                     }
@@ -376,7 +460,7 @@ impl Worker {
                 None => match rx.recv() {
                     Ok(c) => Some(c),
                     Err(_) => {
-                        self.restore_all();
+                        self.restore_all("shutdown");
                         self.publish();
                         return;
                     }
@@ -384,7 +468,10 @@ impl Worker {
             };
             match cmd {
                 None => {}
-                Some(Cmd::Activity(a)) => {
+                Some(Cmd::Activity(a, why)) => {
+                    if why.is_some() {
+                        self.reason = why;
+                    }
                     self.status
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
@@ -392,13 +479,14 @@ impl Worker {
                 }
                 Some(Cmd::Mode) => {
                     // A switch never leaves the other backend engaged.
-                    self.restore_all();
+                    let mode = self.snapshot().mode;
+                    self.restore_all(&format!("mode {}", mode.as_str()));
                 }
                 Some(Cmd::Level(level)) => {
                     if self.ducker.is_ducked() {
                         // Re-apply at the new level.
                         self.ducker.restore();
-                        self.ducker.duck(&self.exclude, level);
+                        self.duck(level, "level change");
                     }
                 }
                 Some(Cmd::Arm) => {}
@@ -412,7 +500,7 @@ impl Worker {
                     continue;
                 }
                 Some(Cmd::Shutdown(ack)) => {
-                    self.restore_all();
+                    self.restore_all("shutdown");
                     self.publish();
                     let _ = ack.send(());
                     return;
@@ -421,4 +509,25 @@ impl Worker {
             self.reconcile();
         }
     }
+}
+
+/// Why other apps come back at once (not after the idle grace).
+fn restore_reason(s: &Status) -> &'static str {
+    if !s.armed {
+        "disarmed"
+    } else if s.mode == AudioMode::Off {
+        "mode off"
+    } else if s.activity == Activity::Held {
+        "paused or muted"
+    } else {
+        "idle"
+    }
+}
+
+/// `duck apps=<names> level=<n> (reason: <why>)`.
+pub fn duck_line(apps: &[String], level: u8, why: &str) -> String {
+    format!(
+        "duck apps={} level={level} (reason: {why})",
+        activity::apps(apps)
+    )
 }
