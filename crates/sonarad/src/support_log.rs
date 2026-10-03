@@ -122,9 +122,9 @@ pub type TagLookup = Box<dyn Fn(ItemId) -> Option<Tag> + Send>;
 /// An item being read: where it came from and the chunks heard so far.
 struct Reading {
     session: String,
-    tagged: bool,
-    kind: String,
-    from: String,
+    /// Its kind and source are looked up when it ends: the agent records
+    /// an entry's origin only after the channel fed it to the reader.
+    tag: Option<Tag>,
     total: usize,
     chunks: BTreeMap<usize, String>,
 }
@@ -225,7 +225,6 @@ impl ReadLog {
                 self.starting.remove(&id);
                 let tag = (self.tags)(np.item_id);
                 let session = session_of(np.label.as_deref(), tag.as_ref());
-                let (kind, from) = origin_of(tag.as_ref(), &self.origins);
                 out.push(read_start_line(
                     id,
                     &session,
@@ -236,9 +235,7 @@ impl ReadLog {
                     id,
                     Reading {
                         session,
-                        tagged: tag.is_some(),
-                        kind,
-                        from,
+                        tag,
                         total: np.chunks,
                         chunks: BTreeMap::from([(np.chunk, np.text.clone())]),
                     },
@@ -251,17 +248,18 @@ impl ReadLog {
                     return;
                 }
                 if let Some(mut r) = self.reading.remove(&id) {
-                    if !r.tagged {
+                    if r.tag.is_none() {
                         // The channel may have tagged it after its first
                         // state was seen.
-                        if let Some(tag) = (self.tags)(*item_id) {
-                            (r.kind, r.from) = origin_of(Some(&tag), &self.origins);
-                            r.session = session_of(None, Some(&tag));
+                        r.tag = (self.tags)(*item_id);
+                        if let Some(tag) = &r.tag {
+                            r.session = session_of(None, Some(tag));
                         }
                     }
+                    let (kind, from) = origin_of(r.tag.as_ref(), &self.origins);
                     let chunks: Vec<&str> = r.chunks.values().map(String::as_str).collect();
                     out.push(read_text_line(
-                        id, &r.session, &r.kind, &r.from, &chunks, r.total, debug,
+                        id, &r.session, &kind, &from, &chunks, r.total, debug,
                     ));
                     out.extend(read_end_line(id, *phase));
                 } else if self.starting.remove(&id) {
@@ -477,6 +475,31 @@ mod tests {
             ]
         );
         assert!(lines.iter().all(|l| !l.contains("ecret")));
+    }
+
+    #[test]
+    fn an_origin_recorded_after_the_first_state_still_names_the_text() {
+        // The channel feeds the reader before the agent records the
+        // entry's origin, so the first state of an idle reader can come
+        // first (#219 review).
+        let origins = Origins::default();
+        let mut log = ReadLog::new(Box::new(tags), origins.clone());
+        let mut lines = Vec::new();
+        lines.extend(log.lines(&item(4, ItemPhase::Started), false));
+        lines.extend(log.lines(&state_at(4, Some("work"), "Pick one.", 0, 1), false));
+        origins.record(104, "prose", "turn_end");
+        lines.extend(log.lines(&item(4, ItemPhase::Finished), false));
+        origins.record(105, "question", "ask question");
+        lines.extend(log.lines(&item(5, ItemPhase::Skipped), false));
+        assert_eq!(
+            lines,
+            vec![
+                "read start item=4 session=work chunks=1",
+                "read text item=4 session=work kind=prose from=turn_end chunks=1/1",
+                "read end item=4 finished",
+                "read drop item=5 session=c1 kind=question from=\"ask question\" unread",
+            ]
+        );
     }
 
     #[test]

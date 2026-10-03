@@ -224,9 +224,12 @@ pub fn input_json(m: &Map<String, Value>, debug: bool) -> Value {
             }
             continue;
         }
+        // A `set` value is kept when it is a plain value (a rate, a
+        // voice): `channel_prefs` and `summaries` carry the user's own
+        // labels and prompts.
         let keep = debug
             || PRIVATE_FIELDS.contains(&k.as_str())
-            || (k == "value" && m.get("key").and_then(Value::as_str) != Some("channel_prefs"));
+            || (k == "value" && !v.is_object() && !v.is_array());
         if keep {
             out.insert(k.clone(), v.clone());
         }
@@ -309,6 +312,17 @@ mod tests {
             json!({"type": "set", "key": "channel_prefs", "value": {"c1": {"label": "Secret"}}}),
         );
         assert!(!input_line(&prefs, false, false).unwrap().contains("Secret"));
+        let summaries = map(json!({
+            "type": "set", "key": "summaries",
+            "value": {"mode": "on", "prompts": {"turn": "Secret prompt"}},
+        }));
+        let line = input_line(&summaries, false, false).unwrap();
+        assert!(!line.contains("Secret"), "{line}");
+        assert!(line.contains(r#""key":"summaries""#), "{line}");
+        let rate = map(json!({"type": "set", "key": "rate", "value": 275}));
+        assert!(input_line(&rate, false, false)
+            .unwrap()
+            .contains(r#""value":275"#));
         let spoken = Trace {
             source: "stream".into(),
             channel: Some("c1".into()),

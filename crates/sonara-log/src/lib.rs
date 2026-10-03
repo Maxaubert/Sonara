@@ -11,8 +11,9 @@
 //!   stream, every segment, files other writers left there such as the
 //!   bootstrap's) stays at or under `BUDGET_BYTES` (10 MB): a line that
 //!   would pass it first deletes the oldest files (by last write, so FIFO
-//!   across streams). A line that still cannot fit is dropped, never
-//!   written past the budget.
+//!   across streams), and as a last resort empties the stream's own file
+//!   (when a viewer holding a segment stopped its rotation). A line that
+//!   still cannot fit is dropped, never written past the budget.
 //! - **Process and thread safe.** Each append takes an OS lock on
 //!   `logs\.lock` (`File::try_lock`, retried until the writer's wait
 //!   runs out), then checks sizes, rotates, prunes and appends the whole
@@ -40,8 +41,10 @@ pub const BUDGET_BYTES: u64 = 10_000_000;
 pub const MAX_LINE_BYTES: usize = 256 * 1024;
 /// The lock file every writer takes (empty; never pruned).
 pub const LOCK_FILE: &str = ".lock";
-/// How long a writer waits for the lock by default.
-pub const DEFAULT_WAIT: Duration = Duration::from_millis(500);
+/// How long a writer waits for the lock by default: short, since
+/// `sonarad` writes lines while it holds its channel and agent locks (a
+/// writer holds the log lock for one append only).
+pub const DEFAULT_WAIT: Duration = Duration::from_millis(50);
 
 /// Why a line was not written.
 #[derive(Debug)]
@@ -258,6 +261,19 @@ impl LogDir {
                 }
             }
             if total + n > self.budget {
+                // Last resort: the current file could not rotate (a viewer
+                // holds a segment) and fills the budget by itself. Empty
+                // it rather than refuse every later line of the stream.
+                let len = std::fs::metadata(&cur).map(|m| m.len()).unwrap_or(0);
+                if len > 0 {
+                    if let Ok(f) = OpenOptions::new().write(true).open(&cur) {
+                        if f.set_len(0).is_ok() {
+                            total -= len;
+                        }
+                    }
+                }
+            }
+            if total + n > self.budget {
                 return Err(Error::OverBudget);
             }
         }
@@ -269,7 +285,7 @@ impl LogDir {
     /// Shift the stream's segments up by one and make `cur` segment 1. A
     /// segment that cannot move (a viewer holds it) stops the rotation, so
     /// nothing is overwritten; `cur` then keeps growing, still under the
-    /// budget.
+    /// budget, and is emptied when it alone fills it (`append_locked`).
     fn rotate(&self, stream: &str, cur: &Path) {
         let mut numbers: Vec<u32> = std::fs::read_dir(&self.dir)
             .map(|rd| {
@@ -287,10 +303,17 @@ impl LogDir {
         }
         let first = self.segment_path(stream, 1);
         if std::fs::rename(cur, &first).is_err() {
-            // Held without delete sharing: copy it out and empty it.
+            // Held without delete sharing: copy it out and empty it. When
+            // it cannot be emptied the copy goes again, so no line is in
+            // two files.
             if std::fs::copy(cur, &first).is_ok() {
-                if let Ok(f) = OpenOptions::new().write(true).open(cur) {
-                    let _ = f.set_len(0);
+                let emptied = OpenOptions::new()
+                    .write(true)
+                    .open(cur)
+                    .and_then(|f| f.set_len(0))
+                    .is_ok();
+                if !emptied {
+                    let _ = std::fs::remove_file(&first);
                 }
             }
         }

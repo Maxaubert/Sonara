@@ -153,6 +153,48 @@ fn a_held_lock_makes_a_writer_skip_its_line_in_time() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A viewer that holds an older segment without delete sharing stops the
+/// rotation; once the current file alone fills the budget it is emptied
+/// rather than every later line of the stream being refused.
+#[cfg(windows)]
+#[test]
+fn a_held_segment_never_stalls_the_stream_at_the_budget() {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+    let dir = tmp("held");
+    std::fs::create_dir_all(&dir).unwrap();
+    let log = LogDir::new(&dir).with_limits(100, 300);
+    std::fs::write(
+        log.segment_path("a", 1),
+        "old
+",
+    )
+    .unwrap();
+    let _viewer = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+        .open(log.segment_path("a", 1))
+        .unwrap();
+    for i in 0..40 {
+        log.append("a", &format!("line {i:04}"))
+            .unwrap_or_else(|e| panic!("line {i}: {e}"));
+    }
+    assert!(log.total() <= 300, "{}", log.total());
+    assert!(read(&log.path("a")).ends_with(
+        "line 0039
+"
+    ));
+    assert_eq!(
+        read(&log.segment_path("a", 1)),
+        "old
+",
+        "never overwritten"
+    );
+    drop(_viewer);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Run as a child process (see `CHILD`); a no-op in a normal test run.
 #[test]
 fn child_writer() {
