@@ -567,3 +567,74 @@ fn focus_only_holds_added_text_but_not_a_hosts_speak() {
     r.read("And again.");
     r.stays_idle();
 }
+
+/// One drop reported (#219): (channel, text, reason, cut while read).
+type Reported = (String, String, String, bool);
+
+/// Every drop reported.
+fn drops(r: &Rig) -> Arc<Mutex<Vec<Reported>>> {
+    let got = Arc::new(Mutex::new(Vec::new()));
+    let sink = got.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        sink.lock().unwrap().push((
+            d.channel.clone(),
+            d.text.clone(),
+            d.reason.clone(),
+            d.item.is_some(),
+        ));
+    })));
+    got
+}
+
+#[test]
+fn text_dropped_unread_is_reported_with_its_reason() {
+    let r = Rig::two();
+    r.ch.set_announce(false);
+    let got = drops(&r);
+    let first = r.ch.speak("a", "First one.", None, false, None).unwrap();
+    assert!(first.item_id.is_some());
+    r.wait_for("First one.");
+    r.ch.speak("a", "Second one.", None, false, None).unwrap();
+    r.ch.speak("a", "Third one.", Some(QueueMode::Replace), false, None)
+        .unwrap();
+    assert_eq!(
+        got.lock().unwrap().clone(),
+        vec![(
+            "a".to_string(),
+            "Second one.".to_string(),
+            "replaced by newer text (mode replace)".to_string(),
+            false
+        )]
+    );
+    got.lock().unwrap().clear();
+    r.ch.add("b", "Bee text.").unwrap();
+    // A new turn on `a`: its unread entry and the item being read go.
+    r.ch.control_because(Control::Stop, Some("a"), "turn_start")
+        .unwrap();
+    let mut seen = got.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(
+        seen,
+        vec![
+            ("a".into(), "First one.".into(), "turn_start".into(), true),
+            ("a".into(), "Third one.".into(), "turn_start".into(), false),
+        ]
+    );
+    got.lock().unwrap().clear();
+    r.wait_for("Bee text.");
+    r.ch.control_because(Control::Stop, None, "mute").unwrap();
+    assert_eq!(
+        got.lock().unwrap().clone(),
+        vec![("b".into(), "Bee text.".into(), "mute".into(), true)]
+    );
+}
+
+#[test]
+fn spoken_text_tells_its_entry_and_the_tag_carries_it() {
+    let r = Rig::two();
+    let s = r.ch.speak("a", "Tagged.", None, false, None).unwrap();
+    let id = s.item_id.expect("fed at once");
+    let tag = r.ch.tag(id).unwrap();
+    assert_eq!(tag.entry, Some(s.entry));
+    assert!(!tag.announcement);
+}

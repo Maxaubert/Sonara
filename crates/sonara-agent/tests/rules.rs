@@ -940,3 +940,114 @@ fn closing_a_channel_frees_its_turn_state() {
     assert!(!r.tracks("a"));
     assert!(r.stream("a", None, "Again.", 0, true, Some(1.0)).is_ok());
 }
+
+// -- notes and kinds for the troubleshooting log (#219) ---------------------
+
+fn kinds(actions: &[Action]) -> Vec<&'static str> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Speak { kind, .. } => Some(*kind),
+            _ => None,
+        })
+        .collect()
+}
+
+fn notes(r: &Rules) -> Vec<(&'static str, String, Option<String>)> {
+    r.take_notes()
+        .into_iter()
+        .map(|n| (n.kind, n.what, n.text))
+        .collect()
+}
+
+#[test]
+fn every_spoken_text_names_its_kind() {
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::Everything;
+    assert_eq!(
+        kinds(&r.stream("fg", None, "Hi.", 0, true, None).unwrap()),
+        ["prose"]
+    );
+    assert_eq!(
+        kinds(&r.ask("fg", &question("Pick?", &["A"]))),
+        ["question"]
+    );
+    r.answered("fg");
+    assert_eq!(
+        kinds(&r.ask("fg", &Ask::new(AskKind::Permission, "Run ls"))),
+        ["permission"]
+    );
+    assert_eq!(
+        kinds(&r.ask("fg", &Ask::new(AskKind::Plan, "Do it."))),
+        ["plan"]
+    );
+    assert_eq!(kinds(&r.tool("fg", "Bash", "git status")), ["tool"]);
+    assert!(notes(&r).is_empty(), "nothing was held back");
+}
+
+#[test]
+fn what_is_not_spoken_leaves_a_note_with_the_reason() {
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::SkipCode;
+    // A code block at skip_code.
+    let a = prose(&mut r, "fg", "Look:\n```py\nx = 1\n```\n", 0, true);
+    assert!(
+        spoken(&a).iter().all(|t| !t.contains("code block")),
+        "{a:?}"
+    );
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(k, w, t)| *k == "code" && w.contains("skip_code") && t.is_some()),
+        "{n:?}"
+    );
+    // A tool at skip_code.
+    assert!(r.tool("fg", "Bash", "ls").is_empty());
+    let n = notes(&r);
+    assert_eq!(n[0].0, "tool");
+    assert!(n[0].1.contains("verbosity skip_code"), "{n:?}");
+    assert_eq!(n[0].2.as_deref(), Some("ls"));
+    // The permission prompt of an unanswered question (#11).
+    r.ask("fg", &question("Pick?", &["A", "B"]));
+    let _ = notes(&r);
+    assert!(spoken(&r.ask(
+        "fg",
+        &Ask::new(AskKind::Permission, "Claude needs your permission")
+    ))
+    .is_empty());
+    let n = notes(&r);
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert_eq!(n[0].0, "permission");
+    assert!(n[0].1.contains("awaiting its answer"), "{n:?}");
+    // Muted.
+    r.set_mute_level(1);
+    assert!(prose(&mut r, "fg", "Quiet please.", 1, true).is_empty());
+    let n = notes(&r);
+    assert!(
+        n.iter().any(|(k, w, t)| *k == "prose"
+            && w == "not spoken: mute level 1"
+            && t.as_deref() == Some("Quiet please.")),
+        "{n:?}"
+    );
+    r.set_mute_level(2);
+    assert!(r.turn_end("fg", None, None).unwrap().is_empty());
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(k, w, _)| *k == "earcon" && w.contains("turn_done")),
+        "{n:?}"
+    );
+}
+
+#[test]
+fn prose_held_below_minqueue_is_noted() {
+    let mut r = rules();
+    r.settings.minqueue = 3;
+    assert!(prose(&mut r, "fg", "One.", 0, true).is_empty());
+    let n = notes(&r);
+    assert_eq!(n.len(), 1);
+    assert!(
+        n[0].1.contains("held: 1 chunk(s) wait for minqueue 3"),
+        "{n:?}"
+    );
+}

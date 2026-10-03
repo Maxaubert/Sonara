@@ -31,7 +31,7 @@ Eyes-free text-to-speech for Claude Code, Windows only. Since 0.11 (#202) the Cl
   3. Copy `target/release/{sonarad,sonara-hook,sonara}.exe` and the staged DLLs into that folder.
   4. `"$LOCALAPPDATA/Sonara/runtime/<ver>/sonara.exe" start` (clears `stopped`).
 - Hooks run through Git Bash: `bin/sonara-hook-launch` reads `bin/runtime-version`, execs `sonara-hook.exe` (adds `--standalone` to `SONARA_RUNTIME_ARGS`), else starts `bin/sonara-bootstrap.ps1` once in the background (lock `runtime\.bootstrap.lock`, retry marker `.bootstrap.failed`, 5 min). Test overrides: `SONARA_RELEASE_BASE_URL`, `SONARA_BOOTSTRAP_START=0`, `SONARA_NO_BROWSER`.
-- Logs: `%LOCALAPPDATA%\Sonara\logs\sonarad.log` (reading, media pause/duck and hotkey activity per #217; rotates to `sonarad.old.log` at 1 MB), `logs\bootstrap.log`. Settings: `config.json` there (only user-set keys; product defaults in `sonarad::config::SCHEMA`); change keys live through the settings page (`sonara.exe settings`) or protocol `set`.
+- Logs: `%LOCALAPPDATA%\Sonara\logs\` (crate `sonara-log`, #219: 1 MB segments, 10 MB for the whole folder, oldest first out): `sonarad.log` (activity per #217; `in` messages, `agent` decisions, `read text` spoken text, `drop` reasons), `hook.log` (each hook's raw payload and what it sent), `bootstrap.log`. Text only while setting `debug_log` is on (default). Settings: `config.json` there (only user-set keys; product defaults in `sonarad::config::SCHEMA`); change keys live through the settings page (`sonara.exe settings`) or protocol `set`.
 - The Python product (until removed): daemon copy in `~/.sonara/app`, redeploy with `from sonara.install.app_copy import copy_app`; it is no longer installed by the plugin.
 
 ## Architecture

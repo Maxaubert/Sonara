@@ -43,6 +43,8 @@ pub enum Layer {
     Channels,
     Agent,
     System,
+    /// `sonarad` itself (the troubleshooting log).
+    Host,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +59,8 @@ enum Kind {
     TextOrNull,
     /// The `summaries` object (see `validate_summaries`).
     Summaries,
+    /// true or false.
+    Bool,
 }
 
 /// One persisted setting.
@@ -173,6 +177,14 @@ pub const SCHEMA: &[Setting] = &[
         kind: Kind::Range(0, 100),
         default: "30",
     },
+    // The troubleshooting log records what is read and what hooks send
+    // (#219). On by default for now, at the user's request.
+    Setting {
+        key: "debug_log",
+        layer: Layer::Host,
+        kind: Kind::Bool,
+        default: "true",
+    },
 ];
 
 pub fn setting(key: &str) -> Option<&'static Setting> {
@@ -224,6 +236,10 @@ pub fn validate(key: &str, v: &Value) -> Result<Value, String> {
                 .ok_or_else(|| format!("'{key}' is a non-empty string or null")),
         },
         Kind::Summaries => validate_summaries(v).map(Value::Object),
+        Kind::Bool => v
+            .as_bool()
+            .map(Value::Bool)
+            .ok_or_else(|| format!("'{key}' is true or false")),
     }
 }
 
@@ -816,6 +832,7 @@ mod tests {
             ("background_policy", json!("all")),
             ("audio_mode", json!("pause")),
             ("duck_level", json!(30)),
+            ("debug_log", json!(true)),
         ] {
             assert_eq!(default(key), Some(v), "{key}");
         }
@@ -863,6 +880,7 @@ mod tests {
             ("minqueue", json!(11)),
             ("background_policy", json!("silent")),
             ("channel_announce", json!(true)),
+            ("debug_log", json!("on")),
             ("summaries", json!({"timeout": 5})),
             ("summaries", json!({"style": "long"})),
             ("summaries", json!({"prompts": {"poem": "x"}})),

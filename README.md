@@ -264,8 +264,15 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
   `read start item=12 session=<name> chunks=3`, then `media pause apps=spotify.exe (reason:
   reading item=12 session=<name>)`, `read end item=12 finished` and `media resume apps=...
   (reason: idle)`; `reader paused` and `reader resumed` mark a pause of Sonara itself; ducking
-  logs `duck apps=... level=30` and `restore apps=...`, hotkeys `hotkey <action>`. It never holds what was read. At about 1 MB it moves to `sonarad.old.log`.
+  logs `duck apps=... level=30` and `restore apps=...`, hotkeys `hotkey <action>`.
   Set audio mode to *Off* on the settings page if you do not want this.
+- **It read something else, or skipped something.** With *Troubleshooting log* on (settings
+  page, System; on by default for now) `sonarad.log` also shows what came in (`in {...}`), what
+  was decided and why (`agent ... speak kind=question ...`, `agent ... permission: not spoken:
+  ...`), the exact text read (`read text item=12 kind=prose from=turn_end text="..."`) and text
+  dropped unread with the reason (`drop ... reason=turn_start`); `logs\hook.log` has what each
+  Claude Code hook received and sent. The logs hold session text then; all of them together stay
+  under 10 MB, oldest first out (see PRIVACY.md). Turn it off to keep text out.
 - **Nothing after installing the plugin.** Restart Claude Code; the runtime installs on the first
   hook. Offline or blocked downloads are retried every 5 minutes, or at once by `/sonara:start`.
 - **Hooks not firing.** Make sure the `sonara` plugin is enabled in `/plugin`, start a new

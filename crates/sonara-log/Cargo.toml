@@ -1,0 +1,10 @@
+[package]
+name = "sonara-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sonara's troubleshooting log: rotating segments under one size budget, shared by sonarad and the hook processes"
+
+# A leaf: no dependencies at all, so the L5 hook adapter can link it
+# without linking any runtime crate (R7, sonara-hook/tests/layering.rs).
+[dependencies]

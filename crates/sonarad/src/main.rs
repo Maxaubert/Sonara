@@ -14,7 +14,7 @@ use sonarad::migrate;
 use sonarad::protocol::{self, Server};
 use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
-use sonarad::{http, null_output::NullOutput, support_log, tcp, VERSION};
+use sonarad::{http, null_output::NullOutput, support_log, tcp, trace_log, VERSION};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -199,6 +199,8 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     for p in problems {
         home.log(&p);
     }
+    // Text and payloads in the troubleshooting log (#219).
+    trace_log::set_debug(store.value(trace_log::DEBUG_KEY).as_bool().unwrap_or(true));
     // --engine, else the saved engine, else the default choice (Kokoro
     // when ONNX Runtime is installed, else OneCore).
     let saved = store
@@ -297,8 +299,8 @@ async fn run(
         });
     }
     let server = Arc::new(server);
-    // Reading start and end in the support log, with the session of each
-    // item (#217).
+    // Reading start, text and end in the support log, with the session
+    // and origin of each item (#217, #219), and the spoken cues.
     let tags = Arc::downgrade(&server);
     support_log::watch_reading(
         home,
@@ -307,7 +309,11 @@ async fn run(
             tags.upgrade()
                 .and_then(|s| s.channels().and_then(|c| c.tag(id)))
         }),
+        server.origins(),
     );
+    if let Some(s) = server.system() {
+        support_log::watch_cues(home, s.cues());
+    }
     // The startup sweep: restore what a previous runtime that died left
     // ducked or paused (never strand other apps, #131).
     if let Some(s) = server.system().cloned() {

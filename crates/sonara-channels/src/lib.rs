@@ -39,6 +39,11 @@
 //!   own text goes through `add`, which the gates apply to.
 //! - A thread drains the reader's events; it holds the driver weakly and
 //!   ends with the reader.
+//! - `on_drop` (#219) reports every entry dropped unread (and an item cut
+//!   while it was read) with the reason: `replaced` (policy `latest` or
+//!   mode `replace`), the reason given to `control_because` (L3 passes
+//!   `turn_start`, `answered`, `mute`, `stop`), `closed`, `muted`. It runs
+//!   under the driver's lock and must not call back into `Channels`.
 pub mod router;
 
 pub use router::{Channel, Entry, Feed, Policy, Router};
@@ -99,6 +104,22 @@ pub struct Announced {
 /// The hook of `Channels::on_announce`.
 pub type AnnounceHook = Arc<dyn Fn(&Announced) + Send + Sync>;
 
+/// Text dropped before it was heard (`Channels::on_drop`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dropped {
+    pub channel: String,
+    /// The channel entry.
+    pub entry: u64,
+    pub text: String,
+    /// Why (module docs).
+    pub reason: String,
+    /// The reader item cut while it was being read, if the entry was.
+    pub item: Option<ItemId>,
+}
+
+/// The hook of `Channels::on_drop`.
+pub type DropHook = Arc<dyn Fn(&Dropped) + Send + Sync>;
+
 /// Which channel an item came from (`state.now_playing.channel`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tag {
@@ -106,6 +127,8 @@ pub struct Tag {
     pub host_tab: Option<String>,
     /// The item is a switch announcement.
     pub announcement: bool,
+    /// The channel entry it reads (`None` for an announcement).
+    pub entry: Option<u64>,
 }
 
 /// The item this driver fed and is waiting for.
@@ -115,12 +138,16 @@ struct InFlight {
     channel: String,
     /// The entry it reads; `None` for an announcement.
     entry: Option<u64>,
+    /// Its text (for `on_drop`: a replace can drop the entry from the
+    /// batch while it is read).
+    text: String,
 }
 
 struct State {
     router: Router,
     config: Config,
     on_announce: Option<AnnounceHook>,
+    on_drop: Option<DropHook>,
     in_flight: Option<InFlight>,
     tags: VecDeque<(ItemId, Tag)>,
 }
@@ -144,6 +171,8 @@ pub struct Spoken {
     pub item_id: Option<ItemId>,
     /// Unread entries of the channel that were dropped for it.
     pub dropped: usize,
+    /// The channel entry holding the text.
+    pub entry: u64,
 }
 
 fn check(channel: &str) -> Result<()> {
@@ -164,6 +193,7 @@ impl Channels {
                 router: Router::new(),
                 config,
                 on_announce: None,
+                on_drop: None,
                 in_flight: None,
                 tags: VecDeque::new(),
             }),
@@ -214,10 +244,18 @@ impl Channels {
     /// channel's text follows.
     pub fn close(&self, channel: &str) -> Result<()> {
         let mut st = self.lock();
+        let unread = unread(&st, channel);
+        let cut = cut_entry(&st, channel);
         if !st.router.close(channel) {
             return Err(Error::UnknownChannel(channel.to_string()));
         }
-        self.inner.cut_if(&mut st, channel)?;
+        report(&st, channel, unread, "closed", None);
+        if let Some((item, e)) =
+            cut.filter(|_| st.in_flight.as_ref().is_some_and(|f| f.channel == channel))
+        {
+            report(&st, channel, vec![e], "closed", Some(item));
+        }
+        self.inner.cut_if(&mut st, channel, None)?;
         self.inner.pump(&mut st)
     }
 
@@ -286,6 +324,14 @@ impl Channels {
             None => st.router.channel(channel).map(|c| c.policy) == Some(Policy::Latest),
         };
         let before = st.router.channel(channel).map_or(0, Channel::pending);
+        if replace {
+            let why = if mode == Some(QueueMode::Replace) {
+                "replaced by newer text (mode replace)"
+            } else {
+                "replaced by newer text (policy latest)"
+            };
+            report(&st, channel, unread(&st, channel), why, None);
+        }
         let entry = st
             .router
             .push_with(channel, text, label, replace, interrupt)
@@ -308,7 +354,11 @@ impl Channels {
             self.inner.pump_fed(&mut st)?
         };
         let item_id = fed.filter(|f| f.entry == Some(entry)).map(|f| f.id);
-        Ok(Spoken { item_id, dropped })
+        Ok(Spoken {
+            item_id,
+            dropped,
+            entry,
+        })
     }
 
     /// Mute or unmute a channel (open or not: a channel opened later starts
@@ -319,7 +369,7 @@ impl Channels {
         let mut st = self.lock();
         st.router.set_muted(channel, muted);
         if muted {
-            self.inner.cut_if(&mut st, channel)?;
+            self.inner.cut_if(&mut st, channel, Some("muted"))?;
         }
         self.inner.pump(&mut st)
     }
@@ -355,11 +405,27 @@ impl Channels {
     /// (switching to it), and other actions apply only while it is being
     /// read.
     pub fn control(&self, c: Control, channel: Option<&str>) -> Result<()> {
+        self.control_because(c, channel, "stop")
+    }
+
+    /// `control`, with the reason a `Stop` drops text reported to
+    /// `on_drop` (module docs).
+    pub fn control_because(&self, c: Control, channel: Option<&str>, reason: &str) -> Result<()> {
         let mut st = self.lock();
         let reader = &self.inner.reader;
         let Some(ch) = channel else {
             return match c {
                 Control::Stop => {
+                    let ids: Vec<String> =
+                        st.router.channels().iter().map(|c| c.id.clone()).collect();
+                    for id in ids {
+                        report(&st, &id, unread(&st, &id), reason, None);
+                    }
+                    if let Some(f) = st.in_flight.clone() {
+                        if let Some((item, e)) = cut_entry(&st, &f.channel) {
+                            report(&st, &f.channel, vec![e], reason, Some(item));
+                        }
+                    }
                     st.router.flush(None);
                     st.router.done();
                     st.in_flight = None;
@@ -381,8 +447,9 @@ impl Channels {
         let reading = st.in_flight.as_ref().is_some_and(|f| f.channel == ch);
         match c {
             Control::Stop => {
+                report(&st, ch, unread(&st, ch), reason, None);
                 st.router.flush(Some(ch));
-                self.inner.cut_if(&mut st, ch)?;
+                self.inner.cut_if(&mut st, ch, Some(reason))?;
                 self.inner.pump(&mut st)
             }
             Control::Restart if reading => Ok(reader.control(Control::Restart)?),
@@ -452,6 +519,12 @@ impl Channels {
         self.lock().on_announce = hook;
     }
 
+    /// Report every entry dropped unread from now on to `hook` (`None`
+    /// removes it): module docs. It runs under the driver's lock.
+    pub fn on_drop(&self, hook: Option<DropHook>) {
+        self.lock().on_drop = hook;
+    }
+
     /// The channel an item came from, if a channel fed it (recent items).
     pub fn tag(&self, item: ItemId) -> Option<Tag> {
         let st = self.lock();
@@ -496,6 +569,41 @@ impl Channels {
             .iter()
             .map(|c| c.id.clone())
             .collect()
+    }
+}
+
+/// The unread entries of `channel`.
+fn unread(st: &State, channel: &str) -> Vec<Entry> {
+    st.router
+        .channel(channel)
+        .map(|c| c.entries()[c.cursor()..].to_vec())
+        .unwrap_or_default()
+}
+
+/// The item in flight for `channel` and the entry it reads.
+fn cut_entry(st: &State, channel: &str) -> Option<(ItemId, Entry)> {
+    let f = st.in_flight.as_ref().filter(|f| f.channel == channel)?;
+    let e = Entry {
+        id: f.entry?,
+        text: f.text.clone(),
+        label: None,
+    };
+    Some((f.id, e))
+}
+
+/// Tell `on_drop` about `entries` of `channel`.
+fn report(st: &State, channel: &str, entries: Vec<Entry>, reason: &str, item: Option<ItemId>) {
+    let Some(hook) = &st.on_drop else {
+        return;
+    };
+    for e in entries {
+        hook(&Dropped {
+            channel: channel.to_string(),
+            entry: e.id,
+            text: e.text,
+            reason: reason.to_string(),
+            item,
+        });
     }
 }
 
@@ -585,16 +693,26 @@ impl Inner {
                     channel: channel.clone(),
                     host_tab,
                     announcement: entry.is_none(),
+                    entry,
                 },
             ));
-            let f = InFlight { id, channel, entry };
+            let f = InFlight {
+                id,
+                channel,
+                entry,
+                text,
+            };
             st.in_flight = Some(f.clone());
             return Ok(Some(f));
         }
     }
 
-    /// Cut the item in flight if it belongs to `channel`.
-    fn cut_if(&self, st: &mut State, channel: &str) -> Result<()> {
+    /// Cut the item in flight if it belongs to `channel`, reporting its
+    /// entry dropped for `reason` when one is given.
+    fn cut_if(&self, st: &mut State, channel: &str, reason: Option<&str>) -> Result<()> {
+        if let (Some(reason), Some((item, e))) = (reason, cut_entry(st, channel)) {
+            report(st, channel, vec![e], reason, Some(item));
+        }
         if st.in_flight.as_ref().is_some_and(|f| f.channel == channel) {
             st.in_flight = None;
             st.router.done();

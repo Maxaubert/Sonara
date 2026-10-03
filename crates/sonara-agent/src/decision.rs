@@ -29,6 +29,15 @@ impl AskKind {
             _ => None,
         }
     }
+
+    /// The protocol name.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AskKind::Question => "question",
+            AskKind::Permission => "permission",
+            AskKind::Plan => "plan",
+        }
+    }
 }
 
 fn ends_sentence(s: &str) -> bool {

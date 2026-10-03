@@ -37,6 +37,15 @@
 //!   (SET_FOREGROUND + FLUSH).
 //! - `SessionStart` -> `channel_open`, `focus` (SET_FOREGROUND +
 //!   SESSION_START). `SessionEnd` -> `channel_close` (SESSION_END).
+//!
+//! **Troubleshooting log** (#219): every invocation appends one line to
+//! `<home>\logs\hook.log` (`sonara_log`: the folder's 10 MB budget, oldest
+//! first out): the event, the outcome (`sent`, `started`, `dropped`,
+//! `nothing to send`), the time it took, the messages sent and the raw
+//! payload (a string field over `FIELD_MAX` clipped). With `debug_log`
+//! off in `config.json` the payload and the messages' text are left out.
+//! The log never holds up or fails the hook: the lock is waited for
+//! `LOG_WAIT` at most and every error is ignored.
 use serde_json::{json, Map, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -67,6 +76,14 @@ pub const SELECT_ONCE: &str = "Selecting is immediate.";
 const MULTI_NOTE: &str =
     "Select multiple: press each number, or Space on the highlighted item, then Enter to confirm.";
 const MANY_NOTE: &str = "More than nine options; use arrow keys for ten and up.";
+
+/// The hook's stream in the log folder (`hook.log`).
+pub const LOG_STREAM: &str = "hook";
+/// A payload string longer than this (bytes) is clipped in the log.
+pub const FIELD_MAX: usize = 4096;
+/// How long a hook waits for another writer of the log before it skips
+/// its line.
+pub const LOG_WAIT: Duration = Duration::from_millis(50);
 
 /// A session without an id (never seen from Claude Code) still gets a
 /// channel.
@@ -284,6 +301,105 @@ pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<Stri
         ],
         "SessionEnd" => vec![Value::Object(msg("channel_close", channel))],
         _ => Vec::new(),
+    }
+}
+
+/// Whether text and payloads go to the log: `debug_log` in the home's
+/// `config.json`, true unless set to false.
+pub fn debug_log(home: &Path) -> bool {
+    std::fs::read(home.join("config.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+        .and_then(|v| v.get("debug_log").and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+/// Clip every string over `FIELD_MAX` bytes, anywhere in `v`.
+pub fn clip_strings(v: &mut Value) {
+    match v {
+        Value::String(s) if s.len() > FIELD_MAX => {
+            *s = sonara_log::clip(s, FIELD_MAX).into_owned();
+        }
+        Value::Array(a) => a.iter_mut().for_each(clip_strings),
+        Value::Object(o) => o.values_mut().for_each(clip_strings),
+        _ => {}
+    }
+}
+
+/// The log line of one invocation (module docs). `raw` is stdin as read;
+/// `outcome` what became of the messages.
+pub fn log_line(
+    event: &str,
+    raw: &[u8],
+    msgs: &[Value],
+    outcome: &str,
+    elapsed: Duration,
+    debug: bool,
+) -> String {
+    let payload: Option<Value> = serde_json::from_slice(raw).ok();
+    let mut line = format!(
+        "hook {} pid={} {outcome} ms={}",
+        if event.is_empty() { "?" } else { event },
+        std::process::id(),
+        elapsed.as_millis()
+    );
+    let field = |key: &str| {
+        payload
+            .as_ref()
+            .and_then(|p| p.get(key))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    if let Some(sid) = field("session_id") {
+        line.push_str(&format!(" session={sid}"));
+    }
+    for (key, name) in [("tool_name", "tool"), ("notification_type", "notification")] {
+        if let Some(v) = field(key) {
+            line.push_str(&format!(" {name}={}", Value::String(v)));
+        }
+    }
+    if debug {
+        let mut sent = Value::Array(msgs.to_vec());
+        clip_strings(&mut sent);
+        line.push_str(&format!(" sent={sent}"));
+        match payload {
+            Some(mut p) => {
+                clip_strings(&mut p);
+                line.push_str(&format!(" payload={p}"));
+            }
+            None if raw.is_empty() => line.push_str(" payload=none"),
+            None => {
+                let text = String::from_utf8_lossy(raw);
+                let text = sonara_log::clip(&text, FIELD_MAX).into_owned();
+                line.push_str(&format!(" raw={}", Value::String(text)));
+            }
+        }
+    } else {
+        let types: Vec<&str> = msgs
+            .iter()
+            .filter_map(|m| m.get("type").and_then(Value::as_str))
+            .collect();
+        line.push_str(&format!(" sent={}", json!(types)));
+    }
+    line
+}
+
+/// Append `line` to the home's `hook.log`, best effort: a busy log (another
+/// writer past `LOG_WAIT`) or any error skips it.
+pub fn log(home: &Path, line: &str) {
+    let _ = sonara_log::LogDir::new(home.join("logs"))
+        .with_wait(LOG_WAIT)
+        .log(LOG_STREAM, line);
+}
+
+/// What became of the messages, for the log.
+pub fn outcome(d: Option<Delivery>) -> &'static str {
+    match d {
+        None => "nothing to send",
+        Some(Delivery::Sent) => "sent",
+        Some(Delivery::Started) => "started the runtime, sent",
+        Some(Delivery::Dropped) => "dropped (no runtime answered)",
     }
 }
 

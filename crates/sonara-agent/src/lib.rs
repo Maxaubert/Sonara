@@ -42,6 +42,13 @@
 //!   level 2.
 //! - Timers and summarizer jobs run on their own threads, which hold the
 //!   agent weakly and end with it.
+//! - **Trace** (#219, `on_trace`): every message's outcome for the
+//!   troubleshooting log: text added to a channel (with its L2 entry, its
+//!   kind and why it may wait), what the rules did not speak and why
+//!   (`rules::Note`), late text dropped, earcons and wipes (L2 reports the
+//!   entries a wipe drops, with the reason given here: `turn_start`,
+//!   `answered`, `mute`, `stop`). The hook runs under the agent's lock and
+//!   must not call back into the agent.
 pub mod decision;
 pub mod earcon;
 pub mod rules;
@@ -50,7 +57,7 @@ pub mod summarizer;
 
 pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
-pub use rules::{Action, Ask, Job, Rules, Stale, Timer};
+pub use rules::{Action, Ask, Job, Note, Rules, Stale, Timer};
 pub use settings::{BackgroundPolicy, Settings, Style, SummaryCommand, SummarySettings, Verbosity};
 pub use sonara_channels::{Channels, Control, QueueMode};
 pub use summarizer::Summarizer;
@@ -106,6 +113,45 @@ pub fn default_summarizer() -> Option<Arc<dyn Summarizer>> {
         None
     }
 }
+
+/// What the agent did, for the troubleshooting log (`Agent::on_trace`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trace {
+    /// What caused it: the message (`stream`, `turn_start`, `turn_end`,
+    /// `ask question`, `ask permission`, `ask plan`, `tool`, `answered`,
+    /// `earcon`, `mute_level`, `stop`), a `timer` or a `summary` landing.
+    pub source: String,
+    pub channel: Option<String>,
+    pub what: Traced,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Traced {
+    /// `text` was added to the channel as L2 entry `entry`; `waits` says
+    /// why it may not be read soon (a muted channel, the background
+    /// policy).
+    Spoken {
+        kind: &'static str,
+        entry: u64,
+        text: String,
+        decision: bool,
+        waits: Option<&'static str>,
+    },
+    /// Something the rules did not speak now, and why.
+    Note(Note),
+    /// The message was late text of an earlier turn and was dropped
+    /// (stamped before the channel's last `turn_start`, #174).
+    Late,
+    Earcon(Earcon),
+    /// The channel's unread text (every channel's when `channel` is
+    /// `None`) was dropped and its item cut, for `reason`.
+    Wiped {
+        reason: &'static str,
+    },
+}
+
+/// The hook of `Agent::on_trace`.
+pub type TraceHook = Arc<dyn Fn(&Trace) + Send + Sync>;
 
 /// How to build an `Agent`.
 pub struct Config {
@@ -166,6 +212,8 @@ struct Inner {
     /// The mute level, readable without the rules' lock (the
     /// session-change earcon is played under L2's lock).
     mute_level: AtomicU8,
+    /// `Agent::on_trace`.
+    trace: Mutex<Option<TraceHook>>,
 }
 
 /// L3 over L2. Clones share it.
@@ -202,6 +250,7 @@ impl Agent {
             }),
             earcons: config.earcons,
             mute_level,
+            trace: Mutex::new(None),
         });
         // Called under L2's lock: it only plays a clip and reports it.
         let weak = Arc::downgrade(&inner);
@@ -215,6 +264,12 @@ impl Agent {
             }
         })));
         Ok(Agent { inner })
+    }
+
+    /// Report what the agent does to `hook` (`None` removes it): module
+    /// docs. It runs under the agent's lock.
+    pub fn on_trace(&self, hook: Option<TraceHook>) {
+        *self.inner.trace.lock().unwrap_or_else(|p| p.into_inner()) = hook;
     }
 
     /// The earcon clips in force (bundled, or custom files in front).
@@ -231,10 +286,11 @@ impl Agent {
         self.inner.lock()
     }
 
-    /// Run `f` on the rules and carry out its actions. `Err(Stale)` from
-    /// the rules is `Ok(false)`.
+    /// Run `f` on the rules and carry out its actions; `source` names the
+    /// message for the trace. `Err(Stale)` from the rules is `Ok(false)`.
     fn apply(
         &self,
+        source: &str,
         channel: Option<&str>,
         f: impl FnOnce(&mut Rules) -> std::result::Result<Vec<Action>, Stale>,
     ) -> Result<bool> {
@@ -245,10 +301,13 @@ impl Agent {
         self.inner.seen(&mut rules, channel);
         match f(&mut rules) {
             Ok(actions) => {
-                self.inner.execute(&rules, actions)?;
+                self.inner.execute(&rules, source, channel, actions)?;
                 Ok(true)
             }
-            Err(Stale) => Ok(false),
+            Err(Stale) => {
+                self.inner.trace(source, channel, Traced::Late);
+                Ok(false)
+            }
         }
     }
 
@@ -263,7 +322,7 @@ impl Agent {
         is_final: bool,
         t: Option<f64>,
     ) -> Result<bool> {
-        self.apply(Some(channel), |r| {
+        self.apply("stream", Some(channel), |r| {
             r.stream(channel, turn, delta, index, is_final, t)
         })
     }
@@ -271,36 +330,43 @@ impl Agent {
     /// A new turn. Returns false when it is older than the channel's last
     /// one (dropped).
     pub fn turn_start(&self, channel: &str, turn: Option<&str>, t: Option<f64>) -> Result<bool> {
-        self.apply(Some(channel), |r| r.turn_start(channel, turn, t))
+        self.apply("turn_start", Some(channel), |r| {
+            r.turn_start(channel, turn, t)
+        })
     }
 
     /// The turn ended. Returns false when it was the end of an earlier turn
     /// (dropped, no earcon).
     pub fn turn_end(&self, channel: &str, turn: Option<&str>, t: Option<f64>) -> Result<bool> {
-        self.apply(Some(channel), |r| r.turn_end(channel, turn, t))
+        self.apply("turn_end", Some(channel), |r| r.turn_end(channel, turn, t))
     }
 
     /// A decision.
     pub fn ask(&self, channel: &str, ask: &Ask) -> Result<()> {
-        self.apply(Some(channel), |r| Ok(r.ask(channel, ask)))
+        let source = format!("ask {}", ask.kind.as_str());
+        self.apply(&source, Some(channel), |r| Ok(r.ask(channel, ask)))
             .map(|_| ())
     }
 
     /// A tool runs.
     pub fn tool(&self, channel: &str, name: &str, summary: &str) -> Result<()> {
-        self.apply(Some(channel), |r| Ok(r.tool(channel, name, summary)))
-            .map(|_| ())
+        self.apply(
+            "tool",
+            Some(channel),
+            |r| Ok(r.tool(channel, name, summary)),
+        )
+        .map(|_| ())
     }
 
     /// The user answered the question.
     pub fn answered(&self, channel: &str) -> Result<()> {
-        self.apply(Some(channel), |r| Ok(r.answered(channel)))
+        self.apply("answered", Some(channel), |r| Ok(r.answered(channel)))
             .map(|_| ())
     }
 
     /// Play an earcon (unless mute level 2).
     pub fn earcon(&self, e: Earcon) -> Result<()> {
-        self.apply(None, |r| Ok(r.play(e))).map(|_| ())
+        self.apply("earcon", None, |r| Ok(r.play(e))).map(|_| ())
     }
 
     /// Close a channel and forget its turn.
@@ -354,7 +420,12 @@ impl Agent {
     pub fn stop(&self) -> Result<()> {
         let mut rules = self.lock();
         rules.stop_all();
-        Ok(self.inner.channels.control(Control::Stop, None)?)
+        self.inner
+            .trace("stop", None, Traced::Wiped { reason: "stop" });
+        Ok(self
+            .inner
+            .channels
+            .control_because(Control::Stop, None, "stop")?)
     }
 
     pub fn settings(&self) -> Settings {
@@ -373,7 +444,7 @@ impl Agent {
                 settings::MUTE_LEVEL_MAX
             )));
         }
-        let done = self.apply(None, |r| Ok(r.set_mute_level(level)));
+        let done = self.apply("mute_level", None, |r| Ok(r.set_mute_level(level)));
         self.inner.mute_level.store(level, Ordering::SeqCst);
         done.map(|_| ())
     }
@@ -458,6 +529,18 @@ impl Inner {
         self.rules.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Report to the trace hook, if any.
+    fn trace(&self, source: &str, channel: Option<&str>, what: Traced) {
+        let hook = self.trace.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        if let Some(hook) = hook {
+            hook(&Trace {
+                source: source.to_string(),
+                channel: channel.map(str::to_string),
+                what,
+            });
+        }
+    }
+
     fn lock_seen(&self) -> MutexGuard<'_, Seen> {
         self.seen.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -519,12 +602,23 @@ impl Inner {
         }
     }
 
-    /// Carry out actions in order; the first error is returned after the
-    /// rest were tried (a failed speak must not lose a later decision).
-    fn execute(self: &Arc<Self>, rules: &Rules, actions: Vec<Action>) -> Result<()> {
+    /// Trace the rules' notes, then carry out actions in order; the first
+    /// error is returned after the rest were tried (a failed speak must not
+    /// lose a later decision).
+    fn execute(
+        self: &Arc<Self>,
+        rules: &Rules,
+        source: &str,
+        channel: Option<&str>,
+        actions: Vec<Action>,
+    ) -> Result<()> {
+        for n in rules.take_notes() {
+            let ch = n.channel.clone();
+            self.trace(source, ch.as_deref().or(channel), Traced::Note(n));
+        }
         let mut first = Ok(());
         for a in actions {
-            if let Err(e) = self.carry_out(rules, a) {
+            if let Err(e) = self.carry_out(rules, source, a) {
                 if first.is_ok() {
                     first = Err(e);
                 }
@@ -533,7 +627,17 @@ impl Inner {
         first
     }
 
-    fn carry_out(self: &Arc<Self>, rules: &Rules, a: Action) -> Result<()> {
+    /// Why text added to `channel` may wait (for the trace).
+    fn waits(&self, channel: &str, release: bool) -> Option<&'static str> {
+        let ch = &self.channels;
+        if ch.is_muted(channel) {
+            return Some("the session is muted");
+        }
+        let gated = ch.focus_only() && ch.focused().is_some_and(|f| f != channel) && !release;
+        gated.then_some("background policy earcon_only: read once the session is focused")
+    }
+
+    fn carry_out(self: &Arc<Self>, rules: &Rules, source: &str, a: Action) -> Result<()> {
         let ch = &self.channels;
         match a {
             Action::Speak {
@@ -541,22 +645,40 @@ impl Inner {
                 text,
                 decision,
                 release,
+                kind,
             } => {
-                ch.add(&channel, &text)?;
+                let spoken = ch.add(&channel, &text)?;
                 if decision {
                     ch.prioritize(&channel)?;
                 }
                 if release {
                     ch.authorize(&channel)?;
                 }
+                let waits = self.waits(&channel, release);
+                self.trace(
+                    source,
+                    Some(&channel),
+                    Traced::Spoken {
+                        kind,
+                        entry: spoken.entry,
+                        text,
+                        decision,
+                        waits,
+                    },
+                );
             }
-            Action::Earcon(e) => self.play(e)?,
+            Action::Earcon(e) => {
+                self.play(e)?;
+                self.trace(source, None, Traced::Earcon(e));
+            }
             Action::Wipe { channel, resume } => {
                 if ch.channel(&channel).is_none() {
                     return Ok(());
                 }
+                let reason = if resume { "turn_start" } else { "answered" };
+                self.trace(source, Some(&channel), Traced::Wiped { reason });
                 let engaged = ch.engaged().as_deref() == Some(channel.as_str());
-                ch.control(Control::Stop, Some(&channel))?;
+                ch.control_because(Control::Stop, Some(&channel), reason)?;
                 if resume && engaged {
                     let st = ch.reader().state()?;
                     if st.paused && st.now_playing.is_some() {
@@ -564,7 +686,10 @@ impl Inner {
                     }
                 }
             }
-            Action::Silence => ch.control(Control::Stop, None)?,
+            Action::Silence => {
+                self.trace(source, None, Traced::Wiped { reason: "mute" });
+                ch.control_because(Control::Stop, None, "mute")?
+            }
             Action::Summarize(job) => self.summarize(rules, job),
             Action::Timer { after, timer } => {
                 let weak = Arc::downgrade(self);
@@ -585,7 +710,7 @@ impl Inner {
         let mut rules = self.lock();
         let focused = self.channels.focused();
         let actions = rules.fire(timer, focused.as_deref());
-        if let Err(e) = self.execute(&rules, actions) {
+        if let Err(e) = self.execute(&rules, "timer", None, actions) {
             eprintln!("[agent] timer {timer:?}: {e}");
         }
     }
@@ -631,7 +756,7 @@ impl Inner {
     fn digest_done(self: &Arc<Self>, job: &Job, summary: Option<String>) {
         let mut rules = self.lock();
         let actions = rules.digest_done(job, summary);
-        if let Err(e) = self.execute(&rules, actions) {
+        if let Err(e) = self.execute(&rules, "summary", Some(&job.channel), actions) {
             eprintln!("[agent] summary for {}: {e}", job.channel);
         }
     }

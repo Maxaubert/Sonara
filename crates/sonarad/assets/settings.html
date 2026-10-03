@@ -349,6 +349,10 @@
         </div>
         <h2 class="group-label">Settings file</h2>
         <div class="inset"><div class="file-row"><div><strong>Saved settings</strong><div class="hint path" id="rt-config">&ndash;</div></div></div></div>
+        <h2 class="group-label">Troubleshooting</h2>
+        <div class="inset">
+          <div class="pref"><div class="pref-copy"><strong id="debuglog-label">Troubleshooting log</strong><div class="hint" id="debuglog-hint">Record what is read and what hooks send, in the logs folder (10 MB at most, oldest first out). Off keeps only which item was read and when, without its text.</div></div><div class="control"><div class="toggle-line"><span class="hint" id="debuglog-status" aria-hidden="true">On</span><button class="switch" id="debuglog-switch" type="button" role="switch" aria-checked="true" aria-labelledby="debuglog-label" aria-describedby="debuglog-hint"></button></div></div></div>
+        </div>
         <footer class="footer"><span>Sonara for Windows</span><span id="app-version"></span></footer>
       </section>
     </main>
@@ -472,7 +476,7 @@ async function change(key, value, label) {
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
               "mute_level", "verbosity", "minqueue", "background_policy", "summaries", "channel_announce",
-              "channel_prefs", "earcons"];
+              "channel_prefs", "earcons", "debug_log"];
 let voices = [];
 
 async function refresh() {
@@ -654,6 +658,10 @@ function render() {
   if (s.hotkeys) renderHotkeys(s.hotkeys);
 
   // System
+  if (s.debug_log !== undefined) {
+    setSwitch("debuglog-switch", s.debug_log === true);
+    setText("debuglog-status", s.debug_log === true ? "On" : "Off");
+  }
   if (s.hello) {
     setText("rt-version", s.hello.version);
     setText("rt-protocol", s.hello.protocol.major + "." + s.hello.protocol.minor);
@@ -962,6 +970,7 @@ numberField("settle", "settle_ms", 0, 5000, "Settle time");
 $("mq-minus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.max(0, state.minqueue - 1), "Minimum queue"); });
 $("mq-plus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.min(10, state.minqueue + 1), "Minimum queue"); });
 $("announce-switch").addEventListener("click", () => change("channel_announce", state.channel_announce === "on" ? "off" : "on", "Announcements"));
+$("debuglog-switch").addEventListener("click", () => change("debug_log", state.debug_log !== true, "Troubleshooting log"));
 
 try { const p = localStorage.getItem("sonara-page"); if (p) showPage(p); } catch (e) {}
 refresh();

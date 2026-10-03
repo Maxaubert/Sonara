@@ -35,11 +35,17 @@
 //! - **Summaries** (opt in): see `Pipeline` below; the rules are the Python
 //!   ones: settle window, lead-in digests before decisions, the decision
 //!   hold with its cap, the hung-worker watchdog and the reorder buffer.
+//! - **Notes** (#219): whatever the rules do not speak now (muted, a code
+//!   block at `skip_code`, prose held below `minqueue`, a permission prompt
+//!   of an unanswered question, ...) leaves a `Note` with the reason, which
+//!   the driver takes after each call (`take_notes`) for the
+//!   troubleshooting log. Notes never change what is spoken.
 use crate::decision::{self, AskKind, Choice};
 use crate::earcon::Earcon;
 use crate::settings::{Settings, Verbosity};
 use sonara_core::assembler::{Chunk, ProseAssembler};
 use sonara_core::text::normalize_for_speech;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::time::Duration;
 
@@ -64,6 +70,9 @@ pub enum Action {
         text: String,
         decision: bool,
         release: bool,
+        /// What it is, for the troubleshooting log: `prose`, `question`,
+        /// `permission`, `plan`, `tool` or `summary`.
+        kind: &'static str,
     },
     /// Play an earcon.
     Earcon(Earcon),
@@ -105,6 +114,19 @@ pub struct Job {
     pub seq: Option<u64>,
 }
 
+/// Something the rules did not speak now, and why (module docs).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Note {
+    pub channel: Option<String>,
+    /// `prose`, `code`, `question`, `permission`, `plan`, `tool`,
+    /// `summary` or `earcon`.
+    pub kind: &'static str,
+    /// What happened and why (`not spoken: mute level 1`).
+    pub what: String,
+    /// The text concerned, if any.
+    pub text: Option<String>,
+}
+
 /// The message came from an earlier turn and was dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stale;
@@ -143,6 +165,7 @@ impl Ask {
 struct Decision {
     id: u64,
     text: String,
+    kind: &'static str,
 }
 
 /// A summary (or raw text) waiting for its turn to be spoken.
@@ -234,6 +257,8 @@ pub struct Rules {
     parked: BTreeMap<u64, Release>,
     /// What a hung slot speaks when its watchdog fires.
     watched: HashMap<u64, Release>,
+    /// Notes since the last `take_notes` (module docs).
+    notes: RefCell<Vec<Note>>,
 }
 
 impl Rules {
@@ -248,7 +273,22 @@ impl Rules {
             serve_seq: 0,
             parked: BTreeMap::new(),
             watched: HashMap::new(),
+            notes: RefCell::new(Vec::new()),
         }
+    }
+
+    /// The notes left since the last call (module docs).
+    pub fn take_notes(&self) -> Vec<Note> {
+        std::mem::take(&mut *self.notes.borrow_mut())
+    }
+
+    fn note(&self, channel: Option<&str>, kind: &'static str, what: String, text: Option<String>) {
+        self.notes.borrow_mut().push(Note {
+            channel: channel.map(str::to_string),
+            kind,
+            what,
+            text,
+        });
     }
 
     fn gen(&mut self) -> u64 {
@@ -283,11 +323,25 @@ impl Rules {
     fn earcon(&self, out: &mut Vec<Action>, e: Earcon) {
         if self.settings.mute_level < 2 {
             out.push(Action::Earcon(e));
+        } else {
+            self.note(
+                None,
+                "earcon",
+                format!("{} not played: mute level 2", e.as_str()),
+                None,
+            );
         }
     }
 
-    fn speak(&self, out: &mut Vec<Action>, channel: &str, text: String, decision: bool) {
-        self.say(out, channel, text, decision, false);
+    fn speak(
+        &self,
+        out: &mut Vec<Action>,
+        channel: &str,
+        text: String,
+        decision: bool,
+        kind: &'static str,
+    ) {
+        self.say(out, channel, text, decision, false, kind);
     }
 
     fn say(
@@ -297,14 +351,26 @@ impl Rules {
         text: String,
         decision: bool,
         release: bool,
+        kind: &'static str,
     ) {
-        if self.settings.mute_level == 0 && !text.trim().is_empty() {
+        if text.trim().is_empty() {
+            return;
+        }
+        if self.settings.mute_level == 0 {
             out.push(Action::Speak {
                 channel: channel.to_string(),
                 text,
                 decision,
                 release,
+                kind,
             });
+        } else {
+            self.note(
+                Some(channel),
+                kind,
+                format!("not spoken: mute level {}", self.settings.mute_level),
+                Some(text),
+            );
         }
     }
 
@@ -312,7 +378,7 @@ impl Rules {
     fn flush_prose(&mut self, out: &mut Vec<Action>, channel: &str) {
         let held = std::mem::take(&mut self.turn(channel).held_prose);
         for text in held {
-            self.speak(out, channel, text, false);
+            self.speak(out, channel, text, false, "prose");
         }
     }
 
@@ -339,6 +405,7 @@ impl Rules {
         // Every chunk is recorded for summaries; at `skip_code` a code
         // block's announcement is not spoken (#214).
         let mut texts: Vec<String> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
         for ch in c.assembler.feed(delta, index, is_final) {
             match ch {
                 Chunk::Text(t) => {
@@ -347,17 +414,36 @@ impl Rules {
                 }
                 Chunk::Code(t) => {
                     c.prose.push(t.clone());
-                    if !skip_code {
+                    if skip_code {
+                        skipped.push(t);
+                    } else {
                         texts.push(t);
                     }
                 }
                 Chunk::ParagraphBreak => {}
             }
         }
+        let settle = c.settle_armed;
+        for t in skipped {
+            self.note(
+                Some(channel),
+                "code",
+                "not spoken: verbosity skip_code".into(),
+                Some(t),
+            );
+        }
         if summaries {
+            for t in texts {
+                self.note(
+                    Some(channel),
+                    "prose",
+                    "kept for the summary (summaries on)".into(),
+                    Some(t),
+                );
+            }
             // Late prose after turn_end restarts the settle window, so the
             // summary waits for the whole turn (#14).
-            if c.settle_armed {
+            if settle {
                 self.arm_settle(&mut out, channel);
             }
             return Ok(out);
@@ -365,9 +451,18 @@ impl Rules {
         if texts.is_empty() {
             return Ok(out);
         }
+        let c = self.turn(channel);
         c.held_prose.extend(texts);
         if c.released || c.held_prose.len() >= minqueue {
             self.flush_prose(&mut out, channel);
+        } else {
+            let held = c.held_prose.len();
+            self.note(
+                Some(channel),
+                "prose",
+                format!("held: {held} chunk(s) wait for minqueue {minqueue} or the turn end"),
+                None,
+            );
         }
         Ok(out)
     }
@@ -449,25 +544,36 @@ impl Rules {
         let mut out = Vec::new();
         let everything = self.settings.verbosity == Verbosity::Everything;
         let awaiting = self.turn(channel).awaiting;
-        let text = match ask.kind {
+        let (text, kind) = match ask.kind {
             AskKind::Question => {
                 if !awaiting {
                     self.earcon(&mut out, Earcon::Choice);
                 }
                 self.turn(channel).awaiting = true;
-                decision::question_text(&ask.text, &ask.options, ask.multi)
+                (
+                    decision::question_text(&ask.text, &ask.options, ask.multi),
+                    "question",
+                )
             }
             AskKind::Permission => {
                 if awaiting {
                     // The permission prompt the unanswered question also
                     // fires: drop it and consume the mark.
                     self.turn(channel).awaiting = false;
+                    self.note(
+                        Some(channel),
+                        "permission",
+                        "not spoken: the permission prompt of the question awaiting its \
+                         answer (#11)"
+                            .into(),
+                        Some(decision::permission_text(&ask.text)),
+                    );
                     return out;
                 }
                 self.earcon(&mut out, Earcon::Permission);
-                decision::permission_text(&ask.text)
+                (decision::permission_text(&ask.text), "permission")
             }
-            AskKind::Plan => decision::plan_text(&ask.text),
+            AskKind::Plan => (decision::plan_text(&ask.text), "plan"),
         };
         let mut extras: Vec<&str> = Vec::new();
         if let Some(n) = &ask.notes {
@@ -490,11 +596,18 @@ impl Rules {
         let item = Decision {
             id: self.next_decision,
             text,
+            kind,
         };
         if self.summaries() {
             // The decision can beat its lead-in prose (separate hook
             // processes race): gather the lead-in after the settle window
             // and speak it first (#16).
+            self.note(
+                Some(channel),
+                kind,
+                "waits for the settle window (summaries on)".into(),
+                Some(item.text.clone()),
+            );
             self.turn(channel).pending.push(item);
             self.arm_settle(&mut out, channel);
         } else {
@@ -508,18 +621,27 @@ impl Rules {
     pub fn tool(&mut self, channel: &str, name: &str, summary: &str) -> Vec<Action> {
         let mut out = Vec::new();
         self.turn(channel).awaiting = false;
-        if self.settings.verbosity != Verbosity::Everything {
-            return out;
-        }
-        self.turn(channel).released = true;
-        self.flush_prose(&mut out, channel);
         let summary = summary.trim();
         let text = if summary.is_empty() {
             format!("Running {}.", name.trim())
         } else {
             summary.to_string()
         };
-        self.speak(&mut out, channel, text, false);
+        if self.settings.verbosity != Verbosity::Everything {
+            self.note(
+                Some(channel),
+                "tool",
+                format!(
+                    "not announced: verbosity {}",
+                    self.settings.verbosity.as_str()
+                ),
+                Some(text),
+            );
+            return out;
+        }
+        self.turn(channel).released = true;
+        self.flush_prose(&mut out, channel);
+        self.speak(&mut out, channel, text, false, "tool");
         out
     }
 
@@ -639,7 +761,7 @@ impl Rules {
                     // the summary follows (bounded inversion).
                     let (_, items) = c.held.take().expect("checked");
                     for d in items {
-                        self.speak(&mut out, channel, d.text, true);
+                        self.speak(&mut out, channel, d.text, true, d.kind);
                     }
                 }
             }
@@ -678,7 +800,7 @@ impl Rules {
         if text.chars().count() < SUMMARY_MIN_CHARS && !leadin {
             if focused == Some(channel) {
                 for chunk in chunks {
-                    self.speak(out, channel, chunk, false);
+                    self.speak(out, channel, chunk, false, "prose");
                 }
             } else {
                 // Joins the summary sequence, so a short turn finishing
@@ -742,9 +864,16 @@ impl Rules {
         if digesting || c.inflight > 0 {
             let owner = c.last_token;
             let id = item.id;
+            let (kind, text) = (item.kind, item.text.clone());
             let mut items = c.held.take().map(|(_, v)| v).unwrap_or_default();
             items.push(item);
             c.held = Some((owner, items));
+            self.note(
+                Some(channel),
+                kind,
+                "held behind the summary in flight (context first)".into(),
+                Some(text),
+            );
             out.push(Action::Timer {
                 after: cap,
                 timer: Timer::HoldCap {
@@ -754,7 +883,7 @@ impl Rules {
             });
         } else {
             self.flush_prose(out, channel);
-            self.speak(out, channel, item.text, true);
+            self.speak(out, channel, item.text, true, item.kind);
         }
     }
 
@@ -783,7 +912,7 @@ impl Rules {
         self.land(&mut out, job.seq, release);
         for d in held {
             // Decisions after their context.
-            self.speak(&mut out, &job.channel, d.text, true);
+            self.speak(&mut out, &job.channel, d.text, true, d.kind);
         }
         out
     }
@@ -818,16 +947,27 @@ impl Rules {
     /// message is always read), except for a lead-in, which is dropped.
     fn apply(&mut self, out: &mut Vec<Action>, r: Release) {
         if self.turns.get(&r.channel).map(|c| c.gen) != Some(r.gen) {
+            self.note(
+                Some(&r.channel),
+                "summary",
+                "dropped: the session moved on (a new turn, an answer or a stop)".into(),
+                r.summary.or(Some(r.text)),
+            );
             return;
         }
         match r.summary.filter(|s| !s.trim().is_empty()) {
             Some(s) => {
                 let text = normalize_for_speech(&s);
-                self.say(out, &r.channel, text, false, true);
+                self.say(out, &r.channel, text, false, true, "summary");
             }
-            None if r.leadin => {}
+            None if r.leadin => self.note(
+                Some(&r.channel),
+                "summary",
+                "lead-in dropped: the summarizer gave nothing".into(),
+                None,
+            ),
             None if r.text.trim().is_empty() => self.earcon(out, Earcon::SummaryFailed),
-            None => self.say(out, &r.channel, r.text, false, true),
+            None => self.say(out, &r.channel, r.text, false, true, "prose"),
         }
     }
 
