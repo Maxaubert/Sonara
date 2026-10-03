@@ -26,7 +26,7 @@ use sonara_agent::{Trace, Traced};
 use sonara_channels::Dropped;
 use sonara_system::log::value;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A protocol string field longer than this (bytes) is clipped in an `in`
@@ -189,15 +189,43 @@ const PRIVATE_FIELDS: &[&str] = &[
     "events",
 ];
 
-/// Clip every string over `FIELD_MAX` bytes, anywhere in `v`.
-pub fn clip_strings(v: &mut Value) {
+/// Make `v` fit for the log, anywhere in it: the value of a field whose
+/// name says it holds a secret is masked, credential-looking words in text
+/// are masked (`sonara_log::mask`), and every string over `FIELD_MAX`
+/// bytes is clipped.
+pub fn scrub(v: &mut Value) {
     match v {
-        Value::String(s) if s.len() > FIELD_MAX => {
-            *s = sonara_log::clip(s, FIELD_MAX).into_owned();
+        Value::String(s) => {
+            if let std::borrow::Cow::Owned(m) = sonara_log::mask(s) {
+                *s = m;
+            }
+            if s.len() > FIELD_MAX {
+                *s = sonara_log::clip(s, FIELD_MAX).into_owned();
+            }
         }
-        Value::Array(a) => a.iter_mut().for_each(clip_strings),
-        Value::Object(o) => o.values_mut().for_each(clip_strings),
+        Value::Array(a) => a.iter_mut().for_each(scrub),
+        Value::Object(o) => {
+            for (k, v) in o.iter_mut() {
+                if sonara_log::secret_key(k) && !v.is_null() {
+                    *v = Value::String(sonara_log::MASK.into());
+                } else {
+                    scrub(v);
+                }
+            }
+        }
         _ => {}
+    }
+}
+
+/// Whether the `value` of a `set` is safe to log with `debug_log` off.
+fn plain(m: &Map<String, Value>, v: &Value) -> bool {
+    match v {
+        Value::Null | Value::Bool(_) | Value::Number(_) => true,
+        Value::String(_) => m
+            .get("key")
+            .and_then(Value::as_str)
+            .is_some_and(|k| k != "summaries" && crate::config::setting(k).is_some()),
+        _ => false,
     }
 }
 
@@ -224,18 +252,17 @@ pub fn input_json(m: &Map<String, Value>, debug: bool) -> Value {
             }
             continue;
         }
-        // A `set` value is kept when it is a plain value (a rate, a
-        // voice): `channel_prefs` and `summaries` carry the user's own
-        // labels and prompts.
-        let keep = debug
-            || PRIVATE_FIELDS.contains(&k.as_str())
-            || (k == "value" && !v.is_object() && !v.is_array());
+        // A `set` value is kept when it is a number, a switch or a choice
+        // of the runtime's own settings (a rate, a voice). Free text is
+        // not: `channel_prefs` and `summaries` carry the user's own labels
+        // and prompts, an extension setting may be a folder path.
+        let keep = debug || PRIVATE_FIELDS.contains(&k.as_str()) || (k == "value" && plain(m, v));
         if keep {
             out.insert(k.clone(), v.clone());
         }
     }
     let mut v = Value::Object(out);
-    clip_strings(&mut v);
+    scrub(&mut v);
     v
 }
 
@@ -255,9 +282,48 @@ pub fn input_line(m: &Map<String, Value>, over_http: bool, debug: bool) -> Optio
     logged(kind, over_http).then(|| format!("in {}", input_json(m, debug)))
 }
 
+/// Seconds between two logged refusals of a connection that has not
+/// said `hello` with the token: anyone on the machine can reach the port,
+/// so what they send is never logged and their refusals are rate limited.
+const UNAUTHED_EVERY: u64 = 10;
+static UNAUTHED: Gate = Gate::new(UNAUTHED_EVERY);
+
+/// Lets one event through per `every` seconds.
+pub struct Gate {
+    every: u64,
+    last: AtomicU64,
+}
+
+impl Gate {
+    pub const fn new(every: u64) -> Gate {
+        Gate {
+            every,
+            last: AtomicU64::new(0),
+        }
+    }
+
+    /// Whether an event at `now` (seconds) passes.
+    pub fn allow(&self, now: u64) -> bool {
+        let last = self.last.load(Ordering::SeqCst);
+        (last == 0 || now >= last + self.every)
+            && self
+                .last
+                .compare_exchange(last, now.max(1), Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+    }
+}
+
+/// Whether a refusal before `hello` may be logged now (`now` in seconds).
+pub fn unauthed_allowed(now: u64) -> bool {
+    UNAUTHED.allow(now)
+}
+
 /// The line of a refused message.
 pub fn failed_line(kind: &str, code: &str, message: &str) -> String {
-    format!("in failed type={} {code}: {message}", value(kind))
+    format!(
+        "in failed type={} {code}: {message}",
+        value(&sonara_log::clip(kind, 64))
+    )
 }
 
 #[cfg(test)]
@@ -290,6 +356,40 @@ mod tests {
             failed_line("ask", "E_UNSUPPORTED", "not enabled"),
             "in failed type=ask E_UNSUPPORTED: not enabled"
         );
+    }
+
+    #[test]
+    fn a_set_keeps_a_plain_value_but_never_free_text_with_debug_log_off() {
+        let voice = map(json!({"type": "set", "key": "voice", "value": "af_sarah"}));
+        assert!(input_line(&voice, false, false)
+            .unwrap()
+            .contains("af_sarah"));
+        let folder = map(json!({"type": "set", "key": "earcons_dir", "value": "C:/Users/Secret"}));
+        assert!(!input_line(&folder, false, false)
+            .unwrap()
+            .contains("Secret"));
+        let on = map(json!({"type": "set", "key": "earcons_on", "value": true}));
+        assert!(input_line(&on, false, false)
+            .unwrap()
+            .contains(r#""value":true"#));
+    }
+
+    #[test]
+    fn secrets_are_masked_even_with_debug_log_on() {
+        let m = map(
+            json!({"type": "ask", "channel": "c", "text": "run with API_KEY=abc123", "token": "t0k"}),
+        );
+        let line = input_line(&m, false, true).unwrap();
+        assert!(!line.contains("abc123") && !line.contains("t0k"), "{line}");
+    }
+
+    #[test]
+    fn refusals_before_hello_are_logged_at_most_once_per_window() {
+        let gate = Gate::new(10);
+        assert!(gate.allow(1_000));
+        assert!(!gate.allow(1_001));
+        assert!(!gate.allow(1_009));
+        assert!(gate.allow(1_010));
     }
 
     #[test]

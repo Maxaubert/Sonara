@@ -245,7 +245,10 @@ fn a_huge_field_is_clipped_and_debug_log_off_keeps_text_out() {
     let home = Home::new("log-clip");
     let _rx = fake_runtime(&home);
     let big = "w".repeat(20_000);
-    let payload = json!({"session_id": "s1", "tool_name": "Write", "tool_input": {"file_path": "a.txt", "content": big}});
+    let question =
+        json!({"questions": [{"question": big, "header": "Pick", "options": [{"label": "Red"}]}]});
+    let payload =
+        json!({"session_id": "s1", "tool_name": "AskUserQuestion", "tool_input": question});
     assert_eq!(
         run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]),
         0
@@ -253,10 +256,22 @@ fn a_huge_field_is_clipped_and_debug_log_off_keeps_text_out() {
     let log = hook_log(&home);
     assert!(log.contains("...[+15904 bytes]"), "clipped at 4 KB");
     assert!(
-        log.contains(r#""file_path":"a.txt""#),
+        log.contains(r#""header":"Pick""#),
         "short fields stay whole"
     );
-    assert!(log.len() < 10_000, "{}", log.len());
+    assert!(log.len() < 20_000, "{}", log.len());
+    // Another tool's input (a file being written) keeps its field names only.
+    let write = json!({"session_id": "s1", "tool_name": "Write", "tool_input": {"file_path": "a.txt", "content": "private file"}});
+    assert_eq!(
+        run(&home, "PreToolUse", write.to_string().as_bytes(), &[]),
+        0
+    );
+    let last = hook_log(&home).lines().last().unwrap().to_string();
+    assert!(
+        last.contains(r#""fields":["content","file_path"]"#),
+        "{last}"
+    );
+    assert!(!last.contains("private file"), "{last}");
     std::fs::write(home.dir.join("config.json"), r#"{"debug_log": false}"#).unwrap();
     let secret = json!({"session_id": "s1", "notification_type": "permission_prompt", "message": "Secret words"});
     assert_eq!(

@@ -314,15 +314,57 @@ pub fn debug_log(home: &Path) -> bool {
         .unwrap_or(true)
 }
 
-/// Clip every string over `FIELD_MAX` bytes, anywhere in `v`.
-pub fn clip_strings(v: &mut Value) {
+/// Make `v` fit for the log, anywhere in it: the value of a field whose
+/// name says it holds a secret is masked, credential-looking words in text
+/// are masked (`sonara_log::mask`), and every string over `FIELD_MAX`
+/// bytes is clipped.
+pub fn scrub(v: &mut Value) {
     match v {
-        Value::String(s) if s.len() > FIELD_MAX => {
-            *s = sonara_log::clip(s, FIELD_MAX).into_owned();
+        Value::String(s) => {
+            if let std::borrow::Cow::Owned(m) = sonara_log::mask(s) {
+                *s = m;
+            }
+            if s.len() > FIELD_MAX {
+                *s = sonara_log::clip(s, FIELD_MAX).into_owned();
+            }
         }
-        Value::Array(a) => a.iter_mut().for_each(clip_strings),
-        Value::Object(o) => o.values_mut().for_each(clip_strings),
+        Value::Array(a) => a.iter_mut().for_each(scrub),
+        Value::Object(o) => {
+            for (k, v) in o.iter_mut() {
+                if sonara_log::secret_key(k) && !v.is_null() {
+                    *v = Value::String(sonara_log::MASK.into());
+                } else {
+                    scrub(v);
+                }
+            }
+        }
         _ => {}
+    }
+}
+
+/// Tools whose input Sonara reads, so the log keeps it whole.
+const READ_TOOLS: &[&str] = &["AskUserQuestion"];
+
+/// Every tool fires `PreToolUse`, so its `tool_input` may be a shell
+/// command or a whole file: for a tool Sonara does not read, only the
+/// input's field names are kept.
+pub fn slim_tool_input(payload: &mut Value) {
+    let tool = payload
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if READ_TOOLS.contains(&tool) {
+        return;
+    }
+    if let Some(input) = payload.get_mut("tool_input") {
+        if let Value::Object(o) = input {
+            *input = json!({ "fields": o.keys().collect::<Vec<_>>() });
+        } else if !input.is_null() {
+            *input = json!("[omitted]");
+        }
+    }
+    if let Some(out) = payload.get_mut("tool_response") {
+        *out = json!("[omitted]");
     }
 }
 
@@ -361,11 +403,12 @@ pub fn log_line(
     }
     if debug {
         let mut sent = Value::Array(msgs.to_vec());
-        clip_strings(&mut sent);
+        scrub(&mut sent);
         line.push_str(&format!(" sent={sent}"));
         match payload {
             Some(mut p) => {
-                clip_strings(&mut p);
+                slim_tool_input(&mut p);
+                scrub(&mut p);
                 line.push_str(&format!(" payload={p}"));
             }
             None if raw.is_empty() => line.push_str(" payload=none"),
@@ -790,5 +833,77 @@ mod tests {
         let mut msgs = vec![json!({"type": "stream"}), json!({"type": "focus"})];
         stamp(&mut msgs, 12.5);
         assert!(msgs.iter().all(|m| m["t"] == 12.5));
+    }
+
+    #[test]
+    fn the_log_keeps_no_command_file_or_secret_of_a_tool_sonara_does_not_read() {
+        let raw = json!({
+            "hook_event_name": "PreToolUse",
+            "session_id": "s1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "curl -H 'Authorization: Bearer abcdefghijklmnop' x"},
+            "api_key": "plain-secret",
+        })
+        .to_string();
+        let line = log_line(
+            "PreToolUse",
+            raw.as_bytes(),
+            &[],
+            "sent",
+            Duration::ZERO,
+            true,
+        );
+        assert!(
+            line.contains(r#""tool_input":{"fields":["command"]}"#),
+            "{line}"
+        );
+        assert!(
+            !line.contains("abcdefghijklmnop") && !line.contains("plain-secret"),
+            "{line}"
+        );
+        assert!(line.contains(r#""api_key":"[redacted]""#), "{line}");
+    }
+
+    #[test]
+    fn the_log_keeps_the_question_sonara_reads_with_secrets_masked() {
+        let raw = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [{"question": "Use GITHUB_TOKEN=ghp_1234567890abcdef1234 ?",
+                                          "options": [{"label": "Red"}]}]},
+        })
+        .to_string();
+        let line = log_line(
+            "PreToolUse",
+            raw.as_bytes(),
+            &[],
+            "sent",
+            Duration::ZERO,
+            true,
+        );
+        assert!(
+            line.contains("Use GITHUB_TOKEN=[redacted] ?") && line.contains("Red"),
+            "{line}"
+        );
+        assert!(!line.contains("ghp_1234567890"), "{line}");
+    }
+
+    #[test]
+    fn with_debug_log_off_the_log_has_no_payload_and_no_text() {
+        let raw = json!({"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Secret?"}]}})
+            .to_string();
+        let msgs = vec![json!({"type": "ask", "text": "Secret?"})];
+        let line = log_line(
+            "PreToolUse",
+            raw.as_bytes(),
+            &msgs,
+            "sent",
+            Duration::ZERO,
+            false,
+        );
+        assert!(
+            !line.contains("Secret") && !line.contains("payload"),
+            "{line}"
+        );
     }
 }

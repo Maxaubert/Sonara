@@ -26,6 +26,9 @@
 //! Best effort by design: every failure is an `Err` the caller may ignore.
 //! No dependencies, so the hook adapter (L5) links it without any runtime
 //! crate.
+pub mod secrets;
+pub use secrets::{mask, secret_key, MASK};
+
 use std::borrow::Cow;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::Write;

@@ -527,7 +527,9 @@ impl Server {
         };
         let kind = m.get("type").and_then(Value::as_str);
         let over_http = session.transport == Transport::Http;
-        if request.is_object() {
+        // Nothing a connection sends before `hello` is logged (the token
+        // is stripped from the `hello` itself).
+        if request.is_object() && (session.authed || kind == Some("hello")) {
             if let Some(line) = trace_log::input_line(m, over_http, trace_log::debug()) {
                 self.trace(&line);
             }
@@ -553,7 +555,12 @@ impl Server {
             },
             Err(f) => {
                 let k = kind.unwrap_or("");
-                if trace_log::logged(k, over_http) {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let allowed = session.authed || trace_log::unauthed_allowed(now);
+                if allowed && trace_log::logged(k, over_http) {
                     self.trace(&trace_log::failed_line(k, f.code.as_str(), &f.message));
                 }
                 let after = if f.code == Code::Auth && session.transport == Transport::Tcp {

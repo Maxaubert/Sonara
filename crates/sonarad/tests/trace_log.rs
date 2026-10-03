@@ -253,3 +253,32 @@ fn with_debug_log_off_no_text_is_written_and_the_choice_is_saved() {
     let v = c.request(json!({"type": "set", "key": "debug_log", "value": true}));
     assert_eq!(v["value"], true);
 }
+
+#[test]
+fn what_a_connection_sends_before_hello_never_reaches_the_log() {
+    let rt = start("unauthed");
+    // An authed client first, so the runtime is up and `runtime.json` read.
+    let mut c = Client::connect(&rt);
+    let info: Value =
+        serde_json::from_str(&std::fs::read_to_string(rt.home.join("runtime.json")).unwrap())
+            .unwrap();
+    let port = info["port"].as_u64().unwrap() as u16;
+    for _ in 0..5 {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let msg =
+            json!({"type": "ask", "channel": "x", "kind": "question", "text": "Intruder text"});
+        s.write_all(format!("{msg}\n").as_bytes()).unwrap();
+        let mut line = String::new();
+        let _ = BufReader::new(s).read_line(&mut line);
+        assert!(line.contains("E_AUTH"), "{line}");
+    }
+    c.request(json!({"type": "channel_open", "channel": "c1", "label": "marker"}));
+    let log = wait_log(&rt, "the marker", |t| t.contains("\"marker\""));
+    assert!(!log.contains("Intruder"), "{log}");
+    let refusals = log.lines().filter(|l| l.contains("E_AUTH")).count();
+    assert!(
+        refusals <= 1,
+        "refusals before hello are rate limited:\n{log}"
+    );
+}
