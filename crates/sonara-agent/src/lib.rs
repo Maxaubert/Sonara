@@ -31,8 +31,10 @@
 //!   channel gets a new turn.
 //! - `Silence` (muting) is `control(Stop)` over every channel.
 //! - Earcons are played with `ReaderHandle::play_clip` and reported to
-//!   `subscribe`rs. The clips come from `Config::earcons` (the bundled
-//!   ones, or a folder of custom WAVs in front: `earcon::Library`).
+//!   `subscribe`rs. The clips come from `Config::earcons`
+//!   (`earcon::Library`: the bundled sound library, the user's selection
+//!   per kind and a folder of custom WAVs); a kind set to silence is still
+//!   reported.
 //! - **Session switches** (the Python daemon's "Session changed"): the
 //!   agent sets L2's announcement texts to `SESSION_CHANGED` /
 //!   `SESSION_CHANGED_AGAIN` and plays the `session_change` earcon right
@@ -464,10 +466,12 @@ impl Inner {
 
     /// Play an earcon now and report it to the subscribers.
     fn play(&self, e: Earcon) -> Result<()> {
-        let clip = self.earcons.clip(e);
-        self.channels
-            .reader()
-            .play_clip(clip.samples.clone(), clip.sample_rate)?;
+        // An event set to silence is still reported.
+        if let Some(clip) = self.earcons.clip(e) {
+            self.channels
+                .reader()
+                .play_clip(clip.samples.clone(), clip.sample_rate)?;
+        }
         self.subscribers
             .lock()
             .unwrap_or_else(|p| p.into_inner())

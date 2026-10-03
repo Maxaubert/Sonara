@@ -1,14 +1,17 @@
 //! The `agent` extension (spec 4.3) on top of `sonara_agent`: `stream`,
 //! `turn_start`, `turn_end`, `ask`, `earcon`, `tool`, `answered`, the
 //! settings `mute_level`, `verbosity`, `minqueue`, `background_policy` and
-//! `summaries`, the read-only key `earcons` (the custom earcons folder and
-//! the kinds it overrides), and the `earcons` event stream. It needs
+//! `summaries`, the read-only key `earcons` (the sound library, what each
+//! earcon plays and the custom earcons folder), the sound picker messages
+//! `earcon_select`, `earcon_upload`, `earcon_delete` and `earcon_preview`
+//! (#211), and the `earcons` event stream. It needs
 //! `channels`, which enabling it enables too. `protocol` calls in here once a client enabled it; before that its
 //! messages are `E_UNSUPPORTED`.
 use crate::config::Store;
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
+use sonara_agent::earcon::{self, Source};
 use sonara_agent::settings::{BackgroundPolicy, Settings, SummaryCommand, Verbosity};
 use sonara_agent::summarizer::instruction;
 use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Style, SummarySettings};
@@ -29,6 +32,10 @@ pub const TYPES: &[&str] = &[
     "earcon",
     "tool",
     "answered",
+    "earcon_select",
+    "earcon_upload",
+    "earcon_delete",
+    "earcon_preview",
 ];
 
 /// `set`/`get` keys of the extension.
@@ -397,15 +404,183 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
     ok(f)
 }
 
-/// `get earcons`: the folder whose `<kind>.wav` files replace the bundled
-/// clips (`null`: none), every kind, and the kinds a usable file replaces
-/// now.
+/// `get earcons`: the folder of the user's own sounds (`null`: none),
+/// every kind, the kinds with a usable own file, the bundled sound library
+/// and, per kind, the selection, what plays now and the default (#211).
 pub fn earcons_json(lib: &sonara_agent::Library) -> Value {
+    let custom = lib.custom();
+    let events: Map<String, Value> = Earcon::ALL
+        .iter()
+        .map(|e| {
+            (
+                e.as_str().to_string(),
+                json!({
+                    "selection": lib.selection(*e).map(|s| s.as_string()),
+                    "effective": lib.effective(*e).as_string(),
+                    "default": e.default_source().as_string(),
+                    "custom": custom.contains(e),
+                }),
+            )
+        })
+        .collect();
     json!({
         "folder": lib.dir().map(|d| d.display().to_string()),
         "kinds": Earcon::ALL.iter().map(Earcon::as_str).collect::<Vec<_>>(),
-        "custom": lib.custom().iter().map(Earcon::as_str).collect::<Vec<_>>(),
+        "custom": custom.iter().map(Earcon::as_str).collect::<Vec<_>>(),
+        "library": earcon::sounds()
+            .iter()
+            .map(|id| json!({"id": id, "label": earcon::sound_label(id)}))
+            .collect::<Vec<_>>(),
+        "events": events,
+        "max_upload_bytes": earcon::MAX_UPLOAD_BYTES,
+        "max_seconds": earcon::MAX_SECONDS,
     })
+}
+
+fn kind(m: &Map<String, Value>) -> Result<Earcon, Failure> {
+    let k = opt_str(m, "kind")?.ok_or_else(|| bad("missing 'kind'"))?;
+    Earcon::parse(k).ok_or_else(|| bad(format!("unknown earcon '{k}'")))
+}
+
+fn source(m: &Map<String, Value>) -> Result<Option<Source>, Failure> {
+    opt_str(m, "source")?
+        .map(|s| {
+            Source::parse(s).ok_or_else(|| {
+                bad("'source' is \"default\", \"library:<name>\", \"custom\" or \"none\"")
+            })
+        })
+        .transpose()
+}
+
+/// The selections now, stored in `config.json` (`earcon_sounds`).
+fn persist(a: &Agent, store: &Store) {
+    let map: Map<String, Value> = a
+        .earcons()
+        .selections()
+        .into_iter()
+        .map(|(e, s)| (e.as_str().to_string(), json!(s.as_string())))
+        .collect();
+    if map.is_empty() {
+        store.forget(crate::config::EARCON_SOUNDS);
+    } else {
+        store.record(crate::config::EARCON_SOUNDS, &Value::Object(map));
+    }
+}
+
+fn with_earcons(a: &Agent) -> Handled {
+    let mut f = Map::new();
+    f.insert("earcons".into(), earcons_json(a.earcons()));
+    ok(f)
+}
+
+/// `earcon_select {kind, source}`: what the kind plays from now on.
+pub fn earcon_select(a: &Agent, store: &Store, m: &Map<String, Value>) -> Handled {
+    let e = kind(m)?;
+    let s = source(m)?.ok_or_else(|| bad("missing 'source'"))?;
+    a.earcons()
+        .select(e, s)
+        .map_err(|why| Failure::new(Code::NotFound, why))?;
+    persist(a, store);
+    with_earcons(a)
+}
+
+/// `earcon_upload {kind, wav}`: `wav` is a base64 WAV, saved as the kind's
+/// own sound (`<home>\earcons\<kind>.wav`) and selected.
+pub fn earcon_upload(a: &Agent, store: &Store, m: &Map<String, Value>) -> Handled {
+    let e = kind(m)?;
+    let data = opt_str(m, "wav")?.ok_or_else(|| bad("missing 'wav' (a base64 WAV file)"))?;
+    // Base64 is 4/3 the size: refuse an oversize upload before decoding.
+    if data.len() > earcon::MAX_UPLOAD_BYTES / 3 * 4 + 8 {
+        return Err(Failure::new(
+            Code::BadRequest,
+            format!(
+                "the sound is bigger than {} KB",
+                earcon::MAX_UPLOAD_BYTES / 1024
+            ),
+        ));
+    }
+    let bytes = base64(data).ok_or_else(|| bad("'wav' is not valid base64"))?;
+    a.earcons()
+        .save_custom(e, &bytes)
+        .map_err(|why| Failure::new(Code::BadRequest, why))?;
+    persist(a, store);
+    with_earcons(a)
+}
+
+/// `earcon_delete {kind}`: delete the kind's own sound (its default plays
+/// again if it was selected).
+pub fn earcon_delete(a: &Agent, store: &Store, m: &Map<String, Value>) -> Handled {
+    let e = kind(m)?;
+    let existed = a
+        .earcons()
+        .delete_custom(e)
+        .map_err(|why| Failure::new(Code::Engine, why))?;
+    persist(a, store);
+    let (mut f, after) = with_earcons(a)?;
+    f.insert("deleted".into(), json!(existed));
+    Ok((f, after))
+}
+
+/// `earcon_preview {kind?, source?}`: play a sound now, over speech and
+/// whatever the mute level (the user asked to hear it). Without `source`,
+/// what `kind` plays now.
+pub fn earcon_preview(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let e = match m.get("kind") {
+        None | Some(Value::Null) => None,
+        _ => Some(kind(m)?),
+    };
+    let s = match (source(m)?, e) {
+        (Some(s), _) => s,
+        (None, Some(e)) => a.earcons().effective(e),
+        (None, None) => return Err(bad("give 'kind', 'source' or both")),
+    };
+    let clip = a
+        .earcons()
+        .source_clip(e, &s)
+        .map_err(|why| Failure::new(Code::NotFound, why))?;
+    if let Some(c) = &clip {
+        a.channels()
+            .reader()
+            .play_clip(c.samples.clone(), c.sample_rate)
+            .map_err(reader_failure)?;
+    }
+    let mut f = Map::new();
+    f.insert("played".into(), json!(clip.is_some()));
+    f.insert("source".into(), json!(s.as_string()));
+    ok(f)
+}
+
+/// Standard base64 (padding optional, whitespace ignored), or `None`.
+fn base64(text: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    }
+    let clean: Vec<u8> = text.bytes().filter(|c| !c.is_ascii_whitespace()).collect();
+    let body = match clean.iter().position(|&c| c == b'=') {
+        Some(i) if clean[i..].iter().all(|&c| c == b'=') && clean.len() - i <= 2 => &clean[..i],
+        Some(_) => return None,
+        None => &clean[..],
+    };
+    if body.len() % 4 == 1 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(body.len() / 4 * 3 + 2);
+    for chunk in body.chunks(4) {
+        let mut n = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= val(c)? << (18 - 6 * i);
+        }
+        let bytes = n.to_be_bytes();
+        out.extend_from_slice(&bytes[1..chunk.len()]);
+    }
+    Some(out)
 }
 
 /// The `earcon` event.
@@ -520,6 +695,175 @@ mod tests {
                 "{req}"
             );
         }
+    }
+
+    #[test]
+    fn base64_decodes_standard_text() {
+        assert_eq!(super::base64("aGVsbG8=").unwrap(), b"hello");
+        assert_eq!(super::base64("aGVsbG8").unwrap(), b"hello");
+        assert_eq!(super::base64("aGVs\nbG8h").unwrap(), b"hello!");
+        assert_eq!(super::base64("").unwrap(), b"");
+        assert!(super::base64("a").is_none());
+        assert!(super::base64("aGV=sbG8").is_none());
+        assert!(super::base64("aGVsbG8*").is_none());
+    }
+
+    /// A 0.1 s square wave as a 16-bit mono WAV, base64.
+    fn wav_b64(rate: u32) -> String {
+        let pcm = sonara_engine::PcmChunk {
+            samples: (0..rate / 10)
+                .map(|i| if (i / 20) % 2 == 0 { 8000 } else { -8000 })
+                .collect(),
+            sample_rate: rate,
+            channels: 1,
+        };
+        let bytes = sonara_engine::wav::encode(&pcm);
+        const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for c in bytes.chunks(3) {
+            let n = (c[0] as u32) << 16
+                | (*c.get(1).unwrap_or(&0) as u32) << 8
+                | *c.get(2).unwrap_or(&0) as u32;
+            for i in 0..4 {
+                if i <= c.len() {
+                    out.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_sound_picker_selects_uploads_deletes_and_previews() {
+        use crate::config::Store;
+        let dir = std::env::temp_dir().join(format!("sonarad-picker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Store::load(&dir).0;
+        let lib = sonara_agent::Library::new(dir.join("earcons"), None);
+        let s = server()
+            .with_config(store.clone())
+            .with_earcons(Arc::new(lib));
+        let mut a = Session::tcp();
+        call(
+            &s,
+            &mut a,
+            json!({"type": "hello", "token": "secret", "extensions": ["agent"]}),
+        );
+        let r = call(&s, &mut a, json!({"type": "get", "key": "earcons"}));
+        let v = &r["value"];
+        let library = v["library"].as_array().unwrap();
+        assert!(!library.is_empty(), "{v}");
+        assert_eq!(v["events"]["error"]["default"], "none");
+        assert_eq!(v["events"]["nav"]["selection"], Value::Null);
+        let id = library[0]["id"].as_str().unwrap().to_string();
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "earcon_select", "kind": "nav", "source": format!("library:{id}")}),
+        );
+        assert_eq!(
+            r["earcons"]["events"]["nav"]["effective"],
+            format!("library:{id}"),
+            "{r}"
+        );
+        assert_eq!(
+            store.value("earcon_sounds"),
+            json!({"nav": format!("library:{id}")})
+        );
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "earcon_upload", "kind": "turn_done", "wav": wav_b64(16_000)}),
+        );
+        assert_eq!(
+            r["earcons"]["events"]["turn_done"]["effective"], "custom",
+            "{r}"
+        );
+        assert!(dir.join("earcons").join("turn_done.wav").is_file());
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "earcon_preview", "kind": "turn_done"}),
+        );
+        assert_eq!(
+            (r["played"].clone(), r["source"].clone()),
+            (json!(true), json!("custom"))
+        );
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "earcon_select", "kind": "error", "source": "none"}),
+        );
+        assert_eq!(r["ok"], true);
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "earcon_preview", "kind": "error"}),
+        );
+        assert_eq!(r["played"], false);
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "earcon_delete", "kind": "turn_done"}),
+        );
+        assert_eq!(r["deleted"], true);
+        assert_eq!(
+            r["earcons"]["events"]["turn_done"]["selection"],
+            Value::Null
+        );
+        assert_eq!(
+            store.value("earcon_sounds"),
+            json!({"nav": format!("library:{id}"), "error": "none"})
+        );
+        for (req, want) in [
+            (
+                json!({"type": "earcon_select", "kind": "ready", "source": "none"}),
+                "E_BAD_REQUEST",
+            ),
+            (
+                json!({"type": "earcon_select", "kind": "nav"}),
+                "E_BAD_REQUEST",
+            ),
+            (
+                json!({"type": "earcon_select", "kind": "nav", "source": "loud"}),
+                "E_BAD_REQUEST",
+            ),
+            (
+                json!({"type": "earcon_select", "kind": "nav", "source": "library:nope"}),
+                "E_NOT_FOUND",
+            ),
+            (
+                json!({"type": "earcon_select", "kind": "nav", "source": "custom"}),
+                "E_NOT_FOUND",
+            ),
+            (
+                json!({"type": "earcon_upload", "kind": "nav"}),
+                "E_BAD_REQUEST",
+            ),
+            (
+                json!({"type": "earcon_upload", "kind": "nav", "wav": "%%%"}),
+                "E_BAD_REQUEST",
+            ),
+            (
+                json!({"type": "earcon_upload", "kind": "nav", "wav": "aGVsbG8="}),
+                "E_BAD_REQUEST",
+            ),
+            (
+                json!({"type": "earcon_upload", "kind": "nav", "wav": "A".repeat(2_000_000)}),
+                "E_BAD_REQUEST",
+            ),
+            (json!({"type": "earcon_preview"}), "E_BAD_REQUEST"),
+            (
+                json!({"type": "earcon_preview", "source": "custom"}),
+                "E_NOT_FOUND",
+            ),
+            (json!({"type": "earcon_delete"}), "E_BAD_REQUEST"),
+        ] {
+            assert_eq!(code(&call(&s, &mut a, req.clone())), want, "{req}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

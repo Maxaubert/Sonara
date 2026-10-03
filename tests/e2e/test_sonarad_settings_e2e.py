@@ -280,3 +280,168 @@ def test_the_audio_page_shows_the_custom_chimes_folder(live, browser):
     page.click("[data-page=audio]")
     pw.expect(page.locator("#earcons-custom")).to_contain_text("Your own: turn_done")
     page.close()
+
+
+# ---- the sound picker (#211) ----------------------------------------------
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+def small_wav(rate=8000, frames=800) -> bytes:
+    pcm = b"".join((8000 if i % 16 < 8 else -8000).to_bytes(2, "little", signed=True) for i in range(frames))
+    fmt = (1).to_bytes(2, "little") + (1).to_bytes(2, "little") + rate.to_bytes(4, "little") \
+        + (rate * 2).to_bytes(4, "little") + (2).to_bytes(2, "little") + (16).to_bytes(2, "little")
+    body = b"WAVEfmt " + len(fmt).to_bytes(4, "little") + fmt + b"data" + len(pcm).to_bytes(4, "little") + pcm
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+def wav_info(path: Path):
+    b = path.read_bytes()
+    assert b[:4] == b"RIFF" and b[8:12] == b"WAVE"
+    channels = int.from_bytes(b[22:24], "little")
+    rate = int.from_bytes(b[24:28], "little")
+    bits = int.from_bytes(b[34:36], "little")
+    return channels, rate, bits
+
+
+def audio_page(browser, lv):
+    page = open_page(browser, lv.url)
+    page.click("[data-page=audio]")
+    page.wait_for_selector("#sound-list .sound-row")
+    return page
+
+
+def test_every_event_has_a_row_with_what_it_means(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    rows = page.locator("#sound-list .sound-row")
+    pw.expect(rows).to_have_count(8)
+    pw.expect(page.locator("[data-kind=turn_done]")).to_contain_text("Claude finished its reply")
+    pw.expect(page.locator("[data-kind=summary_failed]")).to_contain_text("the reply is read as is")
+    # Labelled for a screen reader: name plus description.
+    sel = page.locator("#snd-turn_done")
+    assert sel.get_attribute("aria-label") == "Reply finished sound"
+    assert "snd-turn_done-desc" in sel.get_attribute("aria-describedby")
+    library = lv.get("earcons")["library"]
+    assert sel.locator("option").count() == len(library) + 1  # the library plus None
+    # error has no default sound: it is silent and cannot be played.
+    pw.expect(page.locator("#snd-error")).to_have_value("none")
+    pw.expect(page.locator("[data-kind=error] .play")).to_be_disabled()
+    pw.expect(page.locator("[data-kind=turn_done] [data-act=reset]")).to_be_disabled()
+    pw.expect(page.locator("[data-kind=turn_done] [data-act=remove]")).to_be_hidden()
+    page.close()
+
+
+def test_the_play_button_previews_through_the_runtime(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    with page.expect_response(lambda r: r.url.endswith("/v1/earcon_preview")) as resp:
+        page.click("[data-kind=nav] .play")
+    assert resp.value.request.post_data_json == {"kind": "nav"}
+    assert resp.value.status == 200 and resp.value.json()["played"] is True
+    page.close()
+
+
+def test_choosing_a_sound_by_keyboard_previews_saves_and_survives_a_reload(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    default = lv.get("earcons")["events"]["turn_done"]["default"]
+    sel = page.locator("#snd-turn_done")
+    sel.focus()
+    with page.expect_request(lambda r: r.url.endswith("/v1/earcon_preview")) as req:
+        page.keyboard.press("ArrowDown")
+    assert req.value.post_data_json == {"kind": "turn_done"}
+    picked = sel.input_value()
+    assert picked != default
+    assert eventually(lambda: lv.saved().get("earcon_sounds") == {"turn_done": picked})
+    pw.expect(page.locator("#live")).to_contain_text("Reply finished:")
+    assert lv.get("earcons")["events"]["turn_done"]["effective"] == picked
+    page.reload()
+    page.click("[data-page=audio]")
+    pw.expect(page.locator("#snd-turn_done")).to_have_value(picked)
+    pw.expect(page.locator("#snd-turn_done-now")).to_contain_text("Plays:")
+    # Tab order in a row: the sound list, play, then the actions.
+    page.locator("#snd-turn_done").focus()
+    page.keyboard.press("Tab")
+    pw.expect(page.locator("[data-kind=turn_done] .play")).to_be_focused()
+    page.keyboard.press("Tab")
+    pw.expect(page.locator("[data-kind=turn_done] [data-act=upload]")).to_be_focused()
+    page.keyboard.press("Tab")
+    reset = page.locator("[data-kind=turn_done] [data-act=reset]")
+    pw.expect(reset).to_be_focused()
+    page.keyboard.press("Enter")
+    assert eventually(lambda: lv.get("earcons")["events"]["turn_done"]["effective"] == default)
+    assert eventually(lambda: lv.saved().get("earcon_sounds") == {"turn_done": "default"})
+    pw.expect(page.locator("#snd-turn_done")).to_have_value(default)
+    page.close()
+
+
+def test_none_silences_an_event(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    page.select_option("#snd-nav", "none")
+    assert eventually(lambda: lv.saved().get("earcon_sounds") == {"nav": "none"})
+    pw.expect(page.locator("[data-kind=nav] .play")).to_be_disabled()
+    pw.expect(page.locator("#snd-nav-now")).to_contain_text("None (silent)")
+    page.close()
+
+
+def test_dropping_a_wav_on_a_row_makes_it_that_events_own_sound(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    data = list(small_wav())
+    dt = page.evaluate_handle(
+        """(bytes) => {
+            const dt = new DataTransfer();
+            dt.items.add(new File([new Uint8Array(bytes)], "chime.wav", {type: "audio/wav"}));
+            return dt;
+        }""",
+        data,
+    )
+    row = page.locator("[data-kind=choice]")
+    row.dispatch_event("dragenter", {"dataTransfer": dt})
+    pw.expect(row).to_have_class("sound-row drag")
+    with page.expect_response(lambda r: r.url.endswith("/v1/earcon_upload")) as resp:
+        row.dispatch_event("drop", {"dataTransfer": dt})
+    assert resp.value.status == 200, resp.value.text()
+    pw.expect(row).to_have_class("sound-row")
+    saved = lv.home / "earcons" / "choice.wav"
+    assert eventually(saved.is_file)
+    assert wav_info(saved) == (1, 44100, 16)
+    pw.expect(page.locator("#snd-choice")).to_have_value("custom")
+    pw.expect(page.locator("#live")).to_contain_text("Choice: your own sound saved")
+    assert eventually(lambda: lv.saved().get("earcon_sounds") == {"choice": "custom"})
+    # Remove it: the default comes back.
+    remove = page.locator("[data-kind=choice] [data-act=remove]")
+    pw.expect(remove).to_be_visible()
+    remove.click()
+    assert eventually(lambda: not saved.exists())
+    pw.expect(remove).to_be_hidden()
+    ev = lv.get("earcons")["events"]["choice"]
+    assert ev["effective"] == ev["default"]
+    page.close()
+
+
+def test_an_mp3_from_the_file_picker_is_decoded_in_the_browser(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    with page.expect_response(lambda r: r.url.endswith("/v1/earcon_upload")) as resp:
+        page.locator("[data-kind=session_change] input[type=file]").set_input_files(str(FIXTURES / "tone.mp3"))
+    assert resp.value.status == 200, resp.value.text()
+    saved = lv.home / "earcons" / "session_change.wav"
+    assert eventually(saved.is_file)
+    assert wav_info(saved) == (1, 44100, 16), "mono 16-bit WAV at 44.1 kHz"
+    frames = (saved.stat().st_size - 44) // 2
+    assert 0.3 * 44100 < frames < 0.6 * 44100
+    pw.expect(page.locator("#snd-session_change")).to_have_value("custom")
+    page.close()
+
+
+def test_a_file_that_is_not_audio_is_refused_with_a_message(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    page.locator("[data-kind=nav_edge] input[type=file]").set_input_files(
+        {"name": "notes.mp3", "mimeType": "audio/mpeg", "buffer": b"this is not audio at all"})
+    pw.expect(page.locator("#live")).to_contain_text("Could not read notes.mp3")
+    assert not (lv.home / "earcons" / "nav_edge.wav").exists()
+    page.close()

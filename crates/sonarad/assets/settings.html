@@ -198,6 +198,17 @@
     .engine-row strong { display:block; font-size:14px; margin-bottom:3px; }
     .pill { padding:4px 10px; border-radius:99px; background:var(--green-wash); color:var(--green); font-size:12px; font-weight:700; white-space:nowrap; }
     .path { font:12.5px ui-monospace,"Cascadia Mono",Consolas,monospace; overflow-wrap:anywhere; }
+    /* The sound picker (#211): one row per earcon, also a drop target. */
+    .sound-row { display:grid; grid-template-columns:minmax(200px,.9fr) minmax(280px,1.15fr); gap:30px; align-items:start; margin-left:20px; padding:18px 20px 18px 0; border-top:1px solid var(--line); }
+    .sound-row:first-child { border-top:0; }
+    .sound-row strong { display:block; font-size:15px; font-weight:650; margin-bottom:4px; }
+    .sound-now { margin-top:6px; color:var(--tertiary); font-size:12.5px; }
+    .sound-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .sound-actions .btn[hidden] { display:none; }
+    .drop-note { margin-top:8px; color:var(--tertiary); font-size:12px; }
+    .sound-row.drag { margin-left:0; padding-left:20px; background:var(--accent-wash); box-shadow:inset 0 0 0 2px var(--accent); border-radius:12px; }
+    .sound-row.drag .drop-note { color:var(--accent-text); font-weight:650; }
+    .sound-row[aria-busy="true"] .sound-actions { opacity:.6; }
     .footer { display:flex; justify-content:space-between; padding:16px 3px 0; color:var(--secondary); font-size:12.5px; }
     .banner { position:fixed; top:0; left:0; right:0; z-index:99; background:var(--red); color:#fff; padding:10px 16px; display:flex; gap:8px; font-size:13.5px; justify-content:center; }
     html[data-theme="dark"] .banner { color:#1c1c20; }
@@ -207,7 +218,7 @@
       .window { grid-template-columns:1fr; height:auto; }
       .nav-pane { border-right:0; border-bottom:1px solid var(--line); }
       .page { padding:28px 18px 60px; }
-      .pref { grid-template-columns:1fr; gap:12px; }
+      .pref, .sound-row { grid-template-columns:1fr; gap:12px; }
       .sess-head { display:none; }
       .sess-row { grid-template-columns:1fr auto; }
       .sess-row select { grid-column:1 / -1; }
@@ -289,9 +300,11 @@
           <div class="pref" id="duck-row"><div class="pref-copy"><label class="title" for="duck">Duck level</label><div class="hint">Volume other apps keep while ducked.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out" for="duck">30 %</output></div><input id="duck" type="range" min="0" max="100" value="30"><div class="ends" aria-hidden="true"><span>Silent</span><span>Full</span></div><div class="hint">Lower values keep context without competing with speech.</div></div></div>
         </div>
         <p class="hint" style="padding:12px 4px">Other apps always come back: when speech pauses or ends, when the app that turned this on closes, and after a crash at the next start.</p>
-        <h2 class="group-label">Attention sounds</h2>
-        <div class="inset"><div class="engine-row"><div><strong>Your own chimes</strong><div class="hint path" id="earcons-folder">&ndash;</div><div class="hint" id="earcons-custom" aria-live="polite">&ndash;</div></div></div></div>
-        <p class="hint" style="padding:12px 4px">To replace a chime, paste this folder into File Explorer's address bar and put a WAV file there named after the chime: <span class="path">session_change.wav</span>, <span class="path">turn_done.wav</span>, <span class="path">choice.wav</span>, <span class="path">permission.wav</span>, <span class="path">summary_failed.wav</span>, <span class="path">error.wav</span>, <span class="path">nav.wav</span> or <span class="path">nav_edge.wav</span>. Any WAV works (mono or stereo, any sample rate, up to 10 seconds). It plays from the next time that chime sounds; delete the file to get the built-in sound back.</p>
+        <h2 class="group-label" id="sounds-label">Attention sounds</h2>
+        <p class="notice" id="sounds-off" hidden>The sounds appear once an app that plays them (such as the Claude Code plugin) is connected.</p>
+        <div class="inset" id="sound-list" role="list" aria-labelledby="sounds-label"></div>
+        <div class="inset" style="margin-top:14px"><div class="engine-row"><div><strong>Your own sounds folder</strong><div class="hint path" id="earcons-folder">&ndash;</div><div class="hint" id="earcons-custom" aria-live="polite">&ndash;</div></div></div></div>
+        <p class="hint" style="padding:12px 4px">Pick a sound for each event, or use your own: choose a file or drop one on its row (WAV, MP3, OGG, FLAC or M4A, up to 10 seconds; it is converted to WAV here and saved in this folder). You can also put a WAV in the folder yourself, named after the event: <span class="path">session_change.wav</span>, <span class="path">turn_done.wav</span>, <span class="path">choice.wav</span>, <span class="path">permission.wav</span>, <span class="path">summary_failed.wav</span>, <span class="path">error.wav</span>, <span class="path">nav.wav</span> or <span class="path">nav_edge.wav</span>.</p>
       </section>
 
       <section class="page" id="sessions" aria-labelledby="h-sessions">
@@ -637,13 +650,14 @@ function render() {
   }
   if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setText("duck-out", s.duck_level + " %"); }
   if (s.earcons) {
-    setText("earcons-folder", s.earcons.folder || "This runtime has no folder for your own chimes");
+    setText("earcons-folder", s.earcons.folder || "This runtime has no folder for your own sounds");
     setText("earcons-custom", s.earcons.custom.length
-      ? "Your own: " + s.earcons.custom.join(", ") + ". The others are built in."
-      : "None yet: the built-in sounds play.");
+      ? "Your own: " + s.earcons.custom.join(", ") + "."
+      : "None yet: the bundled sounds play.");
   } else {
     setText("earcons-custom", "Shown once an app that plays chimes (such as the Claude Code plugin) is connected.");
   }
+  renderSounds(s.earcons);
 
   // Sessions
   $("sessions-off").hidden = channelsOn;
@@ -931,6 +945,220 @@ $("keymap-reset").addEventListener("click", () => {
   cancelCapture();
   change("hotkeys", "reset", "Hotkeys");
 });
+
+// ---- attention sounds (#211) -------------------------------------------
+const SOUND_EVENTS = [
+  ["choice", "Choice", "Claude asks you to choose an option"],
+  ["permission", "Permission", "Claude asks for permission to run something"],
+  ["turn_done", "Reply finished", "Claude finished its reply"],
+  ["session_change", "Session change", "Switching to another session"],
+  ["nav", "Restart", "Restart the message (Ctrl+Alt+Up)"],
+  ["nav_edge", "Nothing before", "Nothing to go back to"],
+  ["error", "Error", "Something went wrong"],
+  ["summary_failed", "Summary failed", "A summary could not be made; the reply is read as is"],
+];
+const SOUND_NAME = Object.fromEntries(SOUND_EVENTS.map(([k, n]) => [k, n]));
+const AUDIO_ACCEPT = ".wav,.mp3,.ogg,.oga,.opus,.flac,.m4a,.aac,audio/*";
+const PLAY_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+let soundsSig = "";
+
+function soundLabel(e, source) {
+  if (source === "none") return "None (silent)";
+  if (source === "custom") return "Your own sound";
+  const id = source.replace(/^library:/, "");
+  const hit = (e.library || []).find(x => x.id === id);
+  return hit ? hit.label : id;
+}
+
+function buildSoundRows(e) {
+  const list = $("sound-list");
+  list.textContent = "";
+  for (const [kind, name, desc] of SOUND_EVENTS) {
+    if (!e.events[kind]) continue;
+    const row = document.createElement("div");
+    row.className = "sound-row";
+    row.setAttribute("role", "listitem");
+    row.dataset.kind = kind;
+    row.innerHTML =
+      '<div class="sound-copy"><strong></strong><div class="hint"></div><div class="sound-now" aria-live="off"></div></div>' +
+      '<div class="control"><div class="voice"><select></select><button type="button" class="play"></button></div>' +
+      '<div class="sound-actions"><button type="button" class="btn" data-act="upload">Use your own sound…</button>' +
+      '<button type="button" class="btn" data-act="remove">Remove your own</button>' +
+      '<button type="button" class="btn" data-act="reset">Reset to default</button></div>' +
+      '<div class="drop-note">Or drop an audio file on this row.</div>' +
+      '<input type="file" hidden tabindex="-1"></div>';
+    const id = "snd-" + kind;
+    const title = row.querySelector("strong");
+    title.id = id + "-name";
+    title.textContent = name;
+    const hint = row.querySelector(".sound-copy .hint");
+    hint.id = id + "-desc";
+    hint.textContent = desc;
+    row.querySelector(".sound-now").id = id + "-now";
+    const sel = row.querySelector("select");
+    sel.id = id;
+    sel.setAttribute("aria-label", name + " sound");
+    sel.setAttribute("aria-describedby", id + "-desc " + id + "-now");
+    const play = row.querySelector(".play");
+    play.innerHTML = PLAY_SVG;
+    play.setAttribute("aria-label", "Play the " + name.toLowerCase() + " sound");
+    play.title = "Play";
+    const input = row.querySelector("input[type=file]");
+    input.accept = AUDIO_ACCEPT;
+    input.setAttribute("aria-label", "Audio file for " + name);
+    sel.addEventListener("change", () => pickSound(kind, sel.value));
+    play.addEventListener("click", () => previewSound(kind, play));
+    row.querySelector("[data-act=upload]").setAttribute("aria-label", "Use your own sound for " + name);
+    row.querySelector("[data-act=remove]").setAttribute("aria-label", "Remove your own " + name.toLowerCase() + " sound");
+    row.querySelector("[data-act=reset]").setAttribute("aria-label", "Reset " + name.toLowerCase() + " to its default sound");
+    row.querySelector("[data-act=upload]").addEventListener("click", () => input.click());
+    row.querySelector("[data-act=remove]").addEventListener("click", () => soundCall("earcon_delete", {kind}, name + ": your own sound removed"));
+    row.querySelector("[data-act=reset]").addEventListener("click", () => soundCall("earcon_select", {kind, source: "default"}, name + ": default sound"));
+    input.addEventListener("change", () => {
+      const f = input.files && input.files[0];
+      input.value = "";
+      if (f) uploadSound(kind, f, row);
+    });
+    let depth = 0;
+    row.addEventListener("dragenter", ev => { if (hasFiles(ev)) { ev.preventDefault(); depth++; row.classList.add("drag"); } });
+    row.addEventListener("dragover", ev => { if (hasFiles(ev)) { ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; } });
+    row.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); if (!depth) row.classList.remove("drag"); });
+    row.addEventListener("drop", ev => {
+      ev.preventDefault();
+      depth = 0;
+      row.classList.remove("drag");
+      const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if (f) uploadSound(kind, f, row);
+    });
+    list.appendChild(row);
+  }
+}
+function hasFiles(ev) {
+  return !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
+}
+
+function renderSounds(e) {
+  const on = !!(e && e.events && e.library);
+  $("sounds-off").hidden = on;
+  $("sound-list").hidden = !on;
+  if (!on) return;
+  const sig = JSON.stringify([e.library, Object.keys(e.events)]);
+  if (sig !== soundsSig) { soundsSig = sig; buildSoundRows(e); }
+  for (const row of $("sound-list").children) {
+    const kind = row.dataset.kind;
+    const ev = e.events[kind];
+    const opts = e.library.map(x => {
+      const src = "library:" + x.id;
+      return [src, x.label + (src === ev.default ? " (default)" : "")];
+    });
+    if (ev.custom) opts.push(["custom", "Your own sound"]);
+    opts.push(["none", ev.default === "none" ? "None (silent, default)" : "None (silent)"]);
+    fillSelect(row.querySelector("select"), opts, ev.effective);
+    const isDefault = ev.effective === ev.default;
+    setText(row.querySelector(".sound-now").id, "Plays: " + soundLabel(e, ev.effective) + (isDefault ? ", the default." : "."));
+    setDisabled(row.querySelector("[data-act=reset]"), isDefault);
+    row.querySelector("[data-act=remove]").hidden = !ev.custom;
+    setDisabled(row.querySelector(".play"), ev.effective === "none");
+  }
+}
+
+// One sound request: the reply carries every earcon's state.
+async function soundCall(type, body, done) {
+  try {
+    const j = await call(type, body);
+    mutationSeq++;
+    if (j.earcons) { state.earcons = j.earcons; render(); }
+    showState(done);
+    return j;
+  } catch (err) {
+    showState(err instanceof ApiError ? err.message : "Could not reach the runtime", true);
+    refresh();
+    return null;
+  }
+}
+
+async function pickSound(kind, source) {
+  const name = SOUND_NAME[kind];
+  const j = await soundCall("earcon_select", {kind, source}, name + ": " + soundLabel(state.earcons || {}, source));
+  // Hear what was picked (arrowing through the list plays each sound).
+  if (j && source !== "none") call("earcon_preview", {kind}).catch(() => {});
+}
+
+async function previewSound(kind, btn) {
+  if (btn.getAttribute("aria-busy") === "true") return;
+  btn.setAttribute("aria-busy", "true");
+  try {
+    const j = await call("earcon_preview", {kind});
+    announce(j.played ? "Playing." : "This event is silent.");
+  } catch (err) {
+    showState(err instanceof ApiError ? err.message : "Could not reach the runtime", true);
+  } finally {
+    setTimeout(() => btn.removeAttribute("aria-busy"), 400);
+  }
+}
+
+// A file of any format the browser decodes -> mono 16-bit WAV of at most
+// max_seconds, at 44.1 kHz (fits the runtime's upload limit).
+const UPLOAD_RATE = 44100;
+async function toWav(file, maxSeconds) {
+  if (file.size > 64 * 1024 * 1024) throw new ApiError("That file is too big for a sound (over 64 MB).");
+  const data = await file.arrayBuffer();
+  const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!Ctx) throw new ApiError("This browser cannot convert audio files.");
+  let audio;
+  try {
+    audio = await new Ctx(1, 1, UPLOAD_RATE).decodeAudioData(data);
+  } catch (err) {
+    throw new ApiError("Could not read " + file.name + " as audio. Use WAV, MP3, OGG, FLAC or M4A.");
+  }
+  const rate = audio.sampleRate;
+  const frames = Math.min(audio.length, Math.floor(maxSeconds * rate));
+  if (!frames) throw new ApiError(file.name + " has no sound.");
+  const mono = new Float32Array(frames);
+  for (let c = 0; c < audio.numberOfChannels; c++) {
+    const ch = audio.getChannelData(c);
+    for (let i = 0; i < frames; i++) mono[i] += ch[i] / audio.numberOfChannels;
+  }
+  if (frames < audio.length) {
+    // Cut at the limit: fade the last 30 ms so it ends without a click.
+    const fade = Math.min(frames, Math.floor(rate * 0.03));
+    for (let i = 0; i < fade; i++) mono[frames - 1 - i] *= i / fade;
+  }
+  const buf = new ArrayBuffer(44 + frames * 2);
+  const v = new DataView(buf);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + frames * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, frames * 2, true);
+  for (let i = 0; i < frames; i++) {
+    const x = Math.max(-1, Math.min(1, mono[i]));
+    v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+  }
+  return {bytes: new Uint8Array(buf), trimmed: frames < audio.length};
+}
+function base64(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function uploadSound(kind, file, row) {
+  const name = SOUND_NAME[kind];
+  const e = state.earcons || {};
+  row.setAttribute("aria-busy", "true");
+  announce("Converting " + file.name + ".");
+  try {
+    const wav = await toWav(file, e.max_seconds || 10);
+    const j = await soundCall("earcon_upload", {kind, wav: base64(wav.bytes)},
+      name + ": your own sound saved" + (wav.trimmed ? " (cut to " + (e.max_seconds || 10) + " seconds)" : ""));
+    if (j) call("earcon_preview", {kind}).catch(() => {});
+  } catch (err) {
+    showState(err instanceof ApiError ? err.message : "Could not convert that file", true);
+  } finally {
+    row.removeAttribute("aria-busy");
+  }
+}
 
 // ---- wiring ---------------------------------------------------------------
 $("engine-select").addEventListener("change", e => change("engine", e.target.value, "Engine"));

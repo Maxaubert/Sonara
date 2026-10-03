@@ -1,0 +1,22 @@
+# The bundled sound of each event (#211): `<event> = <sound>`, where
+# <sound> is the name of a WAV in this folder without `.wav`, or `none`
+# (the event is silent until the user picks a sound). An event left out
+# is silent too.
+#
+# Every WAV in this folder is offered for every event in the settings
+# page's sound picker. Adding or removing a sound is a file change only:
+# build.rs scans the folder; a default naming a missing sound fails the
+# build. Sound names are lowercase letters, digits, '-' or '_'.
+#
+# The five WAVs here are placeholders (#211), copies of the generated tones
+# of src/sonara/platform/windows/earcons, until the final pack replaces them
+# under the same names (attention, reply-done, session-changed, navigate,
+# edge). Only add sounds that may be redistributed under this repo's licence.
+choice = attention
+permission = attention
+turn_done = reply-done
+session_change = session-changed
+nav = navigate
+nav_edge = edge
+error = none
+summary_failed = none

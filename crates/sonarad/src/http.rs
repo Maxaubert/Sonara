@@ -27,8 +27,9 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-/// Largest accepted request body.
-pub const MAX_BODY: usize = 1 << 20;
+/// Largest accepted request body (an `earcon_upload` carries up to 1 MiB
+/// of WAV as base64).
+pub const MAX_BODY: usize = 2 << 20;
 /// An SSE comment is sent this often so dead connections are noticed.
 pub const PING: Duration = Duration::from_secs(15);
 

@@ -281,7 +281,8 @@ async fn run(
     let earcons = sonara_agent::Library::new(
         home.earcons(),
         Some(Arc::new(move |line: &str| log_home.log(line))),
-    );
+    )
+    .with_selection(sonarad::config::earcon_selections(&store));
     let mut server = Server::new(reader.clone(), token.clone(), life.clone())
         .with_config(store)
         .with_earcons(Arc::new(earcons));

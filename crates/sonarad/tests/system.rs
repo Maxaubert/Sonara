@@ -680,7 +680,7 @@ fn custom_earcons_are_listed_played_and_bad_files_logged() {
     )));
     let log = std::fs::read_to_string(r.home.join("logs").join("sonarad.log")).unwrap();
     assert!(
-        log.contains("choice.wav") && log.contains("using the bundled choice clip"),
+        log.contains("choice.wav") && log.contains("choice plays its default"),
         "{log}"
     );
 }

@@ -57,6 +57,8 @@ enum Kind {
     TextOrNull,
     /// The `summaries` object (see `validate_summaries`).
     Summaries,
+    /// The sound picked per earcon (see `validate_earcon_sounds`).
+    EarconSounds,
 }
 
 /// One persisted setting.
@@ -74,6 +76,9 @@ pub const STYLES: &[&str] = &["tidy", "natural", "brief"];
 pub const COMMANDS: &[&str] = &["claude", "codex"];
 pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
 const ON_OFF: &[&str] = &["on", "off"];
+/// The sound picked per earcon (#211): `{kind: source}`, written by the
+/// agent extension's `earcon_select`, `earcon_upload` and `earcon_delete`.
+pub const EARCON_SOUNDS: &str = "earcon_sounds";
 
 /// Every persisted setting, its layer, validation and default (as JSON).
 ///
@@ -146,6 +151,12 @@ pub const SCHEMA: &[Setting] = &[
                   \"timeout\": 60, \"settle_ms\": 600, \"style\": \"natural\", \"prompts\": {}}",
     },
     Setting {
+        key: EARCON_SOUNDS,
+        layer: Layer::Agent,
+        kind: Kind::EarconSounds,
+        default: "{}",
+    },
+    Setting {
         key: "audio_mode",
         layer: Layer::System,
         kind: Kind::OneOf(AUDIO_MODES),
@@ -207,7 +218,51 @@ pub fn validate(key: &str, v: &Value) -> Result<Value, String> {
                 .ok_or_else(|| format!("'{key}' is a non-empty string or null")),
         },
         Kind::Summaries => validate_summaries(v).map(Value::Object),
+        Kind::EarconSounds => validate_earcon_sounds(v).map(Value::Object),
     }
+}
+
+/// `earcon_sounds`: earcon kind -> `default`, `library:<name>`, `custom`
+/// or `none`. A sound no longer bundled is kept (it plays the default
+/// until it is back).
+pub fn validate_earcon_sounds(v: &Value) -> Result<Map<String, Value>, String> {
+    use sonara_agent::earcon::Source;
+    let o = v
+        .as_object()
+        .ok_or("'earcon_sounds' is an object of kind: sound")?;
+    let mut out = Map::new();
+    for (kind, source) in o {
+        if sonara_agent::Earcon::parse(kind).is_none() {
+            return Err(format!("'earcon_sounds' has an unknown earcon '{kind}'"));
+        }
+        let parsed = source.as_str().and_then(Source::parse).ok_or_else(|| {
+            format!(
+                "'earcon_sounds.{kind}' is \"default\", \"library:<name>\", \"custom\" or \"none\""
+            )
+        })?;
+        out.insert(kind.clone(), json!(parsed.as_string()));
+    }
+    Ok(out)
+}
+
+/// The persisted earcon selections, for `sonara_agent::Library`.
+pub fn earcon_selections(
+    store: &Store,
+) -> Vec<(sonara_agent::Earcon, sonara_agent::earcon::Source)> {
+    store
+        .value(EARCON_SOUNDS)
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| {
+                    Some((
+                        sonara_agent::Earcon::parse(k)?,
+                        sonara_agent::earcon::Source::parse(v.as_str()?)?,
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The custom prompts: style -> non-blank instruction.
@@ -850,6 +905,10 @@ mod tests {
             ("summaries", json!({"style": "long"})),
             ("summaries", json!({"prompts": {"poem": "x"}})),
             ("summaries", json!(1)),
+            ("earcon_sounds", json!({"ready": "none"})),
+            ("earcon_sounds", json!({"nav": "loud"})),
+            ("earcon_sounds", json!({"nav": "library:"})),
+            ("earcon_sounds", json!(1)),
         ] {
             assert!(validate(key, &v).is_err(), "{key} {v}");
         }
@@ -863,6 +922,28 @@ mod tests {
             .unwrap(),
             json!({"model": "sonnet"}),
             "unknown fields and the derived prompt are dropped"
+        );
+        let sounds = json!({"nav": "library:edge", "error": "none", "choice": "custom"});
+        assert_eq!(validate("earcon_sounds", &sounds).unwrap(), sounds);
+    }
+
+    #[test]
+    fn earcon_selections_come_from_the_store() {
+        use sonara_agent::{earcon::Source, Earcon};
+        let (store, _) = Store::load(&tmp());
+        assert!(earcon_selections(&store).is_empty());
+        store.record(
+            EARCON_SOUNDS,
+            &json!({"nav": "none", "turn_done": "library:x"}),
+        );
+        let mut got = earcon_selections(&store);
+        got.sort_by_key(|(e, _)| e.as_str());
+        assert_eq!(
+            got,
+            [
+                (Earcon::Nav, Source::Silent),
+                (Earcon::TurnDone, Source::Library("x".into()))
+            ]
         );
     }
 

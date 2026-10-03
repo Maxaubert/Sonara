@@ -12,7 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 
 /// Longest accepted line (bytes, newline included).
-pub const MAX_LINE: usize = 1 << 20;
+pub const MAX_LINE: usize = 2 << 20;
 
 /// How long a new connection may wait before a successful `hello`; then it
 /// gets `E_AUTH` and is closed.

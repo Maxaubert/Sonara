@@ -238,7 +238,9 @@ fn earcons_are_mixed_over_speech_and_reported() {
     r.wait_for("Speaking now.");
     r.out.start();
     r.agent.turn_end("a", None, None).unwrap();
-    let clip = Earcon::TurnDone.clip();
+    let clip = Library::bundled()
+        .clip(Earcon::TurnDone)
+        .expect("turn_done has a default sound");
     assert!(r.out.calls().contains(&OutputCall::PlayClip {
         samples: clip.samples.len(),
         sample_rate: clip.sample_rate,
@@ -277,7 +279,7 @@ fn an_automatic_session_switch_chimes_then_says_session_changed() {
     let (clip, play) = first_clip_and_last_play(&r.out);
     assert!(clip < play, "the earcon goes before the announcement");
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
-    let c = Earcon::SessionChange.clip();
+    let c = Library::bundled().clip(Earcon::SessionChange).unwrap();
     assert!(r.out.calls().contains(&OutputCall::PlayClip {
         samples: c.samples.len(),
         sample_rate: c.sample_rate,

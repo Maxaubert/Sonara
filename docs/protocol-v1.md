@@ -19,7 +19,7 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
   "http_port": 50312,
   "token": "64 hex characters",
   "version": "0.9.7",
-  "protocol": {"major": 1, "minor": 1},
+  "protocol": {"major": 1, "minor": 2},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log", "engine_status"],
   "extensions": ["channels", "agent", "system"],
   "started_at": "2026-10-02T10:40:45Z"
@@ -43,14 +43,14 @@ Both transports bind `127.0.0.1` on ephemeral ports and never another address. E
 
 ### TCP JSON lines (`port`)
 
-- One UTF-8 JSON object per line (`\n`), both ways; at most 1 MiB per line.
+- One UTF-8 JSON object per line (`\n`), both ways; at most 2 MiB per line.
 - The **first message must be `hello` with the token**. Anything else (another type, a wrong token, invalid JSON) is answered with `E_AUTH` and the connection closes. So is a connection that sends no successful `hello` within 5 s. A `hello` that fails for another reason (`E_UNSUPPORTED`, `E_INCOMPATIBLE`, `E_BUSY`) leaves the connection open and unauthenticated, so the client may send `hello` again.
 - Replies and events share the connection: a reply has `ok`, an event has `event`. Replies come in request order.
 - Invalid JSON after `hello` is `E_BAD_REQUEST`; the connection stays open.
 
 ### HTTP (`http_port`)
 
-- `POST /v1/<type>` with header `Authorization: Bearer <token>`. The body is the request without `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB.
+- `POST /v1/<type>` with header `Authorization: Bearer <token>`. The body is the request without `type` (the path gives it), a JSON object; an empty body is `{}`. At most 2 MiB (an `earcon_upload` carries up to 1 MiB of WAV as base64).
 - No `hello` is needed (the bearer token authenticates each request), but `POST /v1/hello` works, including `keep_alive` and `takeover`.
 - The reply body is the same JSON as on TCP. Status: 200 for `ok: true`; for errors `E_AUTH` 401, `E_UNKNOWN_TYPE` and `E_NOT_FOUND` 404, `E_BUSY` and `E_INCOMPATIBLE` 409, `E_ENGINE` 500, anything else 400.
 - `GET /v1/events?events=state,items,log` (default: all three) is a Server-Sent Events stream. Each event is `event: <name>` plus `data: <the same JSON as on TCP>`; a `: ping` comment comes every 15 s. `subscribe` over POST is `E_BAD_REQUEST`.
@@ -73,7 +73,7 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 
 ```json
 > {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.10.0", "protocol": {"major": 1, "minor": 1}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
+< {"id": 1, "ok": true, "version": "0.10.0", "protocol": {"major": 1, "minor": 2}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
 
 The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.
@@ -198,7 +198,7 @@ When a client finds an instance it cannot use (another protocol major, a missing
 
 ## Versioning
 
-Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
+Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. 1.2 (runtime 0.12.0) added the sound picker of `agent` (`earcon_select`, `earcon_upload`, `earcon_delete`, `earcon_preview`, the new fields of `get earcons`), and raised the line and body limit from 1 to 2 MiB. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
 
 ## Saved settings
 
@@ -208,10 +208,10 @@ Every setting a client changes with `set` is saved in the home and applies again
 
 | file in the home | holds |
 |---|---|
-| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`. A `_migrated` key records the migration below |
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `earcon_sounds` (`{kind: source}`, the sounds picked with `earcon_select`, `earcon_upload` and `earcon_delete`). A `_migrated` key records the migration below |
 | `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
-| `earcons\` | the user's own earcons: `<kind>.wav` replaces that kind's bundled clip (see [Custom earcons](#custom-earcons)); created empty at start, only read |
+| `earcons\` | the user's own earcons: `<kind>.wav` is that kind's own sound (see [Custom earcons](#custom-earcons)); created empty at start; `earcon_upload` writes `<kind>.wav` there and `earcon_delete` removes it |
 | `logs\sonarad.log` | one line per start (`sonarad <version> started (pid <pid>): engine <id> <status>; home <dir>`), the engine's readiness changes (model downloaded, loaded or failed; not the progress), the migration, saved values that could not be applied, custom earcons used or refused |
 
 Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it. A value out of range is not applied (and logged), the others still apply; it stays in the file, like a key this runtime does not know (from a newer release), until a client sets that key. A saved value the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies once it is available; the default is used meanwhile. `--engine` on the command line wins over a saved `engine`, which wins over the default choice below; a saved engine that cannot start is logged and the default choice is used. Setting `engine` to another engine replaces a saved voice that engine lacks with the voice in force; setting the same engine again keeps it.
@@ -327,14 +327,22 @@ Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat 
 | `tool` | `channel`, `name`, `summary?` | the agent runs a tool: clears a waiting question; at verbosity `everything` it reads `summary` (else `"Running <name>."`) after the text held so far |
 | `answered` | `channel` | the user answered the question: everything queued for the channel is stale, so its unread text is dropped and its item cut, summary work and held decisions are dropped; the turn goes on |
 | `earcon` | `kind` | play an earcon: `choice`, `permission`, `error`, `turn_done`, `nav`, `nav_edge`, `session_change`, `summary_failed` |
+| `earcon_select` | `kind`, `source` | what `kind` plays from now on (saved): `source` is `"default"`, `"library:<name>"` (a bundled sound), `"custom"` (its own file) or `"none"` (silence). An unknown kind or source is `E_BAD_REQUEST`; a library sound that does not exist, or `custom` without a usable own file, is `E_NOT_FOUND`. Reply `{earcons}` (as `get earcons`) |
+| `earcon_upload` | `kind`, `wav` | `wav` is a WAV file in base64 (standard alphabet; at most 1 MiB once decoded). It is checked as a file in the folder is (see Custom earcons), saved as `<home>\earcons\<kind>.wav` (mono 16-bit, its sample rate kept) and selected (`custom`). Anything else (bad base64, not a usable WAV, silent, longer than 10 s, too big, an unknown kind) is `E_BAD_REQUEST` and saves nothing. Reply `{earcons}` |
+| `earcon_delete` | `kind` | delete `kind`'s own file; a `custom` selection is dropped, so its default plays. Reply `{deleted, earcons}` (`deleted`: there was a file) |
+| `earcon_preview` | `kind?`, `source?` | play a sound now, mixed over speech like an earcon, whatever `mute_level` (the user asked to hear it); nothing is queued or reported in the `earcons` stream. Without `source`: what `kind` plays now; `default` and `custom` need `kind`. Reply `{played, source}` (`played` false for silence). Neither field is `E_BAD_REQUEST`; a missing sound is `E_NOT_FOUND` |
 
 `channel` is a non-empty string (`E_BAD_REQUEST` otherwise); a channel is opened with the defaults when it gets its first text (open it with `channel_open` to give it a label for announcements). With the extension on, `channel_close` also forgets the channel's turn, and `control stop` without a channel also drops every channel's summary work and held decisions.
 
 Earcons are mixed over the speech (they never pause or cut it) and follow the output volume.
 
+#### The sound library and selections
+
+The runtime bundles a library of sounds (#211; `crates/sonara-agent/sounds/`, compiled in: every WAV there is offered for every kind, and `defaults.txt` gives each kind its default sound or none). What a kind plays follows its selection (`earcon_select`): a library sound, its own file (`custom`), silence (`none`) or its default. A kind without a selection plays its own file when there is a usable one, else its default. A selection that cannot apply (a library sound a later release no longer bundles, an own file that went away) plays the default and is kept. An event set to silence still sends its `earcon` event.
+
 #### Custom earcons
 
-`sonarad` plays `<home>\earcons\<kind>.wav` (for example `session_change.wav`, `turn_done.wav`) instead of the bundled clip of that kind (#209). Any RIFF/WAVE file works: 8-, 16-, 24- or 32-bit integer PCM or 32- or 64-bit float, plain or `WAVE_FORMAT_EXTENSIBLE`, mono or stereo (mixed down), any sample rate (the output resamples), up to 10 seconds and 16 MB. A file is checked again (size and modification time) each time its kind plays and on `get earcons`, so adding, replacing or deleting one applies at the next play, without a restart or a reload command. A file that cannot be used (not a WAV, an unsupported format, silent, too long or too big, unreadable) plays the bundled clip instead, and one line in `logs\sonarad.log` says why (once per version of the file). The `earcon` event names the kind either way.
+`sonarad` plays `<home>\earcons\<kind>.wav` (for example `session_change.wav`, `turn_done.wav`) as that kind's own sound (#209), unless another sound is selected for it. Any RIFF/WAVE file works: 8-, 16-, 24- or 32-bit integer PCM or 32- or 64-bit float, plain or `WAVE_FORMAT_EXTENSIBLE`, mono or stereo (mixed down), any sample rate (the output resamples), up to 10 seconds and 16 MB. A file is checked again (size and modification time) each time its kind plays and on `get earcons`, so adding, replacing or deleting one applies at the next play, without a restart or a reload command. A file that cannot be used (not a WAV, an unsupported format, silent, too long or too big, unreadable) is skipped (the default plays), and one line in `logs\sonarad.log` says why (once per version of the file). The `earcon` event names the kind either way.
 
 ### Settings
 
@@ -345,7 +353,7 @@ Earcons are mixed over the speech (they never pause or cut it) and follow the ou
 | `minqueue` | `0` to `10` (default 5): a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
 | `background_policy` | `"all"` (default) or `"earcon_only"`: see Background sessions |
 | `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt, prompts, default_prompts}`: see below. `set` merges the fields given; `get` returns them all |
-| `earcons` | read-only (`set` is `E_BAD_REQUEST`): `{folder, kinds, custom}`: `folder` is the custom earcons folder (`null` when the runtime has none), `kinds` every earcon kind, `custom` the kinds a usable file there replaces now. See Custom earcons |
+| `earcons` | read-only (`set` is `E_BAD_REQUEST`; change it with the messages above): `{folder, kinds, custom, library, events, max_upload_bytes, max_seconds}`: `folder` is the custom earcons folder (`null` when the runtime has none), `kinds` every earcon kind, `custom` the kinds with a usable own file, `library` the bundled sounds (`[{id, label}]`), `events` per kind `{selection, effective, default, custom}` (`selection`: the saved choice or `null`; `effective`: what plays now, `"library:<name>"`, `"custom"` or `"none"`; `default`: `"library:<name>"` or `"none"`; `custom`: a usable own file exists), and the upload limits (1048576 bytes, 10 seconds). See Custom earcons |
 
 **Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer or `stop` drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
 

@@ -101,12 +101,12 @@ def test_custom_earcons_folder(rt):
     assert v["custom"] == ["session_change"]
     r = c.request({"type": "set", "key": "earcons", "value": {}})
     assert r["error"]["code"] == "E_BAD_REQUEST"
-    # A bad file plays the bundled clip and is logged once.
+    # A bad file plays the default and is logged once.
     ok(c, {"type": "earcon", "kind": "turn_done"})
     assert earcon(c) == "turn_done"
     log = (rt.home / "logs" / "sonarad.log").read_text(encoding="utf-8")
     assert log.count("turn_done.wav") == 1, log
-    assert "using the bundled turn_done clip" in log
+    assert "turn_done plays its default" in log
 
 
 def test_the_start_is_logged(rt):

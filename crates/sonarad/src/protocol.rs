@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 1;
+pub const PROTOCOL_MINOR: u64 = 2;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -57,6 +57,10 @@ const EXTENSION_TYPES: &[&str] = &[
     "earcon",
     "tool",
     "answered",
+    "earcon_select",
+    "earcon_upload",
+    "earcon_delete",
+    "earcon_preview",
     "preview",
     "shutdown",
 ];
@@ -537,6 +541,10 @@ impl Server {
                     "turn_end" => agent_ext::turn_end(a, m),
                     "ask" => agent_ext::ask(a, m),
                     "earcon" => agent_ext::earcon(a, m),
+                    "earcon_select" => agent_ext::earcon_select(a, &self.store, m),
+                    "earcon_upload" => agent_ext::earcon_upload(a, &self.store, m),
+                    "earcon_delete" => agent_ext::earcon_delete(a, &self.store, m),
+                    "earcon_preview" => agent_ext::earcon_preview(a, m),
                     "tool" => agent_ext::tool(a, m),
                     _ => agent_ext::answered(a, m),
                 }
@@ -982,7 +990,7 @@ mod tests {
         let r = &o.reply;
         assert_eq!(r["id"], "h1");
         assert_eq!(r["version"], crate::VERSION);
-        assert_eq!(r["protocol"], json!({"major": 1, "minor": 1}));
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 2}));
         assert!(r["capabilities"]
             .as_array()
             .unwrap()
