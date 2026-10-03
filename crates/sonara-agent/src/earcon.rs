@@ -1,8 +1,9 @@
 //! Earcons: short tones that mark agent events (a question, a permission
-//! prompt, the end of a turn...). The WAVs are the Python plugin's bundled
-//! ones (`src/sonara/platform/windows/earcons`, made by its `generate.py`),
-//! compiled in, and played through the L1 output's clip mixer so they never
-//! pause or cut speech.
+//! prompt, the end of a turn...). The WAVs are `sounds/<kind>.wav` in this
+//! crate: original procedural sounds (MIT) rendered by
+//! `packaging/sounds/build_earcons.py` (#211; `sounds/SHA256SUMS` pins
+//! them), compiled in, and played through the L1 output's clip mixer so
+//! they never pause or cut speech. `nav_edge` is the same sound as `nav`.
 //!
 //! **Custom earcons** (`Library`): a host gives a folder; `<kind>.wav` there
 //! (`session_change.wav`, `turn_done.wav`, ...) replaces that kind's bundled
@@ -47,7 +48,7 @@ macro_rules! earcons {
             fn wav(&self) -> &'static [u8] {
                 match self {
                     $(Earcon::$variant => include_bytes!(concat!(
-                        "../../../src/sonara/platform/windows/earcons/",
+                        "../sounds/",
                         $name,
                         ".wav"
                     ))),*
@@ -291,11 +292,35 @@ mod tests {
         for e in Earcon::ALL {
             let c = e.clip();
             assert_eq!(c.channels, 1, "{e:?}");
-            assert!(c.sample_rate >= 8_000, "{e:?}");
+            assert_eq!(c.sample_rate, 48_000, "{e:?}");
             let secs = c.samples.len() as f32 / c.sample_rate as f32;
             assert!(secs > 0.01 && secs < 2.0, "{e:?} lasts {secs} s");
-            assert!(c.samples.iter().any(|&s| s != 0), "{e:?} is silent");
+            // Audible, not just non-zero: every pick peaks well above -30 dBFS.
+            let peak = c.samples.iter().map(|s| s.unsigned_abs()).max().unwrap();
+            assert!(peak > 1_000, "{e:?} peaks at {peak}");
         }
+    }
+
+    #[test]
+    fn the_bundled_wavs_are_the_sound_pack_files() {
+        // 16-bit mono PCM at 48 kHz, as packaging/sounds/build_earcons.py
+        // writes them (wav::decode would also take other formats).
+        for e in Earcon::ALL {
+            let b = e.wav();
+            assert_eq!(&b[..4], b"RIFF", "{e:?}");
+            assert_eq!(u16::from_le_bytes([b[20], b[21]]), 1, "{e:?} format");
+            assert_eq!(u16::from_le_bytes([b[22], b[23]]), 1, "{e:?} channels");
+            assert_eq!(
+                u32::from_le_bytes([b[24], b[25], b[26], b[27]]),
+                48_000,
+                "{e:?} rate"
+            );
+            assert_eq!(u16::from_le_bytes([b[34], b[35]]), 16, "{e:?} bits");
+        }
+        // nav_edge is the same sound as nav (#211), in its own file so a
+        // custom nav.wav does not change nav_edge.
+        assert_eq!(Earcon::NavEdge.wav(), Earcon::Nav.wav());
+        assert_ne!(Earcon::Error.wav(), Earcon::SummaryFailed.wav());
     }
 
     #[test]
