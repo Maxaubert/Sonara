@@ -15,9 +15,11 @@
 //!   naming an earlier `turn`; unstamped messages are never stale. A
 //!   `turn_start` older than the last one is itself dropped.
 //! - **Prose** (`stream`) goes through the streaming assembler; each
-//!   finished chunk is spoken in the channel (append), held below
-//!   `minqueue` until the batch is big enough or the turn ends, a tool runs
-//!   or a decision arrives (context first). At verbosity `skip_code` a
+//!   finished chunk is spoken in the channel (append) as `read_mode`
+//!   says (#222): `immediate` at once; `queue` held below `minqueue` until
+//!   the batch is big enough or the turn ends, a tool runs or a decision
+//!   arrives (context first); `done` held until the turn ends or a decision
+//!   arrives (context first), a tool run does not release it. At verbosity `skip_code` a
 //!   code block's summary is recorded but not spoken; summary mode records
 //!   prose for the recap.
 //! - **turn_end** plays `turn_done` and releases held prose (the turn ends
@@ -36,13 +38,13 @@
 //!   ones: settle window, lead-in digests before decisions, the decision
 //!   hold with its cap, the hung-worker watchdog and the reorder buffer.
 //! - **Notes** (#219): whatever the rules do not speak now (muted, a code
-//!   block at `skip_code`, prose held below `minqueue`, a permission prompt
+//!   block at `skip_code`, prose held by `read_mode`, a permission prompt
 //!   of an unanswered question, ...) leaves a `Note` with the reason, which
 //!   the driver takes after each call (`take_notes`) for the
 //!   troubleshooting log. Notes never change what is spoken.
 use crate::decision::{self, AskKind, Choice};
 use crate::earcon::Earcon;
-use crate::settings::{Settings, Verbosity};
+use crate::settings::{ReadMode, Settings, Verbosity};
 use sonara_core::assembler::{Chunk, ProseAssembler};
 use sonara_core::text::normalize_for_speech;
 use std::cell::RefCell;
@@ -189,9 +191,10 @@ struct Turn {
     awaiting: bool,
     /// `hint_once` was spoken in this channel.
     hinted: bool,
-    /// Prose held below `minqueue`.
+    /// Prose held by `read_mode`.
     held_prose: Vec<String>,
-    /// The turn released its prose (turn_end or a tool): no more holding.
+    /// The turn released its prose (turn_end, or a tool in read mode
+    /// `queue`): no more holding.
     released: bool,
     /// This turn's prose chunks, and how many were voiced by a summary.
     prose: Vec<String>,
@@ -374,7 +377,7 @@ impl Rules {
         }
     }
 
-    /// Speak the prose held below `minqueue`.
+    /// Speak the prose held by `read_mode`.
     fn flush_prose(&mut self, out: &mut Vec<Action>, channel: &str) {
         let held = std::mem::take(&mut self.turn(channel).held_prose);
         for text in held {
@@ -401,6 +404,7 @@ impl Rules {
         let summaries = self.summaries();
         let skip_code = self.settings.verbosity == Verbosity::SkipCode;
         let minqueue = self.settings.minqueue;
+        let mode = self.settings.read_mode;
         let c = self.turn(channel);
         // Every chunk is recorded for summaries; at `skip_code` a code
         // block's announcement is not spoken (#214).
@@ -453,16 +457,22 @@ impl Rules {
         }
         let c = self.turn(channel);
         c.held_prose.extend(texts);
-        if c.released || c.held_prose.len() >= minqueue {
+        let ready = c.released
+            || match mode {
+                ReadMode::Immediate => true,
+                ReadMode::Queue => c.held_prose.len() >= minqueue,
+                ReadMode::Done => false,
+            };
+        if ready {
             self.flush_prose(&mut out, channel);
         } else {
             let held = c.held_prose.len();
-            self.note(
-                Some(channel),
-                "prose",
-                format!("held: {held} chunk(s) wait for minqueue {minqueue} or the turn end"),
-                None,
-            );
+            let what = if mode == ReadMode::Done {
+                format!("held: waits for the turn end (read_mode done), {held} chunk(s)")
+            } else {
+                format!("held: {held} chunk(s) wait for minqueue {minqueue} or the turn end")
+            };
+            self.note(Some(channel), "prose", what, None);
         }
         Ok(out)
     }
@@ -617,7 +627,8 @@ impl Rules {
     }
 
     /// A tool runs: the question (if any) was answered; at verbosity
-    /// `everything` the tool is announced, after the prose held so far.
+    /// `everything` the tool is announced, after the prose held so far
+    /// (read mode `done`: the prose stays held, the tool is announced).
     pub fn tool(&mut self, channel: &str, name: &str, summary: &str) -> Vec<Action> {
         let mut out = Vec::new();
         self.turn(channel).awaiting = false;
@@ -639,8 +650,10 @@ impl Rules {
             );
             return out;
         }
-        self.turn(channel).released = true;
-        self.flush_prose(&mut out, channel);
+        if self.settings.read_mode != ReadMode::Done {
+            self.turn(channel).released = true;
+            self.flush_prose(&mut out, channel);
+        }
         self.speak(&mut out, channel, text, false, "tool");
         out
     }

@@ -24,6 +24,12 @@
 //!   runtime's custom earcons folder), unless one is there already. Paths
 //!   to the plugin's bundled WAVs (older versions saved them) are skipped.
 //!
+//! `read_mode` (#222) replaced the minimum queue as the reading switch: a
+//! runtime `config.json` with a user-set `minqueue` and no `read_mode`
+//! loads 0 and 1 as `immediate` and more as `queue`
+//! ([`read_mode_from_minqueue`], at every load, written with the next
+//! change); with no `minqueue` the default (`done`) applies.
+//!
 //! The plugin's folder is only read, never changed. `config.json` gets the
 //! marker key `_migrated` (written even when nothing was imported), so the
 //! migration runs once: a home with a `config.json` is never migrated.
@@ -289,6 +295,18 @@ pub fn convert_config(
     (out, notes)
 }
 
+/// The `read_mode` of a runtime `config.json` from before #222 (its user
+/// keys): a user-set `minqueue` 0 or 1 read at once (`immediate`), more
+/// held a queue (`queue`). `None` when `read_mode` is set or `minqueue`
+/// is not.
+pub fn read_mode_from_minqueue(user: &Map<String, Value>) -> Option<Value> {
+    if user.contains_key("read_mode") {
+        return None;
+    }
+    let n = user.get("minqueue")?.as_u64()?;
+    Some(json!(if n <= 1 { "immediate" } else { "queue" }))
+}
+
 /// The runtime's keymap overrides for the plugin's `keymap.json`.
 pub fn convert_keymap(py: &Map<String, Value>) -> (BTreeMap<String, Binding>, Vec<String>) {
     let mut out: BTreeMap<String, Binding> = BTreeMap::new();
@@ -483,6 +501,29 @@ mod tests {
 
     fn obj(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn a_minqueue_without_read_mode_maps_to_a_read_mode() {
+        // #222.
+        for (n, mode) in [
+            (0, "immediate"),
+            (1, "immediate"),
+            (2, "queue"),
+            (10, "queue"),
+        ] {
+            assert_eq!(
+                read_mode_from_minqueue(&obj(json!({"minqueue": n}))),
+                Some(json!(mode)),
+                "{n}"
+            );
+        }
+        assert_eq!(read_mode_from_minqueue(&obj(json!({}))), None);
+        assert_eq!(
+            read_mode_from_minqueue(&obj(json!({"minqueue": 5, "read_mode": "done"}))),
+            None,
+            "the user's read_mode wins"
+        );
     }
 
     #[test]

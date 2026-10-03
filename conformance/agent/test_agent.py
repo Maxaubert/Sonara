@@ -20,13 +20,13 @@ def agent_client(rt, announce=False, policy="earcon_only"):
     and earcons, past the first (idle) state. The parity cases run on the
     Python plugin's settings (prose read at once, every kind of text,
     ``policy`` as the background speech policy, default ``earcon_only``),
-    not on the product defaults of #202 (five chunks held, ``skip_code``,
-    ``all``)."""
+    not on the product defaults of #202 and #222 (the turn held until it is
+    done, ``skip_code``, ``all``)."""
     c = rt.tcp(extensions=["agent"])
     assert c.request({"type": "subscribe", "events": ["state", "items", "earcons"]})["ok"]
     c.state()
     ok(c, {"type": "set", "key": "channel_announce", "value": "on" if announce else "off"})
-    ok(c, {"type": "set", "key": "minqueue", "value": 1})
+    ok(c, {"type": "set", "key": "read_mode", "value": "immediate"})
     ok(c, {"type": "set", "key": "verbosity", "value": "everything"})
     ok(c, {"type": "set", "key": "background_policy", "value": policy})
     return c
@@ -328,6 +328,60 @@ def test_agent_over_http(rt):
     assert status == 200 and r["value"]["enabled"] is False
 
 
+# -- reading mode (#222) ----------------------------------------------------
+
+
+def test_read_mode_is_set_and_got_and_refuses_other_values(rt):
+    c = rt.tcp(extensions=["agent"])
+    assert ok(c, {"type": "get", "key": "read_mode"})["value"] == "done"
+    for mode in ("immediate", "queue", "done"):
+        assert ok(c, {"type": "set", "key": "read_mode", "value": mode})["value"] == mode
+        assert ok(c, {"type": "get", "key": "read_mode"})["value"] == mode
+    for bad in ("later", 1, None):
+        r = c.request({"type": "set", "key": "read_mode", "value": bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", bad
+    assert ok(c, {"type": "get", "key": "read_mode"})["value"] == "done"
+
+
+def test_read_mode_done_holds_the_turn_through_a_tool_until_it_ends(rt):
+    c = agent_client(rt)
+    ok(c, {"type": "set", "key": "read_mode", "value": "done"})
+    ok(c, {"type": "turn_start", "channel": "a"})
+    stream(c, "a", "First part.", 0)
+    ok(c, {"type": "tool", "channel": "a", "name": "Bash", "summary": "ls"})
+    assert heard(c, 1) == [("ls", "a")], "the tool is announced, the prose held"
+    c.state(lambda s: s["now_playing"] is None)
+    stream(c, "a", "Second part.", 1)
+    quiet(c)
+    ok(c, {"type": "turn_end", "channel": "a"})
+    assert heard(c, 2) == [("First part.", "a"), ("Second part.", "a")]
+
+
+def test_read_mode_done_reads_the_held_prose_before_a_question(rt):
+    c = agent_client(rt)
+    ok(c, {"type": "set", "key": "read_mode", "value": "done"})
+    ok(c, {"type": "turn_start", "channel": "a"})
+    stream(c, "a", "Two ways to go.")
+    quiet(c, 0.4)
+    ok(c, {"type": "ask", "channel": "a", "kind": "question", "text": "Which one?",
+           "options": ["A", "B"]})
+    assert earcon(c) == "choice"
+    first, second = heard(c, 2)
+    assert first == ("Two ways to go.", "a")
+    assert second[0].startswith("Which one?") and second[1] == "a"
+
+
+def test_read_mode_queue_holds_until_the_queue_size(rt):
+    c = agent_client(rt)
+    ok(c, {"type": "set", "key": "read_mode", "value": "queue"})
+    ok(c, {"type": "set", "key": "minqueue", "value": 3})
+    ok(c, {"type": "turn_start", "channel": "a"})
+    stream(c, "a", "One. Two. ", 0, final=False)
+    quiet(c, 0.4)
+    stream(c, "a", "Three.", 1)
+    assert heard(c, 1) == [("One.", "a")]
+
+
 # -- background speech policy (#195) and per-channel mute (#196) ----------
 
 
@@ -335,7 +389,7 @@ def test_the_agent_defaults_are_the_product_defaults(rt):
     # #202: the maintainer's settings of the Python plugin, unmuted.
     c = rt.tcp(extensions=["agent"])
     for key, want in (("background_policy", "all"), ("verbosity", "skip_code"),
-                      ("minqueue", 5), ("mute_level", 0)):
+                      ("read_mode", "done"), ("minqueue", 5), ("mute_level", 0)):
         assert ok(c, {"type": "get", "key": key})["value"] == want, key
     assert ok(c, {"type": "get", "key": "summaries"})["value"]["enabled"] is False
     r = c.request({"type": "set", "key": "background_policy", "value": "silent"})

@@ -57,6 +57,7 @@ def test_every_setting_survives_a_restart(start):
         "mute_level": 1,
         "verbosity": "skip_code",
         "minqueue": 4,
+        "read_mode": "immediate",
         "audio_mode": "pause",
         "duck_level": 15,
     }
@@ -199,6 +200,25 @@ def test_the_runtime_key_reports_the_engine_status(rt):
     c = rt.tcp(extensions=["system"])
     status = get(c, "runtime")["engine_status"]
     assert status["engine"] == "fake" and status["ready"] is True
+
+
+def test_a_minqueue_set_before_read_mode_picks_the_read_mode(start, tmp_path):
+    """#222: 0 and 1 read at once, more is a queue; no minqueue, the
+    default (done). The key is written with the next change."""
+    for minqueue, mode in ((1, "immediate"), (4, "queue")):
+        (tmp_path / str(minqueue)).mkdir()
+        home = seeded(tmp_path / str(minqueue), {"minqueue": minqueue})
+        rt = start(home=home)
+        c = rt.tcp(extensions=["agent"])
+        assert get(c, "read_mode") == mode
+        assert get(c, "minqueue") == minqueue
+        assert "read_mode" not in saved(rt), "loading writes nothing"
+        set_key(c, "rate", 260)
+        assert saved(rt)["read_mode"] == mode
+        rt.close()
+    (tmp_path / "none").mkdir()
+    rt = start(home=seeded(tmp_path / "none", {"rate": 300}))
+    assert get(rt.tcp(extensions=["agent"]), "read_mode") == "done"
 
 
 def test_unknown_and_refused_keys_survive_a_save(start, tmp_path):

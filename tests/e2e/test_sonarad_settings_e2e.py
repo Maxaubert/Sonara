@@ -8,6 +8,7 @@ Skipped unless playwright + chromium are installed and sonarad is built
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -163,8 +164,10 @@ def test_every_remaining_control_saves_and_survives_a_reload(live, browser):
     assert eventually(lambda: lv.saved().get("mute_level") == 1)
     page.click("#mute-seg [data-value='0']")
     assert eventually(lambda: lv.saved().get("mute_level") == 0)
-    # Summary: minimum queue (live reading, mode Off)
+    # Summary: the queue size (live reading in mode Queue, summaries Off)
     page.click("[data-page=summary]")
+    page.click("#readmode-seg [data-value=queue]")
+    assert eventually(lambda: lv.saved().get("read_mode") == "queue")
     before = lv.get("minqueue")
     page.click("#mq-plus")
     assert eventually(lambda: lv.saved().get("minqueue") == before + 1)
@@ -212,6 +215,42 @@ def test_every_remaining_control_saves_and_survives_a_reload(live, browser):
     pw.expect(page.locator("#settle")).to_have_value("700")
     pw.expect(page.locator("#announce-switch")).to_have_attribute("aria-checked", "false")
     pw.expect(page.locator("#debuglog-switch")).to_have_attribute("aria-checked", "false")
+    page.close()
+
+
+def test_reading_mode_switches_and_shows_the_queue_size_only_for_queue(live, browser):
+    # #222: Immediately | Queue | When done replaces the minimum queue row.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=summary]")
+    seg = "#readmode-seg [data-value=%s]"
+    pw.expect(page.locator("#readmode-seg")).to_have_attribute("role", "radiogroup")
+    pw.expect(page.locator(seg % "done")).to_have_attribute("aria-checked", "true")  # default
+    pw.expect(page.locator("#minqueue-row")).to_be_hidden()
+    page.click(seg % "queue")
+    assert eventually(lambda: lv.saved().get("read_mode") == "queue")
+    pw.expect(page.locator(seg % "queue")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#minqueue-row")).to_be_visible()
+    pw.expect(page.locator("#minqueue-out")).to_have_text("5")
+    page.click(seg % "immediate")
+    assert eventually(lambda: lv.saved().get("read_mode") == "immediate")
+    assert lv.get("read_mode") == "immediate"
+    pw.expect(page.locator("#minqueue-row")).to_be_hidden()
+    # Keyboard: the arrows move through the options and pick them.
+    page.locator(seg % "immediate").focus()
+    page.keyboard.press("ArrowRight")
+    assert eventually(lambda: lv.saved().get("read_mode") == "queue")
+    pw.expect(page.locator(seg % "queue")).to_be_focused()
+    page.keyboard.press("ArrowRight")
+    assert eventually(lambda: lv.saved().get("read_mode") == "done")
+    # A summary mode owns the turn: the row is gated.
+    page.click("#summary-seg [data-value=brief]")
+    assert eventually(lambda: lv.get("summaries")["enabled"] is True)
+    pw.expect(page.locator("#read-row")).to_have_class(re.compile(r"(^|\s)dim(\s|$)"))
+    pw.expect(page.locator(seg % "queue")).to_be_disabled()
+    page.click("#summary-seg [data-value=off]")
+    assert eventually(lambda: lv.get("summaries")["enabled"] is False)
+    pw.expect(page.locator(seg % "queue")).to_be_enabled()
     page.close()
 
 

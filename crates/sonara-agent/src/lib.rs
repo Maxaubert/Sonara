@@ -58,7 +58,9 @@ pub mod summarizer;
 pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
 pub use rules::{Action, Ask, Job, Note, Rules, Stale, Timer};
-pub use settings::{BackgroundPolicy, Settings, Style, SummaryCommand, SummarySettings, Verbosity};
+pub use settings::{
+    BackgroundPolicy, ReadMode, Settings, Style, SummaryCommand, SummarySettings, Verbosity,
+};
 pub use sonara_channels::{Channels, Control, QueueMode};
 pub use summarizer::Summarizer;
 
@@ -451,6 +453,11 @@ impl Agent {
 
     pub fn set_verbosity(&self, v: Verbosity) {
         self.lock().settings.verbosity = v;
+    }
+
+    /// When a turn's prose is spoken (#222).
+    pub fn set_read_mode(&self, m: ReadMode) {
+        self.lock().settings.read_mode = m;
     }
 
     pub fn set_minqueue(&self, n: usize) -> Result<()> {

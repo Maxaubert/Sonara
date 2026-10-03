@@ -800,6 +800,7 @@ fn the_schema_defaults_are_the_layers_defaults() {
         "channel_announce",
         "mute_level",
         "verbosity",
+        "read_mode",
         "minqueue",
         "background_policy",
         "audio_mode",
@@ -1189,11 +1190,11 @@ fn a_muted_channel_pref_holds_the_channels_speech() {
         let s = &r.server;
         let mut h = Session::http();
         ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
-        // Read prose at once (the product default holds five chunks).
+        // Read prose at once (the product default holds the turn).
         ok(
             s,
             &mut h,
-            json!({"type": "set", "key": "minqueue", "value": 1}),
+            json!({"type": "set", "key": "read_mode", "value": "immediate"}),
         );
         ok(
             s,
@@ -1312,6 +1313,44 @@ fn the_background_policy_is_a_persisted_agent_key() {
     let mut h = Session::http();
     ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
     assert!(s.channels().unwrap().focus_only(), "applied at start");
+}
+
+#[test]
+fn the_read_mode_is_a_persisted_agent_key_and_an_old_minqueue_maps_to_it() {
+    // #222.
+    let home = tmp();
+    {
+        let r = rig_on(home.clone());
+        let s = &r.server;
+        let mut h = Session::http();
+        ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+        let g = ok(s, &mut h, json!({"type": "get", "key": "read_mode"}));
+        assert_eq!(g["value"], "done", "the product default");
+        let g = ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "read_mode", "value": "queue"}),
+        );
+        assert_eq!(g["value"], "queue");
+        assert_eq!(saved(&home)["read_mode"], "queue");
+    }
+    {
+        let r = rig_on(home.clone());
+        let s = &r.server;
+        let mut h = Session::http();
+        ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+        let g = ok(s, &mut h, json!({"type": "get", "key": "read_mode"}));
+        assert_eq!(g["value"], "queue", "applied at start");
+    }
+    // A config.json from before #222: the minqueue the user set.
+    let home = tmp();
+    std::fs::write(home.join("config.json"), r#"{"minqueue": 1}"#).unwrap();
+    let r = rig_on(home.clone());
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+    let g = ok(s, &mut h, json!({"type": "get", "key": "read_mode"}));
+    assert_eq!(g["value"], "immediate");
 }
 
 /// Kokoro as `sonarad` builds it, but without downloads, ONNX Runtime or a

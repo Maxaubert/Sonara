@@ -1,6 +1,7 @@
 //! The `agent` extension (spec 4.3) on top of `sonara_agent`: `stream`,
 //! `turn_start`, `turn_end`, `ask`, `earcon`, `tool`, `answered`, the
-//! settings `mute_level`, `verbosity`, `minqueue`, `background_policy` and
+//! settings `mute_level`, `verbosity`, `read_mode`, `minqueue`,
+//! `background_policy` and
 //! `summaries`, the read-only key `earcons` (the custom earcons folder and
 //! the kinds it overrides), and the `earcons` event stream. It needs
 //! `channels`, which enabling it enables too. `protocol` calls in here once a client enabled it; before that its
@@ -9,7 +10,7 @@ use crate::config::Store;
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_agent::settings::{BackgroundPolicy, Settings, SummaryCommand, Verbosity};
+use sonara_agent::settings::{BackgroundPolicy, ReadMode, Settings, SummaryCommand, Verbosity};
 use sonara_agent::summarizer::instruction;
 use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Style, SummarySettings};
 use std::collections::BTreeMap;
@@ -35,6 +36,7 @@ pub const TYPES: &[&str] = &[
 pub const KEYS: &[&str] = &[
     "mute_level",
     "verbosity",
+    "read_mode",
     "minqueue",
     "background_policy",
     "summaries",
@@ -322,6 +324,9 @@ pub fn settings_from(store: &Store) -> Settings {
     if let Some(v) = store.value("verbosity").as_str().and_then(Verbosity::parse) {
         s.verbosity = v;
     }
+    if let Some(m) = store.value("read_mode").as_str().and_then(ReadMode::parse) {
+        s.read_mode = m;
+    }
     if let Some(n) = store.value("minqueue").as_u64() {
         s.minqueue = n as usize;
     }
@@ -358,6 +363,13 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
                 let vb = Verbosity::parse(name)
                     .ok_or_else(|| bad("'verbosity' is \"everything\" or \"skip_code\""))?;
                 a.set_verbosity(vb);
+            }
+            "read_mode" => {
+                let m = v
+                    .as_str()
+                    .and_then(ReadMode::parse)
+                    .ok_or_else(|| bad("'read_mode' is \"immediate\", \"queue\" or \"done\""))?;
+                a.set_read_mode(m);
             }
             "minqueue" => {
                 let n = v
@@ -398,6 +410,7 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
     let value = match key {
         "mute_level" => json!(s.mute_level),
         "verbosity" => json!(s.verbosity.as_str()),
+        "read_mode" => json!(s.read_mode.as_str()),
         "minqueue" => json!(s.minqueue),
         "background_policy" => json!(s.background.as_str()),
         "earcons" => earcons_json(a.earcons()),
@@ -520,6 +533,8 @@ mod tests {
             json!({"type": "set", "key": "mute_level", "value": 3}),
             json!({"type": "set", "key": "verbosity", "value": "loud"}),
             json!({"type": "set", "key": "minqueue", "value": 11}),
+            json!({"type": "set", "key": "read_mode", "value": "later"}),
+            json!({"type": "set", "key": "read_mode", "value": 2}),
             json!({"type": "set", "key": "background_policy", "value": "silent"}),
             json!({"type": "set", "key": "summaries", "value": {"timeout": 5}}),
             json!({"type": "set", "key": "summaries", "value": {"style": "long"}}),
@@ -626,6 +641,9 @@ mod tests {
             ("verbosity", json!("skip_code")),
             ("verbosity", json!("everything")),
             ("minqueue", json!(3)),
+            ("read_mode", json!("immediate")),
+            ("read_mode", json!("queue")),
+            ("read_mode", json!("done")),
             ("background_policy", json!("all")),
             ("background_policy", json!("earcon_only")),
         ] {

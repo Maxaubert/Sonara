@@ -120,6 +120,7 @@
     .hint { color:var(--secondary); font-size:13px; line-height:1.45; }
     .control .hint { margin-top:8px; }
     .pref.dim { opacity:.55; }
+    .pref[hidden] { display:none; }
     .notice { margin:0 0 14px; padding:12px 14px; border-radius:12px; background:var(--accent-wash); color:var(--text); font-size:13.5px; line-height:1.45; }
     .notice[hidden] { display:none; }
     select, .field { width:100%; min-height:42px; border:1px solid var(--line-strong); border-radius:10px; padding:0 12px; background:var(--subtle); font-size:14px; }
@@ -276,7 +277,8 @@
         </div>
         <h2 class="group-label">Live reading</h2>
         <div class="inset">
-          <div class="pref agent-pref" id="minqueue-row"><div class="pref-copy"><strong id="mq-label">Minimum queue</strong><div class="hint">Sentences Sonara waits for before it starts reading.</div></div><div class="control"><div class="stepper" role="group" aria-labelledby="mq-label"><button id="mq-minus" type="button" aria-label="Fewer sentences">&minus;</button><output id="minqueue-out" aria-live="polite">1</output><button id="mq-plus" type="button" aria-label="More sentences">+</button></div><div class="hint">0 and 1 start speaking immediately. Applies while the mode above is Off.</div></div></div>
+          <div class="pref agent-pref" id="read-row"><div class="pref-copy"><strong id="readmode-label">Reading</strong><div class="hint">When Sonara reads the answer. Applies while the mode above is Off.</div></div><div class="control"><div class="segments" id="readmode-seg" role="radiogroup" aria-labelledby="readmode-label" aria-describedby="readmode-hint"><button type="button" role="radio" data-value="immediate">Immediately</button><button type="button" role="radio" data-value="queue">Queue</button><button type="button" role="radio" data-value="done">When done</button></div><div class="hint" id="readmode-hint"></div></div></div>
+          <div class="pref agent-pref" id="minqueue-row" hidden><div class="pref-copy"><strong id="mq-label">Queue size</strong><div class="hint">Sentences Sonara waits for before it starts reading.</div></div><div class="control"><div class="stepper" role="group" aria-labelledby="mq-label"><button id="mq-minus" type="button" aria-label="Fewer sentences">&minus;</button><output id="minqueue-out" aria-live="polite">5</output><button id="mq-plus" type="button" aria-label="More sentences">+</button></div><div class="hint">0 and 1 start speaking immediately.</div></div></div>
         </div>
       </section>
 
@@ -475,7 +477,7 @@ async function change(key, value, label) {
 }
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
-              "mute_level", "verbosity", "minqueue", "background_policy", "summaries", "channel_announce",
+              "mute_level", "verbosity", "read_mode", "minqueue", "background_policy", "summaries", "channel_announce",
               "channel_prefs", "earcons", "debug_log"];
 let voices = [];
 
@@ -577,8 +579,13 @@ const VERBOSITY_HINTS = {
   everything: "The answer, questions, tool announcements, and each code block by its size and language (\u201c3-line python code block\u201d).",
   skip_code: "The answer and questions. Code blocks and tool announcements are skipped without a word.",
 };
+const READ_HINTS = {
+  immediate: "Each sentence as soon as it arrives.",
+  queue: "Once the queue size of sentences waits. A tool run, a question or the end of the turn starts it sooner.",
+  done: "The whole answer once the agent is done. A question or permission prompt reads what came before it first.",
+};
 const MODE_HINTS = {
-  off: "Read everything live, as it streams.",
+  off: "Read the answer itself, as set under Live reading.",
   tidy: "Everything, rewritten for the ear at the end of the turn.",
   natural: "The full story, minus the noise.",
   brief: "Just the outcome.",
@@ -590,7 +597,7 @@ const SUMMARY_MODELS = [
   {cmd: "claude", model: "haiku", label: "Haiku (fast)"},
 ];
 
-const SUMMARY_GATED = new Set(["model-row", "timeout-row", "settle-row", "minqueue-row"]);
+const SUMMARY_GATED = new Set(["model-row", "timeout-row", "settle-row", "read-row", "minqueue-row"]);
 
 function voiceOptions(engine, withDefault) {
   const own = voices.filter(v => v.engine === engine);
@@ -625,6 +632,9 @@ function render() {
     setText("verbosity-hint", VERBOSITY_HINTS[s.verbosity] || "");
     setSegments("background-seg", s.background_policy);
     renderSummary(s.summaries);
+    setSegments("readmode-seg", s.read_mode);
+    setText("readmode-hint", READ_HINTS[s.read_mode] || "");
+    $("minqueue-row").hidden = s.read_mode !== "queue";
     setText("minqueue-out", String(s.minqueue));
   }
 
@@ -717,6 +727,7 @@ function renderSummary(sm) {
   gate($("model-row"), active === "off");
   gate($("timeout-row"), active === "off");
   gate($("settle-row"), active === "off");
+  gate($("read-row"), active !== "off");
   gate($("minqueue-row"), active !== "off");
   setVal("timeout", sm.timeout);
   setVal("settle", sm.settle_ms);
@@ -932,6 +943,7 @@ wireSegments("audio-seg", v => change("audio_mode", v, "Audio mode"));
 wireSegments("mute-seg", v => change("mute_level", Number(v), "Mute"));
 wireSegments("verbosity-seg", v => change("verbosity", v, "Verbosity"));
 wireSegments("background-seg", v => change("background_policy", v, "Background sessions"));
+wireSegments("readmode-seg", v => change("read_mode", v, "Reading"));
 wireSegments("summary-seg", v => change("summaries", v === "off" ? {enabled: false} : {enabled: true, style: v}, "Summary mode"));
 $("model-select").addEventListener("change", e => {
   const [command, model] = e.target.value.split("|");
@@ -967,8 +979,8 @@ function numberField(id, field, lo, hi, label) {
 }
 numberField("timeout", "timeout", 15, 300, "Timeout");
 numberField("settle", "settle_ms", 0, 5000, "Settle time");
-$("mq-minus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.max(0, state.minqueue - 1), "Minimum queue"); });
-$("mq-plus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.min(10, state.minqueue + 1), "Minimum queue"); });
+$("mq-minus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.max(0, state.minqueue - 1), "Queue size"); });
+$("mq-plus").addEventListener("click", () => { if (state.minqueue !== undefined) change("minqueue", Math.min(10, state.minqueue + 1), "Queue size"); });
 $("announce-switch").addEventListener("click", () => change("channel_announce", state.channel_announce === "on" ? "off" : "on", "Announcements"));
 $("debuglog-switch").addEventListener("click", () => change("debug_log", state.debug_log !== true, "Troubleshooting log"));
 

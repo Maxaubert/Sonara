@@ -120,6 +120,8 @@ fn has_line(log: &str, ok: impl Fn(&str) -> bool) -> bool {
 fn what_came_in_what_was_decided_read_and_dropped_is_in_the_log() {
     let rt = start("on");
     let mut c = Client::connect(&rt);
+    // Prose held by the queue size (five chunks), not the whole turn.
+    c.request(json!({"type": "set", "key": "read_mode", "value": "queue"}));
     for m in [
         json!({"type": "channel_open", "channel": "c1", "label": "proj"}),
         json!({"type": "focus", "channel": "c1"}),

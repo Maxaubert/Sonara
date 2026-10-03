@@ -69,6 +69,7 @@ const EXTENSION_KEYS: &[&str] = &[
     channels_ext::PREFS_KEY,
     "mute_level",
     "verbosity",
+    "read_mode",
     "minqueue",
     "background_policy",
     "summaries",

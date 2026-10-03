@@ -85,6 +85,7 @@ def test_the_plugin_settings_are_imported(start, tmp_path, profile):
     assert get(c, "mute_level") == 1
     assert get(c, "verbosity") == "skip_code", "#214: the plugin's medium is skip_code"
     assert get(c, "minqueue") == 3
+    assert get(c, "read_mode") == "queue", "#222: a minqueue above 1 is a queue"
     s = get(c, "summaries")
     assert (s["enabled"], s["command"], s["model"], s["timeout"], s["style"]) == (
         True, "codex", "gpt-5.4-mini", 90, "brief")

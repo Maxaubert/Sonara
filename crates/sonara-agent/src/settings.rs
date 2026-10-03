@@ -1,4 +1,4 @@
-//! L3 settings: mute level, verbosity, prose batching, the background
+//! L3 settings: mute level, verbosity, the reading mode and prose batching, the background
 //! speech policy and summaries. Ranges and defaults are the Python
 //! plugin's (`config_schema.py`).
 use std::time::Duration;
@@ -6,8 +6,8 @@ use std::time::Duration;
 /// `set mute_level`: 0 speaks, 1 silences agent speech (earcons still
 /// play), 2 also silences the earcons.
 pub const MUTE_LEVEL_MAX: u8 = 2;
-/// `minqueue` range: prose is held until this many chunks are waiting (or
-/// the turn ends); 0 and 1 read at once.
+/// `minqueue` range (read mode `queue`): prose is held until this many
+/// chunks are waiting (or the turn ends); 0 and 1 read at once.
 pub const MINQUEUE_MAX: usize = 10;
 pub const SUMMARY_TIMEOUT_S: (u64, u64) = (15, 300);
 pub const SUMMARY_SETTLE_MS_MAX: u64 = 5_000;
@@ -40,6 +40,40 @@ impl Verbosity {
         match self {
             Verbosity::Everything => "everything",
             Verbosity::SkipCode => "skip_code",
+        }
+    }
+}
+
+/// When a turn's prose is spoken (`read_mode`, #222). Summaries, when on,
+/// own the turn whatever the mode. A decision always speaks the prose
+/// held before it first (context first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadMode {
+    /// Each chunk as it arrives.
+    Immediate,
+    /// Held until `minqueue` chunks wait; the turn end, a tool run or a
+    /// decision releases.
+    Queue,
+    /// Held until the turn ends or a decision arrives; a tool run does not
+    /// release.
+    Done,
+}
+
+impl ReadMode {
+    pub fn parse(name: &str) -> Option<ReadMode> {
+        match name {
+            "immediate" => Some(ReadMode::Immediate),
+            "queue" => Some(ReadMode::Queue),
+            "done" => Some(ReadMode::Done),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReadMode::Immediate => "immediate",
+            ReadMode::Queue => "queue",
+            ReadMode::Done => "done",
         }
     }
 }
@@ -192,6 +226,7 @@ impl SummarySettings {
 pub struct Settings {
     pub mute_level: u8,
     pub verbosity: Verbosity,
+    pub read_mode: ReadMode,
     pub minqueue: usize,
     pub background: BackgroundPolicy,
     pub summaries: SummarySettings,
@@ -202,6 +237,7 @@ impl Default for Settings {
         Settings {
             mute_level: 0,
             verbosity: Verbosity::Everything,
+            read_mode: ReadMode::Queue,
             minqueue: 1,
             background: BackgroundPolicy::EarconOnly,
             summaries: SummarySettings::default(),
