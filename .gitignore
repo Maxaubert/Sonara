@@ -19,5 +19,8 @@ graphify-out/
 # Rust build output
 /target/
 
+# Candidate WAVs from packaging/sounds/make_pack.py and make_round2.py
+packaging/sounds/out/
+
 # Release zip output (packaging/release_zip.py)
 /dist/

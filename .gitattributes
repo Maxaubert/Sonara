@@ -8,3 +8,6 @@ bin/sonara-runtime.sh text eol=lf
 # Vendored misaki data: embedded byte for byte (tests/data.rs checks hashes).
 crates/misaki/data/*.xz binary
 crates/misaki/data/*.txt text eol=lf
+# Bundled earcons (#211): compiled in byte for byte, pinned by SHA256SUMS.
+crates/sonara-agent/sounds/*.wav binary
+crates/sonara-agent/sounds/SHA256SUMS text eol=lf

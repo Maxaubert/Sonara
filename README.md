@@ -178,6 +178,23 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 media that Windows can control (music, video players) and resumes it afterwards. Either way
 Sonara restores them when it stops, and on the next start if it was killed mid-sentence.
 
+### Sounds
+
+Sonara's built-in chimes are original sounds, synthesised from scratch for it (MIT, no samples;
+`packaging/sounds` rebuilds them):
+
+| Chime | When | Sound |
+| --- | --- | --- |
+| `choice` | a question needs your answer | kalimba, two notes rising an octave |
+| `permission` | a permission prompt | two soft rising blips |
+| `turn_done` | a reply ends | kalimba arpeggio landing on the tonic |
+| `session_change` | the voice moves to another session | slow, warm e-piano arpeggio |
+| `nav`, `nav_edge` | a restart or flush (`nav_edge`: nothing to restart) | a light tick (the same sound) |
+| `error` | speech fails | a low falling knock pair |
+| `summary_failed` | a summary-mode turn had no text | a short, soft falling knock |
+
+A WAV of your own in `%LOCALAPPDATA%\Sonara\earcons\` overrides any of them: see below.
+
 ### Custom chimes
 
 Put a WAV file named after a chime in `%LOCALAPPDATA%\Sonara\earcons\` and Sonara plays it
