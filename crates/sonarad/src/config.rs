@@ -69,7 +69,22 @@ pub struct Setting {
 }
 
 pub const AUDIO_MODES: &[&str] = &["off", "duck", "pause"];
-pub const VERBOSITY: &[&str] = &["everything", "medium", "quiet"];
+pub const VERBOSITY: &[&str] = &["everything", "skip_code"];
+/// Old names of a value, accepted and stored as the new one: the
+/// verbosity levels before #214 (and the Python plugin's).
+const ALIASES: &[(&str, &str, &str)] = &[
+    ("verbosity", "all", "everything"),
+    ("verbosity", "medium", "skip_code"),
+    ("verbosity", "quiet", "skip_code"),
+];
+
+fn canonical<'a>(key: &str, v: &'a str) -> &'a str {
+    ALIASES
+        .iter()
+        .find(|(k, old, _)| *k == key && *old == v)
+        .map(|(_, _, now)| *now)
+        .unwrap_or(v)
+}
 pub const STYLES: &[&str] = &["tidy", "natural", "brief"];
 pub const COMMANDS: &[&str] = &["claude", "codex"];
 pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
@@ -78,9 +93,10 @@ const ON_OFF: &[&str] = &["on", "off"];
 /// Every persisted setting, its layer, validation and default (as JSON).
 ///
 /// The defaults are the product's (#202, the maintainer's settings of the
-/// Python plugin): Kokoro's `af_sarah` at 250 words per minute, medium
-/// verbosity, prose held until five chunks wait, every session read, media
-/// paused while Sonara speaks, summaries off, unmuted. `sonarad` applies
+/// Python plugin): Kokoro's `af_sarah` at 250 words per minute, verbosity
+/// `skip_code` (#214; it was `medium`), prose held until five chunks wait,
+/// every session read, media paused while Sonara speaks, summaries off,
+/// unmuted. `sonarad` applies
 /// them to the layers (L1 in `apply_reader`), so they differ from the
 /// library crates' own defaults on purpose.
 pub const SCHEMA: &[Setting] = &[
@@ -124,7 +140,7 @@ pub const SCHEMA: &[Setting] = &[
         key: "verbosity",
         layer: Layer::Agent,
         kind: Kind::OneOf(VERBOSITY),
-        default: "\"medium\"",
+        default: "\"skip_code\"",
     },
     Setting {
         key: "minqueue",
@@ -194,6 +210,7 @@ pub fn validate(key: &str, v: &Value) -> Result<Value, String> {
             .ok_or_else(|| format!("'{key}' is an integer {lo} to {hi}")),
         Kind::OneOf(options) => v
             .as_str()
+            .map(|s| canonical(key, s))
             .filter(|s| options.contains(s))
             .map(|s| json!(s))
             .ok_or_else(|| format!("'{key}' is one of {}", options.join(", "))),
@@ -794,7 +811,7 @@ mod tests {
             ("rate", json!(250)),
             ("volume", json!(100)),
             ("mute_level", json!(0)),
-            ("verbosity", json!("medium")),
+            ("verbosity", json!("skip_code")),
             ("minqueue", json!(5)),
             ("background_policy", json!("all")),
             ("audio_mode", json!("pause")),
@@ -842,7 +859,7 @@ mod tests {
             ("audio_mode", json!("loud")),
             ("duck_level", json!(1.5)),
             ("mute_level", json!(3)),
-            ("verbosity", json!("all")),
+            ("verbosity", json!("loud")),
             ("minqueue", json!(11)),
             ("background_policy", json!("silent")),
             ("channel_announce", json!(true)),
@@ -854,6 +871,19 @@ mod tests {
             assert!(validate(key, &v).is_err(), "{key} {v}");
         }
         assert_eq!(validate("rate", &json!(250.0)).unwrap(), json!(250));
+        // #214: the verbosity levels before it load as their new names.
+        for (old, now) in [
+            ("medium", "skip_code"),
+            ("quiet", "skip_code"),
+            ("all", "everything"),
+            ("everything", "everything"),
+        ] {
+            assert_eq!(
+                validate("verbosity", &json!(old)).unwrap(),
+                json!(now),
+                "{old}"
+            );
+        }
         assert_eq!(validate("voice", &json!(null)).unwrap(), Value::Null);
         assert_eq!(
             validate(

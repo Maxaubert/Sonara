@@ -83,7 +83,7 @@ def test_the_plugin_settings_are_imported(start, tmp_path, profile):
     assert get(c, "audio_mode") == "duck"
     assert get(c, "duck_level") == 20
     assert get(c, "mute_level") == 1
-    assert get(c, "verbosity") == "medium"
+    assert get(c, "verbosity") == "skip_code", "#214: the plugin's medium is skip_code"
     assert get(c, "minqueue") == 3
     s = get(c, "summaries")
     assert (s["enabled"], s["command"], s["model"], s["timeout"], s["style"]) == (

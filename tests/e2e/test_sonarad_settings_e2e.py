@@ -91,8 +91,112 @@ def test_every_section_of_the_old_page_is_there(live, browser):
                                           "Advanced", "System"]
     page.click("[data-page=system]")
     assert page.locator("#app-version").text_content().startswith("Version ")
-    assert page.locator("#rt-pid").text_content().strip() == str(lv.rt.proc.pid)
     assert "config.json" in page.locator("#rt-config").text_content()
+    page.close()
+
+
+def test_outdated_controls_are_gone(live, browser):
+    # #214: no engine picker, no per-session voice, no process noise.
+    lv = live()
+    lv.client.request({"type": "channel_open", "channel": "sess-1234abcd", "label": "repo"})
+    page = open_page(browser, lv.url)
+    for gone in ("#engine-select", "#rt-pid", "#rt-port", "#rt-extensions", "#engine-rows"):
+        assert page.locator(gone).count() == 0, gone
+    page.click("[data-page=sessions]")
+    page.locator("#session-rows .sess-row").first.wait_for()
+    assert page.locator("#session-rows .sess-row select").count() == 0
+    page.close()
+
+
+def test_the_engine_status_line_replaces_the_picker(live, browser):
+    # #214: the engine is not a choice; the page says how it is doing.
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#engine-status")).to_have_text("fake, ready")
+    # The fake runtime has no Kokoro to switch to.
+    pw.expect(page.locator("#engine-kokoro")).to_be_hidden()
+    page.close()
+
+
+def test_verbosity_has_two_levels_and_persists_across_a_reload(live, browser):
+    # #214: Everything or Skip code; Skip code is the default.
+    lv = live()
+    page = open_page(browser, lv.url)
+    buttons = page.locator("#verbosity-seg [role=radio]")
+    assert [b.strip() for b in buttons.all_text_contents()] == ["Everything", "Skip code"]
+    seg = "#verbosity-seg [data-value=%s]"
+    pw.expect(page.locator(seg % "skip_code")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#verbosity-hint")).to_contain_text("Code blocks")
+    page.click(seg % "everything")
+    assert eventually(lambda: lv.saved().get("verbosity") == "everything")
+    assert lv.get("verbosity") == "everything"
+    page.reload()
+    pw.expect(page.locator(seg % "everything")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#verbosity-hint")).to_contain_text("code block")
+    page.close()
+
+
+def test_an_old_saved_verbosity_shows_as_skip_code(live, browser, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({"verbosity": "quiet"}), encoding="utf-8")
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#verbosity-seg [data-value=skip_code]")).to_have_attribute("aria-checked", "true")
+    page.close()
+
+
+def test_every_remaining_control_saves_and_survives_a_reload(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    # Speech
+    page.click("#mute-seg [data-value='1']")
+    assert eventually(lambda: lv.saved().get("mute_level") == 1)
+    page.click("#mute-seg [data-value='0']")
+    assert eventually(lambda: lv.saved().get("mute_level") == 0)
+    # Summary: minimum queue (live reading, mode Off)
+    page.click("[data-page=summary]")
+    before = lv.get("minqueue")
+    page.click("#mq-plus")
+    assert eventually(lambda: lv.saved().get("minqueue") == before + 1)
+    page.click("#mq-minus")
+    assert eventually(lambda: lv.saved().get("minqueue") == before)
+    # Advanced: timeout and settle time apply with a summary mode on
+    page.click("[data-page=summary]")
+    page.click("#summary-seg [data-value=natural]")
+    assert eventually(lambda: lv.get("summaries")["enabled"] is True)
+    page.click("[data-page=advanced]")
+    pw.expect(page.locator("#timeout")).to_be_enabled()
+    page.locator("#timeout").fill("120")
+    page.locator("#timeout").dispatch_event("change")
+    assert eventually(lambda: lv.get("summaries")["timeout"] == 120)
+    page.locator("#settle").fill("700")
+    page.locator("#settle").dispatch_event("change")
+    assert eventually(lambda: lv.get("summaries")["settle_ms"] == 700)
+    # Audio
+    page.click("[data-page=audio]")
+    page.locator("#volume").fill("60")
+    page.locator("#volume").dispatch_event("change")
+    assert eventually(lambda: lv.saved().get("volume") == 60)
+    page.click("#audio-seg [data-value=duck]")
+    assert eventually(lambda: lv.saved().get("audio_mode") == "duck")
+    page.locator("#duck").fill("45")
+    page.locator("#duck").dispatch_event("change")
+    assert eventually(lambda: lv.saved().get("duck_level") == 45)
+    # Sessions: switch announcements
+    page.click("[data-page=sessions]")
+    page.click("#announce-switch")
+    assert eventually(lambda: lv.get("channel_announce") == "off")
+    # Everything is still there after a reload.
+    page.reload()
+    pw.expect(page.locator("#rt-version")).not_to_have_text("–")
+    pw.expect(page.locator("#volume-out")).to_have_text("60 %")
+    pw.expect(page.locator("#duck-out")).to_have_text("45 %")
+    pw.expect(page.locator("#audio-seg [data-value=duck]")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#summary-seg [data-value=natural]")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#timeout")).to_have_value("120")
+    pw.expect(page.locator("#settle")).to_have_value("700")
+    pw.expect(page.locator("#announce-switch")).to_have_attribute("aria-checked", "false")
     page.close()
 
 
@@ -170,7 +274,7 @@ def test_segments_are_a_keyboard_radio_group_with_a_live_status(live, browser):
     page.close()
 
 
-def test_sessions_name_audio_and_voice(live, browser):
+def test_sessions_name_and_audio(live, browser):
     lv = live()
     lv.client.request({"type": "channel_open", "channel": "sess-1234abcd", "label": "repo"})
     page = open_page(browser, lv.url)
@@ -185,8 +289,6 @@ def test_sessions_name_audio_and_voice(live, browser):
     row = page.locator("#session-rows .sess-row").first
     row.locator("[role=switch]").click()
     assert eventually(lambda: lv.get("channel_prefs")[0]["muted"] is True)
-    page.locator("#session-rows .sess-row select").first.select_option("silence")
-    assert eventually(lambda: lv.get("channel_prefs")[0]["voice"] == "silence")
     prefs = json.loads((lv.home / "session_prefs.json").read_text(encoding="utf-8"))
     assert prefs["sess-1234abcd"]["label"] == "Build"
     page.close()

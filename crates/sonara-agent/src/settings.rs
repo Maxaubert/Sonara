@@ -12,23 +12,26 @@ pub const MINQUEUE_MAX: usize = 10;
 pub const SUMMARY_TIMEOUT_S: (u64, u64) = (15, 300);
 pub const SUMMARY_SETTLE_MS_MAX: u64 = 5_000;
 
-/// How much of the agent's output is spoken.
+/// How much of the agent's output is spoken (#214). Decisions are spoken
+/// at both levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verbosity {
-    /// Prose, decisions, tool announcements and the host's selection hints.
+    /// The answer, decisions, tool announcements, the host's selection
+    /// hints, and each code block announced ("3-line python code block").
     Everything,
-    /// Prose and decisions.
-    Medium,
-    /// Decisions only (prose is still recorded for summaries).
-    Quiet,
+    /// The answer and decisions: code blocks are dropped silently, tools
+    /// are not announced and hints are left out.
+    SkipCode,
 }
 
 impl Verbosity {
+    /// A name, or an alias kept for older clients and saved settings:
+    /// `all` is `everything`; `medium` and `quiet` (the levels before #214)
+    /// are `skip_code`.
     pub fn parse(name: &str) -> Option<Verbosity> {
         match name {
-            "everything" => Some(Verbosity::Everything),
-            "medium" => Some(Verbosity::Medium),
-            "quiet" => Some(Verbosity::Quiet),
+            "everything" | "all" => Some(Verbosity::Everything),
+            "skip_code" | "medium" | "quiet" => Some(Verbosity::SkipCode),
             _ => None,
         }
     }
@@ -36,8 +39,7 @@ impl Verbosity {
     pub fn as_str(&self) -> &'static str {
         match self {
             Verbosity::Everything => "everything",
-            Verbosity::Medium => "medium",
-            Verbosity::Quiet => "quiet",
+            Verbosity::SkipCode => "skip_code",
         }
     }
 }

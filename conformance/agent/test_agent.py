@@ -20,7 +20,7 @@ def agent_client(rt, announce=False, policy="earcon_only"):
     and earcons, past the first (idle) state. The parity cases run on the
     Python plugin's settings (prose read at once, every kind of text,
     ``policy`` as the background speech policy, default ``earcon_only``),
-    not on the product defaults of #202 (five chunks held, ``medium``,
+    not on the product defaults of #202 (five chunks held, ``skip_code``,
     ``all``)."""
     c = rt.tcp(extensions=["agent"])
     assert c.request({"type": "subscribe", "events": ["state", "items", "earcons"]})["ok"]
@@ -267,7 +267,7 @@ def test_tools_are_announced_and_an_answer_catches_up(rt):
     c = agent_client(rt)
     ok(c, {"type": "tool", "channel": "a", "name": "Bash", "summary": "git status"})
     assert heard(c, 1) == [("git status", "a")]
-    ok(c, {"type": "set", "key": "verbosity", "value": "medium"})
+    ok(c, {"type": "set", "key": "verbosity", "value": "skip_code"})
     ok(c, {"type": "tool", "channel": "a", "name": "Bash", "summary": "ls"})
     quiet(c, 0.4)
     stream(c, "a", TWO_LONG)
@@ -277,6 +277,32 @@ def test_tools_are_announced_and_an_answer_catches_up(rt):
     quiet(c)
     stream(c, "a", "After the answer.", 1)
     assert heard(c, 1) == [("After the answer.", "a")]
+
+
+CODE_TURN = "Look.\n```python\nx = 1\ny = 2\n```\nDone.\n"
+
+
+def test_everything_announces_code_blocks_and_skip_code_drops_them(rt):
+    # #214: two levels. A code block is announced at everything and
+    # skipped without a word at skip_code.
+    c = agent_client(rt)
+    stream(c, "a", CODE_TURN)
+    assert heard(c, 3) == [("Look.", "a"), ("2-line python code block", "a"), ("Done.", "a")]
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "set", "key": "verbosity", "value": "skip_code"})
+    ok(c, {"type": "turn_start", "channel": "a"})
+    stream(c, "a", CODE_TURN)
+    assert heard(c, 2) == [("Look.", "a"), ("Done.", "a")]
+    c.state(lambda s: s["now_playing"] is None)
+    quiet(c)
+
+
+def test_old_verbosity_names_are_accepted_as_aliases(rt):
+    # #214: older clients send the three-level names.
+    c = rt.tcp(extensions=["agent"])
+    for old, now in (("medium", "skip_code"), ("quiet", "skip_code"), ("all", "everything")):
+        assert ok(c, {"type": "set", "key": "verbosity", "value": old})["value"] == now, old
+    assert c.request({"type": "set", "key": "verbosity", "value": "loud"})["error"]["code"] == "E_BAD_REQUEST"
 
 
 def test_closing_a_channel_forgets_its_turn(rt):
@@ -308,7 +334,7 @@ def test_agent_over_http(rt):
 def test_the_agent_defaults_are_the_product_defaults(rt):
     # #202: the maintainer's settings of the Python plugin, unmuted.
     c = rt.tcp(extensions=["agent"])
-    for key, want in (("background_policy", "all"), ("verbosity", "medium"),
+    for key, want in (("background_policy", "all"), ("verbosity", "skip_code"),
                       ("minqueue", 5), ("mute_level", 0)):
         assert ok(c, {"type": "get", "key": key})["value"] == want, key
     assert ok(c, {"type": "get", "key": "summaries"})["value"]["enabled"] is False

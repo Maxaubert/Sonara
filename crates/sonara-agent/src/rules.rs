@@ -332,19 +332,27 @@ impl Rules {
         }
         let mut out = Vec::new();
         let summaries = self.summaries();
-        let quiet = self.settings.verbosity == Verbosity::Quiet;
+        let skip_code = self.settings.verbosity == Verbosity::SkipCode;
         let minqueue = self.settings.minqueue;
         let c = self.turn(channel);
-        let texts: Vec<String> = c
-            .assembler
-            .feed(delta, index, is_final)
-            .into_iter()
-            .filter_map(|ch| match ch {
-                Chunk::Text(t) => Some(t),
-                Chunk::ParagraphBreak => None,
-            })
-            .collect();
-        c.prose.extend(texts.iter().cloned());
+        // Every chunk is recorded for summaries; at `skip_code` a code
+        // block's announcement is not spoken (#214).
+        let mut texts: Vec<String> = Vec::new();
+        for ch in c.assembler.feed(delta, index, is_final) {
+            match ch {
+                Chunk::Text(t) => {
+                    c.prose.push(t.clone());
+                    texts.push(t);
+                }
+                Chunk::Code(t) => {
+                    c.prose.push(t.clone());
+                    if !skip_code {
+                        texts.push(t);
+                    }
+                }
+                Chunk::ParagraphBreak => {}
+            }
+        }
         if summaries {
             // Late prose after turn_end restarts the settle window, so the
             // summary waits for the whole turn (#14).
@@ -353,7 +361,7 @@ impl Rules {
             }
             return Ok(out);
         }
-        if quiet || texts.is_empty() {
+        if texts.is_empty() {
             return Ok(out);
         }
         c.held_prose.extend(texts);

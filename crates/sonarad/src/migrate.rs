@@ -558,7 +558,7 @@ mod tests {
             Value::Object(out),
             json!({
                 "voice": "af_sarah", "rate": 250, "audio_mode": "duck",
-                "duck_level": 20, "mute_level": 1, "verbosity": "medium", "minqueue": 3,
+                "duck_level": 20, "mute_level": 1, "verbosity": "skip_code", "minqueue": 3,
                 "background_policy": "earcon_only", "volume": 100,
                 "summaries": {"enabled": true, "command": "codex", "model": "gpt-5.4-mini",
                               "timeout": 90, "style": "brief",
