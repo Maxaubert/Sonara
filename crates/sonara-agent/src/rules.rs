@@ -377,6 +377,21 @@ impl Rules {
         }
     }
 
+    /// Drop the prose held by `read_mode`, noted for the troubleshooting
+    /// log: in `done` that can be a whole turn.
+    fn drop_held(&mut self, channel: &str, why: &str) {
+        let n = std::mem::take(&mut self.turn(channel).held_prose).len();
+        if n > 0 {
+            let mode = self.settings.read_mode.as_str();
+            self.note(
+                Some(channel),
+                "prose",
+                format!("dropped: {n} held chunk(s) ({why}, read_mode {mode})"),
+                None,
+            );
+        }
+    }
+
     /// Speak the prose held by `read_mode`.
     fn flush_prose(&mut self, out: &mut Vec<Action>, channel: &str) {
         let held = std::mem::take(&mut self.turn(channel).held_prose);
@@ -504,7 +519,8 @@ impl Rules {
         }
         c.current = turn.map(str::to_string);
         c.awaiting = false;
-        c.held_prose.clear();
+        self.drop_held(channel, "turn_start");
+        let c = self.turn(channel);
         c.released = false;
         c.prose.clear();
         c.voiced = 0;
@@ -673,9 +689,9 @@ impl Rules {
     fn catch_up(&mut self, channel: &str) {
         let gen = self.gen();
         let settle = self.gen();
+        self.drop_held(channel, "answered");
         let c = self.turn(channel);
         c.awaiting = false;
-        c.held_prose.clear();
         c.voiced = c.prose.len();
         Self::cancel(c, gen, settle);
     }

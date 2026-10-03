@@ -491,7 +491,13 @@ impl Store {
                 }
             }
         }
-        if let Some(mode) = crate::migrate::read_mode_from_minqueue(&user) {
+        // A refused read_mode stays in the file (in `extra`): no mapping.
+        let mapped = if extra.contains_key("read_mode") {
+            None
+        } else {
+            crate::migrate::read_mode_from_minqueue(&user)
+        };
+        if let Some(mode) = mapped {
             // In memory only: written with the next change (#222).
             user.insert("read_mode".into(), mode);
         }
@@ -992,6 +998,23 @@ mod tests {
         .unwrap();
         let (store, _) = Store::load(&dir);
         assert_eq!(store.value("read_mode"), json!("done"));
+    }
+
+    #[test]
+    fn a_refused_read_mode_is_kept_in_the_file_next_to_a_minqueue() {
+        // Review of #222: the mapping must not replace a read_mode the file
+        // holds but this release refuses (a newer value or a typo).
+        let dir = tmp();
+        std::fs::write(
+            dir.join(CONFIG_FILE),
+            r#"{"minqueue": 1, "read_mode": "later"}"#,
+        )
+        .unwrap();
+        let (store, problems) = Store::load(&dir);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(store.value("read_mode"), json!("done"));
+        store.record("volume", &json!(50));
+        assert_eq!(read(&dir.join(CONFIG_FILE))["read_mode"], json!("later"));
     }
 
     #[test]

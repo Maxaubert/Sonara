@@ -455,6 +455,33 @@ fn read_mode_done_held_prose_is_noted() {
 }
 
 #[test]
+fn read_mode_done_held_prose_dropped_by_an_answer_or_a_new_turn_is_noted() {
+    // Review of #222: done holds a whole turn, so a drop must show in the log.
+    let mut r = mode_rules(ReadMode::Done);
+    prose(&mut r, "fg", "One. Two. ", 0, false);
+    let _ = notes(&r);
+    r.answered("fg");
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(_, w, _)| w == "dropped: 2 held chunk(s) (answered, read_mode done)"),
+        "{n:?}"
+    );
+    prose(&mut r, "fg", "Three. ", 1, false);
+    let _ = notes(&r);
+    r.turn_start("fg", None, None).unwrap();
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(_, w, _)| w == "dropped: 1 held chunk(s) (turn_start, read_mode done)"),
+        "{n:?}"
+    );
+    // Nothing held: no note.
+    r.turn_start("fg", None, None).unwrap();
+    assert!(notes(&r).is_empty());
+}
+
+#[test]
 fn read_mode_does_not_change_summaries() {
     for mode in [ReadMode::Immediate, ReadMode::Queue, ReadMode::Done] {
         let mut r = summary_rules();
