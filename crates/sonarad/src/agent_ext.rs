@@ -344,7 +344,7 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
             "verbosity" => {
                 let name = v.as_str().unwrap_or("");
                 let vb = Verbosity::parse(name)
-                    .ok_or_else(|| bad("'verbosity' is \"everything\", \"medium\" or \"quiet\""))?;
+                    .ok_or_else(|| bad("'verbosity' is \"everything\" or \"skip_code\""))?;
                 a.set_verbosity(vb);
             }
             "minqueue" => {
@@ -611,7 +611,8 @@ mod tests {
         assert_eq!(code(&r), "E_BAD_REQUEST");
         for (key, value) in [
             ("mute_level", json!(2)),
-            ("verbosity", json!("quiet")),
+            ("verbosity", json!("skip_code")),
+            ("verbosity", json!("everything")),
             ("minqueue", json!(3)),
             ("background_policy", json!("all")),
             ("background_policy", json!("earcon_only")),
@@ -624,6 +625,24 @@ mod tests {
             assert_eq!(r["value"], value, "{key}");
             let r = call(&s, &mut a, json!({"type": "get", "key": key}));
             assert_eq!(r["value"], value, "{key}");
+        }
+    }
+
+    #[test]
+    fn old_verbosity_names_are_aliases_that_answer_the_new_name() {
+        // #214: older clients still send the three-level names.
+        let (s, mut a) = enabled();
+        for (old, now) in [
+            ("medium", "skip_code"),
+            ("quiet", "skip_code"),
+            ("all", "everything"),
+        ] {
+            let r = call(
+                &s,
+                &mut a,
+                json!({"type": "set", "key": "verbosity", "value": old}),
+            );
+            assert_eq!(r["value"], now, "{old}");
         }
     }
 

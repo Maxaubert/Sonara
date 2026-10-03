@@ -14,7 +14,7 @@ fn assemble(deltas: &[String]) -> Vec<Value> {
     for (i, d) in deltas.iter().enumerate() {
         for c in a.feed(d, i as u32, i == last) {
             out.push(match c {
-                Chunk::Text(s) => Value::String(s),
+                Chunk::Text(s) | Chunk::Code(s) => Value::String(s),
                 Chunk::ParagraphBreak => Value::Null,
             });
         }

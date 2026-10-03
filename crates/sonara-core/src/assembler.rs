@@ -36,8 +36,11 @@ static PARA: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n[ \t]*\n").unwrap());
 /// One unit of `ProseAssembler::feed` output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Chunk {
-    /// A cleaned, speakable chunk (sentence, line or code-block summary).
+    /// A cleaned, speakable chunk (a sentence or a line).
     Text(String),
+    /// A fenced code block's spoken one-line summary ("3-line python code
+    /// block"), apart from the prose so a reader can skip it (#214).
+    Code(String),
     /// Emitted between paragraphs (Python's PARAGRAPH_BREAK sentinel).
     ParagraphBreak,
 }
@@ -279,9 +282,9 @@ impl ProseAssembler {
         self.fence_opened_line = false;
         self.fence_lines.clear();
         if !lang.is_empty() {
-            Chunk::Text(format!("{n}-line {lang} code block"))
+            Chunk::Code(format!("{n}-line {lang} code block"))
         } else {
-            Chunk::Text(format!("{n}-line code block"))
+            Chunk::Code(format!("{n}-line code block"))
         }
     }
 
@@ -386,7 +389,7 @@ mod tests {
     fn texts(v: Vec<Chunk>) -> Vec<Option<String>> {
         v.into_iter()
             .map(|c| match c {
-                Chunk::Text(s) => Some(s),
+                Chunk::Text(s) | Chunk::Code(s) => Some(s),
                 Chunk::ParagraphBreak => None,
             })
             .collect()

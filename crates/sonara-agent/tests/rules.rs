@@ -123,17 +123,41 @@ fn each_channel_has_its_own_assembler() {
 }
 
 #[test]
-fn verbosity_quiet_records_prose_without_speaking_it() {
-    for (v, speaks) in [
-        (Verbosity::Everything, true),
-        (Verbosity::Medium, true),
-        (Verbosity::Quiet, false),
-    ] {
+fn prose_is_spoken_at_every_verbosity() {
+    for v in [Verbosity::Everything, Verbosity::SkipCode] {
         let mut r = rules();
         r.settings.verbosity = v;
         let a = prose(&mut r, "fg", "Hello. ", 0, true);
-        assert_eq!(!spoken(&a).is_empty(), speaks, "{v:?}");
+        assert_eq!(spoken(&a), ["Hello."], "{v:?}");
     }
+}
+
+#[test]
+fn everything_announces_a_code_block_and_skip_code_drops_it_silently() {
+    let text = "Here it is.\n```python\nprint(1)\nprint(2)\nprint(3)\n```\nDone.\n";
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::Everything;
+    let a = prose(&mut r, "fg", text, 0, true);
+    assert_eq!(
+        spoken(&a),
+        ["Here it is.", "3-line python code block", "Done."]
+    );
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::SkipCode;
+    let a = prose(&mut r, "fg", text, 0, true);
+    assert_eq!(spoken(&a), ["Here it is.", "Done."]);
+}
+
+#[test]
+fn verbosity_names_and_their_old_aliases() {
+    assert_eq!(Verbosity::parse("everything"), Some(Verbosity::Everything));
+    assert_eq!(Verbosity::parse("all"), Some(Verbosity::Everything));
+    for old in ["skip_code", "medium", "quiet"] {
+        assert_eq!(Verbosity::parse(old), Some(Verbosity::SkipCode), "{old}");
+    }
+    assert_eq!(Verbosity::parse("loud"), None);
+    assert_eq!(Verbosity::Everything.as_str(), "everything");
+    assert_eq!(Verbosity::SkipCode.as_str(), "skip_code");
 }
 
 #[test]
@@ -306,12 +330,8 @@ fn a_tool_announcement_follows_the_held_prose() {
 }
 
 #[test]
-fn tools_are_announced_only_at_verbosity_everything() {
-    for (v, n) in [
-        (Verbosity::Everything, 1),
-        (Verbosity::Medium, 0),
-        (Verbosity::Quiet, 0),
-    ] {
+fn tools_are_announced_at_everything_and_suppressed_at_skip_code() {
+    for (v, n) in [(Verbosity::Everything, 1), (Verbosity::SkipCode, 0)] {
         let mut r = rules();
         r.settings.verbosity = v;
         assert_eq!(spoken(&r.tool("fg", "Bash", "ls")).len(), n, "{v:?}");
@@ -345,7 +365,7 @@ fn a_question_chimes_and_is_spoken_as_a_decision() {
 
 #[test]
 fn decisions_are_spoken_at_every_verbosity() {
-    for v in [Verbosity::Everything, Verbosity::Medium, Verbosity::Quiet] {
+    for v in [Verbosity::Everything, Verbosity::SkipCode] {
         let mut r = rules();
         r.settings.verbosity = v;
         assert_eq!(
@@ -436,7 +456,7 @@ fn notes_always_hints_at_everything_and_the_once_hint_once_per_channel() {
         ["!Pick? Option 1: A. Use arrows. Press a number. Selecting is immediate."]
     );
     let mut r = rules();
-    r.settings.verbosity = Verbosity::Medium;
+    r.settings.verbosity = Verbosity::SkipCode;
     assert_eq!(
         spoken(&r.ask("fg", &ask)),
         ["!Pick? Option 1: A. Use arrows."]

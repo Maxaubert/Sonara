@@ -55,7 +55,7 @@ def test_every_setting_survives_a_restart(start):
         "voice": "silence",
         "channel_announce": "off",
         "mute_level": 1,
-        "verbosity": "medium",
+        "verbosity": "skip_code",
         "minqueue": 4,
         "audio_mode": "pause",
         "duck_level": 15,
@@ -181,6 +181,24 @@ def test_a_saved_voice_the_engine_lacks_survives_setting_the_engine(start, tmp_p
     assert get(c, "runtime")["saved_voice"] == "af_sarah"
     set_key(c, "engine", "fake")
     assert saved(rt)["voice"] == "af_sarah"
+
+
+def test_a_saved_old_verbosity_loads_as_its_new_name(start, tmp_path):
+    """#214: a config.json from before the two levels keeps working."""
+    for old, now in (("quiet", "skip_code"), ("medium", "skip_code"), ("everything", "everything")):
+        (tmp_path / old).mkdir()
+        home = seeded(tmp_path / old, {"verbosity": old})
+        rt = start(home=home)
+        c = rt.tcp(extensions=["agent"])
+        assert get(c, "verbosity") == now, old
+        rt.close()
+
+
+def test_the_runtime_key_reports_the_engine_status(rt):
+    # #214: the settings page shows the engine's readiness from `get runtime`.
+    c = rt.tcp(extensions=["system"])
+    status = get(c, "runtime")["engine_status"]
+    assert status["engine"] == "fake" and status["ready"] is True
 
 
 def test_unknown_and_refused_keys_survive_a_save(start, tmp_path):

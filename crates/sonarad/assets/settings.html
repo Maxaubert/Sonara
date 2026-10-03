@@ -20,8 +20,9 @@
     })();
   </script>
   <style>
-    /* The Python plugin's settings page (src/sonara/settings.html): same
-       sections and layout, on protocol v1 and the public HTTP API only. */
+    /* The runtime's settings page: the Python plugin's sections and layout,
+       on protocol v1 and the public HTTP API only, showing only what the
+       runtime does (#214). */
     :root {
       color-scheme: light;
       --nav: #eff0f4;
@@ -160,7 +161,7 @@
     .unit { position:relative; }
     .unit .field { padding-right:56px; }
     .unit span { position:absolute; right:12px; top:11px; color:var(--secondary); font-size:13px; }
-    .sess-head, .sess-row { display:grid; grid-template-columns:minmax(0,1fr) 64px 190px; gap:14px; align-items:center; }
+    .sess-head, .sess-row { display:grid; grid-template-columns:minmax(0,1fr) 64px; gap:14px; align-items:center; }
     .sess-head { padding:12px 0 4px; color:var(--secondary); font-size:12px; font-weight:650; }
     .sess-head span:nth-child(2) { text-align:center; }
     .sess-row { padding:12px 0; border-bottom:1px solid var(--line); }
@@ -193,10 +194,11 @@
     .metric:not(:nth-child(3n+1)) { border-left:1px solid var(--line); }
     .metric span { display:block; color:var(--secondary); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; }
     .metric b { display:block; margin-top:4px; font-size:13.5px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
-    .engine-row { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-left:18px; padding:14px 18px 14px 0; border-top:1px solid var(--line); }
-    .engine-row:first-child { border-top:0; }
-    .engine-row strong { display:block; font-size:14px; margin-bottom:3px; }
-    .pill { padding:4px 10px; border-radius:99px; background:var(--green-wash); color:var(--green); font-size:12px; font-weight:700; white-space:nowrap; }
+    .file-row { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-left:18px; padding:14px 18px 14px 0; border-top:1px solid var(--line); }
+    .file-row:first-child { border-top:0; }
+    .file-row strong { display:block; font-size:14px; margin-bottom:3px; }
+    .engine-status { font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
+    .engine-status.busy { color:var(--secondary); font-weight:500; }
     .path { font:12.5px ui-monospace,"Cascadia Mono",Consolas,monospace; overflow-wrap:anywhere; }
     .footer { display:flex; justify-content:space-between; padding:16px 3px 0; color:var(--secondary); font-size:12.5px; }
     .banner { position:fixed; top:0; left:0; right:0; z-index:99; background:var(--red); color:#fff; padding:10px 16px; display:flex; gap:8px; font-size:13.5px; justify-content:center; }
@@ -210,8 +212,6 @@
       .pref { grid-template-columns:1fr; gap:12px; }
       .sess-head { display:none; }
       .sess-row { grid-template-columns:1fr auto; }
-      .sess-row select { grid-column:1 / -1; }
-      .info { grid-template-columns:1fr 1fr; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation:none !important; transition:none !important; }
@@ -249,15 +249,15 @@
         <div class="title-row"><div><h1 id="h-speech">Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
         <h2 class="group-label">Voice</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><label class="title" for="engine-select">Engine</label><div class="hint">Which speech engine reads.</div></div><div class="control"><select id="engine-select"></select></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">A voice of the engine above.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
+          <div class="pref"><div class="pref-copy"><strong id="engine-label">Voice engine</strong><div class="hint">Kokoro reads. Windows' own voice stands in while Kokoro downloads or loads, or if it cannot run.</div></div><div class="control"><div class="toggle-line"><span class="engine-status" id="engine-status" role="status" aria-labelledby="engine-label">&ndash;</span><button class="btn" id="engine-kokoro" type="button" hidden>Use Kokoro</button></div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">Which voice reads.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
         </div>
         <h2 class="group-label">Delivery</h2>
         <p class="notice agent-off" hidden>Mute and verbosity are for agent sessions. They appear once an app that uses them (such as the Claude Code plugin) is connected.</p>
         <div class="inset">
           <div class="pref agent-pref"><div class="pref-copy"><strong id="mute-label">Mute</strong><div class="hint">Muted keeps the attention sounds; super muted silences them too. The mute hotkey cycles through these.</div></div><div class="control"><div class="segments" id="mute-seg" role="radiogroup" aria-labelledby="mute-label"><button type="button" role="radio" data-value="0">Unmuted</button><button type="button" role="radio" data-value="1">Muted</button><button type="button" role="radio" data-value="2">Super muted</button></div></div></div>
-          <div class="pref agent-pref"><div class="pref-copy"><strong id="verbosity-label">Verbosity</strong><div class="hint">What is read besides the agent's answer.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="medium">Medium</button><button type="button" role="radio" data-value="quiet">Quiet</button></div><div class="hint" id="verbosity-hint"></div></div></div>
+          <div class="pref agent-pref"><div class="pref-copy"><strong id="verbosity-label">Verbosity</strong><div class="hint">What is read besides the agent's answer and its questions.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="skip_code">Skip code</button></div><div class="hint" id="verbosity-hint"></div></div></div>
           <div class="pref agent-pref"><div class="pref-copy"><strong id="background-label">Background sessions</strong><div class="hint">With several sessions open: read every session in turn, or only the one you last prompted (the others chime; switch to them to hear them).</div></div><div class="control"><div class="segments" id="background-seg" role="radiogroup" aria-labelledby="background-label"><button type="button" role="radio" data-value="all">Read all</button><button type="button" role="radio" data-value="earcon_only">Chime only</button></div></div></div>
         </div>
       </section>
@@ -270,7 +270,7 @@
           <div class="pref agent-pref"><div class="pref-copy"><strong id="mode-label">Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="radiogroup" aria-labelledby="mode-label" aria-describedby="summary-mode-hint"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="tidy">Tidy</button><button type="button" role="radio" data-value="natural">Natural</button><button type="button" role="radio" data-value="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
           <div class="combo-body agent-pref" id="prompt-card"><label class="sr-only" for="prompt-text">Summary instruction</label><textarea id="prompt-text" spellcheck="false" aria-describedby="prompt-state"></textarea><div class="prompt-actions"><span class="hint" id="prompt-state"></span><button class="btn" id="prompt-reset" type="button">Reset to default</button></div></div>
         </div>
-        <h2 class="group-label">Engine</h2>
+        <h2 class="group-label">Summarizer</h2>
         <div class="inset">
           <div class="pref agent-pref" id="model-row"><div class="pref-copy"><label class="title" for="model-select">Model</label><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select"></select><div class="hint">Fastest first. Every model runs headless and never touches your session.</div></div></div>
         </div>
@@ -290,12 +290,12 @@
         </div>
         <p class="hint" style="padding:12px 4px">Other apps always come back: when speech pauses or ends, when the app that turned this on closes, and after a crash at the next start.</p>
         <h2 class="group-label">Attention sounds</h2>
-        <div class="inset"><div class="engine-row"><div><strong>Your own chimes</strong><div class="hint path" id="earcons-folder">&ndash;</div><div class="hint" id="earcons-custom" aria-live="polite">&ndash;</div></div></div></div>
+        <div class="inset"><div class="file-row"><div><strong>Your own chimes</strong><div class="hint path" id="earcons-folder">&ndash;</div><div class="hint" id="earcons-custom" aria-live="polite">&ndash;</div></div></div></div>
         <p class="hint" style="padding:12px 4px">To replace a chime, paste this folder into File Explorer's address bar and put a WAV file there named after the chime: <span class="path">session_change.wav</span>, <span class="path">turn_done.wav</span>, <span class="path">choice.wav</span>, <span class="path">permission.wav</span>, <span class="path">summary_failed.wav</span>, <span class="path">error.wav</span>, <span class="path">nav.wav</span> or <span class="path">nav_edge.wav</span>. Any WAV works (mono or stereo, any sample rate, up to 10 seconds). It plays from the next time that chime sounds; delete the file to get the built-in sound back.</p>
       </section>
 
       <section class="page" id="sessions" aria-labelledby="h-sessions">
-        <div class="title-row"><div><h1 id="h-sessions">Sessions</h1><p>Name each session, switch its audio, or give it a voice.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <div class="title-row"><div><h1 id="h-sessions">Sessions</h1><p>Name each session or switch its audio.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
         <p class="notice" id="sessions-off" hidden>Sessions appear once an app that reads several sessions or tabs (such as the Claude Code plugin) is connected.</p>
         <h2 class="group-label">Switching</h2>
         <div class="inset">
@@ -304,13 +304,13 @@
         <h2 class="group-label">Sessions</h2>
         <div class="inset">
           <div style="padding:4px 20px">
-            <div class="sess-head" id="sessions-head" aria-hidden="true" hidden><span>Name</span><span>Audio</span><span>Voice</span></div>
+            <div class="sess-head" id="sessions-head" aria-hidden="true" hidden><span>Name</span><span>Audio</span></div>
             <div id="session-rows" role="list" aria-label="Open sessions"></div>
             <p class="hint" id="sessions-empty" style="padding:14px 0;margin:0">No sessions yet. Start an agent session and it appears here.</p>
             <details class="older" id="sessions-older" hidden><summary id="sessions-older-sum">Earlier sessions</summary><div id="session-rows-older" role="list" aria-label="Earlier sessions"></div></details>
           </div>
         </div>
-        <p class="hint" style="padding:12px 4px">A name you give a session is what Sonara says when it switches to it. Audio and voice are saved per session; the agent layer applies them from its next update.</p>
+        <p class="hint" style="padding:12px 4px">A name you give a session is what Sonara says when it switches to it. A session with its audio off is not read: its messages wait until you turn it back on.</p>
       </section>
 
       <section class="page" id="hotkeys" aria-labelledby="h-hotkeys">
@@ -344,16 +344,11 @@
         <h2 class="group-label">Runtime</h2>
         <div class="info">
           <div class="metric"><span>Version</span><b id="rt-version">&ndash;</b></div>
-          <div class="metric"><span>Protocol</span><b id="rt-protocol">&ndash;</b></div>
-          <div class="metric"><span>Process ID</span><b id="rt-pid">&ndash;</b></div>
           <div class="metric"><span>Uptime</span><b id="rt-uptime">&ndash;</b></div>
-          <div class="metric"><span>Port</span><b id="rt-port">&ndash;</b></div>
-          <div class="metric"><span>Extensions</span><b id="rt-extensions">&ndash;</b></div>
+          <div class="metric"><span>Protocol</span><b id="rt-protocol">&ndash;</b></div>
         </div>
-        <h2 class="group-label">Speech engines</h2>
-        <div class="inset" id="engine-rows"></div>
         <h2 class="group-label">Settings file</h2>
-        <div class="inset"><div class="engine-row"><div><strong>Saved settings</strong><div class="hint path" id="rt-config">&ndash;</div></div></div></div>
+        <div class="inset"><div class="file-row"><div><strong>Saved settings</strong><div class="hint path" id="rt-config">&ndash;</div></div></div></div>
         <footer class="footer"><span>Sonara for Windows</span><span id="app-version"></span></footer>
       </section>
     </main>
@@ -575,9 +570,8 @@ const AUDIO_HINTS = {
   pause: "Playing music and video pause while Sonara speaks, then resume.",
 };
 const VERBOSITY_HINTS = {
-  everything: "The answer, decisions, tool announcements and hints.",
-  medium: "The answer and decisions, no tool announcements or hints.",
-  quiet: "Decisions only.",
+  everything: "The answer, questions, tool announcements, and each code block by its size and language (\u201c3-line python code block\u201d).",
+  skip_code: "The answer and questions. Code blocks and tool announcements are skipped without a word.",
 };
 const MODE_HINTS = {
   off: "Read everything live, as it streams.",
@@ -606,10 +600,12 @@ function render() {
   const agentOn = ext.includes("agent") && s.summaries !== undefined;
   const channelsOn = ext.includes("channels") && s.channel_prefs !== undefined;
 
-  // Speech
-  const engines = [...new Set(voices.map(v => v.engine))];
-  if (s.engine && !engines.includes(s.engine)) engines.unshift(s.engine);
-  fillSelect($("engine-select"), engines.map(e => [e, e === "onecore" ? "Windows (OneCore)" : e]), s.engine);
+  // Speech: the engine is Kokoro (#214); the page shows how it is doing.
+  // An engine picked before #214 (or by an app) gets a way back to Kokoro.
+  const st = s.runtime && s.runtime.engine_status;
+  setText("engine-status", engineText(st));
+  $("engine-status").classList.toggle("busy", !!st && !st.ready);
+  $("engine-kokoro").hidden = !s.engine || s.engine === "kokoro" || !voices.some(v => v.engine === "kokoro");
   const vopts = voiceOptions(s.engine, true);
   if (s.voice && !vopts.some(o => o[0] === s.voice)) vopts.push([s.voice, s.voice]);
   fillSelect($("voice-select"), vopts, s.voice || "");
@@ -661,13 +657,10 @@ function render() {
   if (s.hello) {
     setText("rt-version", s.hello.version);
     setText("rt-protocol", s.hello.protocol.major + "." + s.hello.protocol.minor);
-    setText("rt-extensions", ext.length ? ext.join(", ") : "none");
     setText("app-version", "Version " + s.hello.version);
   }
   if (s.runtime) {
-    setText("rt-pid", String(s.runtime.pid));
     setText("rt-uptime", fmtUptime(s.runtime.uptime_s));
-    setText("rt-port", String(s.runtime.http_port));
     setText("rt-config", s.runtime.config || "Not saved (this runtime keeps settings in memory)");
     setDisabled($("voice-preview"), !s.runtime.previews);
     // A saved voice this engine lacks waits in config.json: say so, so a
@@ -675,9 +668,22 @@ function render() {
     const saved = s.runtime.saved_voice;
     const note = $("voice-saved");
     note.hidden = !saved || saved === s.voice;
-    if (!note.hidden) note.textContent = "Saved voice " + saved + " is not available with this engine. It is kept and applies once it is.";
+    if (!note.hidden) note.textContent = "Saved voice " + saved + " is not available yet. It is kept and applies once it is.";
   }
-  renderEngines();
+}
+
+const ENGINE_NAMES = {kokoro: "Kokoro", onecore: "Windows"};
+const ENGINE_STATES = {loading: "loading", downloading: "downloading voices",
+                       waiting: "download failed, retrying soon", unavailable: "cannot run on this PC"};
+function engineText(st) {
+  if (!st) return "\u2013";
+  const name = ENGINE_NAMES[st.engine] || st.engine;
+  if (st.ready) return name + ", ready";
+  let what = ENGINE_STATES[st.status] || st.status;
+  const p = st.progress;
+  if (st.status === "downloading" && p && p.total) what += " " + Math.floor(p.done * 100 / p.total) + " %";
+  const stand = st.fallback ? ". " + (ENGINE_NAMES[st.fallback] || st.fallback) + " reads meanwhile." : "";
+  return name + ", " + what + stand;
 }
 
 function renderSummary(sm) {
@@ -714,42 +720,6 @@ function fmtUptime(sec) {
   return h ? h + " h " + m + " min" : m + " min";
 }
 
-function renderEngines() {
-  const box = $("engine-rows");
-  const by = {};
-  for (const v of voices) (by[v.engine] = by[v.engine] || []).push(v);
-  const sig = JSON.stringify(Object.keys(by).map(k => [k, by[k].length, by[k].filter(v => v.installed).length]));
-  if (box.dataset.sig === sig) return;
-  box.dataset.sig = sig;
-  box.textContent = "";
-  for (const [engine, list] of Object.entries(by)) {
-    const row = document.createElement("div");
-    row.className = "engine-row";
-    const left = document.createElement("div");
-    const name = document.createElement("strong");
-    name.textContent = engine === "onecore" ? "Windows (OneCore)" : engine;
-    const desc = document.createElement("div");
-    desc.className = "hint";
-    const lic = list[0].license_class === "os" ? "Part of Windows." : "Permissive licence.";
-    desc.textContent = list.length + " voice" + (list.length === 1 ? "" : "s") + ". " + lic;
-    left.append(name, desc);
-    const pill = document.createElement("span");
-    pill.className = "pill";
-    const ready = list.filter(v => v.installed).length;
-    pill.textContent = ready ? "Ready" : "Not installed";
-    row.append(left, pill);
-    box.appendChild(row);
-  }
-  if (!box.children.length) {
-    const p = document.createElement("p");
-    p.className = "hint";
-    p.style.padding = "14px 18px";
-    p.style.margin = "0";
-    p.textContent = "No engine lists any voices yet.";
-    box.appendChild(p);
-  }
-}
-
 // ---- sessions ---------------------------------------------------------
 let sessionsSig = "";
 function buildSessionRow(sess) {
@@ -782,13 +752,7 @@ function buildSessionRow(sess) {
   audio.setAttribute("aria-checked", sess.muted ? "false" : "true");
   audio.setAttribute("aria-label", "Audio for session " + shown);
   audio.addEventListener("click", () => changePrefs({channel: sess.channel, muted: audio.getAttribute("aria-checked") === "true"}, "Audio"));
-  const sel = document.createElement("select");
-  sel.setAttribute("aria-label", "Voice for session " + shown);
-  const opts = voiceOptions(state.engine, true);
-  if (sess.voice && !opts.some(o => o[0] === sess.voice)) opts.push([sess.voice, sess.voice]);
-  fillSelect(sel, opts, sess.voice || "");
-  sel.addEventListener("change", () => changePrefs({channel: sess.channel, voice: sel.value || null}, "Voice"));
-  row.append(id, audio, sel);
+  row.append(id, audio);
   return row;
 }
 async function changePrefs(update, label) {
@@ -799,7 +763,7 @@ async function changePrefs(update, label) {
 function renderSessions(list) {
   const rows = $("session-rows"), older = $("session-rows-older");
   const open = list.filter(x => x.open), closed = list.filter(x => !x.open);
-  const sig = JSON.stringify([list, state.engine, voices.length]);
+  const sig = JSON.stringify(list);
   $("sessions-empty").hidden = list.length > 0;
   $("sessions-head").hidden = open.length === 0;
   if (sig === sessionsSig) return;
@@ -933,7 +897,7 @@ $("keymap-reset").addEventListener("click", () => {
 });
 
 // ---- wiring ---------------------------------------------------------------
-$("engine-select").addEventListener("change", e => change("engine", e.target.value, "Engine"));
+$("engine-kokoro").addEventListener("click", () => change("engine", "kokoro", "Voice engine"));
 $("voice-select").addEventListener("change", e => change("voice", e.target.value || null, "Voice"));
 $("voice-preview").addEventListener("click", async () => {
   const btn = $("voice-preview");

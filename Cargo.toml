@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/misaki", "crates/sonara-core", "crates/sonara-engine", "crates/sonara-audio", "crates/sonara-reader", "crates/sonara-channels", "crates/sonara-agent", "crates/sonara-system", "crates/sonarad", "crates/sonara-hook", "crates/sonara-cli"]
 
 [workspace.package]
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Maxaubert/Sonara"

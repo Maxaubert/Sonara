@@ -755,7 +755,11 @@ impl Server {
         }
         if let Some(s) = self.system.as_ref().filter(|s| s.is_enabled()) {
             if system_ext::KEYS.contains(&name) {
-                return Some(s.setting(name, value));
+                let mut handled = s.setting(name, value);
+                if name == "runtime" {
+                    self.add_engine_status(&mut handled);
+                }
+                return Some(handled);
             }
         }
         let ch = self.channels.get()?;
@@ -768,6 +772,25 @@ impl Server {
                 value,
             )),
             _ => None,
+        }
+    }
+
+    /// `get runtime` also carries `engine_status` (as in `state`, #214), so
+    /// a client that polls instead of subscribing sees the engine's
+    /// readiness and its model download.
+    fn add_engine_status(&self, handled: &mut Handled) {
+        let Ok((fields, _)) = handled else {
+            return;
+        };
+        let Ok(status) = self.reader.engine_status() else {
+            return;
+        };
+        let engine = events::engine_name(&self.engine);
+        if let Some(Value::Object(v)) = fields.get_mut("value") {
+            v.insert(
+                "engine_status".into(),
+                wire::engine_status_json(&engine, &status),
+            );
         }
     }
 

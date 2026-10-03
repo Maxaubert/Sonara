@@ -73,8 +73,8 @@ missing and installs it in the background, without holding up Claude Code:
 Speech starts with the next event, usually a few seconds later. `/sonara:doctor` shows the
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
 
-**Defaults** are the voice `af_sarah` at 250 words per minute, medium verbosity (no tool
-announcements), every session read, media paused while Sonara speaks, summaries off. Change
+**Defaults** are the voice `af_sarah` at 250 words per minute, verbosity *Skip code* (code blocks
+and tool announcements skipped), every session read, media paused while Sonara speaks, summaries off. Change
 them on the settings page (`/sonara:settings`).
 
 **Updates.** A plugin update names a new runtime release; the next hook installs it the same way,
@@ -166,13 +166,13 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 
 | Page | What you can set |
 |---|---|
-| Speech | Engine (Kokoro or Windows), voice (with a preview button), speaking rate, mute level, verbosity, background sessions |
+| Speech | The voice engine's status (Kokoro, with Windows' voice standing in while it downloads), voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and the minimum queue before live reading starts |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
-| Sessions | A name, mute and voice per Claude Code session, and switch announcements |
+| Sessions | A name and audio on/off per Claude Code session, and switch announcements |
 | Hotkeys | Every binding, with AltGr and conflict warnings, and a reset to defaults |
 | Advanced | Summary timeout and settle time |
-| System | Runtime version, process and uptime, engines and the Kokoro download, the settings file |
+| System | Runtime version, uptime and protocol, the settings file |
 
 **Audio mode.** *Duck* lowers other apps to the duck level while Sonara speaks; *Pause* pauses
 media that Windows can control (music, video players) and resumes it afterwards. Either way
@@ -264,7 +264,8 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
   session, and check the hooks row of `/sonara:doctor`.
 - **Too fast or too slow.** Change the speaking rate on the settings page (default 250 words per
   minute), or bind the `faster` and `slower` hotkeys.
-- **Too chatty.** Set verbosity to quiet, or turn on summary mode, on the settings page.
+- **Too chatty.** Set verbosity to *Skip code*, turn on summary mode, or mute (the mute hotkey
+  cycles muted and super muted), on the settings page.
 
 ## Uninstall
 

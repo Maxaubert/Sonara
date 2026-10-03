@@ -10,7 +10,7 @@ pub fn split_chunks(text: &str) -> Vec<String> {
         .feed(text, 0, true)
         .into_iter()
         .filter_map(|c| match c {
-            Chunk::Text(s) if !s.trim().is_empty() => Some(s),
+            Chunk::Text(s) | Chunk::Code(s) if !s.trim().is_empty() => Some(s),
             _ => None,
         })
         .collect()

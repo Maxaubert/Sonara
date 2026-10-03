@@ -617,6 +617,9 @@ fn an_automatic_session_switch_chimes_then_says_session_changed() {
     let chimes = s.agent().unwrap().subscribe();
     two_sessions(&r, &mut session);
     assert!(chimes.try_recv().is_err());
+    // The item is now playing before its chunk reaches the output: wait
+    // for the load, or `start` finds nothing loaded (a flaky panic).
+    assert!(eventually(|| r.out.loaded().is_some()));
     r.out.start();
     r.out.finish();
     assert!(eventually(
@@ -805,7 +808,11 @@ fn persisted_settings_apply_when_each_layer_starts() {
     assert_eq!(get("audio_mode"), "duck");
     assert_eq!(get("duck_level"), 25);
     assert_eq!(get("mute_level"), 2);
-    assert_eq!(get("verbosity"), "quiet");
+    assert_eq!(
+        get("verbosity"),
+        "skip_code",
+        "#214: quiet loads as skip_code"
+    );
     assert_eq!(get("channel_announce"), "off");
     assert_eq!(get("summaries")["style"], "brief");
     assert_eq!(get("summaries")["prompt"], "Short.");
@@ -972,6 +979,9 @@ fn a_preview_plays_a_clip_and_leaves_the_queue_alone() {
     let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
     assert_eq!(g["value"]["pid"], std::process::id());
     assert_eq!(g["value"]["previews"], true);
+    // #214: the settings page shows the engine's readiness from here.
+    assert_eq!(g["value"]["engine_status"]["engine"], "fake");
+    assert_eq!(g["value"]["engine_status"]["ready"], true);
 }
 
 // -- spoken control cues, per-channel mute, background policy (#195-#197) --
@@ -1329,6 +1339,9 @@ fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
     );
     let g = ok(s, &mut h, json!({"type": "get", "key": "runtime"}));
     assert_eq!(g["value"]["saved_voice"], "af_sarah");
+    // #214: Kokoro without its model is not ready yet.
+    assert_eq!(g["value"]["engine_status"]["engine"], "kokoro");
+    assert_eq!(g["value"]["engine_status"]["ready"], false);
 }
 
 #[test]
