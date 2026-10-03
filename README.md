@@ -263,8 +263,8 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
   sessions. `%LOCALAPPDATA%\Sonara\logs\sonarad.log` shows each one with a UTC time:
   `read start item=12 session=<name> chunks=3`, then `media pause apps=spotify.exe (reason:
   reading item=12 session=<name>)`, `read end item=12 finished` and `media resume apps=...
-  (reason: idle)`; ducking logs `duck apps=... level=30` and `restore apps=...`, hotkeys
-  `hotkey <action>`. It never holds what was read. At about 1 MB it moves to `sonarad.old.log`.
+  (reason: idle)`; `reader paused` and `reader resumed` mark a pause of Sonara itself; ducking
+  logs `duck apps=... level=30` and `restore apps=...`, hotkeys `hotkey <action>`. It never holds what was read. At about 1 MB it moves to `sonarad.old.log`.
   Set audio mode to *Off* on the settings page if you do not want this.
 - **Nothing after installing the plugin.** Restart Claude Code; the runtime installs on the first
   hook. Offline or blocked downloads are retried every 5 minutes, or at once by `/sonara:start`.

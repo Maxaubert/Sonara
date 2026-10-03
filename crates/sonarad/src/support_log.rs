@@ -110,10 +110,13 @@ pub type TagLookup = Box<dyn Fn(ItemId) -> Option<Tag> + Send>;
 
 /// The reading lines of one event stream: a start when an item first
 /// shows in the state (it carries the label and chunk count), an end for
-/// every item seen starting. Items dropped from the queue unread write
-/// nothing.
+/// every item seen starting, and `reader paused` / `reader resumed` when
+/// the state's pause flips, whatever paused it (hotkey, CLI, settings
+/// page, SDK). Items dropped from the queue unread write nothing.
 pub struct ReadLog {
     tags: TagLookup,
+    /// The pause flag of the last state seen.
+    paused: bool,
     /// `Started` reported, not yet shown in a state.
     starting: HashSet<u64>,
     /// Start line written, end not yet.
@@ -124,13 +127,33 @@ impl ReadLog {
     pub fn new(tags: TagLookup) -> ReadLog {
         ReadLog {
             tags,
+            paused: false,
             starting: HashSet::new(),
             reading: HashSet::new(),
         }
     }
 
-    /// The line `e` adds to the log, if any.
-    pub fn line(&mut self, e: &Event) -> Option<String> {
+    /// The lines `e` adds to the log, oldest first.
+    pub fn lines(&mut self, e: &Event) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Event::State(s) = e {
+            if s.paused != self.paused {
+                self.paused = s.paused;
+                out.push(
+                    if s.paused {
+                        "reader paused"
+                    } else {
+                        "reader resumed"
+                    }
+                    .to_string(),
+                );
+            }
+        }
+        out.extend(self.read_line(e));
+        out
+    }
+
+    fn read_line(&mut self, e: &Event) -> Option<String> {
         match e {
             Event::State(s) => {
                 let np = s.now_playing.as_ref()?;
@@ -178,7 +201,7 @@ pub fn watch_reading(home: &Home, reader: &ReaderHandle, tags: TagLookup) {
         .spawn(move || {
             let mut log = ReadLog::new(tags);
             while let Ok(e) = events.recv() {
-                if let Some(line) = log.line(&e) {
+                for line in log.lines(&e) {
                     home.log(&line);
                 }
             }
@@ -303,7 +326,7 @@ mod tests {
             item(3, ItemPhase::Skipped),
         ]
         .iter()
-        .filter_map(|e| log.line(e))
+        .flat_map(|e| log.lines(e))
         .collect();
         assert_eq!(
             lines,
@@ -315,6 +338,45 @@ mod tests {
             ]
         );
         assert!(lines.iter().all(|l| !l.contains("ecret")));
+    }
+
+    fn paused_state(id: Option<u64>, paused: bool) -> Event {
+        let Event::State(mut s) = state(id.unwrap_or(0), None, "Secret.", 1) else {
+            unreachable!()
+        };
+        if id.is_none() {
+            s.now_playing = None;
+        }
+        s.paused = paused;
+        Event::State(s)
+    }
+
+    #[test]
+    fn a_reader_pause_and_resume_is_logged_whatever_its_source() {
+        let mut log = ReadLog::new(Box::new(|_| None));
+        let lines: Vec<String> = [
+            paused_state(None, false),
+            // Paused before anything plays (a protocol `control`).
+            paused_state(None, true),
+            paused_state(None, true),
+            // The start and the resume arrive in one state.
+            paused_state(Some(1), false),
+            paused_state(Some(1), true),
+            paused_state(Some(1), false),
+        ]
+        .iter()
+        .flat_map(|e| log.lines(e))
+        .collect();
+        assert_eq!(
+            lines,
+            vec![
+                "reader paused",
+                "reader resumed",
+                "read start item=1 session=direct chunks=1",
+                "reader paused",
+                "reader resumed",
+            ]
+        );
     }
 
     #[test]
