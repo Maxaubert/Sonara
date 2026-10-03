@@ -952,8 +952,8 @@ const SOUND_EVENTS = [
   ["permission", "Permission", "Claude asks for permission to run something"],
   ["turn_done", "Reply finished", "Claude finished its reply"],
   ["session_change", "Session change", "Switching to another session"],
-  ["nav", "Restart", "Restart the message (Ctrl+Alt+Up)"],
-  ["nav_edge", "Nothing before", "Nothing to go back to"],
+  ["nav", "Restart", "You restarted or flushed the message (the Restart and Flush hotkeys)"],
+  ["nav_edge", "Nothing before", "Nothing to restart or flush"],
   ["error", "Error", "Something went wrong"],
   ["summary_failed", "Summary failed", "A summary could not be made; the reply is read as is"],
 ];
@@ -1006,14 +1006,19 @@ function buildSoundRows(e) {
     const input = row.querySelector("input[type=file]");
     input.accept = AUDIO_ACCEPT;
     input.setAttribute("aria-label", "Audio file for " + name);
-    sel.addEventListener("change", () => pickSound(kind, sel.value));
+    sel.addEventListener("change", () => queuePick(kind, sel.value));
     play.addEventListener("click", () => previewSound(kind, play));
     row.querySelector("[data-act=upload]").setAttribute("aria-label", "Use your own sound for " + name);
     row.querySelector("[data-act=remove]").setAttribute("aria-label", "Remove your own " + name.toLowerCase() + " sound");
     row.querySelector("[data-act=reset]").setAttribute("aria-label", "Reset " + name.toLowerCase() + " to its default sound");
     row.querySelector("[data-act=upload]").addEventListener("click", () => input.click());
-    row.querySelector("[data-act=remove]").addEventListener("click", () => soundCall("earcon_delete", {kind}, name + ": your own sound removed"));
-    row.querySelector("[data-act=reset]").addEventListener("click", () => soundCall("earcon_select", {kind, source: "default"}, name + ": default sound"));
+    // Both buttons disable or hide themselves once used: keep the keyboard
+    // and screen reader in the row by moving focus to its sound list.
+    const keepFocus = () => { const s = $(id); if (s) s.focus(); };
+    row.querySelector("[data-act=remove]").addEventListener("click", () =>
+      soundCall("earcon_delete", {kind}, name + ": your own sound removed").then(keepFocus));
+    row.querySelector("[data-act=reset]").addEventListener("click", () =>
+      soundCall("earcon_select", {kind, source: "default"}, name + ": default sound").then(keepFocus));
     input.addEventListener("change", () => {
       const f = input.files && input.files[0];
       input.value = "";
@@ -1077,6 +1082,14 @@ async function soundCall(type, body, done) {
   }
 }
 
+// Arrowing through a list fires a change per step: send only where it
+// settles (one select and one preview), in order.
+const pickTimers = {};
+function queuePick(kind, source) {
+  clearTimeout(pickTimers[kind]);
+  pickTimers[kind] = setTimeout(() => { delete pickTimers[kind]; pickSound(kind, source); }, 150);
+}
+
 async function pickSound(kind, source) {
   const name = SOUND_NAME[kind];
   const j = await soundCall("earcon_select", {kind, source}, name + ": " + soundLabel(state.earcons || {}, source));
@@ -1100,8 +1113,11 @@ async function previewSound(kind, btn) {
 // A file of any format the browser decodes -> mono 16-bit WAV of at most
 // max_seconds, at 44.1 kHz (fits the runtime's upload limit).
 const UPLOAD_RATE = 44100;
+// The whole file is decoded before it is cut to max_seconds, so a long
+// compressed file would expand to hundreds of MB: refuse it before decoding.
+const MAX_SOURCE_MB = 20;
 async function toWav(file, maxSeconds) {
-  if (file.size > 64 * 1024 * 1024) throw new ApiError("That file is too big for a sound (over 64 MB).");
+  if (file.size > MAX_SOURCE_MB * 1024 * 1024) throw new ApiError("That file is too big for a sound (over " + MAX_SOURCE_MB + " MB). Use a shorter clip.");
   const data = await file.arrayBuffer();
   const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   if (!Ctx) throw new ApiError("This browser cannot convert audio files.");
@@ -1161,6 +1177,16 @@ async function uploadSound(kind, file, row) {
 }
 
 // ---- wiring ---------------------------------------------------------------
+// Only the sound rows take dropped files. A file dropped anywhere else would
+// make the browser open it in place of this page: refuse it.
+for (const type of ["dragover", "drop"]) {
+  document.addEventListener(type, ev => {
+    if (!hasFiles(ev) || ev.defaultPrevented) return;
+    ev.preventDefault();
+    if (type === "dragover") ev.dataTransfer.dropEffect = "none";
+    else announce("Drop the file on an event's row to use it as that event's sound.");
+  });
+}
 $("engine-select").addEventListener("change", e => change("engine", e.target.value, "Engine"));
 $("voice-select").addEventListener("change", e => change("voice", e.target.value || null, "Voice"));
 $("voice-preview").addEventListener("click", async () => {

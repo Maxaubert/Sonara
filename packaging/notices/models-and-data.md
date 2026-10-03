@@ -17,6 +17,12 @@ Hand-maintained (`packaging/notices/models-and-data.md`). Each entry says whethe
 - Part-of-speech tagger weights (inside misaki-rs): NLTK's `averaged_perceptron_tagger` model (https://github.com/nltk/nltk_data), as packaged by postagger.rs (Apache-2.0, https://github.com/shubham0204/postagger.rs); the tagger design comes from textblob-aptagger by Matthew Honnibal (MIT). The weights were trained on the Wall Street Journal part of the Penn Treebank; reviewed with the lexicon provenance before the first commercial bundle.
 - Ships: yes, compiled into `sonarad.exe` (xz-compressed).
 
+### Bundled event sounds
+
+- Files: `crates/sonara-agent/sounds/{attention,reply-done,session-changed,navigate,edge}.wav`, the sound pack the user picked for #211 (2026-10-03), converted from MP3 to WAV.
+- Source and licence: free sound sites; the redistribution licence is NOT yet confirmed. Confirm it (or replace the files by name) before a public release; until then this entry is the open item.
+- Ships: yes, compiled into `sonarad.exe` (`crates/sonara-agent/build.rs`).
+
 ### Microsoft ONNX Runtime
 
 - Source: Microsoft, https://github.com/microsoft/onnxruntime, the official CPU build `onnxruntime-win-x64-1.28.2.zip` (SHA-256 `c4eedd29489d5feca21866d054638416f3655bf6b18851b3b6b85c8313e95c35`).

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -41,8 +42,19 @@ class Live:
         return r["value"]
 
     def saved(self) -> dict:
+        """config.json as sonarad last wrote it. sonarad replaces the file by
+        a rename, and Windows denies an open that races that rename
+        (PermissionError) or can show the file mid-replace (empty or partial
+        JSON): retry those for a moment instead of failing the test."""
         p = self.home / "config.json"
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+            except (PermissionError, json.JSONDecodeError):
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.02)
 
     def close(self):
         self.client.close()
@@ -373,6 +385,9 @@ def test_choosing_a_sound_by_keyboard_previews_saves_and_survives_a_reload(live,
     assert eventually(lambda: lv.get("earcons")["events"]["turn_done"]["effective"] == default)
     assert eventually(lambda: lv.saved().get("earcon_sounds") == {"turn_done": "default"})
     pw.expect(page.locator("#snd-turn_done")).to_have_value(default)
+    # Reset is now disabled: focus moves to the row's sound list, not <body>.
+    pw.expect(reset).to_be_disabled()
+    pw.expect(page.locator("#snd-turn_done")).to_be_focused()
     page.close()
 
 
@@ -414,9 +429,12 @@ def test_dropping_a_wav_on_a_row_makes_it_that_events_own_sound(live, browser):
     # Remove it: the default comes back.
     remove = page.locator("[data-kind=choice] [data-act=remove]")
     pw.expect(remove).to_be_visible()
-    remove.click()
+    remove.focus()
+    page.keyboard.press("Enter")
     assert eventually(lambda: not saved.exists())
     pw.expect(remove).to_be_hidden()
+    # The button is gone: focus moves to the row's sound list, not <body>.
+    pw.expect(page.locator("#snd-choice")).to_be_focused()
     ev = lv.get("earcons")["events"]["choice"]
     assert ev["effective"] == ev["default"]
     page.close()
@@ -444,4 +462,38 @@ def test_a_file_that_is_not_audio_is_refused_with_a_message(live, browser):
         {"name": "notes.mp3", "mimeType": "audio/mpeg", "buffer": b"this is not audio at all"})
     pw.expect(page.locator("#live")).to_contain_text("Could not read notes.mp3")
     assert not (lv.home / "earcons" / "nav_edge.wav").exists()
+    page.close()
+
+
+def test_a_file_dropped_outside_a_row_does_not_leave_the_page(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    # A missed drop (a heading, the gap between rows) must not let the
+    # browser open the file in place of the settings page.
+    prevented = page.evaluate(
+        """() => {
+            const dt = new DataTransfer();
+            dt.items.add(new File([new Uint8Array([1, 2, 3])], "chime.mp3", {type: "audio/mpeg"}));
+            const out = {};
+            for (const [name, el] of [["heading", document.querySelector("#audio h1")],
+                                      ["list", document.querySelector("#sound-list")]]) {
+                for (const type of ["dragover", "drop"]) {
+                    const ev = new DragEvent(type, {bubbles: true, cancelable: true, dataTransfer: dt});
+                    el.dispatchEvent(ev);
+                    out[name + "-" + type] = ev.defaultPrevented;
+                }
+            }
+            return out;
+        }"""
+    )
+    assert all(prevented.values()), prevented
+    assert not (lv.home / "earcons").exists() or not any((lv.home / "earcons").iterdir())
+    page.close()
+
+
+def test_the_restart_sound_does_not_name_a_fixed_hotkey(live, browser):
+    lv = live()
+    page = audio_page(browser, lv)
+    # The restart hotkey can be rebound, so the row must not hardcode it.
+    pw.expect(page.locator("#snd-nav-desc")).not_to_contain_text("Ctrl+Alt")
     page.close()

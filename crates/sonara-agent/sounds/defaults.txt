@@ -8,10 +8,11 @@
 # build.rs scans the folder; a default naming a missing sound fails the
 # build. Sound names are lowercase letters, digits, '-' or '_'.
 #
-# The five WAVs here are placeholders (#211), copies of the generated tones
-# of src/sonara/platform/windows/earcons, until the final pack replaces them
-# under the same names (attention, reply-done, session-changed, navigate,
-# edge). Only add sounds that may be redistributed under this repo's licence.
+# The five WAVs here are the sound pack the user picked (#211), converted to
+# WAV; they replace the generated tones of the Python product. Their
+# redistribution licence is not yet confirmed: see
+# packaging/notices/models-and-data.md ("Bundled event sounds"). Only add
+# sounds that may be redistributed under this repo's licence.
 choice = attention
 permission = attention
 turn_done = reply-done
