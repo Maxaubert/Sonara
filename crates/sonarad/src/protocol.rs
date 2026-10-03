@@ -10,6 +10,7 @@ use crate::config::{self, Store};
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
 use crate::system_ext::{self, HotkeyTarget, SystemExt, SystemHold, SystemHost};
+use crate::trace_log::{self, Origins};
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_agent::Agent;
@@ -163,6 +164,9 @@ pub struct Server {
     setting: Mutex<()>,
     /// The support log's activity lines (`with_log`; else stderr).
     log: Option<LogFn>,
+    /// What produced each channel entry the agent added (#219), for the
+    /// reading log's `read text` lines.
+    origins: Origins,
 }
 
 pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -263,6 +267,19 @@ impl Server {
             store: Store::memory(),
             setting: Mutex::new(()),
             log: None,
+            origins: Origins::default(),
+        }
+    }
+
+    /// The origins of channel entries (shared with the reading log).
+    pub fn origins(&self) -> Origins {
+        self.origins.clone()
+    }
+
+    /// A troubleshooting line (#219): to the log only, never stderr.
+    fn trace(&self, line: &str) {
+        if let Some(log) = &self.log {
+            log(line);
         }
     }
 
@@ -358,6 +375,17 @@ impl Server {
                 Channels::new(self.reader.clone(), config).map_err(|e| engine(e.to_string()))?;
             // The channels the user muted stay muted (#196).
             channels_ext::apply_mutes(&ch, &self.store);
+            if let Some(log) = self.log.clone() {
+                let origins = self.origins.clone();
+                ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+                    let origin = origins.get(d.entry);
+                    log(&trace_log::drop_line(
+                        d,
+                        origin.as_ref(),
+                        trace_log::debug(),
+                    ));
+                })));
+            }
             let _ = self.channels.set(ch);
         }
         if name == agent_ext::NAME && self.agent.get().is_none() {
@@ -382,6 +410,15 @@ impl Server {
                 }
                 Err(e) => return Err(engine(e.to_string())),
             };
+            if let Some(log) = self.log.clone() {
+                let origins = self.origins.clone();
+                agent.on_trace(Some(Arc::new(move |t: &sonara_agent::Trace| {
+                    if let sonara_agent::Traced::Spoken { kind, entry, .. } = &t.what {
+                        origins.record(*entry, kind, &t.source);
+                    }
+                    log(&trace_log::agent_line(t, trace_log::debug()));
+                })));
+            }
             let _ = self.agent.set(agent);
         }
         if name == system_ext::NAME {
@@ -489,6 +526,14 @@ impl Server {
             _ => (&empty, None),
         };
         let kind = m.get("type").and_then(Value::as_str);
+        let over_http = session.transport == Transport::Http;
+        // Nothing a connection sends before `hello` is logged (the token
+        // is stripped from the `hello` itself).
+        if request.is_object() && (session.authed || kind == Some("hello")) {
+            if let Some(line) = trace_log::input_line(m, over_http, trace_log::debug()) {
+                self.trace(&line);
+            }
+        }
         let result = if !session.authed && kind != Some("hello") {
             Err(Failure::new(
                 Code::Auth,
@@ -509,6 +554,15 @@ impl Server {
                 after,
             },
             Err(f) => {
+                let k = kind.unwrap_or("");
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let allowed = session.authed || trace_log::unauthed_allowed(now);
+                if allowed && trace_log::logged(k, over_http) {
+                    self.trace(&trace_log::failed_line(k, f.code.as_str(), &f.message));
+                }
                 let after = if f.code == Code::Auth && session.transport == Transport::Tcp {
                     After::Close
                 } else {
@@ -884,7 +938,29 @@ impl Server {
         }
     }
 
+    /// `set`/`get` of `debug_log` (#219), a host setting: text and
+    /// payloads in the troubleshooting log, on or off.
+    fn debug_setting(&self, m: &Map<String, Value>, set: bool) -> Option<Handled> {
+        if opt_str(m, "key").ok().flatten() != Some(trace_log::DEBUG_KEY) {
+            return None;
+        }
+        if set {
+            let raw = m.get("value").unwrap_or(&Value::Null);
+            match config::validate(trace_log::DEBUG_KEY, raw) {
+                Ok(v) => trace_log::set_debug(v.as_bool().unwrap_or(true)),
+                Err(e) => return Some(Err(bad(e))),
+            }
+        }
+        let mut f = Map::new();
+        f.insert("key".into(), json!(trace_log::DEBUG_KEY));
+        f.insert("value".into(), json!(trace_log::debug()));
+        Some(Ok((f, After::Nothing)))
+    }
+
     fn set_now(&self, m: &Map<String, Value>) -> Handled {
+        if let Some(done) = self.debug_setting(m, true) {
+            return done;
+        }
         if let Some(done) = self.extension_setting(m, true) {
             return done;
         }
@@ -902,6 +978,9 @@ impl Server {
     }
 
     fn get(&self, m: &Map<String, Value>) -> Handled {
+        if let Some(done) = self.debug_setting(m, false) {
+            return done;
+        }
         if let Some(done) = self.extension_setting(m, false) {
             return done;
         }

@@ -5,7 +5,10 @@
 #![windows_subsystem = "windows"]
 
 use serde_json::Value;
-use sonara_hook::{deliver, home, map_event, runtime_args, runtime_exe, stamp, START_BUDGET};
+use sonara_hook::{
+    debug_log, deliver, home, log, log_line, map_event, outcome, runtime_args, runtime_exe, stamp,
+    START_BUDGET,
+};
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -46,26 +49,37 @@ fn run(t0: f64, started: Instant) {
         .filter(Value::is_object)
         .unwrap_or_else(|| Value::Object(Default::default()));
     let mut msgs = map_event(&event, &payload, &env);
-    if msgs.is_empty() {
-        return;
-    }
     stamp(&mut msgs, t0);
     let Some(home) = home(&env) else {
         return;
     };
-    let exe = if env("SONARA_NO_START").is_some_and(|v| !v.is_empty()) {
+    let delivery = if msgs.is_empty() {
         None
     } else {
-        std::env::current_exe().ok().and_then(|me| runtime_exe(&me))
+        let exe = if env("SONARA_NO_START").is_some_and(|v| !v.is_empty()) {
+            None
+        } else {
+            std::env::current_exe().ok().and_then(|me| runtime_exe(&me))
+        };
+        Some(deliver(
+            &home,
+            &msgs,
+            exe.as_deref(),
+            &runtime_args(&env),
+            started + START_BUDGET,
+            TIMEOUT,
+        ))
     };
-    let _ = deliver(
-        &home,
+    // The troubleshooting log (#219), last, so it never delays delivery.
+    let line = log_line(
+        &event,
+        &raw,
         &msgs,
-        exe.as_deref(),
-        &runtime_args(&env),
-        started + START_BUDGET,
-        TIMEOUT,
+        outcome(delivery),
+        started.elapsed(),
+        debug_log(&home),
     );
+    log(&home, &line);
 }
 
 fn main() {

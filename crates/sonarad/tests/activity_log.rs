@@ -1,8 +1,8 @@
 //! The built `sonarad.exe` (`--engine fake --system fake`) writes the
 //! activity lines of #217 to `logs\sonarad.log`: an item read in audio mode
 //! `pause` with a playing app gives `read start`, `media pause` (naming the
-//! item), `read end` and `media resume`, in that order, and never the
-//! spoken text.
+//! item), `read end` and `media resume`, in that order, and with the
+//! setting `debug_log` off never the spoken text (#219).
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -126,6 +126,7 @@ fn reading_and_media_pause_lines_appear_in_order() {
         "extensions": ["system"],
     }));
     c.request(json!({"type": "set", "key": "audio_mode", "value": "pause"}));
+    c.request(json!({"type": "set", "key": "debug_log", "value": false}));
     let item = c.request(json!({
         "type": "speak",
         "text": "Private words. More private words.",
@@ -154,9 +155,9 @@ fn reading_and_media_pause_lines_appear_in_order() {
     assert!(!text.contains("rivate"), "never the spoken text: {text}");
     // Every line starts with a UTC timestamp.
     assert!(
-        lines
-            .iter()
-            .all(|l| l.get(..20).is_some_and(|t| t.ends_with('Z'))),
+        lines.iter().all(|l| l
+            .split_once(' ')
+            .is_some_and(|(t, _)| t.len() == 24 && t.ends_with('Z'))),
         "{lines:#?}"
     );
 }

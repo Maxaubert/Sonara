@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-03 (0.13.1: reading, hotkey and media activity in `sonarad.log`, kept to about 2 MB)_
+_Last updated: 2026-10-03 (0.13.2: the troubleshooting log records what is read and what hooks send, on by default, 10 MB at most)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -16,7 +16,12 @@ your computer and what, if anything, leaves it.
   summary engine you chose. Short replies are read as they are and never sent. Nothing else
   leaves the machine.
 - Sonara keeps its runtime and a few small files in `%LOCALAPPDATA%\Sonara`, listed below.
-  None of them holds session text.
+  **The troubleshooting log holds session text**: with the setting "Troubleshooting log" on
+  (the default for now) it records what Sonara read aloud and what Claude Code's hooks sent it,
+  which includes your prompts' context, Claude's replies, questions and their options, and tool
+  inputs such as commands and file contents. It never leaves your computer, all logs together
+  stay under 10 MB (the oldest lines are deleted first), and turning the setting off stops
+  recording text. No other file holds session text.
 - It downloads software, never your data: its runtime from Sonara's GitHub releases and the
   Kokoro voice model, once each (see Downloads).
 
@@ -67,7 +72,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 
 | File | What it holds |
 |---|---|
-| `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, summary options and your own summary instructions), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
+| `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, summary options and your own summary instructions, the troubleshooting log on or off), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
 | `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
 | `earcons\` | Your own chimes, if you put any there: `<kind>.wav` files (for example `session_change.wav`) that Sonara plays instead of its built-in sounds. Created empty at start; Sonara only reads it |
@@ -83,11 +88,21 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 
 **Logs**
 
+Everything in `logs\` together is kept at or under 10 MB: each log is split into files of about
+1 MB (`sonarad.log`, then `sonarad.1.log`, `sonarad.2.log`, ... from newer to older), and when a
+new line would pass 10 MB the oldest files are deleted first.
+
 | File | What it holds |
 |---|---|
-| `logs\sonarad.log` | One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. Also what Sonara did and when (UTC): each message it started and finished reading (a number, the session's name, how many sentences), questions and permission prompts that arrived (their kind and session), each hotkey used, and which apps it paused, resumed, lowered or restored (their process names) and why. Never what was read or said: no session text |
-| `logs\sonarad.old.log` | The previous `sonarad.log`: when the log reaches about 1 MB it is renamed to this (replacing the older one) and a new log starts |
+| `logs\sonarad.log` (and `sonarad.<n>.log`) | One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. Also what Sonara did and when (UTC): each message it started and finished reading (a number, the session's name, how many sentences, what kind of text it was and which message produced it), text it dropped before reading it and why, questions and permission prompts that arrived (their kind and session), each hotkey used, the spoken confirmations ("Paused."), and which apps it paused, resumed, lowered or restored (their process names) and why. With the troubleshooting log on, also the session text: every message the hooks and other clients sent (what Claude wrote, questions with their options, permission prompts, tool names and summaries; never the access token), what Sonara decided to read or not and why, and the exact text it read aloud. With it off, none of that text: only the kinds, numbers and reasons |
+| `logs\hook.log` (and `hook.<n>.log`) | One line per hook call (the Claude Code event, the session id, the tool or notification name, what was sent to the runtime and whether it arrived, and how long it took). With the troubleshooting log on, also the hook's raw input from Claude Code: your session's context such as the working folder and transcript path, Claude's messages, questions and their options, notifications, and the questions Claude asks you (any single value over 4 KB is cut short). Other tools' inputs (commands, file contents) are never kept, only their field names, and credential-looking values (API keys, tokens, passwords, `Authorization` headers) are replaced with `[redacted]` in every log line. With it off, none of that |
+| `logs\sonarad.old.log` | Left by 0.13.1 and earlier; deleted first when the logs need room |
 | `logs\bootstrap.log` | Each runtime download and install, with its address and result |
+
+**The troubleshooting log setting.** On the settings page under System, "Troubleshooting log:
+record what is read and what hooks send" (`debug_log` in `config.json`). It is on by default for
+now, to diagnose what Sonara reads; turn it off to keep text out of the logs from then on. Lines
+already written stay until they age out or you delete the `logs` folder.
 
 **The Python plugin's folder.** Up to 0.10 Sonara kept its files in `~/.sonara`
 (`C:\Users\<you>\.sonara`). The first start of 0.11 reads the settings there (`config.json`,

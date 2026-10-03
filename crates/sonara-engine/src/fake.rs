@@ -10,6 +10,7 @@
 //! - The audio comes as chunks of at most `CHUNK_SAMPLES` samples.
 use crate::{Engine, EngineId, Error, LicenseClass, PcmChunk, PcmStream, Result, Voice};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 pub const ID: EngineId = EngineId("fake");
 pub const SAMPLE_RATE: u32 = 16_000;
@@ -23,6 +24,7 @@ pub const FAIL_MARK: &str = "[fail]";
 pub struct FakeEngine {
     syntheses: AtomicUsize,
     cancels: AtomicUsize,
+    texts: Mutex<Vec<String>>,
 }
 
 impl FakeEngine {
@@ -33,6 +35,11 @@ impl FakeEngine {
     /// How many times `synthesize` was called.
     pub fn syntheses(&self) -> usize {
         self.syntheses.load(Ordering::SeqCst)
+    }
+
+    /// Every text `synthesize` was given, in order.
+    pub fn texts(&self) -> Vec<String> {
+        self.texts.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// How many times `cancel` was called.
@@ -93,6 +100,10 @@ impl Engine for FakeEngine {
 
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
         self.syntheses.fetch_add(1, Ordering::SeqCst);
+        self.texts
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(text.to_string());
         let samples = Self::render(text, voice, rate)?;
         let chunks: Vec<Result<PcmChunk>> = samples
             .chunks(CHUNK_SAMPLES)

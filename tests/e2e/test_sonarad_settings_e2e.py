@@ -196,6 +196,11 @@ def test_every_remaining_control_saves_and_survives_a_reload(live, browser):
     page.click("[data-page=sessions]")
     page.click("#announce-switch")
     assert eventually(lambda: lv.get("channel_announce") == "off")
+    # System: the troubleshooting log (#219) is on by default and saved off.
+    page.click("[data-page=system]")
+    pw.expect(page.locator("#debuglog-switch")).to_have_attribute("aria-checked", "true")
+    page.click("#debuglog-switch")
+    assert eventually(lambda: lv.saved().get("debug_log") is False)
     # Everything is still there after a reload.
     page.reload()
     pw.expect(page.locator("#rt-version")).not_to_have_text("–")
@@ -206,6 +211,7 @@ def test_every_remaining_control_saves_and_survives_a_reload(live, browser):
     pw.expect(page.locator("#timeout")).to_have_value("120")
     pw.expect(page.locator("#settle")).to_have_value("700")
     pw.expect(page.locator("#announce-switch")).to_have_attribute("aria-checked", "false")
+    pw.expect(page.locator("#debuglog-switch")).to_have_attribute("aria-checked", "false")
     page.close()
 
 

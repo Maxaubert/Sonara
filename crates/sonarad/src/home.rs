@@ -1,37 +1,9 @@
 //! The home folder (spec section 3): `--home`, else `SONARA_HOME`, else
 //! `%LOCALAPPDATA%\Sonara`. Every path under it is built here.
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
-/// `sonarad.log` stays below this size: a line that would pass it first
-/// renames the file to `sonarad.old.log` (replacing the older one), so the
-/// two files hold at most about 2 MB (#217).
-pub const LOG_CAP: u64 = 1_000_000;
-
-/// Serializes appends and the rotation: several threads log (the reader's
-/// watcher, the audio worker, hotkeys, requests).
-static LOG_LOCK: Mutex<()> = Mutex::new(());
-
-/// Append `line` and a newline to `path`; when the file would pass `cap`,
-/// rename it to `old` (replacing it) first. Best effort.
-pub fn append_line(path: &Path, old: &Path, cap: u64, line: &str) {
-    use std::io::Write;
-    let _guard = LOG_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if len > 0 && len + line.len() as u64 + 1 > cap {
-        let _ = std::fs::rename(path, old);
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(f, "{line}");
-    }
-}
+/// The runtime's stream in the log folder (`sonarad.log`).
+pub const LOG_STREAM: &str = "sonarad";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Home {
@@ -94,29 +66,31 @@ impl Home {
         self.dir.join("runtime.json")
     }
 
-    /// `logs\sonarad.log`: notes worth keeping after the process is gone
-    /// (the migration, settings that could not be applied) and the
-    /// activity lines (reading, other apps paused or ducked, hotkeys).
-    pub fn log_path(&self) -> PathBuf {
-        self.dir.join("logs").join("sonarad.log")
+    /// `logs\`: every log file of the home (`sonara_log`: rotating
+    /// segments, 10 MB for the whole folder, oldest first out).
+    pub fn logs(&self) -> PathBuf {
+        self.dir.join("logs")
     }
 
-    /// `logs\sonarad.old.log`: the log before the last rotation.
-    pub fn old_log_path(&self) -> PathBuf {
-        self.dir.join("logs").join("sonarad.old.log")
+    /// The log folder with its limits.
+    pub fn log_dir(&self) -> sonara_log::LogDir {
+        sonara_log::LogDir::new(self.logs())
+    }
+
+    /// `logs\sonarad.log`: notes worth keeping after the process is gone
+    /// (the migration, settings that could not be applied), the activity
+    /// lines (reading, other apps paused or ducked, hotkeys) and the
+    /// troubleshooting lines (#219: what was read, what came in, what the
+    /// agent decided). Older lines are in `sonarad.<n>.log`.
+    pub fn log_path(&self) -> PathBuf {
+        self.log_dir().path(LOG_STREAM)
     }
 
     /// Print a note on stderr and append it, with a UTC timestamp, to the
-    /// log file (best effort; rotated at `LOG_CAP`).
+    /// log (best effort: a line the folder cannot take is dropped).
     pub fn log(&self, line: &str) {
         eprintln!("sonarad: {line}");
-        let now = crate::runtime_file::rfc3339(std::time::SystemTime::now());
-        append_line(
-            &self.log_path(),
-            &self.old_log_path(),
-            LOG_CAP,
-            &format!("{now} {line}"),
-        );
+        let _ = self.log_dir().log(LOG_STREAM, line);
     }
 
     /// `earcons\`: `<kind>.wav` files that replace the bundled earcons
@@ -153,75 +127,20 @@ mod tests {
         assert!(choose(None, None, None).is_err());
     }
 
-    fn tmp(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("sonarad-home-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[test]
-    fn a_full_log_rotates_to_the_old_file_once() {
-        let dir = tmp("rotate");
-        let (log, old) = (
-            dir.join("logs").join("a.log"),
-            dir.join("logs").join("a.old.log"),
-        );
-        // 10 bytes per line ("line nnnn" and the newline), cap 35: three
-        // lines fit, the fourth starts a new file.
-        for i in 0..4 {
-            append_line(&log, &old, 35, &format!("line {i:04}"));
-        }
-        assert_eq!(
-            std::fs::read_to_string(&old).unwrap(),
-            "line 0000\nline 0001\nline 0002\n"
-        );
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "line 0003\n");
-        // The next rotation replaces the old file.
-        for i in 4..8 {
-            append_line(&log, &old, 35, &format!("line {i:04}"));
-        }
-        assert_eq!(
-            std::fs::read_to_string(&old).unwrap(),
-            "line 0003\nline 0004\nline 0005\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&log).unwrap(),
-            "line 0006\nline 0007\n"
-        );
+    fn notes_go_to_the_sonarad_stream_of_the_log_folder() {
+        let dir = std::env::temp_dir().join(format!("sonarad-home-log-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn concurrent_writers_lose_no_line_across_a_rotation() {
-        let dir = tmp("threads");
-        let (log, old) = (
-            dir.join("logs").join("b.log"),
-            dir.join("logs").join("b.old.log"),
-        );
-        let threads: Vec<_> = (0..4)
-            .map(|t| {
-                let (log, old) = (log.clone(), old.clone());
-                std::thread::spawn(move || {
-                    for i in 0..50 {
-                        append_line(&log, &old, 4_000, &format!("t{t} line {i:03}"));
-                    }
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().unwrap();
-        }
-        // 200 lines of 12 bytes = 2400 bytes: under the cap, no rotation.
-        let text = std::fs::read_to_string(&log).unwrap();
-        assert_eq!(text.lines().count(), 200);
-        assert!(text.lines().all(|l| l.len() == 11), "no torn line");
-        // Past the cap: the two files together hold every line.
-        for i in 0..200 {
-            append_line(&log, &old, 4_000, &format!("x{i:03} line 0"));
-        }
-        let both = std::fs::read_to_string(&old).unwrap() + &std::fs::read_to_string(&log).unwrap();
-        assert!(std::fs::metadata(&log).unwrap().len() <= 4_000);
-        assert!(both.lines().any(|l| l == "x199 line 0"));
+        let home = Home {
+            dir: dir.clone(),
+            is_default: false,
+        };
+        home.log("first note");
+        assert_eq!(home.log_path(), dir.join("logs").join("sonarad.log"));
+        let text = std::fs::read_to_string(home.log_path()).unwrap();
+        let (stamp, rest) = text.trim_end().split_once(' ').unwrap();
+        assert_eq!(rest, "first note");
+        assert!(stamp.ends_with('Z') && stamp.contains('T'), "{stamp}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

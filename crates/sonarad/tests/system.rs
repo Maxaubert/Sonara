@@ -537,7 +537,9 @@ fn hotkeys_drive_the_agent_mute_cycle_and_channel_switches() {
 }
 
 #[test]
-fn an_ask_is_logged_with_its_kind_and_session_never_its_text() {
+fn an_ask_is_logged_with_its_kind_and_session_and_no_text_with_debug_log_off() {
+    // No other test of this binary needs the text in the log (#219).
+    sonarad::trace_log::set_debug(false);
     let r = rig();
     let s = &r.server;
     let mut session = Session::http();

@@ -193,3 +193,132 @@ fn the_raw_payload_can_be_captured() {
         .starts_with("Stop-"));
     assert_eq!(std::fs::read(f).unwrap(), br#"{"session_id": "raw"}"#);
 }
+
+// -- the troubleshooting log (#219) -----------------------------------------
+
+fn hook_log(home: &Home) -> String {
+    std::fs::read_to_string(home.dir.join("logs").join("hook.log")).unwrap_or_default()
+}
+
+#[test]
+fn every_invocation_logs_its_payload_its_messages_and_the_delivery() {
+    let home = Home::new("log");
+    let rx = fake_runtime(&home);
+    let payload = json!({
+        "session_id": "s9",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{"question": "Which colour?", "options": [{"label": "Red"}, {"label": "Blue"}]}]},
+    });
+    assert_eq!(
+        run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]),
+        0
+    );
+    rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let silent = br#"{"session_id": "s9", "notification_type": "idle_prompt", "message": "Claude is waiting for your input"}"#;
+    assert_eq!(run(&home, "Notification", silent, &[]), 0);
+    let log = hook_log(&home);
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 2, "{log}");
+    let ask = lines[0];
+    assert!(ask.contains(" hook PreToolUse pid="), "{ask}");
+    assert!(ask.contains(" sent ms="), "{ask}");
+    assert!(ask.contains("session=s9 tool=\"AskUserQuestion\""), "{ask}");
+    assert!(
+        ask.contains(r#""question":"Which colour?""#),
+        "the payload: {ask}"
+    );
+    assert!(
+        ask.contains(r#""type":"ask""#) && ask.contains(r#""label":"Blue""#),
+        "{ask}"
+    );
+    let note = lines[1];
+    assert!(
+        note.contains("hook Notification") && note.contains("nothing to send"),
+        "{note}"
+    );
+    assert!(note.contains("notification=\"idle_prompt\""), "{note}");
+    assert!(note.contains("Claude is waiting for your input"), "{note}");
+}
+
+#[test]
+fn a_huge_field_is_clipped_and_debug_log_off_keeps_text_out() {
+    let home = Home::new("log-clip");
+    let _rx = fake_runtime(&home);
+    let big = "w".repeat(20_000);
+    let question =
+        json!({"questions": [{"question": big, "header": "Pick", "options": [{"label": "Red"}]}]});
+    let payload =
+        json!({"session_id": "s1", "tool_name": "AskUserQuestion", "tool_input": question});
+    assert_eq!(
+        run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]),
+        0
+    );
+    let log = hook_log(&home);
+    assert!(log.contains("...[+15904 bytes]"), "clipped at 4 KB");
+    assert!(
+        log.contains(r#""header":"Pick""#),
+        "short fields stay whole"
+    );
+    assert!(log.len() < 20_000, "{}", log.len());
+    // Another tool's input (a file being written) keeps its field names only.
+    let write = json!({"session_id": "s1", "tool_name": "Write", "tool_input": {"file_path": "a.txt", "content": "private file"}});
+    assert_eq!(
+        run(&home, "PreToolUse", write.to_string().as_bytes(), &[]),
+        0
+    );
+    let last = hook_log(&home).lines().last().unwrap().to_string();
+    assert!(
+        last.contains(r#""fields":["content","file_path"]"#),
+        "{last}"
+    );
+    assert!(!last.contains("private file"), "{last}");
+    std::fs::write(home.dir.join("config.json"), r#"{"debug_log": false}"#).unwrap();
+    let secret = json!({"session_id": "s1", "notification_type": "permission_prompt", "message": "Secret words"});
+    assert_eq!(
+        run(&home, "Notification", secret.to_string().as_bytes(), &[]),
+        0
+    );
+    let last = hook_log(&home).lines().last().unwrap().to_string();
+    assert!(
+        last.contains("hook Notification") && last.contains(r#"sent=["ask"]"#),
+        "{last}"
+    );
+    assert!(!last.contains("Secret"), "{last}");
+}
+
+#[test]
+fn a_log_that_cannot_be_written_never_fails_or_holds_up_the_hook() {
+    // `logs` is a file: no folder can be made there.
+    let home = Home::new("log-broken");
+    let rx = fake_runtime(&home);
+    std::fs::write(home.dir.join("logs"), b"not a folder").unwrap();
+    let payload = br#"{"session_id": "s1"}"#;
+    assert_eq!(run(&home, "Stop", payload, &[]), 0);
+    assert!(
+        rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "delivered"
+    );
+    // A log locked by another writer: the hook skips its line in time.
+    let home = Home::new("log-locked");
+    let rx = fake_runtime(&home);
+    std::fs::create_dir_all(home.dir.join("logs")).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(home.dir.join("logs").join(".lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let t = Instant::now();
+    assert_eq!(run(&home, "Stop", payload, &[]), 0);
+    assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+    assert!(
+        rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+        "delivered"
+    );
+    assert_eq!(hook_log(&home), "", "skipped while locked");
+    lock.unlock().unwrap();
+    assert_eq!(run(&home, "Stop", payload, &[]), 0);
+    assert!(hook_log(&home).contains("hook Stop"));
+}
