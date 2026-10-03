@@ -2,7 +2,8 @@
 
 The eight WAVs are compiled into sonarad (crates/sonara-agent/src/earcon.rs)
 and rendered by packaging/sounds/build_earcons.py. SHA256SUMS pins them; the
-regeneration check needs numpy and scipy and is skipped without them.
+regeneration checks need numpy and scipy at the versions the WAVs were made
+with (build_earcons.MADE_WITH) and are skipped otherwise.
 """
 from __future__ import annotations
 
@@ -72,17 +73,41 @@ def test_no_rust_code_reads_the_legacy_python_earcons():
         assert "src/sonara/platform/windows/earcons" not in text, path
 
 
-@pytest.mark.skipif(
-    importlib.util.find_spec("numpy") is None or importlib.util.find_spec("scipy") is None,
-    reason="the sound generators need numpy and scipy",
-)
-def test_the_generators_rebuild_the_bundled_earcons_byte_for_byte(tmp_path, monkeypatch):
+def _version_skip_reason(made_with):
+    """Why the byte-for-byte rebuild cannot be checked here, or None."""
+    for lib, want in made_with.items():
+        if importlib.util.find_spec(lib) is None:
+            return f"the sound generators need {lib}"
+        have = ".".join(importlib.import_module(lib).__version__.split(".")[:2])
+        if have != want:
+            return f"the earcons were made with {lib} {want}, this is {have}"
+    return None
+
+
+@pytest.fixture
+def build_earcons(monkeypatch):
+    """A freshly imported build_earcons, skipped without the pinned numpy/scipy."""
     monkeypatch.syspath_prepend(str(REPO / "packaging" / "sounds"))
     for mod in ("build_earcons", "make_pack", "make_round2", "synth"):
         monkeypatch.delitem(sys.modules, mod, raising=False)
     import build_earcons
 
+    reason = _version_skip_reason(build_earcons.MADE_WITH)
+    if reason:
+        pytest.skip(reason)
+    return build_earcons
+
+
+def test_the_generators_rebuild_the_bundled_earcons_byte_for_byte(tmp_path, build_earcons):
     build_earcons.render(tmp_path)
     for kind in KINDS:
         got = (tmp_path / f"{kind}.wav").read_bytes()
         assert got == (SOUNDS / f"{kind}.wav").read_bytes(), kind
+
+
+def test_a_second_render_in_the_same_process_gives_the_same_bytes(tmp_path, build_earcons):
+    build_earcons.render(tmp_path / "first")
+    build_earcons.render(tmp_path / "second")
+    for kind in KINDS:
+        first = (tmp_path / "first" / f"{kind}.wav").read_bytes()
+        assert (tmp_path / "second" / f"{kind}.wav").read_bytes() == first, kind

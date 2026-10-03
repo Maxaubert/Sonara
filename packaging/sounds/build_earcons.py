@@ -27,6 +27,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 SOUNDS = REPO / "crates" / "sonara-agent" / "sounds"
+# major.minor of the libraries the bundled WAVs were rendered with; other
+# versions may round differently, so the byte-for-byte test skips on them.
+MADE_WITH = {"numpy": "2.4", "scipy": "1.17"}
 
 # kind -> (generator, candidate file it renders)
 PICKS = {
@@ -43,7 +46,8 @@ PICKS = {
 
 def render(out_dir: Path) -> None:
     """Render the eight picks into out_dir as <kind>.wav, plus SHA256SUMS."""
-    sys.path.insert(0, str(HERE))
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
     import make_pack as mp
     import make_round2 as r2
 

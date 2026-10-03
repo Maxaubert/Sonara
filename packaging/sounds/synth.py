@@ -6,7 +6,8 @@ generator that uses them (make_round2.py).
 
 The noise sources draw from one module-level generator (RNG), so a sound
 that uses noise depends on every noise draw rendered before it in the same
-process: make_round2.render_all keeps the original render order for that.
+process: make_round2.render_all reseeds it (seed_rng) and keeps the original
+render order for that.
 """
 from __future__ import annotations
 
@@ -18,7 +19,14 @@ from scipy import signal
 SR = 48000  # output rate
 OS = 4
 FS = SR * OS
-RNG = np.random.default_rng(20261003)
+SEED = 20261003
+RNG = np.random.default_rng(SEED)
+
+
+def seed_rng() -> None:
+    """Restart the shared noise generator, so a second render repeats the first."""
+    global RNG
+    RNG = np.random.default_rng(SEED)
 
 
 # ---------------------------------------------------------------- primitives

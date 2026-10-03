@@ -19,7 +19,8 @@ import numpy as np
 from scipy import signal
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 
 import make_pack as mp  # noqa: E402     (room, s100 loudness, soft limiter)
 import synth as ml  # noqa: E402  (192 kHz primitives)
@@ -517,6 +518,7 @@ def finish(x, target, max_s, lead=0.004):
 
 
 def render_all(outdir):
+    ml.seed_rng()
     os.makedirs(outdir, exist_ok=True)
     labels, report = {}, {}
     for fam, items in FAMILIES.items():
