@@ -27,7 +27,7 @@ use sonara_reader::{Control, Key, ReaderHandle, Registry, RATE_MAX, RATE_MIN};
 use sonara_system::audio::{AudioConfig, AudioControl, AudioMode};
 use sonara_system::hotkeys::Hotkeys;
 use sonara_system::keymap::{self, Action};
-use sonara_system::Platform;
+use sonara_system::{LogFn, Platform};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -80,18 +80,24 @@ pub struct HotkeyTarget {
     pub store: Arc<Store>,
     /// The spoken cues (set by `SystemExt::new`).
     pub cues: Option<Arc<Cues>>,
+    /// The support log: one line per hotkey action, and the audio worker's
+    /// lines (other apps paused, resumed, ducked, restored). Else stderr.
+    pub log: Option<LogFn>,
 }
 
 impl HotkeyTarget {
-    /// Carry out one hotkey action like the matching protocol request.
+    /// Carry out one hotkey action like the matching protocol request,
+    /// with one log line saying what it did.
     pub fn perform(&self, action: Action) {
         let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
         if *retiring {
             return;
         }
-        if let Err(e) = self.apply(action) {
-            eprintln!("sonarad: hotkey {}: {e}", action.as_str());
-        }
+        let outcome = self.apply(action);
+        sonara_system::log::emit(
+            self.log.as_ref(),
+            &crate::support_log::hotkey_line(action.as_str(), &outcome),
+        );
     }
 
     fn control(&self, c: Control) -> Result<(), String> {
@@ -122,18 +128,21 @@ impl HotkeyTarget {
         reader || self.channels.get().is_some_and(|c| !c.is_idle())
     }
 
-    fn apply(&self, action: Action) -> Result<(), String> {
+    /// Carry out `action`; what it did, for the log line, when the action
+    /// alone does not say it.
+    fn apply(&self, action: Action) -> Result<Option<String>, String> {
         match action {
-            Action::Restart => self.control(Control::Restart),
+            Action::Restart => self.control(Control::Restart).map(|_| None),
             Action::Pause => {
                 // "Paused." / "Resumed." (Python controls.py): spoken over
                 // the paused reader, so the user hears what the key did.
                 let before = self.reader.state().ok();
                 self.control(Control::Toggle)?;
-                if let Some(s) = before.filter(|s| s.now_playing.is_some()) {
-                    self.cue(if s.paused { "Resumed." } else { "Paused." }, None);
-                }
-                Ok(())
+                let Some(s) = before.filter(|s| s.now_playing.is_some()) else {
+                    return Ok(Some("idle".into()));
+                };
+                self.cue(if s.paused { "Resumed." } else { "Paused." }, None);
+                Ok(Some(if s.paused { "resumed" } else { "paused" }.into()))
             }
             Action::Flush => {
                 // Flush to end (#107): silence everything queued or in
@@ -144,7 +153,7 @@ impl HotkeyTarget {
                     None => self.control(Control::Stop)?,
                 }
                 self.earcon(if had { Earcon::Nav } else { Earcon::NavEdge });
-                Ok(())
+                Ok(None)
             }
             Action::Mute => match self.agent.get() {
                 // The mute cycle: unmuted, muted (earcons on), super muted.
@@ -153,7 +162,7 @@ impl HotkeyTarget {
                     a.set_mute_level(next).map_err(|e| e.to_string())?;
                     self.store.record("mute_level", &json!(next));
                     self.cue(cues::mute_level_cue(u64::from(next)), None);
-                    Ok(())
+                    Ok(Some(format!("level={next}")))
                 }
                 None => {
                     let muted = self.reader.state().map(|s| s.muted).unwrap_or(false);
@@ -166,14 +175,27 @@ impl HotkeyTarget {
                     // A muted reader plays clips silently: only the unmute
                     // is heard.
                     self.cue(if muted { "Unmuted." } else { "Muted." }, None);
-                    Ok(())
+                    Ok(Some(if muted { "unmuted" } else { "muted" }.into()))
                 }
             },
             Action::NextChannel => {
                 let Some(ch) = self.channels.get() else {
-                    return Ok(());
+                    return Ok(Some("session=none".into()));
                 };
-                match ch.next_channel().map_err(|e| e.to_string())? {
+                let next = ch.next_channel().map_err(|e| e.to_string())?;
+                let detail = match &next {
+                    Some(t) => {
+                        let label = ch.channel(t).and_then(|c| c.label);
+                        format!(
+                            "session={}",
+                            sonara_system::log::value(
+                                &label.filter(|l| !l.is_empty()).unwrap_or_else(|| t.clone())
+                            )
+                        )
+                    }
+                    None => "session=none".into(),
+                };
+                match next {
                     // An announced switch chimes as its "Session changed"
                     // announcement is fed (the agent's L2 hook: earcon
                     // first); a switch that is not announced (announcements
@@ -189,12 +211,12 @@ impl HotkeyTarget {
                     // earcon for it).
                     None => self.cue("No session.", None),
                 }
-                Ok(())
+                Ok(Some(detail))
             }
             Action::Faster | Action::Slower => {
                 let rate = match self.reader.get(Key::Rate) {
                     Ok(sonara_reader::Value::Number(n)) => n as u32,
-                    _ => return Ok(()),
+                    _ => return Ok(None),
                 };
                 let next = if action == Action::Faster {
                     rate.saturating_add(RATE_STEP).min(RATE_MAX)
@@ -206,7 +228,7 @@ impl HotkeyTarget {
                     .map_err(|e| e.to_string())?;
                 self.store.record("rate", &json!(next));
                 self.cue(&cues::rate_cue(u64::from(next)), Some("rate"));
-                Ok(())
+                Ok(Some(format!("rate={next}")))
             }
         }
     }
@@ -249,7 +271,10 @@ impl SystemExt {
     /// `duck_level` apply from the start (nothing is ducked or paused
     /// before the extension is armed).
     pub fn new(host: SystemHost, mut target: HotkeyTarget) -> SystemExt {
-        let audio = AudioControl::new(&host.platform, AudioConfig::new(host.home.join("state")));
+        let audio = AudioControl::new(
+            &host.platform,
+            AudioConfig::new(host.home.join("state")).with_log(target.log.clone()),
+        );
         let previews = host.previews.map(Arc::new);
         let previewing = Arc::new(Mutex::new(()));
         let cues = Arc::new(Cues::new(

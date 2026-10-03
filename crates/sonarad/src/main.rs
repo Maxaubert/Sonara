@@ -282,8 +282,10 @@ async fn run(
         home.earcons(),
         Some(Arc::new(move |line: &str| log_home.log(line))),
     );
+    let activity_home = home.clone();
     let mut server = Server::new(reader.clone(), token.clone(), life.clone())
         .with_config(store)
+        .with_log(Arc::new(move |line: &str| activity_home.log(line)))
         .with_earcons(Arc::new(earcons));
     if let Some(platform) = system_platform(args.system, home) {
         server = server.with_system(SystemHost {
@@ -295,6 +297,17 @@ async fn run(
         });
     }
     let server = Arc::new(server);
+    // Reading start and end in the support log, with the session of each
+    // item (#217).
+    let tags = Arc::downgrade(&server);
+    support_log::watch_reading(
+        home,
+        &reader,
+        Box::new(move |id| {
+            tags.upgrade()
+                .and_then(|s| s.channels().and_then(|c| c.tag(id)))
+        }),
+    );
     // The startup sweep: restore what a previous runtime that died left
     // ducked or paused (never strand other apps, #131).
     if let Some(s) = server.system().cloned() {

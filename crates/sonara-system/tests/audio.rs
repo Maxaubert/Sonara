@@ -25,6 +25,7 @@ fn control(fake: &Fake, grace: Duration) -> (AudioControl, std::path::PathBuf) {
             state_dir: dir.clone(),
             exclude_pids: vec![OWN_PID],
             idle_grace: grace,
+            log: None,
         },
     );
     (c, dir)
