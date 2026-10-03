@@ -92,13 +92,16 @@ fn canonical<'a>(key: &str, v: &'a str) -> &'a str {
 pub const STYLES: &[&str] = &["tidy", "natural", "brief"];
 pub const COMMANDS: &[&str] = &["claude", "codex"];
 pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
+/// When a turn's prose is spoken (#222).
+pub const READ_MODES: &[&str] = &["immediate", "queue", "done"];
 const ON_OFF: &[&str] = &["on", "off"];
 
 /// Every persisted setting, its layer, validation and default (as JSON).
 ///
 /// The defaults are the product's (#202, the maintainer's settings of the
 /// Python plugin): Kokoro's `af_sarah` at 250 words per minute, verbosity
-/// `skip_code` (#214; it was `medium`), prose held until five chunks wait,
+/// `skip_code` (#214; it was `medium`), prose held until the turn is done
+/// (#222; the queue size, used in read mode `queue`, is five chunks),
 /// every session read, media paused while Sonara speaks, summaries off,
 /// unmuted. `sonarad` applies
 /// them to the layers (L1 in `apply_reader`), so they differ from the
@@ -145,6 +148,12 @@ pub const SCHEMA: &[Setting] = &[
         layer: Layer::Agent,
         kind: Kind::OneOf(VERBOSITY),
         default: "\"skip_code\"",
+    },
+    Setting {
+        key: "read_mode",
+        layer: Layer::Agent,
+        kind: Kind::OneOf(READ_MODES),
+        default: "\"done\"",
     },
     Setting {
         key: "minqueue",
@@ -481,6 +490,16 @@ impl Store {
                     extra.insert(key, value);
                 }
             }
+        }
+        // A refused read_mode stays in the file (in `extra`): no mapping.
+        let mapped = if extra.contains_key("read_mode") {
+            None
+        } else {
+            crate::migrate::read_mode_from_minqueue(&user)
+        };
+        if let Some(mode) = mapped {
+            // In memory only: written with the next change (#222).
+            user.insert("read_mode".into(), mode);
         }
         let raw = read_object(&dir.join(PREFS_FILE), &mut problems, false);
         let mut prefs: Vec<(String, Prefs, u64)> = raw
@@ -828,6 +847,7 @@ mod tests {
             ("volume", json!(100)),
             ("mute_level", json!(0)),
             ("verbosity", json!("skip_code")),
+            ("read_mode", json!("done")),
             ("minqueue", json!(5)),
             ("background_policy", json!("all")),
             ("audio_mode", json!("pause")),
@@ -878,6 +898,8 @@ mod tests {
             ("mute_level", json!(3)),
             ("verbosity", json!("loud")),
             ("minqueue", json!(11)),
+            ("read_mode", json!("later")),
+            ("read_mode", json!(1)),
             ("background_policy", json!("silent")),
             ("channel_announce", json!(true)),
             ("debug_log", json!("on")),
@@ -938,6 +960,61 @@ mod tests {
         let (again, _) = Store::load(&dir);
         assert_eq!(again.value("rate"), json!(250));
         assert_eq!(again.value("volume"), json!(100));
+    }
+
+    #[test]
+    fn a_user_set_minqueue_without_read_mode_loads_as_its_read_mode() {
+        // #222: 0 and 1 read at once, more is a queue; nothing is written.
+        for (n, mode) in [
+            (0, "immediate"),
+            (1, "immediate"),
+            (2, "queue"),
+            (5, "queue"),
+        ] {
+            let dir = tmp();
+            let text = format!("{{\"minqueue\": {n}}}");
+            std::fs::write(dir.join(CONFIG_FILE), &text).unwrap();
+            let (store, problems) = Store::load(&dir);
+            assert!(problems.is_empty(), "{problems:?}");
+            assert_eq!(store.value("read_mode"), json!(mode), "minqueue {n}");
+            assert_eq!(store.value("minqueue"), json!(n));
+            assert_eq!(
+                std::fs::read_to_string(dir.join(CONFIG_FILE)).unwrap(),
+                text,
+                "loading writes nothing"
+            );
+            store.record("volume", &json!(50));
+            assert_eq!(read(&dir.join(CONFIG_FILE))["read_mode"], json!(mode));
+        }
+        // No minqueue: the default; a read_mode the user set wins.
+        let dir = tmp();
+        let (store, _) = Store::load(&dir);
+        assert_eq!(store.value("read_mode"), json!("done"));
+        assert!(store.user_keys().is_empty());
+        std::fs::write(
+            dir.join(CONFIG_FILE),
+            r#"{"minqueue": 1, "read_mode": "done"}"#,
+        )
+        .unwrap();
+        let (store, _) = Store::load(&dir);
+        assert_eq!(store.value("read_mode"), json!("done"));
+    }
+
+    #[test]
+    fn a_refused_read_mode_is_kept_in_the_file_next_to_a_minqueue() {
+        // Review of #222: the mapping must not replace a read_mode the file
+        // holds but this release refuses (a newer value or a typo).
+        let dir = tmp();
+        std::fs::write(
+            dir.join(CONFIG_FILE),
+            r#"{"minqueue": 1, "read_mode": "later"}"#,
+        )
+        .unwrap();
+        let (store, problems) = Store::load(&dir);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(store.value("read_mode"), json!("done"));
+        store.record("volume", &json!(50));
+        assert_eq!(read(&dir.join(CONFIG_FILE))["read_mode"], json!("later"));
     }
 
     #[test]

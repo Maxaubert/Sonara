@@ -74,7 +74,7 @@ Speech starts with the next event, usually a few seconds later. `/sonara:doctor`
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
 
 **Defaults** are the voice `af_sarah` at 250 words per minute, verbosity *Skip code* (code blocks
-and tool announcements skipped), every session read, media paused while Sonara speaks, summaries off. Change
+and tool announcements skipped), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
 them on the settings page (`/sonara:settings`).
 
 **Updates.** A plugin update names a new runtime release; the next hook installs it the same way,
@@ -167,7 +167,7 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 | Page | What you can set |
 |---|---|
 | Speech | The voice engine's status (Kokoro, with Windows' voice standing in while it downloads), voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
-| Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and the minimum queue before live reading starts |
+| Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and live reading: Immediately, Queue (with its queue size) or When done |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
 | Sessions | A name and audio on/off per Claude Code session, and switch announcements |
 | Hotkeys | Every binding, with AltGr and conflict warnings, and a reset to defaults |

@@ -6,7 +6,9 @@
 //! `test_summary_pipeline.py`, `test_digest_reorder.py`). Issue numbers name
 //! the Python regressions.
 use sonara_agent::settings::Settings;
-use sonara_agent::{Action, Ask, AskKind, Choice, Earcon, Job, Rules, Stale, Timer, Verbosity};
+use sonara_agent::{
+    Action, Ask, AskKind, Choice, Earcon, Job, ReadMode, Rules, Stale, Timer, Verbosity,
+};
 use std::time::Duration;
 
 fn rules() -> Rules {
@@ -346,6 +348,159 @@ fn a_new_turn_discards_held_prose() {
     r.turn_start("fg", None, None).unwrap();
     let a = r.turn_end("fg", None, None).unwrap();
     assert!(spoken(&a).is_empty());
+}
+
+// -- read_mode (#222) -------------------------------------------------------
+
+fn mode_rules(mode: ReadMode) -> Rules {
+    let mut r = rules();
+    r.settings.read_mode = mode;
+    r.settings.minqueue = 5;
+    r
+}
+
+#[test]
+fn read_mode_immediate_speaks_each_chunk_whatever_the_queue_size() {
+    let mut r = mode_rules(ReadMode::Immediate);
+    assert_eq!(spoken(&prose(&mut r, "fg", "One. ", 0, false)), ["One."]);
+    assert_eq!(spoken(&prose(&mut r, "fg", "Two. ", 0, false)), ["Two."]);
+}
+
+#[test]
+fn read_mode_queue_holds_until_the_queue_size_waits() {
+    let mut r = mode_rules(ReadMode::Queue);
+    r.settings.minqueue = 3;
+    assert!(spoken(&prose(&mut r, "fg", "One. Two. ", 0, false)).is_empty());
+    assert_eq!(
+        spoken(&prose(&mut r, "fg", "Three. ", 1, false)),
+        ["One.", "Two.", "Three."]
+    );
+}
+
+#[test]
+fn read_mode_queue_is_released_by_a_tool_run() {
+    let mut r = mode_rules(ReadMode::Queue);
+    prose(&mut r, "fg", "Looking now. ", 0, false);
+    assert_eq!(spoken(&r.tool("fg", "Bash", "ls")), ["Looking now.", "ls"]);
+    assert_eq!(
+        spoken(&prose(&mut r, "fg", "Found it. ", 1, false)),
+        ["Found it."]
+    );
+}
+
+#[test]
+fn read_mode_done_holds_all_prose_until_the_turn_end() {
+    let mut r = mode_rules(ReadMode::Done);
+    for i in 0..12 {
+        let a = prose(&mut r, "fg", &format!("Sentence {i}. "), i, true);
+        assert!(spoken(&a).is_empty(), "chunk {i} held");
+    }
+    let a = r.turn_end("fg", None, None).unwrap();
+    assert_eq!(spoken(&a).len(), 12);
+    assert_eq!(spoken(&a)[0], "Sentence 0.");
+    assert_eq!(earcons(&a), [Earcon::TurnDone]);
+    // After the turn end late prose flows at once.
+    assert_eq!(spoken(&prose(&mut r, "fg", "Late. ", 20, false)), ["Late."]);
+}
+
+#[test]
+fn read_mode_done_keeps_holding_through_a_tool_run() {
+    let mut r = mode_rules(ReadMode::Done);
+    prose(&mut r, "fg", "Looking now. ", 0, false);
+    // The tool is announced, the prose stays held.
+    assert_eq!(spoken(&r.tool("fg", "Bash", "ls")), ["ls"]);
+    assert!(spoken(&prose(&mut r, "fg", "Found it. ", 1, false)).is_empty());
+    let a = r.turn_end("fg", None, None).unwrap();
+    assert_eq!(spoken(&a), ["Looking now.", "Found it."]);
+}
+
+#[test]
+fn read_mode_done_flushes_held_prose_before_a_question() {
+    let mut r = mode_rules(ReadMode::Done);
+    prose(&mut r, "fg", "Two ways to go. ", 0, false);
+    let a = r.ask("fg", &question("Which one?", &["A", "B"]));
+    assert_eq!(
+        spoken(&a),
+        ["Two ways to go.", "!Which one? Option 1: A. Option 2: B."]
+    );
+    assert_eq!(earcons(&a), [Earcon::Choice]);
+}
+
+#[test]
+fn read_mode_done_flushes_held_prose_before_a_permission_and_a_plan() {
+    for (kind, said) in [
+        (AskKind::Permission, "!Run ls"),
+        (AskKind::Plan, "!Plan ready. Run ls"),
+    ] {
+        let mut r = mode_rules(ReadMode::Done);
+        prose(&mut r, "fg", "Context first. ", 0, false);
+        let a = r.ask("fg", &Ask::new(kind, "Run ls"));
+        assert_eq!(spoken(&a), ["Context first.", said], "{kind:?}");
+        // The turn goes on holding after the decision.
+        assert!(spoken(&prose(&mut r, "fg", "More. ", 1, false)).is_empty());
+    }
+}
+
+#[test]
+fn read_mode_done_held_prose_is_noted() {
+    let mut r = mode_rules(ReadMode::Done);
+    assert!(prose(&mut r, "fg", "One.", 0, true).is_empty());
+    let n = notes(&r);
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert!(
+        n[0].1
+            .contains("held: waits for the turn end (read_mode done)"),
+        "{n:?}"
+    );
+}
+
+#[test]
+fn read_mode_done_held_prose_dropped_by_an_answer_or_a_new_turn_is_noted() {
+    // Review of #222: done holds a whole turn, so a drop must show in the log.
+    let mut r = mode_rules(ReadMode::Done);
+    prose(&mut r, "fg", "One. Two. ", 0, false);
+    let _ = notes(&r);
+    r.answered("fg");
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(_, w, _)| w == "dropped: 2 held chunk(s) (answered, read_mode done)"),
+        "{n:?}"
+    );
+    prose(&mut r, "fg", "Three. ", 1, false);
+    let _ = notes(&r);
+    r.turn_start("fg", None, None).unwrap();
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(_, w, _)| w == "dropped: 1 held chunk(s) (turn_start, read_mode done)"),
+        "{n:?}"
+    );
+    // Nothing held: no note.
+    r.turn_start("fg", None, None).unwrap();
+    assert!(notes(&r).is_empty());
+}
+
+#[test]
+fn read_mode_does_not_change_summaries() {
+    for mode in [ReadMode::Immediate, ReadMode::Queue, ReadMode::Done] {
+        let mut r = summary_rules();
+        r.settings.read_mode = mode;
+        assert!(spoken(&prose(&mut r, "fg", "Recorded only. ", 0, true)).is_empty());
+        let a = r.turn_end("fg", None, None).unwrap();
+        assert!(spoken(&a).is_empty(), "{mode:?}: summaries own the turn");
+    }
+}
+
+#[test]
+fn read_mode_names_round_trip() {
+    for m in [ReadMode::Immediate, ReadMode::Queue, ReadMode::Done] {
+        assert_eq!(ReadMode::parse(m.as_str()), Some(m));
+    }
+    assert_eq!(ReadMode::parse("later"), None);
+    assert_eq!(ReadMode::parse("immediate"), Some(ReadMode::Immediate));
+    assert_eq!(ReadMode::parse("queue"), Some(ReadMode::Queue));
+    assert_eq!(ReadMode::parse("done"), Some(ReadMode::Done));
 }
 
 // -- decisions ---------------------------------------------------------------
