@@ -249,7 +249,7 @@
         <div class="title-row"><div><h1 id="h-speech">Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
         <h2 class="group-label">Voice</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong id="engine-label">Voice engine</strong><div class="hint">Kokoro reads. Windows' own voice stands in while Kokoro downloads or loads, or if it cannot run.</div></div><div class="control"><div class="toggle-line"><span class="engine-status" id="engine-status">&ndash;</span><button class="btn" id="engine-kokoro" type="button" hidden>Use Kokoro</button></div></div></div>
+          <div class="pref"><div class="pref-copy"><strong id="engine-label">Voice engine</strong><div class="hint">Kokoro reads. Windows' own voice stands in while Kokoro downloads or loads, or if it cannot run.</div></div><div class="control"><div class="toggle-line"><span class="engine-status" id="engine-status" role="status" aria-labelledby="engine-label">&ndash;</span><button class="btn" id="engine-kokoro" type="button" hidden>Use Kokoro</button></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">Which voice reads.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
         </div>
@@ -570,7 +570,7 @@ const AUDIO_HINTS = {
   pause: "Playing music and video pause while Sonara speaks, then resume.",
 };
 const VERBOSITY_HINTS = {
-  everything: "The answer, questions, tool announcements, and each code block by its size and language (\u201c3-line Python code block\u201d).",
+  everything: "The answer, questions, tool announcements, and each code block by its size and language (\u201c3-line python code block\u201d).",
   skip_code: "The answer and questions. Code blocks and tool announcements are skipped without a word.",
 };
 const MODE_HINTS = {

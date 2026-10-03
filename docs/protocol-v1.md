@@ -198,7 +198,7 @@ When a client finds an instance it cannot use (another protocol major, a missing
 
 ## Versioning
 
-Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
+Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. Runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and `skip_code` (old values are accepted as aliases: `all` is `everything`, `medium` and `quiet` are `skip_code`, so `get` returns the new names) and added `engine_status` to `runtime`; no shipped client depended on the old verbosity values, so the protocol minor was not bumped for it. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
 
 ## Saved settings
 

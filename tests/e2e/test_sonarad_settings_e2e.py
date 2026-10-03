@@ -41,8 +41,14 @@ class Live:
         return r["value"]
 
     def saved(self) -> dict:
+        # sonarad replaces config.json atomically; a read that lands mid
+        # replace sees no file, a locked file or half a document. Report
+        # "nothing saved yet" so eventually() keeps polling.
         p = self.home / "config.json"
-        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+            return {}
 
     def close(self):
         self.client.close()
@@ -136,13 +142,16 @@ def test_verbosity_has_two_levels_and_persists_across_a_reload(live, browser):
     page.close()
 
 
-def test_an_old_saved_verbosity_shows_as_skip_code(live, browser, tmp_path):
+def test_an_old_saved_verbosity_shows_as_its_new_level(live, browser, tmp_path):
+    # "all" maps to everything; skip_code is the default, so seeding an old
+    # value that maps to it would pass even with the alias broken.
     home = tmp_path / "home"
     home.mkdir()
-    (home / "config.json").write_text(json.dumps({"verbosity": "quiet"}), encoding="utf-8")
+    (home / "config.json").write_text(json.dumps({"verbosity": "all"}), encoding="utf-8")
     lv = live()
+    assert lv.get("verbosity") == "everything"
     page = open_page(browser, lv.url)
-    pw.expect(page.locator("#verbosity-seg [data-value=skip_code]")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#verbosity-seg [data-value=everything]")).to_have_attribute("aria-checked", "true")
     page.close()
 
 

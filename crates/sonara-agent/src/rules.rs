@@ -17,8 +17,9 @@
 //! - **Prose** (`stream`) goes through the streaming assembler; each
 //!   finished chunk is spoken in the channel (append), held below
 //!   `minqueue` until the batch is big enough or the turn ends, a tool runs
-//!   or a decision arrives (context first). Verbosity `quiet` records it
-//!   without speaking; summary mode records it for the recap.
+//!   or a decision arrives (context first). At verbosity `skip_code` a
+//!   code block's summary is recorded but not spoken; summary mode records
+//!   prose for the recap.
 //! - **turn_end** plays `turn_done` and releases held prose (the turn ends
 //!   at this signal, not at a block's `final`).
 //! - **Decisions** (`ask`) are spoken with priority: the driver puts the
