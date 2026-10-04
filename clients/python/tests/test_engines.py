@@ -37,6 +37,8 @@ def test_engine_messages_have_the_wire_shape(home, fake):
         c.engines.test("kgpu", text="Hi.", voice="af_sky", play=False)
         c.engines.voices("kgpu", refresh=True)
         c.voices("kgpu", refresh=True)
+        c.engines.models("kgpu", refresh=True)
+        c.engines.models(profile={"kind": "gemini"}, secret="k-1")
         c.engines.remove("kgpu")
         c.engines.remove("kgpu", forget_key=False)
         c.engines.reload()
@@ -50,6 +52,8 @@ def test_engine_messages_have_the_wire_shape(home, fake):
         {"type": "engine_test", "engine": "kgpu", "text": "Hi.", "voice": "af_sky", "play": False},
         {"type": "voices", "engine": "kgpu", "refresh": True},
         {"type": "voices", "engine": "kgpu", "refresh": True},
+        {"type": "engine_models", "engine": "kgpu", "refresh": True},
+        {"type": "engine_models", "profile": {"kind": "gemini"}, "secret": "k-1"},
         {"type": "engine_remove", "engine": "kgpu"},
         {"type": "engine_remove", "engine": "kgpu", "forget_key": False},
         {"type": "engine_reload"},
@@ -105,9 +109,17 @@ def test_add_test_and_remove_against_sonarad(home, sonarad, provider):
     try:
         assert "engines" in c.info["capabilities"]
         profile = {"id": "local", "kind": "openai-compatible", "url": provider.url,
-                   "key_ref": "credman", "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000}}
+                   "key_ref": "credman", "voice": "af_heart",
+                   "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000}}
         added = c.engines.add(profile, secret=SECRET)
         assert added["engine"]["key_present"] is True
+        # A server on this PC: a sentence at a time by default (#235).
+        assert added["engine"]["send_mode"] == "sentence"
+        assert "send_mode" not in added["engine"]["explicit"]
+        chosen = c.engines.add(dict(profile, send_mode="message"), replace=True)
+        assert chosen["engine"]["send_mode"] == "message"
+        assert chosen["engine"]["explicit"]["send_mode"] == "message"
+        c.engines.add(profile, replace=True)
         assert SECRET not in json.dumps(added)
         t = c.engines.test("local", play=False)
         assert t["sample_rate"] == 24000

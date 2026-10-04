@@ -32,9 +32,10 @@ pub use error::{Error, Result};
 pub use settings::{Key, Value, RATE_MAX, RATE_MIN, VOLUME_MAX};
 
 pub use sonara_audio::{AudioEvent, Output};
-pub use sonara_core::reader::{Control, ItemId, ItemPhase, NowPlaying, QueueMode, State};
-pub use sonara_engine::{Engine, EngineId, EngineStatus, Readiness, Registry, Voice};
+pub use sonara_core::reader::{Chunking, Control, ItemId, ItemPhase, NowPlaying, QueueMode, State};
+pub use sonara_engine::{Engine, EngineId, EngineStatus, Readiness, Registry, SendMode, Voice};
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -140,6 +141,8 @@ struct Shared {
     tx: Sender<Msg>,
     registry: Arc<Registry>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    /// The current engine sends whole messages (set by the worker).
+    whole: Arc<AtomicBool>,
 }
 
 impl Shared {
@@ -199,7 +202,9 @@ impl ReaderHandle {
             }
         };
         let (tx, rx) = channel();
+        let whole = Arc::new(AtomicBool::new(false));
         let start = worker::Start {
+            whole: whole.clone(),
             registry: registry.clone(),
             engine,
             voice,
@@ -214,6 +219,7 @@ impl ReaderHandle {
                 tx,
                 registry,
                 worker: Mutex::new(Some(worker)),
+                whole,
             }),
         })
     }
@@ -268,6 +274,18 @@ impl ReaderHandle {
     /// The current state snapshot.
     pub fn state(&self) -> Result<State> {
         self.call(Msg::State)
+    }
+
+    /// How the current engine takes text (#235): `Message` when it reads
+    /// each item as one text (`Engine::send_mode`), so L3 joins what it
+    /// releases at once into one item. Cheap: no round trip to the worker,
+    /// which updates it at start and on every engine change.
+    pub fn send_mode(&self) -> SendMode {
+        if self.shared.whole.load(Ordering::SeqCst) {
+            SendMode::Message
+        } else {
+            SendMode::Sentence
+        }
     }
 
     /// The current engine's readiness (spec 4.1 `engine_status`).

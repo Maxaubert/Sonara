@@ -27,7 +27,7 @@ describe("engines", () => {
   });
 
   it("sends the engine_* messages with the wire field names", async () => {
-    const profile = { id: "kgpu", kind: "openai-compatible", url: "http://127.0.0.1:8880/v1", options: { preset: "kokoro-fastapi" } };
+    const profile = { id: "kgpu", kind: "openai-compatible", url: "http://127.0.0.1:8880/v1", send_mode: "message", options: { preset: "kokoro-fastapi" } };
     await client.engines.list();
     await client.engines.add(profile);
     await client.engines.add(profile, { secret: "sk-x", replace: true });
@@ -37,6 +37,8 @@ describe("engines", () => {
     await client.engines.test("kgpu", { text: "Hi.", voice: "af_sky", play: false });
     await client.engines.voices("kgpu", { refresh: true });
     await client.voices("kgpu", { refresh: true });
+    await client.engines.models("kgpu", { refresh: true });
+    await client.engines.models({ profile: { kind: "gemini" }, secret: "k-1" });
     await client.engines.remove("kgpu");
     await client.engines.remove("kgpu", { forgetKey: false });
     await client.engines.reload();
@@ -51,6 +53,8 @@ describe("engines", () => {
       { type: "engine_test", engine: "kgpu", text: "Hi.", voice: "af_sky", play: false },
       { type: "voices", engine: "kgpu", refresh: true },
       { type: "voices", engine: "kgpu", refresh: true },
+      { type: "engine_models", engine: "kgpu", refresh: true },
+      { type: "engine_models", profile: { kind: "gemini" }, secret: "k-1" },
       { type: "engine_remove", engine: "kgpu" },
       { type: "engine_remove", engine: "kgpu", forget_key: false },
       { type: "engine_reload" },

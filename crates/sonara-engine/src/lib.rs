@@ -27,7 +27,9 @@ pub mod fake;
 
 pub use error::{Error, Result, MISSING_VOICE_DATA_FIX};
 pub use registry::Registry;
-pub use types::{EngineId, EngineStatus, LicenseClass, PcmChunk, Readiness, Reason, Voice};
+pub use types::{
+    EngineId, EngineStatus, InputLimit, LicenseClass, PcmChunk, Readiness, Reason, SendMode, Voice,
+};
 
 /// The PCM chunks of one synthesis, in playback order.
 pub type PcmStream = Box<dyn Iterator<Item = Result<PcmChunk>> + Send>;
@@ -62,6 +64,26 @@ pub trait Engine: Send + Sync {
     /// one (1..=4). A cloud engine asks for more to hide its round trip.
     fn lookahead(&self) -> usize {
         1
+    }
+    /// How the reader sends text to this engine (#235): `Sentence` (the
+    /// default) one chunk per sentence; `Message` one chunk per item, its
+    /// paragraphs and sentences joined, split only past `input_limit`.
+    fn send_mode(&self) -> SendMode {
+        SendMode::Sentence
+    }
+    /// The most text one synthesis takes in `SendMode::Message` (the
+    /// provider's input limit, or less when the profile asks). Unused in
+    /// `Sentence` mode.
+    fn input_limit(&self) -> InputLimit {
+        InputLimit::Chars(4096)
+    }
+    /// True when the `PcmStream` of `synthesize` yields audio while the
+    /// rest is still being made (#235, Gemini's streamed answer): the
+    /// reader then starts playing a chunk at its first piece instead of
+    /// waiting for all of it. Default false: the reader collects the
+    /// stream first.
+    fn streams(&self) -> bool {
+        false
     }
     /// True when `synthesize` accepts voice ids that `voices()` does not
     /// list (cloud voice ids, cloned voices, file names of a local server).

@@ -91,9 +91,11 @@ impl Rig {
         self.server.handle(&mut self.session, &req).reply
     }
 
+    /// A profile as the user sets it: the voice picked (none comes from
+    /// Sonara, #235).
     fn profile(&self, id: &str) -> Value {
         json!({"id": id, "kind": "openai-compatible", "label": "Local",
-            "url": self.provider.url, "key_ref": "credman",
+            "url": self.provider.url, "key_ref": "credman", "voice": "af_heart",
             "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000}})
     }
 
@@ -115,7 +117,7 @@ fn the_capability_and_the_list() {
         .as_array()
         .unwrap()
         .contains(&json!("engines")));
-    assert_eq!(o["protocol"]["minor"], 4);
+    assert_eq!(o["protocol"]["minor"], 5);
     assert!(r.server.capabilities().contains(&"engines"));
     let l = r.call(json!({"type": "engine_list"}));
     assert_eq!(l["ok"], true);
@@ -128,6 +130,7 @@ fn the_capability_and_the_list() {
             "elevenlabs",
             "azure",
             "google",
+            "gemini",
             "cartesia",
             "deepgram",
             "command"
@@ -150,6 +153,7 @@ fn a_host_without_external_engines_refuses_every_engine_message() {
         "engine_key",
         "engine_test",
         "engine_reload",
+        "engine_models",
     ] {
         let o = r.call(json!({"type": t, "engine": "x"}));
         assert_eq!(code(&o), "E_UNSUPPORTED", "{t}");
@@ -282,6 +286,130 @@ fn engine_test_plays_and_reports_failures_with_a_reason() {
     assert_eq!(code(&o), "E_NOT_FOUND");
     let o = r.call(json!({"type": "engine_test", "engine": "local", "text": "x".repeat(301)}));
     assert_eq!(code(&o), "E_BAD_REQUEST");
+}
+
+/// The one voice rule (#235): the voice picked in Sonara is the one heard
+/// everywhere. Live, the CLI test used the profile's voice while the user
+/// had picked another as the voice setting.
+#[test]
+fn engine_test_uses_the_voice_picked_in_sonara() {
+    let mut r = rig("test-voice", true);
+    r.add("local");
+    let voice_of_last = |r: &Rig| -> Value {
+        let (_, body) = r.provider.speech_requests().pop().unwrap();
+        serde_json::from_slice::<Value>(&body).unwrap()["voice"].clone()
+    };
+    // Not the current engine: the profile's voice.
+    let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+    assert_eq!(o["voice"], "af_heart", "{o}");
+    // Current, with a voice picked: that voice, also for the test.
+    let o = r.call(json!({"type": "set", "key": "engine", "value": "local"}));
+    assert_eq!(o["ok"], true, "{o}");
+    let o = r.call(json!({"type": "set", "key": "voice", "value": "am_echo"}));
+    assert_eq!(o["ok"], true, "{o}");
+    let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+    assert_eq!(o["voice"], "am_echo", "{o}");
+    assert_eq!(voice_of_last(&r), "am_echo");
+    // A voice the request names wins.
+    let o =
+        r.call(json!({"type": "engine_test", "engine": "local", "voice": "af_sky", "play": false}));
+    assert_eq!(o["voice"], "af_sky");
+    assert_eq!(voice_of_last(&r), "af_sky");
+}
+
+#[test]
+fn engine_models_come_live_for_a_saved_or_an_unsaved_profile() {
+    let mut r = rig("models", true);
+    r.add("local");
+    let o = r.call(json!({"type": "engine_models", "engine": "local"}));
+    assert_eq!(o["ok"], true, "{o}");
+    assert_eq!(
+        o["models"],
+        json!([{"id": "speech-1", "name": "speech-1"}, {"id": "speech-2", "name": "speech-2"}])
+    );
+    assert_eq!(o["list"], true);
+    assert_eq!(o["takes_model"], true);
+    assert_eq!(o["required"], false, "Kokoro-FastAPI picks its own");
+    // An unsaved profile with the key typed in the form.
+    let p = json!({"kind": "openai-compatible", "url": r.provider.url, "key_ref": "credman",
+        "options": {"preset": "speaches"}});
+    let o = r.call(json!({"type": "engine_models", "profile": p, "secret": SECRET}));
+    assert_eq!(o["ok"], true, "{o}");
+    assert_eq!(o["models"].as_array().unwrap().len(), 2);
+    assert_eq!(o["required"], true, "Speaches needs one");
+    let seen = r.provider.seen.lock().unwrap().clone();
+    let last = seen
+        .iter()
+        .rev()
+        .find(|(p, _, _)| p.ends_with("/models"))
+        .unwrap();
+    assert!(last
+        .1
+        .contains(&("authorization".into(), format!("Bearer {SECRET}"))));
+    let o = r.call(json!({"type": "engine_models", "engine": "nope"}));
+    assert_eq!(code(&o), "E_NOT_FOUND");
+    let o = r.call(json!({"type": "engine_models"}));
+    assert_eq!(code(&o), "E_BAD_REQUEST");
+    // The secret never reaches the log.
+    assert!(!r.lines.lock().unwrap().iter().any(|l| l.contains(SECRET)));
+}
+
+/// A profile stored before #235 that relied on a default model or voice
+/// stays listed and usable, and says what to pick (the user's Gemini
+/// profile had neither; the ElevenLabs one stored its voice).
+#[test]
+fn stored_profiles_without_a_model_or_voice_say_choose_one() {
+    let home = std::env::temp_dir().join(format!("sonarad-engines-migrate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join(engines::FILE),
+        r#"{"format": 2, "engines": [
+            {"id": "gemini", "kind": "gemini", "key_ref": "credman", "options": {}},
+            {"id": "elevenlabs", "kind": "elevenlabs", "voice": "stored-voice-1",
+             "model": "stored-model-1", "key_ref": "credman", "options": {}},
+            {"id": "el2", "kind": "elevenlabs", "voice": "stored-voice-2", "key_ref": "credman"}
+        ]}"#,
+    )
+    .unwrap();
+    let (e, problems) = Engines::load(engines::Setup {
+        home: home.clone(),
+        store: Arc::new(MemoryStore::new()),
+        fallback: None,
+        fallback_voice: String::new(),
+        default_engine: "fake".into(),
+        log: None,
+    });
+    assert!(problems.is_empty(), "{problems:?}");
+    let l = e.list("");
+    let views = l["engines"].as_array().unwrap();
+    let by = |id: &str| views.iter().find(|v| v["id"] == id).unwrap().clone();
+    let g = by("gemini");
+    assert_eq!(g["supported"], true);
+    assert_eq!(g["missing"], json!(["model", "voice"]));
+    assert_eq!(g["model_required"], true);
+    assert_eq!(g["model_list"], true);
+    assert!(g.get("model").is_none(), "no model filled in");
+    assert!(g.get("voice").is_none(), "no voice filled in");
+    assert_eq!(g["status"]["reason"], "bad_config");
+    assert_eq!(
+        g["status"]["message"],
+        "Choose a model for Gemini in Sonara's settings (Engines)."
+    );
+    let el = by("elevenlabs");
+    assert_eq!(el["missing"], json!([]));
+    assert_eq!(el["voice"], "stored-voice-1", "kept as stored");
+    assert_eq!(el["model"], "stored-model-1");
+    let el2 = by("el2");
+    assert_eq!(el2["missing"], json!([]), "ElevenLabs picks its own model");
+    assert!(el2.get("model").is_none());
+    assert_eq!(el2["model_required"], false);
+    // Nothing was rewritten: the file keeps what the user stored.
+    let file: Value =
+        serde_json::from_str(&std::fs::read_to_string(home.join(engines::FILE)).unwrap()).unwrap();
+    assert!(file["engines"][0].get("model").is_none());
+    assert!(file["engines"][0].get("voice").is_none());
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 #[test]
@@ -625,13 +753,14 @@ fn an_env_key_follows_only_a_locally_confirmed_url() {
 
 #[test]
 fn cloud_kinds_never_send_their_key_to_a_new_url_or_region() {
-    // ElevenLabs, Google and Azure profiles without a url send to the
+    // ElevenLabs, Google, Gemini and Azure profiles without a url send to the
     // provider's host (Azure's from its region): a replace to a url of
     // another server, over TCP or HTTP, or to another region, deletes the
     // key and never sends it (spec 6.4).
     for (kind, options) in [
         ("elevenlabs", json!({})),
         ("google", json!({})),
+        ("gemini", json!({})),
         ("azure", json!({"region": "westeurope"})),
     ] {
         for http in [false, true] {

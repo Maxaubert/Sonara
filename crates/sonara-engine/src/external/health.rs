@@ -13,6 +13,9 @@ pub const BREAKER_FIRST: Duration = Duration::from_secs(30);
 pub const BREAKER_MAX: Duration = Duration::from_secs(300);
 /// A `quota` failure blocks this long, then one chunk probes.
 pub const QUOTA_BLOCK: Duration = Duration::from_secs(600);
+/// A `quota` failure's own `Retry-After` (Gemini's `retryDelay`) is kept
+/// up to this long (#235).
+pub const QUOTA_MAX: Duration = Duration::from_secs(24 * 3600);
 
 /// A failure the user must fix (or that waits for its time).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,12 +126,23 @@ impl Health {
                 s.open_until = Some(now + open);
                 s.next_open = (open * 2).min(BREAKER_MAX);
             }
+            // A wait the provider asked for (`Retry-After`, Gemini's
+            // `retryDelay`) longer than the one retry: nothing is sent
+            // before it ends, from the first failure on (#235).
+            if let Some(d) = e.retry_after.filter(|d| *d > super::RETRY_AFTER_MAX) {
+                let until = now + d.min(BREAKER_MAX);
+                s.open_until = Some(s.open_until.map_or(until, |t| t.max(until)));
+            }
             return;
         }
+        // A quota block lasts its own Retry-After when that is longer.
+        let quota_wait = e
+            .retry_after
+            .map_or(QUOTA_BLOCK, |d| d.min(QUOTA_MAX).max(QUOTA_BLOCK));
         s.blocked = Some(Blocked {
             reason: e.reason,
             message: e.message.clone(),
-            until: (e.reason == Reason::Quota).then(|| now + QUOTA_BLOCK),
+            until: (e.reason == Reason::Quota).then(|| now + quota_wait),
             voice: (e.reason == Reason::BadVoice).then(|| voice.to_string()),
         });
     }
@@ -320,6 +334,60 @@ mod tests {
     }
 
     #[test]
+    fn a_long_retry_after_opens_the_breaker_at_once_for_that_long() {
+        let (h, clock) = rig();
+        let mut e = fail(Reason::RateLimited);
+        e.retry_after = Some(Duration::from_secs(39));
+        h.record_failure(&e, "v");
+        assert_eq!(
+            h.skip("v").map(|s| s.0),
+            Some(Reason::RateLimited),
+            "one failure with a long wait is enough"
+        );
+        clock.advance(Duration::from_secs(38));
+        assert!(h.skip("v").is_some());
+        clock.advance(Duration::from_secs(1));
+        assert_eq!(h.skip("v"), None, "a probe once the wait is over");
+        // A short one was already waited for once: no breaker.
+        let (h, _) = rig();
+        let mut e = fail(Reason::RateLimited);
+        e.retry_after = Some(Duration::from_millis(500));
+        h.record_failure(&e, "v");
+        assert_eq!(h.skip("v"), None);
+        // Capped at BREAKER_MAX.
+        let (h, clock) = rig();
+        let mut e = fail(Reason::Server);
+        e.retry_after = Some(Duration::from_secs(3600));
+        h.record_failure(&e, "v");
+        clock.advance(BREAKER_MAX);
+        assert_eq!(h.skip("v"), None);
+    }
+
+    #[test]
+    fn quota_with_a_retry_after_blocks_at_least_that_long() {
+        let (h, clock) = rig();
+        let mut e = fail(Reason::Quota);
+        e.retry_after = Some(Duration::from_secs(3600));
+        h.record_failure(&e, "v");
+        clock.advance(QUOTA_BLOCK);
+        assert!(
+            h.skip("v").is_some(),
+            "the provider's hour, not ten minutes"
+        );
+        clock.advance(Duration::from_secs(3600) - QUOTA_BLOCK);
+        assert_eq!(h.skip("v"), None);
+        // A short one still blocks the usual ten minutes.
+        let (h, clock) = rig();
+        let mut e = fail(Reason::Quota);
+        e.retry_after = Some(Duration::from_secs(39));
+        h.record_failure(&e, "v");
+        clock.advance(Duration::from_secs(40));
+        assert!(h.skip("v").is_some());
+        clock.advance(QUOTA_BLOCK);
+        assert_eq!(h.skip("v"), None);
+    }
+
+    #[test]
     fn auth_blocks_until_cleared() {
         let (h, clock) = rig();
         h.record_failure(&fail(Reason::Auth), "v");
@@ -337,7 +405,7 @@ mod tests {
         // A bad voice blocks that voice only.
         h.record_failure(&fail(Reason::BadVoice), "nova");
         assert!(h.skip("nova").is_some());
-        assert_eq!(h.skip("alloy"), None);
+        assert_eq!(h.skip("v2"), None);
         h.clear_key_block();
         assert!(h.skip("nova").is_some(), "a key does not fix a voice");
         h.clear();

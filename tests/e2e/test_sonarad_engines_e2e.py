@@ -107,6 +107,9 @@ def add_through_the_form(page, provider, key=SECRET):
     page.fill("#ef-url", provider.url)
     page.select_option("#ef-keyref", "credman")
     page.fill("#ef-key", key)
+    # No voice is preselected (#235): pick one of the server's.
+    page.wait_for_selector("#ef-voice option[value=af_heart]", state="attached")
+    page.select_option("#ef-voice", "af_heart")
     page.click("#ef-save")
     pw.expect(page.locator("#profile-rows [data-engine=local]")).to_be_visible()
 
@@ -269,7 +272,8 @@ def test_a_validation_error_is_shown_next_to_its_field(live, browser, provider):
     pw.expect(page.locator("#ef-id")).to_have_attribute("aria-invalid", "true")
     pw.expect(page.locator("#ef-id")).to_be_focused()
     assert "ef-id-err" in page.get_attribute("#ef-id", "aria-describedby")
-    pw.expect(page.locator("#ef-error")).to_contain_text("Not saved. Check ID.")
+    # The voice is required too (Sonara picks none, #235).
+    pw.expect(page.locator("#ef-error")).to_contain_text("Not saved. Check the 2 marked fields: ID, Voice.")
     # Typing in the field clears its error.
     page.fill("#ef-id", "good")
     pw.expect(page.locator("#ef-id-err")).to_be_hidden()
@@ -284,6 +288,9 @@ def test_a_refusal_of_the_runtime_is_shown_at_its_field(live, browser, provider)
     page.click("#engine-new")
     page.select_option("#ef-preset", "kokoro-fastapi")
     page.fill("#ef-url", provider.url)
+    page.locator("#ef-url").dispatch_event("change")
+    page.wait_for_selector("#ef-voice option[value=af_heart]", state="attached")
+    page.select_option("#ef-voice", "af_heart")
     page.click("details.more summary")
     page.fill("#ef-timeout", "5")
     page.click("#ef-save")
@@ -309,7 +316,14 @@ def test_the_whole_path_works_with_the_keyboard(live, browser, provider):
     page.keyboard.press("Control+A")
     page.keyboard.type("kbd")
     page.locator("#ef-url").focus()
+    page.keyboard.press("Control+A")   # the preset's usual address is filled in
     page.keyboard.type(provider.url)
+    # Leaving the address loads the server's voices; one is picked with the
+    # arrow keys (no voice is preselected, #235).
+    page.locator("#ef-voice").focus()
+    page.wait_for_selector("#ef-voice option[value=af_heart]", state="attached")
+    page.keyboard.press("ArrowDown")
+    pw.expect(page.locator("#ef-voice")).to_have_value("af_heart")
     page.locator("#ef-url").press("Enter")   # Enter submits the form
     assert eventually(lambda: [e["id"] for e in lv.request({"type": "engine_list"})["engines"]] == ["kbd"])
     row = page.locator("#profile-rows [data-engine=kbd]")
@@ -339,6 +353,7 @@ def test_a_new_cloud_profile_does_not_keep_the_openai_address(live, browser):
     # No real provider is ever called: the voice list of the unsaved form
     # (which would go to api.elevenlabs.io) is stopped in the page.
     page.route("**/v1/voices", lambda route: route.abort())
+    page.route("**/v1/engine_models", lambda route: route.abort())
     page.click("#engine-new")
     # The form opens on OpenAI with its address filled in; another kind drops it.
     pw.expect(page.locator("#ef-url")).to_have_value("https://api.openai.com/v1")
@@ -349,7 +364,7 @@ def test_a_new_cloud_profile_does_not_keep_the_openai_address(live, browser):
     pw.expect(page.locator("#ef-voice-req")).to_be_visible()
     pw.expect(page.locator("#ef-voice-hint")).to_contain_text("Enter the API key")
     page.select_option("#ef-voice", "__other")
-    page.fill("#ef-voice-other", "21m00Tcm4TlvDq8ikWAM")
+    page.fill("#ef-voice-other", "voice-x")
     page.fill("#ef-key", SECRET)
     page.click("#ef-save")
     pw.expect(page.locator("#profile-rows [data-engine=eleven]")).to_be_visible()
@@ -363,9 +378,11 @@ def test_a_new_cloud_profile_does_not_keep_the_openai_address(live, browser):
 def test_an_azure_region_edit_moves_where_text_goes(live, browser):
     lv = live()
     lv.request({"type": "engine_add", "engine": {
-        "id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+        "id": "az", "kind": "azure", "voice": "en-US-VoiceZNeural",
         "options": {"region": "westeurope"}}})
     page, _ = open_engines(browser, lv.url)
+    # No real provider is called: the voice list (Azure's host) is stopped.
+    page.route("**/v1/voices", lambda route: route.abort())
     page.locator("#profile-rows [data-engine=az] button.engine-edit").click()
     pw.expect(page.locator("#ef-url")).to_have_value("")
     page.fill("#ef-opt-region", "eastus")
@@ -377,16 +394,24 @@ def test_an_azure_region_edit_moves_where_text_goes(live, browser):
 
 
 def test_renaming_a_preset_profile_keeps_the_preset_defaults(live, browser):
+    # The address stays the preset's own; the model and voice stay what
+    # the user picked (Sonara fills in none, #235).
     lv = live()
     lv.request({"type": "engine_add", "engine": {
-        "id": "openai", "kind": "openai-compatible", "options": {"preset": "openai"}}})
+        "id": "openai", "kind": "openai-compatible", "model": "m-picked", "voice": "v-picked",
+        "options": {"preset": "openai"}}})
     page, _ = open_engines(browser, lv.url)
+    page.route("**/v1/engine_models", lambda route: route.abort())
     page.locator("#profile-rows [data-engine=openai] button.engine-edit").click()
+    # The form starts from what the profile set (listed or typed).
+    assert eventually(lambda: page.evaluate("chosenModel()") == "m-picked")
+    assert eventually(lambda: page.evaluate("chosenVoice()") == "v-picked")
     page.fill("#ef-label", "My OpenAI")
     page.click("#ef-save")
     assert eventually(lambda: stored(lv, "openai").get("label") == "My OpenAI")
     raw = stored(lv, "openai")
-    assert not {"url", "model", "voice"} & set(raw), raw
+    assert "url" not in raw, raw
+    assert raw["model"] == "m-picked" and raw["voice"] == "v-picked", raw
     page.close()
 
 
@@ -501,16 +526,23 @@ def test_required_fields_are_starred(live, browser):
     lv = live()
     page, _ = open_engines(browser, lv.url)
     page.route("**/v1/voices", lambda route: route.abort())
+    page.route("**/v1/engine_models", lambda route: route.abort())
     page.click("#engine-new")
     pw.expect(page.locator("#ef-legend")).to_contain_text("Required field")
     for fid in ("ef-kind", "ef-label", "ef-id"):
         assert page.locator(f"label[for={fid}] .req").is_visible(), fid
         pw.expect(page.locator("#" + fid)).to_have_attribute("aria-required", "true")
-    # OpenAI needs a key and no voice; ElevenLabs needs both.
+    # Nothing is preselected (#235): OpenAI needs a key, a model and a voice.
     pw.expect(page.locator("#ef-key-req")).to_be_visible()
-    pw.expect(page.locator("#ef-voice-req")).to_be_hidden()
+    pw.expect(page.locator("#ef-voice-req")).to_be_visible()
+    pw.expect(page.locator("#ef-model-req")).to_be_visible()
+    pw.expect(page.locator("#ef-model-select")).to_have_value("")
+    pw.expect(page.locator("#ef-voice")).to_have_value("")
+    # ElevenLabs needs a key and a voice; its model is its own choice.
     page.select_option("#ef-kind", "elevenlabs")
     pw.expect(page.locator("#ef-voice-req")).to_be_visible()
+    pw.expect(page.locator("#ef-model-req")).to_be_hidden()
+    assert options(page, "#ef-model-select")[0] == ["", "ElevenLabs' own choice"]
     pw.expect(page.locator("#ef-key")).to_have_attribute("aria-required", "true")
     # Save with everything missing: each field says what is wrong.
     page.fill("#ef-label", "")
@@ -714,3 +746,219 @@ def test_the_speech_page_names_the_engine_on_its_voices(live, browser, provider)
     labels = [t for v, t in options(page, "#voice-select") if v == "am_echo"]
     assert labels and labels[0].endswith("(Test server)"), labels
     page.close()
+
+
+def test_gemini_offers_googles_live_models_and_voices_and_presets_none(live, browser):
+    # #235: no model and no voice in Sonara. With the key typed, the model
+    # list (the speech models of GET /v1beta/models) and the voices
+    # (GET /v1beta/voices) load from Google (here the fake); both are
+    # required, nothing is preselected, and the saved engine streams.
+    cloud = FakeCloud("gemini", SECRET)
+    try:
+        lv = live()
+        page, _ = open_engines(browser, lv.url)
+        page.click("#engine-new")
+        assert ["gemini", "Gemini (Google AI Studio)"] in options(page, "#ef-kind")
+        page.select_option("#ef-kind", "gemini")
+        pw.expect(page.locator("#ef-label")).to_have_value("Gemini")
+        pw.expect(page.locator("#ef-id")).to_have_value("gemini")
+        pw.expect(page.locator("#ef-key-req")).to_be_visible()
+        pw.expect(page.locator("#ef-key")).to_have_attribute("aria-required", "true")
+        pw.expect(page.locator("#ef-model-req")).to_be_visible()
+        pw.expect(page.locator("#ef-voice-req")).to_be_visible()
+        pw.expect(page.locator("#ef-key-hint")).to_contain_text("aistudio.google.com")
+        pw.expect(page.locator("#ef-key-hint")).to_contain_text("free tier")
+        # Nothing preselected, no model or voice name anywhere in the form.
+        pw.expect(page.locator("#ef-model-select")).to_have_value("")
+        pw.expect(page.locator("#ef-voice")).to_have_value("")
+        form_text = page.locator("#engine-form").inner_html()
+        for name in ("gemini-3", "flash-lite", "Kore", "Puck"):
+            assert name not in form_text, name
+        assert page.locator("#ef-opt-style").is_visible()
+        # The wait for audio and the split limit are common options now
+        # (review of #236), with Gemini's defaults as placeholders.
+        assert page.locator("#ef-opt-first_audio_ms").count() == 0
+        pw.expect(page.locator("#ef-first-audio")).to_have_attribute("placeholder", "12000")
+        pw.expect(page.locator("#ef-chunk")).to_have_attribute("placeholder", "2000")
+        # The pre-release Gemini options are folded into "Send to the
+        # engine" (#235): a whole message per request by default.
+        assert page.locator("#ef-opt-chunk_chars").count() == 0
+        assert page.locator("#ef-opt-quick_start").count() == 0
+        pw.expect(page.locator("#ef-send [data-value=message]")).to_have_attribute("aria-checked", "true")
+        # Before the key: the lists wait for it, nothing is fetched.
+        pw.expect(page.locator("#ef-voice-hint")).to_contain_text("Enter the API key")
+        pw.expect(page.locator("#ef-model-hint")).to_contain_text("Enter the API key")
+        assert cloud.requests == []
+        # Save without anything: each required field says so.
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-key-err")).to_contain_text("Paste the API key")
+        pw.expect(page.locator("#ef-model-select-err")).to_contain_text("Choose a model")
+        pw.expect(page.locator("#ef-voice-err")).to_contain_text("Pick a voice")
+        assert lv.request({"type": "engine_list"})["engines"] == []
+        # With the key (and the fake's address): Google's lists.
+        page.fill("#ef-url", cloud.url)
+        page.locator("#ef-url").dispatch_event("change")
+        page.fill("#ef-key", SECRET)
+        page.wait_for_selector("#ef-model-select option[value=tts-g]", state="attached")
+        models = options(page, "#ef-model-select")
+        assert ["tts-g", "TTS G (tts-g)"] in models
+        assert not any(v == "chat-g" for v, _ in models), "speech models only"
+        page.wait_for_selector("#ef-voice option[value=voice-g]", state="attached")
+        assert ["voice-g", "G (Gemini)"] in options(page, "#ef-voice")
+        pw.expect(page.locator("#ef-model-select")).to_have_value("")
+        pw.expect(page.locator("#ef-voice")).to_have_value("")
+        assert any(r["path"].startswith("/v1beta/models?") and r["headers"].get("x-goog-api-key") == SECRET
+                   for r in cloud.requests)
+        assert lv.request({"type": "engine_list"})["engines"] == [], "nothing saved yet"
+        page.select_option("#ef-model-select", "tts-g")
+        page.select_option("#ef-voice", "voice-g")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["kind"] == "gemini" and view["model"] == "tts-g" and view["voice"] == "voice-g"
+        assert view["key_present"] and view["missing"] == []
+        assert view["send_mode"] == "message" and "send_mode" not in view["explicit"]
+        assert "chunk_chars" not in view["options"] and "quick_start" not in view["options"]
+        page.click("#ef-test")
+        pw.expect(page.locator("#ef-status")).to_contain_text("Test passed")
+        sent = cloud.speech()
+        assert sent and sent[-1]["headers"]["x-goog-api-key"] == SECRET
+        assert sent[-1]["path"] == "/v1beta/models/tts-g:streamGenerateContent?alt=sse"
+        assert json.loads(sent[-1]["body"])["generationConfig"]["speechConfig"] == {
+            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "voice-g"}}}
+        assert SECRET not in page.content()
+        page.close()
+    finally:
+        cloud.stop()
+
+
+def send_choice(page):
+    return page.locator("#ef-send [aria-checked=true]").get_attribute("data-value")
+
+
+def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, browser, provider):
+    # #235: "Send to the engine" with two choices, each with its one-line
+    # hint. The default is preselected per provider (a whole message for the
+    # cloud, a sentence at a time for a server on this PC) and is sent only
+    # once the user picks one; an edit shows the stored choice.
+    cloud = FakeCloud("elevenlabs", SECRET)
+    try:
+        lv = live()
+        page, _ = open_engines(browser, lv.url)
+        page.click("#engine-new")
+        group = page.locator("#ef-send")
+        pw.expect(group).to_have_attribute("role", "radiogroup")
+        pw.expect(page.locator("#ef-send-label")).to_have_text("Send to the engine")
+        labels = [b.inner_text() for b in group.locator("[role=radio]").all()]
+        assert labels == ["Full message in one request", "As it comes in"]
+        # OpenAI (the cloud) first: a whole message.
+        assert send_choice(page) == "message"
+        pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per reply")
+        pw.expect(page.locator("#ef-send-hint")).to_contain_text("default for this provider")
+        # A full message's options (review of #236): the wait for audio and
+        # the split limit, shown only for it; the timeout speaks of answers.
+        page.locator("#engine-form details.more").evaluate("d => { d.open = true; }")
+        pw.expect(page.locator("#ef-first-audio-row")).to_be_visible()
+        pw.expect(page.locator("#ef-chunk-row")).to_be_visible()
+        pw.expect(page.locator("#ef-timeout-hint")).to_contain_text("full message gets more time")
+        # A server on this PC: a sentence at a time.
+        page.select_option("#ef-preset", "kokoro-fastapi")
+        assert send_choice(page) == "sentence"
+        pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per sentence")
+        pw.expect(page.locator("#ef-first-audio-row")).to_be_hidden()
+        pw.expect(page.locator("#ef-chunk-row")).to_be_hidden()
+        # Its address moved off this PC: the cloud default again.
+        page.fill("#ef-url", "https://tts.example.com/v1")
+        page.locator("#ef-url").dispatch_event("change")
+        assert send_choice(page) == "message"
+        # A cloud kind: a whole message; the keyboard picks the other.
+        page.select_option("#ef-kind", "elevenlabs")
+        assert send_choice(page) == "message"
+        page.fill("#ef-url", cloud.url)
+        page.locator("#ef-url").dispatch_event("change")
+        page.fill("#ef-key", SECRET)
+        page.wait_for_selector("#ef-voice option[value=voice-a]", state="attached")
+        page.select_option("#ef-voice", "voice-a")
+        page.locator("#ef-send [data-value=message]").focus()
+        page.keyboard.press("ArrowRight")
+        assert send_choice(page) == "sentence"
+        pw.expect(page.locator("#ef-send [data-value=sentence]")).to_be_focused()
+        hint = page.locator("#ef-send-hint")
+        pw.expect(hint).to_contain_text("One request per sentence")
+        pw.expect(hint).not_to_contain_text("default")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["send_mode"] == "sentence" and view["explicit"]["send_mode"] == "sentence"
+        # Reopened for an edit, the stored choice shows; back to a whole
+        # message, saved.
+        page.click("#ef-cancel")
+        page.locator("#profile-rows [data-engine=elevenlabs] button.engine-edit").click()
+        pw.expect(page.locator("#engine-form")).to_be_visible()
+        assert send_choice(page) == "sentence"
+        page.click("#ef-send [data-value=message]")
+        page.locator("#engine-form details.more").evaluate("d => { d.open = true; }")
+        page.fill("#ef-first-audio", "8000")
+        page.fill("#ef-chunk", "1500")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["send_mode"] == "message"
+        assert view["options"]["first_audio_ms"] == 8000 and view["options"]["chunk_chars"] == 1500
+        page.close()
+    finally:
+        cloud.stop()
+
+
+def test_a_stored_profile_without_a_model_or_voice_says_choose(live, browser, tmp_path):
+    # #235 migration: the user's Gemini profile stored neither (Sonara used
+    # to fill them in). It is listed, says what to pick, and its edit form
+    # starts with nothing chosen.
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "engines.json").write_text(json.dumps({"format": 2, "engines": [
+        {"id": "gemini", "kind": "gemini", "label": "Gemini", "key_ref": "credman", "options": {}},
+        {"id": "el", "kind": "elevenlabs", "label": "ElevenLabs", "voice": "stored-voice",
+         "key_ref": "credman", "options": {}}]}), encoding="utf-8")
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.route("**/v1/voices", lambda route: route.abort())
+    page.route("**/v1/engine_models", lambda route: route.abort())
+    row = page.locator("#profile-rows [data-engine=gemini]")
+    pw.expect(row).to_contain_text("Choose a model and a voice (Edit).")
+    pw.expect(page.locator("#profile-rows [data-engine=el]")).not_to_contain_text("Choose a")
+    row.locator("button.engine-edit").click()
+    pw.expect(page.locator("#ef-model-select")).to_have_value("")
+    pw.expect(page.locator("#ef-voice")).to_have_value("")
+    pw.expect(page.locator("#ef-model-req")).to_be_visible()
+    page.close()
+
+
+def test_openai_lists_its_models_and_types_its_voice(live, browser, provider):
+    # OpenAI's API has a model list but no voice list (#235): the models
+    # come from GET /v1/models, the voice is typed, with a link to OpenAI's
+    # voice page. The fake server stands in for OpenAI's address.
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.click("#engine-new")
+    page.select_option("#ef-preset", "openai")
+    page.fill("#ef-url", provider.url)
+    page.locator("#ef-url").dispatch_event("change")
+    page.fill("#ef-key", SECRET)
+    pw.expect(page.locator("#ef-model-req")).to_be_visible()
+    page.wait_for_selector("#ef-model-select option[value=tts-a]", state="attached")
+    models = [v for v, _ in options(page, "#ef-model-select")]
+    assert models == ["", "tts-a", "tts-b", "__other"], "the speech models, nothing preselected"
+    pw.expect(page.locator("#ef-model-select")).to_have_value("")
+    pw.expect(page.locator("#ef-voice-hint")).to_contain_text("has no voice list")
+    pw.expect(page.locator("#ef-voice-hint")).to_contain_text("platform.openai.com")
+    page.select_option("#ef-model-select", "tts-b")
+    page.select_option("#ef-voice", "__other")
+    page.fill("#ef-voice-other", "typed-voice")
+    page.fill("#ef-id", "oa")
+    page.click("#ef-save")
+    pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+    view = lv.request({"type": "engine_list"})["engines"][0]
+    assert view["model"] == "tts-b" and view["voice"] == "typed-voice", view
+    page.close()
+

@@ -36,15 +36,15 @@ def free_port() -> int:
 
 def test_capability_engines_listed(rt, client):
     assert "engines" in rt.info["capabilities"]
-    assert rt.info["protocol"] == {"major": 1, "minor": 4}
+    assert rt.info["protocol"] == {"major": 1, "minor": 5}
     r = client.hello(rt.token, require=["engines"])
     assert r["ok"] is True
     assert "engines" in r["capabilities"]
     lst = ok(client, {"type": "engine_list"})
     assert lst["engines"] == []
     assert lst["builtin"] == ["fake"]
-    assert lst["kinds"] == ["openai-compatible", "elevenlabs", "azure", "google", "cartesia",
-                           "deepgram", "command"]
+    assert lst["kinds"] == ["openai-compatible", "elevenlabs", "azure", "google", "gemini",
+                           "cartesia", "deepgram", "command"]
     assert "openai" in lst["presets"] and "generic" in lst["presets"]
 
 
@@ -83,7 +83,9 @@ def test_speak_with_profile_hits_the_server_with_bearer(client, profile, provide
     assert sent[0]["headers"]["authorization"] == f"Bearer {SECRET}"
     body = json.loads(sent[0]["body"])
     assert body["input"] == "Hello from the fake provider."
-    assert body["model"] == "kokoro" and body["response_format"] == "wav"
+    # No model named: none sent, the server picks its own (#235).
+    assert "model" not in body and body["response_format"] == "wav"
+    assert body["voice"] == "af_heart"
     assert body["stream"] is False
 
 
@@ -236,3 +238,20 @@ def test_new_secret_with_the_new_url_is_used(client, profile, provider):
         assert not saw_a_key(provider)
     finally:
         other.stop()
+
+
+def test_engine_models_and_the_voice_picked_in_sonara(client, profile, provider):
+    # #235: the server's models come live; the test of the current engine
+    # speaks with the voice picked in Sonara, not the profile's.
+    add(client, profile)
+    m = ok(client, {"type": "engine_models", "engine": "local", "refresh": True})
+    # A server that marks no task: all it lists (OpenAI's own: the tts ones).
+    assert [x["id"] for x in m["models"]] == ["tts-a", "tts-b", "chat-c"]
+    assert m["list"] is True and m["required"] is False
+    r = ok(client, {"type": "engine_test", "engine": "local", "play": False})
+    assert r["voice"] == "af_heart"
+    ok(client, {"type": "set", "key": "engine", "value": "local"})
+    ok(client, {"type": "set", "key": "voice", "value": "am_echo"})
+    r = ok(client, {"type": "engine_test", "engine": "local", "play": False})
+    assert r["voice"] == "am_echo"
+    assert json.loads(provider.speech()[-1]["body"])["voice"] == "am_echo"

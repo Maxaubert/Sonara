@@ -23,12 +23,14 @@ def provider():
 @pytest.fixture
 def profile(provider):
     """A local Kokoro-FastAPI-like profile that still takes a key, so the
-    tests see the Authorization header."""
+    tests see the Authorization header. Its voice is one the fake lists
+    (Sonara picks none, #235)."""
     return {
         "id": "local",
         "kind": "openai-compatible",
         "label": "Test server",
         "url": provider.url,
         "key_ref": "credman",
+        "voice": "af_heart",
         "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000},
     }

@@ -1,6 +1,12 @@
 //! The cue cache (spec 7.4): provider audio of short texts ("Paused.",
 //! "Rate 250.") kept in memory, so a repeated cue costs no round trip. Only
 //! provider audio goes in; fallback audio never does.
+//!
+//! In send mode `message` (#235) it also keeps the last few whole
+//! messages (`keep` with `message`), so Up (Restart), which reads the
+//! message again as a new item, plays it without a new request. They are
+//! bounded by count and by samples (about ten minutes of 24 kHz speech
+//! in all, some 30 MB), and only a complete answer goes in (never one cut off).
 use crate::PcmChunk;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -9,12 +15,23 @@ use std::sync::Mutex;
 pub const MAX_TEXT_CHARS: usize = 64;
 /// Entries kept (least recently used out first).
 pub const CAPACITY: usize = 128;
+/// Whole messages kept (send mode `message`).
+pub const MESSAGES: usize = 4;
+/// The most samples of whole messages kept in all (about 30 MB, ten
+/// minutes of 24 kHz speech: a replay needs only the last message).
+pub const MESSAGE_SAMPLES: usize = 15 * 1024 * 1024;
 
 type Key = (String, u32, String);
 
 #[derive(Default)]
 pub struct CueCache {
     entries: Mutex<VecDeque<(Key, Vec<PcmChunk>)>>,
+    /// Whole messages (module docs), oldest first.
+    messages: Mutex<VecDeque<(Key, Vec<PcmChunk>)>>,
+}
+
+fn samples(pcm: &[PcmChunk]) -> usize {
+    pcm.iter().map(|c| c.samples.len()).sum()
 }
 
 impl CueCache {
@@ -28,7 +45,11 @@ impl CueCache {
 
     pub fn get(&self, voice: &str, rate: u32, text: &str) -> Option<Vec<PcmChunk>> {
         if !Self::cacheable(text) {
-            return None;
+            let m = self.messages.lock().unwrap_or_else(|p| p.into_inner());
+            return m
+                .iter()
+                .find(|(k, _)| k.0 == voice && k.1 == rate && k.2 == text)
+                .map(|(_, pcm)| pcm.clone());
         }
         let mut e = self.entries.lock().unwrap_or_else(|p| p.into_inner());
         let at = e
@@ -52,8 +73,39 @@ impl CueCache {
         }
     }
 
+    /// Keep provider audio of `text`: a short text as a cue, a longer one
+    /// only for a whole `message` (send mode `message`).
+    pub fn keep(&self, voice: &str, rate: u32, text: &str, pcm: Vec<PcmChunk>, message: bool) {
+        if Self::cacheable(text) {
+            return self.put(voice, rate, text, pcm);
+        }
+        if !message || pcm.is_empty() || samples(&pcm) > MESSAGE_SAMPLES {
+            return;
+        }
+        let mut m = self.messages.lock().unwrap_or_else(|p| p.into_inner());
+        m.retain(|(k, _)| !(k.0 == voice && k.1 == rate && k.2 == text));
+        m.push_back(((voice.to_string(), rate, text.to_string()), pcm));
+        while m.len() > MESSAGES
+            || m.iter().map(|(_, p)| samples(p)).sum::<usize>() > MESSAGE_SAMPLES
+        {
+            m.pop_front();
+        }
+    }
+
+    /// Whole messages kept (tests).
+    pub fn messages(&self) -> usize {
+        self.messages
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len()
+    }
+
     pub fn clear(&self) {
         self.entries
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.messages
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
@@ -83,13 +135,13 @@ mod tests {
     #[test]
     fn keyed_by_voice_rate_and_text() {
         let c = CueCache::new();
-        c.put("marin", 250, "Paused.", pcm(1));
-        assert_eq!(c.get("marin", 250, "Paused."), Some(pcm(1)));
-        assert_eq!(c.get("marin", 200, "Paused."), None);
-        assert_eq!(c.get("alloy", 250, "Paused."), None);
-        assert_eq!(c.get("marin", 250, "Paused"), None);
-        c.put("marin", 250, "Paused.", pcm(2));
-        assert_eq!(c.get("marin", 250, "Paused."), Some(pcm(2)));
+        c.put("v1", 250, "Paused.", pcm(1));
+        assert_eq!(c.get("v1", 250, "Paused."), Some(pcm(1)));
+        assert_eq!(c.get("v1", 200, "Paused."), None);
+        assert_eq!(c.get("v2", 250, "Paused."), None);
+        assert_eq!(c.get("v1", 250, "Paused"), None);
+        c.put("v1", 250, "Paused.", pcm(2));
+        assert_eq!(c.get("v1", 250, "Paused."), Some(pcm(2)));
         assert_eq!(c.len(), 1);
     }
 
@@ -102,6 +154,33 @@ mod tests {
         let edge = "x".repeat(MAX_TEXT_CHARS);
         c.put("v", 200, &edge, pcm(1));
         assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn whole_messages_are_kept_only_when_asked_and_bounded() {
+        let c = CueCache::new();
+        let long = "x".repeat(MAX_TEXT_CHARS + 1);
+        c.keep("v", 200, &long, pcm(1), false);
+        assert_eq!(c.get("v", 200, &long), None, "a sentence is not kept");
+        c.keep("v", 200, &long, pcm(1), true);
+        assert_eq!(c.get("v", 200, &long), Some(pcm(1)));
+        assert_eq!(c.get("v", 250, &long), None);
+        c.keep("v", 200, "Paused.", pcm(3), true);
+        assert_eq!(c.get("v", 200, "Paused."), Some(pcm(3)), "short: a cue");
+        for i in 0..MESSAGES {
+            c.keep("v", 200, &format!("{long}{i}"), pcm(i as i16), true);
+        }
+        assert_eq!(c.messages(), MESSAGES);
+        assert_eq!(c.get("v", 200, &long), None, "the oldest went out");
+        let huge = vec![PcmChunk {
+            samples: vec![0; MESSAGE_SAMPLES + 1],
+            sample_rate: 24_000,
+            channels: 1,
+        }];
+        c.keep("v", 200, &format!("{long}huge"), huge, true);
+        assert_eq!(c.get("v", 200, &format!("{long}huge")), None);
+        c.clear();
+        assert_eq!(c.messages(), 0);
     }
 
     #[test]

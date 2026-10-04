@@ -29,6 +29,14 @@ pub use test_output::{OutputCall, TestOutput};
 pub trait Output: Send {
     /// Load and start the audio of one chunk (`chunk_index` of `item`).
     fn play(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk_index: usize, gen: u64);
+    /// Load and start the first audio of a chunk that is still being made
+    /// (#235, a streaming engine): more comes with `append`, and the chunk
+    /// finishes (`ChunkFinished`) only after `finish` and the last audio.
+    fn play_open(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk_index: usize, gen: u64);
+    /// More audio of the open chunk `gen` (ignored for any other).
+    fn append(&mut self, gen: u64, pcm: Vec<PcmChunk>);
+    /// The open chunk `gen` has all its audio: it finishes when played.
+    fn finish(&mut self, gen: u64);
     /// Hold the loaded chunk where it is.
     fn pause(&mut self);
     /// Continue the loaded chunk from where it was paused.

@@ -3,17 +3,24 @@
 //! -- --ignored --nocapture`. Keys and addresses come from environment
 //! variables; a test whose variables are unset says so and passes.
 //!
-//! - `openai_live`: `OPENAI_API_KEY`
+//! No model or voice is named here (#235): models and voices change
+//! upstream. Each check takes `SONARA_LIVE_<NAME>_MODEL` and
+//! `SONARA_LIVE_<NAME>_VOICE` when set, else the first model and voice the
+//! provider lists live; a provider without a voice list (OpenAI) needs the
+//! voice variable.
+//!
+//! - `openai_live`: `OPENAI_API_KEY`, `SONARA_LIVE_OPENAI_VOICE`
 //! - `kokoro_fastapi_live`: `SONARA_LIVE_KOKORO_FASTAPI_URL` (e.g.
 //!   `http://127.0.0.1:8880/v1`)
 //! - `localai_live`: `SONARA_LIVE_LOCALAI_URL`, `SONARA_LIVE_LOCALAI_MODEL`
 //! - `speaches_live`: `SONARA_LIVE_SPEACHES_URL`, `SONARA_LIVE_SPEACHES_MODEL`
-//! - `elevenlabs_live`: `ELEVENLABS_API_KEY`, optional
-//!   `SONARA_LIVE_ELEVENLABS_VOICE` (default: the premade voice George)
+//! - `elevenlabs_live`: `ELEVENLABS_API_KEY`
 //! - `azure_live`: `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
 //! - `google_live`: `GOOGLE_TTS_API_KEY` (also the acceptance check of API-key
 //!   auth through `X-goog-api-key`, spec 13.3 item 1)
-//! - `cartesia_live`: `CARTESIA_API_KEY`, `SONARA_LIVE_CARTESIA_VOICE`
+//! - `gemini_live`: `GEMINI_API_KEY`; the model and voice come from
+//!   Google's lists, the sentence is streamed
+//! - `cartesia_live`: `CARTESIA_API_KEY`, `SONARA_LIVE_CARTESIA_MODEL`
 //! - `deepgram_live`: `DEEPGRAM_API_KEY` (also prints whether Deepgram
 //!   applies `speed`, spec 13.3 item 2)
 //! - `command_live`: `SONARA_LIVE_COMMAND` (a JSON argv of a real program of
@@ -29,23 +36,65 @@ fn var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
-fn check(profile: Value) {
-    let p = Profile::from_json(&profile).expect("a valid profile");
-    let e = External::new(ExternalConfig::new(
+fn engine(profile: &Value) -> External {
+    let p = Profile::from_json(profile).expect("a valid profile");
+    External::new(ExternalConfig::new(
         p,
         KeyResolver::new(Arc::new(MemoryStore::new())),
     ))
-    .unwrap();
-    let voices = e.refresh_voices().expect("the voice list");
-    println!("{} voices", voices.len());
+    .unwrap()
+}
+
+/// The profile with a model and a voice: `SONARA_LIVE_<name>_MODEL` and
+/// `_VOICE`, else the first the provider lists. `None` (skipped) when one
+/// is needed and none is found.
+fn complete(name: &str, mut profile: Value) -> Option<Value> {
+    let p = Profile::from_json(&profile).expect("a valid profile");
+    let e = engine(&profile);
+    if p.takes_model() && p.model.is_none() {
+        let pick = var(&format!("SONARA_LIVE_{name}_MODEL")).or_else(|| {
+            let models = e.refresh_models().expect("the model list");
+            let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+            println!("{} models: {ids:?}", models.len());
+            models.first().map(|m| m.id.clone())
+        });
+        match pick {
+            Some(m) => profile["model"] = json!(m),
+            None if p.model_required() => {
+                println!("skipped: no model listed; set SONARA_LIVE_{name}_MODEL");
+                return None;
+            }
+            None => {}
+        }
+    }
+    if p.voice_required() && p.voice.is_none() {
+        let pick = var(&format!("SONARA_LIVE_{name}_VOICE")).or_else(|| {
+            let voices = e.refresh_voices().expect("the voice list");
+            println!("{} voices", voices.len());
+            voices.first().map(|v| v.id.clone())
+        });
+        let Some(v) = pick else {
+            println!("skipped: no voice list; set SONARA_LIVE_{name}_VOICE");
+            return None;
+        };
+        profile["voice"] = json!(v);
+    }
+    Some(profile)
+}
+
+fn check(name: &str, profile: Value) {
+    let Some(profile) = complete(name, profile) else {
+        return;
+    };
+    let e = engine(&profile);
     let t = e
         .test("Hello. This is a live check of Sonara.", "", 250)
         .expect("one synthesis");
     let samples: usize = t.pcm.iter().map(|c| c.samples.len()).sum();
     let rate = t.pcm[0].sample_rate;
     println!(
-        "voice {} in {} ms: {samples} samples at {rate} Hz",
-        t.voice, t.ms
+        "model {} voice {} in {} ms: {samples} samples at {rate} Hz",
+        profile["model"], t.voice, t.ms
     );
     assert!(samples as u32 > rate / 2, "at least half a second of audio");
     assert!(
@@ -61,8 +110,11 @@ fn openai_live() {
         println!("skipped: set OPENAI_API_KEY");
         return;
     }
-    check(json!({"id": "openai-live", "kind": "openai-compatible",
-        "key_ref": "env:OPENAI_API_KEY", "options": {"preset": "openai"}}));
+    check(
+        "OPENAI",
+        json!({"id": "openai-live", "kind": "openai-compatible",
+        "key_ref": "env:OPENAI_API_KEY", "options": {"preset": "openai"}}),
+    );
 }
 
 #[test]
@@ -73,6 +125,7 @@ fn kokoro_fastapi_live() {
         return;
     };
     check(
+        "KOKORO_FASTAPI",
         json!({"id": "kfa-live", "kind": "openai-compatible", "url": url,
         "options": {"preset": "kokoro-fastapi"}}),
     );
@@ -89,6 +142,7 @@ fn localai_live() {
         return;
     };
     check(
+        "LOCALAI",
         json!({"id": "localai-live", "kind": "openai-compatible", "url": url,
         "model": model, "key_ref": "none", "options": {"preset": "localai"}}),
     );
@@ -105,6 +159,7 @@ fn speaches_live() {
         return;
     };
     check(
+        "SPEACHES",
         json!({"id": "speaches-live", "kind": "openai-compatible", "url": url,
         "model": model, "key_ref": "none", "options": {"preset": "speaches"}}),
     );
@@ -117,10 +172,9 @@ fn elevenlabs_live() {
         println!("skipped: set ELEVENLABS_API_KEY");
         return;
     }
-    let voice =
-        var("SONARA_LIVE_ELEVENLABS_VOICE").unwrap_or_else(|| "JBFqnCBsd6RMkjVDRZzb".into());
     check(
-        json!({"id": "elevenlabs-live", "kind": "elevenlabs", "voice": voice,
+        "ELEVENLABS",
+        json!({"id": "elevenlabs-live", "kind": "elevenlabs",
         "key_ref": "env:ELEVENLABS_API_KEY"}),
     );
 }
@@ -133,7 +187,8 @@ fn azure_live() {
         return;
     };
     check(
-        json!({"id": "azure-live", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+        "AZURE",
+        json!({"id": "azure-live", "kind": "azure",
         "key_ref": "env:AZURE_SPEECH_KEY", "options": {"region": region}}),
     );
 }
@@ -146,22 +201,35 @@ fn google_live() {
         return;
     }
     check(
-        json!({"id": "google-live", "kind": "google", "voice": "en-US-Chirp3-HD-Kore",
+        "GOOGLE",
+        json!({"id": "google-live", "kind": "google",
         "key_ref": "env:GOOGLE_TTS_API_KEY"}),
     );
 }
 
 #[test]
 #[ignore]
-fn cartesia_live() {
-    let (Some(_), Some(voice)) = (var("CARTESIA_API_KEY"), var("SONARA_LIVE_CARTESIA_VOICE"))
-    else {
-        println!("skipped: set CARTESIA_API_KEY and SONARA_LIVE_CARTESIA_VOICE (a voice id)");
+fn gemini_live() {
+    if var("GEMINI_API_KEY").is_none() {
+        println!("skipped: set GEMINI_API_KEY");
         return;
-    };
+    }
     check(
-        json!({"id": "cartesia-live", "kind": "cartesia", "voice": voice,
-        "key_ref": "env:CARTESIA_API_KEY"}),
+        "GEMINI",
+        json!({"id": "gemini-live", "kind": "gemini", "key_ref": "env:GEMINI_API_KEY"}),
+    );
+}
+
+#[test]
+#[ignore]
+fn cartesia_live() {
+    if var("CARTESIA_API_KEY").is_none() {
+        println!("skipped: set CARTESIA_API_KEY (and SONARA_LIVE_CARTESIA_MODEL)");
+        return;
+    }
+    check(
+        "CARTESIA",
+        json!({"id": "cartesia-live", "kind": "cartesia", "key_ref": "env:CARTESIA_API_KEY"}),
     );
 }
 
@@ -175,14 +243,14 @@ fn deepgram_live() {
         println!("skipped: set DEEPGRAM_API_KEY");
         return;
     }
-    let profile = json!({"id": "deepgram-live", "kind": "deepgram",
-        "voice": "aura-2-thalia-en", "key_ref": "env:DEEPGRAM_API_KEY"});
-    check(profile.clone());
-    let e = External::new(ExternalConfig::new(
-        Profile::from_json(&profile).unwrap(),
-        KeyResolver::new(Arc::new(MemoryStore::new())),
-    ))
-    .unwrap();
+    let Some(profile) = complete(
+        "DEEPGRAM",
+        json!({"id": "deepgram-live", "kind": "deepgram", "key_ref": "env:DEEPGRAM_API_KEY"}),
+    ) else {
+        return;
+    };
+    check("DEEPGRAM", profile.clone());
+    let e = engine(&profile);
     let len = |wpm| -> usize {
         e.test("One two three four five six seven eight.", "", wpm)
             .expect("one synthesis")
@@ -220,5 +288,8 @@ fn command_live() {
             options[k] = v.clone();
         }
     }
-    check(json!({"id": "command-live", "kind": "command", "options": options}));
+    check(
+        "COMMAND",
+        json!({"id": "command-live", "kind": "command", "options": options}),
+    );
 }

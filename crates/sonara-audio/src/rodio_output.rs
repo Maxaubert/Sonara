@@ -17,6 +17,15 @@ enum Cmd {
         item: ItemId,
         chunk: usize,
         gen: u64,
+        /// More audio comes (`Append`) until `Finish`.
+        open: bool,
+    },
+    Append {
+        gen: u64,
+        pcm: Vec<PcmChunk>,
+    },
+    Finish {
+        gen: u64,
     },
     Pause,
     Resume,
@@ -122,7 +131,26 @@ impl Output for RodioOutput {
             item,
             chunk: chunk_index,
             gen,
+            open: false,
         });
+    }
+
+    fn play_open(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk_index: usize, gen: u64) {
+        self.send(Cmd::Play {
+            pcm,
+            item,
+            chunk: chunk_index,
+            gen,
+            open: true,
+        });
+    }
+
+    fn append(&mut self, gen: u64, pcm: Vec<PcmChunk>) {
+        self.send(Cmd::Append { gen, pcm });
+    }
+
+    fn finish(&mut self, gen: u64) {
+        self.send(Cmd::Finish { gen });
     }
 
     fn pause(&mut self) {
@@ -194,7 +222,27 @@ impl Worker {
                     item,
                     chunk,
                     gen,
-                } => self.play(pcm, item, chunk, gen),
+                    open,
+                } => self.play(pcm, item, chunk, gen, open),
+                Cmd::Append { gen, pcm } => {
+                    if let (Some(s), Some(g)) = (&self.sink, self.loaded) {
+                        if g == gen {
+                            for buffer in pcm.iter().filter_map(to_buffer) {
+                                s.append(buffer);
+                            }
+                        }
+                    }
+                }
+                Cmd::Finish { gen } => {
+                    if let (Some(s), Some(g)) = (&self.sink, self.loaded) {
+                        if g == gen {
+                            let tx = self.events.clone();
+                            s.append(EmptyCallback::new(Box::new(move || {
+                                let _ = tx.send(AudioEvent::ChunkFinished { gen });
+                            })));
+                        }
+                    }
+                }
                 Cmd::Pause => {
                     if let Some(s) = &self.sink {
                         s.pause();
@@ -237,7 +285,7 @@ impl Worker {
         self.stream.as_ref().ok_or_else(|| "no stream".to_string())
     }
 
-    fn play(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk: usize, gen: u64) {
+    fn play(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk: usize, gen: u64, open: bool) {
         self.sink = None;
         self.loaded = None;
         let sink = match self.ensure_stream() {
@@ -261,10 +309,13 @@ impl Worker {
         for buffer in pcm.iter().filter_map(to_buffer) {
             sink.append(buffer);
         }
-        let tx = self.events.clone();
-        sink.append(EmptyCallback::new(Box::new(move || {
-            let _ = tx.send(AudioEvent::ChunkFinished { gen });
-        })));
+        // An open chunk finishes after `Finish` (its last audio).
+        if !open {
+            let tx = self.events.clone();
+            sink.append(EmptyCallback::new(Box::new(move || {
+                let _ = tx.send(AudioEvent::ChunkFinished { gen });
+            })));
+        }
         self.sink = Some(sink);
         self.loaded = Some(gen);
     }

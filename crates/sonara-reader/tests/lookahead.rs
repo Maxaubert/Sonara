@@ -6,7 +6,7 @@ mod common;
 use common::engines::{GateEngine, OpenEngine};
 use common::{Rig, THREE, TIMEOUT};
 use sonara_engine::fake::FakeEngine;
-use sonara_reader::{Config, Error, Key, QueueMode, Registry, Value};
+use sonara_reader::{Config, Error, Key, QueueMode, Registry, SendMode, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -95,4 +95,56 @@ fn a_replaced_engine_applies_on_the_next_set_engine() {
     r.h.speak("Hi.", QueueMode::Append, false, None).unwrap();
     wait_for("the new instance", || second.inner.syntheses() == 1);
     assert_eq!(first.inner.syntheses(), 0);
+}
+
+/// #235: an engine in send mode `message` reads an item as one text (one
+/// synthesis), split only past its input limit; switching to an engine in
+/// `sentence` mode reads one sentence per synthesis again. The handle's
+/// `send_mode` follows the engine (L3 joins what it releases by it).
+#[test]
+fn an_engine_in_message_mode_gets_the_whole_item() {
+    let whole = Arc::new(OpenEngine {
+        send_mode: SendMode::Message,
+        ..OpenEngine::new("whole", 1)
+    });
+    let plain = Arc::new(OpenEngine::new("plain", 1));
+    let registry = Registry::default();
+    registry.register(plain.clone()).unwrap();
+    registry.register(whole.clone()).unwrap();
+    let r = Rig::config(Config::new(registry));
+    assert_eq!(r.h.send_mode(), SendMode::Sentence);
+    r.h.set(Key::Engine, Value::Text("whole".into())).unwrap();
+    assert_eq!(r.h.send_mode(), SendMode::Message);
+    r.h.speak("One. Two.\n\nThree.", QueueMode::Append, false, None)
+        .unwrap();
+    wait_for("one synthesis", || whole.inner.syntheses() == 1);
+    assert_eq!(whole.inner.texts(), vec!["One. Two.\n\nThree."]);
+    r.h.set(Key::Engine, Value::Text("plain".into())).unwrap();
+    assert_eq!(r.h.send_mode(), SendMode::Sentence);
+    r.h.speak("Four. Five.", QueueMode::Replace, true, None)
+        .unwrap();
+    wait_for("one sentence each", || plain.inner.syntheses() == 2);
+    assert_eq!(plain.inner.texts(), vec!["Four.", "Five."]);
+}
+
+#[test]
+fn a_message_past_the_engines_limit_is_split_at_paragraphs() {
+    let whole = Arc::new(OpenEngine {
+        send_mode: SendMode::Message,
+        limit: 30,
+        ..OpenEngine::new("whole", 2)
+    });
+    let r = Rig::with(whole.clone());
+    r.h.speak(
+        "The first one here.\n\nThe second one here.",
+        QueueMode::Append,
+        false,
+        None,
+    )
+    .unwrap();
+    wait_for("two syntheses", || whole.inner.syntheses() == 2);
+    assert_eq!(
+        whole.inner.texts(),
+        vec!["The first one here.", "The second one here."]
+    );
 }

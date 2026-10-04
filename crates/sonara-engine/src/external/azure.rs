@@ -228,7 +228,7 @@ mod tests {
         }
         Azure::new(
             &Profile::from_json(&json!({"id": "az", "kind": "azure",
-                "voice": "en-US-AvaMultilingualNeural", "options": o}))
+                "voice": "en-US-VoiceANeural", "options": o}))
             .unwrap(),
         )
     }
@@ -255,9 +255,9 @@ mod tests {
         assert_eq!(xml_escape("a\u{1}b"), "a b");
         let a = adapter(json!({}));
         assert_eq!(
-            a.ssml("1 < 2 & 'x'", "en-US-AvaMultilingualNeural", 250),
+            a.ssml("1 < 2 & 'x'", "en-US-VoiceANeural", 250),
             "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
-             <voice name='en-US-AvaMultilingualNeural'><prosody rate='1.25'>\
+             <voice name='en-US-VoiceANeural'><prosody rate='1.25'>\
              1 &lt; 2 &amp; &apos;x&apos;</prosody></voice></speak>"
         );
         // A voice name cannot break out of its attribute.
@@ -270,21 +270,26 @@ mod tests {
     fn lang_from_the_voice_or_the_option() {
         let a = adapter(json!({}));
         assert!(a
-            .ssml("x", "de-DE-KatjaNeural", 200)
+            .ssml("x", "de-DE-VoiceCNeural", 200)
             .contains("xml:lang='de-DE'"));
         assert!(a.ssml("x", "Custom", 200).contains("xml:lang='en-US'"));
         assert!(a.ssml("x", "x", 200).contains("rate='1'"));
         assert!(a.ssml("x", "x", 100).contains("rate='0.5'"));
         let fixed = adapter(json!({"lang": "en-GB"}));
         assert!(fixed
-            .ssml("x", "de-DE-KatjaNeural", 200)
+            .ssml("x", "de-DE-VoiceCNeural", 200)
             .contains("xml:lang='en-GB'"));
     }
 
     #[test]
     fn request_headers_and_url() {
         let a = adapter(json!({"output_format": "raw-16khz-16bit-mono-pcm"}));
-        let r = a.synth_request("Hi.", "en-US-AvaNeural", 200, Some(&Secret::new("az-key")));
+        let r = a.synth_request(
+            "Hi.",
+            "en-US-VoiceBNeural",
+            200,
+            Some(&Secret::new("az-key")),
+        );
         assert_eq!(
             r.url,
             "https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1"
@@ -301,7 +306,7 @@ mod tests {
         assert_eq!(adapter(json!({})).requested_rate(), Some(24_000));
         let by_url = Azure::new(
             &Profile::from_json(
-                &json!({"id": "az", "kind": "azure", "voice": "en-US-AvaNeural",
+                &json!({"id": "az", "kind": "azure", "voice": "en-US-VoiceBNeural",
                 "url": "https://my-resource.cognitiveservices.azure.com"}),
             )
             .unwrap(),
@@ -359,10 +364,10 @@ mod tests {
         let a = adapter(json!({}));
         let list = a
             .parse_voices(
-                br#"[{"Name": "Microsoft Server Speech Text to Speech Voice (en-US, AvaNeural)",
-                  "DisplayName": "Ava", "LocalName": "Ava", "ShortName": "en-US-AvaNeural",
+                br#"[{"Name": "Microsoft Server Speech Text to Speech Voice (en-US, VoiceBNeural)",
+                  "DisplayName": "Bea", "LocalName": "Bea", "ShortName": "en-US-VoiceBNeural",
                   "Gender": "Female", "Locale": "en-US"},
-                 {"DisplayName": "Katja", "LocalName": "Katja", "ShortName": "de-DE-KatjaNeural",
+                 {"DisplayName": "Cea", "LocalName": "Cea", "ShortName": "de-DE-VoiceCNeural",
                   "Locale": "de-DE"},
                  {"LocalName": "no short name"}]"#,
             )
@@ -371,13 +376,13 @@ mod tests {
             list,
             vec![
                 VoiceInfo {
-                    id: "en-US-AvaNeural".into(),
-                    name: "Ava (en-US)".into(),
+                    id: "en-US-VoiceBNeural".into(),
+                    name: "Bea (en-US)".into(),
                     language: "en-US".into()
                 },
                 VoiceInfo {
-                    id: "de-DE-KatjaNeural".into(),
-                    name: "Katja (de-DE)".into(),
+                    id: "de-DE-VoiceCNeural".into(),
+                    name: "Cea (de-DE)".into(),
                     language: "de-DE".into()
                 },
             ]

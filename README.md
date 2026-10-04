@@ -246,37 +246,87 @@ until you add one **and** choose *Use*.
 
 | Kind | What it is | Key | Speaking rate it can follow |
 |---|---|---|---|
-| `openai-compatible`, preset `openai` | OpenAI's speech API (`gpt-4o-mini-tts`, voices such as `marin`) | yes | all (100 to 400 wpm) |
+| `openai-compatible`, preset `openai` | OpenAI's speech API (a model from its list, a voice from OpenAI's guide) | yes | all (100 to 400 wpm) |
 | `openai-compatible`, presets `kokoro-fastapi`, `localai`, `speaches`, `openedai-speech`, `chatterbox-api`, `chatterbox-server`, `generic` | A server on your PC (or network) that speaks OpenAI's API | usually none | all, if the server follows it (Chatterbox servers ignore it) |
-| `elevenlabs` | ElevenLabs (a voice id, cloned voices too) | yes | 140 to 240 wpm (faster stays at 240) |
-| `azure` | Azure AI Speech (a region and a voice such as `en-US-AvaMultilingualNeural`) | yes | all |
-| `google` | Google Cloud Text-to-Speech (a voice such as `en-US-Chirp3-HD-Kore`) | yes | all |
-| `cartesia` | Cartesia (a voice id) | yes | 120 to 300 wpm |
-| `deepgram` | Deepgram Aura (a voice such as `aura-2-thalia-en`) | yes | 140 to 300 wpm (not yet confirmed live) |
+| `elevenlabs` | ElevenLabs (a voice from your list, cloned voices too; the model is optional) | yes | 140 to 240 wpm (faster stays at 240) |
+| `azure` | Azure AI Speech (a region and a voice from its list) | yes | all |
+| `google` | Google Cloud Text-to-Speech (a voice from its list) | yes | all |
+| `gemini` | Gemini speech (a model and a voice from Google's lists; a free key from [Google AI Studio](https://aistudio.google.com), *Get API key*) | yes | roughly: a style (*speaking slowly* / *quickly*), no exact speed |
+| `cartesia` | Cartesia (a model from Cartesia's documentation, a voice from its list) | yes | 120 to 300 wpm |
+| `deepgram` | Deepgram (a voice from its list of speech models) | yes | 140 to 300 wpm (not yet confirmed live) |
 | `command` | A program of yours on this PC (an `.exe`, for example Piper): text in, WAV or PCM out | none | gets `{rate}` and `{speed}` to use as it likes |
 
+**No model or voice is built in.** Providers add and retire models and voices all the time, so
+Sonara names none of its own and never picks one for you: it lists what the provider offers now
+(its model and voice lists, fetched with your key) and you choose. A provider without a list
+(OpenAI's voices, Cartesia's models) gets a text field and a link to where it names them. An
+engine without a model or voice it needs says *Choose a model* or *Choose a voice*, and Kokoro
+reads meanwhile.
+
 **Add one** on the settings page under **Engines** (*Add an engine*: pick the kind, give it a
-name, paste the key, save; its voices are then listed), or with the CLI from Git Bash:
+name, paste the key; its models and voices are then listed; choose, save), or with the CLI from
+Git Bash:
 
 ```bash
 S="bash <plugin folder>/bin/sonara"
-$S engines add openai --preset openai        # OpenAI
-$S engines key openai                        # paste the key when asked (never an argument)
-$S engines add gpu --preset kokoro-fastapi --url http://127.0.0.1:8880/v1 --no-key
-$S engines test openai                       # one sentence, with no stand-in
-$S engines use openai                        # read with it; `use kokoro` goes back
+$S engines add gemini --kind gemini          # Gemini
+$S engines key gemini                        # paste the key when asked (never an argument)
+$S engines models gemini                     # Google's speech models now
+$S engines voices gemini                     # and its voices
+$S engines add gemini --kind gemini --model <model> --voice <voice> --replace
+$S engines add gpu --preset kokoro-fastapi --url http://127.0.0.1:8880/v1 --no-key --voice <voice>
+$S engines test gemini                       # one sentence, with no stand-in
+$S engines use gemini                        # read with it; `use kokoro` goes back
 $S engines list                              # every engine, its key and status
 ```
+
+**Which voice is used.** While an added engine is in use, the voice you pick on the Speech page
+is the one you hear, in replies, previews and *Test* alike; otherwise the engine's own voice
+(the one in its form) is used.
 
 A **program on this PC** (`command`) is never added on the settings page or by any app over
 the API, since it runs a program: add it yourself with the CLI or in `engines.json` in the home.
 The settings page then lists it to use, test or remove.
 
 ```bash
-$S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--model","C:\\piper\\en_US-amy-medium.onnx","--output_file","{out}"]' --option output=file
+$S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--model","C:\\piper\\<model>.onnx","--output_file","{out}"]' --option output=file
 ```
 
 `sonara engines --help` lists the options of every kind.
+
+**Send to the engine.** Every added engine has this setting, in its form on the settings page
+(or `--send-mode` with the CLI):
+
+- **Full message in one request** (`message`, the default for every cloud provider): what Sonara
+  is about to read at once goes to the provider as one request. A reply read when it is done is
+  one request, not one per sentence; the text before a question is one request and the question
+  its own short one; with *Reading: Immediately* each paragraph is one request. The audio plays
+  as it arrives (Gemini, ElevenLabs, OpenAI with `pcm`, Cartesia), so reading starts with the
+  first audio. Up reads the message again without a new request. A very long message is split
+  only past the provider's limit (at paragraphs, then sentences; `--option chunk_chars=<n>`
+  lowers it).
+- **As it comes in** (`sentence`, the default for a program or a speech server on this PC): each
+  sentence is its own request, read as soon as it is made. Nothing is billed locally, and a
+  local server answers one sentence faster than a whole message.
+
+Skipping, flushing or a new prompt stops a message that is still arriving: the request is
+cancelled and nothing more is sent for it (a provider that already started may still bill that
+one request). If the provider fails before any audio, Kokoro reads the whole message (and says
+once why); if an answer stalls or breaks off midway, what was played stays and Kokoro reads the
+rest from the sentence it had reached (that sentence may be heard twice). Muting midway reads
+the rest with Kokoro the same way. A long message is never cut for its length: the time limit
+grows with the text. Kokoro and the Windows voices always read sentence by sentence.
+
+**Gemini** counts requests on its free tier (per minute and per day), so it sends a whole
+message per request by default (up to 2000 characters each; a longer one in as few parts as
+fit). When a per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
+daily limit is reached, Kokoro reads until Google's daily reset (midnight Pacific time).
+Gemini's audio is **streamed**: a sentence starts playing with its first audio, and when none
+has come after 12 seconds (`first_audio_ms`, on the settings page as *Wait for audio* under
+*More options*, with *Characters per request* for `chunk_chars`) Kokoro reads that part instead, so a slow free tier never holds a reply for a minute. Gemini
+has no speed setting: away from the default rate Sonara asks it to speak slowly or quickly, an
+approximate direction. On the free tier Google may use the text to improve its products; with
+billing on it does not.
 
 **Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment
 variable you name (one ending in `_API_KEY` or `_SPEECH_KEY`). They are never written to a file,
@@ -360,7 +410,7 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
 Sonara runs on your computer and has no servers, accounts or telemetry. The only text that
 leaves your machine is a finished reply in summary mode, sent to Anthropic (`claude -p`) or
 OpenAI (`codex exec`) depending on the engine you chose, and, only if you add and select an
-external speech engine (OpenAI, ElevenLabs, Azure, Google, Cartesia, Deepgram), the text read
+external speech engine (OpenAI, ElevenLabs, Azure, Google, Gemini, Cartesia, Deepgram), the text read
 aloud, sent to that provider (a speech program of your own on your PC keeps it local). Details, and every file Sonara keeps,
 are in [PRIVACY.md](PRIVACY.md).
 

@@ -5,6 +5,7 @@
 use serde_json::Value;
 use sonara_channels::{Channels, Config as ChannelsConfig, QueueMode};
 use sonara_engine::fake::FakeEngine;
+use sonara_engine::SendMode;
 use sonara_reader::{Config, ReaderHandle, Registry};
 use sonarad::home::Home;
 use sonarad::null_output::NullOutput;
@@ -15,13 +16,24 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn the_text_lines_are_what_the_engine_was_given() {
-    let dir = std::env::temp_dir().join(format!("sonarad-read-text-{}", std::process::id()));
+    check(SendMode::Sentence);
+}
+
+/// Send mode `message` (#235): an item is one synthesis, and its line holds
+/// the whole joined text once (paragraph breaks included).
+#[test]
+fn a_whole_message_is_one_text_line() {
+    check(SendMode::Message);
+}
+
+fn check(mode: SendMode) {
+    let dir = std::env::temp_dir().join(format!("sonarad-read-text-{}-{mode}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let home = Home {
         dir: dir.clone(),
         is_default: false,
     };
-    let engine = Arc::new(FakeEngine::new());
+    let engine = Arc::new(FakeEngine::with_send_mode(mode));
     let registry = Registry::default();
     registry.register(engine.clone()).unwrap();
     let (out, events) = NullOutput::new();
@@ -80,6 +92,11 @@ fn the_text_lines_are_what_the_engine_was_given() {
     assert_eq!(logged.len(), 3, "{log}");
     let given = engine.texts();
     assert_eq!(chunks, given.len(), "one chunk per synthesis: {given:?}");
+    if mode == SendMode::Message {
+        assert_eq!(chunks, 3, "one synthesis per item: {given:?}");
+        assert_eq!(logged, given, "each line the whole text: {log}");
+        assert!(logged[2].contains("\n\n"), "{logged:?}");
+    }
     assert_eq!(logged.join(" "), given.join(" "), "{log}");
     assert!(
         !logged.join(" ").contains("**"),

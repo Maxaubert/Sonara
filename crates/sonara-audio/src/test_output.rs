@@ -15,6 +15,20 @@ pub enum OutputCall {
         /// Total samples over all PCM chunks.
         samples: usize,
     },
+    /// A chunk still being made (#235): more comes with `Append`.
+    PlayOpen {
+        item: ItemId,
+        chunk: usize,
+        gen: u64,
+        samples: usize,
+    },
+    Append {
+        gen: u64,
+        samples: usize,
+    },
+    Finish {
+        gen: u64,
+    },
     Pause,
     Resume,
     Stop,
@@ -137,6 +151,28 @@ impl Output for TestOutput {
         } else {
             inner.loaded = Some(gen);
         }
+    }
+
+    fn play_open(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk_index: usize, gen: u64) {
+        let samples = pcm.iter().map(|c| c.samples.len()).sum();
+        let mut inner = self.lock();
+        inner.calls.push(OutputCall::PlayOpen {
+            item,
+            chunk: chunk_index,
+            gen,
+            samples,
+        });
+        inner.paused = false;
+        inner.loaded = Some(gen);
+    }
+
+    fn append(&mut self, gen: u64, pcm: Vec<PcmChunk>) {
+        let samples = pcm.iter().map(|c| c.samples.len()).sum();
+        self.lock().calls.push(OutputCall::Append { gen, samples });
+    }
+
+    fn finish(&mut self, gen: u64) {
+        self.lock().calls.push(OutputCall::Finish { gen });
     }
 
     fn pause(&mut self) {

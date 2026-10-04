@@ -1,16 +1,17 @@
 """Fake cloud speech servers (stdlib only) for the external engine
 conformance tests, one per provider shape: ElevenLabs, Azure AI Speech and
-Google Cloud Text-to-Speech (PR2, #225), Cartesia and Deepgram (PR3, #226). Each answers its synthesis path with
-raw 16-bit PCM (Google: base64 in JSON) when the request carries the expected
-key in the provider's own header, and the provider's auth error otherwise; it
-answers its voice list path and keeps every request. Nothing here calls a
-real provider."""
+Google Cloud Text-to-Speech (PR2, #225), Cartesia and Deepgram (PR3, #226), Gemini (#235). Each answers its
+synthesis path with raw 16-bit PCM (Google and Gemini: base64 in JSON; Gemini's stream as server-sent
+events) when the request carries the expected key in the provider's own header, and the provider's auth
+error otherwise; it answers its voice (and model) list paths and keeps every request. The model and voice
+ids are made up: Sonara names none of its own (#235). Nothing here calls a real provider."""
 from __future__ import annotations
 
 import base64
 import json
 import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -30,6 +31,8 @@ class Shape:
     synth_prefix = ""
     voices_path = ""
     voices_body: object = None
+    models_path = ""
+    models_body: object = None
 
     def ok(self) -> tuple[int, str, bytes]:
         return 200, "audio/pcm", pcm()
@@ -57,7 +60,7 @@ class Azure(Shape):
     key_header = "ocp-apim-subscription-key"
     synth_prefix = "/cognitiveservices/v1"
     voices_path = "/cognitiveservices/voices/list"
-    voices_body = [{"ShortName": "en-US-AvaMultilingualNeural", "LocalName": "Ava", "Locale": "en-US"}]
+    voices_body = [{"ShortName": "en-US-VoiceZNeural", "LocalName": "Z", "Locale": "en-US"}]
 
     def refused(self):
         return 401, "text/plain", b""
@@ -68,7 +71,7 @@ class Google(Shape):
     key_header = "x-goog-api-key"
     synth_prefix = "/v1/text:synthesize"
     voices_path = "/v1/voices"
-    voices_body = {"voices": [{"languageCodes": ["en-US"], "name": "en-US-Chirp3-HD-Kore"}]}
+    voices_body = {"voices": [{"languageCodes": ["en-US"], "name": "en-US-Voice-G"}]}
 
     def ok(self):
         body = {"audioContent": base64.b64encode(pcm()).decode()}
@@ -78,6 +81,43 @@ class Google(Shape):
         body = {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.",
                           "status": "INVALID_ARGUMENT",
                           "details": [{"reason": "API_KEY_INVALID", "domain": "googleapis.com"}]}}
+        return 400, "application/json", json.dumps(body).encode()
+
+
+class Gemini(Shape):
+    kind = "gemini"
+    key_header = "x-goog-api-key"
+    synth_prefix = "/v1beta/models/"
+    voices_path = "/v1beta/voices"
+    voices_body = {"voices": [{"id": "voice-g", "display_name": "G", "language_code": "en-US",
+                               "type": "prebuilt"}]}
+    models_path = "/v1beta/models"
+    models_body = {"models": [
+        {"name": "models/chat-g", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/tts-g", "displayName": "TTS G", "supportedGenerationMethods": ["generateContent"]}]}
+
+    @staticmethod
+    def response(samples: bytes) -> dict:
+        part = {"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+                               "data": base64.b64encode(samples).decode()}}
+        return {"candidates": [{"content": {"role": "model", "parts": [part]}, "finishReason": "STOP"}]}
+
+    def ok(self):
+        return 200, "application/json", json.dumps(self.response(pcm())).encode()
+
+    def stream(self):
+        """`streamGenerateContent?alt=sse`: the audio in two events."""
+        audio = pcm()
+        half = len(audio) // 2 // 2 * 2
+        events = [self.response(audio[:half]), self.response(audio[half:])]
+        body = b"".join(b"data: " + json.dumps(e).encode() + b"\r\n\r\n" for e in events)
+        return 200, "text/event-stream", body
+
+    def refused(self):
+        body = {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.",
+                          "status": "INVALID_ARGUMENT",
+                          "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                       "reason": "API_KEY_INVALID", "domain": "googleapis.com"}]}}
         return 400, "application/json", json.dumps(body).encode()
 
 
@@ -101,23 +141,26 @@ class Deepgram(Shape):
     key_prefix = "Token "
     synth_prefix = "/v1/speak"
     voices_path = "/v1/models"
-    voices_body = {"stt": [], "tts": [{"name": "thalia", "canonical_name": "aura-2-thalia-en",
-                                       "architecture": "aura-2", "languages": ["en"]}]}
+    voices_body = {"stt": [], "tts": [{"name": "d", "canonical_name": "voice-d-en",
+                                       "architecture": "arch-d", "languages": ["en"]}]}
 
     def refused(self):
         body = {"err_code": "INVALID_AUTH", "err_msg": "Invalid credentials.", "request_id": "r"}
         return 401, "application/json", json.dumps(body).encode()
 
 
-SHAPES = {s.kind: s for s in (ElevenLabs(), Azure(), Google(), Cartesia(), Deepgram())}
+SHAPES = {s.kind: s for s in (ElevenLabs(), Azure(), Google(), Gemini(), Cartesia(), Deepgram())}
 
 # A profile per kind, pointed at the fake server (its url is filled in).
+# A profile per kind, pointed at the fake server (its url is filled in): the
+# model and voice the user picked from the fake's lists.
 PROFILES = {
     "elevenlabs": {"id": "el", "kind": "elevenlabs", "voice": "voice-a"},
-    "azure": {"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural"},
-    "google": {"id": "gg", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"},
-    "cartesia": {"id": "ca", "kind": "cartesia", "voice": "voice-c"},
-    "deepgram": {"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en"},
+    "azure": {"id": "az", "kind": "azure", "voice": "en-US-VoiceZNeural"},
+    "google": {"id": "gg", "kind": "google", "voice": "en-US-Voice-G"},
+    "gemini": {"id": "ge", "kind": "gemini", "model": "tts-g", "voice": "voice-g"},
+    "cartesia": {"id": "ca", "kind": "cartesia", "model": "model-c", "voice": "voice-c"},
+    "deepgram": {"id": "dg", "kind": "deepgram", "voice": "voice-d-en"},
 }
 
 
@@ -129,6 +172,10 @@ class FakeCloud:
         self.key = key
         self.requests: list[dict] = []
         self.lock = threading.Lock()
+        # `slowly` (#235): raw PCM answers sent piece by piece, and how each
+        # such answer ended: (pieces written, the client closed it).
+        self.slow: tuple[int, float] | None = None
+        self.streams: list[tuple[int, bool]] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -153,15 +200,42 @@ class FakeCloud:
             def _answer(self, r: dict, good) -> None:
                 with outer.lock:
                     key = outer.key
+                    slow = outer.slow
                 if r["headers"].get(outer.shape.key_header) != outer.shape.key_prefix + key:
                     self._send(*outer.shape.refused())
+                elif slow and r["method"] == "POST":
+                    self._trickle(*slow)
                 else:
                     self._send(*good())
 
+            def _trickle(self, n: int, every: float) -> None:
+                """A raw PCM answer made as it is sent: `n` pieces of 0.1 s,
+                `every` seconds apart, no Content-Length."""
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/pcm")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                written, cut = 0, False
+                for _ in range(n):
+                    try:
+                        self.wfile.write(pcm(2400))
+                        self.wfile.flush()
+                    except OSError:
+                        cut = True
+                        break
+                    written += 1
+                    time.sleep(every)
+                with outer.lock:
+                    outer.streams.append((written, cut))
+
             def do_GET(self):  # noqa: N802 - http.server API
                 r = self._keep(b"")
-                if self.path.split("?")[0] == outer.shape.voices_path:
+                path = self.path.split("?")[0]
+                if path == outer.shape.voices_path:
                     body = json.dumps(outer.shape.voices_body).encode()
+                    self._answer(r, lambda: (200, "application/json", body))
+                elif outer.shape.models_path and path == outer.shape.models_path:
+                    body = json.dumps(outer.shape.models_body).encode()
                     self._answer(r, lambda: (200, "application/json", body))
                 else:
                     self._send(404, "application/json", b'{"detail": "Not Found"}')
@@ -170,7 +244,8 @@ class FakeCloud:
                 n = int(self.headers.get("Content-Length") or 0)
                 r = self._keep(self.rfile.read(n))
                 if self.path.startswith(outer.shape.synth_prefix):
-                    self._answer(r, outer.shape.ok)
+                    streamed = ":streamGenerateContent" in self.path
+                    self._answer(r, outer.shape.stream if streamed else outer.shape.ok)
                 else:
                     self._send(404, "application/json", b'{"detail": "Not Found"}')
 
@@ -183,6 +258,11 @@ class FakeCloud:
         p = dict(PROFILES[self.shape.kind], url=self.url)
         p["options"] = {"timeout_ms": 5000}
         return p
+
+    def slowly(self, pieces: int, every: float) -> None:
+        """From now on speech answers trickle in (`_trickle`)."""
+        with self.lock:
+            self.slow = (pieces, every)
 
     def refuse_key(self) -> None:
         """From now on the key Sonara holds is wrong."""

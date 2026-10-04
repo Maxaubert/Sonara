@@ -30,6 +30,14 @@
 //!   play order (the rest of the current item, then the queued items' chunks)
 //!   are synthesized ahead; 1 by default, up to 4 (`set_lookahead`, for an
 //!   engine with a slow round trip).
+//! - Chunking (`set_chunking`, #235): `Sentences` (the default) makes one
+//!   chunk per spoken sentence. `Message`, for an engine billed or limited
+//!   per request (send mode `message`), makes one chunk of the whole item,
+//!   its paragraphs joined with a blank line, cut only past the engine's
+//!   input limit (`pack_message`: at paragraphs, then sentences, as few
+//!   chunks as possible). Items already queued keep their chunks.
+//!   `Previous`/`Next` move by chunks either way, so a message is one step
+//!   and `Restart` replays it whole.
 //! - Every `PlayChunk` carries a new `gen`; an `AudioEvent` whose `gen` is not
 //!   the chunk loaded in the output is stale and ignored, so a superseded
 //!   play can never move the reader. A chunk that finishes while a pause is
@@ -42,13 +50,24 @@
 mod chunks;
 mod types;
 
-pub use chunks::split_chunks;
+pub use chunks::{pack_message, split_chunks};
 pub use types::*;
 
 use std::collections::{HashSet, VecDeque};
 
 /// The deepest prefetch an engine may ask for.
 pub const MAX_LOOKAHEAD: usize = 4;
+
+/// How `speak` cuts an item into chunks (module docs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Chunking {
+    /// One chunk per spoken sentence.
+    #[default]
+    Sentences,
+    /// One chunk per item, cut only past `max` characters (UTF-8 bytes
+    /// with `bytes`).
+    Message { max: usize, bytes: bool },
+}
 
 #[derive(Debug)]
 struct Current {
@@ -79,6 +98,8 @@ pub struct Reader {
     requested: HashSet<(ItemId, usize)>,
     /// Chunks synthesized ahead of the playing one (1..=4).
     lookahead: usize,
+    /// How items spoken from now on are cut into chunks.
+    chunking: Chunking,
     /// The last state emitted (or the initial one, seq 0).
     shown: State,
 }
@@ -107,6 +128,7 @@ impl Reader {
             voice: None,
             requested: HashSet::new(),
             lookahead: 1,
+            chunking: Chunking::Sentences,
             shown: State {
                 seq: 0,
                 now_playing: None,
@@ -133,7 +155,10 @@ impl Reader {
         let id = ItemId(self.next_id);
         self.next_id += 1;
         let mut fx = Vec::new();
-        let chunks = split_chunks(text);
+        let chunks = match self.chunking {
+            Chunking::Sentences => split_chunks(text),
+            Chunking::Message { max, bytes } => pack_message(text, max, bytes),
+        };
         if chunks.is_empty() {
             emit_item(&mut fx, id, ItemPhase::Skipped);
             return (id, fx);
@@ -293,6 +318,17 @@ impl Reader {
 
     pub fn lookahead(&self) -> usize {
         self.lookahead
+    }
+
+    /// How items spoken from now on are cut into chunks (module docs).
+    /// Items already queued keep their chunks.
+    pub fn set_chunking(&mut self, c: Chunking) -> Vec<Effect> {
+        self.chunking = c;
+        self.finish(Vec::new())
+    }
+
+    pub fn chunking(&self) -> Chunking {
+        self.chunking
     }
 
     /// The current state, with the `seq` of the last emitted state.

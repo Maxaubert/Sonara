@@ -7,9 +7,9 @@ use crate::synth::{Done, Job, Synth};
 use crate::{Error, Event, Result};
 use sonara_audio::{AudioEvent, Output, PcmChunk};
 use sonara_core::reader::{
-    Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
+    Chunking, Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
 };
-use sonara_engine::{Engine, EngineStatus, Registry};
+use sonara_engine::{Engine, EngineStatus, InputLimit, Registry, SendMode};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -64,6 +64,19 @@ pub(crate) struct Start {
     pub volume: u8,
     pub output: Box<dyn Output>,
     pub events: Receiver<AudioEvent>,
+    /// The current engine sends whole messages (`ReaderHandle::send_mode`).
+    pub whole: Arc<AtomicBool>,
+}
+
+/// How the reader cuts items for `engine` (#235).
+fn chunking(engine: &dyn Engine) -> Chunking {
+    match engine.send_mode() {
+        SendMode::Sentence => Chunking::Sentences,
+        SendMode::Message => match engine.input_limit() {
+            InputLimit::Chars(max) => Chunking::Message { max, bytes: false },
+            InputLimit::Bytes(max) => Chunking::Message { max, bytes: true },
+        },
+    }
 }
 
 pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<JoinHandle<()>> {
@@ -88,6 +101,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         synth,
         audio: HashMap::new(),
         waiting: None,
+        open: None,
         pending: VecDeque::new(),
         volume: 100,
         muted: false,
@@ -95,6 +109,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         not_ready: None,
         status: EngineStatus::ready(),
         status_changes: 0,
+        whole: start.whole,
     };
     thread::Builder::new()
         .name("sonara-reader".into())
@@ -134,9 +149,11 @@ fn forward(events: Receiver<AudioEvent>, tx: Sender<Msg>, stop: &AtomicBool) {
     }
 }
 
-/// The audio of one chunk: on its way, or the engine's answer.
+/// The audio of one chunk: on its way, arriving (a streaming engine,
+/// #235), or the engine's answer.
 enum Slot {
     Pending,
+    Streaming(Vec<PcmChunk>),
     Ready(std::result::Result<Vec<PcmChunk>, String>),
 }
 
@@ -158,6 +175,10 @@ struct Loop {
     /// Synthesized audio (or the failure) per chunk, until its item ends.
     audio: HashMap<(ItemId, usize), Slot>,
     waiting: Option<Waiting>,
+    /// The chunk playing while its audio still arrives (`Output::play_open`):
+    /// its item, chunk and gen, so later pieces are appended and its end
+    /// finishes it.
+    open: Option<(ItemId, usize, u64)>,
     /// Failures found while carrying out effects, fed to the reader after
     /// the current batch (a failed synthesis surfaces at its play).
     pending: VecDeque<AudioEvent>,
@@ -171,6 +192,8 @@ struct Loop {
     status: EngineStatus,
     /// How many status changes were told (`Event::EngineStatus::changes`).
     status_changes: u64,
+    /// Shared with the handle: the current engine sends whole messages.
+    whole: Arc<AtomicBool>,
 }
 
 impl Loop {
@@ -185,7 +208,16 @@ impl Loop {
         self.status = self.engine.status();
         let fx = self.reader.set_lookahead(self.engine.lookahead());
         self.run(fx);
+        let fx = self.set_chunking();
+        self.run(fx);
         self.synth.warm(self.engine.clone());
+    }
+
+    /// Cut items as the current engine asks (#235), and tell the handle.
+    fn set_chunking(&mut self) -> Vec<Effect> {
+        let c = chunking(self.engine.as_ref());
+        self.whole.store(c != Chunking::Sentences, Ordering::SeqCst);
+        self.reader.set_chunking(c)
     }
 
     /// Tell subscribers when the current engine's status changed (a model
@@ -319,6 +351,7 @@ impl Loop {
                 self.engine = engine;
                 self.not_ready = None;
                 let mut fx = self.reader.set_lookahead(self.engine.lookahead());
+                fx.extend(self.set_chunking());
                 self.synth.warm(self.engine.clone());
                 // A voice of the old engine means nothing to the new one.
                 match self.reader.state().voice {
@@ -353,8 +386,36 @@ impl Loop {
         self.run(fx);
     }
 
+    /// A piece of a chunk still being made (#235): kept, and played at once
+    /// when the reader waits for that chunk (appended when it plays).
+    fn part(&mut self, item: ItemId, chunk: usize, pcm: PcmChunk) {
+        match self.audio.get_mut(&(item, chunk)) {
+            Some(Slot::Pending) => {
+                self.audio
+                    .insert((item, chunk), Slot::Streaming(vec![pcm.clone()]));
+            }
+            Some(Slot::Streaming(v)) => v.push(pcm.clone()),
+            // The item ended meanwhile.
+            _ => return,
+        }
+        if let Some((i, c, gen)) = self.open {
+            if (i, c) == (item, chunk) {
+                self.output.append(gen, vec![pcm]);
+                return;
+            }
+        }
+        let wanted =
+            matches!(&self.waiting, Some(w) if w.item == item && w.chunk == chunk && !w.paused);
+        if wanted {
+            let w = self.waiting.take().expect("waiting");
+            self.load(w.item, w.chunk, w.gen);
+            self.drain();
+        }
+    }
+
     fn synthesized(&mut self, done: Done) {
         let (item, chunk, result) = match done {
+            Done::Part { item, chunk, pcm } => return self.part(item, chunk, pcm),
             Done::Chunk {
                 item,
                 chunk,
@@ -369,7 +430,10 @@ impl Loop {
             }
         };
         // Not pending: the item ended meanwhile (a cancelled job lands here).
-        if !matches!(self.audio.get(&(item, chunk)), Some(Slot::Pending)) {
+        if !matches!(
+            self.audio.get(&(item, chunk)),
+            Some(Slot::Pending) | Some(Slot::Streaming(_))
+        ) {
             return;
         }
         let result = result.map_err(|e| e.to_string());
@@ -382,6 +446,14 @@ impl Loop {
             });
         }
         self.audio.insert((item, chunk), Slot::Ready(result));
+        // Playing while it arrived: it ends after its last audio.
+        if let Some((i, c, gen)) = self.open {
+            if (i, c) == (item, chunk) {
+                self.open = None;
+                self.output.finish(gen);
+                return;
+            }
+        }
         let ready = matches!(&self.waiting, Some(w) if w.item == item && w.chunk == chunk);
         if ready {
             let w = self.waiting.take().expect("waiting");
@@ -415,8 +487,14 @@ impl Loop {
 
     /// Hand a chunk's audio to the output, or report why there is none.
     fn load(&mut self, item: ItemId, chunk: usize, gen: u64) {
+        self.open = None;
         match self.audio.get(&(item, chunk)) {
             Some(Slot::Ready(Ok(pcm))) => self.output.play(pcm.clone(), item, chunk, gen),
+            // Still arriving: play what came, the rest is appended.
+            Some(Slot::Streaming(pcm)) => {
+                self.output.play_open(pcm.clone(), item, chunk, gen);
+                self.open = Some((item, chunk, gen));
+            }
             Some(Slot::Ready(Err(reason))) => self.pending.push_back(AudioEvent::Failed {
                 gen,
                 reason: reason.clone(),
@@ -460,7 +538,12 @@ impl Loop {
                 None => self.output.pause(),
             },
             Effect::ResumeOutput => match self.waiting.take() {
-                Some(w) if matches!(self.audio.get(&(w.item, w.chunk)), Some(Slot::Ready(_))) => {
+                Some(w)
+                    if matches!(
+                        self.audio.get(&(w.item, w.chunk)),
+                        Some(Slot::Ready(_)) | Some(Slot::Streaming(_))
+                    ) =>
+                {
                     self.load(w.item, w.chunk, w.gen)
                 }
                 Some(mut w) => {
@@ -470,6 +553,7 @@ impl Loop {
                 None => self.output.resume(),
             },
             Effect::StopOutput => {
+                self.open = None;
                 if self.waiting.take().is_none() {
                     self.output.stop();
                 }
@@ -491,6 +575,9 @@ impl Loop {
             Effect::Emit(e) => {
                 if let CoreEvent::Item { item_id, phase } = &e {
                     if *phase != ItemPhase::Started {
+                        if self.open.is_some_and(|(i, _, _)| i == *item_id) {
+                            self.open = None;
+                        }
                         self.audio.retain(|(item, _), _| item != item_id);
                         self.synth.drop_item(*item_id);
                     }

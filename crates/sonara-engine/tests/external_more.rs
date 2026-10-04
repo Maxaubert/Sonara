@@ -59,11 +59,12 @@ fn failure(r: sonara_engine::Result<impl std::fmt::Debug>) -> (Reason, String) {
 }
 
 fn cartesia() -> Value {
-    json!({"id": "ca", "kind": "cartesia", "voice": VOICE, "options": {"timeout_ms": 5000}})
+    json!({"id": "ca", "kind": "cartesia", "voice": VOICE, "model": "m1",
+        "options": {"timeout_ms": 5000}})
 }
 
 fn deepgram() -> Value {
-    json!({"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en",
+    json!({"id": "dg", "kind": "deepgram", "voice": "voice-a-en",
         "options": {"timeout_ms": 5000}})
 }
 
@@ -92,7 +93,7 @@ fn cartesia_speaks_raw_pcm_with_bearer_and_version() {
     assert_eq!(req.header("cartesia-version"), Some("2026-08-14"));
     assert_eq!(
         req.json(),
-        json!({"model_id": "sonic-3.6", "transcript": "Hello there.",
+        json!({"model_id": "m1", "transcript": "Hello there.",
             "voice": {"id": VOICE},
             "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 24000},
             "language": "en", "generation_config": {"speed": 1.25}})
@@ -184,7 +185,7 @@ fn deepgram_speaks_with_token_auth_and_the_voice_as_model() {
     let req = &server.requests()[0];
     assert_eq!(
         req.path,
-        "/v1/speak?model=aura-2-thalia-en&encoding=linear16&container=none&sample_rate=24000"
+        "/v1/speak?model=voice-a-en&encoding=linear16&container=none&sample_rate=24000"
     );
     assert_eq!(
         req.header("authorization"),
@@ -192,10 +193,10 @@ fn deepgram_speaks_with_token_auth_and_the_voice_as_model() {
     );
     assert_eq!(req.json(), json!({"text": "Hello."}));
     // Another voice is another model; a rate other than 200 sends speed.
-    chunks(&e, "Again.", "aura-2-zeus-en", 300);
+    chunks(&e, "Again.", "voice-z-en", 300);
     assert_eq!(
         server.requests()[1].path,
-        "/v1/speak?model=aura-2-zeus-en&encoding=linear16&container=none\
+        "/v1/speak?model=voice-z-en&encoding=linear16&container=none\
          &sample_rate=24000&speed=1.5"
     );
 }
@@ -234,17 +235,17 @@ fn deepgram_voices_are_its_tts_models() {
         Route::json(
             200,
             r#"{"stt": [{"name": "nova-3", "canonical_name": "nova-3"}],
-                "tts": [{"name": "thalia", "canonical_name": "aura-2-thalia-en",
-                         "architecture": "aura-2", "languages": ["en"]},
-                        {"name": "zeus", "canonical_name": "aura-2-zeus-en",
-                         "architecture": "aura-2", "languages": ["en"]}]}"#,
+                "tts": [{"name": "a", "canonical_name": "voice-a-en",
+                         "architecture": "arch-2", "languages": ["en"]},
+                        {"name": "z", "canonical_name": "voice-z-en",
+                         "architecture": "arch-2", "languages": ["en"]}]}"#,
         ),
     );
     let e = engine(&server, deepgram(), Some(KEY), false);
     let voices = e.refresh_voices().unwrap();
     let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
-    assert_eq!(ids, vec!["aura-2-thalia-en", "aura-2-zeus-en"]);
-    assert_eq!(voices[0].name, "thalia (aura-2)");
+    assert_eq!(ids, vec!["voice-a-en", "voice-z-en"]);
+    assert_eq!(voices[0].name, "a (arch-2)");
     assert_eq!(
         server.requests()[0].header("authorization"),
         Some(format!("Token {KEY}").as_str())
@@ -744,7 +745,7 @@ fn saw_a_key(server: &ScriptServer) -> bool {
 fn cartesia_and_deepgram_keys_are_bound_to_the_provider_default_host() {
     // A key entered for the provider's own address never goes to a url
     // set later (spec 6.4); Deepgram's EU host is an origin of its own.
-    let deepgram = json!({"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en",
+    let deepgram = json!({"id": "dg", "kind": "deepgram", "voice": "voice-a-en",
         "options": {"timeout_ms": 5000}});
     for (mut v, default) in [
         (cartesia(), "https://api.cartesia.ai:443"),

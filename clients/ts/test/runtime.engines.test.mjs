@@ -99,10 +99,14 @@ describe("external engines against sonarad", { skip }, () => {
       kind: "openai-compatible",
       url: fakeProvider.url,
       key_ref: "credman",
+      voice: "af_heart",
       options: { preset: "kokoro-fastapi", timeout_ms: 5000 },
     };
     const added = await c.engines.add(profile, { secret: SECRET });
     assert.equal(added.engine.key_present, true);
+    // A server on this PC: a sentence at a time by default (#235).
+    assert.equal(added.engine.send_mode, "sentence");
+    assert.equal(added.engine.explicit.send_mode, undefined);
     assert.equal(JSON.stringify(added).includes(SECRET), false);
     const t = await c.engines.test("local", { play: false });
     assert.equal(t.sample_rate, 24000);

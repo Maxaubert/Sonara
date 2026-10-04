@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-04 (0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
+_Last updated: 2026-10-05 (0.19.0: Gemini as an external speech engine, model lists fetched from the provider; 0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
 speech engines; 0.16.0: ElevenLabs, Azure and Google as external speech engines;
 0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
@@ -26,7 +26,7 @@ your computer and what, if anything, leaves it.
   recording text. No other file holds session text.
 - With an **external speech engine** you added and selected (opt-in; none by default), the text
   Sonara reads aloud is sent to that engine: to the cloud service you chose (OpenAI,
-  ElevenLabs, Azure AI Speech, Google Cloud Text-to-Speech, Cartesia or Deepgram), or to a speech
+  ElevenLabs, Azure AI Speech, Google Cloud Text-to-Speech, Gemini, Cartesia or Deepgram), or to a speech
   server or a speech program on your own PC, which keeps it local. Nothing is sent before
   you add an engine **and** select it. Its key stays in Windows Credential Manager.
 - It downloads software, never your data: its runtime from Sonara's GitHub releases and the
@@ -65,7 +65,7 @@ and receives nothing.
 ## External voices (opt-in)
 
 You can add speech engines that are not part of Sonara: a cloud service (OpenAI, ElevenLabs,
-Azure AI Speech, Google Cloud Text-to-Speech, Cartesia, Deepgram), a local OpenAI-compatible
+Azure AI Speech, Google Cloud Text-to-Speech, Gemini, Cartesia, Deepgram), a local OpenAI-compatible
 server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server), or a speech program you installed
 yourself (kind `command`, for example Piper; you add such a program yourself with `sonara engines
 add <id> --kind command` or in `engines.json`, and no app or web page connected to Sonara, the
@@ -83,7 +83,10 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   command line); Sonara sends nothing over the network for it, and what the program does with
   the text is up to that program. Its temporary audio file, if it writes one, is in your
   `%TEMP%` folder (`sonara-tts-<n>.wav`) and is deleted after each sentence. A voice list
-  (`voices` with `refresh`, or the voice picker) asks the same address. The cloud addresses:
+  (`voices` with `refresh`, or the voice picker) and a model list (`engine_models`, the model
+  picker of the settings page, `sonara engines models`) ask the same address, with your key and
+  without any text you read: Sonara names no model or voice of its own, so it asks the provider
+  which ones it offers now. The cloud addresses:
 
   | Engine kind | Text goes to | Key sent as |
   |---|---|---|
@@ -91,13 +94,21 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   | ElevenLabs (`elevenlabs`) | `api.elevenlabs.io` | `xi-api-key` header |
   | Azure AI Speech (`azure`) | `<region>.tts.speech.microsoft.com`, or the endpoint you gave | `Ocp-Apim-Subscription-Key` header |
   | Google Cloud Text-to-Speech (`google`) | `texttospeech.googleapis.com` | `X-goog-api-key` header (with `x-goog-user-project` when you set a project) |
+  | Gemini (`gemini`) | `generativelanguage.googleapis.com` | `x-goog-api-key` header (never in the address) |
   | Cartesia (`cartesia`) | `api.cartesia.ai` | `Authorization` header (with the `Cartesia-Version` date) |
   | Deepgram (`deepgram`) | `api.deepgram.com` (or `api.eu.deepgram.com` when you set it) | `Authorization` header |
 
   Providers may keep what they receive under their terms: ElevenLabs, for example, keeps a
   history of generated speech on your account unless your plan offers zero retention (the
   engine's `enable_logging: false` option asks for it). Azure also receives Sonara's version in
-  the `User-Agent` header.
+  the `User-Agent` header. **Gemini's free tier may use your text**: on Google's free tier
+  (a key from Google AI Studio without billing), Google may use what it receives to improve its
+  products; with billing on (the paid tier) it does not (Gemini API terms,
+  https://ai.google.dev/gemini-api/terms). Sonara uses Gemini's `streamGenerateContent` call (the
+  `generateContent` family, streamed so a sentence plays as its audio arrives), which Google
+  does not store as an interaction; it also asks `models` and `voices` for the lists. For Gemini, Sonara sends several sentences of a reply
+  in one request (up to 1000 characters by default, up to 4000 when set; with Quick start off a
+  whole reply under that is one request) to use fewer of the free tier's requests.
 - **Nothing is sent while Sonara is muted.** While Sonara is muted or super-muted (the mute
   hotkey, the settings page's mute level, or `mute` from any client), nothing goes to an external
   engine: Sonara reads with its built-in voice (Kokoro, else the Windows voices) on your PC, says

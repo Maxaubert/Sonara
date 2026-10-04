@@ -21,6 +21,24 @@
 //!   fetched; raising it ends a request in flight. `test` and a synthesis
 //!   inside `hold::explicit` (the user's own actions) still reach the
 //!   provider.
+//! - **No model or voice in code** (#235): models and voices change
+//!   upstream, so they come from the profile and from the provider's live
+//!   lists (`refresh_voices`, `refresh_models`). A profile that needs a
+//!   model and names none, or a chunk with no voice from the reader or the
+//!   profile, reads with the fallback and the status says "choose a model"
+//!   or "choose a voice" (`bad_config`).
+//! - **Streamed** (`streaming`, #235): an adapter with a stream (Gemini)
+//!   returns from `synthesize` at the first audio, within the profile's
+//!   `first_audio_ms`, and the rest follows while the reader plays it.
+//! - **Send to the engine** (#235, `Profile::send_mode`): `message` (the
+//!   cloud default) makes the reader send what the agent releases at once
+//!   as one text (`Engine::send_mode`, split only past `input_limit`).
+//!   Such a text plays as its audio arrives: Gemini's events, or a raw PCM
+//!   body read as it comes (ElevenLabs `/stream`, OpenAI `pcm`, Cartesia);
+//!   other providers answer whole. A complete answer is kept for a replay
+//!   (`cache`), so Up costs no request. The fallback reads a failed text
+//!   whole (the cue first), playing as Kokoro makes it. `sentence` (local
+//!   servers and programs) sends each sentence as before.
 pub mod adapter;
 pub mod audio;
 pub mod azure;
@@ -30,6 +48,7 @@ pub mod command;
 pub mod deepgram;
 pub mod elevenlabs;
 pub mod error;
+pub mod gemini;
 pub mod google;
 pub mod health;
 pub mod hold;
@@ -38,31 +57,42 @@ pub mod openai;
 pub mod profile;
 pub mod rate;
 pub mod split;
+pub mod sse;
+mod streaming;
 pub mod worker;
 
 use crate::{
-    Engine, EngineId, EngineStatus, Error, LicenseClass, PcmChunk, PcmStream, Readiness, Reason,
-    Result, Voice,
+    Engine, EngineId, EngineStatus, Error, InputLimit, LicenseClass, PcmChunk, PcmStream,
+    Readiness, Reason, Result, SendMode, Voice,
 };
-use adapter::{execute, Adapter, HttpRequest, VoiceSource, MAX_AUDIO_BODY, MAX_LIST_BODY};
+use adapter::{
+    execute, Adapter, HttpRequest, ModelInfo, VoiceSource, Within, MAX_AUDIO_BODY, MAX_LIST_BODY,
+};
 use cache::CueCache;
-use error::{cue_text, ExtError};
+use error::{choose_model, choose_voice, cue_text, ExtError};
 use health::{Clock, Health, View};
 use hold::{Hold, Scope};
 use keys::{KeyResolver, Secret};
 use profile::{Kind, Profile, ProfileError};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use streaming::Begun;
 use worker::CancelToken;
 
 /// A `Retry-After` up to this long is waited for once.
 pub const RETRY_AFTER_MAX: Duration = Duration::from_millis(1500);
+/// A request is sent again at most this many times after the adapter
+/// adapted to a refusal: one per field a model may refuse (Gemini's
+/// `responseFormat` and `speechMetadata`; the adapter itself drops each
+/// field only once).
+pub const MAX_ADAPTS: usize = 2;
 /// The voice list is fetched again after this long.
 pub const VOICES_TTL: Duration = Duration::from_secs(600);
 /// After a failed voice-list fetch the list is not stale for this long, so
 /// a host that asks often does not repeat a refused key or a dead host.
 pub const VOICES_RETRY: Duration = Duration::from_secs(60);
-/// A voice-list request may take this long.
+/// A voice-list (or model-list) request may take this long.
 pub const VOICES_TIMEOUT: Duration = Duration::from_secs(10);
 /// At most this many pages of a paged voice list are read.
 pub const VOICES_MAX_PAGES: usize = 50;
@@ -144,8 +174,8 @@ pub struct External {
     fallback: Option<Arc<dyn Engine>>,
     fallback_voice: String,
     notice: Option<NoticeFn>,
-    health: Health,
-    cache: CueCache,
+    health: Arc<Health>,
+    cache: Arc<CueCache>,
     cancel: Arc<CancelToken>,
     /// The hold epoch and cancel generation at `begin`, taken by the next
     /// `synthesize`.
@@ -157,6 +187,12 @@ pub struct External {
     voices: Mutex<Option<(Instant, Vec<Voice>)>>,
     /// When the last voice-list fetch failed (cleared by a success).
     voices_failed: Mutex<Option<Instant>>,
+    /// The provider's model list (#235), as for voices.
+    models: Mutex<Option<(Instant, Vec<ModelInfo>)>>,
+    models_failed: Mutex<Option<Instant>>,
+    /// The last chunk had no voice (none from the reader or the profile):
+    /// the status says "choose a voice" until one comes.
+    voice_missing: AtomicBool,
     clock: Clock,
     hold: Option<Arc<Hold>>,
 }
@@ -167,6 +203,7 @@ fn backend_for(p: &Profile) -> Backend {
         Kind::ElevenLabs => Backend::Http(Arc::new(elevenlabs::ElevenLabs::new(p))),
         Kind::Azure => Backend::Http(Arc::new(azure::Azure::new(p))),
         Kind::Google => Backend::Http(Arc::new(google::Google::new(p))),
+        Kind::Gemini => Backend::Http(Arc::new(gemini::Gemini::new(p))),
         Kind::Cartesia => Backend::Http(Arc::new(cartesia::Cartesia::new(p))),
         Kind::Deepgram => Backend::Http(Arc::new(deepgram::Deepgram::new(p))),
         Kind::Command => Backend::Command(Arc::new(command::Command::new(p))),
@@ -217,14 +254,17 @@ impl External {
             fallback: config.fallback,
             fallback_voice: config.fallback_voice,
             notice: config.notice,
-            health: Health::new(config.clock.clone()),
-            cache: CueCache::new(),
+            health: Arc::new(Health::new(config.clock.clone())),
+            cache: Arc::new(CueCache::new()),
             cancel,
             begun: Mutex::new(None),
             agent,
             voices_agent,
             voices: Mutex::new(None),
             voices_failed: Mutex::new(None),
+            models: Mutex::new(None),
+            models_failed: Mutex::new(None),
+            voice_missing: AtomicBool::new(false),
             clock: config.clock,
             hold: config.hold,
             profile: p,
@@ -284,6 +324,11 @@ impl External {
         self.held() || (hold::scope() == Scope::Normal && self.hold_epoch() != epoch)
     }
 
+    /// Send mode `message` (#235): whole messages, not sentences.
+    pub fn whole_messages(&self) -> bool {
+        self.profile.send_mode() == SendMode::Message
+    }
+
     /// Speak `text` with the fallback while held: not a failure, so no cue,
     /// no notice and no change of health.
     fn quiet(&self, text: &str, rate: u32) -> Result<PcmStream> {
@@ -296,26 +341,45 @@ impl External {
                 ),
             });
         };
-        let pcm = fb
-            .synthesize(text, &self.fallback_voice, rate)?
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Box::new(pcm.into_iter().map(Ok)))
+        fb.synthesize(text, &self.fallback_voice, rate)
     }
 
+    /// The voice of a chunk (the one rule, #235): the voice the caller
+    /// names (the reader's voice setting while this engine is current, or
+    /// the voice a test or preview asks for), else the profile's. Sonara
+    /// never picks one: with neither, the chunk reads with the fallback and
+    /// the status says "choose a voice".
     fn voice_for(&self, voice: &str) -> std::result::Result<String, ExtError> {
         let v = if voice.is_empty() {
-            self.profile.effective_voice().unwrap_or_default()
+            self.profile.voice.clone().unwrap_or_default()
         } else {
             voice.to_string()
         };
         // A program's voice is optional (`{voice}` may be unused).
-        if v.is_empty() && self.profile.kind != Kind::Command {
-            return Err(ExtError::new(
-                Reason::BadConfig,
-                format!("{} has no voice set", self.label),
-            ));
+        let missing = v.is_empty() && self.profile.voice_required();
+        self.voice_missing.store(missing, Ordering::SeqCst);
+        if missing {
+            return Err(ExtError::new(Reason::BadConfig, choose_voice(&self.label)));
         }
         Ok(v)
+    }
+
+    /// A profile that needs a model and names none (#235).
+    fn model_problem(&self) -> Option<ExtError> {
+        self.profile
+            .missing_model()
+            .then(|| ExtError::new(Reason::BadConfig, choose_model(&self.label)))
+    }
+
+    /// A chunk that cannot be sent as the profile stands (no model, no
+    /// voice): the fallback reads it, with the cue and a notice once per
+    /// episode. Not a failure of the provider, so no block: the user's
+    /// next pick applies at once.
+    fn unconfigured(&self, text: &str, rate: u32, e: ExtError) -> Result<PcmStream> {
+        if self.health.cue_pending() {
+            self.notify(Some(e.reason), None, e.message.clone());
+        }
+        self.fallback(text, rate, e)
     }
 
     fn key(&self) -> std::result::Result<Option<Secret>, ExtError> {
@@ -368,8 +432,10 @@ impl External {
         }
     }
 
-    /// One provider request, with the one `Retry-After` retry and the one
-    /// retry after the adapter adapted to a refusal (Deepgram's `speed`).
+    /// One provider request, with the one `Retry-After` retry (never for a
+    /// quota, which a few seconds do not end) and one retry per refusal the
+    /// adapter adapted to (Deepgram's `speed`; Gemini's `responseFormat`
+    /// and `speechMetadata`), up to `MAX_ADAPTS`.
     fn http_request(
         &self,
         adapter: &Arc<dyn Adapter>,
@@ -380,12 +446,22 @@ impl External {
         key: Option<&Secret>,
     ) -> Result<std::result::Result<PcmChunk, ExtError>> {
         let mut req = adapter.synth_request(text, voice, rate, key);
-        let (mut retried, mut adapted) = (false, false);
+        // A whole message may take as long as its text needs (#235).
+        let within = self.whole_messages().then(|| {
+            let answer = Duration::from_millis(self.profile.answer_ms(text.chars().count()));
+            Within {
+                response: answer,
+                body: answer,
+            }
+        });
+        let (mut retried, mut adapted) = (false, 0);
         loop {
             let (agent, r, host) = (self.agent.clone(), req.clone(), self.host.clone());
             let reply = self
                 .cancel
-                .run(gen, move || execute(&agent, &r, MAX_AUDIO_BODY, &host))
+                .run(gen, move || {
+                    execute(&agent, &r, MAX_AUDIO_BODY, &host, within)
+                })
                 .map_err(|_| Error::Cancelled)?;
             let outcome = match reply {
                 Err(e) => Err(e),
@@ -395,6 +471,7 @@ impl External {
             match outcome {
                 Err(e)
                     if !retried
+                        && e.reason != Reason::Quota
                         && matches!(e.status, Some(429) | Some(503))
                         && e.retry_after.is_some_and(|d| d <= RETRY_AFTER_MAX) =>
                 {
@@ -403,8 +480,8 @@ impl External {
                         .sleep(gen, e.retry_after.unwrap_or_default())
                         .map_err(|_| Error::Cancelled)?;
                 }
-                Err(e) if !adapted && adapter.adapt(&req, &e) => {
-                    adapted = true;
+                Err(e) if adapted < MAX_ADAPTS && adapter.adapt(&req, &e) => {
+                    adapted += 1;
                     req = adapter.synth_request(text, voice, rate, key);
                 }
                 other => return Ok(other),
@@ -431,34 +508,47 @@ impl External {
         Ok(Ok(out))
     }
 
-    /// Speak `text` with the fallback, the cue first once per episode.
+    /// Speak `text` with the fallback, the cue first once per episode. The
+    /// audio comes as the fallback makes it (a whole message plays from
+    /// its first sentence, #235).
     fn fallback(&self, text: &str, rate: u32, e: ExtError) -> Result<PcmStream> {
         let Some(fb) = self.fallback.clone() else {
             return Err(e.into_engine_error());
         };
-        let mut pcm: Vec<PcmChunk> = Vec::new();
+        let mut cue: Vec<PcmChunk> = Vec::new();
         if self.health.take_cue() {
-            let cue = cue_text(e.reason, &self.label);
-            pcm.extend(
-                fb.synthesize(&cue, &self.fallback_voice, rate)?
+            let line = cue_text(e.reason, &self.label);
+            cue.extend(
+                fb.synthesize(&line, &self.fallback_voice, rate)?
                     .collect::<Result<Vec<_>>>()?,
             );
         }
-        pcm.extend(
-            fb.synthesize(text, &self.fallback_voice, rate)?
-                .collect::<Result<Vec<_>>>()?,
-        );
-        Ok(Box::new(pcm.into_iter().map(Ok)))
+        let rest = fb.synthesize(text, &self.fallback_voice, rate)?;
+        Ok(Box::new(cue.into_iter().map(Ok).chain(rest)))
     }
 
     /// One synthesis with no fallback and no cache, for `engine_test`. A
-    /// success clears the blocked state and the breaker.
+    /// success clears the blocked state and the breaker. A streamed answer
+    /// is collected whole (its first audio within `first_audio_ms`).
     pub fn test(&self, text: &str, voice: &str, rate: u32) -> Result<TestResult> {
         let gen = self.cancel.generation();
+        if let Some(e) = self.model_problem() {
+            return Err(e.into_engine_error());
+        }
         let voice = self.voice_for(voice).map_err(ExtError::into_engine_error)?;
         let key = self.key().map_err(ExtError::into_engine_error)?;
         let start = (self.clock)();
-        match self.provider(gen, text, &voice, rate, key.as_ref())? {
+        let streamed = match &self.backend {
+            Backend::Http(a) if a.streams() || self.whole_messages() => {
+                self.stream_whole(gen, text, &voice, rate, key.as_ref())?
+            }
+            _ => None,
+        };
+        let answer = match streamed {
+            Some(a) => a,
+            None => self.provider(gen, text, &voice, rate, key.as_ref())?,
+        };
+        match answer {
             Ok(pcm) => {
                 if self.health.record_success() {
                     self.notify(None, None, "recovered".into());
@@ -485,7 +575,7 @@ impl External {
     }
 
     fn with_profile_voice(&self, mut list: Vec<Voice>) -> Vec<Voice> {
-        if let Some(v) = self.profile.effective_voice() {
+        if let Some(v) = self.profile.voice.clone() {
             if !list.iter().any(|x| x.id == v) {
                 list.insert(0, self.voice_entry(adapter::VoiceInfo::named(&v)));
             }
@@ -518,7 +608,13 @@ impl External {
             if self.held() {
                 return Ok(None);
             }
-            let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
+            let r = execute(
+                &self.voices_agent,
+                &request,
+                MAX_LIST_BODY,
+                &self.host,
+                None,
+            )?;
             if !r.ok() {
                 return Err(adapter.map_error(&r, "", None));
             }
@@ -539,6 +635,110 @@ impl External {
             Backend::Http(a) => a.voices(key),
             Backend::Command(c) => VoiceSource::Fixed(c.voices()),
         }
+    }
+
+    /// Whether the provider has a model list API (#235): the settings page
+    /// then offers its models, else the model is typed in.
+    pub fn has_model_list(&self) -> bool {
+        match &self.backend {
+            Backend::Http(a) => self.profile.takes_model() && a.models(None).is_some(),
+            Backend::Command(_) => false,
+        }
+    }
+
+    /// The models known now (the last list fetched), the profile's own
+    /// first when the list lacks it.
+    pub fn models(&self) -> Vec<ModelInfo> {
+        let mut list = self
+            .models
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|(_, m)| m.clone())
+            .unwrap_or_default();
+        if let Some(m) = &self.profile.model {
+            if !list.iter().any(|x| &x.id == m) {
+                list.insert(0, ModelInfo::named(m));
+            }
+        }
+        list
+    }
+
+    /// Fetch the model list again (#235), with the same rules as the voice
+    /// list: nothing while muted, a failure kept for `VOICES_RETRY`.
+    pub fn refresh_models(&self) -> Result<Vec<ModelInfo>> {
+        if self.held() || !self.profile.takes_model() {
+            return Ok(self.models());
+        }
+        let Backend::Http(adapter) = &self.backend else {
+            return Ok(self.models());
+        };
+        let key = self.keys.resolve(&self.profile).ok().flatten();
+        let Some(source) = adapter.models(key.as_ref()) else {
+            return Ok(self.models());
+        };
+        let list = match self.fetch_models(adapter, source.request, key.as_ref()) {
+            Ok(Some(v)) => v,
+            Ok(None) => return Ok(self.models()),
+            Err(_) if source.empty_on_error => Vec::new(),
+            Err(e) => {
+                *self.models_failed.lock().unwrap_or_else(|p| p.into_inner()) =
+                    Some((self.clock)());
+                return Err(e.into_engine_error());
+            }
+        };
+        *self.models_failed.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *self.models.lock().unwrap_or_else(|p| p.into_inner()) = Some(((self.clock)(), list));
+        Ok(self.models())
+    }
+
+    /// Whether the model cache is old or empty (as `voices_stale`).
+    pub fn models_stale(&self) -> bool {
+        let now = (self.clock)();
+        let failed = *self.models_failed.lock().unwrap_or_else(|p| p.into_inner());
+        if failed.is_some_and(|at| now.saturating_duration_since(at) < VOICES_RETRY) {
+            return false;
+        }
+        self.models
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .is_none_or(|(at, _)| now.saturating_duration_since(*at) >= VOICES_TTL)
+    }
+
+    /// Fetch a model list, following its pages (`None`: muted meanwhile).
+    fn fetch_models(
+        &self,
+        adapter: &Arc<dyn Adapter>,
+        first: HttpRequest,
+        key: Option<&Secret>,
+    ) -> std::result::Result<Option<Vec<ModelInfo>>, ExtError> {
+        let mut out = Vec::new();
+        let mut next = Some(first);
+        for _ in 0..VOICES_MAX_PAGES {
+            let Some(request) = next.take() else { break };
+            if self.held() {
+                return Ok(None);
+            }
+            let r = execute(
+                &self.voices_agent,
+                &request,
+                MAX_LIST_BODY,
+                &self.host,
+                None,
+            )?;
+            if !r.ok() {
+                return Err(adapter.map_error(&r, "", None));
+            }
+            out.extend(adapter.parse_models(&r.body)?);
+            next = adapter.next_models_page(&r.body, key);
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|m| seen.insert(m.id.clone()));
+        if self.held() {
+            return Ok(None);
+        }
+        Ok(Some(out))
     }
 
     /// Whether the voice cache is older than `VOICES_TTL` (or empty), and
@@ -623,6 +823,28 @@ impl Engine for External {
         self.profile.prefetch()
     }
 
+    fn send_mode(&self) -> SendMode {
+        self.profile.send_mode()
+    }
+
+    /// The provider's input limit, or the profile's `chunk_chars` when it
+    /// is lower (counted in the provider's unit).
+    fn input_limit(&self) -> InputLimit {
+        let limit = self.backend.input_limit();
+        match (limit, self.profile.chunk_chars()) {
+            (InputLimit::Chars(n), Some(c)) => InputLimit::Chars(n.min(c)),
+            (InputLimit::Bytes(n), Some(c)) => InputLimit::Bytes(n.min(c)),
+            (l, None) => l,
+        }
+    }
+
+    /// Gemini's events always; any answer in send mode `message`, where a
+    /// message plays from its first audio (a raw body as it comes, the
+    /// fallback as it is made).
+    fn streams(&self) -> bool {
+        self.whole_messages() || matches!(&self.backend, Backend::Http(a) if a.streams())
+    }
+
     /// No network call (a cold profile must not send text or spend quota):
     /// only checks that a needed key resolves.
     fn warm(&self) -> Result<()> {
@@ -656,12 +878,12 @@ impl Engine for External {
             }
             return Err(Error::Cancelled);
         }
+        if let Some(e) = self.model_problem() {
+            return self.unconfigured(text, rate, e);
+        }
         let voice = match self.voice_for(voice) {
             Ok(v) => v,
-            Err(e) => {
-                self.health.block(e.reason, e.message.clone());
-                return self.fallback(text, rate, e);
-            }
+            Err(e) => return self.unconfigured(text, rate, e),
         };
         if let Some(pcm) = self.cache.get(&voice, rate, text) {
             return Ok(Box::new(pcm.into_iter().map(Ok)));
@@ -688,6 +910,28 @@ impl Engine for External {
                 return self.fallback(text, rate, e);
             }
         };
+        if let Backend::Http(adapter) = &self.backend {
+            if adapter.streams() || self.whole_messages() {
+                match self.begin_stream(gen, epoch, text, &voice, rate, key.as_ref()) {
+                    Err(Error::Cancelled) if self.cut_by_hold(epoch) => {
+                        return self.quiet(text, rate)
+                    }
+                    Err(e) => return Err(e),
+                    Ok(Begun::Playing(stream)) => {
+                        if self.health.record_success() {
+                            self.notify(None, None, "recovered".into());
+                        }
+                        return Ok(stream);
+                    }
+                    Ok(Begun::Failed(e)) => {
+                        self.health.record_failure(&e, &voice);
+                        self.notify(Some(e.reason), e.status, e.message.clone());
+                        return self.fallback(text, rate, e);
+                    }
+                    Ok(Begun::Whole) => {}
+                }
+            }
+        }
         let answer = match self.provider(gen, text, &voice, rate, key.as_ref()) {
             // The hold was raised while the request ran (even if lifted
             // again since): it was cut, and the chunk is spoken locally.
@@ -699,7 +943,8 @@ impl Engine for External {
                 if self.health.record_success() {
                     self.notify(None, None, "recovered".into());
                 }
-                self.cache.put(&voice, rate, text, pcm.clone());
+                self.cache
+                    .keep(&voice, rate, text, pcm.clone(), self.whole_messages());
                 Ok(Box::new(pcm.into_iter().map(Ok)))
             }
             Err(e) => {
@@ -723,10 +968,17 @@ impl Engine for External {
 
     fn status(&self) -> EngineStatus {
         let fallback = self.fallback.as_ref().map(|f| f.id());
-        let (readiness, reason, message) = match self.health.view() {
-            View::Healthy => return EngineStatus::ready(),
-            View::Waiting { reason, message } => (Readiness::Waiting, reason, message),
-            View::Blocked { reason, message } => (Readiness::Unavailable, reason, message),
+        // A missing model or voice first (#235): nothing else can work.
+        let unset = self.model_problem().map(|e| e.message).or_else(|| {
+            self.voice_missing
+                .load(Ordering::SeqCst)
+                .then(|| choose_voice(&self.label))
+        });
+        let (readiness, reason, message) = match (unset, self.health.view()) {
+            (Some(m), _) => (Readiness::Unavailable, Reason::BadConfig, m),
+            (None, View::Healthy) => return EngineStatus::ready(),
+            (None, View::Waiting { reason, message }) => (Readiness::Waiting, reason, message),
+            (None, View::Blocked { reason, message }) => (Readiness::Unavailable, reason, message),
         };
         EngineStatus {
             readiness,

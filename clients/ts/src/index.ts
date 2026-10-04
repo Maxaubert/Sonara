@@ -14,7 +14,13 @@ export { SonaraError } from "./errors.js";
 export type { ErrorCode } from "./errors.js";
 export { AgentApi, ChannelsApi, SystemApi } from "./extensions.js";
 export { EnginesApi } from "./engines.js";
-export type { EngineAddOptions, EngineProfile, EngineTestOptions } from "./engines.js";
+export type {
+  EngineAddOptions,
+  EngineModelsDraft,
+  EngineProfile,
+  SendMode,
+  EngineTestOptions,
+} from "./engines.js";
 export type { AskKind, AudioMode, ChannelOpenOptions, ChannelPolicy, StreamMessage } from "./extensions.js";
 export { readRuntime, resolveHome } from "./discovery.js";
 export { PROTOCOL, VERSION } from "./version.js";

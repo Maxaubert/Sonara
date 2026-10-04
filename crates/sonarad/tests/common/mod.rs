@@ -71,6 +71,12 @@ impl Provider {
                             "application/json",
                             br#"{"voices": ["af_heart", "am_echo"]}"#.to_vec(),
                         )
+                    } else if path.ends_with("/models") {
+                        (
+                            200,
+                            "application/json",
+                            br#"{"data": [{"id": "speech-1"}, {"id": "speech-2"}]}"#.to_vec(),
+                        )
                     } else {
                         let delay = *q.delay.lock().unwrap();
                         std::thread::sleep(delay);

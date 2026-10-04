@@ -2,7 +2,9 @@
 //! opens it (or cancels it), one that always fails, and the fake engine
 //! under another id.
 use sonara_engine::fake::FakeEngine;
-use sonara_engine::{Engine, EngineId, Error, LicenseClass, PcmChunk, PcmStream, Result, Voice};
+use sonara_engine::{
+    Engine, EngineId, Error, InputLimit, LicenseClass, PcmChunk, PcmStream, Result, SendMode, Voice,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -255,6 +257,10 @@ pub struct OpenEngine {
     pub id: &'static str,
     pub inner: FakeEngine,
     pub lookahead: usize,
+    /// `Engine::send_mode` (#235).
+    pub send_mode: SendMode,
+    /// `Engine::input_limit` in characters.
+    pub limit: usize,
     pub voices_seen: Mutex<Vec<String>>,
 }
 
@@ -264,6 +270,8 @@ impl OpenEngine {
             id,
             inner: FakeEngine::new(),
             lookahead,
+            send_mode: SendMode::Sentence,
+            limit: 4096,
             voices_seen: Mutex::new(Vec::new()),
         }
     }
@@ -299,7 +307,79 @@ impl Engine for OpenEngine {
         self.lookahead
     }
 
+    fn send_mode(&self) -> SendMode {
+        self.send_mode
+    }
+
+    fn input_limit(&self) -> InputLimit {
+        InputLimit::Chars(self.limit)
+    }
+
     fn accepts_unlisted_voices(&self) -> bool {
+        true
+    }
+}
+
+type PieceRx = std::sync::Arc<Mutex<std::sync::mpsc::Receiver<Option<usize>>>>;
+
+/// A streaming engine (#235): each synthesis yields the pieces the test
+/// sends (`Some(samples)`) as they come, and ends at `None`.
+pub struct StreamEngine {
+    rx: PieceRx,
+}
+
+impl StreamEngine {
+    pub fn new() -> (StreamEngine, std::sync::mpsc::Sender<Option<usize>>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (
+            StreamEngine {
+                rx: std::sync::Arc::new(Mutex::new(rx)),
+            },
+            tx,
+        )
+    }
+}
+
+/// The pieces of one synthesis, read when the reader asks for the next.
+struct Pieces(PieceRx);
+
+impl Iterator for Pieces {
+    type Item = Result<PcmChunk>;
+
+    fn next(&mut self) -> Option<Result<PcmChunk>> {
+        let n = self.0.lock().unwrap().recv().ok()??;
+        Some(Ok(PcmChunk {
+            samples: vec![1; n],
+            sample_rate: 16_000,
+            channels: 1,
+        }))
+    }
+}
+
+impl Engine for StreamEngine {
+    fn id(&self) -> EngineId {
+        EngineId("stream")
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Permissive
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn synthesize(&self, _: &str, _: &str, _: u32) -> Result<PcmStream> {
+        Ok(Box::new(Pieces(self.rx.clone())))
+    }
+
+    fn cancel(&self) {}
+
+    fn streams(&self) -> bool {
         true
     }
 }

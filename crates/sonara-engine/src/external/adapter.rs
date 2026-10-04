@@ -125,6 +125,40 @@ pub enum VoiceSource {
     },
 }
 
+/// One model as a provider lists it (#235): Sonara bakes in no model ids,
+/// so the settings page offers what the provider lists now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+impl ModelInfo {
+    pub fn named(id: &str) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+        }
+    }
+}
+
+/// Where the model list comes from: `None` for a provider without a list
+/// API (the model is typed in), else the first page to fetch;
+/// `empty_on_error` as for voices (a local server that may lack it).
+pub struct ModelSource {
+    pub request: HttpRequest,
+    pub empty_on_error: bool,
+}
+
+/// What one event of a streamed reply carried (#235).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StreamPiece {
+    pub audio: Option<PcmChunk>,
+    /// Why the provider stopped (`finishReason`, `blockReason`), for the
+    /// message when no audio came at all.
+    pub note: Option<String>,
+}
+
 /// One provider shape.
 pub trait Adapter: Send + Sync {
     fn input_limit(&self) -> Limit;
@@ -168,6 +202,60 @@ pub trait Adapter: Send + Sync {
     fn adapt(&self, _request: &HttpRequest, _error: &ExtError) -> bool {
         false
     }
+    /// The model list request (#235), `None` when the provider has no list
+    /// API. Filtered to speech models by `parse_models`.
+    fn models(&self, _key: Option<&Secret>) -> Option<ModelSource> {
+        None
+    }
+    fn parse_models(&self, _body: &[u8]) -> Result<Vec<ModelInfo>, ExtError> {
+        Ok(Vec::new())
+    }
+    /// The next page of a paged model list (Gemini).
+    fn next_models_page(&self, _body: &[u8], _key: Option<&Secret>) -> Option<HttpRequest> {
+        None
+    }
+    /// The request for one part as a stream of server-sent events whose
+    /// audio plays as it comes (#235, Gemini), or `None` to send
+    /// `synth_request` and wait for the whole answer.
+    fn stream_request(
+        &self,
+        _text: &str,
+        _voice: &str,
+        _wpm: u32,
+        _key: Option<&Secret>,
+    ) -> Option<HttpRequest> {
+        None
+    }
+    /// Send mode `message` (#235): the request for one part whose 2xx body
+    /// is raw PCM at `requested_rate`, read as it arrives (ElevenLabs'
+    /// `/stream`, OpenAI's `pcm`, Cartesia's raw bytes), so a whole message
+    /// starts playing at its first audio. `None` (the default): the whole
+    /// answer is waited for.
+    fn bytes_request(
+        &self,
+        _text: &str,
+        _voice: &str,
+        _wpm: u32,
+        _key: Option<&Secret>,
+    ) -> Option<HttpRequest> {
+        None
+    }
+    /// Whether `stream_request` is used now (a model that refused the
+    /// stream once is asked for whole answers from then on).
+    fn streams(&self) -> bool {
+        false
+    }
+    /// The audio of one event (`data:`) of a streamed reply. `carry`
+    /// belongs to the stream: raw PCM bytes of a sample the event cut in
+    /// half, joined to the next event's audio.
+    fn stream_piece(
+        &self,
+        _carry: &mut Vec<u8>,
+        _data: &str,
+        _label: &str,
+    ) -> Result<StreamPiece, ExtError> {
+        Ok(StreamPiece::default())
+    }
 }
 
 /// Percent-encode a query value or a path segment.
@@ -189,39 +277,10 @@ pub fn execute(
     req: &HttpRequest,
     max_body: u64,
     host: &str,
+    within: Option<Within>,
 ) -> Result<HttpReply, ExtError> {
-    let result = match req.method {
-        Method::Get => {
-            let mut b = agent.get(&req.url);
-            for (k, v) in &req.headers {
-                b = b.header(k.as_str(), v.as_str());
-            }
-            b.call()
-        }
-        Method::Post => {
-            let mut b = agent.post(&req.url);
-            for (k, v) in &req.headers {
-                b = b.header(k.as_str(), v.as_str());
-            }
-            b.send(req.body.as_deref().unwrap_or_default())
-        }
-    };
-    let mut resp = result.map_err(|e| transport(e, host))?;
-    let status = resp.status().as_u16();
-    let header = |n: &str| {
-        resp.headers()
-            .get(n)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
-    };
-    let content_type = header("content-type");
-    let retry_after = header("retry-after").and_then(|v| {
-        v.trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|s| s.is_finite() && *s >= 0.0)
-            .map(Duration::from_secs_f64)
-    });
+    let mut resp = send(agent, req, within).map_err(|e| transport(e, host))?;
+    let (status, content_type, retry_after) = head(&resp);
     let limit = if (200..300).contains(&status) {
         max_body
     } else {
@@ -253,7 +312,75 @@ pub fn execute(
     })
 }
 
-fn transport(e: ureq::Error, host: &str) -> ExtError {
+/// Timeouts of one request in place of its agent's (#235: a whole message
+/// may take as long as its text needs; a streamed answer's headers must
+/// come within `first_audio_ms`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Within {
+    /// Until the response headers arrived.
+    pub response: Duration,
+    /// For the whole body.
+    pub body: Duration,
+}
+
+/// Send `req` and return the response with its body unread (`stream`
+/// reads it as it comes); `within` replaces the agent's timeouts.
+pub fn send(
+    agent: &ureq::Agent,
+    req: &HttpRequest,
+    within: Option<Within>,
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    match req.method {
+        Method::Get => {
+            let mut b = agent.get(&req.url);
+            for (k, v) in &req.headers {
+                b = b.header(k.as_str(), v.as_str());
+            }
+            if let Some(w) = within {
+                b = b
+                    .config()
+                    .timeout_recv_response(Some(w.response))
+                    .timeout_recv_body(Some(w.body))
+                    .build();
+            }
+            b.call()
+        }
+        Method::Post => {
+            let mut b = agent.post(&req.url);
+            for (k, v) in &req.headers {
+                b = b.header(k.as_str(), v.as_str());
+            }
+            if let Some(w) = within {
+                b = b
+                    .config()
+                    .timeout_recv_response(Some(w.response))
+                    .timeout_recv_body(Some(w.body))
+                    .build();
+            }
+            b.send(req.body.as_deref().unwrap_or_default())
+        }
+    }
+}
+
+/// The status, `Content-Type` and `Retry-After` of a response.
+pub fn head(resp: &ureq::http::Response<ureq::Body>) -> (u16, Option<String>, Option<Duration>) {
+    let header = |n: &str| {
+        resp.headers()
+            .get(n)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+    };
+    let retry_after = header("retry-after").and_then(|v| {
+        v.trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|s| s.is_finite() && *s >= 0.0)
+            .map(Duration::from_secs_f64)
+    });
+    (resp.status().as_u16(), header("content-type"), retry_after)
+}
+
+pub fn transport(e: ureq::Error, host: &str) -> ExtError {
     match e {
         ureq::Error::Timeout(_) => {
             ExtError::new(Reason::Timeout, format!("{host} did not answer in time"))

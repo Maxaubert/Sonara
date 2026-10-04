@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 4;
+pub const PROTOCOL_MINOR: u64 = 5;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -57,6 +57,7 @@ pub const ENGINE_TYPES: &[&str] = &[
     "engine_key",
     "engine_test",
     "engine_reload",
+    "engine_models",
 ];
 
 /// Extensions this host implements. `system` is offered only by a server
@@ -1173,13 +1174,14 @@ impl Server {
         let engines = self.engines.as_ref().ok_or_else(engines_ext::refused)?;
         let current = self.current_engine();
         match kind {
-            "engine_list" => engines_ext::list(engines, &current),
+            "engine_list" => engines_ext::list(engines, &self.reader, &current),
             "engine_add" => engines_ext::add(engines, &self.reader, m, &current),
             "engine_key" => engines_ext::key(engines, m),
             // The provider round trip runs outside the admission lock
             // (it can take the profile's whole timeout); only the play is
             // admitted, so speech and controls never wait for a test.
-            "engine_test" => engines_ext::test(engines, &self.reader, m, || self.admit()),
+            "engine_test" => engines_ext::test(engines, &self.reader, m, &current, || self.admit()),
+            "engine_models" => engines_ext::models(engines, m),
             "engine_reload" => self.engine_reload(engines, &current),
             _ => self.engine_remove(engines, m, &current),
         }
@@ -1316,7 +1318,7 @@ mod tests {
         let r = &o.reply;
         assert_eq!(r["id"], "h1");
         assert_eq!(r["version"], crate::VERSION);
-        assert_eq!(r["protocol"], json!({"major": 1, "minor": 4}));
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 5}));
         assert!(r["capabilities"]
             .as_array()
             .unwrap()
