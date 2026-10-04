@@ -245,6 +245,8 @@ def test_edit_keeps_the_key_and_never_prefills_it(live, browser, provider):
     pw.expect(page.locator("#ef-id")).to_be_disabled()
     pw.expect(page.locator("#ef-key")).to_have_value("")
     pw.expect(page.locator("#ef-key-hint")).to_contain_text("Leave empty to keep the saved key")
+    # A key is bound to its address: the hint says a new one needs it again.
+    pw.expect(page.locator("#ef-key-hint")).to_contain_text("another address or region needs the key again")
     page.fill("#ef-label", "Renamed")
     page.click("#ef-save")
     assert eventually(lambda: lv.request({"type": "engine_list"})["engines"][0]["label"] == "Renamed")

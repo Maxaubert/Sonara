@@ -1320,8 +1320,8 @@ function syncKeyRow() {
   $("ef-keyenv").hidden = ref !== "env";
   const saved = editing && engineData && (engineData.engines.find(e => e.id === editing) || {}).key_present;
   setText("ef-key-hint", ref === "credman"
-    ? (editing ? (saved ? "Leave empty to keep the saved key." : "No key saved yet. Leave empty to keep the saved key once there is one.") : "Paste the key from the provider's site.")
-    : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY."
+    ? (editing ? (saved ? "Leave empty to keep the saved key; another address or region needs the key again." : "No key saved yet. Leave empty to keep the saved key once there is one.") : "Paste the key from the provider's site.")
+    : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY. It goes only to the provider's own address, or to one confirmed as key_origin in engines.json."
     : "For a server on this PC that needs none.");
 }
 

@@ -280,7 +280,8 @@ $S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--mo
 
 **Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment
 variable you name (one ending in `_API_KEY` or `_SPEECH_KEY`). They are never written to a file,
-shown again, or logged.
+shown again, or logged. A key goes only to the address it was entered for (a program's key only
+to that program): point an engine at another address or region and enter its key again.
 
 **When an engine fails** (no key, a refused key, no credit, no network, a busy or broken server),
 Kokoro reads that sentence instead and says once why ("OpenAI cannot be reached. Reading with the
