@@ -2,7 +2,10 @@
 //! through `wav::decode` (float, LIST chunks, placeholder sizes), anything
 //! else is raw 16-bit little-endian mono PCM, unless it is plainly another
 //! format (MP3, Ogg, FLAC, JSON, HTML), which is a `format` error: Sonara
-//! has no decoder for compressed audio and never plays an error page.
+//! has no decoder for compressed audio and never plays an error page. When
+//! the adapter asked for raw PCM, only the reply's `Content-Type` can say
+//! it is compressed: headerless samples often start with bytes that look
+//! like a magic number (sample -1 is an MP3 frame sync).
 use super::error::ExtError;
 use crate::{PcmChunk, Reason};
 
@@ -21,17 +24,47 @@ pub fn rate_from_content_type(ct: &str) -> Option<u32> {
     })
 }
 
-fn sniff_other(body: &[u8]) -> Option<&'static str> {
+/// A compressed format the reply's `Content-Type` names.
+fn named_compressed(ct: &str) -> Option<&'static str> {
+    let mime = ct.split(';').next().unwrap_or_default().trim();
+    let mime = mime.to_ascii_lowercase();
+    if mime.contains("mpeg") || mime.contains("mp3") {
+        Some("MP3")
+    } else if mime.contains("ogg") || mime.contains("opus") {
+        Some("Ogg")
+    } else if mime.contains("flac") {
+        Some("FLAC")
+    } else {
+        None
+    }
+}
+
+/// A full MPEG audio frame header: sync, a version and layer that are not
+/// reserved, a bitrate index that is not 15, a sample-rate index not 3.
+fn mp3_frame(body: &[u8]) -> bool {
+    let [a, b, c, ..] = body else { return false };
+    *a == 0xFF
+        && b & 0xE0 == 0xE0
+        && (b >> 3) & 3 != 1
+        && (b >> 1) & 3 != 0
+        && c >> 4 != 0xF
+        && (c >> 2) & 3 != 3
+}
+
+fn sniff_compressed(body: &[u8]) -> Option<&'static str> {
+    if body.starts_with(b"ID3") || mp3_frame(body) {
+        Some("MP3")
+    } else if body.starts_with(b"OggS") {
+        Some("Ogg")
+    } else if body.starts_with(b"fLaC") {
+        Some("FLAC")
+    } else {
+        None
+    }
+}
+
+fn sniff_text(body: &[u8]) -> Option<&'static str> {
     let first = body.iter().copied().find(|b| !b.is_ascii_whitespace());
-    if body.starts_with(b"ID3") || (body.len() > 1 && body[0] == 0xFF && body[1] & 0xE0 == 0xE0) {
-        return Some("MP3");
-    }
-    if body.starts_with(b"OggS") {
-        return Some("Ogg");
-    }
-    if body.starts_with(b"fLaC") {
-        return Some("FLAC");
-    }
     // Text, not samples: `{"` / `{}` (JSON) or `<` and a tag start (HTML,
     // XML). Raw PCM may start with these bytes too, so the next byte must
     // also fit.
@@ -67,11 +100,14 @@ fn fix_streamed_sizes(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// Decode a 2xx body. `content_type` is the reply's header, `requested`
-/// the rate Sonara asked for (raw PCM only).
+/// the rate Sonara asked for (raw PCM only), `raw_pcm` whether the request
+/// asked for headerless PCM (then the body's first bytes are not sniffed
+/// for compressed formats).
 pub fn decode_body(
     body: &[u8],
     content_type: Option<&str>,
     requested: Option<u32>,
+    raw_pcm: bool,
     label: &str,
 ) -> Result<PcmChunk, ExtError> {
     if body.is_empty() {
@@ -89,7 +125,12 @@ pub fn decode_body(
         })?;
         return Ok(to_mono(pcm));
     }
-    if let Some(kind) = sniff_other(body) {
+    let compressed = match content_type.and_then(named_compressed) {
+        Some(kind) => Some(kind),
+        None if raw_pcm => None,
+        None => sniff_compressed(body),
+    };
+    if let Some(kind) = compressed.or_else(|| sniff_text(body)) {
         return Err(ExtError::new(
             Reason::Format,
             format!("{label} sent {kind}, not WAV/PCM; set response_format to wav"),
@@ -141,7 +182,48 @@ mod tests {
     }
 
     fn decode(body: &[u8], ct: Option<&str>) -> Result<PcmChunk, ExtError> {
-        decode_body(body, ct, Some(24_000), "Test")
+        decode_body(body, ct, Some(24_000), false, "Test")
+    }
+
+    fn decode_raw(body: &[u8], ct: Option<&str>) -> Result<PcmChunk, ExtError> {
+        decode_body(body, ct, Some(24_000), true, "Test")
+    }
+
+    #[test]
+    fn requested_raw_pcm_starting_with_minus_one_is_pcm() {
+        // -1 (FF FF) looks like an MP3 frame sync; 0x0090 then makes the
+        // next bytes a valid frame header.
+        for samples in [vec![-1i16, 0, -2], vec![-1, 0x0090, 5], vec![-5, 1]] {
+            let body: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+            for ct in [None, Some("audio/pcm"), Some("application/octet-stream")] {
+                assert_eq!(decode_raw(&body, ct).unwrap().samples, samples, "{ct:?}");
+            }
+        }
+        // Magic numbers of other formats are samples too.
+        assert!(decode_raw(b"ID3\x04", None).is_ok());
+        assert!(decode_raw(b"OggS", None).is_ok());
+    }
+
+    #[test]
+    fn requested_raw_pcm_still_refuses_named_compressed_audio_and_text() {
+        for ct in ["audio/mpeg", "audio/ogg; codecs=opus", "audio/flac"] {
+            let e = decode_raw(&[0xFF, 0xFF, 0, 0], Some(ct)).unwrap_err();
+            assert_eq!(e.reason, Reason::Format, "{ct}");
+        }
+        assert_eq!(
+            decode_raw(br#"{"error": "x"}"#, None).unwrap_err().reason,
+            Reason::Format
+        );
+    }
+
+    #[test]
+    fn mp3_sniff_needs_a_valid_frame_header() {
+        // Bitrate index 15 and sample-rate index 3 are not MP3.
+        assert!(decode(&[0xFF, 0xFB, 0xF0, 0x00], None).is_ok());
+        assert!(decode(&[0xFF, 0xFB, 0x9C, 0x00], None).is_ok());
+        // Layer 0 and version 1 are reserved.
+        assert!(decode(&[0xFF, 0xF9, 0x90, 0x00], None).is_ok());
+        assert!(decode(&[0xFF, 0xEB, 0x90, 0x00], None).is_ok());
     }
 
     #[test]
@@ -197,7 +279,7 @@ mod tests {
         assert_eq!(out, pcm(vec![1, -2, 3], 16_000));
         let out = decode(&body, Some("application/octet-stream")).unwrap();
         assert_eq!(out.sample_rate, 24_000, "the requested rate");
-        let out = decode_body(&body, None, None, "T").unwrap();
+        let out = decode_body(&body, None, None, false, "T").unwrap();
         assert_eq!(out.sample_rate, DEFAULT_RATE);
     }
 

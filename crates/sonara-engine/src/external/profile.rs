@@ -51,8 +51,51 @@ impl Kind {
     /// Whether this build implements the kind (a profile of another kind is
     /// kept in `engines.json` and listed, not registered).
     pub fn implemented(&self) -> bool {
-        matches!(self, Kind::OpenAiCompatible)
+        matches!(
+            self,
+            Kind::OpenAiCompatible | Kind::ElevenLabs | Kind::Azure | Kind::Google
+        )
     }
+
+    /// Spoken in cues and shown when a profile has no label.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Kind::OpenAiCompatible => "The speech server",
+            Kind::ElevenLabs => "ElevenLabs",
+            Kind::Azure => "Azure Speech",
+            Kind::Google => "Google Text-to-Speech",
+            Kind::Cartesia => "Cartesia",
+            Kind::Deepgram => "Deepgram",
+            Kind::Command => "The speech program",
+        }
+    }
+}
+
+/// ElevenLabs' default model (spec 5.4).
+pub const ELEVENLABS_MODEL: &str = "eleven_flash_v2_5";
+/// ElevenLabs' raw PCM formats (`pcm_44100` needs the Pro tier).
+pub const ELEVENLABS_FORMATS: &[&str] = &["pcm_16000", "pcm_22050", "pcm_24000", "pcm_44100"];
+/// Azure's raw 16-bit mono PCM formats and their rates.
+pub const AZURE_FORMATS: &[(&str, u32)] = &[
+    ("raw-8khz-16bit-mono-pcm", 8_000),
+    ("raw-16khz-16bit-mono-pcm", 16_000),
+    ("raw-22050hz-16bit-mono-pcm", 22_050),
+    ("raw-24khz-16bit-mono-pcm", 24_000),
+    ("raw-44100hz-16bit-mono-pcm", 44_100),
+    ("raw-48khz-16bit-mono-pcm", 48_000),
+];
+
+/// The locale a voice name starts with: `en-US-AvaMultilingualNeural` and
+/// `en-US-Chirp3-HD-Kore` give `en-US`; a name without one gives `None`.
+pub fn voice_locale(voice: &str) -> Option<String> {
+    let mut parts = voice.splitn(3, '-');
+    let (lang, region, rest) = (parts.next()?, parts.next()?, parts.next()?);
+    let ok = (2..=3).contains(&lang.len())
+        && lang.chars().all(|c| c.is_ascii_lowercase())
+        && (2..=4).contains(&region.len())
+        && region.chars().all(|c| c.is_ascii_alphanumeric())
+        && !rest.is_empty();
+    ok.then(|| format!("{lang}-{region}"))
 }
 
 /// The kinds this build implements, in wire order (`engine_list.kinds`).
@@ -450,6 +493,19 @@ pub struct Profile {
 
 /// Options every kind accepts.
 const COMMON_OPTIONS: &[&str] = &["timeout_ms", "prefetch", "allow_http"];
+/// Options of `elevenlabs`.
+const ELEVENLABS_OPTIONS: &[&str] = &[
+    "output_format",
+    "stability",
+    "similarity_boost",
+    "style",
+    "language_code",
+    "enable_logging",
+];
+/// Options of `azure`.
+const AZURE_OPTIONS: &[&str] = &["region", "output_format", "lang"];
+/// Options of `google`.
+const GOOGLE_OPTIONS: &[&str] = &["language_code", "sample_rate", "user_project", "model_name"];
 /// Options of `openai-compatible`.
 const OPENAI_OPTIONS: &[&str] = &[
     "preset",
@@ -479,6 +535,41 @@ fn plain_text(field: &str, s: &str, max: usize) -> Result<(), ProfileError> {
         return Err(invalid(format!("'{field}' has control characters")));
     }
     Ok(())
+}
+
+fn num_in(o: &Map<String, Value>, field: &str, lo: f64, hi: f64) -> Result<(), ProfileError> {
+    match o.get(field) {
+        None => Ok(()),
+        Some(v) => match v.as_f64() {
+            Some(n) if (lo..=hi).contains(&n) => Ok(()),
+            _ => Err(invalid(format!(
+                "option '{field}' must be a number from {lo} to {hi}"
+            ))),
+        },
+    }
+}
+
+/// A string option of 1 to `max` characters, each `allowed`.
+fn word(
+    o: &Map<String, Value>,
+    field: &str,
+    max: usize,
+    allowed: fn(char) -> bool,
+    what: &str,
+) -> Result<(), ProfileError> {
+    match o.get(field) {
+        None => Ok(()),
+        Some(v) => match v.as_str() {
+            Some(s) if !s.is_empty() && s.chars().count() <= max && s.chars().all(allowed) => {
+                Ok(())
+            }
+            _ => Err(invalid(format!("option '{field}' must be {what}"))),
+        },
+    }
+}
+
+fn lang_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
 fn int_in(
@@ -543,9 +634,13 @@ impl Profile {
         Ok(p)
     }
 
-    /// `none` for a local server, `credman` otherwise (spec 5.2).
+    /// `none` for a local OpenAI-compatible server and a program,
+    /// `credman` otherwise (spec 5.2): a cloud kind always needs a key, even
+    /// when its url points at a local proxy.
     pub fn default_key_ref(&self) -> KeyRef {
-        if self.kind == Kind::Command || self.parsed_url().is_some_and(|u| u.is_loopback()) {
+        let local_server = self.kind == Kind::OpenAiCompatible
+            && self.parsed_url().is_some_and(|u| u.is_loopback());
+        if self.kind == Kind::Command || local_server {
             KeyRef::None
         } else {
             KeyRef::CredMan
@@ -626,6 +721,36 @@ impl Profile {
                 ));
             }
         }
+        let kind = self.kind.as_str();
+        match self.kind {
+            Kind::ElevenLabs if self.voice.is_none() => {
+                return Err(invalid(
+                    "kind 'elevenlabs' needs a voice (a voice_id from your voice library)",
+                ));
+            }
+            Kind::Azure if self.voice.is_none() => {
+                return Err(invalid(
+                    "kind 'azure' needs a voice (a name such as en-US-AvaMultilingualNeural)",
+                ));
+            }
+            Kind::Google if self.voice.is_none() => {
+                return Err(invalid(
+                    "kind 'google' needs a voice (a name such as en-US-Chirp3-HD-Kore)",
+                ));
+            }
+            Kind::Azure if self.url.is_none() && self.option_str("region").is_none() => {
+                return Err(invalid("kind 'azure' needs options.region or url"));
+            }
+            Kind::Azure | Kind::Google if self.model.is_some() => {
+                let hint = if self.kind == Kind::Google {
+                    " (a Gemini TTS model goes in options.model_name)"
+                } else {
+                    ""
+                };
+                return Err(invalid(format!("kind '{kind}' takes no model{hint}")));
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -633,6 +758,9 @@ impl Profile {
         let o = &self.options;
         let kind_opts: &[&str] = match self.kind {
             Kind::OpenAiCompatible => OPENAI_OPTIONS,
+            Kind::ElevenLabs => ELEVENLABS_OPTIONS,
+            Kind::Azure => AZURE_OPTIONS,
+            Kind::Google => GOOGLE_OPTIONS,
             _ => &[],
         };
         if let Some(k) = o
@@ -692,6 +820,78 @@ impl Profile {
                 }
             }
         }
+        self.validate_cloud_options()
+    }
+
+    /// The options of `elevenlabs`, `azure` and `google` (spec 5.4).
+    fn validate_cloud_options(&self) -> Result<(), ProfileError> {
+        let o = &self.options;
+        match self.kind {
+            Kind::ElevenLabs => {
+                if let Some(v) = o.get("output_format") {
+                    if !v.as_str().is_some_and(|f| ELEVENLABS_FORMATS.contains(&f)) {
+                        return Err(invalid(format!(
+                            "option 'output_format' must be one of {}",
+                            ELEVENLABS_FORMATS.join(", ")
+                        )));
+                    }
+                }
+                for f in ["stability", "similarity_boost", "style"] {
+                    num_in(o, f, 0.0, 1.0)?;
+                }
+                word(
+                    o,
+                    "language_code",
+                    16,
+                    lang_char,
+                    "a language code such as en",
+                )?;
+                if o.get("enable_logging").is_some_and(|v| !v.is_boolean()) {
+                    return Err(invalid("option 'enable_logging' must be true or false"));
+                }
+            }
+            Kind::Azure => {
+                word(
+                    o,
+                    "region",
+                    40,
+                    |c| c.is_ascii_lowercase() || c.is_ascii_digit(),
+                    "an Azure region such as westeurope (a-z, 0-9)",
+                )?;
+                if let Some(v) = o.get("output_format") {
+                    if !v
+                        .as_str()
+                        .is_some_and(|f| AZURE_FORMATS.iter().any(|(n, _)| *n == f))
+                    {
+                        let all: Vec<&str> = AZURE_FORMATS.iter().map(|(n, _)| *n).collect();
+                        return Err(invalid(format!(
+                            "option 'output_format' must be one of {}",
+                            all.join(", ")
+                        )));
+                    }
+                }
+                word(o, "lang", 35, lang_char, "a locale such as en-US")?;
+            }
+            Kind::Google => {
+                word(o, "language_code", 35, lang_char, "a locale such as en-US")?;
+                int_in(o, "sample_rate", 8000..=48_000)?;
+                word(
+                    o,
+                    "user_project",
+                    100,
+                    |c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_'),
+                    "a Google Cloud project id",
+                )?;
+                word(
+                    o,
+                    "model_name",
+                    100,
+                    |c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '/'),
+                    "a model name such as gemini-2.5-flash-tts",
+                )?;
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -747,6 +947,7 @@ impl Profile {
     pub fn effective_model(&self) -> Option<String> {
         self.model.clone().or_else(|| match self.kind {
             Kind::OpenAiCompatible => self.preset().default_model().map(str::to_string),
+            Kind::ElevenLabs => Some(ELEVENLABS_MODEL.into()),
             _ => None,
         })
     }
@@ -765,7 +966,7 @@ impl Profile {
         }
         match self.kind {
             Kind::OpenAiCompatible => self.preset().display_name().to_string(),
-            k => k.as_str().to_string(),
+            k => k.display_name().to_string(),
         }
     }
 
@@ -1051,17 +1252,25 @@ mod tests {
     #[test]
     fn unknown_kinds_are_unsupported_not_invalid() {
         assert_eq!(
-            parse(json!({"id": "el", "kind": "elevenlabs", "voice": "x"})),
+            parse(json!({"id": "ca", "kind": "cartesia", "voice": "x"})),
             Err(ProfileError::Unsupported {
-                id: "el".into(),
-                kind: "elevenlabs".into()
+                id: "ca".into(),
+                kind: "cartesia".into()
             })
         );
         assert!(matches!(
             parse(json!({"id": "x", "kind": "future-kind"})),
             Err(ProfileError::Unsupported { .. })
         ));
-        assert_eq!(implemented_kinds(), vec![Kind::OpenAiCompatible]);
+        assert_eq!(
+            implemented_kinds(),
+            vec![
+                Kind::OpenAiCompatible,
+                Kind::ElevenLabs,
+                Kind::Azure,
+                Kind::Google
+            ]
+        );
     }
 
     #[test]
@@ -1154,5 +1363,159 @@ mod tests {
                 "url": "https://api.openai.com/v1", "model": "gpt-4o-mini-tts", "voice": "marin",
                 "key_ref": "credman", "options": {"preset": "openai"}})
         );
+    }
+
+    fn with(base: Value, extra: Value) -> Value {
+        let mut v = base;
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        v
+    }
+
+    #[test]
+    fn elevenlabs_profiles() {
+        let el = |extra: Value| {
+            with(
+                json!({"id": "el", "kind": "elevenlabs", "voice": "JBFqnCBsd6RMkjVDRZzb"}),
+                extra,
+            )
+        };
+        let p = parse(el(json!({}))).unwrap();
+        assert_eq!(p.base_url().as_deref(), Some("https://api.elevenlabs.io"));
+        assert_eq!(p.effective_model().as_deref(), Some("eleven_flash_v2_5"));
+        assert_eq!(p.key_ref, KeyRef::CredMan);
+        assert_eq!(p.display_label(), "ElevenLabs");
+        assert_eq!(p.sends_text_to(), "api.elevenlabs.io");
+        assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
+        assert_eq!(
+            err(json!({"id": "el", "kind": "elevenlabs"})),
+            "kind 'elevenlabs' needs a voice (a voice_id from your voice library)"
+        );
+        // A cloud kind keeps credman even behind a loopback url.
+        let proxy = parse(el(json!({"url": "http://127.0.0.1:9"}))).unwrap();
+        assert_eq!(proxy.key_ref, KeyRef::CredMan);
+        assert!(parse(el(json!({"options": {"output_format": "pcm_44100",
+            "stability": 0.5, "similarity_boost": 1, "style": 0, "language_code": "de",
+            "enable_logging": false}})))
+        .is_ok());
+        for (opts, msg) in [
+            (json!({"output_format": "mp3_44100_128"}), "output_format"),
+            (json!({"stability": 1.5}), "stability"),
+            (json!({"similarity_boost": "high"}), "similarity_boost"),
+            (json!({"style": -0.1}), "style"),
+            (json!({"language_code": "e n"}), "language_code"),
+            (json!({"enable_logging": "no"}), "enable_logging"),
+            (
+                json!({"region": "x"}),
+                "unknown option 'region' for kind 'elevenlabs'",
+            ),
+        ] {
+            assert!(err(el(json!({"options": opts}))).contains(msg), "{opts}");
+        }
+    }
+
+    #[test]
+    fn azure_profiles() {
+        let az = |extra: Value| {
+            with(
+                json!({"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+                    "options": {"region": "westeurope"}}),
+                extra,
+            )
+        };
+        let p = parse(az(json!({}))).unwrap();
+        assert_eq!(
+            p.base_url().as_deref(),
+            Some("https://westeurope.tts.speech.microsoft.com")
+        );
+        assert_eq!(p.sends_text_to(), "westeurope.tts.speech.microsoft.com");
+        assert_eq!(p.display_label(), "Azure Speech");
+        assert_eq!(p.key_ref, KeyRef::CredMan);
+        let by_url = parse(
+            json!({"id": "az", "kind": "azure", "voice": "en-US-AvaNeural",
+            "url": "https://eastus.tts.speech.microsoft.com/"}),
+        )
+        .unwrap();
+        assert_eq!(
+            by_url.base_url().as_deref(),
+            Some("https://eastus.tts.speech.microsoft.com")
+        );
+        assert_eq!(
+            err(json!({"id": "az", "kind": "azure", "voice": "en-US-AvaNeural"})),
+            "kind 'azure' needs options.region or url"
+        );
+        assert!(
+            err(json!({"id": "az", "kind": "azure", "options": {"region": "eastus"}}))
+                .contains("needs a voice")
+        );
+        assert_eq!(
+            err(az(json!({"model": "x"}))),
+            "kind 'azure' takes no model"
+        );
+        assert!(parse(az(json!({"options": {"region": "eastus2",
+            "output_format": "raw-48khz-16bit-mono-pcm", "lang": "en-GB"}})))
+        .is_ok());
+        for (opts, msg) in [
+            (json!({"region": "West Europe"}), "region"),
+            (
+                json!({"region": "westeurope", "output_format": "riff-24khz-16bit-mono-pcm"}),
+                "output_format",
+            ),
+            (json!({"region": "westeurope", "lang": "<x>"}), "lang"),
+        ] {
+            assert!(err(az(json!({"options": opts}))).contains(msg), "{opts}");
+        }
+    }
+
+    #[test]
+    fn google_profiles() {
+        let g = |extra: Value| {
+            with(
+                json!({"id": "g", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"}),
+                extra,
+            )
+        };
+        let p = parse(g(json!({}))).unwrap();
+        assert_eq!(
+            p.base_url().as_deref(),
+            Some("https://texttospeech.googleapis.com")
+        );
+        assert_eq!(p.display_label(), "Google Text-to-Speech");
+        assert_eq!(p.key_ref, KeyRef::CredMan);
+        assert!(err(g(json!({"model": "gemini"}))).contains("options.model_name"));
+        assert!(parse(g(
+            json!({"options": {"language_code": "en-US", "sample_rate": 16000,
+            "user_project": "my-project-1", "model_name": "gemini-2.5-flash-tts"}})
+        ))
+        .is_ok());
+        for (opts, msg) in [
+            (json!({"sample_rate": 96000}), "sample_rate"),
+            (json!({"user_project": "a b"}), "user_project"),
+            (json!({"language_code": ""}), "language_code"),
+            (json!({"model_name": "x?y"}), "model_name"),
+        ] {
+            assert!(err(g(json!({"options": opts}))).contains(msg), "{opts}");
+        }
+    }
+
+    #[test]
+    fn locales_come_from_voice_names() {
+        assert_eq!(
+            voice_locale("en-US-AvaMultilingualNeural").as_deref(),
+            Some("en-US")
+        );
+        assert_eq!(
+            voice_locale("en-US-Chirp3-HD-Kore").as_deref(),
+            Some("en-US")
+        );
+        assert_eq!(voice_locale("cmn-CN-Wavenet-A").as_deref(), Some("cmn-CN"));
+        assert_eq!(
+            voice_locale("zh-CN-henan-YundengNeural").as_deref(),
+            Some("zh-CN")
+        );
+        assert_eq!(voice_locale("Kore"), None);
+        assert_eq!(voice_locale("en-US"), None);
+        assert_eq!(voice_locale("JBFqnCBsd6RMkjVDRZzb"), None);
     }
 }

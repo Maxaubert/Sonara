@@ -22,8 +22,9 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
   `KeyResolver`), `error.rs` (`ExtError`, cue texts), `health.rs` (breaker, blocked state, the
   once-per-episode cue; injectable clock), `cache.rs` (cue cache), `audio.rs` (body to PCM),
   `rate.rs`, `split.rs`, `worker.rs` (a request on its own thread, a wait `cancel` ends),
-  `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes), `openai.rs` (kind
-  `openai-compatible`), `mod.rs` (the `External` engine: fallback with the cue, retry policy,
+  `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes, paged voice lists),
+  `openai.rs` (kind `openai-compatible`), `elevenlabs.rs`, `azure.rs` (SSML, XML escaping),
+  `google.rs` (base64 `audioContent`), `mod.rs` (the `External` engine: fallback with the cue, retry policy,
   status). `http.rs` holds the `ureq` agent shared with the Kokoro download.
 - `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or
   the fake engine) as its fallback, registration in the reader's and the previews' registries,

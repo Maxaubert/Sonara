@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 pub const USAGE: &str = "usage: sonara engines <command>
 
   list                       the engines you added, with their key and status
-  add <id> --kind openai-compatible [--preset P] [--url U] [--model M]
+  add <id> [--kind K] [--preset P] [--url U] [--model M]
           [--voice V] [--label L] [--key-env NAME | --no-key]
           [--option KEY=VALUE ...] [--replace]
                              add (or with --replace, change) an engine; it is
@@ -18,8 +18,12 @@ pub const USAGE: &str = "usage: sonara engines <command>
   test <id> [TEXT]           speak one sentence with it, with no fallback
   remove <id> [--keep-key]   remove it (and its stored key)
 
+Kinds: openai-compatible (the default), elevenlabs, azure, google.
 Presets of openai-compatible: openai, kokoro-fastapi, localai, speaches,
-openedai-speech, chatterbox-api, chatterbox-server, generic.";
+openedai-speech, chatterbox-api, chatterbox-server, generic.
+Examples: add el --kind elevenlabs --voice <voice_id>
+          add az --kind azure --voice en-US-AvaMultilingualNeural --option region=westeurope
+          add gg --kind google --voice en-US-Chirp3-HD-Kore";
 
 /// What a command asks of the runtime.
 #[derive(Debug, Clone, PartialEq)]
@@ -367,6 +371,30 @@ mod tests {
         let Action::Request(r) = a else { panic!() };
         assert_eq!(r["engine"]["key_ref"], "env:OPENAI_API_KEY");
         assert!(r["engine"].get("options").is_none());
+    }
+
+    #[test]
+    fn add_a_cloud_kind_with_its_options() {
+        let a = p(&[
+            "add",
+            "az",
+            "--kind",
+            "azure",
+            "--voice",
+            "en-US-AvaMultilingualNeural",
+            "--option",
+            "region=westeurope",
+            "--key-env",
+            "AZURE_SPEECH_KEY",
+        ])
+        .unwrap();
+        assert_eq!(
+            a,
+            Action::Request(json!({"type": "engine_add", "replace": false, "engine": {
+                "id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+                "key_ref": "env:AZURE_SPEECH_KEY", "options": {"region": "westeurope"}}}))
+        );
+        assert!(USAGE.contains("elevenlabs, azure, google"));
     }
 
     #[test]

@@ -18,8 +18,11 @@
 //!   provider's auth header, over https or to a loopback host.
 pub mod adapter;
 pub mod audio;
+pub mod azure;
 pub mod cache;
+pub mod elevenlabs;
 pub mod error;
+pub mod google;
 pub mod health;
 pub mod keys;
 pub mod openai;
@@ -32,7 +35,7 @@ use crate::{
     Engine, EngineId, EngineStatus, Error, LicenseClass, PcmChunk, PcmStream, Readiness, Reason,
     Result, Voice,
 };
-use adapter::{execute, Adapter, VoiceSource, MAX_AUDIO_BODY, MAX_LIST_BODY};
+use adapter::{execute, Adapter, HttpRequest, VoiceSource, MAX_AUDIO_BODY, MAX_LIST_BODY};
 use cache::CueCache;
 use error::{cue_text, ExtError};
 use health::{Clock, Health, View};
@@ -48,6 +51,8 @@ pub const RETRY_AFTER_MAX: Duration = Duration::from_millis(1500);
 pub const VOICES_TTL: Duration = Duration::from_secs(600);
 /// A voice-list request may take this long.
 pub const VOICES_TIMEOUT: Duration = Duration::from_secs(10);
+/// At most this many pages of a paged voice list are read.
+pub const VOICES_MAX_PAGES: usize = 50;
 
 /// What happened, for the host's log (spec 8.3). `reason: None` is a
 /// recovery after failures.
@@ -124,6 +129,9 @@ pub struct External {
 fn adapter_for(p: &Profile) -> std::result::Result<Arc<dyn Adapter>, ProfileError> {
     match p.kind {
         Kind::OpenAiCompatible => Ok(Arc::new(openai::OpenAi::new(p))),
+        Kind::ElevenLabs => Ok(Arc::new(elevenlabs::ElevenLabs::new(p))),
+        Kind::Azure => Ok(Arc::new(azure::Azure::new(p))),
+        Kind::Google => Ok(Arc::new(google::Google::new(p))),
         other => Err(ProfileError::Unsupported {
             id: p.id.clone(),
             kind: other.as_str().to_string(),
@@ -260,13 +268,8 @@ impl External {
                 .map_err(|_| Error::Cancelled)?;
             let outcome = match reply {
                 Err(e) => Err(e),
-                Ok(r) if r.ok() => audio::decode_body(
-                    &r.body,
-                    r.content_type.as_deref(),
-                    self.adapter.requested_rate(),
-                    &self.label,
-                ),
-                Ok(r) => Err(self.adapter.map_error(&r, voice)),
+                Ok(r) if r.ok() => self.adapter.audio(&r, &self.label),
+                Ok(r) => Err(self.adapter.map_error(&r, voice, self.voice_listed(voice))),
             };
             match outcome {
                 Err(e)
@@ -365,6 +368,37 @@ impl External {
         list
     }
 
+    /// Whether `voice` is in the last fetched list (`None`: none fetched).
+    fn voice_listed(&self, voice: &str) -> Option<bool> {
+        self.voices
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .map(|(_, list)| list.iter().any(|v| v.id == voice))
+    }
+
+    /// Fetch a voice list, following the pages of a paged one.
+    fn fetch_voices(
+        &self,
+        first: HttpRequest,
+        key: Option<&Secret>,
+    ) -> std::result::Result<Vec<adapter::VoiceInfo>, ExtError> {
+        let mut out = Vec::new();
+        let mut next = Some(first);
+        for _ in 0..VOICES_MAX_PAGES {
+            let Some(request) = next.take() else { break };
+            let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
+            if !r.ok() {
+                return Err(self.adapter.map_error(&r, "", None));
+            }
+            out.extend(self.adapter.parse_voices(&r.body)?);
+            next = self.adapter.next_voices_page(&r.body, key);
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|v| seen.insert(v.id.clone()));
+        Ok(out)
+    }
+
     /// Whether the voice cache is older than `VOICES_TTL` (or empty).
     pub fn voices_stale(&self) -> bool {
         let now = (self.clock)();
@@ -409,21 +443,11 @@ impl Engine for External {
             VoiceSource::Fetch {
                 request,
                 empty_on_error,
-            } => {
-                let got = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)
-                    .and_then(|r| {
-                        if r.ok() {
-                            self.adapter.parse_voices(&r.body)
-                        } else {
-                            Err(self.adapter.map_error(&r, ""))
-                        }
-                    });
-                match got {
-                    Ok(v) => v,
-                    Err(_) if empty_on_error => Vec::new(),
-                    Err(e) => return Err(e.into_engine_error()),
-                }
-            }
+            } => match self.fetch_voices(request, key.as_ref()) {
+                Ok(v) => v,
+                Err(_) if empty_on_error => Vec::new(),
+                Err(e) => return Err(e.into_engine_error()),
+            },
         };
         let list: Vec<Voice> = list.into_iter().map(|v| self.voice_entry(v)).collect();
         *self.voices.lock().unwrap_or_else(|p| p.into_inner()) = Some(((self.clock)(), list));

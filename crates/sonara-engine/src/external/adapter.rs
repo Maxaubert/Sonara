@@ -2,11 +2,12 @@
 //! request and maps the reply's errors; `execute` runs a request with the
 //! profile's agent; `ErrorBody` reads the error shapes the researched
 //! servers send (spec 13.2).
+use super::audio::decode_body;
 use super::error::{clean, ExtError};
 use super::keys::Secret;
 use super::profile::Url;
 use super::split::Limit;
-use crate::Reason;
+use crate::{PcmChunk, Reason};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -133,10 +134,45 @@ pub trait Adapter: Send + Sync {
         -> HttpRequest;
     /// The rate asked for, for raw PCM without a rate in its reply.
     fn requested_rate(&self) -> Option<u32>;
-    /// The reason and message of a non-2xx reply.
-    fn map_error(&self, reply: &HttpReply, voice: &str) -> ExtError;
+    /// Whether the request asks for headerless PCM: then a reply is
+    /// compressed audio only when its `Content-Type` says so, since samples
+    /// may start with bytes that look like a magic number.
+    fn raw_pcm(&self) -> bool {
+        false
+    }
+    /// The reason and message of a non-2xx reply. `listed` says whether
+    /// `voice` is in the last fetched voice list (`None`: no list yet).
+    fn map_error(&self, reply: &HttpReply, voice: &str, listed: Option<bool>) -> ExtError;
+    /// The audio of a 2xx reply: by default the body is WAV or raw PCM
+    /// (Google wraps it in JSON).
+    fn audio(&self, reply: &HttpReply, label: &str) -> Result<PcmChunk, ExtError> {
+        decode_body(
+            &reply.body,
+            reply.content_type.as_deref(),
+            self.requested_rate(),
+            self.raw_pcm(),
+            label,
+        )
+    }
     fn voices(&self, key: Option<&Secret>) -> VoiceSource;
     fn parse_voices(&self, body: &[u8]) -> Result<Vec<VoiceInfo>, ExtError>;
+    /// The request for the next page of a paged voice list (ElevenLabs),
+    /// from the body of the page just read; `None` when it was the last.
+    fn next_voices_page(&self, _body: &[u8], _key: Option<&Secret>) -> Option<HttpRequest> {
+        None
+    }
+}
+
+/// Percent-encode a query value or a path segment.
+pub fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Run one request with `agent`; transport failures are `network` or
@@ -391,6 +427,10 @@ mod tests {
         ));
         assert!(key_allowed("https://tts.example.com/v1/voices?page=2#x"));
         assert!(!key_allowed("http://10.0.0.5/v1/voices?model=m"));
+        assert!(key_allowed(
+            "https://api.elevenlabs.io/v1/text-to-speech/x?output_format=pcm_24000"
+        ));
+        assert!(!key_allowed("http://example.com/v1?x=https://"));
     }
 
     #[test]
