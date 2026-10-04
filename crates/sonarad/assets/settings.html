@@ -225,7 +225,7 @@
     .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
     .btn.primary:hover { color:var(--on-accent); filter:brightness(1.08); }
     .btn.danger:hover { color:var(--red); border-color:var(--red); background:var(--red-wash); }
-    .list-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 4px 0; }
+    .list-actions { display:flex; align-items:center; justify-content:flex-end; gap:16px; padding:12px 4px 0; }
     .list-actions .btn { flex-shrink:0; }
     form.inset[hidden], .group-label[hidden] { display:none; }
     .field-pair { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:9px; }
@@ -348,8 +348,7 @@
           <div id="profile-rows" role="list" aria-label="Your engines"></div>
           <p class="hint" id="engines-empty" style="padding:16px 20px;margin:0">No engines added. Kokoro, built in, reads everything.</p>
         </div>
-        <div class="list-actions"><p class="hint" style="margin:0">An engine reads only once you choose Use. Kokoro stays the stand-in: if an engine fails, Kokoro reads that sentence and says once why.</p><button class="btn" id="engine-new" type="button">Add an engine</button></div>
-        <p class="hint" id="engines-command-note" style="margin:0;padding:8px 4px 0">A program on this PC, such as Piper, is never set up here: it runs a program, so only you add it, with <span class="path" style="white-space:nowrap">sonara.exe engines add &lt;name&gt; --kind command</span> or in <span class="path">engines.json</span>. Once added, it shows up here to use, test or remove.</p>
+        <div class="list-actions"><button class="btn" id="engine-new" type="button">Add an engine</button></div>
         <div class="form-title" id="ef-head" hidden><h2 class="group-label" id="ef-title">Add an engine</h2><span class="badge quiet" id="ef-badge"></span></div>
         <form class="inset" id="engine-form" aria-labelledby="ef-title" aria-describedby="ef-legend" novalidate hidden>
           <p class="form-legend" id="ef-legend"><span class="req" aria-hidden="true">*</span> Required field</p>

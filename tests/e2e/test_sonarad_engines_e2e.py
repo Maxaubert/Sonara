@@ -410,7 +410,6 @@ def test_the_form_never_offers_a_program_on_this_pc(live, browser):
     # or `sonara engines add`), never from the settings page.
     lv = live()
     page, _ = open_engines(browser, lv.url)
-    pw.expect(page.locator("#engines-command-note")).to_contain_text("sonara.exe engines add")
     page.click("#engine-new")
     kinds = page.locator("#ef-kind option").evaluate_all("os => os.map(o => o.value)")
     assert "command" not in kinds and "openai-compatible" in kinds, kinds
