@@ -1,6 +1,6 @@
 //! Protocol handlers of the external engine messages (spec 10.2):
-//! `engine_list`, `engine_add`, `engine_key`, `engine_test`, and the
-//! `refresh` of `voices`. `engine_remove` is in `protocol.rs`, which owns
+//! `engine_list`, `engine_add`, `engine_key`, `engine_test`, the
+//! `refresh` of `voices` and its `profile` (an unsaved one, protocol 1.4). `engine_remove` is in `protocol.rs`, which owns
 //! `set engine` (the current engine is switched away first).
 use crate::cues;
 use crate::engines::Engines;
@@ -14,6 +14,14 @@ use sonara_reader::{Key, ReaderHandle};
 pub const TEST_TEXT: &str = "Hello. This is how Sonara sounds with this voice.";
 /// The longest `engine_test` text.
 pub const TEST_MAX: usize = 300;
+/// The `voices` `error` while Sonara is muted (#227): no voice list is
+/// fetched meanwhile.
+pub const MUTED_VOICES: &str =
+    "Sonara is muted, so nothing is sent to the provider: the voices are fetched once it is unmuted.";
+
+fn muted_error() -> Value {
+    json!({"reason": "muted", "message": MUTED_VOICES})
+}
 
 /// The refusal when the host does not allow external engines.
 pub fn refused() -> Failure {
@@ -109,7 +117,9 @@ pub fn key(engines: &Engines, m: &Map<String, Value>) -> Handled {
 }
 
 /// `engine_test` `{engine, text?, voice?, play?}`: one synthesis with no
-/// fallback, at the current rate, played over whatever is read.
+/// fallback, at the current rate, played over whatever is read. The user
+/// pressed Test, so it reaches the provider even while Sonara is muted
+/// (#227).
 ///
 /// `admit` is taken only to play the clip, after the provider answered:
 /// the round trip must not hold up speech or controls.
@@ -165,8 +175,43 @@ pub fn test<G>(
     Ok((f, After::Nothing))
 }
 
+/// `voices` `{profile, secret?}` (protocol 1.4, #227): the voices of a
+/// profile that is not saved (`Engines::draft_voices`); a failed fetch is
+/// an empty list with `error`, as for a saved one. While Sonara is muted
+/// nothing is fetched (`error.reason` `muted`).
+pub fn draft_voices(engines: &Engines, m: &Map<String, Value>) -> Handled {
+    let profile = m.get("profile").ok_or_else(|| bad("missing 'profile'"))?;
+    let secret = match m.get("secret") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.is_empty() => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(_) => return Err(bad("'secret' must be a string")),
+    };
+    let (list, error) = engines.draft_voices(profile, secret)?;
+    let mut f = Map::new();
+    f.insert(
+        "voices".into(),
+        Value::Array(list.iter().map(wire::voice_json).collect()),
+    );
+    if engines.hold().is_held() {
+        f.insert("error".into(), muted_error());
+    } else if let Some(e) = error {
+        let failure = engine_failure(e);
+        f.insert(
+            "error".into(),
+            json!({
+                "reason": failure.reason.unwrap_or("network"),
+                "message": failure.message,
+            }),
+        );
+    }
+    Ok((f, After::Nothing))
+}
+
 /// `voices` for a profile: fetched again when the cache is old or
 /// `refresh` is set; a failure keeps the known voices and adds `error`.
+/// While Sonara is muted nothing is fetched: the known voices, with
+/// `error.reason` `muted` when a fetch was due (#227).
 pub fn voices(
     engines: &Engines,
     reader: &ReaderHandle,
@@ -176,7 +221,9 @@ pub fn voices(
     let ext = engines.get(engine)?;
     let mut f = Map::new();
     let mut error = None;
-    if refresh || ext.voices_stale() {
+    if (refresh || ext.voices_stale()) && engines.hold().is_held() {
+        error = Some(muted_error());
+    } else if refresh || ext.voices_stale() {
         if let Err(e) = reader.refresh_voices(engine) {
             let failure = match e {
                 sonara_reader::Error::Engine(e) => engine_failure(e),

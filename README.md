@@ -166,7 +166,8 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine's status (Kokoro, with Windows' voice standing in while it downloads), voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
+| Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and live reading: Immediately, Queue (with its queue size) or When done |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
 | Sessions | A name and audio on/off per Claude Code session, and switch announcements |
@@ -236,6 +237,68 @@ are missing, so synthesis fails with "file not found". The repair: remove and re
 (United States)* under *Settings > Time & language > Speech > Manage voices*, or in an elevated
 prompt run `DISM /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0`.
 Kokoro voices are unaffected.
+
+## Speech engines
+
+Besides Kokoro and the Windows voices, Sonara can read with a speech engine you add: a cloud
+voice, a speech server on your PC, or a speech program of your own. Nothing is sent anywhere
+until you add one **and** choose *Use*.
+
+| Kind | What it is | Key | Speaking rate it can follow |
+|---|---|---|---|
+| `openai-compatible`, preset `openai` | OpenAI's speech API (`gpt-4o-mini-tts`, voices such as `marin`) | yes | all (100 to 400 wpm) |
+| `openai-compatible`, presets `kokoro-fastapi`, `localai`, `speaches`, `openedai-speech`, `chatterbox-api`, `chatterbox-server`, `generic` | A server on your PC (or network) that speaks OpenAI's API | usually none | all, if the server follows it (Chatterbox servers ignore it) |
+| `elevenlabs` | ElevenLabs (a voice id, cloned voices too) | yes | 140 to 240 wpm (faster stays at 240) |
+| `azure` | Azure AI Speech (a region and a voice such as `en-US-AvaMultilingualNeural`) | yes | all |
+| `google` | Google Cloud Text-to-Speech (a voice such as `en-US-Chirp3-HD-Kore`) | yes | all |
+| `cartesia` | Cartesia (a voice id) | yes | 120 to 300 wpm |
+| `deepgram` | Deepgram Aura (a voice such as `aura-2-thalia-en`) | yes | 140 to 300 wpm (not yet confirmed live) |
+| `command` | A program of yours on this PC (an `.exe`, for example Piper): text in, WAV or PCM out | none | gets `{rate}` and `{speed}` to use as it likes |
+
+**Add one** on the settings page under **Engines** (*Add an engine*: pick the kind, give it a
+name, paste the key, save; its voices are then listed), or with the CLI from Git Bash:
+
+```bash
+S="bash <plugin folder>/bin/sonara"
+$S engines add openai --preset openai        # OpenAI
+$S engines key openai                        # paste the key when asked (never an argument)
+$S engines add gpu --preset kokoro-fastapi --url http://127.0.0.1:8880/v1 --no-key
+$S engines test openai                       # one sentence, with no stand-in
+$S engines use openai                        # read with it; `use kokoro` goes back
+$S engines list                              # every engine, its key and status
+```
+
+A **program on this PC** (`command`) is never added on the settings page or by any app over
+the API, since it runs a program: add it yourself with the CLI or in `engines.json` in the home.
+The settings page then lists it to use, test or remove.
+
+```bash
+$S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--model","C:\\piper\\en_US-amy-medium.onnx","--output_file","{out}"]' --option output=file
+```
+
+`sonara engines --help` lists the options of every kind.
+
+**Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment
+variable you name (one ending in `_API_KEY` or `_SPEECH_KEY`). They are never written to a file,
+shown again, or logged. A key goes only to the address it was entered for (a program's key only
+to that program): point an engine at another address or region and enter its key again.
+
+**When an engine fails** (no key, a refused key, no credit, no network, a busy or broken server),
+Kokoro reads that sentence instead and says once why ("OpenAI cannot be reached. Reading with the
+built-in voice."); after two failures in a row Sonara stops asking the engine for a while, then
+tries again. The settings page and `sonara engines list` show the reason.
+
+**Muted means nothing is sent.** While Sonara is muted or super-muted, nothing goes to an added
+engine: Kokoro reads instead (also the "Muted." and "Unmuted." confirmations), voice lists are
+not fetched, and a sentence on its way is cut the moment you mute. Only *Test* and a voice
+preview, which you ask for yourself, still reach it.
+
+**Speed.** Sonara prepares the next sentences while one plays, so a cloud voice keeps up with a
+reply once it is reading; the first sentence waits for one round trip.
+
+**Privacy.** A cloud engine receives the text Sonara reads aloud (the same sentences it speaks),
+under that provider's terms; a server or program on your PC keeps it here. See
+[PRIVACY.md](PRIVACY.md#external-voices-opt-in).
 
 ## Commands
 

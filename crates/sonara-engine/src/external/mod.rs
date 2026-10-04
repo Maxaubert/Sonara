@@ -16,6 +16,11 @@
 //! - **Keys** are read per request (`keys::KeyResolver`), so a key set with
 //!   `engine_key` applies to the next chunk. A key goes only in the
 //!   provider's auth header, over https or to a loopback host.
+//! - **Muted** (`hold`, #227): while the host's `Hold` is held, nothing is
+//!   sent: chunks are spoken with the fallback and voice lists are not
+//!   fetched; raising it ends a request in flight. `test` and a synthesis
+//!   inside `hold::explicit` (the user's own actions) still reach the
+//!   provider.
 pub mod adapter;
 pub mod audio;
 pub mod azure;
@@ -27,6 +32,7 @@ pub mod elevenlabs;
 pub mod error;
 pub mod google;
 pub mod health;
+pub mod hold;
 pub mod keys;
 pub mod openai;
 pub mod profile;
@@ -42,6 +48,7 @@ use adapter::{execute, Adapter, HttpRequest, VoiceSource, MAX_AUDIO_BODY, MAX_LI
 use cache::CueCache;
 use error::{cue_text, ExtError};
 use health::{Clock, Health, View};
+use hold::{Hold, Scope};
 use keys::{KeyResolver, Secret};
 use profile::{Kind, Profile, ProfileError};
 use std::sync::{Arc, Mutex};
@@ -52,6 +59,9 @@ use worker::CancelToken;
 pub const RETRY_AFTER_MAX: Duration = Duration::from_millis(1500);
 /// The voice list is fetched again after this long.
 pub const VOICES_TTL: Duration = Duration::from_secs(600);
+/// After a failed voice-list fetch the list is not stale for this long, so
+/// a host that asks often does not repeat a refused key or a dead host.
+pub const VOICES_RETRY: Duration = Duration::from_secs(60);
 /// A voice-list request may take this long.
 pub const VOICES_TIMEOUT: Duration = Duration::from_secs(10);
 /// At most this many pages of a paged voice list are read.
@@ -84,6 +94,8 @@ pub struct ExternalConfig {
     /// Tests may inject an agent; default: `http::agent` with the profile's
     /// timeouts.
     pub agent: Option<ureq::Agent>,
+    /// The host's mute (`hold`): while held, nothing is sent.
+    pub hold: Option<Arc<Hold>>,
 }
 
 impl ExternalConfig {
@@ -96,6 +108,7 @@ impl ExternalConfig {
             notice: None,
             clock: Arc::new(Instant::now),
             agent: None,
+            hold: None,
         }
     }
 }
@@ -134,14 +147,18 @@ pub struct External {
     health: Health,
     cache: CueCache,
     cancel: Arc<CancelToken>,
-    /// The cancel generation at `begin`, taken by the next `synthesize`.
-    begun: Mutex<Option<u64>>,
+    /// The hold epoch and cancel generation at `begin`, taken by the next
+    /// `synthesize`.
+    begun: Mutex<Option<(u64, u64)>>,
     agent: ureq::Agent,
     voices_agent: ureq::Agent,
     label: String,
     host: String,
     voices: Mutex<Option<(Instant, Vec<Voice>)>>,
+    /// When the last voice-list fetch failed (cleared by a success).
+    voices_failed: Mutex<Option<Instant>>,
     clock: Clock,
+    hold: Option<Arc<Hold>>,
 }
 
 fn backend_for(p: &Profile) -> Backend {
@@ -187,6 +204,10 @@ impl External {
                 direct,
             )
         });
+        let cancel = Arc::new(CancelToken::new());
+        if let Some(h) = &config.hold {
+            h.watch(&cancel);
+        }
         Ok(External {
             id: EngineId::intern(&p.id),
             label: p.display_label(),
@@ -198,12 +219,14 @@ impl External {
             notice: config.notice,
             health: Health::new(config.clock.clone()),
             cache: CueCache::new(),
-            cancel: Arc::new(CancelToken::new()),
+            cancel,
             begun: Mutex::new(None),
             agent,
             voices_agent,
             voices: Mutex::new(None),
+            voices_failed: Mutex::new(None),
             clock: config.clock,
+            hold: config.hold,
             profile: p,
         })
     }
@@ -226,6 +249,57 @@ impl External {
     pub fn reset(&self) {
         self.health.clear();
         self.cache.clear();
+    }
+
+    /// Whether nothing may be sent now (`hold`): the host is muted (unless
+    /// this thread runs an explicit action), or this thread speaks a local
+    /// cue.
+    pub fn held(&self) -> bool {
+        match hold::scope() {
+            Scope::Explicit => false,
+            Scope::Local => true,
+            Scope::Normal => self.hold.as_ref().is_some_and(|h| h.is_held()),
+        }
+    }
+
+    /// The hold's epoch now (0 without a hold).
+    fn hold_epoch(&self) -> u64 {
+        self.hold.as_ref().map_or(0, |h| h.epoch())
+    }
+
+    /// The hold epoch, then the cancel generation: in this order, a hold
+    /// raised after the generation was read is either seen by the `held`
+    /// check that follows or has moved the generation, so the request is
+    /// never sent (`Hold::set` holds before it cancels).
+    fn mark(&self) -> (u64, u64) {
+        let epoch = self.hold_epoch();
+        (epoch, self.cancel.generation())
+    }
+
+    /// A cancel seen since `epoch` came from the hold (now held, or held
+    /// and lifted again meanwhile), not from the reader: the chunk is
+    /// spoken locally rather than dropped. An explicit action is cut like
+    /// any other cancel.
+    fn cut_by_hold(&self, epoch: u64) -> bool {
+        self.held() || (hold::scope() == Scope::Normal && self.hold_epoch() != epoch)
+    }
+
+    /// Speak `text` with the fallback while held: not a failure, so no cue,
+    /// no notice and no change of health.
+    fn quiet(&self, text: &str, rate: u32) -> Result<PcmStream> {
+        let Some(fb) = self.fallback.clone() else {
+            return Err(Error::External {
+                reason: Reason::BadConfig,
+                message: format!(
+                    "{} is not used while Sonara is muted, and there is no built-in voice",
+                    self.label
+                ),
+            });
+        };
+        let pcm = fb
+            .synthesize(text, &self.fallback_voice, rate)?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Box::new(pcm.into_iter().map(Ok)))
     }
 
     fn voice_for(&self, voice: &str) -> std::result::Result<String, ExtError> {
@@ -428,17 +502,22 @@ impl External {
             .map(|(_, list)| list.iter().any(|v| v.id == voice))
     }
 
-    /// Fetch a voice list, following the pages of a paged one.
+    /// Fetch a voice list, following the pages of a paged one (`None`: muted
+    /// meanwhile, so no further page was asked for).
     fn fetch_voices(
         &self,
         adapter: &Arc<dyn Adapter>,
         first: HttpRequest,
         key: Option<&Secret>,
-    ) -> std::result::Result<Vec<adapter::VoiceInfo>, ExtError> {
+    ) -> std::result::Result<Option<Vec<adapter::VoiceInfo>>, ExtError> {
         let mut out = Vec::new();
         let mut next = Some(first);
         for _ in 0..VOICES_MAX_PAGES {
             let Some(request) = next.take() else { break };
+            // Muted meanwhile: no further page (and no partial list).
+            if self.held() {
+                return Ok(None);
+            }
             let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
             if !r.ok() {
                 return Err(adapter.map_error(&r, "", None));
@@ -448,7 +527,11 @@ impl External {
         }
         let mut seen = std::collections::HashSet::new();
         out.retain(|v| seen.insert(v.id.clone()));
-        Ok(out)
+        // A mute during the last page: the list is not kept either.
+        if self.held() {
+            return Ok(None);
+        }
+        Ok(Some(out))
     }
 
     fn voice_source(&self, key: Option<&Secret>) -> VoiceSource {
@@ -458,9 +541,14 @@ impl External {
         }
     }
 
-    /// Whether the voice cache is older than `VOICES_TTL` (or empty).
+    /// Whether the voice cache is older than `VOICES_TTL` (or empty), and
+    /// no fetch failed in the last `VOICES_RETRY`.
     pub fn voices_stale(&self) -> bool {
         let now = (self.clock)();
+        let failed = *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner());
+        if failed.is_some_and(|at| now.saturating_duration_since(at) < VOICES_RETRY) {
+            return false;
+        }
         self.voices
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -496,6 +584,10 @@ impl Engine for External {
     }
 
     fn refresh_voices(&self) -> Result<Vec<Voice>> {
+        // Muted: the last list known, nothing fetched.
+        if self.held() {
+            return Ok(self.voices());
+        }
         let key = self.keys.resolve(&self.profile).ok().flatten();
         let list = match (&self.backend, self.voice_source(key.as_ref())) {
             (_, VoiceSource::Fixed(v)) => v,
@@ -506,13 +598,19 @@ impl Engine for External {
                     empty_on_error,
                 },
             ) => match self.fetch_voices(adapter, request, key.as_ref()) {
-                Ok(v) => v,
+                Ok(Some(v)) => v,
+                Ok(None) => return Ok(self.voices()),
                 Err(_) if empty_on_error => Vec::new(),
-                Err(e) => return Err(e.into_engine_error()),
+                Err(e) => {
+                    *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some((self.clock)());
+                    return Err(e.into_engine_error());
+                }
             },
             (Backend::Command(_), VoiceSource::Fetch { .. }) => Vec::new(),
         };
         let list: Vec<Voice> = list.into_iter().map(|v| self.voice_entry(v)).collect();
+        *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner()) = None;
         *self.voices.lock().unwrap_or_else(|p| p.into_inner()) = Some(((self.clock)(), list));
         Ok(self.voices())
     }
@@ -542,10 +640,20 @@ impl Engine for External {
     }
 
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
-        // The generation at `begin`, so a cancel between it and here counts.
+        // The marks at `begin`, so a cancel between it and here counts;
+        // taken before the hold is checked (`mark`).
         let begun = self.begun.lock().unwrap_or_else(|p| p.into_inner()).take();
-        let gen = begun.unwrap_or_else(|| self.cancel.generation());
+        let (epoch, gen) = begun.unwrap_or_else(|| self.mark());
+        hold::race_point();
+        // Muted: nothing is sent, not even a chunk begun before the mute
+        // (a lookahead one), whose cancel generation the hold moved on.
+        if self.held() {
+            return self.quiet(text, rate);
+        }
         if gen != self.cancel.generation() {
+            if self.cut_by_hold(epoch) {
+                return self.quiet(text, rate);
+            }
             return Err(Error::Cancelled);
         }
         let voice = match self.voice_for(voice) {
@@ -580,7 +688,13 @@ impl Engine for External {
                 return self.fallback(text, rate, e);
             }
         };
-        match self.provider(gen, text, &voice, rate, key.as_ref())? {
+        let answer = match self.provider(gen, text, &voice, rate, key.as_ref()) {
+            // The hold was raised while the request ran (even if lifted
+            // again since): it was cut, and the chunk is spoken locally.
+            Err(Error::Cancelled) if self.cut_by_hold(epoch) => return self.quiet(text, rate),
+            other => other?,
+        };
+        match answer {
             Ok(pcm) => {
                 if self.health.record_success() {
                     self.notify(None, None, "recovered".into());
@@ -597,7 +711,7 @@ impl Engine for External {
     }
 
     fn begin(&self) {
-        *self.begun.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.cancel.generation());
+        *self.begun.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.mark());
     }
 
     fn cancel(&self) {

@@ -28,6 +28,7 @@ pub mod lifetime;
 pub mod migrate;
 pub mod null_output;
 pub mod protocol;
+pub mod quiet;
 pub mod runtime_file;
 pub mod settings_page;
 pub mod support_log;

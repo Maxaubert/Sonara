@@ -25,14 +25,18 @@
 //!   `env:` key goes only to the provider's default origin or the
 //!   `key_origin` of its entry, which only the local file sets (the user, or
 //!   the migration of a format 1 file at load).
+//! - Every profile's engine (and an unsaved one's, for its voices) shares
+//!   one `Hold` (`hold`), which the server raises while Sonara is muted
+//!   (`crate::quiet`, #227): nothing is sent to a provider meanwhile.
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_engine::external::keys::{KeyResolver, KeyStore, Secret, MAX_KEY_BYTES};
+use sonara_engine::external::hold::Hold;
+use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
     implemented_kinds, origin_of, KeyRef, Kind, Preset, Profile, ProfileError, MAX_PROFILES,
 };
 use sonara_engine::external::{External, ExternalConfig, Notice};
-use sonara_engine::{Engine, Reason, Registry};
+use sonara_engine::{Engine, Reason, Registry, Voice};
 use sonara_system::LogFn;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -87,6 +91,8 @@ pub struct Engines {
     default_engine: String,
     log: Option<LogFn>,
     gate: Arc<Gate>,
+    /// Held while Sonara is muted: no profile sends anything.
+    hold: Arc<Hold>,
     registries: Mutex<Vec<Arc<Registry>>>,
     entries: Mutex<Vec<Entry>>,
     /// The file's text when it was last read or saved (`None`: missing).
@@ -106,6 +112,23 @@ pub const COMMAND_FORBIDDEN: &str = "a command engine runs a program on this PC,
 
 fn is_command(raw: &Value) -> bool {
     raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str())
+}
+
+/// The id an unsaved profile is built under (`voices` with `profile`).
+pub const DRAFT_ID: &str = "draft";
+/// Stands in for the voice an unsaved cloud profile needs to validate; the
+/// voice list never uses it and it is never listed.
+const DRAFT_VOICE: &str = "sonara-draft-voice";
+
+/// A profile that fails `Profile::from_json` as a reply.
+fn profile_failure(e: ProfileError) -> Failure {
+    match e {
+        ProfileError::Invalid(m) => bad(m),
+        ProfileError::Unsupported { kind, .. } => Failure::new(
+            Code::Unsupported,
+            format!("kind '{kind}' is not supported by this version"),
+        ),
+    }
 }
 
 /// What `reload` changed.
@@ -185,6 +208,7 @@ impl Engines {
             default_engine: setup.default_engine,
             log: setup.log,
             gate: Arc::new(Mutex::new(HashMap::new())),
+            hold: Arc::new(Hold::new()),
             registries: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
             seen: Mutex::new(text),
@@ -375,6 +399,7 @@ impl Engines {
                 .map(str::to_string);
         }
         let mut config = ExternalConfig::new(profile, self.keys.clone());
+        config.hold = Some(self.hold.clone());
         config.fallback = self.fallback.clone();
         config.fallback_voice = self.fallback_voice.clone();
         let (log, gate) = (self.log.clone(), self.gate.clone());
@@ -416,6 +441,11 @@ impl Engines {
             .clone()
     }
 
+    /// The mute every profile's engine follows (`crate::quiet`).
+    pub fn hold(&self) -> &Arc<Hold> {
+        &self.hold
+    }
+
     pub fn default_engine(&self) -> &str {
         &self.default_engine
     }
@@ -449,6 +479,13 @@ impl Engines {
             State::Ready(x) => {
                 let p = x.profile();
                 let mut m = p.to_json().as_object().cloned().unwrap_or_default();
+                // What the profile itself sets, so an edit keeps the defaults
+                // as defaults (an Azure region change still moves the URL).
+                let explicit: Map<String, Value> = ["url", "model", "voice"]
+                    .into_iter()
+                    .filter_map(|k| m.get(k).map(|v| (k.to_string(), v.clone())))
+                    .collect();
+                m.insert("explicit".into(), Value::Object(explicit));
                 // The values in force, defaults of the preset included.
                 if let Some(u) = p.base_url() {
                     m.insert("url".into(), json!(u));
@@ -597,21 +634,14 @@ impl Engines {
                 Some(_) => return Err(bad("this engine has key_ref none: it takes no key")),
             }
         }
-        let profile = match Profile::from_json(&Value::Object(raw)).and_then(|p| {
-            // A new profile's program must exist now (a stored one whose
-            // program is gone stays and reads with the fallback).
-            p.check_new()?;
-            Ok(p)
-        }) {
-            Ok(p) => p,
-            Err(ProfileError::Invalid(m)) => return Err(bad(m)),
-            Err(ProfileError::Unsupported { kind, .. }) => {
-                return Err(Failure::new(
-                    Code::Unsupported,
-                    format!("kind '{kind}' is not supported by this version"),
-                ))
-            }
-        };
+        let profile = Profile::from_json(&Value::Object(raw))
+            .and_then(|p| {
+                // A new profile's program must exist now (a stored one whose
+                // program is gone stays and reads with the fallback).
+                p.check_new()?;
+                Ok(p)
+            })
+            .map_err(profile_failure)?;
         if profile.kind == Kind::Command {
             return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
         }
@@ -710,6 +740,70 @@ impl Engines {
             if secret.is_some() { " key=set" } else { "" }
         ));
         Ok(at.is_some())
+    }
+
+    /// `voices` with `profile` (protocol 1.4, #227): the voice list of a
+    /// profile that is not saved, so the settings page can offer voices
+    /// before the user picks one. The profile is built for this request
+    /// only, under `DRAFT_ID`, with `secret` as its only stored key (never
+    /// another profile's): nothing is saved, stored or registered. Its id
+    /// and voice may be missing. A `command` profile is `E_FORBIDDEN`, as in
+    /// `engine_add`: a request never runs a program it names. Returns the
+    /// voices and the error of the fetch, when it failed.
+    pub fn draft_voices(
+        &self,
+        profile: &Value,
+        secret: Option<&str>,
+    ) -> Result<(Vec<Voice>, Option<sonara_engine::Error>), Failure> {
+        let mut raw = match profile {
+            Value::Object(m) => m.clone(),
+            _ => return Err(bad("'profile' must be an object with the profile")),
+        };
+        if is_command(profile) {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
+        raw.insert("id".into(), json!(DRAFT_ID));
+        raw.remove(KEY_ORIGIN);
+        let placeholder = !matches!(raw.get("voice"), Some(Value::String(v)) if !v.is_empty());
+        if placeholder {
+            raw.insert("voice".into(), json!(DRAFT_VOICE));
+        }
+        if let Some(s) = secret {
+            Self::check_secret(s)?;
+            match raw.get("key_ref") {
+                None | Some(Value::Null) => {
+                    raw.insert("key_ref".into(), json!("credman"));
+                }
+                Some(Value::String(k)) if k == "credman" => {}
+                Some(_) => return Err(bad("send a secret only with key_ref credman")),
+            }
+        }
+        let profile = Profile::from_json(&Value::Object(raw)).map_err(profile_failure)?;
+        if profile.kind == Kind::Command {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
+        let store = Arc::new(MemoryStore::new());
+        if let Some(s) = secret {
+            let o = profile.origin().ok_or_else(|| {
+                bad("this engine has no address yet (a region or url) to send the key to")
+            })?;
+            store
+                .set(DRAFT_ID, &Secret::new(s), &o)
+                .map_err(|e| bad(format!("cannot use the key: {e}")))?;
+        }
+        let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
+        // Muted: its voices are not fetched either.
+        config.hold = Some(self.hold.clone());
+        let ext = External::new(config).map_err(profile_failure)?;
+        let (list, error) = match ext.refresh_voices() {
+            Ok(v) => (v, None),
+            Err(e) => (ext.voices(), Some(e)),
+        };
+        let list = list
+            .into_iter()
+            .filter(|v| !(placeholder && v.id == DRAFT_VOICE))
+            .collect();
+        Ok((list, error))
     }
 
     /// `engine_remove` (after the caller moved off it when current).
@@ -982,6 +1076,51 @@ mod tests {
         let err = e.add(&loc("c"), None, false).unwrap_err();
         assert!(err.message.contains("not valid JSON"), "{}", err.message);
         assert_eq!(std::fs::read_to_string(h.join(FILE)).unwrap(), "{ not json");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// The view fills in the values in force, and `explicit` keeps what the
+    /// profile itself sets, so an edit form does not pin the defaults.
+    #[test]
+    fn the_view_tells_explicit_values_from_defaults() {
+        let h = home();
+        let (e, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        e.add(
+            &json!({"id": "openai", "kind": "openai-compatible", "options": {"preset": "openai"}}),
+            None,
+            false,
+        )
+        .unwrap();
+        e.add(
+            &json!({"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+                "options": {"region": "westeurope"}}),
+            None,
+            false,
+        )
+        .unwrap();
+        e.add(
+            &json!({"id": "own", "kind": "openai-compatible", "url": "http://127.0.0.1:9/v1",
+                "model": "m1", "voice": "v1", "options": {"preset": "generic"}}),
+            None,
+            false,
+        )
+        .unwrap();
+        let list = e.list("");
+        let views = list["engines"].as_array().unwrap();
+        assert_eq!(views[0]["url"], "https://api.openai.com/v1");
+        assert_eq!(views[0]["explicit"], json!({}));
+        assert_eq!(
+            views[1]["url"],
+            "https://westeurope.tts.speech.microsoft.com"
+        );
+        assert_eq!(
+            views[1]["explicit"],
+            json!({"voice": "en-US-AvaMultilingualNeural"})
+        );
+        assert_eq!(
+            views[2]["explicit"],
+            json!({"url": "http://127.0.0.1:9/v1", "model": "m1", "voice": "v1"})
+        );
         let _ = std::fs::remove_dir_all(&h);
     }
 

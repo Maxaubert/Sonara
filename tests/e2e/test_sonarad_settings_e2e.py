@@ -94,7 +94,8 @@ def test_every_section_of_the_old_page_is_there(live, browser):
     lv = live()
     page = open_page(browser, lv.url)
     names = page.locator(".side-nav button").all_text_contents()
-    assert [n.strip() for n in names] == ["Speech", "Summary", "Audio", "Sessions", "Hotkeys",
+    # Engines (#227) sits under Speech when the runtime allows external engines.
+    assert [n.strip() for n in names] == ["Speech", "Engines", "Summary", "Audio", "Sessions", "Hotkeys",
                                           "Advanced", "System"]
     page.click("[data-page=system]")
     assert page.locator("#app-version").text_content().startswith("Version ")
@@ -107,7 +108,7 @@ def test_outdated_controls_are_gone(live, browser):
     lv = live()
     lv.client.request({"type": "channel_open", "channel": "sess-1234abcd", "label": "repo"})
     page = open_page(browser, lv.url)
-    for gone in ("#engine-select", "#rt-pid", "#rt-port", "#rt-extensions", "#engine-rows"):
+    for gone in ("#engine-kokoro", "#rt-pid", "#rt-port", "#rt-extensions", "#engine-rows"):
         assert page.locator(gone).count() == 0, gone
     page.click("[data-page=sessions]")
     page.locator("#session-rows .sess-row").first.wait_for()
@@ -115,13 +116,15 @@ def test_outdated_controls_are_gone(live, browser):
     page.close()
 
 
-def test_the_engine_status_line_replaces_the_picker(live, browser):
-    # #214: the engine is not a choice; the page says how it is doing.
+def test_the_engine_picker_shows_the_engine_and_how_it_is_doing(live, browser):
+    # #227: the engine is a dropdown again (the user asked for it), with
+    # the status line under it.
     lv = live()
     page = open_page(browser, lv.url)
     pw.expect(page.locator("#engine-status")).to_have_text("fake, ready")
+    pw.expect(page.locator("#engine-select")).to_have_value("fake")
     # The fake runtime has no Kokoro to switch to.
-    pw.expect(page.locator("#engine-kokoro")).to_be_hidden()
+    assert page.locator("#engine-select option[value=kokoro]").count() == 0
     page.close()
 
 

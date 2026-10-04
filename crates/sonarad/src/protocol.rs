@@ -11,6 +11,7 @@ use crate::engines::Engines;
 use crate::engines_ext;
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
+use crate::quiet::Quiet;
 use crate::system_ext::{self, HotkeyTarget, SystemExt, SystemHold, SystemHost};
 use crate::trace_log::{self, Origins};
 use crate::wire::{self, Code, Failure};
@@ -23,7 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 3;
+pub const PROTOCOL_MINOR: u64 = 4;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -189,6 +190,8 @@ pub struct Server {
     /// External engine profiles, when this host allows them
     /// (`with_engines`; without, `engine_*` is `E_UNSUPPORTED`).
     engines: Option<Arc<Engines>>,
+    /// Muted: external engines send nothing (#227, `crate::quiet`).
+    quiet: Quiet,
 }
 
 pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -275,6 +278,8 @@ impl Server {
             Ok(sonara_reader::Value::Text(t)) => t,
             _ => String::new(),
         };
+        let agent: agent_ext::Slot = Arc::new(OnceLock::new());
+        let quiet = Quiet::new(reader.clone(), agent.clone());
         Server {
             reader,
             token,
@@ -282,7 +287,7 @@ impl Server {
             lifetime,
             retiring: Arc::new(Mutex::new(false)),
             channels: Arc::new(OnceLock::new()),
-            agent: Arc::new(OnceLock::new()),
+            agent,
             earcons: Arc::new(sonara_agent::Library::bundled()),
             system: None,
             enabling: Mutex::new(()),
@@ -291,11 +296,13 @@ impl Server {
             log: None,
             origins: Origins::default(),
             engines: None,
+            quiet,
         }
     }
 
     /// Allow external engine profiles (capability `engines`).
     pub fn with_engines(mut self, engines: Arc<Engines>) -> Self {
+        self.quiet.attach(engines.hold().clone());
         self.engines = Some(engines);
         self
     }
@@ -372,6 +379,7 @@ impl Server {
             store: self.store.clone(),
             cues: None,
             log: self.log.clone(),
+            quiet: self.quiet.clone(),
         };
         self.system = Some(Arc::new(SystemExt::new(host, target)));
         self
@@ -467,6 +475,8 @@ impl Server {
                 })));
             }
             let _ = self.agent.set(agent);
+            // A saved mute level applies from the start (#227).
+            self.quiet.sync();
         }
         if name == system_ext::NAME {
             if let Some(s) = &self.system {
@@ -489,6 +499,11 @@ impl Server {
             v.push(system_ext::NAME);
         }
         v
+    }
+
+    /// Whether Sonara is muted and external engines held (#227).
+    pub fn quiet(&self) -> &Quiet {
+        &self.quiet
     }
 
     pub fn reader(&self) -> &ReaderHandle {
@@ -841,8 +856,23 @@ impl Server {
         Ok((channels_ext::flushed_fields(&report, scope), After::Nothing))
     }
 
+    /// `control`. A mute holds external engines before it applies and
+    /// `mute`/`unmute` leave them held exactly while Sonara is muted
+    /// (#227).
     fn control(&self, m: &Map<String, Value>) -> Handled {
         let action = opt_str(m, "action")?.ok_or_else(|| bad("missing 'action'"))?;
+        if action != "mute" && action != "unmute" {
+            return self.control_now(m, action);
+        }
+        // One mute change at a time; the hold follows it on drop.
+        let change = self.quiet.change();
+        if action == "mute" {
+            change.hold_now();
+        }
+        self.control_now(m, action)
+    }
+
+    fn control_now(&self, m: &Map<String, Value>, action: &str) -> Handled {
         if let Some(ch) = self.channels.get() {
             if action == "flush" {
                 return self.flush(ch, m);
@@ -962,7 +992,21 @@ impl Server {
             .unwrap_or_else(|p| p.into_inner())
             .clone();
         let mute_before = self.agent.get().map(|a| a.settings().mute_level);
+        let mute_key = opt_str(m, "key").ok().flatten() == Some("mute_level");
+        // One mute change at a time; the hold follows it on drop.
+        let change = mute_key.then(|| self.quiet.change());
+        if let Some(c) = &change {
+            if m.get("value")
+                .and_then(Value::as_u64)
+                .is_some_and(|l| l >= 1)
+            {
+                // Nothing is sent from here on (#227).
+                c.hold_now();
+            }
+        }
         let result = self.set_now(m);
+        // The hold follows the outcome before the cue is spoken.
+        drop(change);
         if let (Ok((fields, _)), Some(name)) = (&result, opt_str(m, "key").ok().flatten()) {
             // The mute level's spoken cue (the hotkey's, #197), when it
             // changed; `audio_mode` and `duck_level` speak theirs in the
@@ -970,7 +1014,7 @@ impl Server {
             if let (Some(s), "mute_level", Some(before)) = (&self.system, name, mute_before) {
                 let now = fields.get("value").and_then(Value::as_u64);
                 if let Some(level) = now.filter(|l| *l != u64::from(before)) {
-                    s.cue(crate::cues::mute_level_cue(level), None);
+                    s.cue_local(crate::cues::mute_level_cue(level));
                 }
             }
             if name != "summaries" && config::setting(name).is_some() {
@@ -1075,6 +1119,10 @@ impl Server {
     }
 
     fn voices(&self, m: &Map<String, Value>) -> Handled {
+        if m.contains_key("profile") {
+            let engines = self.engines.as_ref().ok_or_else(engines_ext::refused)?;
+            return engines_ext::draft_voices(engines, m);
+        }
         let engine = opt_str(m, "engine")?;
         let refresh = opt_bool(m, "refresh")?;
         if let (Some(e), Some(id)) = (&self.engines, engine) {
@@ -1268,7 +1316,7 @@ mod tests {
         let r = &o.reply;
         assert_eq!(r["id"], "h1");
         assert_eq!(r["version"], crate::VERSION);
-        assert_eq!(r["protocol"], json!({"major": 1, "minor": 3}));
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 4}));
         assert!(r["capabilities"]
             .as_array()
             .unwrap()

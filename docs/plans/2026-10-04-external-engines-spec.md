@@ -9,7 +9,7 @@ Four PRs, stacked, each a feature with its own version bump:
 | PR1 | #224 | `feat/224-http-engine` | 0.15.0 | Core: profiles, `engines.json`, keys, Registry changes, `External` engine with fallback, cue, breaker, prefetch depth, cue cache, the `openai-compatible` kind (OpenAI and local servers), protocol `engine_*` messages, CLI, SDK helpers, conformance |
 | PR2 | #225 | `feat/225-cloud-adapters` | 0.16.0 | Kinds `elevenlabs`, `azure`, `google` |
 | PR3 | #226 | `feat/226-more-engines` | 0.17.0 | Kinds `cartesia`, `deepgram`, `command` |
-| PR4 | #227 | `feat/227-engines-page` | 0.18.0 | Settings page Engines section; README engines section |
+| PR4 | #227 | `feat/227-engines-settings` | 0.18.0 | Settings page Engines section; README engines section |
 
 PR2 branches from PR1, PR3 from PR2, PR4 from PR3. Each PR is reviewed and merged on its own; nothing is merged without the user's "merge?" answer.
 
@@ -465,6 +465,18 @@ Spoken once per episode: when a reason first causes a fallback, and again only a
 
 `wire` adds `"reason": "<reason>"` to `engine_status` when set (additive field, protocol 1.2).
 
+### 8.5 Muted: nothing is sent (#227, user requirement 2026-10-04)
+
+"Make sure that API requests are never sent if Sonara is muted or super-muted." Sonara is **muted** while the reader is muted (core `control mute`, the mute hotkey without `agent`) or the agent's `mute_level` is 1 or 2 (also a saved one, from the moment the agent extension starts).
+
+- **The hold** (`sonara-engine/src/external/hold.rs`): one `Hold` per runtime (`Engines::hold`), given to every profile's `External` (and to an unsaved profile's, for its voices) through `ExternalConfig::hold`. While held, `External::synthesize` sends nothing and speaks the chunk with its fallback (Kokoro, else OneCore; the fake engine in tests): not a failure, so no cue, no notice, no breaker or block. `refresh_voices` returns the last list known without a request. This one choke point covers every path: the reader's playing chunk and its lookahead, the "Session changed" announcements, a core `speak`, the spoken cues and the voice lists polled by the settings page.
+- **Muting cuts what is in flight**: raising the hold moves every engine's cancel generation on, so a request in flight ends at once and its chunk is spoken locally; a chunk already `begin`-ed (lookahead) is spoken locally too. Nothing more is fetched or billed. `synthesize` reads the hold's epoch and the cancel generation *before* it checks the hold (`Hold::set` holds before it cancels), so a mute that lands between the two is either seen by the check or has moved the generation: no request slips through. Every `Hold::set` moves the epoch, so a request cut by a mute that already lifted again (a quick hotkey cycle) is still spoken locally, not dropped as a failed chunk ("nothing may silently drop it"); a reader cancel alone stays a cancel. A paged voice list checks the hold before each page and keeps no partial list.
+- **The server** (`sonarad/src/quiet.rs`, `Quiet`): before a change that mutes (`set mute_level` 1 or 2, `control mute`, the mute hotkey) it raises the hold; after any mute change (and when the agent extension starts) it sets the hold to the truth (reader muted, or `mute_level` >= 1), so a failed change or an unmute releases it. Mute changes run one at a time (`Quiet::change`, a mutex held across the hold, the change and the sync), so a hotkey mute and a protocol unmute on two threads cannot leave a stale hold. A reader whose state cannot be read keeps the hold as it is.
+- **Cues**: the mute transition cues ("Muted.", "Super muted.", "Unmuted.", core "Muted."/"Unmuted.") are always spoken with the local voice (`Cues::speak_local`, `hold::local`). "Unmuted." is said as the mute lifts and is still part of the muted episode, so the rule is simply: every cue of a mute transition is local. Any other cue queued while muted (a rate cue, "Paused.") is local too.
+- **Explicit user actions stay allowed**: `engine_test` (the Test button; `External::test` ignores the hold) and `preview` (run inside `hold::explicit`). While the reader itself is muted (core `mute`) both are still sent but play silently, as every clip does then. A voice list is not one of them: while muted `voices` answers the known voices with `error: {reason: "muted", ...}` when a fetch was due (saved or unsaved profile).
+- **Unmuted**, everything resumes with the next chunk.
+- Tests: `crates/sonara-engine/tests/external_hold.rs`, `crates/sonarad/tests/muted_engines.rs` (a local provider that counts requests: zero while muted, super-muted, after muting mid-message, for the mute and rate cues; requests again after unmute; Test and preview reach it), `conformance/engines/test_muted_engines.py`.
+
 ## 9. Rate mapping (`rate.rs`)
 
 `s = wpm / 200` (Sonara's range 100..=400 gives 0.5..=2.0; the product default 250 gives 1.25).
@@ -579,7 +591,7 @@ Python `clients/python/src/sonara_client/engines.py`, `client.engines`: `list()`
 
 Section **Engines** under Speech (`crates/sonarad/assets/settings.html`, served by `settings_page.rs`), using only the HTTP API:
 
-- List: each profile with its label, kind, `sends_text_to` ("Sends text to api.openai.com" or "Runs on this PC"), key state ("Key saved" / "No key" / "Key from NAME"), status (ready, or the reason with the fallback), and buttons Use, Test, Edit, Remove (Remove asks for confirmation, then `engine_remove`).
+- List: each profile with its label, kind, `sends_text_to` ("Sends text to api.openai.com" or "Runs on this PC"), key state ("Key saved" / "No key" / "Key from NAME"), status (ready, or the reason with the fallback), and buttons Use, Test, Edit, Remove (Remove asks for confirmation, then `engine_remove`). A `command` profile has no Edit: the page never adds or changes one (the runtime refuses it over the protocol anyway, `E_FORBIDDEN`), so its row says it is set up with `sonara.exe engines add` or in `engines.json`, the kind select of the form leaves `command` out, and a note under the list says how to add one.
 - Add/edit form: kind (and preset for openai-compatible), label, url (prefilled per preset), model, voice (a select filled by `voices {engine, refresh: true}` after the profile exists, with a free-text "Other voice id" entry), key (password input, never prefilled, "Leave empty to keep the saved key"), advanced options per kind. Save = `engine_add` (with `replace` when editing) and `secret` when the key field is non-empty.
 - Test button = `engine_test` with `play: true`; shows the time and the error with its reason.
 - The engine picker that #214 removed stays removed: the Speech section shows "Kokoro (built in)" or the selected profile with a "Use Kokoro" button, as today for a non-Kokoro `engine`.
@@ -815,6 +827,18 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - [ ] 3. E2E (`tests/e2e/test_sonarad_engines_e2e.py`, headless Playwright, `sonarad --engine fake --keys fake --system fake` with a Python fake OpenAI server): add a profile with a key (the key field empties after save and the key never appears in the DOM or in the page's network replies), the voice select fills from `voices`, Test speaks (reply shown), the "Sends text to" line, Use switches `engine`, Remove with confirmation, an auth failure shows its reason, keyboard-only path.
 - [ ] 4. README Engines section (12); `PRIVACY.md` mentions the page.
 - [ ] 5. Version 0.18.0, gates incl. e2e, hands-on in the browser on this PC, "merge?".
+
+**Deviations found while building PR4** (the sections above are updated where they apply):
+
+- Branch `feat/227-engines-settings` (the table said `feat/227-engines-page`).
+- Engines is its own page in the side navigation, directly under Speech, rather than a group inside the Speech page: the list and the add/edit form are too long to share a page with the voice and rate. The nav entry is hidden when `hello.capabilities` lacks `engines` (`--no-external-engines`). Element ids avoid `#engine-rows` and `#engine-select`, which the #214 test keeps absent (the old picker).
+- After a profile is added the form stays open, now editing it, so its voice list (`voices {engine, refresh: true}`) fills at once; Close hides it.
+- Each kind's main options have their own fields (Azure region, ElevenLabs output format and language, Google language and billing project, Cartesia language and API version, OpenAI-compatible instructions, the `command` program, input, output, sample rate and voices); `timeout_ms` and `prefetch` sit under "More options" with a JSON object field for the rest, so every option of 5.4 stays reachable.
+- An untried profile reports `ready` (7.2: `warm` does not check a key on a cloud kind until the first chunk), so the page shows "Needs a key before it can read" for a profile whose key ref needs a key that is not present.
+- The Speech section names an external engine by its label and shows the reason of `engine_status.reason` (`OpenAI, cannot be reached. Kokoro reads meanwhile.`); Kokoro shows as "Kokoro (built in)".
+- `settings_page.rs` is unchanged (same-origin API, no CSP change). `docs/protocol-v1.md`'s Settings page paragraph lists the Engines section.
+- Muted means nothing is sent (8.5), added to this PR at the user's request of 2026-10-04.
+- Step 5's hands-on (a branch build deployed per the safe redeploy steps) is left for the "merge?" step: the PR4 worker must not touch `%LOCALAPPDATA%\Sonara` or the running runtime. The page was checked headless (Playwright e2e and screenshots in light and dark, desktop and phone width).
 
 ### Risks
 
