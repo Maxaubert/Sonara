@@ -22,10 +22,13 @@ fn engine(server: &ScriptServer, mut v: Value, key: Option<&str>, fallback: bool
     v["url"] = json!(server.base);
     let id = v["id"].as_str().unwrap().to_string();
     let store = Arc::new(MemoryStore::new());
+    let profile = Profile::from_json(&v).unwrap();
     if let Some(k) = key {
-        store.set(&id, &Secret::new(k)).unwrap();
+        store
+            .set(&id, &Secret::new(k), &profile.origin().unwrap())
+            .unwrap();
     }
-    let mut config = ExternalConfig::new(Profile::from_json(&v).unwrap(), KeyResolver::new(store));
+    let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
     if fallback {
         config.fallback = Some(Arc::new(FakeEngine::new()) as Arc<dyn Engine>);
     }
@@ -376,5 +379,109 @@ fn cloud_pcm_that_starts_with_minus_one_is_spoken() {
             assert_eq!(got[0].samples, quiet.to_vec(), "{kind}");
         }
         assert_eq!(e.status().readiness, Readiness::Ready, "{kind}");
+    }
+}
+
+/// Whether any request carried a key header or the key.
+fn saw_a_key(server: &ScriptServer) -> bool {
+    server.requests().iter().any(|r| {
+        r.headers.iter().any(|(k, v)| {
+            matches!(
+                k.as_str(),
+                "authorization" | "xi-api-key" | "x-goog-api-key" | "ocp-apim-subscription-key"
+            ) || v.contains(KEY)
+        })
+    })
+}
+
+#[test]
+fn cloud_keys_are_bound_to_the_provider_default_host() {
+    // A key entered for the provider's own address (no url: the default
+    // host, Azure's from its region) never goes to a url set later
+    // (spec 6.4).
+    for (mut v, default) in [
+        (elevenlabs(), "https://api.elevenlabs.io:443"),
+        (google(), "https://texttospeech.googleapis.com:443"),
+        (
+            {
+                let mut a = azure();
+                a["options"]["region"] = json!("westeurope");
+                a
+            },
+            "https://westeurope.tts.speech.microsoft.com:443",
+        ),
+    ] {
+        let id = v["id"].as_str().unwrap().to_string();
+        let home = Profile::from_json(&v).unwrap();
+        assert_eq!(home.origin().as_deref(), Some(default), "{id}");
+        let server = ScriptServer::start();
+        v["url"] = json!(server.base);
+        let store = Arc::new(MemoryStore::new());
+        store.set(&id, &Secret::new(KEY), default).unwrap();
+        let mut config =
+            ExternalConfig::new(Profile::from_json(&v).unwrap(), KeyResolver::new(store));
+        config.fallback = Some(Arc::new(FakeEngine::new()) as Arc<dyn Engine>);
+        let e = External::new(config).unwrap();
+        assert!(!e.key_present(), "{id}");
+        let _ = e
+            .synthesize("Where does this go?", "", 200)
+            .map(|i| i.count());
+        let _ = e.refresh_voices();
+        let _ = e.test("Hello.", "", 200);
+        assert!(!saw_a_key(&server), "{id}: the key left its host");
+    }
+}
+
+#[test]
+fn an_azure_key_is_bound_to_its_region() {
+    let mut v = azure();
+    v["options"]["region"] = json!("westeurope");
+    let store = Arc::new(MemoryStore::new());
+    store
+        .set(
+            "az",
+            &Secret::new(KEY),
+            &Profile::from_json(&v).unwrap().origin().unwrap(),
+        )
+        .unwrap();
+    let resolver = KeyResolver::new(store);
+    let same = Profile::from_json(&v).unwrap();
+    assert!(resolver.resolve(&same).unwrap().is_some());
+    v["options"]["region"] = json!("eastus");
+    let moved = Profile::from_json(&v).unwrap();
+    assert_eq!(
+        moved.origin().as_deref(),
+        Some("https://eastus.tts.speech.microsoft.com:443")
+    );
+    let e = resolver.resolve(&moved).unwrap_err();
+    assert_eq!(e.reason, Reason::NoKey);
+}
+
+#[test]
+fn a_redirect_never_carries_a_custom_key_header_away() {
+    // ureq strips only Authorization on a redirect: xi-api-key and the
+    // like would follow a Location, so no redirect is followed at all.
+    for v in [elevenlabs(), google()] {
+        let server = ScriptServer::start();
+        let other = ScriptServer::start();
+        let path = if v["kind"] == "elevenlabs" {
+            "/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb"
+        } else {
+            "/v1/text:synthesize"
+        };
+        for status in [301, 302, 307] {
+            server.queue(
+                path,
+                Route::new(status, "text/plain", b"moved".to_vec())
+                    .header("Location", &format!("{}{path}", other.base)),
+            );
+        }
+        let e = engine(&server, v, Some(KEY), true);
+        for _ in 0..3 {
+            e.reset();
+            let _ = e.synthesize("Hello.", "", 200).map(|i| i.count());
+        }
+        assert!(other.requests().is_empty(), "{:?}", other.requests());
+        assert_eq!(server.count(path), 3);
     }
 }

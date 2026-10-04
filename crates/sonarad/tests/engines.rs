@@ -710,3 +710,57 @@ fn an_env_key_follows_only_a_locally_confirmed_url() {
     assert!(!saw_a_key(&r.provider));
     std::env::remove_var(var);
 }
+
+#[test]
+fn cloud_kinds_never_send_their_key_to_a_new_url_or_region() {
+    // ElevenLabs, Google and Azure profiles without a url send to the
+    // provider's host (Azure's from its region): a replace to a url of
+    // another server, over TCP or HTTP, or to another region, deletes the
+    // key and never sends it (spec 6.4).
+    for (kind, options) in [
+        ("elevenlabs", json!({})),
+        ("google", json!({})),
+        ("azure", json!({"region": "westeurope"})),
+    ] {
+        for http in [false, true] {
+            let tag = format!("cloud-{kind}-{http}");
+            let mut r = rig(&tag, true);
+            let p = json!({"id": "cloud", "kind": kind, "voice": "v1", "options": options});
+            let o = r.call(json!({"type": "engine_add", "engine": p, "secret": SECRET}));
+            assert_eq!(o["engine"]["key_present"], true, "{tag}: {o}");
+            let other = Provider::start();
+            let mut moved = p.clone();
+            moved["url"] = json!(other.url.trim_end_matches("/v1"));
+            let req = json!({"type": "engine_add", "engine": moved, "replace": true});
+            let o = if http {
+                let mut s = Session::http();
+                r.server.handle(&mut s, &req).reply
+            } else {
+                r.call(req)
+            };
+            assert_eq!(o["ok"], true, "{tag}: {o}");
+            assert_eq!(o["engine"]["key_present"], false, "{tag}: {o}");
+            assert!(r.keys.get("cloud").unwrap().is_none(), "{tag}");
+            speak_through(&mut r, "cloud");
+            assert!(!saw_a_key(&other), "{tag}: the key reached the new host");
+        }
+    }
+    let mut r = rig("cloud-region", true);
+    let p = json!({"id": "az", "kind": "azure", "voice": "v1",
+        "options": {"region": "westeurope"}});
+    r.call(json!({"type": "engine_add", "engine": p, "secret": SECRET}));
+    let mut moved = p.clone();
+    moved["options"]["region"] = json!("eastus");
+    let o = r.call(json!({"type": "engine_add", "engine": moved, "replace": true}));
+    assert_eq!(o["engine"]["key_present"], false, "{o}");
+    assert!(
+        r.keys.get("az").unwrap().is_none(),
+        "a region change drops the key"
+    );
+    // A change that keeps the region keeps the key.
+    r.call(json!({"type": "engine_add", "engine": p, "secret": SECRET, "replace": true}));
+    let mut same = p.clone();
+    same["voice"] = json!("v2");
+    let o = r.call(json!({"type": "engine_add", "engine": same, "replace": true}));
+    assert_eq!(o["engine"]["key_present"], true, "{o}");
+}
