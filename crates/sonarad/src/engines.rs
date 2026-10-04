@@ -449,6 +449,13 @@ impl Engines {
             State::Ready(x) => {
                 let p = x.profile();
                 let mut m = p.to_json().as_object().cloned().unwrap_or_default();
+                // What the profile itself sets, so an edit keeps the defaults
+                // as defaults (an Azure region change still moves the URL).
+                let explicit: Map<String, Value> = ["url", "model", "voice"]
+                    .into_iter()
+                    .filter_map(|k| m.get(k).map(|v| (k.to_string(), v.clone())))
+                    .collect();
+                m.insert("explicit".into(), Value::Object(explicit));
                 // The values in force, defaults of the preset included.
                 if let Some(u) = p.base_url() {
                     m.insert("url".into(), json!(u));
@@ -982,6 +989,51 @@ mod tests {
         let err = e.add(&loc("c"), None, false).unwrap_err();
         assert!(err.message.contains("not valid JSON"), "{}", err.message);
         assert_eq!(std::fs::read_to_string(h.join(FILE)).unwrap(), "{ not json");
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// The view fills in the values in force, and `explicit` keeps what the
+    /// profile itself sets, so an edit form does not pin the defaults.
+    #[test]
+    fn the_view_tells_explicit_values_from_defaults() {
+        let h = home();
+        let (e, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        e.add(
+            &json!({"id": "openai", "kind": "openai-compatible", "options": {"preset": "openai"}}),
+            None,
+            false,
+        )
+        .unwrap();
+        e.add(
+            &json!({"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+                "options": {"region": "westeurope"}}),
+            None,
+            false,
+        )
+        .unwrap();
+        e.add(
+            &json!({"id": "own", "kind": "openai-compatible", "url": "http://127.0.0.1:9/v1",
+                "model": "m1", "voice": "v1", "options": {"preset": "generic"}}),
+            None,
+            false,
+        )
+        .unwrap();
+        let list = e.list("");
+        let views = list["engines"].as_array().unwrap();
+        assert_eq!(views[0]["url"], "https://api.openai.com/v1");
+        assert_eq!(views[0]["explicit"], json!({}));
+        assert_eq!(
+            views[1]["url"],
+            "https://westeurope.tts.speech.microsoft.com"
+        );
+        assert_eq!(
+            views[1]["explicit"],
+            json!({"voice": "en-US-AvaMultilingualNeural"})
+        );
+        assert_eq!(
+            views[2]["explicit"],
+            json!({"url": "http://127.0.0.1:9/v1", "model": "m1", "voice": "v1"})
+        );
         let _ = std::fs::remove_dir_all(&h);
     }
 

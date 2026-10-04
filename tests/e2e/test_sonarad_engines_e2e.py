@@ -297,3 +297,77 @@ def test_the_section_is_hidden_when_the_runtime_refuses_external_engines(live, b
     pw.expect(page.locator("#rt-version")).not_to_have_text("–")
     pw.expect(page.locator("[data-page=engines]")).to_be_hidden()
     page.close()
+
+
+def stored(lv, engine_id):
+    data = json.loads((lv.home / "engines.json").read_text(encoding="utf-8"))
+    return next(e for e in data["engines"] if e["id"] == engine_id)
+
+
+def test_a_new_cloud_profile_does_not_keep_the_openai_address(live, browser):
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.click("#engine-new")
+    # The form opens on OpenAI with its address filled in; another kind drops it.
+    pw.expect(page.locator("#ef-url")).to_have_value("https://api.openai.com/v1")
+    page.select_option("#ef-kind", "elevenlabs")
+    pw.expect(page.locator("#ef-url")).to_have_value("")
+    page.fill("#ef-id", "eleven")
+    # A voice id is required now, so the form asks for one directly.
+    pw.expect(page.locator("#ef-voice")).to_have_value("__other")
+    pw.expect(page.locator("#ef-voice-other")).to_be_visible()
+    pw.expect(page.locator("#ef-voice-hint")).to_contain_text("required")
+    page.fill("#ef-voice-other", "21m00Tcm4TlvDq8ikWAM")
+    page.fill("#ef-key", SECRET)
+    page.click("#ef-save")
+    pw.expect(page.locator("#profile-rows [data-engine=eleven]")).to_be_visible()
+    view = lv.request({"type": "engine_list"})["engines"][0]
+    assert "url" not in view["explicit"], view
+    assert view["sends_text_to"] == "api.elevenlabs.io"
+    assert "url" not in stored(lv, "eleven")
+    page.close()
+
+
+def test_an_azure_region_edit_moves_where_text_goes(live, browser):
+    lv = live()
+    lv.request({"type": "engine_add", "engine": {
+        "id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+        "options": {"region": "westeurope"}}})
+    page, _ = open_engines(browser, lv.url)
+    page.locator("#profile-rows [data-engine=az] button.engine-edit").click()
+    pw.expect(page.locator("#ef-url")).to_have_value("")
+    page.fill("#ef-opt-region", "eastus")
+    page.click("#ef-save")
+    assert eventually(lambda: lv.request({"type": "engine_list"})["engines"][0]["sends_text_to"]
+                      == "eastus.tts.speech.microsoft.com")
+    assert "url" not in stored(lv, "az")
+    page.close()
+
+
+def test_renaming_a_preset_profile_keeps_the_preset_defaults(live, browser):
+    lv = live()
+    lv.request({"type": "engine_add", "engine": {
+        "id": "openai", "kind": "openai-compatible", "options": {"preset": "openai"}}})
+    page, _ = open_engines(browser, lv.url)
+    page.locator("#profile-rows [data-engine=openai] button.engine-edit").click()
+    page.fill("#ef-label", "My OpenAI")
+    page.click("#ef-save")
+    assert eventually(lambda: stored(lv, "openai").get("label") == "My OpenAI")
+    raw = stored(lv, "openai")
+    assert not {"url", "model", "voice"} & set(raw), raw
+    page.close()
+
+
+def test_an_unlisted_select_value_is_kept_by_the_form(live, browser):
+    # The runtime accepts only the listed ElevenLabs formats today; a value
+    # the page does not list (from a newer runtime) must still survive an edit.
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.click("#engine-new")
+    page.select_option("#ef-kind", "elevenlabs")
+    page.evaluate("buildKindFields('elevenlabs', {output_format: 'pcm_48000'})")
+    pw.expect(page.locator("#ef-opt-output_format")).to_have_value("pcm_48000")
+    page.fill("#ef-id", "eleven")
+    opts = page.evaluate("collectProfile().options")
+    assert opts["output_format"] == "pcm_48000"
+    page.close()

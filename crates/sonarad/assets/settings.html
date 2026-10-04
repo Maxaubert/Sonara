@@ -1031,6 +1031,13 @@ const KINDS = {
   "deepgram": {url: "https://api.deepgram.com", key: true},
   "command": {},
 };
+// Kinds that need a voice id when added, with an example of one.
+const VOICE_EXAMPLES = {
+  "elevenlabs": "21m00Tcm4TlvDq8ikWAM", "azure": "en-US-AvaMultilingualNeural",
+  "google": "en-US-Chirp3-HD-Achernar", "cartesia": "a voice id from Cartesia's library",
+  "deepgram": "aura-2-thalia-en",
+};
+const PRESET_URLS = Object.values(PRESETS).map(p => p.url).filter(Boolean);
 // The options of each kind that get their own field; the rest go to "Other options".
 const KIND_FIELDS = {
   "openai-compatible": [
@@ -1262,7 +1269,14 @@ function buildKindFields(kind, options) {
       input.spellcheck = false;
     }
     input.id = "ef-opt-" + f.key;
-    input.value = optionText(options[f.key]);
+    const value = optionText(options[f.key]);
+    if (f.type === "select" && value && !f.choices.some(c => c[0] === value)) {
+      // A value set elsewhere (the CLI, for example) stays through an edit.
+      const o = el("option", null, value);
+      o.value = value;
+      input.appendChild(o);
+    }
+    input.value = value;
     ctl.appendChild(input);
     row.append(copy, ctl);
     box.appendChild(row);
@@ -1284,10 +1298,11 @@ function syncFormRows(prevPreset) {
   $("ef-url-row").hidden = !k.url;
   $("ef-model-row").hidden = !k.model;
   if (kind === "openai-compatible") {
-    // A new profile's address follows the server picked, unless the user typed one.
+    // The address follows the server picked, unless the user typed one.
+    // When editing, empty means the preset's own address.
     const url = $("ef-url");
     const old = (PRESETS[prevPreset] || {}).url || "";
-    if (!editing && (url.value === "" || url.value === old)) url.value = pr.url || "";
+    if ((old && url.value === old) || (!editing && url.value === "")) url.value = editing ? "" : pr.url || "";
     url.placeholder = pr.url || "http://127.0.0.1:8000/v1";
     $("ef-model").placeholder = pr.model ? "Default: " + pr.model : "Required by this server";
     setText("ef-url-hint", preset === "openai" ? "OpenAI's address. Change it only for a proxy." : "The server's address, with /v1.");
@@ -1325,6 +1340,22 @@ function fillVoiceSelect(list, current, fallbackDefault) {
   sel.value = !current ? "" : listed ? current : "__other";
   $("ef-voice-other").value = listed ? "" : current;
   $("ef-voice-other").hidden = sel.value !== "__other";
+}
+
+function voiceRequired() {
+  return Object.prototype.hasOwnProperty.call(VOICE_EXAMPLES, $("ef-kind").value);
+}
+
+// A new profile of a kind that needs a voice asks for its id directly.
+function voiceForNew() {
+  if (editing) return;
+  if (voiceRequired() && !chosenVoice()) {
+    $("ef-voice").value = "__other";
+    $("ef-voice-other").hidden = false;
+  }
+  setText("ef-voice-hint", voiceRequired()
+    ? "A voice id is required now, such as " + VOICE_EXAMPLES[$("ef-kind").value] + ". Its voices are listed once it is saved."
+    : "The engine's voices are listed once it is saved.");
 }
 
 function defaultVoice() {
@@ -1369,8 +1400,11 @@ function openForm(v) {
   $("ef-id").value = v ? v.id : "";
   $("ef-id").disabled = !!v;
   $("ef-label").value = v && v.label ? v.label : "";
-  $("ef-url").value = v && v.url ? v.url : "";
-  $("ef-model").value = v && v.model ? v.model : "";
+  // Only what the profile sets itself: the defaults (a preset's address, an
+  // Azure region's endpoint) stay defaults through an edit.
+  const ex = v ? (v.explicit || v) : {};
+  $("ef-url").value = ex.url || "";
+  $("ef-model").value = ex.model || "";
   $("ef-key").value = "";
   const ref = v ? (v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
   $("ef-keyref").value = ref.startsWith("env:") ? "env" : ref;
@@ -1382,8 +1416,9 @@ function openForm(v) {
   buildKindFields($("ef-kind").value, (v && v.options) || {});
   lastPreset = $("ef-preset").value;
   syncFormRows(lastPreset);
-  fillVoiceSelect([], v ? v.voice : "", defaultVoice());
+  fillVoiceSelect([], ex.voice || "", defaultVoice());
   setText("ef-voice-hint", "The engine's voices are listed once it is saved.");
+  voiceForNew();
   setText("ef-title", v ? "Edit " + (v.label || v.id) : "Add an engine");
   setFormError("");
   $("ef-title").hidden = false;
@@ -1406,10 +1441,12 @@ function collectProfile() {
   if (!p.id) throw [new Error("Give the engine a name."), $("ef-id")];
   const label = $("ef-label").value.trim();
   if (label) p.label = label;
+  // A value equal to the preset's default is left out, so it stays a default.
+  const pr = kind === "openai-compatible" ? PRESETS[$("ef-preset").value] || {} : {};
   const url = $("ef-url").value.trim();
-  if (k.url && url) p.url = url;
+  if (k.url && url && url !== pr.url) p.url = url;
   const model = $("ef-model").value.trim();
-  if (k.model && model) p.model = model;
+  if (k.model && model && model !== pr.model) p.model = model;
   const voice = chosenVoice();
   if (voice) p.voice = voice;
   const ref = $("ef-keyref").value;
@@ -1483,8 +1520,13 @@ $("ef-kind").addEventListener("change", () => {
   const kind = $("ef-kind").value;
   buildKindFields(kind, {});
   if (!editing) $("ef-keyref").value = keyDefault(kind, $("ef-preset").value);
-  syncFormRows($("ef-preset").value);
+  // A server's address never carries over to another kind: the key and the
+  // text would go to the wrong host.
+  if (kind !== "openai-compatible" && PRESET_URLS.includes($("ef-url").value.trim())) $("ef-url").value = "";
+  lastPreset = $("ef-preset").value;
+  syncFormRows("");
   fillVoiceSelect([], chosenVoice(), defaultVoice());
+  voiceForNew();
 });
 $("ef-preset").addEventListener("change", () => {
   if (!editing) $("ef-keyref").value = keyDefault("openai-compatible", $("ef-preset").value);
