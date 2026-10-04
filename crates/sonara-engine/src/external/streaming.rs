@@ -38,7 +38,9 @@ pub(super) enum Begun {
 
 /// What the wait for the first audio saw.
 enum First {
-    Audio(PcmChunk, Receiver<Event>),
+    /// The first audio, the rest of the stream and the half sample it
+    /// ended with, if any.
+    Audio(PcmChunk, Receiver<Event>, Vec<u8>),
     Failed(ExtError),
 }
 
@@ -72,10 +74,11 @@ impl External {
             let started = Instant::now();
             let rx = sse::start(self.agent.clone(), req.clone(), self.host.clone());
             match self.first_audio(adapter, gen, rx, first_audio, voice)? {
-                First::Audio(pcm, rx) => {
+                First::Audio(pcm, rx, carry) => {
                     return Ok(Begun::Playing(Box::new(Rest {
                         first: Some(pcm),
                         rx: Some(rx),
+                        carry,
                         deadline: started + total,
                         adapter: adapter.clone(),
                         label: self.label.clone(),
@@ -127,6 +130,7 @@ impl External {
     ) -> Result<First> {
         let end = Instant::now() + limit;
         let mut note: Option<String> = None;
+        let mut carry = Vec::new();
         loop {
             if self.cancel.generation() != gen {
                 return Err(Error::Cancelled);
@@ -143,10 +147,10 @@ impl External {
                 )));
             }
             match rx.recv_timeout(left.min(POLL)) {
-                Ok(Event::Data(d)) => match adapter.stream_piece(&d, &self.label) {
+                Ok(Event::Data(d)) => match adapter.stream_piece(&mut carry, &d, &self.label) {
                     Ok(StreamPiece {
                         audio: Some(pcm), ..
-                    }) if !pcm.samples.is_empty() => return Ok(First::Audio(pcm, rx)),
+                    }) if !pcm.samples.is_empty() => return Ok(First::Audio(pcm, rx, carry)),
                     Ok(p) => note = p.note.or(note),
                     Err(e) => return Ok(First::Failed(e)),
                 },
@@ -194,6 +198,8 @@ impl External {
 struct Rest {
     first: Option<PcmChunk>,
     rx: Option<Receiver<Event>>,
+    /// A half sample from the last event (`Adapter::stream_piece`).
+    carry: Vec<u8>,
     deadline: Instant,
     adapter: Arc<dyn Adapter>,
     label: String,
@@ -278,18 +284,20 @@ impl Iterator for Rest {
             }
             let rx = self.rx.as_ref()?;
             match rx.recv_timeout(left.min(POLL)) {
-                Ok(Event::Data(d)) => match self.adapter.stream_piece(&d, &self.label) {
-                    Ok(StreamPiece {
-                        audio: Some(pcm), ..
-                    }) if !pcm.samples.is_empty() => {
-                        if CueCache::cacheable(&self.cache_key.2) {
-                            self.got.push(pcm.clone());
+                Ok(Event::Data(d)) => {
+                    match self.adapter.stream_piece(&mut self.carry, &d, &self.label) {
+                        Ok(StreamPiece {
+                            audio: Some(pcm), ..
+                        }) if !pcm.samples.is_empty() => {
+                            if CueCache::cacheable(&self.cache_key.2) {
+                                self.got.push(pcm.clone());
+                            }
+                            return Some(Ok(pcm));
                         }
-                        return Some(Ok(pcm));
+                        Ok(_) => {}
+                        Err(e) => return self.cut(e.reason, e.message),
                     }
-                    Ok(_) => {}
-                    Err(e) => return self.cut(e.reason, e.message),
-                },
+                }
                 Ok(Event::End) | Err(RecvTimeoutError::Disconnected) => return self.finish(),
                 Ok(Event::Failed(e)) => return self.cut(e.reason, e.message),
                 Ok(Event::Refused(_)) => {

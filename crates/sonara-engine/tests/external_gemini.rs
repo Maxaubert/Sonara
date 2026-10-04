@@ -327,6 +327,29 @@ fn a_stream_that_stops_keeps_the_audio_it_sent() {
 }
 
 #[test]
+fn a_sample_split_between_events_plays_whole() {
+    // Review of #235: Google may cut the PCM in the middle of a sample
+    // between events; the half sample waits for the next event.
+    let r = rig();
+    let bytes: Vec<u8> = [5i16, -6, 7].iter().flat_map(|s| s.to_le_bytes()).collect();
+    let event = |b: &[u8]| {
+        json!({"candidates": [{"content": {"role": "model", "parts": [{"inlineData":
+            {"mimeType": "audio/L16;codec=pcm;rate=24000",
+            "data": base64::engine::general_purpose::STANDARD.encode(b)}}]}}]})
+        .to_string()
+    };
+    r.server.on(
+        SPEAK,
+        Route::sse(vec![
+            (Duration::ZERO, event(&bytes[..3])),
+            (Duration::ZERO, event(&bytes[3..])),
+        ]),
+    );
+    assert_eq!(samples(&r.engine, "Split.", "", 200), vec![5, -6, 7]);
+    assert_eq!(r.fake.syntheses(), 0);
+}
+
+#[test]
 fn a_refused_stream_reads_whole_answers_from_then_on() {
     let r = rig();
     r.server.on(

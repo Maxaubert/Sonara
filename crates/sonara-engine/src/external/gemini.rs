@@ -172,8 +172,16 @@ impl Gemini {
 
     /// The audio of one `GenerateContentResponse` (a whole answer or one
     /// event of a stream): its `inlineData` parts, in order, as one chunk,
-    /// or none; and why the model stopped, when it says.
-    fn audio_of(&self, v: &Value, label: &str) -> Result<StreamPiece, ExtError> {
+    /// or none; and why the model stopped, when it says. In a stream,
+    /// `carry` holds the half sample an event ended with (Google may cut
+    /// the PCM anywhere): it starts the next part, so no later sample is
+    /// shifted by a byte.
+    fn audio_of(
+        &self,
+        v: &Value,
+        label: &str,
+        mut carry: Option<&mut Vec<u8>>,
+    ) -> Result<StreamPiece, ExtError> {
         let format = |why: &str| ExtError::new(Reason::Format, format!("{label} {why}"));
         let parts = v
             .pointer("/candidates/0/content/parts")
@@ -183,9 +191,22 @@ impl Gemini {
         let mut out: Option<PcmChunk> = None;
         for data in parts.iter().filter_map(|p| p.get("inlineData")) {
             let b64 = data.get("data").and_then(Value::as_str).unwrap_or_default();
-            let bytes = base64::engine::general_purpose::STANDARD
+            let mut bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64.trim())
                 .map_err(|_| format("sent audio that is not base64"))?;
+            if let Some(c) = carry.as_deref_mut() {
+                if !bytes.starts_with(b"RIFF") {
+                    if !c.is_empty() {
+                        bytes.splice(0..0, c.drain(..));
+                    }
+                    if bytes.len() % 2 == 1 {
+                        c.extend(bytes.pop());
+                    }
+                }
+                if bytes.is_empty() {
+                    continue;
+                }
+            }
             let mime = data.get("mimeType").and_then(Value::as_str);
             let pcm = decode_body(&bytes, mime, Some(GEMINI_RATE), true, label)?;
             match &mut out {
@@ -390,7 +411,7 @@ impl Adapter for Gemini {
                 format!("{label} sent an answer that is not JSON"),
             )
         })?;
-        let piece = self.audio_of(&v, label)?;
+        let piece = self.audio_of(&v, label, None)?;
         piece.audio.ok_or_else(|| no_audio(label, piece.note))
     }
 
@@ -580,7 +601,12 @@ impl Adapter for Gemini {
 
     /// One event: a `GenerateContentResponse` with the next audio, or an
     /// error object (a failure after the stream began).
-    fn stream_piece(&self, data: &str, label: &str) -> Result<StreamPiece, ExtError> {
+    fn stream_piece(
+        &self,
+        carry: &mut Vec<u8>,
+        data: &str,
+        label: &str,
+    ) -> Result<StreamPiece, ExtError> {
         let v: Value = serde_json::from_str(data).map_err(|_| {
             ExtError::new(
                 Reason::Format,
@@ -605,7 +631,7 @@ impl Adapter for Gemini {
                 None,
             ));
         }
-        self.audio_of(&v, label)
+        self.audio_of(&v, label, Some(carry))
     }
 }
 
@@ -1179,6 +1205,7 @@ mod tests {
         let event = |parts: Value| audio_reply(parts);
         let p = a
             .stream_piece(
+                &mut Vec::new(),
                 &event(
                     json!([{"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
                     "data": b64(&[1, 2, 3])}}]),
@@ -1189,20 +1216,67 @@ mod tests {
         assert_eq!(p.audio.unwrap().samples, vec![1, 2, 3]);
         assert_eq!(p.note.as_deref(), Some("STOP"));
         let empty = a
-            .stream_piece(r#"{"candidates": [{"content": {"parts": []}}]}"#, "Gemini")
+            .stream_piece(
+                &mut Vec::new(),
+                r#"{"candidates": [{"content": {"parts": []}}]}"#,
+                "Gemini",
+            )
             .unwrap();
         assert_eq!(empty, StreamPiece::default());
         let e = a
             .stream_piece(
+                &mut Vec::new(),
                 &rpc_error(429, "RESOURCE_EXHAUSTED", "slow down", json!([])),
                 "Gemini",
             )
             .unwrap_err();
         assert_eq!((e.reason, e.status), (Reason::RateLimited, Some(429)));
         assert_eq!(
-            a.stream_piece("not json", "Gemini").unwrap_err().reason,
+            a.stream_piece(&mut Vec::new(), "not json", "Gemini")
+                .unwrap_err()
+                .reason,
             Reason::Format
         );
+    }
+
+    #[test]
+    fn a_sample_split_across_events_is_joined_not_shifted() {
+        // Review of #235: each event was decoded alone and an odd last
+        // byte dropped, so a sample split across two events shifted every
+        // later sample by one byte (loud noise).
+        let a = adapter(json!({}));
+        let bytes: Vec<u8> = [1i16, -2, 3, 300]
+            .iter()
+            .flat_map(|s| s.to_le_bytes())
+            .collect();
+        let event = |b: &[u8]| {
+            audio_reply(
+                json!([{"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+                "data": base64::engine::general_purpose::STANDARD.encode(b)}}]),
+            )
+        };
+        let mut carry = Vec::new();
+        let p = a
+            .stream_piece(&mut carry, &event(&bytes[..3]), "G")
+            .unwrap();
+        assert_eq!(p.audio.unwrap().samples, vec![1]);
+        assert_eq!(carry.len(), 1, "the half sample waits for the next event");
+        // One byte alone: still half a sample, no audio yet.
+        let p = a
+            .stream_piece(&mut carry, &event(&bytes[3..4]), "G")
+            .unwrap();
+        assert_eq!(p.audio.unwrap().samples, vec![-2]);
+        assert!(carry.is_empty());
+        let p = a
+            .stream_piece(&mut carry, &event(&bytes[4..5]), "G")
+            .unwrap();
+        assert_eq!(p.audio, None);
+        assert_eq!(carry.len(), 1);
+        let p = a
+            .stream_piece(&mut carry, &event(&bytes[5..]), "G")
+            .unwrap();
+        assert_eq!(p.audio.unwrap().samples, vec![3, 300]);
+        assert!(carry.is_empty());
     }
 
     #[test]

@@ -231,8 +231,15 @@ pub trait Adapter: Send + Sync {
     fn streams(&self) -> bool {
         false
     }
-    /// The audio of one event (`data:`) of a streamed reply.
-    fn stream_piece(&self, _data: &str, _label: &str) -> Result<StreamPiece, ExtError> {
+    /// The audio of one event (`data:`) of a streamed reply. `carry`
+    /// belongs to the stream: raw PCM bytes of a sample the event cut in
+    /// half, joined to the next event's audio.
+    fn stream_piece(
+        &self,
+        _carry: &mut Vec<u8>,
+        _data: &str,
+        _label: &str,
+    ) -> Result<StreamPiece, ExtError> {
         Ok(StreamPiece::default())
     }
 }
