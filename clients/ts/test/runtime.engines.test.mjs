@@ -99,6 +99,7 @@ describe("external engines against sonarad", { skip }, () => {
       kind: "openai-compatible",
       url: fakeProvider.url,
       key_ref: "credman",
+      voice: "af_heart",
       options: { preset: "kokoro-fastapi", timeout_ms: 5000 },
     };
     const added = await c.engines.add(profile, { secret: SECRET });

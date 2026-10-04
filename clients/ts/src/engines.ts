@@ -5,8 +5,13 @@
  * `engine` field (a request's `id` is its correlation id). A runtime that refuses external
  * engines (`sonarad --no-external-engines`) answers `E_UNSUPPORTED`.
  *
- * A key is sent only in `add` (`secret`) or `setKey`; the runtime stores it
- * in Windows Credential Manager and never returns it.
+ * A key is sent only in `add` (`secret`), `setKey`, or with a draft profile
+ * in `models`; the runtime stores it in Windows Credential Manager (a
+ * draft's only for that request) and never returns it.
+ *
+ * Sonara names no model or voice of its own (protocol 1.5, runtime 0.19.0):
+ * `models` and `voices` list the provider's live, and a profile without one
+ * it needs says so in `engine_list` (`missing`).
  *
  * A `command` engine (a program on the user's PC) is never added or changed
  * through the protocol: `add` of one, or replacing one, is `E_FORBIDDEN`
@@ -36,6 +41,14 @@ export interface EngineAddOptions {
   secret?: string;
   /** Change an existing profile; its stored key is kept unless `secret` is given. */
   replace?: boolean;
+}
+
+/** `engine_models` of a profile not saved yet (the key typed in a form). */
+export interface EngineModelsDraft {
+  /** The profile as it would be added (its `id` and `model` may be missing). */
+  profile: Omit<EngineProfile, "id"> & { id?: string };
+  /** Used for this request only, never stored. */
+  secret?: string;
 }
 
 export interface EngineTestOptions {
@@ -88,6 +101,22 @@ export class EnginesApi {
     if (opts.voice !== undefined) fields.voice = opts.voice;
     if (opts.play !== undefined) fields.play = opts.play;
     return this.send("engine_test", fields);
+  }
+
+  /**
+   * `engine_models` (protocol 1.5): the provider's models now, of a saved
+   * engine (`refresh` asks the provider again) or of a draft profile.
+   * Replies `{models: [{id, name}], list, takes_model, required, error?}`.
+   */
+  models(engine: string | EngineModelsDraft, opts: { refresh?: boolean } = {}): Promise<Reply> {
+    if (typeof engine !== "string") {
+      const fields: Record<string, unknown> = { profile: engine.profile };
+      if (engine.secret !== undefined) fields.secret = engine.secret;
+      return this.send("engine_models", fields);
+    }
+    const fields: Record<string, unknown> = { engine };
+    if (opts.refresh !== undefined) fields.refresh = opts.refresh;
+    return this.send("engine_models", fields);
   }
 
   /** `voices` of one engine; `refresh` asks the provider again. */

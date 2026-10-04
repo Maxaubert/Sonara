@@ -74,8 +74,6 @@ impl Kind {
     }
 }
 
-/// ElevenLabs' default model (spec 5.4).
-pub const ELEVENLABS_MODEL: &str = "eleven_flash_v2_5";
 /// ElevenLabs' raw PCM formats (`pcm_44100` needs the Pro tier).
 pub const ELEVENLABS_FORMATS: &[&str] = &["pcm_16000", "pcm_22050", "pcm_24000", "pcm_44100"];
 /// Azure's raw 16-bit mono PCM formats and their rates.
@@ -88,44 +86,6 @@ pub const AZURE_FORMATS: &[(&str, u32)] = &[
     ("raw-48khz-16bit-mono-pcm", 48_000),
 ];
 
-/// Gemini's default model and voice (#235): the fast, cost-efficient TTS
-/// model Google names for read-aloud features (research 2026-10-05).
-pub const GEMINI_MODEL: &str = "gemini-3.8-flash-lite-tts";
-pub const GEMINI_VOICE: &str = "Kore";
-/// Gemini's 30 prebuilt voices (the voice list; any other voice id, such
-/// as a stored `voice_...`, is still accepted).
-pub const GEMINI_VOICES: &[&str] = &[
-    "Zephyr",
-    "Puck",
-    "Charon",
-    "Kore",
-    "Fenrir",
-    "Leda",
-    "Orus",
-    "Aoede",
-    "Callirrhoe",
-    "Autonoe",
-    "Enceladus",
-    "Iapetus",
-    "Umbriel",
-    "Algieba",
-    "Despina",
-    "Erinome",
-    "Algenib",
-    "Rasalgethi",
-    "Laomedeia",
-    "Achernar",
-    "Alnilam",
-    "Schedar",
-    "Gacrux",
-    "Pulcherrima",
-    "Achird",
-    "Zubenelgenubi",
-    "Vindemiatrix",
-    "Sadachbia",
-    "Sadaltager",
-    "Sulafat",
-];
 /// Gemini's default `chunk_chars`: requests are what its free tier counts,
 /// so the reader joins sentences up to this many characters (#235).
 pub const GEMINI_CHUNK_CHARS: u64 = 1000;
@@ -133,9 +93,12 @@ pub const GEMINI_CHUNK_CHARS: u64 = 1000;
 /// splits at 4000 characters).
 pub const GEMINI_CHUNK_MAX: u64 = 4000;
 
-/// Cartesia's default model and API version (spec 5.4; the API pins its
-/// behaviour to the version date).
-pub const CARTESIA_MODEL: &str = "sonic-3.6";
+/// The Gemini wait for the first audio of a streamed chunk: past it the
+/// chunk is read with the fallback (#235, option `first_audio_ms`).
+pub const GEMINI_FIRST_AUDIO_MS: u64 = 12_000;
+
+/// Cartesia's API version (spec 5.4; the API pins its behaviour to the
+/// version date, so it is the API's contract, not a model or a voice).
 pub const CARTESIA_VERSION: &str = "2026-08-14";
 /// Cartesia's raw PCM rates.
 pub const CARTESIA_RATES: &[u64] = &[8_000, 16_000, 22_050, 24_000, 44_100, 48_000];
@@ -150,8 +113,8 @@ pub fn program_name(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
 }
 
-/// The locale a voice name starts with: `en-US-AvaMultilingualNeural` and
-/// `en-US-Chirp3-HD-Kore` give `en-US`; a name without one gives `None`.
+/// The locale a voice name starts with: `en-US-<name>` gives `en-US`; a
+/// name without one gives `None`.
 pub fn voice_locale(voice: &str) -> Option<String> {
     let mut parts = voice.splitn(3, '-');
     let (lang, region, rest) = (parts.next()?, parts.next()?, parts.next()?);
@@ -224,23 +187,11 @@ impl Preset {
         }
     }
 
-    pub fn default_model(&self) -> Option<&'static str> {
-        match self {
-            Preset::OpenAi => Some("gpt-4o-mini-tts"),
-            Preset::KokoroFastApi => Some("kokoro"),
-            Preset::LocalAi | Preset::Speaches => None,
-            Preset::OpenedAiSpeech | Preset::Generic => Some("tts-1"),
-            Preset::ChatterboxApi | Preset::ChatterboxServer => Some("chatterbox"),
-        }
-    }
-
-    pub fn default_voice(&self) -> Option<&'static str> {
-        match self {
-            Preset::OpenAi => Some("marin"),
-            Preset::KokoroFastApi | Preset::Speaches => Some("af_heart"),
-            Preset::LocalAi | Preset::ChatterboxServer => None,
-            Preset::OpenedAiSpeech | Preset::ChatterboxApi | Preset::Generic => Some("alloy"),
-        }
+    /// Whether the server needs a model in each request (OpenAI's API,
+    /// LocalAI and Speaches host several): the profile must name one.
+    /// Another server picks its own when Sonara sends none.
+    pub fn model_required(&self) -> bool {
+        matches!(self, Preset::OpenAi | Preset::LocalAi | Preset::Speaches)
     }
 
     /// The URL used when the profile names none (only OpenAI has one).
@@ -589,7 +540,13 @@ const AZURE_OPTIONS: &[&str] = &["region", "output_format", "lang"];
 /// Options of `google`.
 const GOOGLE_OPTIONS: &[&str] = &["language_code", "sample_rate", "user_project", "model_name"];
 /// Options of `gemini`.
-const GEMINI_OPTIONS: &[&str] = &["language_code", "style", "chunk_chars", "quick_start"];
+const GEMINI_OPTIONS: &[&str] = &[
+    "language_code",
+    "style",
+    "chunk_chars",
+    "quick_start",
+    "first_audio_ms",
+];
 /// Options of `cartesia`.
 const CARTESIA_OPTIONS: &[&str] = &["api_version", "language", "sample_rate"];
 /// Options of `deepgram`.
@@ -799,52 +756,20 @@ impl Profile {
                     preset.as_str()
                 )));
             }
-            if self.effective_model().is_none() {
-                return Err(invalid(format!(
-                    "preset '{}' needs a model",
-                    preset.as_str()
-                )));
-            }
-            if self.effective_voice().is_none() && preset == Preset::ChatterboxServer {
-                return Err(invalid(
-                    "preset 'chatterbox-server' needs a voice (a file name such as Emily.wav)",
-                ));
-            }
         }
+        // A missing model or voice is not a validation error (#235): a
+        // profile stored before Sonara stopped baking in defaults stays
+        // usable and says "choose a model" or "choose a voice"
+        // (`missing_model`, `External::status`) until the user picks one.
         let kind = self.kind.as_str();
         match self.kind {
-            Kind::ElevenLabs if self.voice.is_none() => {
-                return Err(invalid(
-                    "kind 'elevenlabs' needs a voice (a voice_id from your voice library)",
-                ));
-            }
-            Kind::Azure if self.voice.is_none() => {
-                return Err(invalid(
-                    "kind 'azure' needs a voice (a name such as en-US-AvaMultilingualNeural)",
-                ));
-            }
-            Kind::Google if self.voice.is_none() => {
-                return Err(invalid(
-                    "kind 'google' needs a voice (a name such as en-US-Chirp3-HD-Kore)",
-                ));
-            }
             Kind::Azure if self.url.is_none() && self.option_str("region").is_none() => {
                 return Err(invalid("kind 'azure' needs options.region or url"));
-            }
-            Kind::Cartesia if self.voice.is_none() => {
-                return Err(invalid(
-                    "kind 'cartesia' needs a voice (a voice id from your Cartesia library)",
-                ));
-            }
-            Kind::Deepgram if self.voice.is_none() => {
-                return Err(invalid(
-                    "kind 'deepgram' needs a voice (a model such as aura-2-thalia-en)",
-                ));
             }
             Kind::Azure | Kind::Google | Kind::Deepgram | Kind::Command if self.model.is_some() => {
                 let hint = match self.kind {
                     Kind::Google => " (a Gemini TTS model goes in options.model_name)",
-                    Kind::Deepgram => " (the voice is the model, such as aura-2-thalia-en)",
+                    Kind::Deepgram => " (the voice is the model: pick it as the voice)",
                     _ => "",
                 };
                 return Err(invalid(format!("kind '{kind}' takes no model{hint}")));
@@ -1019,11 +944,12 @@ impl Profile {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'));
             if !ok || m.chars().count() > 100 {
-                return Err(invalid(format!(
-                    "'model' must be a Gemini model name such as {GEMINI_MODEL}"
-                )));
+                return Err(invalid(
+                    "'model' must be a Gemini model id (letters, digits, '-', '.' and '_')",
+                ));
             }
         }
+        int_in(o, "first_audio_ms", 1000..=60_000)?;
         word(o, "language_code", 35, lang_char, "a locale such as en-US")?;
         if let Some(v) = o.get("style") {
             let s = v
@@ -1227,7 +1153,7 @@ impl Profile {
                     "model_name",
                     100,
                     |c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | '/'),
-                    "a model name such as gemini-2.5-flash-tts",
+                    "a model id (letters, digits, '-', '.', '_' and '/')",
                 )?;
             }
             _ => {}
@@ -1293,22 +1219,39 @@ impl Profile {
             .map(|u| u.origin())
     }
 
-    pub fn effective_model(&self) -> Option<String> {
-        self.model.clone().or_else(|| match self.kind {
-            Kind::OpenAiCompatible => self.preset().default_model().map(str::to_string),
-            Kind::ElevenLabs => Some(ELEVENLABS_MODEL.into()),
-            Kind::Cartesia => Some(CARTESIA_MODEL.into()),
-            Kind::Gemini => Some(GEMINI_MODEL.into()),
-            _ => None,
-        })
+    /// Whether the kind has a model field at all (Azure, Google, Deepgram
+    /// and a program take none).
+    pub fn takes_model(&self) -> bool {
+        matches!(
+            self.kind,
+            Kind::OpenAiCompatible | Kind::ElevenLabs | Kind::Gemini | Kind::Cartesia
+        )
     }
 
-    pub fn effective_voice(&self) -> Option<String> {
-        self.voice.clone().or_else(|| match self.kind {
-            Kind::OpenAiCompatible => self.preset().default_voice().map(str::to_string),
-            Kind::Gemini => Some(GEMINI_VOICE.into()),
-            _ => None,
-        })
+    /// Whether the provider needs a model in every request (#235): Gemini
+    /// (the model is in the URL), Cartesia, and the servers of
+    /// `Preset::model_required`. ElevenLabs and the other servers pick
+    /// their own when Sonara sends none, so there it is optional.
+    pub fn model_required(&self) -> bool {
+        match self.kind {
+            Kind::OpenAiCompatible => self.preset().model_required(),
+            Kind::Gemini | Kind::Cartesia => true,
+            _ => false,
+        }
+    }
+
+    /// A model is needed and none is set: the engine says "choose a model"
+    /// (`bad_config`) and reads with the fallback until one is set.
+    pub fn missing_model(&self) -> bool {
+        self.model_required() && self.model.is_none()
+    }
+
+    /// Whether a request needs a voice (every kind but a program, whose
+    /// `{voice}` may be unused). Sonara never picks one for the user: the
+    /// voice comes from the profile or the user's voice setting
+    /// (`External::voice_for`).
+    pub fn voice_required(&self) -> bool {
+        self.kind != Kind::Command
     }
 
     /// The name spoken in cues and shown in lists.
@@ -1352,6 +1295,15 @@ impl Profile {
             _ if self.is_local() => 60_000,
             _ => 15_000,
         })
+    }
+
+    /// How long a streamed chunk may take to send its first audio before
+    /// it is read with the fallback (#235): `options.first_audio_ms`,
+    /// default `GEMINI_FIRST_AUDIO_MS`, never more than `timeout_ms`.
+    pub fn first_audio_ms(&self) -> u64 {
+        self.option_u64("first_audio_ms")
+            .unwrap_or(GEMINI_FIRST_AUDIO_MS)
+            .min(self.timeout_ms())
     }
 
     /// Chunks synthesized ahead (spec D10).
@@ -1589,27 +1541,30 @@ mod tests {
         assert!(err(json!({"id": "k", "kind": "openai-compatible",
             "options": {"preset": "kokoro-fastapi"}}))
         .contains("needs a url"));
-        assert!(err(json!({"id": "l", "kind": "openai-compatible",
-            "url": "http://127.0.0.1:8080/v1", "options": {"preset": "localai"}}))
-        .contains("needs a model"));
-        assert!(err(json!({"id": "s", "kind": "openai-compatible",
-            "url": "http://127.0.0.1:8000/v1", "options": {"preset": "speaches"}}))
-        .contains("needs a model"));
-        assert!(err(json!({"id": "c", "kind": "openai-compatible",
-            "url": "http://127.0.0.1:8004/v1", "options": {"preset": "chatterbox-server"}}))
-        .contains("needs a voice"));
-        for (preset, model, voice) in [
-            ("openai", Some("gpt-4o-mini-tts"), Some("marin")),
-            ("kokoro-fastapi", Some("kokoro"), Some("af_heart")),
-            ("openedai-speech", Some("tts-1"), Some("alloy")),
-            ("chatterbox-api", Some("chatterbox"), Some("alloy")),
-            ("generic", Some("tts-1"), Some("alloy")),
+        // No preset has a default model or voice (#235): a profile without
+        // them parses (a stored one stays usable), and a server that needs
+        // a model says "choose a model" instead.
+        for (preset, required) in [
+            ("openai", true),
+            ("localai", true),
+            ("speaches", true),
+            ("kokoro-fastapi", false),
+            ("openedai-speech", false),
+            ("chatterbox-api", false),
+            ("chatterbox-server", false),
+            ("generic", false),
         ] {
             let p = parse(json!({"id": "p", "kind": "openai-compatible",
                 "url": "http://127.0.0.1:1/v1", "options": {"preset": preset}}))
             .unwrap();
-            assert_eq!(p.effective_model().as_deref(), model, "{preset}");
-            assert_eq!(p.effective_voice().as_deref(), voice, "{preset}");
+            assert_eq!((p.model.as_deref(), p.voice.as_deref()), (None, None));
+            assert_eq!(p.model_required(), required, "{preset}");
+            assert_eq!(p.missing_model(), required, "{preset}");
+            assert!(p.voice_required() && p.takes_model(), "{preset}");
+            let named = parse(json!({"id": "p", "kind": "openai-compatible",
+                "url": "http://127.0.0.1:1/v1", "model": "m1", "options": {"preset": preset}}))
+            .unwrap();
+            assert!(!named.missing_model(), "{preset}");
         }
         // No preset is generic.
         let p = parse(json!({"id": "g", "kind": "openai-compatible",
@@ -1650,20 +1605,24 @@ mod tests {
     fn cartesia_profiles() {
         let ca = |extra: Value| {
             with(
-                json!({"id": "ca", "kind": "cartesia",
-                    "voice": "a0e99841-438c-4a64-b679-ae501e7d6091"}),
+                json!({"id": "ca", "kind": "cartesia", "voice": "v1"}),
                 extra,
             )
         };
         let p = parse(ca(json!({}))).unwrap();
         assert_eq!(p.base_url().as_deref(), Some("https://api.cartesia.ai"));
-        assert_eq!(p.effective_model().as_deref(), Some("sonic-3.6"));
+        assert_eq!(p.model, None, "no default model (#235)");
+        assert!(p.missing_model(), "Cartesia needs a model in every request");
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "Cartesia");
         assert_eq!(p.sends_text_to(), "api.cartesia.ai");
         assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
-        assert!(err(json!({"id": "ca", "kind": "cartesia"})).contains("needs a voice"));
-        assert!(parse(ca(json!({"model": "sonic-2", "options": {
+        let bare = parse(json!({"id": "ca", "kind": "cartesia"})).unwrap();
+        assert_eq!(
+            bare.voice, None,
+            "no voice yet: parsed, says choose a voice"
+        );
+        assert!(parse(ca(json!({"model": "m1", "options": {
             "api_version": "2025-04-16", "language": "de", "sample_rate": 44100}})))
         .is_ok());
         for (opts, msg) in [
@@ -1691,11 +1650,11 @@ mod tests {
             p.origin().as_deref(),
             Some("https://generativelanguage.googleapis.com:443")
         );
-        assert_eq!(
-            p.effective_model().as_deref(),
-            Some("gemini-3.8-flash-lite-tts")
-        );
-        assert_eq!(p.effective_voice().as_deref(), Some("Kore"), "optional");
+        // No model and no voice in code (#235): the user picks both from
+        // Google's live lists; until then the engine says so.
+        assert_eq!((p.model.as_deref(), p.voice.as_deref()), (None, None));
+        assert!(p.missing_model() && p.voice_required());
+        assert_eq!(p.first_audio_ms(), GEMINI_FIRST_AUDIO_MS);
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "Gemini");
         assert_eq!(p.sends_text_to(), "generativelanguage.googleapis.com");
@@ -1704,12 +1663,18 @@ mod tests {
         assert_eq!((p.timeout_ms(), p.prefetch()), (60_000, 1));
         assert_eq!(p.chunk_chars(), 1000);
         assert!(p.quick_start(), "the first sentence alone by default");
-        assert_eq!(GEMINI_VOICES.len(), 30);
-        assert!(GEMINI_VOICES.contains(&"Kore"));
-        let set = parse(ge(json!({"model": "gemini-3.8-flash-tts", "voice": "Puck",
+        let set = parse(ge(json!({"model": "m-1.2_x", "voice": "v1",
             "options": {"language_code": "de-DE", "style": "calm and warm",
-            "chunk_chars": 0}})))
+            "chunk_chars": 0, "first_audio_ms": 5000}})))
         .unwrap();
+        assert!(!set.missing_model());
+        assert_eq!(set.first_audio_ms(), 5000);
+        // Never longer than the whole timeout.
+        let short = parse(ge(
+            json!({"options": {"first_audio_ms": 30000, "timeout_ms": 8000}}),
+        ))
+        .unwrap();
+        assert_eq!(short.first_audio_ms(), 8000);
         assert_eq!(set.chunk_chars(), 0);
         let max = parse(ge(json!({"options": {"chunk_chars": 4000}}))).unwrap();
         assert_eq!(max.chunk_chars(), 4000);
@@ -1729,7 +1694,15 @@ mod tests {
         for (extra, msg) in [
             (
                 json!({"model": "models/x"}),
-                "'model' must be a Gemini model name",
+                "'model' must be a Gemini model id",
+            ),
+            (
+                json!({"options": {"first_audio_ms": 999}}),
+                "first_audio_ms",
+            ),
+            (
+                json!({"options": {"first_audio_ms": 60001}}),
+                "first_audio_ms",
             ),
             (json!({"model": "a b"}), "'model'"),
             (json!({"options": {"chunk_chars": 100}}), "chunk_chars"),
@@ -1751,8 +1724,7 @@ mod tests {
             assert!(err(ge(extra.clone())).contains(msg), "{extra}");
         }
         // Other kinds never join.
-        let g =
-            parse(json!({"id": "g", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"})).unwrap();
+        let g = parse(json!({"id": "g", "kind": "google", "voice": "v1"})).unwrap();
         assert_eq!(g.chunk_chars(), 0);
         assert!(g.quick_start());
     }
@@ -1761,19 +1733,20 @@ mod tests {
     fn deepgram_profiles() {
         let dg = |extra: Value| {
             with(
-                json!({"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en"}),
+                json!({"id": "dg", "kind": "deepgram", "voice": "v1"}),
                 extra,
             )
         };
         let p = parse(dg(json!({}))).unwrap();
         assert_eq!(p.base_url().as_deref(), Some("https://api.deepgram.com"));
-        assert_eq!(p.effective_model(), None);
+        assert_eq!(p.model, None);
+        assert!(!p.takes_model() && !p.missing_model());
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "Deepgram");
         let eu = parse(dg(json!({"url": "https://api.eu.deepgram.com"}))).unwrap();
         assert_eq!(eu.sends_text_to(), "api.eu.deepgram.com");
-        assert!(err(json!({"id": "dg", "kind": "deepgram"})).contains("needs a voice"));
-        assert!(err(dg(json!({"model": "aura-2"}))).contains("the voice is the model"));
+        assert!(parse(json!({"id": "dg", "kind": "deepgram"})).is_ok());
+        assert!(err(dg(json!({"model": "m1"}))).contains("the voice is the model"));
         assert!(parse(dg(json!({"options": {"sample_rate": 48000}}))).is_ok());
         assert!(err(dg(json!({"options": {"sample_rate": 22050}}))).contains("sample_rate"));
     }
@@ -1958,7 +1931,7 @@ mod tests {
     #[test]
     fn json_round_trip_drops_secret_fields() {
         let v = json!({"id": "openai", "kind": "openai-compatible", "label": "OpenAI",
-            "url": "https://api.openai.com/v1", "model": "gpt-4o-mini-tts", "voice": "marin",
+            "url": "https://api.openai.com/v1", "model": "m1", "voice": "v1",
             "key_ref": "credman", "options": {"preset": "openai"},
             "secret": "sk-should-never-be-kept-1234", "api_key": "x"});
         let p = parse(v).unwrap();
@@ -1968,7 +1941,7 @@ mod tests {
         assert_eq!(
             out,
             json!({"id": "openai", "kind": "openai-compatible", "label": "OpenAI",
-                "url": "https://api.openai.com/v1", "model": "gpt-4o-mini-tts", "voice": "marin",
+                "url": "https://api.openai.com/v1", "model": "m1", "voice": "v1",
                 "key_ref": "credman", "options": {"preset": "openai"}})
         );
     }
@@ -1985,21 +1958,20 @@ mod tests {
     fn elevenlabs_profiles() {
         let el = |extra: Value| {
             with(
-                json!({"id": "el", "kind": "elevenlabs", "voice": "JBFqnCBsd6RMkjVDRZzb"}),
+                json!({"id": "el", "kind": "elevenlabs", "voice": "v1"}),
                 extra,
             )
         };
         let p = parse(el(json!({}))).unwrap();
         assert_eq!(p.base_url().as_deref(), Some("https://api.elevenlabs.io"));
-        assert_eq!(p.effective_model().as_deref(), Some("eleven_flash_v2_5"));
+        // The model is optional: ElevenLabs picks its own when none is sent.
+        assert_eq!(p.model, None);
+        assert!(p.takes_model() && !p.model_required() && !p.missing_model());
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "ElevenLabs");
         assert_eq!(p.sends_text_to(), "api.elevenlabs.io");
         assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
-        assert_eq!(
-            err(json!({"id": "el", "kind": "elevenlabs"})),
-            "kind 'elevenlabs' needs a voice (a voice_id from your voice library)"
-        );
+        assert!(parse(json!({"id": "el", "kind": "elevenlabs"})).is_ok());
         // A cloud kind keeps credman even behind a loopback url.
         let proxy = parse(el(json!({"url": "http://127.0.0.1:9"}))).unwrap();
         assert_eq!(proxy.key_ref, KeyRef::CredMan);
@@ -2027,7 +1999,7 @@ mod tests {
     fn azure_profiles() {
         let az = |extra: Value| {
             with(
-                json!({"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+                json!({"id": "az", "kind": "azure", "voice": "v1",
                     "options": {"region": "westeurope"}}),
                 extra,
             )
@@ -2040,22 +2012,19 @@ mod tests {
         assert_eq!(p.sends_text_to(), "westeurope.tts.speech.microsoft.com");
         assert_eq!(p.display_label(), "Azure Speech");
         assert_eq!(p.key_ref, KeyRef::CredMan);
-        let by_url = parse(
-            json!({"id": "az", "kind": "azure", "voice": "en-US-AvaNeural",
-            "url": "https://eastus.tts.speech.microsoft.com/"}),
-        )
+        let by_url = parse(json!({"id": "az", "kind": "azure", "voice": "v1",
+            "url": "https://eastus.tts.speech.microsoft.com/"}))
         .unwrap();
         assert_eq!(
             by_url.base_url().as_deref(),
             Some("https://eastus.tts.speech.microsoft.com")
         );
         assert_eq!(
-            err(json!({"id": "az", "kind": "azure", "voice": "en-US-AvaNeural"})),
+            err(json!({"id": "az", "kind": "azure", "voice": "v1"})),
             "kind 'azure' needs options.region or url"
         );
         assert!(
-            err(json!({"id": "az", "kind": "azure", "options": {"region": "eastus"}}))
-                .contains("needs a voice")
+            parse(json!({"id": "az", "kind": "azure", "options": {"region": "eastus"}})).is_ok()
         );
         assert_eq!(
             err(az(json!({"model": "x"}))),
@@ -2078,12 +2047,7 @@ mod tests {
 
     #[test]
     fn google_profiles() {
-        let g = |extra: Value| {
-            with(
-                json!({"id": "g", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"}),
-                extra,
-            )
-        };
+        let g = |extra: Value| with(json!({"id": "g", "kind": "google", "voice": "v1"}), extra);
         let p = parse(g(json!({}))).unwrap();
         assert_eq!(
             p.base_url().as_deref(),
@@ -2094,7 +2058,7 @@ mod tests {
         assert!(err(g(json!({"model": "gemini"}))).contains("options.model_name"));
         assert!(parse(g(
             json!({"options": {"language_code": "en-US", "sample_rate": 16000,
-            "user_project": "my-project-1", "model_name": "gemini-2.5-flash-tts"}})
+            "user_project": "my-project-1", "model_name": "m-1.0_x"}})
         ))
         .is_ok());
         for (opts, msg) in [
@@ -2109,21 +2073,15 @@ mod tests {
 
     #[test]
     fn locales_come_from_voice_names() {
-        assert_eq!(
-            voice_locale("en-US-AvaMultilingualNeural").as_deref(),
-            Some("en-US")
-        );
-        assert_eq!(
-            voice_locale("en-US-Chirp3-HD-Kore").as_deref(),
-            Some("en-US")
-        );
+        assert_eq!(voice_locale("en-US-VoiceANeural").as_deref(), Some("en-US"));
+        assert_eq!(voice_locale("en-US-Voice-A").as_deref(), Some("en-US"));
         assert_eq!(voice_locale("cmn-CN-Wavenet-A").as_deref(), Some("cmn-CN"));
         assert_eq!(
             voice_locale("zh-CN-henan-YundengNeural").as_deref(),
             Some("zh-CN")
         );
-        assert_eq!(voice_locale("Kore"), None);
+        assert_eq!(voice_locale("VoiceA"), None);
         assert_eq!(voice_locale("en-US"), None);
-        assert_eq!(voice_locale("JBFqnCBsd6RMkjVDRZzb"), None);
+        assert_eq!(voice_locale("voiceid0000000000001"), None);
     }
 }

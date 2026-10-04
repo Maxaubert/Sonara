@@ -6,8 +6,12 @@ Each method sends one core message as is. The profile is named by the
 ``engine`` field (a request's ``id`` is its correlation id). A runtime that
 refuses external engines (``sonarad --no-external-engines``) answers
 ``E_UNSUPPORTED``. A key is sent only in ``add`` (``secret``) or
-``set_key``; the runtime stores it in Windows Credential Manager and never
-returns it.
+``set_key`` (or with a draft profile in ``models``, for that request only);
+the runtime stores it in Windows Credential Manager and never returns it.
+
+Sonara names no model or voice of its own (protocol 1.5, runtime 0.19.0):
+``models`` and ``voices`` list the provider's live, and a profile without
+one it needs says so in ``engine_list`` (``missing``).
 
 A ``command`` engine (a program on the user's PC) is never added or changed
 through the protocol: ``add`` of one, or replacing one, is ``E_FORBIDDEN``
@@ -24,7 +28,8 @@ Send = Callable[[str, dict], dict]
 
 class Engines:
     """``engine_list``, ``engine_add``, ``engine_remove``, ``engine_key``,
-    ``engine_test``, ``engine_reload`` and ``voices`` with ``refresh``."""
+    ``engine_test``, ``engine_reload``, ``engine_models`` and ``voices`` with
+    ``refresh``."""
 
     def __init__(self, send: Send):
         self._send = send
@@ -69,6 +74,24 @@ class Engines:
         if not play:
             fields["play"] = False
         return self._send("engine_test", fields)
+
+    def models(self, engine: Optional[str] = None, refresh: bool = False,
+               profile: Optional[dict] = None, secret: Optional[str] = None) -> dict:
+        """``engine_models`` (protocol 1.5): the provider's models now, of a
+        saved ``engine`` (``refresh`` asks the provider again) or of a draft
+        ``profile`` (with ``secret`` for this request only). Replies
+        ``{models: [{id, name}], list, takes_model, required, error?}``."""
+        if profile is not None:
+            fields: dict = {"profile": profile}
+            if secret is not None:
+                fields["secret"] = secret
+            return self._send("engine_models", fields)
+        if engine is None:
+            raise ValueError("models needs an engine or a profile")
+        fields = {"engine": engine}
+        if refresh:
+            fields["refresh"] = True
+        return self._send("engine_models", fields)
 
     def voices(self, engine: str, refresh: bool = False) -> list:
         """``voices`` of one engine; ``refresh`` asks the provider again."""

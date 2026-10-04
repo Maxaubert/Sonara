@@ -25,6 +25,13 @@ enum Task {
 
 /// What the thread hands back.
 pub(crate) enum Done {
+    /// One piece of a chunk a streaming engine is still making (#235):
+    /// the reader may play it before the chunk is done.
+    Part {
+        item: ItemId,
+        chunk: usize,
+        pcm: PcmChunk,
+    },
     Chunk {
         item: ItemId,
         chunk: usize,
@@ -174,10 +181,39 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
                 }
             }
             Task::Chunk(job) => {
+                let streams = job.engine.streams();
                 let result = job
                     .engine
                     .synthesize(&job.text, &job.voice, job.rate)
-                    .and_then(|stream| stream.collect::<Result<Vec<_>, _>>());
+                    .and_then(|stream| {
+                        if !streams {
+                            return stream.collect::<Result<Vec<_>, _>>();
+                        }
+                        // Each piece goes out as it comes (#235); the whole
+                        // chunk follows. A failure after audio came keeps
+                        // that audio (a cancel does not: its item ended).
+                        let mut all = Vec::new();
+                        for piece in stream {
+                            match piece {
+                                Ok(pcm) => {
+                                    done(Done::Part {
+                                        item: job.item,
+                                        chunk: job.chunk,
+                                        pcm: pcm.clone(),
+                                    });
+                                    all.push(pcm);
+                                }
+                                Err(e)
+                                    if all.is_empty()
+                                        || matches!(e, sonara_engine::Error::Cancelled) =>
+                                {
+                                    return Err(e)
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                        Ok(all)
+                    });
                 shared.lock().in_flight = None;
                 done(Done::Chunk {
                     item: job.item,

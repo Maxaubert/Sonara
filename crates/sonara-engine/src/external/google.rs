@@ -215,7 +215,7 @@ mod tests {
     fn adapter(options: Value) -> Google {
         Google::new(
             &Profile::from_json(&json!({"id": "g", "kind": "google",
-                "voice": "en-US-Chirp3-HD-Kore", "options": options}))
+                "voice": "en-US-Voice-A", "options": options}))
             .unwrap(),
         )
     }
@@ -243,12 +243,7 @@ mod tests {
     #[test]
     fn request_golden() {
         let a = adapter(json!({}));
-        let r = a.synth_request(
-            "Hello.",
-            "en-US-Chirp3-HD-Kore",
-            250,
-            Some(&Secret::new("AIza-k")),
-        );
+        let r = a.synth_request("Hello.", "en-US-Voice-A", 250, Some(&Secret::new("AIza-k")));
         assert_eq!(
             r.url,
             "https://texttospeech.googleapis.com/v1/text:synthesize"
@@ -260,27 +255,27 @@ mod tests {
         assert_eq!(
             body,
             json!({"input": {"text": "Hello."},
-                "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Kore"},
+                "voice": {"languageCode": "en-US", "name": "en-US-Voice-A"},
                 "audioConfig": {"audioEncoding": "PCM", "sampleRateHertz": 24000,
                     "speakingRate": 1.25}})
         );
         let g = adapter(json!({"language_code": "en-GB", "sample_rate": 16000,
-            "user_project": "proj-1", "model_name": "gemini-2.5-flash-tts"}));
-        let r = g.synth_request("Hi.", "Kore", 400, None);
+            "user_project": "proj-1", "model_name": "m-1"}));
+        let r = g.synth_request("Hi.", "VoiceA", 400, None);
         assert_eq!(r.header_value("x-goog-user-project"), Some("proj-1"));
         assert_eq!(r.header_value("x-goog-api-key"), None);
         assert_eq!(
-            g.body("Hi.", "Kore", 400),
+            g.body("Hi.", "VoiceA", 400),
             json!({"input": {"text": "Hi."},
-                "voice": {"languageCode": "en-GB", "name": "Kore",
-                    "modelName": "gemini-2.5-flash-tts"},
+                "voice": {"languageCode": "en-GB", "name": "VoiceA",
+                    "modelName": "m-1"},
                 "audioConfig": {"audioEncoding": "PCM", "sampleRateHertz": 16000,
                     "speakingRate": 2.0}})
         );
         assert_eq!(g.requested_rate(), Some(16_000));
         // A voice without a locale prefix and no option: en-US.
         assert_eq!(
-            adapter(json!({})).body("x", "Kore", 200)["voice"]["languageCode"],
+            adapter(json!({})).body("x", "VoiceA", 200)["voice"]["languageCode"],
             "en-US"
         );
         assert_eq!(a.input_limit(), Limit::Bytes(5000));
@@ -373,7 +368,7 @@ mod tests {
         // A setting the voice does not support is a settings problem.
         for m in [
             "This voice does not support speaking rate or pitch parameters at this time.",
-            "Voice 'en-US-Chirp3-HD-Kore' does not support SSML input.",
+            "Voice 'en-US-Voice-A' does not support SSML input.",
             "Requested model name does not match the voice.",
         ] {
             assert_eq!(
@@ -476,7 +471,7 @@ mod tests {
         }
         let list = a
             .parse_voices(
-                br#"{"voices": [{"languageCodes": ["en-US"], "name": "en-US-Chirp3-HD-Kore",
+                br#"{"voices": [{"languageCodes": ["en-US"], "name": "en-US-Voice-A",
                     "ssmlGender": "FEMALE", "naturalSampleRateHertz": 24000},
                     {"languageCodes": [], "name": "x"}, {"languageCodes": ["de-DE"]}]}"#,
             )
@@ -485,8 +480,8 @@ mod tests {
             list,
             vec![
                 VoiceInfo {
-                    id: "en-US-Chirp3-HD-Kore".into(),
-                    name: "en-US-Chirp3-HD-Kore".into(),
+                    id: "en-US-Voice-A".into(),
+                    name: "en-US-Voice-A".into(),
                     language: "en-US".into()
                 },
                 VoiceInfo {

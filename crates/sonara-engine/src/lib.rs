@@ -77,6 +77,14 @@ pub trait Engine: Send + Sync {
     fn quick_start(&self) -> bool {
         true
     }
+    /// True when the `PcmStream` of `synthesize` yields audio while the
+    /// rest is still being made (#235, Gemini's streamed answer): the
+    /// reader then starts playing a chunk at its first piece instead of
+    /// waiting for all of it. Default false: the reader collects the
+    /// stream first.
+    fn streams(&self) -> bool {
+        false
+    }
     /// True when `synthesize` accepts voice ids that `voices()` does not
     /// list (cloud voice ids, cloned voices, file names of a local server).
     fn accepts_unlisted_voices(&self) -> bool {

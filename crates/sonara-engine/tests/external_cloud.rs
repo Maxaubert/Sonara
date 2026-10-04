@@ -47,24 +47,24 @@ fn pcm_bytes(samples: &[i16]) -> Vec<u8> {
 }
 
 fn elevenlabs() -> Value {
-    json!({"id": "el", "kind": "elevenlabs", "voice": "JBFqnCBsd6RMkjVDRZzb",
+    json!({"id": "el", "kind": "elevenlabs", "voice": "voiceid0000000000001",
         "options": {"timeout_ms": 5000}})
 }
 
 fn azure() -> Value {
-    json!({"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+    json!({"id": "az", "kind": "azure", "voice": "en-US-VoiceANeural",
         "options": {"timeout_ms": 5000}})
 }
 
 fn google() -> Value {
-    json!({"id": "gg", "kind": "google", "voice": "en-US-Chirp3-HD-Kore",
+    json!({"id": "gg", "kind": "google", "voice": "en-US-Voice-A",
         "options": {"timeout_ms": 5000}})
 }
 
 #[test]
 fn elevenlabs_speaks_raw_pcm_with_its_key_header() {
     let server = ScriptServer::start();
-    let path = "/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb";
+    let path = "/v1/text-to-speech/voiceid0000000000001";
     server.on(path, Route::new(200, "audio/pcm", pcm_bytes(&[5, -5, 9])));
     let e = engine(&server, elevenlabs(), Some(KEY), false);
     let got = chunks(&e, "Hello there.", "", 250);
@@ -77,8 +77,8 @@ fn elevenlabs_speaks_raw_pcm_with_its_key_header() {
     assert_eq!(req.header("authorization"), None);
     assert_eq!(
         req.json(),
-        json!({"text": "Hello there.", "model_id": "eleven_flash_v2_5",
-            "voice_settings": {"speed": 1.2}})
+        // No model named: none sent, ElevenLabs uses its own (#235).
+        json!({"text": "Hello there.", "voice_settings": {"speed": 1.2}})
     );
     // Another voice id (a cloned voice) goes in the path as given.
     server.on(
@@ -109,7 +109,7 @@ fn elevenlabs_voice_list_follows_three_pages() {
     let voices = e.refresh_voices().unwrap();
     let ids: Vec<&str> = voices.iter().map(|v| v.id.as_str()).collect();
     // The profile's voice first (not listed), then the three pages, once each.
-    assert_eq!(ids, vec!["JBFqnCBsd6RMkjVDRZzb", "a", "b", "c"]);
+    assert_eq!(ids, vec!["voiceid0000000000001", "a", "b", "c"]);
     assert_eq!(voices[1].language, "en");
     let paths: Vec<String> = server.requests().into_iter().map(|r| r.path).collect();
     assert_eq!(
@@ -130,7 +130,7 @@ fn elevenlabs_voice_list_follows_three_pages() {
 fn elevenlabs_out_of_credit_speaks_with_the_fallback_and_the_cue() {
     let server = ScriptServer::start();
     server.on(
-        "/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb",
+        "/v1/text-to-speech/voiceid0000000000001",
         Route::json(
             402,
             r#"{"detail": {"code": "insufficient_credits", "message": "Not enough credits."}}"#,
@@ -180,7 +180,7 @@ fn azure_sends_ssml_with_its_headers() {
     assert_eq!(
         String::from_utf8(req.body.clone()).unwrap(),
         "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
-         <voice name='en-US-AvaMultilingualNeural'><prosody rate='1'>\
+         <voice name='en-US-VoiceANeural'><prosody rate='1'>\
          Fish &amp; chips &lt;now&gt;.</prosody></voice></speak>"
     );
 }
@@ -192,7 +192,7 @@ fn azure_unknown_voice_is_bad_voice_once_the_list_is_known() {
         "/cognitiveservices/voices/list",
         Route::json(
             200,
-            r#"[{"ShortName": "en-US-AvaMultilingualNeural", "LocalName": "Ava", "Locale": "en-US"}]"#,
+            r#"[{"ShortName": "en-US-VoiceANeural", "LocalName": "Bea", "Locale": "en-US"}]"#,
         ),
     );
     server.on("/cognitiveservices/v1", Route::new(400, "text/plain", ""));
@@ -206,7 +206,7 @@ fn azure_unknown_voice_is_bad_voice_once_the_list_is_known() {
         })
     ));
     let voices = e.refresh_voices().unwrap();
-    assert_eq!(voices[0].name, "Ava (en-US)");
+    assert_eq!(voices[0].name, "Bea (en-US)");
     assert_eq!(
         server
             .requests()
@@ -227,7 +227,7 @@ fn azure_unknown_voice_is_bad_voice_once_the_list_is_known() {
     }
     // A listed voice that still gets a 400 stays a settings problem.
     assert!(matches!(
-        e.test("x", "en-US-AvaMultilingualNeural", 200),
+        e.test("x", "en-US-VoiceANeural", 200),
         Err(Error::External {
             reason: Reason::BadConfig,
             ..
@@ -271,7 +271,7 @@ fn google_decodes_base64_audio_and_sends_the_key_in_a_header() {
     assert_eq!(
         req.json(),
         json!({"input": {"text": "Hello."},
-            "voice": {"languageCode": "en-US", "name": "en-US-Chirp3-HD-Kore"},
+            "voice": {"languageCode": "en-US", "name": "en-US-Voice-A"},
             "audioConfig": {"audioEncoding": "PCM", "sampleRateHertz": 24000,
                 "speakingRate": 1.5}})
     );
@@ -316,7 +316,7 @@ fn google_invalid_key_is_auth() {
         "/v1/voices",
         Route::json(
             200,
-            r#"{"voices": [{"languageCodes": ["en-US"], "name": "en-US-Chirp3-HD-Kore"}]}"#,
+            r#"{"voices": [{"languageCodes": ["en-US"], "name": "en-US-Voice-A"}]}"#,
         ),
     );
     let e = engine(&server, google(), Some(KEY), true);
@@ -336,7 +336,7 @@ fn google_invalid_key_is_auth() {
         .into_iter()
         .map(|v| v.id)
         .collect();
-    assert_eq!(ids, vec!["en-US-Chirp3-HD-Kore"]);
+    assert_eq!(ids, vec!["en-US-Voice-A"]);
 }
 
 #[test]
@@ -359,7 +359,7 @@ fn cloud_pcm_that_starts_with_minus_one_is_spoken() {
     let quiet = [-1i16, 0, -2, 7];
     let server = ScriptServer::start();
     server.on(
-        "/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb",
+        "/v1/text-to-speech/voiceid0000000000001",
         Route::new(200, "audio/pcm", pcm_bytes(&quiet)),
     );
     server.on(
@@ -465,7 +465,7 @@ fn a_redirect_never_carries_a_custom_key_header_away() {
         let server = ScriptServer::start();
         let other = ScriptServer::start();
         let path = if v["kind"] == "elevenlabs" {
-            "/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb"
+            "/v1/text-to-speech/voiceid0000000000001"
         } else {
             "/v1/text:synthesize"
         };

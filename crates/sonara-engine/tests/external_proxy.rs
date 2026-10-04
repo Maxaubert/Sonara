@@ -30,7 +30,7 @@ fn a_loopback_engine_bypasses_the_system_proxy() {
     assert_eq!(proxy.requests().len(), 1, "the proxy environment applies");
 
     let profile = Profile::from_json(&json!({"id": "local", "kind": "openai-compatible",
-        "url": format!("{}/v1", provider.base), "key_ref": "credman",
+        "voice": "v1", "url": format!("{}/v1", provider.base), "key_ref": "credman",
         "options": {"preset": "generic"}}))
     .unwrap();
     let store = Arc::new(MemoryStore::new());

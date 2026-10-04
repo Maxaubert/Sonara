@@ -405,7 +405,7 @@ mod tests {
         // A bad voice blocks that voice only.
         h.record_failure(&fail(Reason::BadVoice), "nova");
         assert!(h.skip("nova").is_some());
-        assert_eq!(h.skip("alloy"), None);
+        assert_eq!(h.skip("v2"), None);
         h.clear_key_block();
         assert!(h.skip("nova").is_some(), "a key does not fix a voice");
         h.clear();

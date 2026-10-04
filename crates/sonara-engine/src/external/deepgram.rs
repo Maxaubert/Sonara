@@ -1,7 +1,8 @@
 //! Kind `deepgram` (spec 5.4, 9, 13.1, 13.2): `POST {url}/v1/speak?model=
 //! {voice}&encoding=linear16&container=none&sample_rate=24000` with
-//! `{"text"}`, raw 16-bit mono PCM back. The voice is the model (Aura voices
-//! such as `aura-2-thalia-en`). The key goes in `Authorization: Token`.
+//! `{"text"}`, raw 16-bit mono PCM back. The voice is the model (one of the
+//! speech models `GET /v1/models` lists live; none is named in code, #235).
+//! The key goes in `Authorization: Token`.
 //!
 //! Speed (uncertain, spec 13.3 fact 2): sent as the `speed` query parameter
 //! except at 1.0. When Deepgram refuses it (a `bad_config` naming `speed`),
@@ -187,7 +188,7 @@ mod tests {
     fn adapter(options: Value) -> Deepgram {
         Deepgram::new(
             &Profile::from_json(&json!({"id": "dg", "kind": "deepgram",
-                "voice": "aura-2-thalia-en", "options": options}))
+                "voice": "voice-a-en", "options": options}))
             .unwrap(),
         )
     }
@@ -204,7 +205,7 @@ mod tests {
     #[test]
     fn error_mapping_follows_the_table() {
         let a = adapter(json!({}));
-        let err = |s, b: &str| a.map_error(&reply(s, b), "aura-2-thalia-en", None).reason;
+        let err = |s, b: &str| a.map_error(&reply(s, b), "voice-a-en", None).reason;
         let body = |code: &str, msg: &str| {
             format!(r#"{{"err_code": "{code}", "err_msg": "{msg}", "request_id": "r"}}"#)
         };
@@ -226,7 +227,7 @@ mod tests {
             ),
             (
                 400,
-                body("INVALID_QUERY_PARAMETER", "No such model: aura-9-x"),
+                body("INVALID_QUERY_PARAMETER", "No such model: voice-9-x"),
                 Reason::BadVoice,
             ),
             (
@@ -270,10 +271,10 @@ mod tests {
     fn request_golden() {
         let a = adapter(json!({}));
         let key = Secret::new("dg-test-key-0123456789");
-        let r = a.synth_request("Hello.", "aura-2-thalia-en", 250, Some(&key));
+        let r = a.synth_request("Hello.", "voice-a-en", 250, Some(&key));
         assert_eq!(
             r.url,
-            "https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=linear16\
+            "https://api.deepgram.com/v1/speak?model=voice-a-en&encoding=linear16\
              &container=none&sample_rate=24000&speed=1.25"
         );
         assert_eq!(
@@ -285,8 +286,8 @@ mod tests {
         // No speed at 1.0; the rate option is sent and asked for.
         let b = adapter(json!({"sample_rate": 16000}));
         assert_eq!(
-            b.speak_url("aura-asteria-en", 200),
-            "https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=linear16\
+            b.speak_url("voice-s-en", 200),
+            "https://api.deepgram.com/v1/speak?model=voice-s-en&encoding=linear16\
              &container=none&sample_rate=16000"
         );
         assert_eq!(b.requested_rate(), Some(16_000));
@@ -327,7 +328,7 @@ mod tests {
         // provider naming `speed`.
         let a = Deepgram::new(
             &Profile::from_json(&json!({"id": "dg", "kind": "deepgram",
-                "label": "Speedy Deepgram", "voice": "aura-2-thalia-en"}))
+                "label": "Speedy Deepgram", "voice": "voice-a-en"}))
             .unwrap(),
         );
         let fast = a.synth_request("x", "v", 250, None);
@@ -367,21 +368,21 @@ mod tests {
         assert_eq!(first.header_value("authorization"), Some("Token k"));
         let body = br#"{"stt": [{"name": "nova-3", "canonical_name": "nova-3"}],
             "tts": [
-              {"name": "thalia", "canonical_name": "aura-2-thalia-en",
-               "architecture": "aura-2", "languages": ["en", "en-US"]},
-              {"name": "asteria", "canonical_name": "aura-asteria-en"},
+              {"name": "a", "canonical_name": "voice-a-en",
+               "architecture": "arch-2", "languages": ["en", "en-US"]},
+              {"name": "s", "canonical_name": "voice-s-en"},
               {"name": "no canonical name"}]}"#;
         assert_eq!(
             a.parse_voices(body).unwrap(),
             vec![
                 VoiceInfo {
-                    id: "aura-2-thalia-en".into(),
-                    name: "thalia (aura-2)".into(),
+                    id: "voice-a-en".into(),
+                    name: "a (arch-2)".into(),
                     language: "en".into()
                 },
                 VoiceInfo {
-                    id: "aura-asteria-en".into(),
-                    name: "asteria".into(),
+                    id: "voice-s-en".into(),
+                    name: "s".into(),
                     language: String::new()
                 },
             ]

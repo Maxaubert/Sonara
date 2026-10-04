@@ -2,26 +2,29 @@
 //! for OpenAI and the local servers that copy its API (Kokoro-FastAPI,
 //! LocalAI, Speaches, openedai-speech, the two Chatterbox servers). WAV is
 //! asked for by default (D8); the body is sniffed anyway.
+//!
+//! No model id and no voice in code (#235): models and voices change
+//! upstream. The model list is `GET {url}/models` (for OpenAI the ids that
+//! name `tts`); a server that picks its own model gets none when the
+//! profile names none. OpenAI and openedai-speech have no voice list API,
+//! so their voice is typed in (the settings page links the provider's
+//! voice page); the other servers list theirs.
 use super::adapter::{
-    encode, key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo, VoiceSource,
+    encode, key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, ModelInfo, ModelSource,
+    VoiceInfo, VoiceSource,
 };
-use super::error::{clean, headline, ExtError};
+use super::error::{clean, headline, model_message, ExtError};
 use super::keys::Secret;
 use super::profile::{Kind, Preset, Profile};
 use super::rate;
 use super::split::Limit;
 use crate::Reason;
 use serde_json::{json, Map, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-/// OpenAI's voices for `gpt-4o-mini-tts` (spec 13.1).
-pub const OPENAI_VOICES: &[&str] = &[
-    "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse",
-    "marin", "cedar",
-];
-/// The newer voices `tts-1` and `tts-1-hd` lack.
-const NOT_ON_TTS1: &[&str] = &["ballad", "verse", "marin", "cedar"];
-/// openedai-speech's fixed list.
-pub const OPENEDAI_VOICES: &[&str] = &["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
+/// The field a model may refuse (OpenAI's older speech models take no
+/// `instructions`), as `ExtError::refused_param` names it.
+const INSTRUCTIONS: &str = "instructions";
 
 /// 429 codes that mean the account is out of credit, not busy.
 const QUOTA_CODES: &[&str] = &[
@@ -36,13 +39,17 @@ pub struct OpenAi {
     preset: Preset,
     base: String,
     root: String,
-    model: String,
+    /// `None`: the server picks its own (or, where one is required, the
+    /// profile says "choose a model").
+    model: Option<String>,
     response_format: &'static str,
     sample_rate: Option<u32>,
     instructions: Option<String>,
     extra: Map<String, Value>,
     voices_path: Option<String>,
     label: String,
+    /// The model refused `instructions`: they are not sent again.
+    no_instructions: AtomicBool,
 }
 
 impl OpenAi {
@@ -65,7 +72,7 @@ impl OpenAi {
             preset,
             base,
             root,
-            model: p.effective_model().unwrap_or_default(),
+            model: p.model.clone(),
             response_format,
             sample_rate,
             instructions: p.option_str("instructions").map(str::to_string),
@@ -77,6 +84,7 @@ impl OpenAi {
                 .unwrap_or_default(),
             voices_path: p.option_str("voices_path").map(str::to_string),
             label: p.display_label(),
+            no_instructions: AtomicBool::new(false),
         }
     }
 
@@ -87,22 +95,31 @@ impl OpenAi {
         req
     }
 
-    /// Whether `instructions` goes in the body: OpenAI takes it only for
-    /// `gpt-4o-mini-tts` (tts-1 refuses it), and Kokoro-FastAPI and the
+    /// Whether `instructions` goes in the body: Kokoro-FastAPI and the
     /// Chatterbox servers do not take it; LocalAI forwards it to its
-    /// expressive backends, so any other server gets it when it is set.
+    /// expressive backends, so any other server gets it when it is set. A
+    /// model that refuses it (OpenAI's older speech models) gets it no
+    /// more (`adapt`): Sonara keeps no list of which models take it.
     fn takes_instructions(&self) -> bool {
+        if self.no_instructions.load(Ordering::SeqCst) {
+            return false;
+        }
         match self.preset {
-            Preset::OpenAi => self.model.starts_with("gpt-4o-mini-tts"),
             Preset::KokoroFastApi | Preset::ChatterboxApi | Preset::ChatterboxServer => false,
-            Preset::LocalAi | Preset::Speaches | Preset::OpenedAiSpeech | Preset::Generic => true,
+            Preset::OpenAi
+            | Preset::LocalAi
+            | Preset::Speaches
+            | Preset::OpenedAiSpeech
+            | Preset::Generic => true,
         }
     }
 
     /// The request body (tests check it per preset).
     pub fn body(&self, text: &str, voice: &str, wpm: u32) -> Value {
         let mut b = Map::new();
-        b.insert("model".into(), json!(self.model));
+        if let Some(m) = &self.model {
+            b.insert("model".into(), json!(m));
+        }
         b.insert("input".into(), json!(text));
         let voice_value = if self.preset == Preset::OpenAi && voice.starts_with("voice_") {
             json!({"id": voice})
@@ -134,8 +151,23 @@ impl OpenAi {
         Value::Object(b)
     }
 
-    fn fixed(ids: &[&str]) -> Vec<VoiceInfo> {
-        ids.iter().map(|v| VoiceInfo::named(v)).collect()
+    /// Whether the refusal is about the model (an unknown or retired one).
+    fn about_model(&self, s: u16, eb: &ErrorBody, code: &str) -> bool {
+        self.model.is_some()
+            && (code == "model_not_found"
+                || eb.param.as_deref() == Some("model")
+                || (matches!(s, 400 | 404 | 422)
+                    && eb.mentions("model")
+                    && !eb.mentions("voice")
+                    && [
+                        "not found",
+                        "does not exist",
+                        "not supported",
+                        "unknown",
+                        "deprecated",
+                    ]
+                    .iter()
+                    .any(|p| eb.mentions(p))))
     }
 }
 
@@ -184,19 +216,95 @@ impl Adapter for OpenAi {
             400..=499 => Reason::BadConfig,
             _ => Reason::Server,
         };
-        let mut e = ExtError::new(
-            reason,
+        let text = if reason == Reason::BadConfig && self.about_model(s, &eb, &code) {
+            model_message(
+                &self.label,
+                self.model.as_deref().unwrap_or_default(),
+                s,
+                &eb.text_or(s),
+            )
+        } else {
             format!(
                 "{} ({s}): {}",
                 headline(reason, &self.label, ""),
                 eb.text_or(s)
-            ),
-        )
-        .with_status(s);
+            )
+        };
+        let mut e = ExtError::new(reason, text).with_status(s);
         if matches!(s, 429 | 503) {
             e.retry_after = reply.retry_after;
         }
+        if reason == Reason::BadConfig
+            && (eb.param.as_deref() == Some(INSTRUCTIONS) || eb.mentions(INSTRUCTIONS))
+        {
+            e.refused_param = Some(INSTRUCTIONS);
+        }
         e
+    }
+
+    /// `instructions` refused: the part once more without them, and never
+    /// again with them.
+    fn adapt(&self, request: &HttpRequest, error: &ExtError) -> bool {
+        let carried = request
+            .body
+            .as_deref()
+            .is_some_and(|b| String::from_utf8_lossy(b).contains("\"instructions\""));
+        error.refused_param == Some(INSTRUCTIONS)
+            && carried
+            && !self.no_instructions.swap(true, Ordering::SeqCst)
+    }
+
+    /// `GET {url}/models`: for OpenAI the ids that name `tts`; for a
+    /// server, the models it marks as text-to-speech, else all it lists
+    /// (a server without the list is an empty one: the model is typed).
+    fn models(&self, key: Option<&Secret>) -> Option<ModelSource> {
+        Some(ModelSource {
+            request: self.with_key(HttpRequest::get(format!("{}/models", self.base)), key),
+            empty_on_error: self.preset != Preset::OpenAi,
+        })
+    }
+
+    fn parse_models(&self, body: &[u8]) -> Result<Vec<ModelInfo>, ExtError> {
+        let v: Value = serde_json::from_slice(body).map_err(|e| {
+            ExtError::new(
+                Reason::Format,
+                format!(
+                    "the model list of {} is not JSON: {}",
+                    self.label,
+                    clean(&e.to_string())
+                ),
+            )
+        })?;
+        let entries = v
+            .get("data")
+            .or_else(|| v.get("models"))
+            .and_then(Value::as_array)
+            .or_else(|| v.as_array())
+            .map(|a| a.as_slice())
+            .unwrap_or_default();
+        let mut out: Vec<ModelInfo> = entries
+            .iter()
+            .filter_map(|m| {
+                let id = match m {
+                    Value::String(s) => s.clone(),
+                    _ => m.get("id").and_then(Value::as_str)?.to_string(),
+                };
+                let task = m
+                    .get("task")
+                    .or_else(|| m.get("type"))
+                    .and_then(Value::as_str)
+                    .map(str::to_ascii_lowercase);
+                let speech = match (&task, self.preset) {
+                    (_, Preset::OpenAi) => id.to_ascii_lowercase().contains("tts"),
+                    (Some(t), _) => t.contains("text-to-speech") || t.contains("tts"),
+                    (None, _) => true,
+                };
+                speech.then(|| ModelInfo::named(&id))
+            })
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|m| seen.insert(m.id.clone()));
+        Ok(out)
     }
 
     fn voices(&self, key: Option<&Secret>) -> VoiceSource {
@@ -206,24 +314,15 @@ impl Adapter for OpenAi {
             empty_on_error: false,
         };
         match self.preset {
-            Preset::OpenAi => {
-                let old = self.model == "tts-1" || self.model == "tts-1-hd";
-                let ids: Vec<&str> = OPENAI_VOICES
-                    .iter()
-                    .copied()
-                    .filter(|v| !old || !NOT_ON_TTS1.contains(v))
-                    .collect();
-                VoiceSource::Fixed(Self::fixed(&ids))
-            }
-            Preset::OpenedAiSpeech => VoiceSource::Fixed(Self::fixed(OPENEDAI_VOICES)),
+            // No voice list API: the voice is typed in (none in code).
+            Preset::OpenAi | Preset::OpenedAiSpeech => VoiceSource::Fixed(Vec::new()),
             Preset::KokoroFastApi | Preset::Speaches => {
                 fetch(format!("{}/audio/voices", self.base))
             }
-            Preset::LocalAi => fetch(format!(
-                "{}/audio/voices?model={}",
-                self.base,
-                encode(&self.model)
-            )),
+            Preset::LocalAi => fetch(match &self.model {
+                Some(m) => format!("{}/audio/voices?model={}", self.base, encode(m)),
+                None => format!("{}/audio/voices", self.base),
+            }),
             Preset::ChatterboxApi => fetch(format!("{}/voices", self.root)),
             Preset::ChatterboxServer => fetch(format!("{}/get_predefined_voices", self.root)),
             Preset::Generic => VoiceSource::Fetch {
@@ -386,6 +485,28 @@ mod tests {
             Reason::BadVoice
         );
         assert_eq!(err(400, &openai("model_not_found")), Reason::BadConfig);
+        // An unknown or retired model is named (#235).
+        let e = a.map_error(&reply(404, &openai("model_not_found")), "v", None);
+        assert!(
+            e.message
+                .starts_with("The speech server does not know the model 'm1' (404)"),
+            "{}",
+            e.message
+        );
+        assert!(e.message.contains("Choose another model"));
+        let e = a.map_error(
+            &reply(400, r#"{"detail": "Model 'm1' not found"}"#),
+            "v",
+            None,
+        );
+        assert!(e.message.contains("model 'm1'"), "{}", e.message);
+        // A voice error stays a voice error.
+        let e = a.map_error(
+            &reply(404, r#"{"detail": "Voice 'x' not found for model m1"}"#),
+            "x",
+            None,
+        );
+        assert_eq!(e.reason, Reason::BadVoice);
         assert_eq!(err(404, r#"{"detail": "Not Found"}"#), Reason::BadConfig);
         assert_eq!(err(415, ""), Reason::BadConfig);
         assert_eq!(
@@ -410,7 +531,7 @@ mod tests {
                 401,
                 r#"{"error": {"message": "Incorrect API key provided: sk-proj-abcdefghijklmnopqrst"}}"#,
             ),
-            "marin",
+            "v1",
             None,
         );
         assert_eq!(e.status, Some(401));
@@ -428,22 +549,41 @@ mod tests {
 
     #[test]
     fn request_bodies_per_preset() {
-        let openai = adapter(json!({"id": "o", "kind": "openai-compatible",
-            "options": {"preset": "openai", "instructions": "Calm."}}));
+        let openai = adapter(
+            json!({"id": "o", "kind": "openai-compatible", "model": "m1",
+            "options": {"preset": "openai", "instructions": "Calm."}}),
+        );
         assert_eq!(
-            openai.body("Hi.", "marin", 250),
-            json!({"model": "gpt-4o-mini-tts", "input": "Hi.", "voice": "marin",
+            openai.body("Hi.", "v1", 250),
+            json!({"model": "m1", "input": "Hi.", "voice": "v1",
                 "response_format": "wav", "speed": 1.25, "instructions": "Calm."})
         );
         assert_eq!(
             openai.body("Hi.", "voice_abc123", 200)["voice"],
             json!({"id": "voice_abc123"})
         );
-        let tts1 = adapter(
-            json!({"id": "o", "kind": "openai-compatible", "model": "tts-1",
-            "options": {"preset": "openai", "instructions": "Calm."}}),
+        // A model that refuses instructions gets them no more (no list of
+        // models in code, #235).
+        let req = openai.synth_request("Hi.", "v1", 200, None);
+        let e = openai.map_error(
+            &reply(
+                400,
+                r#"{"error": {"message": "instructions is not supported with this model", "param": "instructions"}}"#,
+            ),
+            "v1",
+            None,
         );
-        assert!(tts1.body("Hi.", "alloy", 200).get("instructions").is_none());
+        assert_eq!(e.refused_param, Some("instructions"));
+        assert!(openai.adapt(&req, &e));
+        assert!(openai.body("Hi.", "v1", 200).get("instructions").is_none());
+        assert!(!openai.adapt(&req, &e), "once");
+        // No model named: none sent, the server picks its own.
+        let own = preset("kokoro-fastapi", json!({}));
+        let mut v = json!({"id": "p", "kind": "openai-compatible", "url": "http://127.0.0.1:9/v1",
+            "options": {"preset": "kokoro-fastapi"}});
+        let bare = adapter(v.take());
+        assert!(bare.body("Hi.", "v1", 200).get("model").is_none());
+        assert_eq!(own.body("Hi.", "v1", 200)["model"], "m1");
         // LocalAI forwards instructions to expressive backends; a server
         // known not to take them never gets them.
         let calm = json!({"voice": "Emily.wav", "options": {"instructions": "Calm."}});
@@ -459,12 +599,9 @@ mod tests {
             assert_eq!(b.get("instructions").is_some(), sent, "{name}");
         }
         let kokoro = preset("kokoro-fastapi", json!({}));
-        assert_eq!(kokoro.body("a", "af_heart", 200)["stream"], json!(false));
+        assert_eq!(kokoro.body("a", "v1", 200)["stream"], json!(false));
         let speaches = preset("speaches", json!({}));
-        assert_eq!(
-            speaches.body("a", "af_heart", 200)["sample_rate"],
-            json!(24_000)
-        );
+        assert_eq!(speaches.body("a", "v1", 200)["sample_rate"], json!(24_000));
         let speaches = preset("speaches", json!({"options": {"sample_rate": 16000}}));
         assert_eq!(speaches.body("a", "x", 200)["sample_rate"], json!(16_000));
         let generic = preset(
@@ -472,7 +609,7 @@ mod tests {
             json!({"options": {"response_format": "pcm",
             "extra": {"stream": true, "speed": 9, "lang": "en"}}}),
         );
-        let b = generic.body("a", "alloy", 100);
+        let b = generic.body("a", "v1", 100);
         assert_eq!(b["response_format"], "pcm");
         assert_eq!(b["speed"], json!(9), "extra is merged last");
         assert_eq!(b["lang"], "en");
@@ -533,23 +670,20 @@ mod tests {
             } => (request.url, empty_on_error),
             VoiceSource::Fixed(v) => (format!("fixed {}", v.len()), false),
         };
+        // No voice list in code (#235): OpenAI and openedai-speech have no
+        // list API, so the voice is typed in.
         let o = adapter(
             json!({"id": "o", "kind": "openai-compatible", "options": {"preset": "openai"}}),
         );
-        assert_eq!(url(&o).0, "fixed 13");
-        let t1 = adapter(
-            json!({"id": "o", "kind": "openai-compatible", "model": "tts-1-hd",
-            "options": {"preset": "openai"}}),
-        );
-        assert_eq!(url(&t1).0, "fixed 9");
-        assert_eq!(url(&preset("openedai-speech", json!({}))).0, "fixed 6");
+        assert_eq!(url(&o).0, "fixed 0");
+        assert_eq!(url(&preset("openedai-speech", json!({}))).0, "fixed 0");
         assert_eq!(
             url(&preset("kokoro-fastapi", json!({}))).0,
             "http://127.0.0.1:9/v1/audio/voices"
         );
         assert_eq!(
-            url(&preset("localai", json!({"model": "kokoro v1"}))).0,
-            "http://127.0.0.1:9/v1/audio/voices?model=kokoro%20v1"
+            url(&preset("localai", json!({"model": "a b"}))).0,
+            "http://127.0.0.1:9/v1/audio/voices?model=a%20b"
         );
         assert_eq!(
             url(&preset("chatterbox-api", json!({}))).0,
@@ -565,6 +699,52 @@ mod tests {
                 json!({"options": {"voices_path": "/v/list"}})
             )),
             ("http://127.0.0.1:9/v1/v/list".into(), true)
+        );
+    }
+
+    #[test]
+    fn models_come_from_the_models_list() {
+        let o = adapter(json!({"id": "o", "kind": "openai-compatible",
+            "options": {"preset": "openai"}}));
+        let src = o.models(Some(&Secret::new("sk-1"))).unwrap();
+        assert_eq!(src.request.url, "https://api.openai.com/v1/models");
+        assert_eq!(
+            src.request.header_value("authorization"),
+            Some("Bearer sk-1")
+        );
+        assert!(!src.empty_on_error);
+        let list = br#"{"object": "list", "data": [{"id": "chat-x"}, {"id": "a-tts"},
+            {"id": "b-TTS-hd"}, {"id": "a-tts"}]}"#;
+        let ids = |a: &OpenAi, b: &[u8]| {
+            a.parse_models(b)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(&o, list),
+            vec!["a-tts", "b-TTS-hd"],
+            "speech models only"
+        );
+        // A server: its text-to-speech models when it marks them, else all.
+        let s = preset("speaches", json!({}));
+        assert!(s.models(None).unwrap().empty_on_error);
+        assert_eq!(
+            ids(
+                &s,
+                br#"{"data": [{"id": "stt-1", "task": "automatic-speech-recognition"},
+                {"id": "voice-1", "task": "text-to-speech"}]}"#
+            ),
+            vec!["voice-1"]
+        );
+        assert_eq!(
+            ids(&s, br#"{"data": [{"id": "x"}, {"id": "y"}]}"#),
+            vec!["x", "y"]
+        );
+        assert_eq!(
+            o.parse_models(b"<html>").unwrap_err().reason,
+            Reason::Format
         );
     }
 
@@ -594,14 +774,13 @@ mod tests {
             ids(json!([{"display_name": "Emily", "filename": "Emily.wav"}])),
             vec!["Emily.wav"]
         );
-        let v = parse_voice_list(
-            &json!({"voices": [{"name": "alloy", "aliases": [], "language": "en"}]}),
-        );
+        let v =
+            parse_voice_list(&json!({"voices": [{"name": "v2", "aliases": [], "language": "en"}]}));
         assert_eq!(
             v[0],
             VoiceInfo {
-                id: "alloy".into(),
-                name: "alloy".into(),
+                id: "v2".into(),
+                name: "v2".into(),
                 language: "en".into()
             }
         );

@@ -26,7 +26,7 @@ struct Rig {
 
 fn profile(base: &str, extra: Value) -> Profile {
     let mut v = json!({"id": "core-test", "kind": "openai-compatible", "label": "Test",
-        "url": format!("{base}/v1"), "options": {"preset": "generic", "timeout_ms": 5000}});
+        "voice": "v1", "url": format!("{base}/v1"), "options": {"preset": "generic", "timeout_ms": 5000}});
     for (k, x) in extra.as_object().unwrap() {
         v[k] = x.clone();
     }

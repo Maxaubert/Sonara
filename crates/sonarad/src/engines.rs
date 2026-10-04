@@ -30,6 +30,7 @@
 //!   (`crate::quiet`, #227): nothing is sent to a provider meanwhile.
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
+use sonara_engine::external::adapter::ModelInfo;
 use sonara_engine::external::hold::Hold;
 use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
@@ -114,11 +115,9 @@ fn is_command(raw: &Value) -> bool {
     raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str())
 }
 
-/// The id an unsaved profile is built under (`voices` with `profile`).
+/// The id an unsaved profile is built under (`voices` and `engine_models`
+/// with `profile`).
 pub const DRAFT_ID: &str = "draft";
-/// Stands in for the voice an unsaved cloud profile needs to validate; the
-/// voice list never uses it and it is never listed.
-const DRAFT_VOICE: &str = "sonara-draft-voice";
 
 /// A profile that fails `Profile::from_json` as a reply.
 fn profile_failure(e: ProfileError) -> Failure {
@@ -486,16 +485,25 @@ impl Engines {
                     .filter_map(|k| m.get(k).map(|v| (k.to_string(), v.clone())))
                     .collect();
                 m.insert("explicit".into(), Value::Object(explicit));
-                // The values in force, defaults of the preset included.
+                // The address in force (a preset's or kind's default
+                // included). No model or voice is ever filled in (#235).
                 if let Some(u) = p.base_url() {
                     m.insert("url".into(), json!(u));
                 }
-                if let Some(v) = p.effective_model() {
-                    m.insert("model".into(), json!(v));
+                // What the form needs to know about the model (#235).
+                m.insert("takes_model".into(), json!(p.takes_model()));
+                m.insert("model_required".into(), json!(p.model_required()));
+                m.insert("model_list".into(), json!(x.has_model_list()));
+                // What the user must still pick: "model", "voice" (the
+                // reader's voice may supply the voice: `engines_ext::list`).
+                let mut missing = Vec::new();
+                if p.missing_model() {
+                    missing.push("model");
                 }
-                if let Some(v) = p.effective_voice() {
-                    m.insert("voice".into(), json!(v));
+                if p.voice_required() && p.voice.is_none() {
+                    missing.push("voice");
                 }
+                m.insert("missing".into(), json!(missing));
                 m.insert("label".into(), json!(p.display_label()));
                 m.insert("key_present".into(), json!(x.key_present()));
                 m.insert("sends_text_to".into(), json!(p.sends_text_to()));
@@ -742,19 +750,14 @@ impl Engines {
         Ok(at.is_some())
     }
 
-    /// `voices` with `profile` (protocol 1.4, #227): the voice list of a
-    /// profile that is not saved, so the settings page can offer voices
-    /// before the user picks one. The profile is built for this request
-    /// only, under `DRAFT_ID`, with `secret` as its only stored key (never
-    /// another profile's): nothing is saved, stored or registered. Its id
-    /// and voice may be missing. A `command` profile is `E_FORBIDDEN`, as in
-    /// `engine_add`: a request never runs a program it names. Returns the
-    /// voices and the error of the fetch, when it failed.
-    pub fn draft_voices(
-        &self,
-        profile: &Value,
-        secret: Option<&str>,
-    ) -> Result<(Vec<Voice>, Option<sonara_engine::Error>), Failure> {
+    /// The engine of a profile that is not saved, for its voice and model
+    /// lists (protocol 1.4, #227; 1.5, #235): built for this request only,
+    /// under `DRAFT_ID`, with `secret` as its only stored key (never
+    /// another profile's): nothing is saved, stored or registered. Its id,
+    /// model and voice may be missing. A `command` profile is
+    /// `E_FORBIDDEN`, as in `engine_add`: a request never runs a program it
+    /// names.
+    fn draft(&self, profile: &Value, secret: Option<&str>) -> Result<External, Failure> {
         let mut raw = match profile {
             Value::Object(m) => m.clone(),
             _ => return Err(bad("'profile' must be an object with the profile")),
@@ -764,10 +767,6 @@ impl Engines {
         }
         raw.insert("id".into(), json!(DRAFT_ID));
         raw.remove(KEY_ORIGIN);
-        let placeholder = !matches!(raw.get("voice"), Some(Value::String(v)) if !v.is_empty());
-        if placeholder {
-            raw.insert("voice".into(), json!(DRAFT_VOICE));
-        }
         if let Some(s) = secret {
             Self::check_secret(s)?;
             match raw.get("key_ref") {
@@ -792,18 +791,49 @@ impl Engines {
                 .map_err(|e| bad(format!("cannot use the key: {e}")))?;
         }
         let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
-        // Muted: its voices are not fetched either.
+        // Muted: its lists are not fetched either.
         config.hold = Some(self.hold.clone());
-        let ext = External::new(config).map_err(profile_failure)?;
-        let (list, error) = match ext.refresh_voices() {
+        External::new(config).map_err(profile_failure)
+    }
+
+    /// `voices` with `profile` (protocol 1.4, #227): the voice list of a
+    /// profile that is not saved, so the settings page can offer voices
+    /// before the user picks one (`draft`). Returns the voices and the
+    /// error of the fetch, when it failed.
+    pub fn draft_voices(
+        &self,
+        profile: &Value,
+        secret: Option<&str>,
+    ) -> Result<(Vec<Voice>, Option<sonara_engine::Error>), Failure> {
+        let ext = self.draft(profile, secret)?;
+        Ok(match ext.refresh_voices() {
             Ok(v) => (v, None),
             Err(e) => (ext.voices(), Some(e)),
+        })
+    }
+
+    /// `engine_models` with `profile` (protocol 1.5, #235): the provider's
+    /// models for a profile that is not saved (`draft`), whether it has a
+    /// list at all, and the error of the fetch, when it failed.
+    pub fn draft_models(&self, profile: &Value, secret: Option<&str>) -> Result<Models, Failure> {
+        let ext = self.draft(profile, secret)?;
+        Ok(Models::of(&ext, true))
+    }
+
+    /// `engine_models` with `engine`: a saved profile's models, fetched
+    /// again when the cache is old or `refresh` is set.
+    pub fn models(&self, id: &str, refresh: bool) -> Result<Models, Failure> {
+        let ext = match self.get(id) {
+            Some(x) => x,
+            None if self.contains(id) => {
+                return Err(Failure::new(
+                    Code::Unsupported,
+                    format!("engine '{id}' cannot be used by this version"),
+                ))
+            }
+            None => return Err(Failure::new(Code::NotFound, format!("no engine '{id}'"))),
         };
-        let list = list
-            .into_iter()
-            .filter(|v| !(placeholder && v.id == DRAFT_VOICE))
-            .collect();
-        Ok((list, error))
+        Ok(Models::of(&ext, refresh || ext.models_stale()))
     }
 
     /// `engine_remove` (after the caller moved off it when current).
@@ -898,6 +928,40 @@ impl Engines {
 
     pub fn file(&self) -> &Path {
         &self.file
+    }
+}
+
+/// The reply of `engine_models` (#235).
+pub struct Models {
+    pub models: Vec<ModelInfo>,
+    /// The provider has a model list API (else the model is typed in).
+    pub list: bool,
+    /// The kind takes a model at all.
+    pub takes_model: bool,
+    pub required: bool,
+    pub error: Option<sonara_engine::Error>,
+}
+
+impl Models {
+    /// The models of `ext`, fetched first when `fetch` (never while muted:
+    /// `External::refresh_models` keeps the known list then).
+    fn of(ext: &External, fetch: bool) -> Models {
+        let list = ext.has_model_list();
+        let (models, error) = if fetch && list {
+            match ext.refresh_models() {
+                Ok(m) => (m, None),
+                Err(e) => (ext.models(), Some(e)),
+            }
+        } else {
+            (ext.models(), None)
+        };
+        Models {
+            models,
+            list,
+            takes_model: ext.profile().takes_model(),
+            required: ext.profile().model_required(),
+            error,
+        }
     }
 }
 
@@ -1000,7 +1064,8 @@ mod tests {
         assert_eq!(views[1]["supported"], true);
         assert!(views[1]["error"].as_str().unwrap().contains("invalid url"));
         assert_eq!(views[2]["current"], true);
-        assert_eq!(views[2]["model"], "kokoro", "the preset's default");
+        assert!(views[2].get("model").is_none(), "no model filled in (#235)");
+        assert_eq!(views[2]["missing"], json!(["voice"]));
         assert_eq!(views[2]["local"], true);
         assert_eq!(views[2]["status"]["status"], "ready");
         assert_eq!(
@@ -1093,7 +1158,7 @@ mod tests {
         )
         .unwrap();
         e.add(
-            &json!({"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+            &json!({"id": "az", "kind": "azure", "voice": "en-US-VoiceANeural",
                 "options": {"region": "westeurope"}}),
             None,
             false,
@@ -1114,10 +1179,7 @@ mod tests {
             views[1]["url"],
             "https://westeurope.tts.speech.microsoft.com"
         );
-        assert_eq!(
-            views[1]["explicit"],
-            json!({"voice": "en-US-AvaMultilingualNeural"})
-        );
+        assert_eq!(views[1]["explicit"], json!({"voice": "en-US-VoiceANeural"}));
         assert_eq!(
             views[2]["explicit"],
             json!({"url": "http://127.0.0.1:9/v1", "model": "m1", "voice": "v1"})
@@ -1363,7 +1425,7 @@ mod tests {
         std::fs::write(
             h.join(FILE),
             r#"{"format": 2, "engines": [
-                {"id": "az", "kind": "azure", "voice": "en-US-AvaNeural",
+                {"id": "az", "kind": "azure", "voice": "en-US-VoiceBNeural",
                  "options": {"region": "westeurope"}}]}"#,
         )
         .unwrap();

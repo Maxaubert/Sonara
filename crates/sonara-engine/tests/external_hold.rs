@@ -31,7 +31,7 @@ fn rig_with(fallback: bool) -> Rig {
     let server = ScriptServer::start();
     let fake = Arc::new(FakeEngine::new());
     let profile = Profile::from_json(&json!({"id": "hold-test", "kind": "openai-compatible",
-        "label": "Test", "url": format!("{}/v1", server.base),
+        "label": "Test", "voice": "v1", "url": format!("{}/v1", server.base),
         "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000}}))
     .unwrap();
     let mut config = ExternalConfig::new(profile, KeyResolver::new(Arc::new(MemoryStore::new())));
@@ -190,7 +190,7 @@ fn an_engine_without_a_hold_is_unaffected() {
     let server = ScriptServer::start();
     server.on(SPEECH, Route::wav(&[9], 24_000));
     let profile = Profile::from_json(&json!({"id": "free", "kind": "openai-compatible",
-        "url": format!("{}/v1", server.base), "options": {"preset": "kokoro-fastapi"}}))
+        "voice": "v1", "url": format!("{}/v1", server.base), "options": {"preset": "kokoro-fastapi"}}))
     .unwrap();
     let engine = External::new(ExternalConfig::new(
         profile,
@@ -267,7 +267,7 @@ fn a_mute_during_a_paged_voice_list_stops_the_pages() {
     );
     server.queue("/v2/voices", Route::json(200, page2));
     let profile = Profile::from_json(&json!({"id": "el", "kind": "elevenlabs",
-        "url": server.base, "voice": "JBFqnCBsd6RMkjVDRZzb",
+        "url": server.base, "voice": "voiceid0000000000001",
         "options": {"timeout_ms": 5000}}))
     .unwrap();
     let store = Arc::new(MemoryStore::new());

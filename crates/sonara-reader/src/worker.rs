@@ -88,6 +88,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         synth,
         audio: HashMap::new(),
         waiting: None,
+        open: None,
         pending: VecDeque::new(),
         volume: 100,
         muted: false,
@@ -134,9 +135,11 @@ fn forward(events: Receiver<AudioEvent>, tx: Sender<Msg>, stop: &AtomicBool) {
     }
 }
 
-/// The audio of one chunk: on its way, or the engine's answer.
+/// The audio of one chunk: on its way, arriving (a streaming engine,
+/// #235), or the engine's answer.
 enum Slot {
     Pending,
+    Streaming(Vec<PcmChunk>),
     Ready(std::result::Result<Vec<PcmChunk>, String>),
 }
 
@@ -158,6 +161,10 @@ struct Loop {
     /// Synthesized audio (or the failure) per chunk, until its item ends.
     audio: HashMap<(ItemId, usize), Slot>,
     waiting: Option<Waiting>,
+    /// The chunk playing while its audio still arrives (`Output::play_open`):
+    /// its item, chunk and gen, so later pieces are appended and its end
+    /// finishes it.
+    open: Option<(ItemId, usize, u64)>,
     /// Failures found while carrying out effects, fed to the reader after
     /// the current batch (a failed synthesis surfaces at its play).
     pending: VecDeque<AudioEvent>,
@@ -359,8 +366,36 @@ impl Loop {
         self.run(fx);
     }
 
+    /// A piece of a chunk still being made (#235): kept, and played at once
+    /// when the reader waits for that chunk (appended when it plays).
+    fn part(&mut self, item: ItemId, chunk: usize, pcm: PcmChunk) {
+        match self.audio.get_mut(&(item, chunk)) {
+            Some(Slot::Pending) => {
+                self.audio
+                    .insert((item, chunk), Slot::Streaming(vec![pcm.clone()]));
+            }
+            Some(Slot::Streaming(v)) => v.push(pcm.clone()),
+            // The item ended meanwhile.
+            _ => return,
+        }
+        if let Some((i, c, gen)) = self.open {
+            if (i, c) == (item, chunk) {
+                self.output.append(gen, vec![pcm]);
+                return;
+            }
+        }
+        let wanted =
+            matches!(&self.waiting, Some(w) if w.item == item && w.chunk == chunk && !w.paused);
+        if wanted {
+            let w = self.waiting.take().expect("waiting");
+            self.load(w.item, w.chunk, w.gen);
+            self.drain();
+        }
+    }
+
     fn synthesized(&mut self, done: Done) {
         let (item, chunk, result) = match done {
+            Done::Part { item, chunk, pcm } => return self.part(item, chunk, pcm),
             Done::Chunk {
                 item,
                 chunk,
@@ -375,7 +410,10 @@ impl Loop {
             }
         };
         // Not pending: the item ended meanwhile (a cancelled job lands here).
-        if !matches!(self.audio.get(&(item, chunk)), Some(Slot::Pending)) {
+        if !matches!(
+            self.audio.get(&(item, chunk)),
+            Some(Slot::Pending) | Some(Slot::Streaming(_))
+        ) {
             return;
         }
         let result = result.map_err(|e| e.to_string());
@@ -388,6 +426,14 @@ impl Loop {
             });
         }
         self.audio.insert((item, chunk), Slot::Ready(result));
+        // Playing while it arrived: it ends after its last audio.
+        if let Some((i, c, gen)) = self.open {
+            if (i, c) == (item, chunk) {
+                self.open = None;
+                self.output.finish(gen);
+                return;
+            }
+        }
         let ready = matches!(&self.waiting, Some(w) if w.item == item && w.chunk == chunk);
         if ready {
             let w = self.waiting.take().expect("waiting");
@@ -421,8 +467,14 @@ impl Loop {
 
     /// Hand a chunk's audio to the output, or report why there is none.
     fn load(&mut self, item: ItemId, chunk: usize, gen: u64) {
+        self.open = None;
         match self.audio.get(&(item, chunk)) {
             Some(Slot::Ready(Ok(pcm))) => self.output.play(pcm.clone(), item, chunk, gen),
+            // Still arriving: play what came, the rest is appended.
+            Some(Slot::Streaming(pcm)) => {
+                self.output.play_open(pcm.clone(), item, chunk, gen);
+                self.open = Some((item, chunk, gen));
+            }
             Some(Slot::Ready(Err(reason))) => self.pending.push_back(AudioEvent::Failed {
                 gen,
                 reason: reason.clone(),
@@ -466,7 +518,12 @@ impl Loop {
                 None => self.output.pause(),
             },
             Effect::ResumeOutput => match self.waiting.take() {
-                Some(w) if matches!(self.audio.get(&(w.item, w.chunk)), Some(Slot::Ready(_))) => {
+                Some(w)
+                    if matches!(
+                        self.audio.get(&(w.item, w.chunk)),
+                        Some(Slot::Ready(_)) | Some(Slot::Streaming(_))
+                    ) =>
+                {
                     self.load(w.item, w.chunk, w.gen)
                 }
                 Some(mut w) => {
@@ -476,6 +533,7 @@ impl Loop {
                 None => self.output.resume(),
             },
             Effect::StopOutput => {
+                self.open = None;
                 if self.waiting.take().is_none() {
                     self.output.stop();
                 }
@@ -497,6 +555,9 @@ impl Loop {
             Effect::Emit(e) => {
                 if let CoreEvent::Item { item_id, phase } = &e {
                     if *phase != ItemPhase::Started {
+                        if self.open.is_some_and(|(i, _, _)| i == *item_id) {
+                            self.open = None;
+                        }
                         self.audio.retain(|(item, _), _| item != item_id);
                         self.synth.drop_item(*item_id);
                     }

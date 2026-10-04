@@ -83,6 +83,26 @@ pub fn headline(reason: Reason, label: &str, host: &str) -> String {
     }
 }
 
+/// The message of a refusal about the model (#235): models change
+/// upstream, so a retired or unknown one is named, with where to pick
+/// another. `provider` is the provider's own message.
+pub fn model_message(label: &str, model: &str, status: u16, provider: &str) -> String {
+    format!(
+        "{label} does not know the model '{model}' ({status}): {provider}. Choose another \
+         model in Sonara's settings (Engines)."
+    )
+}
+
+/// What a missing model says (#235): Sonara picks no model for the user.
+pub fn choose_model(label: &str) -> String {
+    format!("Choose a model for {label} in Sonara's settings (Engines).")
+}
+
+/// What a missing voice says (#235): Sonara picks no voice for the user.
+pub fn choose_voice(label: &str) -> String {
+    format!("Choose a voice for {label} in Sonara's settings.")
+}
+
 /// The spoken cue of a fallback (spec 8.2).
 pub fn cue_text(reason: Reason, label: &str) -> String {
     let what = match reason {

@@ -265,3 +265,63 @@ fn a_clip_is_mixed_over_the_item_playing_without_touching_it() {
     assert_eq!(r.events_now(), Vec::<String>::new());
     assert_eq!(r.out.loaded(), Some(1));
 }
+
+/// A streaming engine's chunk plays from its first piece (#235): the rest
+/// is appended as it comes, and the chunk ends only after its last.
+#[test]
+fn a_streamed_chunk_plays_as_its_audio_arrives() {
+    let (engine, pieces) = common::engines::StreamEngine::new();
+    let r = Rig::with(std::sync::Arc::new(engine));
+    r.h.set(Key::Engine, Value::Text("stream".into())).unwrap();
+    let id = speak(&r, "One long chunk.");
+    // Nothing plays before the first audio.
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(r.calls_now(), []);
+    pieces.send(Some(100)).unwrap();
+    assert_eq!(
+        r.calls(1),
+        [OutputCall::PlayOpen {
+            item: id,
+            chunk: 0,
+            gen: 1,
+            samples: 100
+        }]
+    );
+    r.out.start();
+    pieces.send(Some(50)).unwrap();
+    assert_eq!(
+        r.calls(1),
+        [OutputCall::Append {
+            gen: 1,
+            samples: 50
+        }]
+    );
+    pieces.send(None).unwrap();
+    assert_eq!(r.calls(1), [OutputCall::Finish { gen: 1 }]);
+    r.out.finish();
+    assert_eq!(
+        r.events_until("item 1 Finished"),
+        ["item 1 Started", "state 1/0", "item 1 Finished"]
+    );
+}
+
+/// Restarting a streamed chunk plays it whole from the cache.
+#[test]
+fn a_streamed_chunk_replays_whole() {
+    let (engine, pieces) = common::engines::StreamEngine::new();
+    let r = Rig::with(std::sync::Arc::new(engine));
+    r.h.set(Key::Engine, Value::Text("stream".into())).unwrap();
+    speak(&r, "One long chunk.");
+    pieces.send(Some(10)).unwrap();
+    pieces.send(Some(20)).unwrap();
+    pieces.send(None).unwrap();
+    let calls = r.calls(3);
+    assert_eq!(
+        calls.last(),
+        Some(&OutputCall::Finish { gen: 1 }),
+        "{calls:?}"
+    );
+    r.out.start();
+    r.h.control(Control::Restart).unwrap();
+    assert_eq!(r.calls(2), [OutputCall::Stop, play(1, 0, 2, 30)]);
+}

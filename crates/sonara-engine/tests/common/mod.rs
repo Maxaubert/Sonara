@@ -233,6 +233,10 @@ pub struct Route {
     pub body: Vec<u8>,
     /// Wait this long before answering (a slow provider).
     pub delay: Option<std::time::Duration>,
+    /// A streamed body (#235): after the headers, each piece after its
+    /// wait, with no `Content-Length` (the answer ends when the server
+    /// closes). Empty: `body` is the whole answer.
+    pub pieces: Vec<(std::time::Duration, Vec<u8>)>,
 }
 
 impl Route {
@@ -242,7 +246,19 @@ impl Route {
             headers: vec![("Content-Type".into(), content_type.into())],
             body: body.into(),
             delay: None,
+            pieces: Vec::new(),
         }
+    }
+
+    /// Server-sent events, each `data` after its wait (a streaming
+    /// provider such as Gemini's `alt=sse`).
+    pub fn sse(events: Vec<(std::time::Duration, String)>) -> Route {
+        let mut r = Route::new(200, "text/event-stream", Vec::new());
+        r.pieces = events
+            .into_iter()
+            .map(|(d, data)| (d, format!("data: {data}\r\n\r\n").into_bytes()))
+            .collect();
+        r
     }
 
     pub fn json(status: u16, body: &str) -> Route {
@@ -427,11 +443,18 @@ fn answer(conn: TcpStream, script: &Mutex<Script>) {
         thread::sleep(d);
     }
     let mut out = conn;
-    let mut head = format!(
-        "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n",
-        route.status,
-        route.body.len()
-    );
+    let mut head = if route.pieces.is_empty() {
+        format!(
+            "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n",
+            route.status,
+            route.body.len()
+        )
+    } else {
+        format!(
+            "HTTP/1.1 {} Scripted\r\nConnection: close\r\n",
+            route.status
+        )
+    };
     for (k, v) in &route.headers {
         head.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -439,6 +462,12 @@ fn answer(conn: TcpStream, script: &Mutex<Script>) {
     let _ = out.write_all(head.as_bytes());
     let _ = out.write_all(&route.body);
     let _ = out.flush();
+    for (wait, piece) in &route.pieces {
+        thread::sleep(*wait);
+        if out.write_all(piece).and_then(|_| out.flush()).is_err() {
+            return;
+        }
+    }
 }
 
 /// Lower-case hex SHA-256.

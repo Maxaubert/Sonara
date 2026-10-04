@@ -3,10 +3,14 @@
 //! for. The key goes in `Authorization: Bearer`, the dated API version in
 //! `Cartesia-Version` (`options.api_version`, so a version Cartesia retires
 //! is a setting, not a new release). The voice list is paged by cursor.
+//! No model id in code (#235): Cartesia needs one in every request and has
+//! no model list API Sonara uses, so the user types it (the settings page
+//! links Cartesia's model page); a profile without one says "choose a
+//! model".
 use super::adapter::{
     encode, key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo, VoiceSource,
 };
-use super::error::{clean, headline, ExtError};
+use super::error::{clean, headline, model_message, ExtError};
 use super::keys::Secret;
 use super::profile::{Kind, Profile, CARTESIA_VERSION};
 use super::rate;
@@ -19,7 +23,8 @@ const PAGE_SIZE: u32 = 100;
 
 pub struct Cartesia {
     base: String,
-    model: String,
+    /// `None`: the profile names none yet (`Profile::missing_model`).
+    model: Option<String>,
     api_version: String,
     language: String,
     sample_rate: u32,
@@ -31,7 +36,7 @@ impl Cartesia {
     pub fn new(p: &Profile) -> Cartesia {
         Cartesia {
             base: p.base_url().unwrap_or_default(),
-            model: p.effective_model().unwrap_or_default(),
+            model: p.model.clone(),
             api_version: p
                 .option_str("api_version")
                 .unwrap_or(CARTESIA_VERSION)
@@ -56,7 +61,9 @@ impl Cartesia {
     /// at speed 1.0, so a model without it is not asked for it.
     pub fn body(&self, text: &str, voice: &str, wpm: u32) -> Value {
         let mut b = Map::new();
-        b.insert("model_id".into(), json!(self.model));
+        if let Some(m) = &self.model {
+            b.insert("model_id".into(), json!(m));
+        }
         b.insert("transcript".into(), json!(text));
         b.insert("voice".into(), json!({"id": voice}));
         b.insert(
@@ -129,18 +136,23 @@ impl Adapter for Cartesia {
             500..=599 => Reason::Server,
             _ => Reason::BadConfig,
         };
-        let mut message = format!(
-            "{} ({s}): {}",
-            headline(reason, &self.label, ""),
-            eb.text_or(s)
-        );
-        let version = eb.mentions("version");
-        if reason == Reason::BadConfig && (version || code == "model_not_found") {
-            message.push_str(&format!(
-                "; check options.api_version (now {}) and the model ({})",
-                self.api_version, self.model
-            ));
-        }
+        let model = self.model.as_deref().unwrap_or_default();
+        let message = if reason == Reason::BadConfig && code == "model_not_found" {
+            model_message(&self.label, model, s, &eb.text_or(s))
+        } else if reason == Reason::BadConfig && eb.mentions("version") {
+            format!(
+                "{} ({s}): {}; check options.api_version (now {}) and the model ({model})",
+                headline(reason, &self.label, ""),
+                eb.text_or(s),
+                self.api_version
+            )
+        } else {
+            format!(
+                "{} ({s}): {}",
+                headline(reason, &self.label, ""),
+                eb.text_or(s)
+            )
+        };
         let mut e = ExtError::new(reason, message).with_status(s);
         if matches!(s, 429 | 503) {
             e.retry_after = reply.retry_after;
@@ -218,12 +230,12 @@ impl Adapter for Cartesia {
 mod tests {
     use super::*;
 
-    const VOICE: &str = "a0e99841-438c-4a64-b679-ae501e7d6091";
+    const VOICE: &str = "v1";
 
     fn adapter(options: Value) -> Cartesia {
         Cartesia::new(
             &Profile::from_json(&json!({"id": "ca", "kind": "cartesia",
-                "voice": VOICE, "options": options}))
+                "voice": VOICE, "model": "m1", "options": options}))
             .unwrap(),
         )
     }
@@ -284,10 +296,16 @@ mod tests {
         assert_eq!(
             e.message,
             "Cartesia settings do not work (400): Bad Request: Unsupported Cartesia-Version \
-             header; check options.api_version (now 2024-06-10) and the model (sonic-3.6)"
+             header; check options.api_version (now 2024-06-10) and the model (m1)"
         );
+        // An unknown or retired model is named (#235).
         let e = a.map_error(&reply(404, &body("model_not_found")), VOICE, None);
-        assert!(e.message.contains("options.api_version"), "{}", e.message);
+        assert!(
+            e.message
+                .starts_with("Cartesia does not know the model 'm1' (404)"),
+            "{}",
+            e.message
+        );
         let e = a.map_error(&reply(401, &body("unauthorized")), VOICE, None);
         assert_eq!(e.message, "Cartesia refused the key (401): m unauthorized");
     }
@@ -307,7 +325,7 @@ mod tests {
         let body: Value = serde_json::from_slice(r.body.as_deref().unwrap()).unwrap();
         assert_eq!(
             body,
-            json!({"model_id": "sonic-3.6", "transcript": "Hallo.",
+            json!({"model_id": "m1", "transcript": "Hallo.",
                 "voice": {"id": VOICE},
                 "output_format": {"container": "raw", "encoding": "pcm_s16le",
                     "sample_rate": 44100},
@@ -321,7 +339,7 @@ mod tests {
         assert_eq!(r.header_value("cartesia-version"), Some("2026-08-14"));
         assert_eq!(
             d.body("Hi.", VOICE, 200),
-            json!({"model_id": "sonic-3.6", "transcript": "Hi.",
+            json!({"model_id": "m1", "transcript": "Hi.",
                 "voice": {"id": VOICE},
                 "output_format": {"container": "raw", "encoding": "pcm_s16le",
                     "sample_rate": 24000},

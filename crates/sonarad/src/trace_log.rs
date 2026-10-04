@@ -269,8 +269,9 @@ pub fn input_json(m: &Map<String, Value>, debug: bool) -> Value {
 }
 
 /// Message types never logged as `in`: read-only queries the settings page
-/// polls (`engine_list` every 3 s, #227).
-const QUIET: &[&str] = &["get", "voices", "engine_list"];
+/// polls (`engine_list` every 3 s, #227; `engine_models` with the form,
+/// #235).
+const QUIET: &[&str] = &["get", "voices", "engine_list", "engine_models"];
 
 /// Whether a message of type `kind` gets `in` lines: not `QUIET`, nor a
 /// `hello` over HTTP (the settings page's poll).

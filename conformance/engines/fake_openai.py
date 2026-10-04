@@ -57,6 +57,9 @@ class FakeOpenAI:
                 self._keep(b"")
                 if self.path.startswith("/v1/audio/voices"):
                     self._send(200, "application/json", json.dumps({"voices": ["af_heart", "am_echo"]}).encode())
+                elif self.path.split("?")[0] == "/v1/models":
+                    body = {"object": "list", "data": [{"id": "tts-a"}, {"id": "tts-b"}, {"id": "chat-c"}]}
+                    self._send(200, "application/json", json.dumps(body).encode())
                 else:
                     self._send(404, "application/json", b'{"detail": "Not Found"}')
 

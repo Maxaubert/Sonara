@@ -19,6 +19,11 @@ pub const USAGE: &str = "usage: sonara engines <command>
   key <id> --clear           delete its stored key
   use <id>                   read with it from now on (`use kokoro` goes back)
   test <id> [TEXT]           speak one sentence with it, with no fallback
+                             (with the voice picked in Sonara when it is the
+                             current engine, else its own)
+  models <id>                the provider's models now (pick one with
+                             `add <id> --model <model> --replace`)
+  voices <id>                the provider's voices now (`--voice <voice>`)
   remove <id> [--keep-key]   remove it (and its stored key)
 
 Kinds: openai-compatible (the default), elevenlabs, azure, google, gemini,
@@ -27,14 +32,17 @@ engines.json by this command, never sent over the protocol; the text goes
 on its stdin, or with --option input=file in a file at {in}).
 Presets of openai-compatible: openai, kokoro-fastapi, localai, speaches,
 openedai-speech, chatterbox-api, chatterbox-server, generic.
-Examples: add el --kind elevenlabs --voice <voice_id>
-          add az --kind azure --voice en-US-AvaMultilingualNeural --option region=westeurope
-          add gg --kind google --voice en-US-Chirp3-HD-Kore
-          add gemini --kind gemini --voice Kore   (key from aistudio.google.com)
-          add ca --kind cartesia --voice <voice_id>
-          add dg --kind deepgram --voice aura-2-thalia-en
+Sonara names no model or voice of its own (they change at the provider):
+add the engine and its key, then list them with `models <id>` and
+`voices <id>` and set them with --replace.
+Examples: add el --kind elevenlabs --voice <voice>
+          add az --kind azure --voice <voice> --option region=<region>
+          add gg --kind google --voice <voice>
+          add gemini --kind gemini --model <model> --voice <voice>
+          add ca --kind cartesia --model <model> --voice <voice>
+          add dg --kind deepgram --voice <voice>
           add piper --kind command --option output=file --option
-              'argv=[\"C:/piper/piper.exe\", \"-m\", \"C:/piper/en_US-amy.onnx\", \"-f\", \"{out}\"]'";
+              'argv=[\"C:/piper/piper.exe\", \"-m\", \"C:/piper/<model>.onnx\", \"-f\", \"{out}\"]'";
 
 /// What a command asks of the runtime.
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +107,12 @@ pub fn parse(args: &[String]) -> Result<Action, String> {
             }
             Ok(Action::Request(m))
         }
+        "models" => Ok(Action::Request(
+            json!({"type": "engine_models", "engine": id_arg(rest, "models")?, "refresh": true}),
+        )),
+        "voices" => Ok(Action::Request(
+            json!({"type": "voices", "engine": id_arg(rest, "voices")?, "refresh": true}),
+        )),
         "remove" => {
             let id = id_arg(rest, "remove")?;
             let keep = match rest.get(1).map(String::as_str) {
@@ -205,10 +219,22 @@ pub fn list_lines(reply: &Value) -> Vec<String> {
                 e["sends_text_to"].as_str().unwrap_or("?")
             )
         };
+        let id = e["id"].as_str().unwrap_or("?");
+        let missing: Vec<&str> = e["missing"]
+            .as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
         let status = if e["supported"] == false {
             "not supported by this version".to_string()
         } else if let Some(err) = e["error"].as_str() {
             format!("not usable: {err}")
+        } else if !missing.is_empty() {
+            // No model or voice in code (#235): say what to pick and how.
+            let how: Vec<String> = missing
+                .iter()
+                .map(|m| format!("`sonara engines {m}s {id}`"))
+                .collect();
+            format!("choose a {} ({})", missing.join(" and a "), how.join(", "))
         } else {
             match e["status"]["reason"].as_str() {
                 Some(r) => format!(
@@ -272,6 +298,70 @@ pub fn done_line(request: &Value, reply: &Value) -> String {
             reply["voice"].as_str().unwrap_or("?"),
             reply["ms"]
         ),
+        "engine_models" => {
+            let models = reply["models"].as_array().cloned().unwrap_or_default();
+            let mut lines: Vec<String> = models
+                .iter()
+                .map(|m| {
+                    let (id, name) = (
+                        m["id"].as_str().unwrap_or("?"),
+                        m["name"].as_str().unwrap_or(""),
+                    );
+                    if name.is_empty() || name == id {
+                        id.to_string()
+                    } else {
+                        format!("{id} ({name})")
+                    }
+                })
+                .collect();
+            if reply["takes_model"] == false {
+                lines = vec!["This kind takes no model.".into()];
+            } else if reply["list"] == false {
+                lines.push(
+                    "This provider has no model list: see its documentation for the \
+                     model names and set one with --model <model>."
+                        .into(),
+                );
+            } else if models.is_empty() {
+                lines.push("No models listed.".into());
+            }
+            if let Some(m) = reply["error"]["message"].as_str() {
+                lines.push(format!("The list could not be fetched: {m}"));
+            }
+            lines.join("\n")
+        }
+        "voices" => {
+            let voices = reply["voices"].as_array().cloned().unwrap_or_default();
+            let mut lines: Vec<String> = voices
+                .iter()
+                .map(|v| {
+                    let (id, name, lang) = (
+                        v["id"].as_str().unwrap_or("?"),
+                        v["name"].as_str().unwrap_or(""),
+                        v["language"].as_str().unwrap_or(""),
+                    );
+                    let mut l = id.to_string();
+                    if !name.is_empty() && name != id {
+                        l.push_str(&format!(" ({name})"));
+                    }
+                    if !lang.is_empty() {
+                        l.push_str(&format!(" [{lang}]"));
+                    }
+                    l
+                })
+                .collect();
+            if voices.is_empty() {
+                lines.push(
+                    "No voices listed: see the provider's voice page and set one with \
+                     --voice <voice>."
+                        .into(),
+                );
+            }
+            if let Some(m) = reply["error"]["message"].as_str() {
+                lines.push(format!("The list could not be fetched: {m}"));
+            }
+            lines.join("\n")
+        }
         "engine_remove" => format!(
             "Removed {}; reading with {}.",
             reply["removed"].as_str().unwrap_or("?"),
@@ -366,7 +456,7 @@ mod tests {
             "--url",
             "http://127.0.0.1:8880/v1",
             "--voice",
-            "af_heart",
+            "v1",
             "--no-key",
             "--option",
             "prefetch=2",
@@ -379,7 +469,7 @@ mod tests {
             a,
             Action::Request(json!({"type": "engine_add", "replace": true, "engine": {
                 "id": "kgpu", "kind": "openai-compatible", "url": "http://127.0.0.1:8880/v1",
-                "voice": "af_heart", "key_ref": "none",
+                "voice": "v1", "key_ref": "none",
                 "options": {"preset": "kokoro-fastapi", "prefetch": 2, "extra": {"stream": false}}}}))
         );
         let a = p(&[
@@ -404,7 +494,7 @@ mod tests {
             "--kind",
             "azure",
             "--voice",
-            "en-US-AvaMultilingualNeural",
+            "v2",
             "--option",
             "region=westeurope",
             "--key-env",
@@ -414,18 +504,28 @@ mod tests {
         assert_eq!(
             a,
             Action::Request(json!({"type": "engine_add", "replace": false, "engine": {
-                "id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+                "id": "az", "kind": "azure", "voice": "v2",
                 "key_ref": "env:AZURE_SPEECH_KEY", "options": {"region": "westeurope"}}}))
         );
         assert!(USAGE.contains(
             "elevenlabs, azure, google, gemini,
 cartesia, deepgram, command"
         ));
-        // Gemini needs no voice (Kore by default).
+        // No model or voice of Sonara's own (#235): an engine added
+        // without them says "choose" until they are set.
         assert_eq!(
             p(&["add", "gemini", "--kind", "gemini"]).unwrap(),
             Action::Request(json!({"type": "engine_add", "replace": false, "engine": {
                 "id": "gemini", "kind": "gemini"}}))
+        );
+        assert!(!USAGE.contains("Kore") && USAGE.contains("--model <model> --voice <voice>"));
+        assert_eq!(
+            p(&["models", "gemini"]).unwrap(),
+            Action::Request(json!({"type": "engine_models", "engine": "gemini", "refresh": true}))
+        );
+        assert_eq!(
+            p(&["voices", "gemini"]).unwrap(),
+            Action::Request(json!({"type": "voices", "engine": "gemini", "refresh": true}))
         );
         // A command's argv is a JSON list in one --option; it is written
         // into engines.json locally, never sent as engine_add.
@@ -516,5 +616,57 @@ cartesia, deepgram, command"
             error_line(&json!({"error": {"code": "E_ENGINE", "message": "m", "reason": "auth"}})),
             "m (auth)"
         );
+    }
+
+    #[test]
+    fn a_profile_without_a_model_or_voice_says_what_to_pick() {
+        let reply = json!({"engines": [
+            {"id": "ge", "label": "Gemini", "kind": "gemini", "key_ref": "credman",
+             "key_present": true, "local": false, "supported": true, "current": false,
+             "sends_text_to": "generativelanguage.googleapis.com",
+             "missing": ["model", "voice"],
+             "status": {"status": "unavailable", "reason": "bad_config", "fallback": "kokoro"}}]});
+        assert_eq!(
+            list_lines(&reply),
+            vec![
+                "  ge (Gemini, gemini): sends text to generativelanguage.googleapis.com; key \
+                 saved; choose a model and a voice (`sonara engines models ge`, `sonara \
+                 engines voices ge`)"
+            ]
+        );
+    }
+
+    #[test]
+    fn models_and_voices_are_listed_one_per_line() {
+        let req = json!({"type": "engine_models"});
+        assert_eq!(
+            done_line(
+                &req,
+                &json!({"models": [{"id": "m1", "name": "Model one"}, {"id": "m2", "name": "m2"}],
+                    "list": true, "takes_model": true})
+            ),
+            "m1 (Model one)\nm2"
+        );
+        assert!(done_line(
+            &req,
+            &json!({"models": [], "list": false, "takes_model": true})
+        )
+        .contains("no model list"));
+        assert_eq!(
+            done_line(
+                &req,
+                &json!({"models": [], "list": false, "takes_model": false})
+            ),
+            "This kind takes no model."
+        );
+        let req = json!({"type": "voices"});
+        assert_eq!(
+            done_line(
+                &req,
+                &json!({"voices": [{"id": "v1", "name": "Voice one", "language": "en-US"}]})
+            ),
+            "v1 (Voice one) [en-US]"
+        );
+        assert!(done_line(&req, &json!({"voices": []})).contains("--voice <voice>"));
     }
 }

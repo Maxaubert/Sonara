@@ -2,10 +2,14 @@
 //! {voice_id}?output_format=pcm_24000`, the whole body (not the stream
 //! endpoint), raw 16-bit mono PCM at the named rate. The key goes in
 //! `xi-api-key`. The voice list is paged (`/v2/voices`, `next_page_token`).
+//! No model id in code (#235): the model is optional (ElevenLabs uses its
+//! own default when `model_id` is left out); the list is `GET /v1/models`
+//! (those that can do text to speech), when the key may read it.
 use super::adapter::{
-    encode, key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo, VoiceSource,
+    encode, key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, ModelInfo, ModelSource,
+    VoiceInfo, VoiceSource,
 };
-use super::error::{clean, headline, ExtError};
+use super::error::{clean, headline, model_message, ExtError};
 use super::keys::Secret;
 use super::profile::{Kind, Profile};
 use super::rate;
@@ -27,7 +31,8 @@ const PLAN_CODES: &[&str] = &[
 
 pub struct ElevenLabs {
     base: String,
-    model: String,
+    /// `None`: ElevenLabs picks its own.
+    model: Option<String>,
     output_format: String,
     settings: Map<String, Value>,
     language_code: Option<String>,
@@ -46,7 +51,7 @@ impl ElevenLabs {
         }
         ElevenLabs {
             base: p.base_url().unwrap_or_default(),
-            model: p.effective_model().unwrap_or_default(),
+            model: p.model.clone(),
             output_format: p
                 .option_str("output_format")
                 .unwrap_or(DEFAULT_FORMAT)
@@ -81,7 +86,9 @@ impl ElevenLabs {
         }
         let mut b = Map::new();
         b.insert("text".into(), json!(text));
-        b.insert("model_id".into(), json!(self.model));
+        if let Some(m) = &self.model {
+            b.insert("model_id".into(), json!(m));
+        }
         if !settings.is_empty() {
             b.insert("voice_settings".into(), Value::Object(settings));
         }
@@ -157,11 +164,19 @@ impl Adapter for ElevenLabs {
             500..=599 => Reason::Server,
             _ => Reason::BadConfig,
         };
-        let mut message = format!(
-            "{} ({s}): {}",
-            headline(reason, &self.label, ""),
-            eb.text_or(s)
-        );
+        let model_refused = has("model_not_found")
+            || has("unsupported_model")
+            || (s == 400 && eb.mentions("model") && !eb.mentions("voice"));
+        let mut message = match &self.model {
+            Some(m) if reason == Reason::BadConfig && model_refused => {
+                model_message(&self.label, m, s, &eb.text_or(s))
+            }
+            _ => format!(
+                "{} ({s}): {}",
+                headline(reason, &self.label, ""),
+                eb.text_or(s)
+            ),
+        };
         if plan && self.output_format != DEFAULT_FORMAT {
             message.push_str(&format!(
                 "; output_format {} may need a higher plan, try {DEFAULT_FORMAT}",
@@ -213,6 +228,44 @@ impl Adapter for ElevenLabs {
             .collect())
     }
 
+    /// `GET /v1/models`: those that can do text to speech. A key without
+    /// the permission to read it gives an empty list (the model is typed).
+    fn models(&self, key: Option<&Secret>) -> Option<ModelSource> {
+        Some(ModelSource {
+            request: self.with_key(HttpRequest::get(format!("{}/v1/models", self.base)), key),
+            empty_on_error: true,
+        })
+    }
+
+    fn parse_models(&self, body: &[u8]) -> Result<Vec<ModelInfo>, ExtError> {
+        let v: Value = serde_json::from_slice(body).map_err(|e| {
+            ExtError::new(
+                Reason::Format,
+                format!(
+                    "the model list of {} is not JSON: {}",
+                    self.label,
+                    clean(&e.to_string())
+                ),
+            )
+        })?;
+        Ok(v.as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .filter(|m| m.get("can_do_text_to_speech").and_then(Value::as_bool) != Some(false))
+            .filter_map(|m| {
+                let id = m.get("model_id").and_then(Value::as_str)?.to_string();
+                let name = m
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or(&id)
+                    .to_string();
+                Some(ModelInfo { id, name })
+            })
+            .collect())
+    }
+
     fn next_voices_page(&self, body: &[u8], key: Option<&Secret>) -> Option<HttpRequest> {
         let v: Value = serde_json::from_slice(body).ok()?;
         if v.get("has_more").and_then(Value::as_bool) != Some(true) {
@@ -233,7 +286,7 @@ mod tests {
     fn adapter(options: Value) -> ElevenLabs {
         ElevenLabs::new(
             &Profile::from_json(&json!({"id": "el", "kind": "elevenlabs",
-                "voice": "JBFqnCBsd6RMkjVDRZzb", "options": options}))
+                "voice": "v1", "model": "m1", "options": options}))
             .unwrap(),
         )
     }
@@ -328,10 +381,10 @@ mod tests {
             "language_code": "de", "enable_logging": false, "output_format": "pcm_16000"}),
         );
         let key = Secret::new("xi-test-key");
-        let r = a.synth_request("Hallo.", "JBFqnCBsd6RMkjVDRZzb", 250, Some(&key));
+        let r = a.synth_request("Hallo.", "v1", 250, Some(&key));
         assert_eq!(
             r.url,
-            "https://api.elevenlabs.io/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb\
+            "https://api.elevenlabs.io/v1/text-to-speech/v1\
              ?output_format=pcm_16000&enable_logging=false"
         );
         assert_eq!(r.header_value("xi-api-key"), Some("xi-test-key"));
@@ -339,7 +392,7 @@ mod tests {
         let body: Value = serde_json::from_slice(r.body.as_deref().unwrap()).unwrap();
         assert_eq!(
             body,
-            json!({"text": "Hallo.", "model_id": "eleven_flash_v2_5", "language_code": "de",
+            json!({"text": "Hallo.", "model_id": "m1", "language_code": "de",
                 "voice_settings": {"stability": 0.4, "similarity_boost": 0.8, "style": 0.1,
                     "speed": 1.2}})
         );
@@ -353,7 +406,7 @@ mod tests {
         assert_eq!(r.header_value("xi-api-key"), None);
         assert_eq!(
             d.body("Hi.", 140),
-            json!({"text": "Hi.", "model_id": "eleven_flash_v2_5",
+            json!({"text": "Hi.", "model_id": "m1",
                 "voice_settings": {"speed": 0.7}})
         );
         assert_eq!(d.requested_rate(), Some(24_000));
@@ -365,12 +418,49 @@ mod tests {
     fn voice_settings_left_out_at_the_default_rate() {
         assert_eq!(
             adapter(json!({})).body("Hi.", 200),
-            json!({"text": "Hi.", "model_id": "eleven_flash_v2_5"})
+            json!({"text": "Hi.", "model_id": "m1"})
         );
+        // No model named: none sent, ElevenLabs uses its own (#235).
+        let own = ElevenLabs::new(
+            &Profile::from_json(&json!({"id": "el", "kind": "elevenlabs", "voice": "v1"})).unwrap(),
+        );
+        assert_eq!(own.body("Hi.", 200), json!({"text": "Hi."}));
         assert_eq!(
             adapter(json!({"stability": 0.3})).body("Hi.", 200),
-            json!({"text": "Hi.", "model_id": "eleven_flash_v2_5",
+            json!({"text": "Hi.", "model_id": "m1",
                 "voice_settings": {"stability": 0.3, "speed": 1.0}})
+        );
+    }
+
+    #[test]
+    fn models_come_live_and_a_refused_one_is_named() {
+        let a = adapter(json!({}));
+        let src = a.models(Some(&Secret::new("k"))).unwrap();
+        assert_eq!(src.request.url, "https://api.elevenlabs.io/v1/models");
+        assert_eq!(src.request.header_value("xi-api-key"), Some("k"));
+        assert!(src.empty_on_error, "a key may lack the permission");
+        assert_eq!(
+            a.parse_models(
+                br#"[{"model_id": "m1", "name": "Model one", "can_do_text_to_speech": true},
+                {"model_id": "stt", "can_do_text_to_speech": false},
+                {"model_id": "m2"}, {"name": "no id"}]"#
+            )
+            .unwrap(),
+            vec![
+                ModelInfo {
+                    id: "m1".into(),
+                    name: "Model one".into()
+                },
+                ModelInfo::named("m2"),
+            ]
+        );
+        let e = a.map_error(&reply(404, &detail("model_not_found")), "v", None);
+        assert_eq!(e.reason, Reason::BadConfig);
+        assert!(
+            e.message
+                .starts_with("ElevenLabs does not know the model 'm1' (404)"),
+            "{}",
+            e.message
         );
     }
 

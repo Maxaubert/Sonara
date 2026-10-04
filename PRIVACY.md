@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-05 (0.19.0: Gemini as an external speech engine; 0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
+_Last updated: 2026-10-05 (0.19.0: Gemini as an external speech engine, model lists fetched from the provider; 0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
 speech engines; 0.16.0: ElevenLabs, Azure and Google as external speech engines;
 0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
@@ -83,7 +83,10 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   command line); Sonara sends nothing over the network for it, and what the program does with
   the text is up to that program. Its temporary audio file, if it writes one, is in your
   `%TEMP%` folder (`sonara-tts-<n>.wav`) and is deleted after each sentence. A voice list
-  (`voices` with `refresh`, or the voice picker) asks the same address. The cloud addresses:
+  (`voices` with `refresh`, or the voice picker) and a model list (`engine_models`, the model
+  picker of the settings page, `sonara engines models`) ask the same address, with your key and
+  without any text you read: Sonara names no model or voice of its own, so it asks the provider
+  which ones it offers now. The cloud addresses:
 
   | Engine kind | Text goes to | Key sent as |
   |---|---|---|
@@ -101,8 +104,9 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   the `User-Agent` header. **Gemini's free tier may use your text**: on Google's free tier
   (a key from Google AI Studio without billing), Google may use what it receives to improve its
   products; with billing on (the paid tier) it does not (Gemini API terms,
-  https://ai.google.dev/gemini-api/terms). Sonara uses Gemini's `generateContent` call, which
-  Google does not store as an interaction. For Gemini, Sonara sends several sentences of a reply
+  https://ai.google.dev/gemini-api/terms). Sonara uses Gemini's `streamGenerateContent` call (the
+  `generateContent` family, streamed so a sentence plays as its audio arrives), which Google
+  does not store as an interaction; it also asks `models` and `voices` for the lists. For Gemini, Sonara sends several sentences of a reply
   in one request (up to 1000 characters by default, up to 4000 when set; with Quick start off a
   whole reply under that is one request) to use fewer of the free tier's requests.
 - **Nothing is sent while Sonara is muted.** While Sonara is muted or super-muted (the mute

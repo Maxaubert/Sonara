@@ -83,13 +83,13 @@ mod tests {
     #[test]
     fn keyed_by_voice_rate_and_text() {
         let c = CueCache::new();
-        c.put("marin", 250, "Paused.", pcm(1));
-        assert_eq!(c.get("marin", 250, "Paused."), Some(pcm(1)));
-        assert_eq!(c.get("marin", 200, "Paused."), None);
-        assert_eq!(c.get("alloy", 250, "Paused."), None);
-        assert_eq!(c.get("marin", 250, "Paused"), None);
-        c.put("marin", 250, "Paused.", pcm(2));
-        assert_eq!(c.get("marin", 250, "Paused."), Some(pcm(2)));
+        c.put("v1", 250, "Paused.", pcm(1));
+        assert_eq!(c.get("v1", 250, "Paused."), Some(pcm(1)));
+        assert_eq!(c.get("v1", 200, "Paused."), None);
+        assert_eq!(c.get("v2", 250, "Paused."), None);
+        assert_eq!(c.get("v1", 250, "Paused"), None);
+        c.put("v1", 250, "Paused.", pcm(2));
+        assert_eq!(c.get("v1", 250, "Paused."), Some(pcm(2)));
         assert_eq!(c.len(), 1);
     }
 

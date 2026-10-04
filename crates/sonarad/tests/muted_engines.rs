@@ -123,7 +123,7 @@ fn rig(agent: bool) -> Rig {
         home,
     };
     let p = json!({"id": "local", "kind": "openai-compatible", "label": "Local",
-        "url": r.provider.url, "key_ref": "credman",
+        "url": r.provider.url, "key_ref": "credman", "voice": "af_heart",
         "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000}});
     r.ok(json!({"type": "engine_add", "engine": p, "secret": SECRET}));
     r.ok(json!({"type": "set", "key": "engine", "value": "local"}));

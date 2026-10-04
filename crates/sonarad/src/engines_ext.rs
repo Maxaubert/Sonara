@@ -1,9 +1,17 @@
 //! Protocol handlers of the external engine messages (spec 10.2):
-//! `engine_list`, `engine_add`, `engine_key`, `engine_test`, the
-//! `refresh` of `voices` and its `profile` (an unsaved one, protocol 1.4). `engine_remove` is in `protocol.rs`, which owns
-//! `set engine` (the current engine is switched away first).
+//! `engine_list`, `engine_add`, `engine_key`, `engine_test`,
+//! `engine_models` (protocol 1.5, #235), the `refresh` of `voices` and its
+//! `profile` (an unsaved one, protocol 1.4). `engine_remove` is in
+//! `protocol.rs`, which owns `set engine` (the current engine is switched
+//! away first).
+//!
+//! The voice of an external engine (one rule, #235): the voice a request
+//! names, else the user's voice setting while that engine is the current
+//! one, else the profile's voice. Reading, the preview and `engine_test`
+//! (the Test button, `sonara engines test`) all follow it, so the voice
+//! picked in Sonara is the one heard everywhere.
 use crate::cues;
-use crate::engines::Engines;
+use crate::engines::{Engines, Models};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
@@ -55,9 +63,28 @@ fn flag(m: &Map<String, Value>, field: &str, default: bool) -> Result<bool, Fail
     }
 }
 
-/// `engine_list`.
-pub fn list(engines: &Engines, current: &str) -> Handled {
-    Ok((engines.list(current), After::Nothing))
+/// The user's voice setting (`None`: none set).
+fn reader_voice(reader: &ReaderHandle) -> Option<String> {
+    match reader.get(Key::Voice) {
+        Ok(sonara_reader::Value::Text(t)) if !t.is_empty() => Some(t),
+        _ => None,
+    }
+}
+
+/// `engine_list`. The current engine's `missing` leaves out the voice when
+/// the user's voice setting supplies one (the voice rule).
+pub fn list(engines: &Engines, reader: &ReaderHandle, current: &str) -> Handled {
+    let mut f = engines.list(current);
+    if reader_voice(reader).is_some() {
+        if let Some(Value::Array(views)) = f.get_mut("engines") {
+            for v in views.iter_mut().filter(|v| v["current"] == json!(true)) {
+                if let Some(Value::Array(missing)) = v.get_mut("missing") {
+                    missing.retain(|x| x != "voice");
+                }
+            }
+        }
+    }
+    Ok((f, After::Nothing))
 }
 
 /// `engine_add` `{engine, secret?, replace?}`. A replaced current engine
@@ -119,7 +146,9 @@ pub fn key(engines: &Engines, m: &Map<String, Value>) -> Handled {
 /// `engine_test` `{engine, text?, voice?, play?}`: one synthesis with no
 /// fallback, at the current rate, played over whatever is read. The user
 /// pressed Test, so it reaches the provider even while Sonara is muted
-/// (#227).
+/// (#227). The voice follows the one rule (module docs): `voice`, else the
+/// user's voice setting when `engine` is the current one, else the
+/// profile's.
 ///
 /// `admit` is taken only to play the clip, after the provider answered:
 /// the round trip must not hold up speech or controls.
@@ -127,6 +156,7 @@ pub fn test<G>(
     engines: &Engines,
     reader: &ReaderHandle,
     m: &Map<String, Value>,
+    current: &str,
     admit: impl FnOnce() -> Result<G, Failure>,
 ) -> Handled {
     let id = required(m, "engine")?;
@@ -147,13 +177,17 @@ pub fn test<G>(
     if text.chars().count() > TEST_MAX {
         return Err(bad(format!("'text' is longer than {TEST_MAX} characters")));
     }
-    let voice = opt_str(m, "voice")?.unwrap_or_default();
+    let voice = match opt_str(m, "voice")?.filter(|v| !v.is_empty()) {
+        Some(v) => v.to_string(),
+        None if id == current => reader_voice(reader).unwrap_or_default(),
+        None => String::new(),
+    };
     let play = flag(m, "play", true)?;
     let rate = match reader.get(Key::Rate).map_err(reader_failure)? {
         sonara_reader::Value::Number(n) => n as u32,
         _ => 200,
     };
-    let result = ext.test(text, voice, rate).map_err(engine_failure)?;
+    let result = ext.test(text, &voice, rate).map_err(engine_failure)?;
     let (samples, sample_rate) = cues::mono(&result.pcm);
     let duration_ms = if sample_rate > 0 {
         samples.len() as u64 * 1000 / sample_rate as u64
@@ -173,6 +207,57 @@ pub fn test<G>(
     f.insert("sample_rate".into(), json!(sample_rate));
     f.insert("duration_ms".into(), json!(duration_ms));
     Ok((f, After::Nothing))
+}
+
+/// `engine_models` `{engine, refresh?}` or `{profile, secret?}` (protocol
+/// 1.5, #235): the provider's models, live (Sonara names none). `list`
+/// says whether the provider has a model list (else the model is typed
+/// in), `required` whether a model must be set; a failed fetch keeps the
+/// known models (the profile's own at least) and adds `error`. While
+/// Sonara is muted nothing is fetched (`error.reason` `muted`).
+pub fn models(engines: &Engines, m: &Map<String, Value>) -> Handled {
+    let got = if let Some(profile) = m.get("profile") {
+        let secret = match m.get("secret") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if s.is_empty() => None,
+            Some(Value::String(s)) => Some(s.as_str()),
+            Some(_) => return Err(bad("'secret' must be a string")),
+        };
+        engines.draft_models(profile, secret)?
+    } else {
+        let id = required(m, "engine")?;
+        engines.models(id, flag(m, "refresh", false)?)?
+    };
+    Ok((models_reply(engines, got), After::Nothing))
+}
+
+fn models_reply(engines: &Engines, got: Models) -> Map<String, Value> {
+    let mut f = Map::new();
+    f.insert(
+        "models".into(),
+        Value::Array(
+            got.models
+                .iter()
+                .map(|x| json!({"id": x.id, "name": x.name}))
+                .collect(),
+        ),
+    );
+    f.insert("list".into(), json!(got.list));
+    f.insert("takes_model".into(), json!(got.takes_model));
+    f.insert("required".into(), json!(got.required));
+    if engines.hold().is_held() && got.list {
+        f.insert("error".into(), muted_error());
+    } else if let Some(e) = got.error {
+        let failure = engine_failure(e);
+        f.insert(
+            "error".into(),
+            json!({
+                "reason": failure.reason.unwrap_or("network"),
+                "message": failure.message,
+            }),
+        );
+    }
+    f
 }
 
 /// `voices` `{profile, secret?}` (protocol 1.4, #227): the voices of a

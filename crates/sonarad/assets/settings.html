@@ -358,8 +358,8 @@
           <div class="pref"><div class="pref-copy"><label class="title" for="ef-id">ID<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-id-hint">Made from the label; change it if you like. Lowercase a to z, 0 to 9, - and _. The <span class="path">sonara engines</span> commands use it.</div></div><div class="control"><input class="field mono" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-required="true" aria-describedby="ef-id-hint"></div></div>
           <div class="pref" id="ef-url-row"><div class="pref-copy"><label class="title" for="ef-url">Address<span class="req" id="ef-url-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-url-hint">The server's address.</div></div><div class="control"><input class="field" id="ef-url" type="url" autocomplete="off" spellcheck="false" aria-describedby="ef-url-hint"></div></div>
           <div class="pref" id="ef-key-row"><div class="pref-copy"><label class="title" for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-keyref-hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref" aria-label="Where the key comes from" aria-describedby="ef-keyref-hint"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" aria-describedby="ef-key-hint" placeholder="Paste the key&hellip;"><input class="field mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" aria-describedby="ef-key-hint" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
-          <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-model-hint">Empty uses the default shown.</div></div><div class="control"><input class="field" id="ef-model" type="text" autocomplete="off" spellcheck="false" aria-describedby="ef-model-hint"></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint"></div></div></div>
+          <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model-select">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-model-about">Which of the provider's models speaks. Sonara names none of its own: models change at the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-model-select" aria-describedby="ef-model-hint"></select><input class="field mono" id="ef-model" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Model id" aria-describedby="ef-model-hint" placeholder="Model id&hellip;" hidden></div><div class="hint" id="ef-model-hint"></div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads. Sonara picks none for you; the voice you choose on the Speech page wins while this engine is in use.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint"></div></div></div>
           <div id="ef-kind-fields"></div>
           <details class="more"><summary>More options</summary>
             <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
@@ -742,7 +742,13 @@ const SUMMARY_GATED = new Set(["model-row", "timeout-row", "settle-row", "read-r
 
 function voiceOptions(engine, withDefault) {
   const own = voices.filter(v => v.engine === engine);
-  const opts = withDefault ? [["", "Default"]] : [];
+  // An added engine has no voice of Sonara's (#235): "Default" is the
+  // profile's own voice, or there is none to fall back to.
+  const prof = engineData && engineData.engines.find(e => e.id === engine);
+  const dflt = !prof ? "Default"
+    : prof.voice ? possessive(prof.label || prof.id) + " own voice (" + prof.voice + ")"
+    : "Choose a voice";
+  const opts = withDefault ? [["", dflt]] : [];
   // An added engine's voices carry its name, so "Adam (ElevenLabs)" is never
   // taken for a Kokoro voice of the same name.
   return opts.concat(own.map(v => [v.id, v.license_class === "external"
@@ -1084,42 +1090,46 @@ const KIND_NAMES = {"openai-compatible": "OpenAI or a compatible server", eleven
                     azure: "Azure Speech", google: "Google Text-to-Speech", gemini: "Gemini (Google AI Studio)",
                     cartesia: "Cartesia",
                     deepgram: "Deepgram", command: "A program on this PC"};
-// Per preset: the usual address of the server, and whether it needs a key.
+// No model id and no voice in this page (#235): models and voices change at
+// the provider, so they come from its own lists (engine_models, voices)
+// or are typed in, with a link to where the provider names them.
+// Per preset: the usual address of the server, whether it needs a key, and
+// whether it needs a model in every request (else it picks its own).
 const PRESETS = {
-  "openai": {name: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini-tts", voice: "marin", key: true},
-  "kokoro-fastapi": {name: "Kokoro FastAPI", url: "http://127.0.0.1:8880/v1", model: "kokoro", voice: "af_heart"},
-  "localai": {name: "LocalAI", url: "http://127.0.0.1:8080/v1"},
-  "speaches": {name: "Speaches", url: "http://127.0.0.1:8000/v1", voice: "af_heart"},
-  "openedai-speech": {name: "openedai-speech", url: "http://127.0.0.1:8000/v1", model: "tts-1", voice: "alloy"},
-  "chatterbox-api": {name: "Chatterbox (TTS API)", url: "http://127.0.0.1:4123/v1", model: "chatterbox", voice: "alloy"},
-  "chatterbox-server": {name: "Chatterbox TTS Server", url: "http://127.0.0.1:8004/v1", model: "chatterbox"},
-  "generic": {name: "Another compatible server", model: "tts-1", voice: "alloy"},
+  "openai": {name: "OpenAI", url: "https://api.openai.com/v1", key: true, modelRequired: true,
+             voicePage: "https://platform.openai.com/docs/guides/text-to-speech"},
+  "kokoro-fastapi": {name: "Kokoro FastAPI", url: "http://127.0.0.1:8880/v1"},
+  "localai": {name: "LocalAI", url: "http://127.0.0.1:8080/v1", modelRequired: true},
+  "speaches": {name: "Speaches", url: "http://127.0.0.1:8000/v1", modelRequired: true},
+  "openedai-speech": {name: "openedai-speech", url: "http://127.0.0.1:8000/v1",
+                      voicePage: "https://github.com/matatonic/openedai-speech"},
+  "chatterbox-api": {name: "Chatterbox (TTS API)", url: "http://127.0.0.1:4123/v1"},
+  "chatterbox-server": {name: "Chatterbox TTS Server", url: "http://127.0.0.1:8004/v1"},
+  "generic": {name: "Another compatible server"},
 };
-// Per kind: the default address and model (placeholders) and which rows apply.
+// Per kind: the default address (a placeholder), which rows apply, the
+// model: "required" (in every request), "optional" (the provider picks its
+// own) or absent (none), whether the provider lists its models, and where
+// it names its models when it has no list.
 const KINDS = {
-  "openai-compatible": {url: true, model: true},
-  "elevenlabs": {url: "https://api.elevenlabs.io", model: "eleven_flash_v2_5", key: true},
+  "openai-compatible": {url: true, model: true, modelList: true},
+  "elevenlabs": {url: "https://api.elevenlabs.io", model: "optional", modelList: true, key: true},
   "azure": {url: "From the region", key: true},
   "google": {url: "https://texttospeech.googleapis.com", key: true},
-  "gemini": {url: "https://generativelanguage.googleapis.com", model: "gemini-3.8-flash-lite-tts", key: true, voice: "Kore", fixedVoices: true},
-  "cartesia": {url: "https://api.cartesia.ai", model: "sonic-3.6", key: true},
+  "gemini": {url: "https://generativelanguage.googleapis.com", model: "required", modelList: true, key: true},
+  "cartesia": {url: "https://api.cartesia.ai", model: "required", key: true,
+               modelPage: "https://docs.cartesia.ai"},
   "deepgram": {url: "https://api.deepgram.com", key: true},
 };
 // Kinds the page never adds or edits: a program on this PC is set up only
 // locally (sonara.exe engines add, or engines.json); the runtime refuses it
 // over the protocol (E_FORBIDDEN).
 const LOCAL_ONLY_KINDS = ["command"];
-// Kinds that need a voice id when added, with an example of one.
-const VOICE_EXAMPLES = {
-  "elevenlabs": "21m00Tcm4TlvDq8ikWAM", "azure": "en-US-AvaMultilingualNeural",
-  "google": "en-US-Chirp3-HD-Achernar", "cartesia": "a voice id from Cartesia's library",
-  "deepgram": "aura-2-thalia-en",
-};
 const PRESET_URLS = Object.values(PRESETS).map(p => p.url).filter(Boolean);
 // The options of each kind that get their own field; the rest go to "Other options".
 const KIND_FIELDS = {
   "openai-compatible": [
-    {key: "instructions", label: "Instructions", hint: "How to speak, for models that take it (gpt-4o-mini-tts)."},
+    {key: "instructions", label: "Instructions", hint: "How to speak, for models that take it. A model that refuses it is asked without it."},
   ],
   "elevenlabs": [
     {key: "output_format", label: "Audio quality", type: "select", choices: [["", "Default (24 kHz)"], ["pcm_16000", "16 kHz"], ["pcm_22050", "22 kHz"], ["pcm_24000", "24 kHz"], ["pcm_44100", "44.1 kHz (Pro plans)"]]},
@@ -1137,6 +1147,7 @@ const KIND_FIELDS = {
     {key: "language_code", label: "Language", hint: "Empty lets Gemini tell from the text. A locale such as en-US."},
     {key: "style", label: "Style", hint: "How to speak, such as calm and warm. Sent as a direction, never read aloud. Sonara adds the pace from your rate."},
     {key: "chunk_chars", label: "Characters per request", type: "number", min: 0, max: 4000, step: 100, placeholder: "1000", hint: "The free tier counts requests: Sonara joins sentences up to this many characters. 0 sends one sentence per request; 200 to 4000. Empty is 1000."},
+    {key: "first_audio_ms", label: "Wait for the first audio", type: "number", min: 1000, max: 60000, step: 500, placeholder: "12000", hint: "Gemini streams its audio. If none has come after this many milliseconds, Kokoro reads that part instead. Empty is 12000."},
     {key: "quick_start", label: "Quick start", type: "select", bool: true, choices: [["", "On: the first sentence alone, reading starts at once (default)"], ["false", "Off: a reply that fits is one request, reading starts once it is made"]], hint: "Off saves requests on the free tier: a reply under the characters per request is one request."},
   ],
   "cartesia": [
@@ -1185,9 +1196,19 @@ function keyText(v) {
   if (ref.startsWith("env:")) return "Key from " + ref.slice(4) + (v.key_present ? "" : " (not set)");
   return v.key_present ? "Key saved" : "No key";
 }
+// What a profile still needs the user to pick (#235): "a model", "a voice".
+function missingText(v) {
+  const m = (v.missing || []).map(x => "a " + x);
+  return m.length ? "Choose " + m.join(" and ") : "";
+}
 function statusOf(v) {
   if (v.supported === false) return {bad: true, text: "Needs a newer Sonara"};
   if (v.error) return {bad: true, text: v.error};
+  const pick = missingText(v);
+  if (pick) {
+    const fb = v.status && v.status.fallback;
+    return {bad: true, text: pick + " (Edit)." + (fb ? " " + engineName(fb).replace(" (built in)", "") + " reads meanwhile." : "")};
+  }
   const st = v.status;
   if (!st) return {bad: false, text: ""};
   const needsKey = v.key_ref && v.key_ref !== "none" && !v.key_present;
@@ -1330,9 +1351,9 @@ const PROVIDER_NAMES = {elevenlabs: "ElevenLabs", azure: "Azure Speech", google:
                         gemini: "Gemini", cartesia: "Cartesia", deepgram: "Deepgram"};
 const RESERVED_IDS = ["kokoro", "onecore", "fake"];
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-// Fields whose change can change the voice list (it loads before a save).
-// Not the address or the region: a key must never go to a half-typed host,
-// so those two load the voices on change, once complete.
+// Fields whose change can change the voice and model lists (they load
+// before a save). Not the address or the region: a key must never go to a
+// half-typed host, so those two load the lists on change, once complete.
 const VOICE_INPUTS = ["ef-key", "ef-keyenv", "ef-model"];
 const formState = {
   auto: {label: true, id: true},   // the label and ID still follow the provider
@@ -1341,6 +1362,8 @@ const formState = {
   voicesSeq: 0,
   voicesTimer: null,
   voicesNote: "",                  // the last voice-list result announced
+  modelsSeq: 0,
+  modelsNote: "",                  // the last model-list result announced
 };
 
 function optionText(v) { return v == null ? "" : Array.isArray(v) ? v.join("\n") : String(v); }
@@ -1451,14 +1474,19 @@ function keyRequiredNow() {
 function urlRequired() {
   return $("ef-kind").value === "openai-compatible" && !(PRESETS[$("ef-preset").value] || {}).url;
 }
+// Whether the kind (or server) takes a model at all, needs one, lists them.
+function takesModel() { return !!(KINDS[$("ef-kind").value] || {}).model; }
 function modelRequired() {
-  const p = $("ef-preset").value;
-  return $("ef-kind").value === "openai-compatible" && (p === "localai" || p === "speaches");
-}
-function voiceRequired() {
   const kind = $("ef-kind").value;
-  return Object.prototype.hasOwnProperty.call(VOICE_EXAMPLES, kind) ||
-    (kind === "openai-compatible" && $("ef-preset").value === "chatterbox-server");
+  if (kind === "openai-compatible") return !!(PRESETS[$("ef-preset").value] || {}).modelRequired;
+  return (KINDS[kind] || {}).model === "required";
+}
+function hasModelList() { return takesModel() && !!(KINDS[$("ef-kind").value] || {}).modelList; }
+// Sonara picks no voice (#235): every engine the page adds needs one.
+function voiceRequired() { return !LOCAL_ONLY_KINDS.includes($("ef-kind").value); }
+// Where the provider names its voices or models, for one without a list.
+function voicePage() {
+  return $("ef-kind").value === "openai-compatible" ? (PRESETS[$("ef-preset").value] || {}).voicePage || "" : "";
 }
 function markRequired(input, on) {
   if (on) input.setAttribute("aria-required", "true");
@@ -1469,6 +1497,7 @@ function syncRequired() {
   $("ef-url-req").hidden = !urlRequired();
   markRequired($("ef-url"), urlRequired());
   $("ef-model-req").hidden = !modelRequired();
+  markRequired($("ef-model-select"), modelRequired());
   markRequired($("ef-model"), modelRequired());
   $("ef-key-req").hidden = !(keyRequiredNow() || env);
   markRequired($("ef-key"), keyRequiredNow());
@@ -1493,15 +1522,11 @@ function syncFormRows(prevPreset) {
     const old = (PRESETS[prevPreset] || {}).url || "";
     if ((old && url.value === old) || (!editing && url.value === "")) url.value = editing ? "" : pr.url || "";
     url.placeholder = pr.url || "http://127.0.0.1:8000/v1";
-    $("ef-model").placeholder = pr.model ? "Default: " + pr.model : "Required by this server";
     setText("ef-url-hint", preset === "openai" ? "OpenAI's address. Change it only for a proxy."
       : pr.url ? "The server's address, with /v1. The usual one is filled in." : "The server's address, with /v1, such as http://127.0.0.1:8000/v1.");
-    setText("ef-model-hint", pr.model ? "Empty uses " + pr.model + "." : "The model name the server runs.");
   } else {
     $("ef-url").placeholder = typeof k.url === "string" ? k.url : "";
-    $("ef-model").placeholder = k.model ? "Default: " + k.model : "";
     setText("ef-url-hint", kind === "azure" ? "Optional: your resource's endpoint, instead of the region." : "Optional. Empty uses " + possessive(providerName()) + " own address.");
-    setText("ef-model-hint", k.model ? "Empty uses " + k.model + "." : "Empty uses the default shown.");
   }
   syncKeyRow();
 }
@@ -1514,21 +1539,19 @@ function syncKeyRow() {
   setText("ef-key-hint", ref === "credman"
     ? (editing ? (saved ? "Leave empty to keep the saved key; another address or region needs the key again." : "No key saved yet. Leave empty to keep the saved key once there is one.")
       : $("ef-kind").value === "gemini" ? "Get a key at aistudio.google.com (Get API key) and paste it here. On the free tier Google may use the text it reads to improve its products; with billing on, it does not."
-      : needsKey() ? "Paste the key from " + possessive(providerName()) + " site. Its voices load as soon as the key is in." : "Only if the server asks for one.")
+      : needsKey() ? "Paste the key from " + possessive(providerName()) + " site. Its voices" + (hasModelList() ? " and models" : "") + " load as soon as the key is in." : "Only if the server asks for one.")
     : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY. It goes only to the provider's own address, or to one confirmed as key_origin in engines.json."
     : "For a server on this PC that needs none.");
   syncRequired();
 }
 
 // ---- the voice list, before and after a save -------------------------------
-function fillVoiceSelect(list, current, fallbackDefault) {
+function fillVoiceSelect(list, current) {
   const sel = $("ef-voice");
   const prov = providerName();
   // The provider's name on every voice, so "Adam (ElevenLabs)" is never
-  // taken for a Kokoro voice of the same name.
-  const opts = [voiceRequired()
-    ? ["", list.length ? "Choose a voice" : "Choose a voice (none listed yet)"]
-    : ["", fallbackDefault ? "Default (" + fallbackDefault + ", " + prov + ")" : "Default"]];
+  // taken for a Kokoro voice of the same name. No voice is preselected.
+  const opts = [["", list.length ? "Choose a voice" : "Choose a voice (none listed yet)"]];
   for (const v of list) opts.push([v.id, (v.name || v.id) + " (" + prov + ")"]);
   opts.push(["__other", "Other voice id…"]);
   // A list that arrives while the user is typing another id keeps it open.
@@ -1545,9 +1568,81 @@ function fillVoiceSelect(list, current, fallbackDefault) {
   $("ef-voice-other").hidden = sel.value !== "__other";
 }
 
-function defaultVoice() {
-  const kind = $("ef-kind").value;
-  return kind === "openai-compatible" ? (PRESETS[$("ef-preset").value] || {}).voice : (KINDS[kind] || {}).voice || null;
+// ---- the model list, before and after a save (#235) -----------------------
+function fillModelSelect(list, current) {
+  const sel = $("ef-model-select");
+  const text = $("ef-model");
+  // A provider with no model list: the model is typed.
+  const listed = hasModelList();
+  sel.hidden = !listed;
+  const opts = [["", modelRequired()
+    ? (list.length ? "Choose a model" : "Choose a model (none listed yet)")
+    : possessive(providerName()) + " own choice"]];
+  for (const m of list) opts.push([m.id, m.name && m.name !== m.id ? m.name + " (" + m.id + ")" : m.id]);
+  opts.push(["__other", "Other model id…"]);
+  const typing = sel.value === "__other" && !current;
+  sel.textContent = "";
+  for (const [value, label] of opts) {
+    const o = el("option", null, label);
+    o.value = value;
+    sel.appendChild(o);
+  }
+  const inList = !current || list.some(m => m.id === current);
+  sel.value = typing ? "__other" : !current ? "" : inList ? current : "__other";
+  if (!listed) {
+    text.hidden = false;
+    text.value = current || text.value;
+  } else {
+    if (!typing) text.value = inList ? "" : current;
+    text.hidden = sel.value !== "__other";
+  }
+  // The label points at the visible control.
+  document.querySelector('label[for^="ef-model"]').htmlFor = listed ? "ef-model-select" : "ef-model";
+}
+
+function chosenModel() {
+  if (!hasModelList()) return $("ef-model").value.trim();
+  const v = $("ef-model-select").value;
+  return v === "__other" ? $("ef-model").value.trim() : v;
+}
+
+function modelsNote(text) {
+  setText("ef-model-hint", text);
+  if (text !== formState.modelsNote) { formState.modelsNote = text; announce(text); }
+}
+
+// The provider's models for the message `msg` (engine_models with the saved
+// engine, or the form's draft profile and typed key), or the hint `wait`.
+async function loadFormModels(msg, wait) {
+  const seq = ++formState.modelsSeq;
+  $("ef-model-row").hidden = !takesModel();
+  if (!takesModel()) return;
+  const prov = providerName();
+  if (!hasModelList()) {
+    const page = (KINDS[$("ef-kind").value] || {}).modelPage;
+    fillModelSelect([], chosenModel());
+    setText("ef-model-hint", (modelRequired() ? "Required. " : "") + "Type the model id from " + possessive(prov) + " documentation" + (page ? " (" + page + ")" : "") + "; names change, so Sonara lists none.");
+    return;
+  }
+  if (wait || !msg) {
+    fillModelSelect([], chosenModel());
+    setText("ef-model-hint", (wait || "").replace("voices", "models"));
+    return;
+  }
+  setText("ef-model-hint", "Fetching " + possessive(prov) + " models…");
+  try {
+    const r = await call("engine_models", Object.assign({}, msg, msg.engine ? {refresh: true} : {}));
+    if (seq !== formState.modelsSeq) return;
+    fillModelSelect(r.models, chosenModel());
+    const own = modelRequired() ? "" : " Leave it at " + possessive(prov) + " own choice to let it pick.";
+    modelsNote(r.error
+      ? "Could not fetch the models: " + r.error.message + " A model id still works through Other model id."
+      : r.models.length ? r.models.length + (r.models.length === 1 ? " model" : " models") + " from " + prov + "." + own
+      : "It lists no models: choose Other model id and enter one." + own);
+  } catch (e) {
+    if (seq !== formState.modelsSeq) return;
+    modelsNote((e instanceof ApiError ? "Could not fetch the models: " + e.message : "Could not reach the runtime.") + " A model id still works through Other model id.");
+  }
 }
 
 function chosenVoice() {
@@ -1589,7 +1684,7 @@ async function loadFormVoices() {
   let wait = "";
   if (editing && !(ref === "credman" && key)) {
     msg = {engine: editing, refresh: true};
-  } else if (kind !== "openai-compatible" && !(KINDS[kind] || {}).fixedVoices && ref === "credman" && !key) {
+  } else if (kind !== "openai-compatible" && ref === "credman" && !key) {
     wait = "Enter the API key above and " + possessive(prov) + " voices appear here.";
   } else if (ref === "env" && !$("ef-keyenv").value.trim()) {
     wait = "Name the environment variable above and " + possessive(prov) + " voices appear here.";
@@ -1606,8 +1701,10 @@ async function loadFormVoices() {
     msg = {profile: p};
     if (ref === "credman" && key) msg.secret = key;
   }
+  // The models come from the same profile and key (#235).
+  loadFormModels(msg && (msg.engine ? {engine: msg.engine} : msg), wait);
   if (wait) {
-    fillVoiceSelect([], chosenVoice(), defaultVoice());
+    fillVoiceSelect([], chosenVoice());
     setText("ef-voice-hint", wait);
     return;
   }
@@ -1615,10 +1712,12 @@ async function loadFormVoices() {
   try {
     const r = await call("voices", msg);
     if (seq !== formState.voicesSeq) return;
-    fillVoiceSelect(r.voices, chosenVoice(), defaultVoice());
+    fillVoiceSelect(r.voices, chosenVoice());
+    const page = voicePage();
     voicesNote(r.error
       ? "Could not fetch the voices: " + r.error.message + " A voice id still works through Other voice id."
       : r.voices.length ? r.voices.length + (r.voices.length === 1 ? " voice" : " voices") + " from " + prov + ". For one it does not list (a cloned voice), choose Other voice id."
+      : page ? prov + " has no voice list: choose Other voice id and enter one of the voices named at " + page + "."
       : "It lists no voices: choose Other voice id and enter one.");
   } catch (e) {
     if (seq !== formState.voicesSeq) return;
@@ -1715,7 +1814,10 @@ function validate() {
   const ref = $("ef-keyref").value;
   if (ref === "credman" && keyRequiredNow() && !$("ef-key").value.trim()) errs.push([$("ef-key"), "Paste the API key from " + possessive(providerName()) + " site."]);
   if (ref === "env" && !$("ef-keyenv").value.trim()) errs.push([$("ef-keyenv"), "Name the environment variable that holds the key."]);
-  if (!$("ef-model-row").hidden && modelRequired() && !$("ef-model").value.trim()) errs.push([$("ef-model"), "This server needs a model name."]);
+  if (takesModel() && modelRequired() && !chosenModel()) {
+    errs.push([hasModelList() && $("ef-model-select").value !== "__other" ? $("ef-model-select") : $("ef-model"),
+      hasModelList() ? "Choose a model, or choose Other model id and enter one." : "Enter the model id."]);
+  }
   if (voiceRequired() && !chosenVoice()) {
     errs.push([$("ef-voice").value === "__other" ? $("ef-voice-other") : $("ef-voice"), "Pick a voice, or choose Other voice id and enter one."]);
   }
@@ -1733,13 +1835,14 @@ function fieldForMessage(msg) {
   const m = msg.toLowerCase();
   const rules = [[/engine id|'id'|built-in engine|exists; send replace/, "ef-id"], [/voice/, "ef-voice"],
                  [/environment variable|key_ref/, "ef-keyenv"], [/\bkey\b|secret/, "ef-key"],
-                 [/'url'|address|\burl\b/, "ef-url"], [/model/, "ef-model"], [/label/, "ef-label"],
+                 [/'url'|address|\burl\b/, "ef-url"], [/model/, "ef-model-select"], [/label/, "ef-label"],
                  [/region/, "ef-opt-region"], [/timeout_ms/, "ef-timeout"], [/prefetch/, "ef-prefetch"],
                  [/option/, "ef-options"]];
   for (const [re, id] of rules) {
     let n = $(id);
     if (!re.test(m) || !n || n.hidden || n.closest("[hidden]")) continue;
     if (id === "ef-voice" && n.value === "__other") n = $("ef-voice-other");
+    if (id === "ef-model-select" && (n.hidden || n.value === "__other")) n = $("ef-model");
     if (n.disabled) continue;
     return n;
   }
@@ -1767,7 +1870,7 @@ function openForm(v) {
   // Azure region's endpoint) stay defaults through an edit.
   const ex = v ? (v.explicit || v) : {};
   $("ef-url").value = ex.url || "";
-  $("ef-model").value = ex.model || "";
+  $("ef-model").value = "";
   $("ef-key").value = "";
   const ref = v ? (v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
   $("ef-keyref").value = ref.startsWith("env:") ? "env" : ref;
@@ -1780,7 +1883,9 @@ function openForm(v) {
   lastPreset = $("ef-preset").value;
   syncFormRows(lastPreset);
   $("ef-voice").value = "";
-  fillVoiceSelect([], ex.voice || "", defaultVoice());
+  fillVoiceSelect([], ex.voice || "");
+  $("ef-model-select").value = "";
+  fillModelSelect([], ex.model || "");
   setText("ef-title", v ? "Edit " + (v.label || v.id) : "Add an engine");
   showErrors([], "");
   setFormStatus("");
@@ -1815,12 +1920,13 @@ function collectProfile() {
   const p = {id: (editing || $("ef-id").value.trim()), kind};
   const label = $("ef-label").value.trim();
   if (label) p.label = label;
-  // A value equal to the preset's default is left out, so it stays a default.
+  // An address equal to the preset's own is left out, so it stays a default.
   const pr = kind === "openai-compatible" ? PRESETS[$("ef-preset").value] || {} : {};
   const url = $("ef-url").value.trim();
   if (k.url && url && url !== pr.url) p.url = url;
-  const model = $("ef-model").value.trim();
-  if (k.model && model && model !== pr.model) p.model = model;
+  // The model as chosen: never a default of Sonara's (#235).
+  const model = chosenModel();
+  if (k.model && model) p.model = model;
   const voice = chosenVoice();
   if (voice) p.voice = voice;
   const ref = $("ef-keyref").value;
@@ -1911,7 +2017,9 @@ $("engine-form").addEventListener("input", e => {
   } else if (t.id === "ef-id") {
     formState.auto.id = t.value === "";
   }
-  if (VOICE_INPUTS.includes(t.id)) scheduleVoices();
+  // A typed model id is not a reason to fetch again; the key and the
+  // variable are (the model list of LocalAI's voices aside).
+  if (VOICE_INPUTS.includes(t.id) && !(t.id === "ef-model" && hasModelList())) scheduleVoices();
   markDirty();
 });
 $("engine-form").addEventListener("change", e => {
@@ -1934,7 +2042,10 @@ $("ef-kind").addEventListener("change", () => {
   if (formState.auto.label) { $("ef-label").value = providerName(); syncAutoId(); }
   syncFormRows("");
   $("ef-voice").value = "";
-  fillVoiceSelect([], "", defaultVoice());
+  fillVoiceSelect([], "");
+  $("ef-model-select").value = "";
+  $("ef-model").value = "";
+  fillModelSelect([], "");
   loadFormVoices();
 });
 $("ef-preset").addEventListener("change", () => {
@@ -1942,10 +2053,20 @@ $("ef-preset").addEventListener("change", () => {
   syncFormRows(lastPreset);
   lastPreset = $("ef-preset").value;
   if (formState.auto.label) { $("ef-label").value = providerName(); syncAutoId(); }
-  fillVoiceSelect([], chosenVoice(), defaultVoice());
+  fillVoiceSelect([], chosenVoice());
+  fillModelSelect([], chosenModel());
+  syncRequired();
   loadFormVoices();
 });
 $("ef-keyref").addEventListener("change", () => { syncKeyRow(); loadFormVoices(); });
+$("ef-model-select").addEventListener("change", () => {
+  const other = $("ef-model-select").value === "__other";
+  $("ef-model").hidden = !other;
+  if ($("ef-model-select").getAttribute("aria-invalid") === "true") setFieldError($("ef-model-select"), "");
+  if (other) $("ef-model").focus();
+  // LocalAI lists the voices of the model chosen.
+  if ($("ef-preset").value === "localai" && $("ef-kind").value === "openai-compatible") scheduleVoices();
+});
 $("ef-voice").addEventListener("change", () => {
   const other = $("ef-voice").value === "__other";
   $("ef-voice-other").hidden = !other;
