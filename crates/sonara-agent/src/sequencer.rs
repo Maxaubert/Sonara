@@ -19,6 +19,8 @@ pub const MAX: usize = 3;
 /// Why an earcon was not scheduled.
 pub const DUPLICATE: &str = "the same earcon is queued right before it";
 pub const FULL: &str = "too many earcons queued";
+/// Why a waiting earcon was not played.
+pub const MUTED: &str = "mute level 2";
 
 /// The earcons waiting or playing, with when each starts and ends.
 #[derive(Debug, Default)]
@@ -49,6 +51,12 @@ impl Schedule {
         }
         self.slots.push_back((e, now, now + len));
         Ok(now)
+    }
+
+    /// Forget the earcons that have not started at `now` (they will not
+    /// be played: mute level 2), so the next ones do not wait for them.
+    pub fn drop_waiting(&mut self, now: Instant) {
+        self.slots.retain(|(_, start, _)| *start <= now);
     }
 
     /// When the last earcon scheduled has ended and its gap passed (`now`
@@ -102,5 +110,15 @@ mod tests {
         s.admit(Earcon::Choice, ms(350), t).unwrap();
         s.admit(Earcon::TurnDone, ms(750), t).unwrap();
         assert_eq!(s.admit(Earcon::Error, ms(900), t), Err(FULL));
+    }
+
+    #[test]
+    fn dropping_the_waiting_earcons_keeps_the_one_playing() {
+        let mut s = Schedule::default();
+        let t = Instant::now();
+        s.admit(Earcon::TurnDone, ms(750), t).unwrap();
+        s.admit(Earcon::Choice, ms(350), t).unwrap();
+        s.drop_waiting(t + ms(10));
+        assert_eq!(s.quiet_at(t), t + ms(750) + GAP);
     }
 }

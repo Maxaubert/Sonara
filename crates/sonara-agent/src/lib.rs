@@ -47,8 +47,9 @@
 //!   one after the other in the order they were triggered, never mixed. A
 //!   burst is capped: an earcon equal to the one queued right before it is
 //!   dropped, and at most `EARCON_QUEUE` wait or play. A waiting earcon is
-//!   played by the agent's earcon thread, not at mute level 2. Stop and
-//!   flush do not cancel waiting earcons.
+//!   played by the agent's earcon thread; mute level 2 drops the waiting
+//!   ones (traced as dropped) and frees their slots. Stop and flush do not
+//!   cancel waiting earcons.
 //! - **Session switches** (the Python daemon's "Session changed"): the
 //!   agent sets L2's announcement texts to `SESSION_CHANGED` /
 //!   `SESSION_CHANGED_AGAIN` and plays the `session_change` earcon right
@@ -57,7 +58,9 @@
 //!   chimes first and then says "Session changed: <label>.". The chime
 //!   queues behind any earcon playing, and the announcement is held
 //!   (`ReaderHandle::hold_start`) until the chime ended, so the name is
-//!   heard after it, not under it (#238). The chime is traced as source
+//!   heard after it, not under it (#238). The hold lasts until every
+//!   queued earcon ended, also when the chime itself was dropped (a
+//!   duplicate or a full queue): never speak under an earcon. The chime is traced as source
 //!   `announce` with the channel switched to. Not at mute level 2.
 //! - Timers and summarizer jobs run on their own threads, which hold the
 //!   agent weakly and end with it.
@@ -250,6 +253,9 @@ struct Inner {
     deferred: AtomicUsize,
     /// The earcon thread's inbox, started at the first earcon that waits.
     player: Mutex<Option<Sender<Deferred>>>,
+    /// Bumped at mute level 2: waiting earcons of an older epoch are
+    /// dropped, as their slots are (`Schedule::drop_waiting`).
+    epoch: AtomicUsize,
 }
 
 /// An earcon that waits for the one before it (#238).
@@ -257,6 +263,7 @@ struct Deferred {
     earcon: Earcon,
     clip: Arc<PcmChunk>,
     start: Instant,
+    epoch: usize,
 }
 
 /// L3 over L2. Clones share it.
@@ -297,6 +304,7 @@ impl Agent {
             schedule: Mutex::new(sequencer::Schedule::default()),
             deferred: AtomicUsize::new(0),
             player: Mutex::new(None),
+            epoch: AtomicUsize::new(0),
         });
         // Called under L2's lock: it only queues a clip, reports it and
         // holds the announcement until the chime ended (#238).
@@ -568,6 +576,12 @@ impl Agent {
         }
         let done = self.apply("mute_level", None, |r| Ok(r.set_mute_level(level)));
         self.inner.mute_level.store(level, Ordering::SeqCst);
+        if level >= 2 {
+            // Waiting earcons will not play: free their slots (#238).
+            let mut schedule = self.inner.lock_schedule();
+            self.inner.epoch.fetch_add(1, Ordering::SeqCst);
+            schedule.drop_waiting(Instant::now());
+        }
         done.map(|_| ())
     }
 
@@ -718,6 +732,7 @@ impl Inner {
             earcon: e,
             clip,
             start,
+            epoch: self.epoch.load(Ordering::SeqCst),
         };
         // The thread lives as long as the agent, so the send cannot fail.
         if player.as_ref().is_some_and(|tx| tx.send(job).is_err()) {
@@ -945,19 +960,41 @@ impl Inner {
 }
 
 /// The earcon thread (#238): plays each waiting earcon at its start time,
-/// in order, unless mute level 2 came meanwhile. It holds the agent weakly
-/// and ends with it.
+/// in order. One queued before mute level 2 came is not played and is
+/// traced as dropped. It holds the agent weakly and ends with it.
 fn earcon_thread(agent: Weak<Inner>, inbox: Receiver<Deferred>) {
+    // Whether `job` is still to be played; when not, trace and count it.
+    let keep = |inner: &Inner, job: &Deferred| {
+        let muted = inner.mute_level.load(Ordering::SeqCst) >= 2
+            || inner.epoch.load(Ordering::SeqCst) != job.epoch;
+        if muted {
+            inner.trace(
+                "earcon",
+                None,
+                Traced::EarconDropped {
+                    earcon: job.earcon,
+                    why: sequencer::MUTED,
+                },
+            );
+            inner.deferred.fetch_sub(1, Ordering::SeqCst);
+        }
+        !muted
+    };
     while let Ok(job) = inbox.recv() {
+        match agent.upgrade() {
+            Some(inner) if !keep(&inner, &job) => continue,
+            Some(_) => {}
+            None => return,
+        }
         std::thread::sleep(job.start.saturating_duration_since(Instant::now()));
         let Some(inner) = agent.upgrade() else {
             return;
         };
-        if inner.mute_level.load(Ordering::SeqCst) < 2 {
+        if keep(&inner, &job) {
             if let Err(e) = inner.sound(job.earcon, &job.clip) {
                 eprintln!("[agent] {} earcon: {e}", job.earcon.as_str());
             }
+            inner.deferred.fetch_sub(1, Ordering::SeqCst);
         }
-        inner.deferred.fetch_sub(1, Ordering::SeqCst);
     }
 }

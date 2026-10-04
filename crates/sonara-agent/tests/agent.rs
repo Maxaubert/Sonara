@@ -1187,3 +1187,60 @@ fn super_mute_drops_queued_earcons() {
     assert!(heard.recv_timeout(Duration::from_millis(1200)).is_err());
     assert_eq!(timed_clips(&r.out).len(), 1);
 }
+
+/// An earcon skipped at mute level 2 says so in the log, rather than the
+/// log claiming an earcon that was never heard.
+#[test]
+fn an_earcon_skipped_at_super_mute_is_logged_as_dropped() {
+    let r = Rig::new();
+    let traced: Arc<Mutex<Vec<sonara_agent::Trace>>> = Arc::default();
+    let t = traced.clone();
+    r.agent
+        .on_trace(Some(Arc::new(move |x: &sonara_agent::Trace| {
+            t.lock().unwrap().push(x.clone())
+        })));
+    r.agent.earcon(Earcon::TurnDone).unwrap();
+    r.agent.earcon(Earcon::Choice).unwrap();
+    r.agent.set_mute_level(2).unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let found = traced.lock().unwrap().iter().any(|t| {
+            t.what
+                == sonara_agent::Traced::EarconDropped {
+                    earcon: Earcon::Choice,
+                    why: sonara_agent::sequencer::MUTED,
+                }
+        });
+        if found {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{:?}", traced.lock().unwrap());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Earcons skipped at mute level 2 do not keep their slots: after an
+/// unmute the next earcon waits only for the one still playing.
+#[test]
+fn after_super_mute_the_next_earcon_does_not_wait_for_skipped_ones() {
+    let r = Rig::new();
+    let heard = r.agent.subscribe();
+    r.agent.earcon(Earcon::TurnDone).unwrap();
+    r.agent.earcon(Earcon::Choice).unwrap();
+    r.agent.earcon(Earcon::Permission).unwrap();
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    r.agent.set_mute_level(2).unwrap();
+    r.agent.set_mute_level(0).unwrap();
+    r.agent.earcon(Earcon::Error).unwrap();
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::Error);
+    let clips = timed_clips(&r.out);
+    assert_eq!(clips.len(), 2, "the skipped ones are never played");
+    assert_no_overlap(&clips);
+    let (at, samples, rate) = clips[0];
+    let latest = at + clip_len(samples, rate) + sonara_agent::sequencer::GAP;
+    assert!(
+        clips[1].0 < latest + Duration::from_millis(150),
+        "error waited {:?} after turn_done, behind earcons that never played",
+        clips[1].0 - at
+    );
+}
