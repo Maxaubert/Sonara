@@ -94,6 +94,8 @@ pub const COMMANDS: &[&str] = &["claude", "codex"];
 pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
 /// When a turn's prose is spoken (#222).
 pub const READ_MODES: &[&str] = &["immediate", "queue", "done"];
+/// What the flush hotkey skips (#228).
+pub const FLUSH_SCOPES: &[&str] = &["session", "all"];
 const ON_OFF: &[&str] = &["on", "off"];
 
 /// Every persisted setting, its layer, validation and default (as JSON).
@@ -103,7 +105,7 @@ const ON_OFF: &[&str] = &["on", "off"];
 /// `skip_code` (#214; it was `medium`), prose held until the turn is done
 /// (#222; the queue size, used in read mode `queue`, is five chunks),
 /// every session read, media paused while Sonara speaks, summaries off,
-/// unmuted. `sonarad` applies
+/// unmuted, the flush hotkey skipping only the session being read (#228). `sonarad` applies
 /// them to the layers (L1 in `apply_reader`), so they differ from the
 /// library crates' own defaults on purpose.
 pub const SCHEMA: &[Setting] = &[
@@ -154,6 +156,12 @@ pub const SCHEMA: &[Setting] = &[
         layer: Layer::Agent,
         kind: Kind::OneOf(READ_MODES),
         default: "\"done\"",
+    },
+    Setting {
+        key: "flush_scope",
+        layer: Layer::Agent,
+        kind: Kind::OneOf(FLUSH_SCOPES),
+        default: "\"session\"",
     },
     Setting {
         key: "minqueue",
@@ -848,6 +856,7 @@ mod tests {
             ("mute_level", json!(0)),
             ("verbosity", json!("skip_code")),
             ("read_mode", json!("done")),
+            ("flush_scope", json!("session")),
             ("minqueue", json!(5)),
             ("background_policy", json!("all")),
             ("audio_mode", json!("pause")),
@@ -900,6 +909,7 @@ mod tests {
             ("minqueue", json!(11)),
             ("read_mode", json!("later")),
             ("read_mode", json!(1)),
+            ("flush_scope", json!("everything")),
             ("background_policy", json!("silent")),
             ("channel_announce", json!(true)),
             ("debug_log", json!("on")),

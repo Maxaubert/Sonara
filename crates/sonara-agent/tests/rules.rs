@@ -1206,3 +1206,376 @@ fn prose_held_below_minqueue_is_noted() {
         "{n:?}"
     );
 }
+
+// -- flush: only the session being read (#228) -----------------------------
+
+fn done_rules() -> Rules {
+    Rules::new(Settings {
+        read_mode: ReadMode::Done,
+        ..Settings::default()
+    })
+}
+
+/// The notes of `channel` as `kind: what` lines.
+fn notes_of(r: &Rules, channel: &str) -> Vec<String> {
+    r.take_notes()
+        .into_iter()
+        .filter(|n| n.channel.as_deref() == Some(channel))
+        .map(|n| format!("{}: {}", n.kind, n.what))
+        .collect()
+}
+
+#[test]
+fn flush_while_another_session_streams_keeps_its_message() {
+    // #228: flushing the session being read wiped the prose another
+    // session was still streaming (summary mode); only its last sentences,
+    // arriving after the flush, were heard.
+    let mut r = summary_rules();
+    prose(&mut r, "wind", &PAD.repeat(6), 0, false);
+    prose(&mut r, "dl", "The downloads recap. ", 0, true);
+    r.flush("dl");
+    prose(&mut r, "wind", "Last words. ", 1, true);
+    let job = jobs(&end_and_settle(&mut r, "wind", None)).remove(0);
+    assert_eq!(job.text.matches("filler").count(), 6, "{}", job.text);
+    assert!(job.text.ends_with("Last words."), "{}", job.text);
+}
+
+#[test]
+fn flush_stops_only_the_session_being_read() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "Alpha one. ", 0, true);
+    prose(&mut r, "b", "Beta one. ", 0, true);
+    r.flush("a");
+    assert_eq!(spoken(&r.turn_end("b", None, None).unwrap()), ["Beta one."]);
+    assert!(spoken(&r.turn_end("a", None, None).unwrap()).is_empty());
+}
+
+#[test]
+fn flush_keeps_other_sessions_summaries_and_decisions() {
+    let mut r = summary_rules();
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let job = jobs(&end_and_settle(&mut r, "b", None)).remove(0);
+    prose(&mut r, "c", "Lead-in. ", 0, true);
+    r.ask("c", &question("Deploy?", &[]));
+    prose(&mut r, "a", "Alpha. ", 0, true);
+    r.flush("a");
+    assert_eq!(r.summary_state("b"), Some((false, 0, 0, 1)));
+    assert_eq!(r.summary_state("c"), Some((true, 1, 0, 0)));
+    assert_eq!(spoken(&r.digest_done(&job, Some("B.".into()))), ["B."]);
+}
+
+#[test]
+fn the_rest_of_a_flushed_reply_is_skipped() {
+    // #228 (flush_scope, 2026-10-04): the flushed session is skipped for
+    // the whole reply, also the prose that arrives after the flush.
+    for mode in [ReadMode::Immediate, ReadMode::Queue, ReadMode::Done] {
+        let mut r = Rules::new(Settings {
+            read_mode: mode,
+            ..Settings::default()
+        });
+        prose(&mut r, "a", "Heard. ", 0, true);
+        r.flush("a");
+        r.take_notes();
+        assert!(spoken(&prose(&mut r, "a", "After. ", 1, true)).is_empty());
+        assert_eq!(
+            notes_of(&r, "a"),
+            ["prose: dropped: flushed reply"],
+            "{mode:?}"
+        );
+        let end = r.turn_end("a", None, None).unwrap();
+        assert!(spoken(&end).is_empty(), "{mode:?}");
+        assert_eq!(earcons(&end), [Earcon::TurnDone], "the reply still ends");
+    }
+}
+
+#[test]
+fn the_flushed_reply_is_skipped_until_the_sessions_next_turn_start() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    // An answer does not end the reply.
+    r.answered("a");
+    assert!(spoken(&prose(&mut r, "a", "Still skipped. ", 1, true)).is_empty());
+    r.tool("a", "Bash", "");
+    r.turn_end("a", None, None).unwrap();
+    // Late prose of the flushed reply, after its turn_end (#14).
+    assert!(spoken(&prose(&mut r, "a", "Late. ", 2, true)).is_empty());
+    r.turn_start("a", None, None).unwrap();
+    prose(&mut r, "a", "Next reply. ", 0, true);
+    assert_eq!(
+        spoken(&r.turn_end("a", None, None).unwrap()),
+        ["Next reply."]
+    );
+}
+
+#[test]
+fn a_tool_in_the_flushed_reply_is_not_announced() {
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::Everything;
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    r.take_notes();
+    assert!(spoken(&r.tool("a", "Bash", "Running the tests.")).is_empty());
+    assert_eq!(notes_of(&r, "a"), ["tool: not announced: flushed reply"]);
+}
+
+#[test]
+fn a_question_later_in_the_flushed_reply_is_still_spoken() {
+    // #228: a decision needs an answer, so it is read even though the rest
+    // of its reply is skipped.
+    let mut r = done_rules();
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    prose(&mut r, "a", "Lead-in skipped. ", 1, true);
+    let out = r.ask("a", &question("Deploy?", &["Yes", "No"]));
+    let said = spoken(&out);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with('!') && said[0].contains("Deploy?"),
+        "{said:?}"
+    );
+    assert_eq!(earcons(&out), [Earcon::Choice]);
+    let perm = r.ask("a", &Ask::new(AskKind::Plan, "The plan."));
+    assert_eq!(spoken(&perm).len(), 1, "a plan too");
+}
+
+#[test]
+fn a_question_later_in_a_flushed_summary_reply_is_still_spoken() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    r.flush("a");
+    prose(&mut r, "a", &PAD.repeat(6), 1, true);
+    let asked = r.ask("a", &question("Ship?", &[]));
+    let out = r.fire(&settle_of(&asked), None);
+    assert!(
+        jobs(&out).is_empty(),
+        "nothing of the flushed reply to recap"
+    );
+    let said = spoken(&out);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("Ship?"), "{said:?}");
+}
+
+#[test]
+fn a_flushed_summary_reply_makes_no_summary_and_the_next_turn_does() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    r.flush("a");
+    prose(&mut r, "a", "After the flush. ", 1, true);
+    let a = end_and_settle(&mut r, "a", Some("a"));
+    assert!(jobs(&a).is_empty());
+    assert!(spoken(&a).is_empty(), "{:?}", spoken(&a));
+    r.turn_start("a", None, None).unwrap();
+    prose(&mut r, "a", "A new reply. ", 0, true);
+    assert_eq!(
+        spoken(&end_and_settle(&mut r, "a", Some("a"))),
+        ["A new reply."]
+    );
+}
+
+// -- flush_scope all: every ready message (#228) ---------------------------
+
+#[test]
+fn flush_ready_drops_a_finished_turns_work_and_keeps_a_turn_still_arriving() {
+    let mut r = summary_rules();
+    // b finished its turn: its summary is in flight.
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let job = jobs(&end_and_settle(&mut r, "b", None)).remove(0);
+    // c is still writing.
+    prose(&mut r, "c", &PAD.repeat(6), 0, false);
+    assert!(!r.writing("b"));
+    assert!(r.writing("c"));
+    r.take_notes();
+    assert!(r.flush_ready("b", false).is_some());
+    assert!(
+        r.flush_ready("c", true).is_none(),
+        "a turn still arriving stays"
+    );
+    assert_eq!(
+        notes_of(&r, "b"),
+        ["summary: cancelled (flush): 1 summary in flight"]
+    );
+    assert!(spoken(&r.digest_done(&job, Some("B.".into()))).is_empty());
+    // b is not skipped for later: only the session being read is.
+    prose(&mut r, "c", "Last words. ", 1, true);
+    let c = jobs(&end_and_settle(&mut r, "c", None)).remove(0);
+    assert_eq!(c.text.matches("filler").count(), 6, "{}", c.text);
+}
+
+#[test]
+fn flush_ready_with_nothing_to_drop_says_so() {
+    let mut r = done_rules();
+    prose(&mut r, "b", "Done. ", 0, true);
+    r.turn_end("b", None, None).unwrap();
+    assert!(r.flush_ready("b", false).is_none());
+    assert!(r.flush_ready("ghost", true).is_none());
+    // Nothing was flushed: its late prose is still read.
+    assert_eq!(spoken(&prose(&mut r, "b", "Late. ", 1, true)), ["Late."]);
+}
+
+#[test]
+fn flush_all_skips_the_late_prose_of_another_sessions_flushed_reply() {
+    // Review of #228: b's reply ended and its text was queued in L2 (the
+    // driver says so); late prose of that reply (#14) is skipped too.
+    let mut r = rules();
+    prose(&mut r, "b", "Read. ", 0, true);
+    r.turn_end("b", None, None).unwrap();
+    r.take_notes();
+    assert!(r.flush_ready("b", true).is_some());
+    assert!(spoken(&prose(&mut r, "b", "Late. ", 1, true)).is_empty());
+    assert_eq!(notes_of(&r, "b"), ["prose: dropped: flushed reply"]);
+    // Its next reply is read as usual.
+    r.turn_start("b", None, None).unwrap();
+    assert_eq!(
+        spoken(&prose(&mut r, "b", "Next reply. ", 0, true)),
+        ["Next reply."]
+    );
+}
+
+#[test]
+fn flush_all_skips_late_prose_after_cancelling_a_summary() {
+    // Summaries on: the settle window was cancelled, so late prose would be
+    // kept and never summarized; it is dropped instead.
+    let mut r = summary_rules();
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let a = r.turn_end("b", None, None).unwrap();
+    let settle = settle_of(&a);
+    assert!(r.flush_ready("b", false).is_some());
+    r.take_notes();
+    assert!(spoken(&prose(&mut r, "b", "Late. ", 1, true)).is_empty());
+    assert_eq!(notes_of(&r, "b"), ["prose: dropped: flushed reply"]);
+    assert!(jobs(&r.fire(&settle, None)).is_empty());
+}
+
+#[test]
+fn a_session_without_a_turn_end_is_still_writing() {
+    let mut r = done_rules();
+    assert!(!r.writing("ghost"));
+    r.turn_start("a", None, None).unwrap();
+    assert!(r.writing("a"));
+    r.turn_end("a", None, None).unwrap();
+    assert!(!r.writing("a"));
+    r.turn_start("a", None, None).unwrap();
+    assert!(r.writing("a"));
+}
+
+#[test]
+fn flush_drop_is_logged() {
+    // #228: what a flush drops leaves a note with the session, the count
+    // and the reason (it was silent).
+    let mut r = done_rules();
+    prose(&mut r, "a", "One. Two. ", 0, true);
+    r.take_notes();
+    r.flush("a");
+    assert_eq!(
+        notes_of(&r, "a"),
+        ["prose: dropped: 2 held chunk(s) (flush, read_mode done)"]
+    );
+
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    r.ask("a", &question("Deploy?", &[]));
+    prose(&mut r, "a", "More text. ", 1, true);
+    r.take_notes();
+    r.flush("a");
+    let notes = notes_of(&r, "a");
+    assert_eq!(
+        notes,
+        [
+            "prose: dropped: 1 chunk(s) kept for the summary (flush)",
+            "summary: cancelled (flush): 1 summary in flight, the settle window",
+            "question: spoken now: the summary it waited for was flushed",
+        ],
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn stop_drop_is_logged_for_every_session() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "One. ", 0, true);
+    prose(&mut r, "b", "Two. Three. ", 0, true);
+    r.take_notes();
+    r.stop_all();
+    let notes: Vec<String> = r
+        .take_notes()
+        .into_iter()
+        .map(|n| format!("{} {}", n.channel.unwrap_or_default(), n.what))
+        .collect();
+    assert_eq!(
+        notes,
+        [
+            "a dropped: 1 held chunk(s) (stop, read_mode done)",
+            "b dropped: 2 held chunk(s) (stop, read_mode done)",
+        ]
+    );
+}
+
+#[test]
+fn flush_of_a_session_without_turn_state_does_nothing() {
+    let mut r = rules();
+    r.flush("ghost");
+    assert!(r.channels().is_empty());
+    assert!(r.take_notes().is_empty());
+}
+
+#[test]
+fn flush_of_a_question_keeps_its_permission_prompt_silent() {
+    // #228 review: flushing the question being read does not answer it, so
+    // the permission prompt the same question fires stays suppressed (#11).
+    let mut r = rules();
+    r.ask("a", &question("Deploy?", &[]));
+    r.flush("a");
+    assert!(r.awaiting("a"));
+    let out = r.ask(
+        "a",
+        &Ask::new(AskKind::Permission, "Claude needs your permission"),
+    );
+    assert!(spoken(&out).is_empty(), "{:?}", spoken(&out));
+    assert!(earcons(&out).is_empty());
+}
+
+#[test]
+fn flush_speaks_the_decisions_that_waited_for_the_summary() {
+    // #228 review: skipping a session's recap must not lose its question.
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    r.ask("a", &question("Deploy?", &[]));
+    r.take_notes();
+    let out = r.flush("a");
+    let said = spoken(&out);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with('!') && said[0].contains("Deploy?"),
+        "{said:?}"
+    );
+    assert!(notes_of(&r, "a")
+        .contains(&"question: spoken now: the summary it waited for was flushed".to_string()));
+
+    // Held behind the summary in flight (after the settle window).
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    let asked = r.ask("a", &question("Ship?", &[]));
+    r.fire(&settle_of(&asked), None);
+    assert_eq!(r.summary_state("a").map(|s| s.2), Some(1), "held");
+    let said = spoken(&r.flush("a"));
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("Ship?"), "{said:?}");
+}
+
+#[test]
+fn stop_still_drops_the_decisions_that_waited_for_the_summary() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    r.ask("a", &question("Deploy?", &[]));
+    r.take_notes();
+    r.stop_all();
+    assert!(
+        notes_of(&r, "a").contains(&"question: dropped: waited for the summary (stop)".to_string())
+    );
+    assert!(!r.awaiting("a"));
+}

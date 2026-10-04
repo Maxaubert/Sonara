@@ -217,6 +217,7 @@ def test_extension_namespaces_send_their_message_types(home, fake):
         assert c.channels.speak("tab-1", "Hi.", mode="replace") == 1
         c.channels.control("tab-1", "pause")
         c.channels.next_channel()
+        c.channels.flush()
         c.channels.close("tab-1")
         c.agent.turn_start("tab-1", 3, t=12)
         c.agent.stream("tab-1", 3, "Hel", 0, False, t=12)
@@ -234,6 +235,7 @@ def test_extension_namespaces_send_their_message_types(home, fake):
         {"type": "speak", "channel": "tab-1", "text": "Hi.", "mode": "replace"},
         {"type": "control", "channel": "tab-1", "action": "pause"},
         {"type": "control", "action": "next_channel"},
+        {"type": "control", "action": "flush"},
         {"type": "channel_close", "channel": "tab-1"},
         {"type": "turn_start", "channel": "tab-1", "turn": 3, "t": 12},
         {"type": "stream", "channel": "tab-1", "turn": 3, "delta": "Hel", "index": 0, "final": False, "t": 12},

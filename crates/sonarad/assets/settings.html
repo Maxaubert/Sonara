@@ -321,7 +321,7 @@
         <h2 class="group-label">Keyboard shortcuts</h2>
         <div class="inset key-list">
           <div class="key-row" data-action="restart"><div class="key-copy"><strong>Restart / re-read</strong><span>Read the latest message again from the top.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Restart">&times;</button></div></div>
-          <div class="key-row" data-action="flush"><div class="key-copy"><strong>Flush to end</strong><span>Stop everything queued or playing.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Flush to end">&times;</button></div></div>
+          <div class="key-row" data-action="flush"><div class="key-copy"><strong>Flush</strong><span>Skip the reply being read. What else it skips is set below.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Flush">&times;</button></div></div>
           <div class="key-row" data-action="pause"><div class="key-copy"><strong>Pause / resume</strong><span>Pause or resume what is being read.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Pause / resume">&times;</button></div></div>
           <div class="key-row" data-action="mute"><div class="key-copy"><strong>Mute cycle</strong><span>Muted, super muted, unmuted.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Mute cycle">&times;</button></div></div>
           <div class="key-row" data-action="next_channel"><div class="key-copy"><strong>Next session</strong><span>Move to the next session or tab.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Next session">&times;</button></div></div>
@@ -329,6 +329,10 @@
           <div class="key-row" data-action="slower"><div class="key-copy"><strong>Slower</strong><span>Decrease the speaking rate.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Slower">&times;</button></div></div>
         </div>
         <div class="key-actions"><p class="hint" style="margin:0">Select a shortcut and press the new keys (Escape cancels), or use &times; to unbind it. The defaults use Ctrl+Alt, which is AltGr on many European keyboards: if a shortcut warns that it takes a character away, rebind it with Win. A shortcut another program owns has to be changed.</p><button class="btn" id="keymap-reset" type="button">Reset hotkeys to defaults</button></div>
+        <h2 class="group-label">Flush</h2>
+        <div class="inset">
+          <div class="pref agent-pref" id="flushscope-row"><div class="pref-copy"><strong id="flushscope-label">Flush skips</strong><div class="hint">The rest of the flushed reply is skipped either way; its questions are still read.</div></div><div class="control"><div class="segments" id="flushscope-seg" role="radiogroup" aria-labelledby="flushscope-label" aria-describedby="flushscope-hint"><button type="button" role="radio" data-value="session">This session</button><button type="button" role="radio" data-value="all">Everything queued</button></div><div class="hint" id="flushscope-hint"></div></div></div>
+        </div>
       </section>
 
       <section class="page" id="advanced" aria-labelledby="h-advanced">
@@ -477,7 +481,7 @@ async function change(key, value, label) {
 }
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
-              "mute_level", "verbosity", "read_mode", "minqueue", "background_policy", "summaries", "channel_announce",
+              "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
               "channel_prefs", "earcons", "debug_log"];
 let voices = [];
 
@@ -584,6 +588,10 @@ const READ_HINTS = {
   queue: "Once the queue size of sentences waits. A tool run, a question or the end of the turn starts it sooner.",
   done: "The whole answer once the agent is done. A question or permission prompt reads what came before it first.",
 };
+const FLUSH_HINTS = {
+  session: "Only the session being read. Sonara goes on to the next session.",
+  all: "Every finished reply waiting in every session. A session still writing its reply is read when done.",
+};
 const MODE_HINTS = {
   off: "Read the answer itself, as set under Live reading.",
   tidy: "Everything, rewritten for the ear at the end of the turn.",
@@ -636,6 +644,8 @@ function render() {
     setText("readmode-hint", READ_HINTS[s.read_mode] || "");
     $("minqueue-row").hidden = s.read_mode !== "queue";
     setText("minqueue-out", String(s.minqueue));
+    setSegments("flushscope-seg", s.flush_scope);
+    setText("flushscope-hint", FLUSH_HINTS[s.flush_scope] || "");
   }
 
   // Audio
@@ -804,7 +814,7 @@ function renderSessions(list) {
 }
 
 // ---- hotkeys ------------------------------------------------------------
-const ACTION_NAMES = {restart: "Restart", flush: "Flush to end", pause: "Pause / resume", mute: "Mute cycle",
+const ACTION_NAMES = {restart: "Restart", flush: "Flush", pause: "Pause / resume", mute: "Mute cycle",
                       next_channel: "Next session", faster: "Faster", slower: "Slower"};
 function renderHotkeys(h) {
   $("hotkeys-inactive").hidden = !!h.active;
@@ -944,6 +954,7 @@ wireSegments("mute-seg", v => change("mute_level", Number(v), "Mute"));
 wireSegments("verbosity-seg", v => change("verbosity", v, "Verbosity"));
 wireSegments("background-seg", v => change("background_policy", v, "Background sessions"));
 wireSegments("readmode-seg", v => change("read_mode", v, "Reading"));
+wireSegments("flushscope-seg", v => change("flush_scope", v, "Flush skips"));
 wireSegments("summary-seg", v => change("summaries", v === "off" ? {enabled: false} : {enabled: true, style: v}, "Summary mode"));
 $("model-select").addEventListener("change", e => {
   const [command, model] = e.target.value.split("|");

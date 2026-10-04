@@ -26,7 +26,9 @@
 //!   channel's message, right after the announcement. An item ended from
 //!   outside (a core `speak` with `interrupt`, `skip`) counts as read: L2
 //!   cannot tell it from a user skip. `Stop` without a channel flushes every channel,
-//!   with a channel only that one. `Restart` while idle replays the engaged
+//!   with a channel only that one; `stop_reading` (the flush hotkey, #228)
+//!   flushes only the channel being read, `flush_with` also the other
+//!   channels its caller names (L3's flush scope `all`). `Restart` while idle replays the engaged
 //!   channel's batch (the Python plugin's Up key).
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
@@ -161,6 +163,31 @@ struct Inner {
 #[derive(Clone)]
 pub struct Channels {
     inner: Arc<Inner>,
+}
+
+/// What `stop_reading` stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Flushed {
+    /// The channel being read, flushed.
+    Channel(String),
+    /// A switch announcement was playing: only it was skipped, and the
+    /// channel it announces (named) is read next with everything it had.
+    /// The press was aimed at the session that had just ended.
+    Announcement(String),
+    /// An item spoken to the reader directly, skipped.
+    Direct,
+    /// Nothing was being read.
+    Nothing,
+}
+
+/// What `flush_with` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlushReport {
+    /// What was being read, and what happened to it.
+    pub flushed: Flushed,
+    /// The other channels whose unread entries were dropped too, in
+    /// opening order.
+    pub others: Vec<String>,
 }
 
 /// What `speak` did with the text.
@@ -472,6 +499,88 @@ impl Channels {
             other if reading => Ok(reader.control(other)?),
             _ => Ok(()),
         }
+    }
+
+    /// The flush hotkey (#228): stop only what is being read now. When a
+    /// channel's item is in flight (playing or paused) that channel is
+    /// flushed as `control(Stop, channel)` (its unread entries skipped,
+    /// reported to `on_drop` with `reason`, its item cut) and the next
+    /// channel is read as usual; other channels keep everything. A switch
+    /// announcement in flight is skipped alone (`Flushed::Announcement`):
+    /// the session it names has not been heard yet. Text spoken to the
+    /// reader directly is skipped one item at a time. Idle, nothing
+    /// changes. A paused reader is un-paused, as `Stop` does.
+    pub fn stop_reading(&self, reason: &str) -> Result<Flushed> {
+        self.stop_reading_with(reason, |_| {})
+    }
+
+    /// `stop_reading`, running `before` with the channel to flush right
+    /// before its drops are reported (so a log names the flush first). It
+    /// runs under the channels' lock and must not call back into them.
+    pub fn stop_reading_with(&self, reason: &str, before: impl FnMut(&str)) -> Result<Flushed> {
+        Ok(self.flush_with(reason, before, |_| false)?.flushed)
+    }
+
+    /// `stop_reading`, then every other channel `also` names (flush scope
+    /// `all`, #228) is flushed too: its unread entries are dropped and
+    /// reported with `reason`. That happens whatever was being read, also
+    /// while idle (entries a muted channel or the focus-only gate holds),
+    /// and also for the channel a skipped announcement named. `before`
+    /// runs with each channel flushed, before its drops are reported (for
+    /// another channel only when it had unread entries). Both run under
+    /// the channels' lock and must not call back into them.
+    pub fn flush_with(
+        &self,
+        reason: &str,
+        mut before: impl FnMut(&str),
+        also: impl Fn(&str) -> bool,
+    ) -> Result<FlushReport> {
+        let mut st = self.lock();
+        let reader = &self.inner.reader;
+        let target = st
+            .in_flight
+            .as_ref()
+            .map(|f| (f.channel.clone(), f.entry.is_none()));
+        let flushed = if let Some((ch, true)) = target {
+            st.in_flight = None;
+            st.router.done();
+            reader.control(Control::Skip)?;
+            Flushed::Announcement(ch)
+        } else if let Some((ch, false)) = target {
+            before(&ch);
+            report(&st, &ch, unread(&st, &ch), reason, None);
+            st.router.flush(Some(&ch));
+            self.inner.cut_if(&mut st, &ch, Some(reason))?;
+            Flushed::Channel(ch)
+        } else if reader.state()?.now_playing.is_some() {
+            reader.control(Control::Skip)?;
+            Flushed::Direct
+        } else {
+            Flushed::Nothing
+        };
+        let mut others = Vec::new();
+        let ids: Vec<String> = st.router.channels().iter().map(|c| c.id.clone()).collect();
+        for id in ids {
+            if flushed == Flushed::Channel(id.clone()) || !also(&id) {
+                continue;
+            }
+            let entries = unread(&st, &id);
+            if entries.is_empty() {
+                continue;
+            }
+            before(&id);
+            report(&st, &id, entries, reason, None);
+            st.router.flush(Some(&id));
+            others.push(id);
+        }
+        if flushed == Flushed::Nothing {
+            return Ok(FlushReport { flushed, others });
+        }
+        if reader.state()?.paused {
+            reader.control(Control::Play)?;
+        }
+        self.inner.pump(&mut st)?;
+        Ok(FlushReport { flushed, others })
     }
 
     /// Switch to the next channel now (the Python plugin's next-session

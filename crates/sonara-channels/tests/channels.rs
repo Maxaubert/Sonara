@@ -3,7 +3,7 @@
 //! and the channels thread with a timeout.
 use sonara_audio::OutputCall;
 use sonara_audio::TestOutput;
-use sonara_channels::{Announced, Channels, Config, Control, Policy, QueueMode};
+use sonara_channels::{Announced, Channels, Config, Control, Flushed, Policy, QueueMode};
 use sonara_engine::fake::FakeEngine;
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
 use std::sync::Arc;
@@ -637,4 +637,189 @@ fn spoken_text_tells_its_entry_and_the_tag_carries_it() {
     let tag = r.ch.tag(id).unwrap();
     assert_eq!(tag.entry, Some(s.entry));
     assert!(!tag.announcement);
+}
+
+// -- stop_reading: the flush hotkey (#228) ---------------------------------
+
+#[test]
+fn stop_reading_flushes_only_the_channel_being_read() {
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("a", "Alpha two.");
+    r.speak("b", "Beta one.");
+    r.wait_for("Alpha one.");
+    r.out.start();
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let seen = drops.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock()
+            .unwrap()
+            .push(format!("{} {} {}", d.channel, d.text, d.reason));
+    })));
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Channel("a".into())
+    );
+    r.read("Beta.");
+    r.read("Beta one.");
+    r.stays_idle();
+    assert_eq!(
+        *drops.lock().unwrap(),
+        ["a Alpha two. flush", "a Alpha one. flush"]
+    );
+}
+
+#[test]
+fn stop_reading_a_paused_channel_reads_the_next_one() {
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.wait_for("Alpha one.");
+    r.out.start();
+    r.ch.control(Control::Pause, None).unwrap();
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Channel("a".into())
+    );
+    r.read("Beta.");
+    r.read("Beta one.");
+    assert!(!r.reader().state().unwrap().paused);
+}
+
+#[test]
+fn stop_reading_text_spoken_to_the_reader_skips_only_that_item() {
+    let r = Rig::two();
+    r.reader()
+        .speak("Direct words.", QueueMode::Append, false, None)
+        .unwrap();
+    r.wait_for("Direct words.");
+    r.speak("a", "Alpha one.");
+    assert_eq!(r.ch.stop_reading("flush").unwrap(), Flushed::Direct);
+    r.read("Alpha one.");
+    r.stays_idle();
+}
+
+#[test]
+fn stop_reading_while_idle_does_nothing() {
+    let r = Rig::two();
+    assert_eq!(r.ch.stop_reading("flush").unwrap(), Flushed::Nothing);
+    r.speak("a", "Alpha one.");
+    r.read("Alpha one.");
+}
+
+#[test]
+fn stop_reading_during_a_switch_announcement_skips_only_the_announcement() {
+    // #228 review: a's item ends a moment before the press and b's switch
+    // announcement starts. The press was aimed at a: b's message must not
+    // be wiped before a word of it was heard.
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.speak("b", "Beta two.");
+    r.read("Alpha one.");
+    r.wait_for("Beta.");
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let seen = drops.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock().unwrap().push(d.text.clone());
+    })));
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Announcement("b".into())
+    );
+    r.read("Beta one.");
+    r.read("Beta two.");
+    r.stays_idle();
+    assert!(drops.lock().unwrap().is_empty());
+}
+
+#[test]
+fn stop_reading_names_the_channel_before_its_drops_are_reported() {
+    // #228 review: the agent logs `wipe reason=flush` before the drops.
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("a", "Alpha two.");
+    r.wait_for("Alpha one.");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let seen = log.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock().unwrap().push(format!("drop {}", d.text));
+    })));
+    let before = log.clone();
+    let f =
+        r.ch.stop_reading_with("flush", |ch| {
+            before.lock().unwrap().push(format!("flush {ch}"))
+        })
+        .unwrap();
+    assert_eq!(f, Flushed::Channel("a".into()));
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["flush a", "drop Alpha two.", "drop Alpha one."]
+    );
+}
+
+// -- flush_with: the flush hotkey with flush_scope all (#228) ----------------
+
+fn drops_of(r: &Rig) -> Arc<Mutex<Vec<String>>> {
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let seen = drops.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock()
+            .unwrap()
+            .push(format!("{} {} {}", d.channel, d.text, d.reason));
+    })));
+    drops
+}
+
+#[test]
+fn flush_with_also_flushes_the_other_channels_it_names() {
+    let r = Rig::two();
+    r.ch.open("c", Some("Gamma".into()), None, Some(Policy::Queue))
+        .unwrap();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.speak("c", "Gamma one.");
+    r.wait_for("Alpha one.");
+    r.out.start();
+    let drops = drops_of(&r);
+    let mut named = Vec::new();
+    let report =
+        r.ch.flush_with("flush", |ch| named.push(ch.to_string()), |ch| ch == "b")
+            .unwrap();
+    assert_eq!(report.flushed, Flushed::Channel("a".into()));
+    assert_eq!(report.others, ["b"]);
+    assert_eq!(named, ["a", "b"]);
+    r.read("Gamma.");
+    r.read("Gamma one.");
+    r.stays_idle();
+    assert_eq!(
+        *drops.lock().unwrap(),
+        ["a Alpha one. flush", "b Beta one. flush"]
+    );
+}
+
+#[test]
+fn flush_with_during_an_announcement_flushes_the_announced_channel_it_names() {
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.read("Alpha one.");
+    r.wait_for("Beta.");
+    let report = r.ch.flush_with("flush", |_| {}, |_| true).unwrap();
+    assert_eq!(report.flushed, Flushed::Announcement("b".into()));
+    assert_eq!(report.others, ["b"]);
+    r.stays_idle();
+}
+
+#[test]
+fn flush_with_while_idle_flushes_the_waiting_channels_it_names() {
+    let r = Rig::two();
+    r.ch.set_muted("b", true).unwrap();
+    r.speak("b", "Beta one.");
+    r.stays_idle();
+    let report = r.ch.flush_with("flush", |_| {}, |_| true).unwrap();
+    assert_eq!(report.flushed, Flushed::Nothing);
+    assert_eq!(report.others, ["b"]);
+    r.ch.set_muted("b", false).unwrap();
+    r.stays_idle();
 }

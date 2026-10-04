@@ -32,6 +32,18 @@
 //!   A permission otherwise plays `permission`; a plan has no earcon (the
 //!   user removed it). A tool running, an answer or a new turn clears the
 //!   mark.
+//! - **Stop and flush.** `control stop` catches every channel up;
+//!   `flush` (the flush hotkey, #228) the session being read: its held
+//!   prose, the prose kept for its summary and its summary work are
+//!   dropped; the decisions waiting for that summary are spoken now and a
+//!   question keeps its mark (a flush answers nothing). Stop drops those
+//!   decisions. The rest of the flushed reply is skipped too: prose and
+//!   tool announcements arriving before the session's next `turn_start`
+//!   are dropped (`dropped: flushed reply`); its decisions are still
+//!   spoken. With flush scope `all` the driver also calls `flush_ready`
+//!   on every other session whose turn ended (the late prose of a reply it
+//!   flushed is skipped the same way); a session still writing its reply
+//!   (no `turn_end` yet) is untouched in both scopes.
 //! - **Mute levels.** 1 drops agent speech (the driver also silences what
 //!   is queued and playing), 2 also drops earcons.
 //! - **Summaries** (opt in): see `Pipeline` below; the rules are the Python
@@ -39,7 +51,8 @@
 //!   hold with its cap, the hung-worker watchdog and the reorder buffer.
 //! - **Notes** (#219): whatever the rules do not speak now (muted, a code
 //!   block at `skip_code`, prose held by `read_mode`, a permission prompt
-//!   of an unanswered question, ...) leaves a `Note` with the reason, which
+//!   of an unanswered question, what an answer, a stop or a flush drops,
+//!   with the count and the reason, ...) leaves a `Note`, which
 //!   the driver takes after each call (`take_notes`) for the
 //!   troubleshooting log. Notes never change what is spoken.
 use crate::decision::{self, AskKind, Choice};
@@ -196,6 +209,13 @@ struct Turn {
     /// The turn released its prose (turn_end, or a tool in read mode
     /// `queue`): no more holding.
     released: bool,
+    /// The turn ended (`turn_end`): its messages are ready. A channel
+    /// whose turn_end has not come is still writing (flush scope `all`
+    /// keeps it, #228).
+    ended: bool,
+    /// The user flushed this reply (#228): the rest of it is skipped until
+    /// the next `turn_start`, except its decisions.
+    skip_reply: bool,
     /// This turn's prose chunks, and how many were voiced by a summary.
     prose: Vec<String>,
     voiced: usize,
@@ -224,6 +244,8 @@ impl Turn {
             hinted: false,
             held_prose: Vec::new(),
             released: false,
+            ended: false,
+            skip_reply: false,
             prose: Vec::new(),
             voiced: 0,
             gen,
@@ -379,7 +401,7 @@ impl Rules {
 
     /// Drop the prose held by `read_mode`, noted for the troubleshooting
     /// log: in `done` that can be a whole turn.
-    fn drop_held(&mut self, channel: &str, why: &str) {
+    fn drop_held(&mut self, channel: &str, why: &str) -> usize {
         let n = std::mem::take(&mut self.turn(channel).held_prose).len();
         if n > 0 {
             let mode = self.settings.read_mode.as_str();
@@ -390,6 +412,7 @@ impl Rules {
                 None,
             );
         }
+        n
     }
 
     /// Speak the prose held by `read_mode`.
@@ -421,6 +444,28 @@ impl Rules {
         let minqueue = self.settings.minqueue;
         let mode = self.settings.read_mode;
         let c = self.turn(channel);
+        if c.skip_reply {
+            // The user flushed this reply (#228): the rest is skipped.
+            let dropped: Vec<(&'static str, String)> = c
+                .assembler
+                .feed(delta, index, is_final)
+                .into_iter()
+                .filter_map(|ch| match ch {
+                    Chunk::Text(t) => Some(("prose", t)),
+                    Chunk::Code(t) => Some(("code", t)),
+                    Chunk::ParagraphBreak => None,
+                })
+                .collect();
+            for (kind, t) in dropped {
+                self.note(
+                    Some(channel),
+                    kind,
+                    "dropped: flushed reply".into(),
+                    Some(t),
+                );
+            }
+            return Ok(out);
+        }
         // Every chunk is recorded for summaries; at `skip_code` a code
         // block's announcement is not spoken (#214).
         let mut texts: Vec<String> = Vec::new();
@@ -522,6 +567,8 @@ impl Rules {
         self.drop_held(channel, "turn_start");
         let c = self.turn(channel);
         c.released = false;
+        c.ended = false;
+        c.skip_reply = false;
         c.prose.clear();
         c.voiced = 0;
         Self::cancel(c, gen, settle);
@@ -556,7 +603,9 @@ impl Rules {
         }
         let mut out = Vec::new();
         self.earcon(&mut out, Earcon::TurnDone);
-        self.turn(channel).released = true;
+        let c = self.turn(channel);
+        c.released = true;
+        c.ended = true;
         self.flush_prose(&mut out, channel);
         if self.summaries() {
             // Not yet: the turn's last prose can arrive after this (#14).
@@ -654,6 +703,15 @@ impl Rules {
         } else {
             summary.to_string()
         };
+        if self.turn(channel).skip_reply {
+            self.note(
+                Some(channel),
+                "tool",
+                "not announced: flushed reply".into(),
+                Some(text),
+            );
+            return out;
+        }
         if self.settings.verbosity != Verbosity::Everything {
             self.note(
                 Some(channel),
@@ -679,21 +737,84 @@ impl Rules {
     /// work and held decisions are dropped, and a later summary covers only
     /// what comes after the answer. The turn goes on.
     pub fn answered(&mut self, channel: &str) -> Vec<Action> {
-        self.catch_up(channel);
+        self.turn(channel).awaiting = false;
+        let (decisions, _) = self.catch_up(channel, "answered");
+        self.drop_decisions(channel, decisions, "answered");
         vec![Action::Wipe {
             channel: channel.to_string(),
             resume: false,
         }]
     }
 
-    fn catch_up(&mut self, channel: &str) {
+    /// Skip the channel to now: its held prose, the prose kept for a
+    /// summary and its summary work (in flight, parked, settling) are
+    /// dropped, each drop noted with `why` (#228). The decisions that
+    /// waited for that work are returned for the caller to drop or speak,
+    /// with whether anything was there to drop or release. The turn goes
+    /// on: what comes later follows the usual rules.
+    fn catch_up(&mut self, channel: &str, why: &str) -> (Vec<Decision>, bool) {
         let gen = self.gen();
         let settle = self.gen();
-        self.drop_held(channel, "answered");
+        let held = self.drop_held(channel, why);
+        let summaries = self.summaries();
         let c = self.turn(channel);
-        c.awaiting = false;
+        let kept = c.prose.len() - c.voiced;
+        let (inflight, settling, old) = (c.inflight, c.settle_armed, c.gen);
+        let mut decisions: Vec<Decision> = std::mem::take(&mut c.pending);
+        decisions.extend(c.held.take().map(|(_, v)| v).unwrap_or_default());
         c.voiced = c.prose.len();
         Self::cancel(c, gen, settle);
+        if summaries && kept > 0 {
+            self.note(
+                Some(channel),
+                "prose",
+                format!("dropped: {kept} chunk(s) kept for the summary ({why})"),
+                None,
+            );
+        }
+        let parked = self
+            .parked
+            .values()
+            .filter(|r| r.channel == channel && r.gen == old)
+            .count();
+        let mut work = Vec::new();
+        if inflight > 0 {
+            let s = if inflight == 1 {
+                "summary"
+            } else {
+                "summaries"
+            };
+            work.push(format!("{inflight} {s} in flight"));
+        }
+        if parked > 0 {
+            let s = if parked == 1 { "summary" } else { "summaries" };
+            work.push(format!("{parked} {s} waiting for the earlier ones"));
+        }
+        if settling {
+            work.push("the settle window".to_string());
+        }
+        let any = held > 0 || (summaries && kept > 0) || !work.is_empty() || !decisions.is_empty();
+        if !work.is_empty() {
+            self.note(
+                Some(channel),
+                "summary",
+                format!("cancelled ({why}): {}", work.join(", ")),
+                None,
+            );
+        }
+        (decisions, any)
+    }
+
+    /// Drop `decisions` that waited for summary work, noted with `why`.
+    fn drop_decisions(&mut self, channel: &str, decisions: Vec<Decision>, why: &str) {
+        for d in decisions {
+            self.note(
+                Some(channel),
+                d.kind,
+                format!("dropped: waited for the summary ({why})"),
+                Some(d.text),
+            );
+        }
     }
 
     /// `control stop` with the extension on: every channel is caught up
@@ -701,8 +822,74 @@ impl Rules {
     /// dropped too, #107). The driver stops L2.
     pub fn stop_all(&mut self) {
         for ch in self.channels() {
-            self.catch_up(&ch);
+            self.turn(&ch).awaiting = false;
+            let (decisions, _) = self.catch_up(&ch, "stop");
+            self.drop_decisions(&ch, decisions, "stop");
         }
+    }
+
+    /// The flush hotkey (#228): `channel`, the session being read, is
+    /// caught up and the rest of its reply is skipped: prose and tool
+    /// announcements that arrive before its next `turn_start` are dropped
+    /// (noted `flushed reply`), while the decisions it asks are still read
+    /// (a question needs an answer). Unlike an answer, a flush answers
+    /// nothing: a question keeps its awaiting mark (its permission prompt
+    /// stays silent, #11), and the decisions that waited for the cancelled
+    /// summary are spoken now rather than lost. Other sessions keep their
+    /// held prose, summary work and turns still arriving (flush scope
+    /// `all` also calls `flush_ready` on them). The driver flushes its L2
+    /// channel first. A channel without turn state is left alone.
+    pub fn flush(&mut self, channel: &str) -> Vec<Action> {
+        if !self.tracks(channel) {
+            return Vec::new();
+        }
+        self.turn(channel).skip_reply = true;
+        let (decisions, _) = self.catch_up(channel, "flush");
+        self.release(channel, decisions)
+    }
+
+    /// Flush scope `all` (#228) for a session other than the one being
+    /// read: when its turn ended, its ready work is dropped (held prose,
+    /// the prose kept for its summary, its summaries in flight, waiting or
+    /// settling) and the decisions that waited for it are spoken now.
+    /// `queued` says the driver dropped text of it from its L2 channel.
+    /// When anything was flushed, late prose of that reply (#14) is
+    /// skipped too, as for the session being read; its next reply is read
+    /// as usual. `None` when it is still writing its reply (kept: it is
+    /// read when done), has no turn state, or had nothing to drop.
+    pub fn flush_ready(&mut self, channel: &str, queued: bool) -> Option<Vec<Action>> {
+        if !self.tracks(channel) || self.writing(channel) {
+            return None;
+        }
+        let (decisions, any) = self.catch_up(channel, "flush");
+        if !(any || queued) {
+            return None;
+        }
+        self.turn(channel).skip_reply = true;
+        Some(self.release(channel, decisions))
+    }
+
+    /// Speak the decisions a flush released from the summary they waited
+    /// for.
+    fn release(&mut self, channel: &str, decisions: Vec<Decision>) -> Vec<Action> {
+        let mut out = Vec::new();
+        for d in decisions {
+            self.note(
+                Some(channel),
+                d.kind,
+                "spoken now: the summary it waited for was flushed".into(),
+                Some(d.text.clone()),
+            );
+            self.speak(&mut out, channel, d.text, true, d.kind);
+        }
+        out
+    }
+
+    /// The channel is still writing its reply: it has turn state and its
+    /// `turn_end` has not come since its last `turn_start` (flush scope
+    /// `all` keeps it, #228).
+    pub fn writing(&self, channel: &str) -> bool {
+        self.turns.get(channel).is_some_and(|c| !c.ended)
     }
 
     /// The channel closed (or was forgotten): free its turn state. Summary

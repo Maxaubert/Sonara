@@ -19,7 +19,8 @@ use std::path::Path;
 pub enum Action {
     /// Read the current message again from the top (`control restart`).
     Restart,
-    /// Flush to the end: stop everything queued or playing (`control stop`).
+    /// Flush: stop only the session being read (`control flush`, #228;
+    /// `control stop` without channels).
     Flush,
     /// Pause or resume (`control toggle`).
     Pause,

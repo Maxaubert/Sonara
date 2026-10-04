@@ -7,7 +7,8 @@ use crate::config::{PrefsUpdate, Store};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_channels::{Channels, Control, Error, ItemId, Policy, QueueMode};
+use sonara_agent::FlushScope;
+use sonara_channels::{Channels, Control, Error, FlushReport, Flushed, ItemId, Policy, QueueMode};
 use std::sync::{Arc, OnceLock};
 
 /// The extension's state: empty until a client enables it.
@@ -21,7 +22,7 @@ pub const ANNOUNCE_KEY: &str = "channel_announce";
 /// The per-channel preferences (label, voice, muted) of the settings page.
 pub const PREFS_KEY: &str = "channel_prefs";
 
-fn failure(e: Error) -> Failure {
+pub(crate) fn failure(e: Error) -> Failure {
     match e {
         Error::UnknownChannel(_) => Failure::new(Code::NotFound, e.to_string()),
         Error::EmptyChannel => Failure::new(Code::BadRequest, e.to_string()),
@@ -116,6 +117,25 @@ pub fn control(ch: &Channels, action: Option<Control>, m: &Map<String, Value>) -
         }
     }
     ok(f)
+}
+
+/// The reply of `control flush`: `flushed` (`channel`, `announcement`,
+/// `direct` or `nothing`), the `channel` flushed or announced (`null`
+/// for `direct` and `nothing`), the `scope` in force and the `others`
+/// whose ready messages went too (scope `all`).
+pub fn flushed_fields(r: &FlushReport, scope: FlushScope) -> Map<String, Value> {
+    let (what, channel) = match &r.flushed {
+        Flushed::Channel(id) => ("channel", json!(id)),
+        Flushed::Announcement(id) => ("announcement", json!(id)),
+        Flushed::Direct => ("direct", Value::Null),
+        Flushed::Nothing => ("nothing", Value::Null),
+    };
+    let mut m = Map::new();
+    m.insert("flushed".into(), json!(what));
+    m.insert("channel".into(), channel);
+    m.insert("scope".into(), json!(scope.as_str()));
+    m.insert("others".into(), json!(r.others));
+    m
 }
 
 /// `set channel_announce` (`"on"` or `"off"`) and `get channel_announce`.

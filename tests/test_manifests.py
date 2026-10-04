@@ -152,8 +152,8 @@ def test_package_version_matches_pyproject():
     assert m and m.group(1) == version
 
 
-def test_pyproject_version_is_0_14_0():
-    assert _pyproject_version() == "0.14.0"
+def test_pyproject_version_is_0_14_1():
+    assert _pyproject_version() == "0.14.1"
 
 
 def test_sdk_package_versions_match_pyproject():

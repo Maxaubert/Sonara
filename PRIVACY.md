@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-03 (0.14.0: the reading mode is a saved setting)_
+_Last updated: 2026-10-04 (0.14.1: what the flush hotkey skips is a saved setting)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -72,7 +72,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 
 | File | What it holds |
 |---|---|
-| `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, reading mode, summary options and your own summary instructions, the troubleshooting log on or off), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
+| `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, reading mode, what the flush hotkey skips, summary options and your own summary instructions, the troubleshooting log on or off), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
 | `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
 | `earcons\` | Your own chimes, if you put any there: `<kind>.wav` files (for example `session_change.wav`) that Sonara plays instead of its built-in sounds. Created empty at start; Sonara only reads it |
