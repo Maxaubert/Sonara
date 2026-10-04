@@ -255,6 +255,11 @@ fn a_missing_key_falls_back_without_a_request_until_one_is_set() {
     let mut want = fake_audio(&cue_text(Reason::NoKey, "Test"));
     want.extend(fake_audio("Hi."));
     assert_eq!(out, want);
+    // The episode's first fallback is logged once with its reason.
+    samples(&r.engine, "Again.").unwrap();
+    let n = r.notices.lock().unwrap().clone();
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert_eq!(n[0].reason, Some(Reason::NoKey));
     r.store.set("core-test", &Secret::new("sk-local")).unwrap();
     assert!(r.engine.key_present());
     assert_eq!(samples(&r.engine, "Now.").unwrap(), vec![3]);
@@ -315,4 +320,21 @@ fn voices_list_the_profile_voice_and_accept_any_id() {
     assert_eq!(v[0].id, "my-clone");
     assert_eq!(v[0].engine, EngineId::intern("core-test"));
     assert_eq!(v[0].license_class, sonara_engine::LicenseClass::External);
+}
+
+#[test]
+fn a_cancel_after_begin_ends_the_synthesis_before_any_request() {
+    // The reader calls `begin` under its queue lock and `synthesize` after
+    // releasing it; a cancel in between must still end that synthesis.
+    let r = rig_with(json!({}), true);
+    r.server.on(SPEECH, Route::wav(&[1], 24_000));
+    r.engine.begin();
+    r.engine.cancel();
+    assert!(matches!(
+        r.engine.synthesize("Stale.", "", 200).map(|s| s.count()),
+        Err(Error::Cancelled)
+    ));
+    assert_eq!(r.server.count(SPEECH), 0, "no request for a stale chunk");
+    // The next synthesis is not affected.
+    assert_eq!(samples(&r.engine, "Fresh.").unwrap(), vec![1]);
 }

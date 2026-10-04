@@ -633,12 +633,12 @@ mod tests {
         assert!(e.add(&local, None, true).unwrap(), "a replace");
         let mut env = local.clone();
         env["id"] = json!("env1");
-        env["key_ref"] = json!("env:MY_KEY");
+        env["key_ref"] = json!("env:MY_API_KEY");
         assert!(e
             .add(&env, Some("sk-x"), false)
             .unwrap_err()
             .message
-            .contains("MY_KEY"));
+            .contains("MY_API_KEY"));
         let mut none = local.clone();
         none["id"] = json!("n1");
         none["key_ref"] = json!("none");

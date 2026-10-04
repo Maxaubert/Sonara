@@ -111,6 +111,8 @@ pub struct External {
     health: Health,
     cache: CueCache,
     cancel: CancelToken,
+    /// The cancel generation at `begin`, taken by the next `synthesize`.
+    begun: Mutex<Option<u64>>,
     agent: ureq::Agent,
     voices_agent: ureq::Agent,
     label: String,
@@ -140,7 +142,9 @@ impl External {
             crate::http::agent(crate::http::Timeouts {
                 connect: Duration::from_secs(5),
                 recv_response: timeout,
-                recv_body: timeout + Duration::from_secs(30),
+                // A body that stalls (Wi-Fi gone after the headers) falls
+                // back after the same wait, not 30 s more.
+                recv_body: timeout,
             })
         });
         let voices_agent = config.agent.unwrap_or_else(|| {
@@ -162,6 +166,7 @@ impl External {
             health: Health::new(config.clock.clone()),
             cache: CueCache::new(),
             cancel: CancelToken::new(),
+            begun: Mutex::new(None),
             agent,
             voices_agent,
             voices: Mutex::new(None),
@@ -442,7 +447,12 @@ impl Engine for External {
     }
 
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
-        let gen = self.cancel.generation();
+        // The generation at `begin`, so a cancel between it and here counts.
+        let begun = self.begun.lock().unwrap_or_else(|p| p.into_inner()).take();
+        let gen = begun.unwrap_or_else(|| self.cancel.generation());
+        if gen != self.cancel.generation() {
+            return Err(Error::Cancelled);
+        }
         let voice = match self.voice_for(voice) {
             Ok(v) => v,
             Err(e) => {
@@ -460,6 +470,11 @@ impl Engine for External {
             }
         }
         if let Some((reason, message)) = self.health.skip(&voice) {
+            // A block found without a request (a missing key at `warm`)
+            // is logged at the episode's first fallback, like a failure.
+            if self.health.cue_pending() {
+                self.notify(Some(reason), None, message.clone());
+            }
             return self.fallback(text, rate, ExtError::new(reason, message));
         }
         let key = match self.key() {
@@ -484,6 +499,10 @@ impl Engine for External {
                 self.fallback(text, rate, e)
             }
         }
+    }
+
+    fn begin(&self) {
+        *self.begun.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.cancel.generation());
     }
 
     fn cancel(&self) {

@@ -229,7 +229,7 @@ A kind this build does not implement yet (a file written by a newer release, or 
 | `label` | 1 to 40 chars, no control chars | |
 | `url` | absolute `http`/`https`; `https` required unless the host is loopback (`localhost`, `127.0.0.0/8`, `::1`) or `options.allow_http` is `true`; no userinfo, no query, no fragment | `a key is never sent over http to a non-loopback host` when `allow_http` is set together with a key_ref other than none on a non-loopback host |
 | `model`, `voice` | at most 200 chars, no control chars | |
-| `key_ref` | `env:` name `^[A-Za-z_][A-Za-z0-9_]{0,127}$` | |
+| `key_ref` | `env:` name `^[A-Za-z_][A-Za-z0-9_]{0,127}$`, ending in `_API_KEY` or `_SPEECH_KEY`, `SPEECH_KEY`, or starting with `SONARA_` (case-insensitive; review of #224: a client must not send other secrets of the runtime's environment) | `environment variable 'NAME' in key_ref must end in _API_KEY or _SPEECH_KEY, or start with SONARA_` |
 | `options` | known keys of the kind only, typed (tables in 5.4); unknown keys are refused, so a typo is caught | `unknown option 'x' for kind 'openai-compatible'` |
 | kind-specific | required fields per kind (5.4) | `kind 'azure' needs options.region or url` |
 
@@ -393,7 +393,7 @@ fallback(text, rate, reason):
 
 ### 7.5 Timeouts
 
-`http::agent` per profile: connect 5 s, `timeout_recv_response` = `timeout_ms`, `timeout_recv_body` = `timeout_ms` + 30 s, `http_status_as_error(false)` (bodies of 4xx/5xx are read for the error mapping), max audio body 64 MiB, max error body 16 KiB.
+`http::agent` per profile: connect 5 s, `timeout_recv_response` = `timeout_ms`, `timeout_recv_body` = `timeout_ms` (review of #224: was `timeout_ms` + 30 s, which meant 45 to 90 s of silence on a connection that stalls mid-body), `http_status_as_error(false)` (bodies of 4xx/5xx are read for the error mapping), max audio body 64 MiB, max error body 16 KiB.
 
 ## 8. Fallback, health and cues
 
@@ -715,7 +715,7 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - [ ] 10. `rate.rs` (every row of 9 at 100, 200, 250, 400 wpm), `split.rs` (chars and UTF-8 bytes, CJK, emoji, no split inside a word unless a word is longer than the limit).
 - [ ] 11. `health.rs` with an injected clock: `two_transient_failures_open_the_breaker`, `backoff_doubles_to_300s`, `probe_after_expiry_closes_on_success`, `quota_blocks_ten_minutes`, `auth_blocks_until_cleared`, `cue_once_per_episode`.
 - [ ] 12. `cache.rs`: LRU size and key tests; only provider audio cached.
-- [ ] 13. `worker.rs` + `External::synthesize`: against the scripted server in `tests/common` (extend it: POST routes, status, headers, body, delay, captured requests). Tests in `external_core.rs`/`external_openai.rs`: request body golden per preset (model, voice, `response_format`, `speed`, `instructions` only for gpt-4o-mini-tts, `stream: false` for kokoro-fastapi, `sample_rate` for speaches, `extra` merged last); `Authorization` sent only with a key and never over http to a non-loopback host; `cancel_returns_promptly_while_the_server_delays` (< 200 ms); `failure_speaks_the_chunk_with_the_fallback_and_prepends_the_cue_once`; `breaker_open_skips_the_network`; `retry_after_once_then_fallback`; `no_fallback_is_an_external_error`; `split_parts_failure_uses_fallback_for_the_whole_chunk`; `voices_per_preset` (both Kokoro-FastAPI shapes, LocalAI, Speaches, Chatterbox both, generic 404 = empty).
+- [ ] 13. `worker.rs` + `External::synthesize`: against the scripted server in `tests/common` (extend it: POST routes, status, headers, body, delay, captured requests). Tests in `external_core.rs`/`external_openai.rs`: request body golden per preset (model, voice, `response_format`, `speed`, `instructions` only for gpt-4o-mini-tts with preset openai, never for kokoro-fastapi or the Chatterbox presets, as set for the others, `stream: false` for kokoro-fastapi, `sample_rate` for speaches, `extra` merged last); `Authorization` sent only with a key and never over http to a non-loopback host; `cancel_returns_promptly_while_the_server_delays` (< 200 ms); `failure_speaks_the_chunk_with_the_fallback_and_prepends_the_cue_once`; `breaker_open_skips_the_network`; `retry_after_once_then_fallback`; `no_fallback_is_an_external_error`; `split_parts_failure_uses_fallback_for_the_whole_chunk`; `voices_per_preset` (both Kokoro-FastAPI shapes, LocalAI, Speaches, Chatterbox both, generic 404 = empty).
 - [ ] 14. `sonara-log` secrets additions with tests.
 - [ ] 15. `sonarad`: `--keys windows|fake`, `--no-external-engines`; `engines.rs` loads `engines.json` before the reader, registers profiles in the reader's and the previews' registries with Kokoro (fake: the fake engine) as fallback and `af_sarah` fallback voice; notice sink to `sonarad.log` (rate-limited); handlers of 10.2; `voices` refresh; capability `engines`, `PROTOCOL_MINOR` 2; wire `reason`, `license_class` `external`. Unit tests in `protocol.rs` style: each message's success and every error row of 10.3; `engine_remove_of_the_current_engine_switches_first`; `secret_never_in_trace_log_or_engines_json`.
 - [ ] 16. CLI `sonara engines ...` (11.1) and uninstall removing `sonara:*` unless settings are kept (with a fake store in tests).
@@ -736,6 +736,7 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - `sonara.exe` gains a `windows` dependency (Credential Manager for `uninstall`, the console mode for the key prompt without echo).
 - The reader test of 4 is `unlisted_voice_refused_by_a_listed_only_engine` (the reader's tests have no Kokoro; the fake engine lists its voices like Kokoro).
 - Prefetch with a deeper lookahead also runs while a loaded chunk is paused (the existing one-ahead rule already did).
+- Review of PR1: `engine_test` runs the provider round trip outside the admission lock (only its play is admitted), so a slow provider never holds up `speak` or `control`; `Engine::begin` (default nothing) lets the reader mark a chunk under its queue lock so a cancel before `synthesize` starts still ends it; a profile blocked at `warm` (no key) logs its `fallback` line at the episode's first fallback; `env:` key refs are limited to API-key names; `instructions` is sent per preset (not only to `gpt-4o-mini-tts`); `timeout_recv_body` is `timeout_ms`.
 - Step 21 (hands-on with a deployed branch build) is left for the "merge?" step: the PR1 worker must not touch `%LOCALAPPDATA%\Sonara` or the running runtime.
 
 ### PR2 (#225, 0.16.0): elevenlabs, azure, google

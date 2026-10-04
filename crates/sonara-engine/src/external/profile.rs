@@ -176,7 +176,12 @@ impl KeyRef {
             "none" => Ok(Some(KeyRef::None)),
             "credman" => Ok(Some(KeyRef::CredMan)),
             _ => match s.strip_prefix("env:") {
-                Some(name) if env_name_ok(name) => Ok(Some(KeyRef::Env(name.to_string()))),
+                Some(name) if env_name_ok(name) && env_name_allowed(name) => {
+                    Ok(Some(KeyRef::Env(name.to_string())))
+                }
+                Some(name) if env_name_ok(name) => Err(format!(
+                    "environment variable '{name}' in key_ref must end in _API_KEY or _SPEECH_KEY, or start with SONARA_"
+                )),
                 Some(name) => Err(format!(
                     "invalid environment variable name '{name}' in key_ref"
                 )),
@@ -193,6 +198,17 @@ fn env_name_ok(n: &str) -> bool {
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
         && n.len() <= 128
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Only a variable named like an API key (`*_API_KEY`; Azure's
+/// `SPEECH_KEY`, `*_SPEECH_KEY`), or one of Sonara's own, may be
+/// sent to a provider: a protocol client must not be able to send the
+/// runtime's other secrets (`GITHUB_TOKEN`, cloud credentials) to a URL it
+/// chose. Windows names are case-insensitive.
+fn env_name_allowed(n: &str) -> bool {
+    let n = n.to_ascii_uppercase();
+    let suffix = |x: &str| n.ends_with(x) && n.len() > x.len();
+    suffix("_API_KEY") || suffix("_SPEECH_KEY") || n == "SPEECH_KEY" || n.starts_with("SONARA_")
 }
 
 /// Why a profile cannot be used.
@@ -796,10 +812,31 @@ mod tests {
             openai.base_url().as_deref(),
             Some("https://api.openai.com/v1")
         );
-        let env = parse(local(json!({"key_ref": "env:MY_KEY_1"}))).unwrap();
-        assert_eq!(env.key_ref, KeyRef::Env("MY_KEY_1".into()));
-        assert_eq!(env.to_json()["key_ref"], "env:MY_KEY_1");
+        let env = parse(local(json!({"key_ref": "env:MY_1_API_KEY"}))).unwrap();
+        assert_eq!(env.key_ref, KeyRef::Env("MY_1_API_KEY".into()));
+        assert_eq!(env.to_json()["key_ref"], "env:MY_1_API_KEY");
         assert!(err(local(json!({"key_ref": "env:1BAD"}))).contains("environment variable"));
+        // Only a variable named like an API key (or Sonara's own) may be
+        // sent: a client must not exfiltrate the runtime's other secrets.
+        for ok in [
+            "OPENAI_API_KEY",
+            "openai_api_key",
+            "SONARA_KEY",
+            "AZURE_SPEECH_KEY",
+            "SPEECH_KEY",
+        ] {
+            assert!(
+                parse(local(json!({"key_ref": format!("env:{ok}")}))).is_ok(),
+                "{ok}"
+            );
+        }
+        for bad in ["GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "PATH", "API_KEY_X"] {
+            assert!(
+                err(local(json!({"key_ref": format!("env:{bad}")})))
+                    .contains("must end in _API_KEY or _SPEECH_KEY, or start with SONARA_"),
+                "{bad}"
+            );
+        }
         assert!(err(local(json!({"key_ref": "vault"}))).contains("unknown key_ref"));
         assert_eq!(
             parse(local(json!({"key_ref": null}))).unwrap().key_ref,

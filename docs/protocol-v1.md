@@ -283,10 +283,10 @@ Protocol 1.2, capability `engines` (runtime 0.15.0, #224; design `docs/plans/202
 | `label` | 1 to 40 characters; spoken in cues. Default: the preset's name |
 | `url` | the base URL with the API version, e.g. `https://api.openai.com/v1`, `http://127.0.0.1:8880/v1`. HTTPS, or plain HTTP to a loopback host (`localhost`, `127.0.0.0/8`, `::1`), or with `options.allow_http` to a server on the network (then never with a key); no user, query or fragment |
 | `model`, `voice` | up to 200 characters; the voice is used when the reader's voice is `null` |
-| `key_ref` | `"none"`, `"credman"` or `"env:NAME"`. Default: `none` for a loopback server, `credman` otherwise |
+| `key_ref` | `"none"`, `"credman"` or `"env:NAME"`, where `NAME` ends in `_API_KEY` or `_SPEECH_KEY`, is `SPEECH_KEY`, or starts with `SONARA_` (case-insensitive; any other variable is `E_BAD_REQUEST`, so a client cannot send the runtime's other secrets to a server it chose). Default: `none` for a loopback server, `credman` otherwise |
 | `options` | per kind, below; an unknown option is `E_BAD_REQUEST` |
 
-At most 16 profiles. Options of every kind: `timeout_ms` (1000 to 120000; 15000 for a cloud engine, 60000 for a local one), `prefetch` (1 to 4), `allow_http` (boolean). Options of `openai-compatible`: `preset` (below, default `generic`), `response_format` (`wav`, the default, or `pcm`), `sample_rate` (8000 to 48000; raw PCM, and sent to Speaches), `instructions` (sent only to `gpt-4o-mini-tts` models), `extra` (an object merged into the request body last, for a server's own fields), `voices_path` (the voice list path of a `generic` server).
+At most 16 profiles. Options of every kind: `timeout_ms` (1000 to 120000; 15000 for a cloud engine, 60000 for a local one), `prefetch` (1 to 4), `allow_http` (boolean). Options of `openai-compatible`: `preset` (below, default `generic`), `response_format` (`wav`, the default, or `pcm`), `sample_rate` (8000 to 48000; raw PCM, and sent to Speaches), `instructions` (for preset `openai` sent only to `gpt-4o-mini-tts` models; never sent to `kokoro-fastapi` or the Chatterbox presets; sent as set to any other server, such as LocalAI's expressive backends), `extra` (an object merged into the request body last, for a server's own fields), `voices_path` (the voice list path of a `generic` server).
 
 | preset | default model | default voice | voice list |
 |---|---|---|---|

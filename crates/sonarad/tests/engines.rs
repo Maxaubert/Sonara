@@ -29,6 +29,8 @@ type Request = (Vec<(String, String)>, Vec<u8>);
 struct Provider {
     url: String,
     answer: Arc<Mutex<(u16, &'static str, Vec<u8>)>>,
+    /// How long a speech reply waits before it is sent.
+    delay: Arc<Mutex<Duration>>,
     seen: Arc<Mutex<Vec<Seen>>>,
 }
 
@@ -46,6 +48,7 @@ impl Provider {
         let p = Provider {
             url: format!("http://{}/v1", listener.local_addr().unwrap()),
             answer: Arc::new(Mutex::new((200, "audio/wav", wav(2400)))),
+            delay: Arc::new(Mutex::new(Duration::ZERO)),
             seen: Arc::new(Mutex::new(Vec::new())),
         };
         let q = p.clone();
@@ -82,6 +85,8 @@ impl Provider {
                             br#"{"voices": ["af_heart", "am_echo"]}"#.to_vec(),
                         )
                     } else {
+                        let delay = *q.delay.lock().unwrap();
+                        std::thread::sleep(delay);
                         q.answer.lock().unwrap().clone()
                     };
                     let mut out = conn;
@@ -362,6 +367,46 @@ fn engine_test_plays_and_reports_failures_with_a_reason() {
     assert_eq!(code(&o), "E_NOT_FOUND");
     let o = r.call(json!({"type": "engine_test", "engine": "local", "text": "x".repeat(301)}));
     assert_eq!(code(&o), "E_BAD_REQUEST");
+}
+
+#[test]
+fn a_slow_engine_test_does_not_hold_up_speech() {
+    let mut r = rig("test-slow", true);
+    r.add("local");
+    *r.provider.delay.lock().unwrap() = Duration::from_secs(3);
+    let server = &r.server;
+    std::thread::scope(|s| {
+        let tester = s.spawn(move || {
+            let mut session = Session::tcp();
+            server.handle(&mut session, &json!({"type": "hello", "token": "secret"}));
+            server
+                .handle(
+                    &mut session,
+                    &json!({"type": "engine_test", "engine": "local"}),
+                )
+                .reply
+        });
+        // Let the test reach the provider before speaking.
+        let end = Instant::now() + Duration::from_secs(5);
+        while r.provider.speech_requests().is_empty() {
+            assert!(Instant::now() < end, "the test never reached the provider");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let mut session = Session::tcp();
+        server.handle(&mut session, &json!({"type": "hello", "token": "secret"}));
+        let start = Instant::now();
+        let o = server
+            .handle(&mut session, &json!({"type": "speak", "text": "Hello."}))
+            .reply;
+        assert_eq!(o["ok"], true, "{o}");
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "speak waited {:?} for the engine test",
+            start.elapsed()
+        );
+        let o = tester.join().unwrap();
+        assert_eq!(o["ok"], true, "{o}");
+    });
 }
 
 #[test]

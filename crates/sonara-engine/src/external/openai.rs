@@ -99,6 +99,18 @@ impl OpenAi {
         req
     }
 
+    /// Whether `instructions` goes in the body: OpenAI takes it only for
+    /// `gpt-4o-mini-tts` (tts-1 refuses it), and Kokoro-FastAPI and the
+    /// Chatterbox servers do not take it; LocalAI forwards it to its
+    /// expressive backends, so any other server gets it when it is set.
+    fn takes_instructions(&self) -> bool {
+        match self.preset {
+            Preset::OpenAi => self.model.starts_with("gpt-4o-mini-tts"),
+            Preset::KokoroFastApi | Preset::ChatterboxApi | Preset::ChatterboxServer => false,
+            Preset::LocalAi | Preset::Speaches | Preset::OpenedAiSpeech | Preset::Generic => true,
+        }
+    }
+
     /// The request body (tests check it per preset).
     pub fn body(&self, text: &str, voice: &str, wpm: u32) -> Value {
         let mut b = Map::new();
@@ -115,7 +127,7 @@ impl OpenAi {
             b.insert("speed".into(), json!(s));
         }
         if let Some(i) = &self.instructions {
-            if self.model.starts_with("gpt-4o-mini-tts") {
+            if self.takes_instructions() {
                 b.insert("instructions".into(), json!(i));
             }
         }
@@ -439,6 +451,20 @@ mod tests {
             "options": {"preset": "openai", "instructions": "Calm."}}),
         );
         assert!(tts1.body("Hi.", "alloy", 200).get("instructions").is_none());
+        // LocalAI forwards instructions to expressive backends; a server
+        // known not to take them never gets them.
+        let calm = json!({"voice": "Emily.wav", "options": {"instructions": "Calm."}});
+        for (name, sent) in [
+            ("localai", true),
+            ("generic", true),
+            ("speaches", true),
+            ("kokoro-fastapi", false),
+            ("chatterbox-api", false),
+            ("chatterbox-server", false),
+        ] {
+            let b = preset(name, calm.clone()).body("Hi.", "v", 200);
+            assert_eq!(b.get("instructions").is_some(), sent, "{name}");
+        }
         let kokoro = preset("kokoro-fastapi", json!({}));
         assert_eq!(kokoro.body("a", "af_heart", 200)["stream"], json!(false));
         let speaches = preset("speaches", json!({}));

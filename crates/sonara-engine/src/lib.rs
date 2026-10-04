@@ -48,6 +48,12 @@ pub trait Engine: Send + Sync {
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream>;
     /// Abandon every synthesis in flight; each ends with `Error::Cancelled`.
     fn cancel(&self);
+    /// The caller is about to call `synthesize` from this thread: a
+    /// `cancel` from now on ends that synthesis too, even one that has not
+    /// started yet (the reader calls it under its queue lock, which a
+    /// cancel also takes). Default: nothing (a synthesis that starts after
+    /// a cancel runs; fine for a local engine).
+    fn begin(&self) {}
     /// Readiness (spec 4.1 `engine_status`); cheap, polled by the reader.
     fn status(&self) -> EngineStatus {
         EngineStatus::ready()

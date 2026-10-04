@@ -110,7 +110,15 @@ pub fn key(engines: &Engines, m: &Map<String, Value>) -> Handled {
 
 /// `engine_test` `{engine, text?, voice?, play?}`: one synthesis with no
 /// fallback, at the current rate, played over whatever is read.
-pub fn test(engines: &Engines, reader: &ReaderHandle, m: &Map<String, Value>) -> Handled {
+///
+/// `admit` is taken only to play the clip, after the provider answered:
+/// the round trip must not hold up speech or controls.
+pub fn test<G>(
+    engines: &Engines,
+    reader: &ReaderHandle,
+    m: &Map<String, Value>,
+    admit: impl FnOnce() -> Result<G, Failure>,
+) -> Handled {
     let id = required(m, "engine")?;
     let ext = match engines.get(id) {
         Some(x) => x,
@@ -143,6 +151,7 @@ pub fn test(engines: &Engines, reader: &ReaderHandle, m: &Map<String, Value>) ->
         0
     };
     if play {
+        let _admitted = admit()?;
         reader
             .play_clip(samples, sample_rate)
             .map_err(reader_failure)?;

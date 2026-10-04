@@ -1127,10 +1127,10 @@ impl Server {
             "engine_list" => engines_ext::list(engines, &current),
             "engine_add" => engines_ext::add(engines, &self.reader, m, &current),
             "engine_key" => engines_ext::key(engines, m),
-            "engine_test" => {
-                let _admitted = self.admit()?;
-                engines_ext::test(engines, &self.reader, m)
-            }
+            // The provider round trip runs outside the admission lock
+            // (it can take the profile's whole timeout); only the play is
+            // admitted, so speech and controls never wait for a test.
+            "engine_test" => engines_ext::test(engines, &self.reader, m, || self.admit()),
             _ => self.engine_remove(engines, m, &current),
         }
     }

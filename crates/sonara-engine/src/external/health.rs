@@ -190,6 +190,11 @@ impl Health {
         !std::mem::replace(&mut s.cue_said, true)
     }
 
+    /// Whether this episode's cue is still to come (its first fallback).
+    pub fn cue_pending(&self) -> bool {
+        !self.lock().cue_said
+    }
+
     pub fn view(&self) -> View {
         let now = self.now();
         let s = self.lock();
