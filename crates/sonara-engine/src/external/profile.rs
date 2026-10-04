@@ -271,15 +271,36 @@ impl Url {
         if s.chars().any(|c| c.is_control() || c == ' ') {
             return Err(bad("no spaces or control characters"));
         }
+        // The host checked here must be exactly the one the HTTP client
+        // connects to (spec 6.4): an IPv6 literal in brackets, else ASCII
+        // letters, digits, '.', '-' and '_' only.
         let (host, port) = if let Some(r) = authority.strip_prefix('[') {
             let end = r.find(']').ok_or_else(|| bad("unclosed '['"))?;
-            let port = r[end + 1..].strip_prefix(':');
+            let port = match &r[end + 1..] {
+                "" => None,
+                rest => Some(
+                    rest.strip_prefix(':')
+                        .ok_or_else(|| bad("only a port may follow ']'"))?,
+                ),
+            };
+            if r[..end].parse::<std::net::Ipv6Addr>().is_err() {
+                return Err(bad("'[...]' must hold an IPv6 address"));
+            }
             (r[..end].to_string(), port)
         } else {
-            match authority.rsplit_once(':') {
-                Some((h, p)) => (h.to_string(), Some(p)),
-                None => (authority.to_string(), None),
+            let (h, p) = match authority.rsplit_once(':') {
+                Some((h, p)) => (h, Some(p)),
+                None => (authority, None),
+            };
+            if !h
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+            {
+                return Err(bad(
+                    "the host may hold only letters, digits, '.', '-' and '_'",
+                ));
             }
+            (h.to_string(), p)
         };
         if host.is_empty() {
             return Err(bad("no host"));
@@ -885,6 +906,17 @@ mod tests {
             "https://x/v1#f",
             "x/v1",
             "https://:80/v1",
+            // Parser mismatches with the HTTP client (review of #224): the
+            // host Sonara checks must be exactly the host ureq connects to.
+            "https://[::1]evil.example/v1",
+            "http://[::1]evil.example:80/v1",
+            "https://[api.openai.com]/v1",
+            "https://[]/v1",
+            "https://a\\b.example/v1",
+            "https://a%2eb.example/v1",
+            "https://ex\u{e4}mple.com/v1",
+            "https://::1/v1",
+            "https://host:/v1",
         ] {
             assert!(err(cloud(bad, json!({}))).contains("invalid url"), "{bad}");
         }

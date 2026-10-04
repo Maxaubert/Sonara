@@ -74,9 +74,11 @@ impl HttpRequest {
 }
 
 /// A key may go to `url` only over https, or over http to a loopback host
-/// (spec 6.3).
+/// (spec 6.3). The query and fragment do not change the host, so they are
+/// left out of the check (a voice list URL may carry `?model=`).
 pub fn key_allowed(url: &str) -> bool {
-    Url::parse(url).is_ok_and(|u| u.https || u.is_loopback())
+    let base = url.split(['?', '#']).next().unwrap_or_default();
+    Url::parse(base).is_ok_and(|u| u.https || u.is_loopback())
 }
 
 /// A provider's answer.
@@ -383,6 +385,12 @@ mod tests {
         assert!(key_allowed("http://localhost/v1"));
         assert!(!key_allowed("http://10.0.0.5:8880/v1/audio/speech"));
         assert!(!key_allowed("http://example.com/v1"));
+        // A query or fragment does not change where the request goes.
+        assert!(key_allowed(
+            "http://127.0.0.1:8080/v1/audio/voices?model=a%20b"
+        ));
+        assert!(key_allowed("https://tts.example.com/v1/voices?page=2#x"));
+        assert!(!key_allowed("http://10.0.0.5/v1/voices?model=m"));
     }
 
     #[test]

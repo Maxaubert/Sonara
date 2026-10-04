@@ -356,3 +356,34 @@ fn a_cancel_after_begin_ends_the_synthesis_before_any_request() {
     // The next synthesis is not affected.
     assert_eq!(samples(&r.engine, "Fresh.").unwrap(), vec![1]);
 }
+
+#[test]
+fn a_redirect_is_never_followed_to_another_host() {
+    // A provider's 3xx would carry custom key headers (xi-api-key and the
+    // like) to the host in Location: the request ends there and falls back
+    // (review of #224).
+    let r = rig_with(json!({"key_ref": "credman"}), true);
+    r.store
+        .set(
+            "core-test",
+            &Secret::new("sk-bound"),
+            &r.engine.profile().origin().unwrap(),
+        )
+        .unwrap();
+    let other = ScriptServer::start();
+    other.on(SPEECH, Route::wav(&[9, 9], 24_000));
+    for status in [301, 302, 303, 307, 308] {
+        r.server.queue(
+            SPEECH,
+            Route::new(status, "text/plain", b"moved".to_vec())
+                .header("Location", &format!("{}{SPEECH}", other.base)),
+        );
+    }
+    for _ in 0..5 {
+        r.engine.reset();
+        let out = samples(&r.engine, "Hi.").unwrap();
+        assert_ne!(out, vec![9, 9]);
+    }
+    assert!(other.requests().is_empty(), "{:?}", other.requests());
+    assert_eq!(r.server.count(SPEECH), 5);
+}

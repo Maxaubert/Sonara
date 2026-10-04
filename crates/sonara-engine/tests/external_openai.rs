@@ -147,6 +147,29 @@ fn an_mp3_answer_is_a_format_failure() {
 }
 
 #[test]
+fn a_localai_voice_list_carries_the_key() {
+    // The query of the voices URL must not keep the key off the request
+    // (review of #224: key_allowed reparsed the whole URL and refused '?').
+    let server = ScriptServer::start();
+    server.queue(
+        "/v1/audio/voices",
+        Route::json(
+            200,
+            r#"{"data": [{"model": "m", "voices": [{"name": "v1"}]}]}"#,
+        ),
+    );
+    let e = engine(
+        &server,
+        json!({"model": "m", "voice": "v1", "key_ref": "credman", "options": {"preset": "localai"}}),
+        Some("sk-local-9"),
+    );
+    e.refresh_voices().unwrap();
+    let seen = server.requests();
+    assert_eq!(seen[0].path, "/v1/audio/voices?model=m");
+    assert_eq!(seen[0].header("authorization"), Some("Bearer sk-local-9"));
+}
+
+#[test]
 fn voices_per_preset() {
     let server = ScriptServer::start();
     let list = |preset: &str, extra: Value| {

@@ -80,7 +80,11 @@ engine` from a client).
   from an environment variable you named. It is never written to a file in
   `%LOCALAPPDATA%\Sonara`, never logged and never sent back to a client. It is sent only in the
   provider's authentication header, over HTTPS (or to a server on your own PC), never in an
-  address.
+  address, and only to the address it was entered for: a redirect to another address is not
+  followed. Requests to a cloud service use your Windows proxy settings, if any; requests to a
+  server on your own PC never go through a proxy. A key for a server on your own PC goes to
+  whatever program listens on that port, so do not store one for a local server you do not
+  keep running.
 - **When it fails.** If the engine cannot speak (no key, a refused key, no credit, no network, a
   server problem), Sonara reads that sentence with its built-in voice (Kokoro, else the Windows
   voices) and says once why ("OpenAI cannot be reached. Reading with the built-in voice."). The

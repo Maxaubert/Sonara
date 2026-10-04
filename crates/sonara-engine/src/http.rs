@@ -2,9 +2,15 @@
 //! agent shape for the Kokoro model download and the external engines.
 //!
 //! - TLS through rustls with the platform verifier (Windows' certificate
-//!   store), no bundled root certificates; the system proxy applies.
+//!   store), no bundled root certificates.
 //! - `http_status_as_error(false)`: 4xx and 5xx bodies are read, so callers
 //!   can map the provider's error.
+//! - `agent` (the model download) follows redirects and uses the system
+//!   proxy. `provider_agent` (external engines, spec 6.4) follows none, so
+//!   a key header never goes to a host named in a `Location`, and with
+//!   `direct` (a loopback profile) skips the proxy, which `ureq` would
+//!   otherwise use for `127.0.0.1` too (it ignores Windows' `<local>`
+//!   bypass list).
 use std::time::Duration;
 
 /// How long each step of a request may take.
@@ -17,8 +23,7 @@ pub struct Timeouts {
     pub recv_body: Duration,
 }
 
-/// An agent with these timeouts and Sonara's user agent.
-pub fn agent(t: Timeouts) -> ureq::Agent {
+fn builder(t: Timeouts) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
     use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
     ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -32,6 +37,19 @@ pub fn agent(t: Timeouts) -> ureq::Agent {
                 .build(),
         )
         .user_agent(concat!("sonara/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into()
+}
+
+/// An agent with these timeouts and Sonara's user agent: follows redirects,
+/// uses the system proxy (the Kokoro model download).
+pub fn agent(t: Timeouts) -> ureq::Agent {
+    builder(t).build().into()
+}
+
+/// The agent of an external engine: never follows a redirect (a 3xx is the
+/// provider's answer, mapped as an error) and, with `direct`, never uses a
+/// proxy (a loopback server).
+pub fn provider_agent(t: Timeouts, direct: bool) -> ureq::Agent {
+    let b = builder(t).max_redirects(0);
+    let b = if direct { b.proxy(None) } else { b };
+    b.build().into()
 }

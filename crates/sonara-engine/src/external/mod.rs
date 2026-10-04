@@ -138,21 +138,29 @@ impl External {
         p.validate()?;
         let adapter = adapter_for(&p)?;
         let timeout = Duration::from_millis(p.timeout_ms());
+        // No redirects, and no proxy for a loopback server (spec 6.4).
+        let direct = p.parsed_url().is_some_and(|u| u.is_loopback());
         let agent = config.agent.clone().unwrap_or_else(|| {
-            crate::http::agent(crate::http::Timeouts {
-                connect: Duration::from_secs(5),
-                recv_response: timeout,
-                // A body that stalls (Wi-Fi gone after the headers) falls
-                // back after the same wait, not 30 s more.
-                recv_body: timeout,
-            })
+            crate::http::provider_agent(
+                crate::http::Timeouts {
+                    connect: Duration::from_secs(5),
+                    recv_response: timeout,
+                    // A body that stalls (Wi-Fi gone after the headers) falls
+                    // back after the same wait, not 30 s more.
+                    recv_body: timeout,
+                },
+                direct,
+            )
         });
         let voices_agent = config.agent.unwrap_or_else(|| {
-            crate::http::agent(crate::http::Timeouts {
-                connect: Duration::from_secs(5),
-                recv_response: VOICES_TIMEOUT,
-                recv_body: VOICES_TIMEOUT,
-            })
+            crate::http::provider_agent(
+                crate::http::Timeouts {
+                    connect: Duration::from_secs(5),
+                    recv_response: VOICES_TIMEOUT,
+                    recv_body: VOICES_TIMEOUT,
+                },
+                direct,
+            )
         });
         Ok(External {
             id: EngineId::intern(&p.id),
