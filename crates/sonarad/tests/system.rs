@@ -1456,3 +1456,82 @@ fn shutdown_stops_reading_refuses_more_and_asks_to_exit() {
     let busy = call(s, &mut session, json!({"type": "speak", "text": "More."}));
     assert_eq!(busy["error"]["code"], "E_BUSY", "{busy}");
 }
+
+#[test]
+fn the_flush_hotkey_stops_only_the_session_being_read() {
+    // #228: the flush key cut the session being read and also wiped the
+    // turn another session was still streaming.
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    ok(
+        s,
+        &mut session,
+        json!({"type": "set", "key": "read_mode", "value": "done"}),
+    );
+    for (id, label) in [("a", "alpha-repo"), ("b", "beta-repo")] {
+        ok(
+            s,
+            &mut session,
+            json!({"type": "channel_open", "channel": id, "label": label}),
+        );
+    }
+    ok(
+        s,
+        &mut session,
+        json!({"type": "stream", "channel": "b", "delta": "Beta still arriving.", "final": false}),
+    );
+    ok(
+        s,
+        &mut session,
+        json!({"type": "stream", "channel": "a", "delta": "Alpha one. Alpha two.", "final": true}),
+    );
+    ok(s, &mut session, json!({"type": "turn_end", "channel": "a"}));
+    assert!(eventually(|| playing(s).as_deref() == Some("Alpha one.")));
+    start_playing(&r.out);
+    r.fake.press(Action::Flush.id());
+    assert!(eventually(
+        || log_of(&r).contains("hotkey flush session=alpha-repo")
+    ));
+    assert!(eventually(|| playing(s).is_none()));
+    ok(
+        s,
+        &mut session,
+        json!({"type": "stream", "channel": "b", "delta": " Done now.", "final": true}),
+    );
+    ok(s, &mut session, json!({"type": "turn_end", "channel": "b"}));
+    // The switch announcement, then b's whole turn.
+    assert!(eventually(
+        || playing(s).is_some_and(|t| t.contains("beta-repo"))
+    ));
+    start_playing(&r.out);
+    r.out.finish();
+    assert!(eventually(
+        || playing(s).as_deref() == Some("Beta still arriving.")
+    ));
+    let log = log_of(&r);
+    assert!(log.contains("reason=flush"), "{log}");
+    assert!(
+        log.contains("agent flush channel=a wipe reason=flush"),
+        "{log}"
+    );
+}
+
+#[test]
+fn the_flush_hotkey_with_nothing_being_read_is_logged_idle() {
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    r.fake.press(Action::Flush.id());
+    assert!(eventually(|| log_of(&r).contains("hotkey flush idle")));
+}

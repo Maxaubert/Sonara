@@ -59,6 +59,11 @@ export class ChannelsApi {
   async nextChannel(extra: Extra = {}): Promise<void> {
     await this.send("control", defined({ ...extra, action: "next_channel" }));
   }
+
+  /** `control` `flush`: stop only the session being read (the flush hotkey, #228). */
+  flush(extra: Extra = {}): Promise<Reply> {
+    return this.send("control", defined({ ...extra, action: "flush" }));
+  }
 }
 
 export type AskKind = "question" | "permission" | "plan";

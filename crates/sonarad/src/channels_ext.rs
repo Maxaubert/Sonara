@@ -7,7 +7,7 @@ use crate::config::{PrefsUpdate, Store};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_channels::{Channels, Control, Error, ItemId, Policy, QueueMode};
+use sonara_channels::{Channels, Control, Error, Flushed, ItemId, Policy, QueueMode};
 use std::sync::{Arc, OnceLock};
 
 /// The extension's state: empty until a client enables it.
@@ -21,7 +21,7 @@ pub const ANNOUNCE_KEY: &str = "channel_announce";
 /// The per-channel preferences (label, voice, muted) of the settings page.
 pub const PREFS_KEY: &str = "channel_prefs";
 
-fn failure(e: Error) -> Failure {
+pub(crate) fn failure(e: Error) -> Failure {
     match e {
         Error::UnknownChannel(_) => Failure::new(Code::NotFound, e.to_string()),
         Error::EmptyChannel => Failure::new(Code::BadRequest, e.to_string()),
@@ -116,6 +116,20 @@ pub fn control(ch: &Channels, action: Option<Control>, m: &Map<String, Value>) -
         }
     }
     ok(f)
+}
+
+/// The reply of `control flush`: `flushed` (`channel`, `direct` or
+/// `nothing`) and the `channel` flushed (`null` unless `channel`).
+pub fn flushed_fields(f: &Flushed) -> Map<String, Value> {
+    let (what, channel) = match f {
+        Flushed::Channel(id) => ("channel", json!(id)),
+        Flushed::Direct => ("direct", Value::Null),
+        Flushed::Nothing => ("nothing", Value::Null),
+    };
+    let mut m = Map::new();
+    m.insert("flushed".into(), json!(what));
+    m.insert("channel".into(), channel);
+    m
 }
 
 /// `set channel_announce` (`"on"` or `"off"`) and `get channel_announce`.

@@ -26,7 +26,8 @@
 //!   channel's message, right after the announcement. An item ended from
 //!   outside (a core `speak` with `interrupt`, `skip`) counts as read: L2
 //!   cannot tell it from a user skip. `Stop` without a channel flushes every channel,
-//!   with a channel only that one. `Restart` while idle replays the engaged
+//!   with a channel only that one; `stop_reading` (the flush hotkey, #228)
+//!   flushes only the channel being read. `Restart` while idle replays the engaged
 //!   channel's batch (the Python plugin's Up key).
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
@@ -161,6 +162,17 @@ struct Inner {
 #[derive(Clone)]
 pub struct Channels {
     inner: Arc<Inner>,
+}
+
+/// What `stop_reading` stopped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Flushed {
+    /// The channel being read, flushed.
+    Channel(String),
+    /// An item spoken to the reader directly, skipped.
+    Direct,
+    /// Nothing was being read.
+    Nothing,
 }
 
 /// What `speak` did with the text.
@@ -472,6 +484,34 @@ impl Channels {
             other if reading => Ok(reader.control(other)?),
             _ => Ok(()),
         }
+    }
+
+    /// The flush hotkey (#228): stop only what is being read now. When a
+    /// channel's item is in flight (playing or paused) that channel is
+    /// flushed as `control(Stop, channel)` (its unread entries skipped,
+    /// reported to `on_drop` with `reason`, its item cut) and the next
+    /// channel is read as usual; other channels keep everything. Text
+    /// spoken to the reader directly is skipped one item at a time. Idle,
+    /// nothing changes. A paused reader is un-paused, as `Stop` does.
+    pub fn stop_reading(&self, reason: &str) -> Result<Flushed> {
+        let mut st = self.lock();
+        let reader = &self.inner.reader;
+        let flushed = if let Some(ch) = st.in_flight.as_ref().map(|f| f.channel.clone()) {
+            report(&st, &ch, unread(&st, &ch), reason, None);
+            st.router.flush(Some(&ch));
+            self.inner.cut_if(&mut st, &ch, Some(reason))?;
+            Flushed::Channel(ch)
+        } else if reader.state()?.now_playing.is_some() {
+            reader.control(Control::Skip)?;
+            Flushed::Direct
+        } else {
+            return Ok(Flushed::Nothing);
+        };
+        if reader.state()?.paused {
+            reader.control(Control::Play)?;
+        }
+        self.inner.pump(&mut st)?;
+        Ok(flushed)
     }
 
     /// Switch to the next channel now (the Python plugin's next-session

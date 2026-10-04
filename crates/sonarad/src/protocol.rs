@@ -80,7 +80,7 @@ const EXTENSION_KEYS: &[&str] = &[
     "settings_url",
     "runtime",
 ];
-const EXTENSION_ACTIONS: &[&str] = &["next_channel"];
+const EXTENSION_ACTIONS: &[&str] = &["next_channel", "flush"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -766,9 +766,28 @@ impl Server {
         Ok((f, After::Nothing))
     }
 
+    /// `control flush` (#228): stop only the session being read (the
+    /// flush hotkey); with the agent its summary work goes too.
+    fn flush(&self, ch: &Channels, m: &Map<String, Value>) -> Handled {
+        if opt_str(m, "channel")?.is_some() {
+            return Err(bad(
+                "'flush' acts on the session being read; use 'stop' with a channel",
+            ));
+        }
+        let _admitted = self.admit()?;
+        let flushed = match self.agent.get() {
+            Some(a) => a.flush().map_err(agent_ext::failure)?,
+            None => ch.stop_reading("flush").map_err(channels_ext::failure)?,
+        };
+        Ok((channels_ext::flushed_fields(&flushed), After::Nothing))
+    }
+
     fn control(&self, m: &Map<String, Value>) -> Handled {
         let action = opt_str(m, "action")?.ok_or_else(|| bad("missing 'action'"))?;
         if let Some(ch) = self.channels.get() {
+            if action == "flush" {
+                return self.flush(ch, m);
+            }
             let c = match parse_control(action) {
                 Some(c) => Some(c),
                 None if action == "next_channel" => None,

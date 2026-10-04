@@ -52,6 +52,10 @@ class Channels:
         """``control`` ``next_channel``."""
         self._send("control", _defined({**extra, "action": "next_channel"}))
 
+    def flush(self, **extra: Any) -> dict:
+        """``control`` ``flush``: stop only the session being read (the flush hotkey, #228)."""
+        return self._send("control", _defined({**extra, "action": "flush"}))
+
 
 class Agent:
     """``agent`` (needs ``channels``): streaming turns, decisions, earcons."""

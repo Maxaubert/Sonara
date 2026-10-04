@@ -1206,3 +1206,141 @@ fn prose_held_below_minqueue_is_noted() {
         "{n:?}"
     );
 }
+
+// -- flush: only the session being read (#228) -----------------------------
+
+fn done_rules() -> Rules {
+    Rules::new(Settings {
+        read_mode: ReadMode::Done,
+        ..Settings::default()
+    })
+}
+
+/// The notes of `channel` as `kind: what` lines.
+fn notes_of(r: &Rules, channel: &str) -> Vec<String> {
+    r.take_notes()
+        .into_iter()
+        .filter(|n| n.channel.as_deref() == Some(channel))
+        .map(|n| format!("{}: {}", n.kind, n.what))
+        .collect()
+}
+
+#[test]
+fn flush_while_another_session_streams_keeps_its_message() {
+    // #228: flushing the session being read wiped the prose another
+    // session was still streaming (summary mode); only its last sentences,
+    // arriving after the flush, were heard.
+    let mut r = summary_rules();
+    prose(&mut r, "wind", &PAD.repeat(6), 0, false);
+    prose(&mut r, "dl", "The downloads recap. ", 0, true);
+    r.flush("dl");
+    prose(&mut r, "wind", "Last words. ", 1, true);
+    let job = jobs(&end_and_settle(&mut r, "wind", None)).remove(0);
+    assert_eq!(job.text.matches("filler").count(), 6, "{}", job.text);
+    assert!(job.text.ends_with("Last words."), "{}", job.text);
+}
+
+#[test]
+fn flush_stops_only_the_session_being_read() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "Alpha one. ", 0, true);
+    prose(&mut r, "b", "Beta one. ", 0, true);
+    r.flush("a");
+    assert_eq!(spoken(&r.turn_end("b", None, None).unwrap()), ["Beta one."]);
+    assert!(spoken(&r.turn_end("a", None, None).unwrap()).is_empty());
+}
+
+#[test]
+fn flush_keeps_other_sessions_summaries_and_decisions() {
+    let mut r = summary_rules();
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let job = jobs(&end_and_settle(&mut r, "b", None)).remove(0);
+    prose(&mut r, "c", "Lead-in. ", 0, true);
+    r.ask("c", &question("Deploy?", &[]));
+    prose(&mut r, "a", "Alpha. ", 0, true);
+    r.flush("a");
+    assert_eq!(r.summary_state("b"), Some((false, 0, 0, 1)));
+    assert_eq!(r.summary_state("c"), Some((true, 1, 0, 0)));
+    assert_eq!(spoken(&r.digest_done(&job, Some("B.".into()))), ["B."]);
+}
+
+#[test]
+fn prose_after_a_flush_follows_the_read_mode() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    prose(&mut r, "a", "After. ", 1, true);
+    assert_eq!(spoken(&r.turn_end("a", None, None).unwrap()), ["After."]);
+}
+
+#[test]
+fn a_summary_after_a_flush_covers_only_what_came_after() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    r.flush("a");
+    prose(&mut r, "a", "After the flush. ", 1, true);
+    let a = end_and_settle(&mut r, "a", Some("a"));
+    assert!(jobs(&a).is_empty());
+    assert_eq!(spoken(&a), ["After the flush."]);
+}
+
+#[test]
+fn flush_drop_is_logged() {
+    // #228: what a flush drops leaves a note with the session, the count
+    // and the reason (it was silent).
+    let mut r = done_rules();
+    prose(&mut r, "a", "One. Two. ", 0, true);
+    r.take_notes();
+    r.flush("a");
+    assert_eq!(
+        notes_of(&r, "a"),
+        ["prose: dropped: 2 held chunk(s) (flush, read_mode done)"]
+    );
+
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    r.ask("a", &question("Deploy?", &[]));
+    prose(&mut r, "a", "More text. ", 1, true);
+    r.take_notes();
+    r.flush("a");
+    let notes = notes_of(&r, "a");
+    assert_eq!(
+        notes,
+        [
+            "prose: dropped: 1 chunk(s) kept for the summary (flush)",
+            "summary: cancelled (flush): 1 summary in flight, the settle window",
+            "question: dropped: waited for the summary (flush)",
+        ],
+        "{notes:?}"
+    );
+}
+
+#[test]
+fn stop_drop_is_logged_for_every_session() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "One. ", 0, true);
+    prose(&mut r, "b", "Two. Three. ", 0, true);
+    r.take_notes();
+    r.stop_all();
+    let notes: Vec<String> = r
+        .take_notes()
+        .into_iter()
+        .map(|n| format!("{} {}", n.channel.unwrap_or_default(), n.what))
+        .collect();
+    assert_eq!(
+        notes,
+        [
+            "a dropped: 1 held chunk(s) (stop, read_mode done)",
+            "b dropped: 2 held chunk(s) (stop, read_mode done)",
+        ]
+    );
+}
+
+#[test]
+fn flush_of_a_session_without_turn_state_does_nothing() {
+    let mut r = rules();
+    r.flush("ghost");
+    assert!(r.channels().is_empty());
+    assert!(r.take_notes().is_empty());
+}

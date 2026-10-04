@@ -3,7 +3,7 @@
 //! and the channels thread with a timeout.
 use sonara_audio::OutputCall;
 use sonara_audio::TestOutput;
-use sonara_channels::{Announced, Channels, Config, Control, Policy, QueueMode};
+use sonara_channels::{Announced, Channels, Config, Control, Flushed, Policy, QueueMode};
 use sonara_engine::fake::FakeEngine;
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
 use std::sync::Arc;
@@ -637,4 +637,72 @@ fn spoken_text_tells_its_entry_and_the_tag_carries_it() {
     let tag = r.ch.tag(id).unwrap();
     assert_eq!(tag.entry, Some(s.entry));
     assert!(!tag.announcement);
+}
+
+// -- stop_reading: the flush hotkey (#228) ---------------------------------
+
+#[test]
+fn stop_reading_flushes_only_the_channel_being_read() {
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("a", "Alpha two.");
+    r.speak("b", "Beta one.");
+    r.wait_for("Alpha one.");
+    r.out.start();
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let seen = drops.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock()
+            .unwrap()
+            .push(format!("{} {} {}", d.channel, d.text, d.reason));
+    })));
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Channel("a".into())
+    );
+    r.read("Beta.");
+    r.read("Beta one.");
+    r.stays_idle();
+    assert_eq!(
+        *drops.lock().unwrap(),
+        ["a Alpha two. flush", "a Alpha one. flush"]
+    );
+}
+
+#[test]
+fn stop_reading_a_paused_channel_reads_the_next_one() {
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.wait_for("Alpha one.");
+    r.out.start();
+    r.ch.control(Control::Pause, None).unwrap();
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Channel("a".into())
+    );
+    r.read("Beta.");
+    r.read("Beta one.");
+    assert!(!r.reader().state().unwrap().paused);
+}
+
+#[test]
+fn stop_reading_text_spoken_to_the_reader_skips_only_that_item() {
+    let r = Rig::two();
+    r.reader()
+        .speak("Direct words.", QueueMode::Append, false, None)
+        .unwrap();
+    r.wait_for("Direct words.");
+    r.speak("a", "Alpha one.");
+    assert_eq!(r.ch.stop_reading("flush").unwrap(), Flushed::Direct);
+    r.read("Alpha one.");
+    r.stays_idle();
+}
+
+#[test]
+fn stop_reading_while_idle_does_nothing() {
+    let r = Rig::two();
+    assert_eq!(r.ch.stop_reading("flush").unwrap(), Flushed::Nothing);
+    r.speak("a", "Alpha one.");
+    r.read("Alpha one.");
 }

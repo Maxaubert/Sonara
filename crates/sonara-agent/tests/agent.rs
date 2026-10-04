@@ -9,7 +9,7 @@ use sonara_agent::{
     SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
-use sonara_channels::{Config as ChannelsConfig, Control, Policy};
+use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};
 use sonara_engine::fake::FakeEngine;
 use sonara_engine::{wav, PcmChunk};
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
@@ -669,4 +669,59 @@ fn earcon_subscribers_that_went_away_are_pruned() {
     r.agent.earcon(Earcon::Nav).unwrap();
     assert_eq!(r.agent.subscribers(), 1, "pruned at the earcon");
     assert_eq!(kept.recv_timeout(TIMEOUT).unwrap(), Earcon::Nav);
+}
+
+// -- flush: only the session being read (#228) -----------------------------
+
+fn done() -> Settings {
+    Settings {
+        read_mode: sonara_agent::ReadMode::Done,
+        ..Settings::default()
+    }
+}
+
+#[test]
+fn flush_stops_only_the_session_being_read() {
+    let r = Rig::new();
+    r.stream("a", "Alpha one. Alpha two.", 0, None);
+    r.wait_for("Alpha one.");
+    r.out.start();
+    r.stream("b", "Beta one.", 0, None);
+    assert_eq!(r.agent.flush().unwrap(), Flushed::Channel("a".into()));
+    r.read("Beta one.");
+    r.stays_idle();
+    // The flushed session's next text is read as usual.
+    r.stream("a", "Alpha later.", 1, None);
+    r.read("Alpha later.");
+}
+
+#[test]
+fn flush_while_another_session_streams_keeps_its_message() {
+    // #228: read mode `done` holds b's turn while it streams; flushing a
+    // must not drop it.
+    let r = Rig::with(done(), None);
+    r.agent
+        .stream("b", None, "Beta still arriving.", 0, false, None)
+        .unwrap();
+    r.agent
+        .ask("a", &Ask::new(AskKind::Plan, "Alpha plan."))
+        .unwrap();
+    r.wait_for("Plan ready.");
+    assert_eq!(r.agent.flush().unwrap(), Flushed::Channel("a".into()));
+    r.stays_idle();
+    r.agent
+        .stream("b", None, " Done now.", 0, true, None)
+        .unwrap();
+    r.agent.turn_end("b", None, None).unwrap();
+    r.read("Beta still arriving.");
+    r.read("Done now.");
+}
+
+#[test]
+fn flush_with_nothing_being_read_drops_nothing() {
+    let r = Rig::with(done(), None);
+    r.stream("a", "Held for the end.", 0, None);
+    assert_eq!(r.agent.flush().unwrap(), Flushed::Nothing);
+    r.agent.turn_end("a", None, None).unwrap();
+    r.read("Held for the end.");
 }

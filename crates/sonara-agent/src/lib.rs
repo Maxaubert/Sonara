@@ -30,6 +30,9 @@
 //!   (`Channels::engaged`); a paused reader stays paused when another
 //!   channel gets a new turn.
 //! - `Silence` (muting) is `control(Stop)` over every channel.
+//! - `flush` (the flush hotkey, #228) stops only the session being read:
+//!   L2 `stop_reading`, then `Rules::flush` on that channel. The other
+//!   sessions are untouched.
 //! - Earcons are played with `ReaderHandle::play_clip` and reported to
 //!   `subscribe`rs. The clips come from `Config::earcons` (the bundled
 //!   ones, or a folder of custom WAVs in front: `earcon::Library`).
@@ -47,7 +50,7 @@
 //!   kind and why it may wait), what the rules did not speak and why
 //!   (`rules::Note`), late text dropped, earcons and wipes (L2 reports the
 //!   entries a wipe drops, with the reason given here: `turn_start`,
-//!   `answered`, `mute`, `stop`). The hook runs under the agent's lock and
+//!   `answered`, `mute`, `stop`, `flush`). The hook runs under the agent's lock and
 //!   must not call back into the agent.
 pub mod decision;
 pub mod earcon;
@@ -61,7 +64,7 @@ pub use rules::{Action, Ask, Job, Note, Rules, Stale, Timer};
 pub use settings::{
     BackgroundPolicy, ReadMode, Settings, Style, SummaryCommand, SummarySettings, Verbosity,
 };
-pub use sonara_channels::{Channels, Control, QueueMode};
+pub use sonara_channels::{Channels, Control, Flushed, QueueMode};
 pub use summarizer::Summarizer;
 
 use std::collections::HashMap;
@@ -121,7 +124,8 @@ pub fn default_summarizer() -> Option<Arc<dyn Summarizer>> {
 pub struct Trace {
     /// What caused it: the message (`stream`, `turn_start`, `turn_end`,
     /// `ask question`, `ask permission`, `ask plan`, `tool`, `answered`,
-    /// `earcon`, `mute_level`, `stop`), a `timer` or a `summary` landing.
+    /// `earcon`, `mute_level`, `stop`, `flush`), a `timer` or a `summary`
+    /// landing.
     pub source: String,
     pub channel: Option<String>,
     pub what: Traced,
@@ -419,15 +423,36 @@ impl Agent {
 
     /// `control stop`: drop every channel's summary work and held
     /// decisions, then stop L2 (`control(Stop)` without a channel).
+    /// Every drop is noted for the troubleshooting log (#228).
     pub fn stop(&self) -> Result<()> {
         let mut rules = self.lock();
         rules.stop_all();
         self.inner
             .trace("stop", None, Traced::Wiped { reason: "stop" });
+        self.inner.execute(&rules, "stop", None, Vec::new())?;
         Ok(self
             .inner
             .channels
             .control_because(Control::Stop, None, "stop")?)
+    }
+
+    /// The flush hotkey (#228): stop only the session being read. Its
+    /// item, its unread text, its held prose, the prose kept for its
+    /// summary and its summary work are dropped (`Rules::flush`, L2
+    /// `stop_reading`); every other session keeps its text, summaries and
+    /// turns still arriving, and is read next as usual. Text spoken to the
+    /// reader directly is skipped one item at a time; idle, nothing
+    /// happens. Mute is the way to silence everything.
+    pub fn flush(&self) -> Result<Flushed> {
+        let mut rules = self.lock();
+        let flushed = self.inner.channels.stop_reading("flush")?;
+        if let Flushed::Channel(ch) = &flushed {
+            self.inner
+                .trace("flush", Some(ch), Traced::Wiped { reason: "flush" });
+            rules.flush(ch);
+            self.inner.execute(&rules, "flush", Some(ch), Vec::new())?;
+        }
+        Ok(flushed)
     }
 
     pub fn settings(&self) -> Settings {

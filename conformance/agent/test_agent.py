@@ -484,3 +484,22 @@ def test_forgetting_a_dead_session(rt):
     assert c.request({"type": "focus", "channel": "dead"})["error"]["code"] == "E_NOT_FOUND"
     # Reopened, the old turn's start time no longer applies.
     assert stream(c, "dead", "Fresh start.", t=1.0)["stale"] is False
+
+
+def test_flush_stops_only_the_session_being_read(rt):
+    # #228: flushing the session being read keeps the turn another session
+    # is still streaming (held by read_mode done here) and its summary work.
+    c = agent_client(rt, policy="all")
+    for ch in ("a", "b"):
+        ok(c, {"type": "channel_open", "channel": ch})
+    ok(c, {"type": "set", "key": "read_mode", "value": "done"})
+    stream(c, "b", "Beta still arriving.", final=False)
+    stream(c, "a", LONG)
+    ok(c, {"type": "turn_end", "channel": "a"})
+    assert starts_long(heard(c, 1)[0], "a")
+    r = ok(c, {"type": "control", "action": "flush"})
+    assert (r["flushed"], r["channel"]) == ("channel", "a")
+    quiet(c)
+    stream(c, "b", " Done now.", final=True)
+    ok(c, {"type": "turn_end", "channel": "b"})
+    assert heard(c, 2) == [("Beta still arriving.", "b"), ("Done now.", "b")]

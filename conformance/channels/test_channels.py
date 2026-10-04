@@ -77,6 +77,8 @@ def test_hello_enables_channels_for_the_instance(rt):
     assert r["error"]["code"] == "E_UNSUPPORTED"
     r = plain.request({"type": "control", "action": "next_channel"})
     assert r["error"]["code"] == "E_UNSUPPORTED"
+    r = plain.request({"type": "control", "action": "flush"})
+    assert r["error"]["code"] == "E_UNSUPPORTED"
     r = plain.request({"type": "get", "key": "channel_announce"})
     assert r["error"]["code"] == "E_UNSUPPORTED"
     c = rt.tcp(hello=False)
@@ -242,6 +244,26 @@ def test_stop_with_a_channel_flushes_only_it(rt):
     ok(c, {"type": "control", "action": "skip"})
     assert heard(c, 1) == [("More alpha.", "a")]
     quiet(c)
+
+
+def test_flush_stops_only_the_channel_being_read(rt):
+    # #228: the flush hotkey's action. The channel being read is skipped to
+    # its end; the other channels are read next.
+    c = channels_client(rt)
+    open_two(c)
+    ok(c, {"type": "set", "key": "channel_announce", "value": "off"})
+    ok(c, {"type": "speak", "channel": "a", "text": LONG})
+    ok(c, {"type": "speak", "channel": "a", "text": "More alpha."})
+    ok(c, {"type": "speak", "channel": "b", "text": "From beta."})
+    assert is_long(heard(c, 1)[0], "a")
+    r = ok(c, {"type": "control", "action": "flush"})
+    assert (r["flushed"], r["channel"]) == ("channel", "a")
+    assert heard(c, 1) == [("From beta.", "b")]
+    quiet(c)
+    r = ok(c, {"type": "control", "action": "flush"})
+    assert (r["flushed"], r["channel"]) == ("nothing", None)
+    r = c.request({"type": "control", "action": "flush", "channel": "a"})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
 
 
 def test_interrupt_reads_the_new_message_now(rt):

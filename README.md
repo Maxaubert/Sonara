@@ -100,7 +100,7 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.
 - **Other earcons** come from the runtime: `turn_done` when a reply ends, `nav` and `nav_edge`
-  for a restart or flush (`nav_edge`: nothing to restart or flush), `session_change` when the
+  for a restart or flush (`nav_edge`: nothing to restart, or nothing being read to flush), `session_change` when the
   voice moves to another session (followed by "Session changed: *folder*."), `error` when
   speech fails, and `summary_failed` when a summary-mode turn had no text to read. You can
   replace any of them with your own sound: see [Custom chimes](#custom-chimes).
@@ -130,7 +130,7 @@ saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt o
 | Hotkey | Action |
 |---|---|
 | Ctrl+Alt+Up | Restart the latest reply from the top (summary mode: re-read the last summary) |
-| Ctrl+Alt+Down | Flush: silence everything queued in every session and go quiet. Ctrl+Alt+Up brings the reply back |
+| Ctrl+Alt+Down | Flush: stop the session being read (what is playing and the rest of its reply); other sessions keep their messages and are read next. To silence everything, mute (Ctrl+Alt+M) |
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |
 
