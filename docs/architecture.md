@@ -24,15 +24,20 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
   `rate.rs`, `split.rs`, `worker.rs` (a request on its own thread, a wait `cancel` ends),
   `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes, paged voice lists),
   `openai.rs` (kind `openai-compatible`), `elevenlabs.rs`, `azure.rs` (SSML, XML escaping),
-  `google.rs` (base64 `audioContent`), `mod.rs` (the `External` engine: fallback with the cue, retry policy,
-  status). `http.rs` holds the `ureq` agent shared with the Kokoro download.
+  `google.rs` (base64 `audioContent`), `cartesia.rs`, `deepgram.rs` (drops a refused `speed`
+  through `Adapter::adapt`), `command.rs` (kind `command`: not an `Adapter`; runs the user's
+  program with no shell, kills it on timeout or cancel), `mod.rs` (the `External` engine over a
+  `Backend` of an adapter or a program: fallback with the cue, retry policy, status).
+  `src/bin/sonara-fake-tts.rs` (feature `test-util`) is the stand-in program of the tests. `http.rs` holds the `ureq` agent shared with the Kokoro download.
 - `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or
   the fake engine) as its fallback, registration in the reader's and the previews' registries,
-  the notice lines of `sonarad.log`. `engines_ext.rs`: the protocol handlers; `engine_remove`
-  lives in `protocol.rs` because it switches `engine` first.
+  the notice lines of `sonarad.log`, `reload` of the file, and the `E_FORBIDDEN` refusal of a
+  `command` profile in `engine_add` (local-only). `engines_ext.rs`: the protocol handlers;
+  `engine_remove` and `engine_reload` live in `protocol.rs` because they may switch `engine`.
 - `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
   chunks ahead of the playing one. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
-- `sonara-cli` `engines.rs`: `sonara engines ...`; `uninstall` deletes the `sonara:*`
+- `sonara-cli` `engines.rs`: `sonara engines ...` (`engines_file.rs` writes a `command` profile
+  into `engines.json` locally, then `engine_reload`); `uninstall` deletes the `sonara:*`
   credentials unless settings are kept.
 
 ## Big picture

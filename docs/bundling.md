@@ -132,11 +132,15 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 
 Protocol 1.2 lets the user add speech engines that are not part of Sonara (OpenAI, a local
 OpenAI-compatible server; since 0.16.0 also ElevenLabs, Azure AI Speech and Google Cloud
-Text-to-Speech) as profiles; the clients expose them as `client.engines` (`list`,
-`add`, `remove`, `setKey`/`set_key`, `test`) and `client.voices(engine, { refresh })`. Text goes
+Text-to-Speech; since 0.17.0 Cartesia, Deepgram and `command`, a speech program of the user's own
+that the runtime starts with no shell) as profiles; the clients expose them as `client.engines` (`list`,
+`add`, `remove`, `setKey`/`set_key`, `test`, `reload`) and `client.voices(engine, { refresh })`.
+A `command` engine is never added through a client: `add` of one is `E_FORBIDDEN` (protocol
+1.3); the user adds it with `sonara engines add <id> --kind command` or in `engines.json`. Text goes
 to such an engine only once a client selects it with `set engine`; keys live in Windows Credential
 Manager. A host that must not send text off the PC, or does not want the feature, starts the
-runtime with `--no-external-engines`: the `engines` capability is then absent and every
+runtime with `--no-external-engines` (which also keeps the runtime from starting a program
+through a `command` profile the user configured): the `engines` capability is then absent and every
 `engine_*` message is `E_UNSUPPORTED`. Library hosts that embed the engine crates get the same
 choice from the licence policy: `Registry::default()` refuses the `External` class.
 

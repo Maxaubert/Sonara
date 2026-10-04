@@ -1,6 +1,6 @@
-"""Cloud kinds of external engines (#225, ``docs/protocol-v1.md`` "External
-engines"): ``elevenlabs``, ``azure`` and ``google``, each against a local
-fake of its provider (``fakes.py``). A sentence reaches the provider with
+"""Cloud kinds of external engines (#225, #226, ``docs/protocol-v1.md``
+"External engines"): ``elevenlabs``, ``azure``, ``google``, ``cartesia`` and
+``deepgram``, each against a local fake of its provider (``fakes.py``). A sentence reaches the provider with
 the key in the provider's own header, and a refused key makes the runtime
 read with its built-in engine and report ``auth``."""
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 from fakes import FakeCloud
 
 SECRET = "cloud-conformance-secret-0123456789"
-KINDS = ["elevenlabs", "azure", "google"]
+KINDS = ["elevenlabs", "azure", "google", "cartesia", "deepgram"]
 
 
 def ok(c, msg):
@@ -28,7 +28,7 @@ def cloud(request):
 
 
 def test_cloud_kinds_are_listed(client):
-    assert ok(client, {"type": "engine_list"})["kinds"] == ["openai-compatible"] + KINDS
+    assert ok(client, {"type": "engine_list"})["kinds"] == ["openai-compatible"] + KINDS + ["command"]
 
 
 def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
@@ -46,8 +46,9 @@ def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
     sent = cloud.speech()
     assert sent, "no request reached the provider"
     req = sent[0]
-    assert req["headers"][cloud.shape.key_header] == SECRET
-    assert "authorization" not in req["headers"]
+    assert req["headers"][cloud.shape.key_header] == cloud.shape.key_prefix + SECRET
+    if cloud.shape.key_header != "authorization":
+        assert "authorization" not in req["headers"]
     assert SECRET not in req["path"]
     if cloud.shape.kind == "elevenlabs":
         assert req["path"] == "/v1/text-to-speech/voice-a?output_format=pcm_24000"
@@ -60,6 +61,18 @@ def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
         ssml = req["body"].decode()
         assert "<voice name='en-US-AvaMultilingualNeural'>" in ssml
         assert "Hello from the cloud." in ssml
+    elif cloud.shape.kind == "cartesia":
+        assert req["path"] == "/tts/bytes"
+        assert req["headers"]["cartesia-version"] == "2026-08-14"
+        body = json.loads(req["body"])
+        assert body["transcript"] == "Hello from the cloud."
+        assert body["voice"] == {"id": "voice-c"}
+        assert body["output_format"] == {"container": "raw", "encoding": "pcm_s16le",
+                                         "sample_rate": 24000}
+    elif cloud.shape.kind == "deepgram":
+        assert req["path"].startswith("/v1/speak?model=aura-2-thalia-en&encoding=linear16"
+                                      "&container=none&sample_rate=24000")
+        assert json.loads(req["body"]) == {"text": "Hello from the cloud."}
     else:
         body = json.loads(req["body"])
         assert body["input"] == {"text": "Hello from the cloud."}

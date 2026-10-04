@@ -4,11 +4,19 @@
 //! reader's and the previews' registries, keys in a `KeyStore`, and the
 //! fallback notices as `sonarad.log` lines.
 //!
-//! - `engines.json` is read once at start, before the reader starts, so a
-//!   saved `engine` naming a profile works on the first sentence. A file
-//!   that is not JSON is copied to `engines.json.bad` and treated as empty
-//!   until the next save; an entry that fails validation, or of a kind this
-//!   build lacks, is kept in the file, listed, and not registered.
+//! - `engines.json` is read at start, before the reader starts, so a
+//!   saved `engine` naming a profile works on the first sentence, and again
+//!   on `engine_reload` (after the user or `sonara engines add --kind
+//!   command` changed it). A file that is not JSON is copied to
+//!   `engines.json.bad` and treated as empty until the next save (a reload
+//!   refuses it and keeps what it has); an entry that fails validation, or
+//!   of a kind this build lacks, is kept in the file, listed, and not
+//!   registered.
+//! - A `command` profile runs a program, so it comes only from the file:
+//!   `add` (the protocol's `engine_add`, over TCP or HTTP, from any client
+//!   or SDK) refuses to add one or to replace one with `E_FORBIDDEN`
+//!   (security review of PR3). Removing, testing and selecting one stay
+//!   allowed.
 //! - Never a key in the file, a log line or a reply: secrets go only to the
 //!   `KeyStore` (Credential Manager, or `fake-keys.json` with `--keys fake`).
 //! - Keys are bound to the origin they were entered for (spec 6.4): a stored
@@ -21,7 +29,7 @@ use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_engine::external::keys::{KeyResolver, KeyStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
-    implemented_kinds, origin_of, KeyRef, Preset, Profile, ProfileError, MAX_PROFILES,
+    implemented_kinds, origin_of, KeyRef, Kind, Preset, Profile, ProfileError, MAX_PROFILES,
 };
 use sonara_engine::external::{External, ExternalConfig, Notice};
 use sonara_engine::{Engine, Reason, Registry};
@@ -81,10 +89,56 @@ pub struct Engines {
     gate: Arc<Gate>,
     registries: Mutex<Vec<Arc<Registry>>>,
     entries: Mutex<Vec<Entry>>,
+    /// The file's text when it was last read or saved (`None`: missing).
+    /// A save first reloads a file changed since (the user's edit, or
+    /// `sonara engines add`), so it never writes an older list over it.
+    seen: Mutex<Option<String>>,
 }
 
 fn bad(m: impl Into<String>) -> Failure {
     Failure::new(Code::BadRequest, m)
+}
+
+/// The refusal of `engine_add` for a `command` profile.
+pub const COMMAND_FORBIDDEN: &str = "a command engine runs a program on this PC, so it is \
+     never added or changed over the protocol: add it with `sonara engines add <id> --kind \
+     command`, or in engines.json";
+
+fn is_command(raw: &Value) -> bool {
+    raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str())
+}
+
+/// What `reload` changed.
+#[derive(Debug, Default)]
+pub struct Reloaded {
+    /// For the log and the reply.
+    pub problems: Vec<String>,
+    /// Usable before, with another engine (or none) now.
+    pub changed: Vec<String>,
+}
+
+/// The text of `engines.json` (`None` when it is missing).
+fn read_text(file: &Path) -> Option<String> {
+    std::fs::read_to_string(file).ok()
+}
+
+/// The `engines` array of `engines.json` (none when the file is missing)
+/// and whether the file is of an older format (to migrate), or why the
+/// file cannot be read.
+fn parse_file(text: Option<&str>) -> Result<(Vec<Value>, bool), String> {
+    match text {
+        None => Ok((Vec::new(), false)),
+        Some(text) => match serde_json::from_str::<Value>(text) {
+            Ok(v) => Ok((
+                v.get("engines")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+                v.get("format").and_then(Value::as_u64).unwrap_or(1) < FORMAT,
+            )),
+            Err(e) => Err(format!("{FILE} is not valid JSON ({e})")),
+        },
+    }
 }
 
 /// The notice line of spec 8.3, or `None` while the gate holds it back.
@@ -108,27 +162,17 @@ impl Engines {
     pub fn load(setup: Setup) -> (Arc<Engines>, Vec<String>) {
         let file = setup.home.join(FILE);
         let mut problems = Vec::new();
-        let mut legacy = false;
-        let mut raws: Vec<Value> = match std::fs::read_to_string(&file) {
-            Err(_) => Vec::new(),
-            Ok(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(v) => {
-                    legacy = v.get("format").and_then(Value::as_u64).unwrap_or(1) < FORMAT;
-                    v.get("engines")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default()
-                }
-                Err(e) => {
-                    let bad = setup.home.join(format!("{FILE}.bad"));
-                    let _ = std::fs::copy(&file, &bad);
-                    problems.push(format!(
-                        "{FILE} is not valid JSON ({e}); copied to {FILE}.bad, no external \
-                         engines until the next change"
-                    ));
-                    Vec::new()
-                }
-            },
+        let text = read_text(&file);
+        let (mut raws, legacy) = match parse_file(text.as_deref()) {
+            Ok(read) => read,
+            Err(why) => {
+                let bad = setup.home.join(format!("{FILE}.bad"));
+                let _ = std::fs::copy(&file, &bad);
+                problems.push(format!(
+                    "{why}; copied to {FILE}.bad, no external engines until the next change"
+                ));
+                (Vec::new(), false)
+            }
         };
         if legacy {
             migrate(setup.store.as_ref(), &mut raws, &mut problems);
@@ -143,7 +187,26 @@ impl Engines {
             gate: Arc::new(Mutex::new(HashMap::new())),
             registries: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
+            seen: Mutex::new(text),
         });
+        let entries = engines.entries_from(raws, Vec::new(), &mut problems);
+        if legacy {
+            if let Err(e) = engines.save(&entries) {
+                problems.push(e.message);
+            }
+        }
+        *engines.lock() = entries;
+        (engines, problems)
+    }
+
+    /// The entries of the file's profiles. An entry of `old` whose stored
+    /// profile is the same is kept as it is (the same engine).
+    fn entries_from(
+        &self,
+        raws: Vec<Value>,
+        mut old: Vec<Entry>,
+        problems: &mut Vec<String>,
+    ) -> Vec<Entry> {
         let mut entries = Vec::new();
         for raw in raws.into_iter().take(MAX_PROFILES) {
             let id = raw
@@ -155,7 +218,15 @@ impl Engines {
                 problems.push(format!("{FILE}: an entry without a unique id was skipped"));
                 continue;
             }
-            let state = match engines.build(&raw) {
+            if let Some(i) = old.iter().position(|e| e.id == id && e.raw == raw) {
+                let kept = old.swap_remove(i);
+                if let State::Invalid(m) = &kept.state {
+                    problems.push(format!("{FILE}: engine '{id}' is not used: {m}"));
+                }
+                entries.push(kept);
+                continue;
+            }
+            let state = match self.build(&raw) {
                 Ok(e) => State::Ready(e),
                 Err(ProfileError::Unsupported { kind, .. }) => {
                     problems.push(format!(
@@ -171,17 +242,124 @@ impl Engines {
             };
             entries.push(Entry { id, raw, state });
         }
-        if legacy {
-            if let Err(e) = engines.save(&entries) {
-                problems.push(e.message);
+        entries
+    }
+
+    /// `engine_reload`: read `engines.json` again, the only way a `command`
+    /// profile reaches a running runtime. It takes nothing from the
+    /// request. An unchanged profile keeps its engine; a changed one is
+    /// replaced in the registries, a gone or unusable one unregistered.
+    /// A file that is not JSON changes nothing.
+    pub fn reload(&self) -> Result<Reloaded, Failure> {
+        let mut out = Reloaded::default();
+        let mut entries = self.lock();
+        let text = read_text(&self.file);
+        let (raws, _) =
+            parse_file(text.as_deref()).map_err(|why| bad(format!("{why}; nothing changed")))?;
+        // An edit of the file is an edit path too (spec 6.4): a key whose
+        // origin is no longer its entry's is deleted. A reload never binds
+        // a key (only the migration at start does).
+        for raw in &raws {
+            self.drop_key_bound_elsewhere(raw);
+        }
+        *self.seen() = text;
+        let old: Vec<Entry> = entries.drain(..).collect();
+        let before: Vec<(String, Arc<External>)> = old
+            .iter()
+            .filter_map(|e| match &e.state {
+                State::Ready(x) => Some((e.id.clone(), x.clone())),
+                _ => None,
+            })
+            .collect();
+        let next = self.entries_from(raws, old, &mut out.problems);
+        *entries = next;
+        let now: Vec<(String, Arc<External>)> = entries
+            .iter()
+            .filter_map(|e| match &e.state {
+                State::Ready(x) => Some((e.id.clone(), x.clone())),
+                _ => None,
+            })
+            .collect();
+        drop(entries);
+        let registries = self.registries();
+        for (id, x) in &before {
+            match now.iter().find(|(i, _)| i == id) {
+                Some((_, y)) if Arc::ptr_eq(x, y) => {}
+                Some((_, y)) => {
+                    x.cancel();
+                    for r in &registries {
+                        let _ = r.replace(y.clone());
+                    }
+                    out.changed.push(id.clone());
+                }
+                None => {
+                    x.cancel();
+                    for r in &registries {
+                        let _ = r.unregister(id);
+                    }
+                    out.changed.push(id.clone());
+                }
             }
         }
-        *engines.lock() = entries;
-        (engines, problems)
+        for (id, y) in &now {
+            if !before.iter().any(|(i, _)| i == id) {
+                for r in &registries {
+                    if let Err(e) = r.register(y.clone()) {
+                        self.note(&format!("engine {id}: not registered: {e}"));
+                    }
+                }
+            }
+        }
+        for p in &out.problems {
+            self.note(p);
+        }
+        self.note(&format!(
+            "engine reload engines={} changed={}",
+            self.lock().len(),
+            out.changed.len()
+        ));
+        Ok(out)
     }
 
     fn lock(&self) -> MutexGuard<'_, Vec<Entry>> {
         self.entries.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn seen(&self) -> MutexGuard<'_, Option<String>> {
+        self.seen.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Before a save: take in what was written to the file since it was
+    /// last read or saved (a lost update otherwise). A file that is not
+    /// JSON is refused, never overwritten.
+    /// Delete the stored key of `raw`'s id when it is bound to another
+    /// origin than the entry's (or to none).
+    fn drop_key_bound_elsewhere(&self, raw: &Value) {
+        let Some(id) = raw.get("id").and_then(Value::as_str) else {
+            return;
+        };
+        let store = self.keys.store();
+        if let Ok(Some(k)) = store.get(id) {
+            if k.origin != origin_of(raw) {
+                match store.delete(id) {
+                    Ok(()) => self.note(&format!(
+                        "engine {id}: its key was for another address; deleted"
+                    )),
+                    Err(e) => self.note(&format!("engine {id}: the key could not be deleted: {e}")),
+                }
+            }
+        }
+    }
+
+    fn take_in_file_changes(&self) -> Result<(), Failure> {
+        let changed = *self.seen() != read_text(&self.file);
+        if changed {
+            self.note(&format!(
+                "{FILE} changed on disk; read again before the save"
+            ));
+            self.reload()?;
+        }
+        Ok(())
     }
 
     fn note(&self, line: &str) {
@@ -260,7 +438,9 @@ impl Engines {
             "engines": entries.iter().map(|e| e.raw.clone()).collect::<Vec<_>>(),
         });
         crate::config::write_json(&self.file, &v)
-            .map_err(|e| Failure::new(Code::Engine, format!("cannot save {FILE}: {e}")))
+            .map_err(|e| Failure::new(Code::Engine, format!("cannot save {FILE}: {e}")))?;
+        *self.seen() = read_text(&self.file);
+        Ok(())
     }
 
     /// The profile view of spec 10.1 (never a secret).
@@ -390,6 +570,16 @@ impl Engines {
             Value::Object(m) => m.clone(),
             _ => return Err(bad("'engine' must be an object with the profile")),
         };
+        // First, before any other check: a program is never added over the
+        // protocol, and no reply says whether its path exists.
+        if is_command(engine) {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
+        if let Some(id) = engine.get("id").and_then(Value::as_str) {
+            if self.lock().iter().any(|e| e.id == id && is_command(&e.raw)) {
+                return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+            }
+        }
         if let Some(s) = secret {
             Self::check_secret(s)?;
             match raw.get("key_ref") {
@@ -407,7 +597,12 @@ impl Engines {
                 Some(_) => return Err(bad("this engine has key_ref none: it takes no key")),
             }
         }
-        let profile = match Profile::from_json(&Value::Object(raw)) {
+        let profile = match Profile::from_json(&Value::Object(raw)).and_then(|p| {
+            // A new profile's program must exist now (a stored one whose
+            // program is gone stays and reads with the fallback).
+            p.check_new()?;
+            Ok(p)
+        }) {
             Ok(p) => p,
             Err(ProfileError::Invalid(m)) => return Err(bad(m)),
             Err(ProfileError::Unsupported { kind, .. }) => {
@@ -417,11 +612,19 @@ impl Engines {
                 ))
             }
         };
+        if profile.kind == Kind::Command {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
         let mut stored = profile.to_json();
         let id = profile.id.clone();
         let origin = profile.origin();
+        self.take_in_file_changes()?;
         let mut entries = self.lock();
         let at = entries.iter().position(|e| e.id == id);
+        // Checked again under the lock that saves (a reload in between).
+        if at.is_some_and(|i| is_command(&entries[i].raw)) {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
         match at {
             Some(_) if !replace => {
                 return Err(bad(format!("engine '{id}' exists; send replace: true")))
@@ -511,6 +714,7 @@ impl Engines {
 
     /// `engine_remove` (after the caller moved off it when current).
     pub fn remove(&self, id: &str, forget_key: bool) -> Result<(), Failure> {
+        self.take_in_file_changes()?;
         let mut entries = self.lock();
         let at = entries
             .iter()
@@ -681,7 +885,7 @@ mod tests {
         std::fs::write(
             h.join(FILE),
             r#"{"format": 1, "engines": [
-                {"id": "ca", "kind": "cartesia", "voice": "abc", "key_ref": "credman"},
+                {"id": "ca", "kind": "future-kind", "voice": "abc", "key_ref": "credman"},
                 {"id": "bad", "kind": "openai-compatible", "url": "ftp://x"},
                 {"id": "loc", "kind": "openai-compatible", "url": "http://127.0.0.1:9/v1",
                  "options": {"preset": "kokoro-fastapi"}}]}"#,
@@ -707,7 +911,15 @@ mod tests {
         assert_eq!(views[2]["status"]["status"], "ready");
         assert_eq!(
             list["kinds"],
-            json!(["openai-compatible", "elevenlabs", "azure", "google"])
+            json!([
+                "openai-compatible",
+                "elevenlabs",
+                "azure",
+                "google",
+                "cartesia",
+                "deepgram",
+                "command"
+            ])
         );
         // A new profile with a secret: the file keeps the others and no key.
         e.add(
@@ -719,7 +931,7 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(h.join(FILE)).unwrap();
         assert!(!text.contains("sk-"), "{text}");
-        assert!(text.contains("cartesia") && text.contains("ftp://x"));
+        assert!(text.contains("future-kind") && text.contains("ftp://x"));
         assert_eq!(
             store.get("openai").unwrap().unwrap().expose(),
             "sk-secret-value-1234567890"
@@ -727,6 +939,49 @@ mod tests {
         assert!(reg.get("openai").is_ok());
         let (again, _) = Engines::load(setup(&h, store));
         assert_eq!(again.ids(), vec!["ca", "bad", "loc", "openai"]);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// `sonara engines add` writes engines.json as the user and then
+    /// reloads; a protocol add or remove that saves in between must not
+    /// write its older list over the user's new entry.
+    #[test]
+    fn a_save_never_loses_an_entry_written_to_the_file_meanwhile() {
+        let h = home();
+        let loc = |id: &str| {
+            json!({"id": id, "kind": "openai-compatible",
+                "url": "http://127.0.0.1:9/v1", "options": {"preset": "kokoro-fastapi"}})
+        };
+        let (e, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        let reg = registry();
+        e.attach(reg.clone());
+        e.add(&loc("a"), None, false).unwrap();
+        // The user's own edit (the CLI's write), not yet reloaded.
+        let write_with = |ids: &[&str]| {
+            let engines: Vec<Value> = ids.iter().map(|i| loc(i)).collect();
+            std::fs::write(
+                h.join(FILE),
+                json!({"format": 1, "engines": engines}).to_string(),
+            )
+            .unwrap();
+        };
+        write_with(&["a", "mine"]);
+        e.add(&loc("b"), None, false).unwrap();
+        let (again, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        assert_eq!(again.ids(), vec!["a", "mine", "b"]);
+        assert!(
+            reg.get("mine").is_ok(),
+            "the user's entry is registered too"
+        );
+        write_with(&["a", "mine", "b", "mine2"]);
+        e.remove("a", false).unwrap();
+        let (again, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        assert_eq!(again.ids(), vec!["mine", "b", "mine2"]);
+        // A file the user broke is never overwritten by a protocol save.
+        std::fs::write(h.join(FILE), "{ not json").unwrap();
+        let err = e.add(&loc("c"), None, false).unwrap_err();
+        assert!(err.message.contains("not valid JSON"), "{}", err.message);
+        assert_eq!(std::fs::read_to_string(h.join(FILE)).unwrap(), "{ not json");
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -766,7 +1021,7 @@ mod tests {
             "'kokoro' is a built-in engine"
         );
         assert_eq!(
-            e.add(&json!({"id": "x", "kind": "deepgram"}), None, false)
+            e.add(&json!({"id": "x", "kind": "future-kind"}), None, false)
                 .unwrap_err()
                 .code,
             Code::Unsupported
@@ -806,6 +1061,59 @@ mod tests {
         assert!(store.get("c").unwrap().is_none(), "the key went with it");
         assert!(reg.get("c").is_err());
         assert_eq!(e.remove("c", true).unwrap_err().code, Code::NotFound);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// A stored profile whose program went away stays registered (it reads
+    /// with the fallback until the program is back). A command profile is
+    /// never added through `add` (the protocol): only from the file.
+    #[test]
+    fn command_profiles_come_only_from_the_file() {
+        let h = home();
+        let missing = "C:\\Nope\\sonara-missing-tts.exe";
+        let exe = std::env::current_exe().unwrap().display().to_string();
+        std::fs::write(
+            h.join(FILE),
+            json!({"format": 1, "engines": [
+                {"id": "gone", "kind": "command", "options": {"argv": [missing]}},
+                {"id": "prog", "kind": "command", "options": {"argv": [exe]}}]})
+            .to_string(),
+        )
+        .unwrap();
+        let (e, problems) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        assert!(problems.is_empty(), "{problems:?}");
+        let reg = registry();
+        e.attach(reg.clone());
+        assert!(reg.get("gone").is_ok());
+        for (p, replace) in [
+            (
+                json!({"id": "typo", "kind": "command", "options": {"argv": [missing]}}),
+                false,
+            ),
+            (
+                json!({"id": "prog", "kind": "command", "options": {"argv": [exe]}}),
+                true,
+            ),
+            (
+                json!({"id": "prog", "kind": "openai-compatible",
+                    "url": "http://127.0.0.1:9/v1", "key_ref": "none"}),
+                true,
+            ),
+        ] {
+            let err = e.add(&p, None, replace).unwrap_err();
+            assert_eq!(err.code, Code::Forbidden, "{p}");
+        }
+        assert_eq!(e.ids(), vec!["gone", "prog"]);
+        let list = e.list("prog");
+        let view = &list["engines"].as_array().unwrap()[1];
+        let name = std::path::Path::new(&exe)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(view["sends_text_to"], format!("program {name}"));
+        assert_eq!(view["local"], true);
+        assert_eq!(view["key_ref"], "none");
         let _ = std::fs::remove_dir_all(&h);
     }
 

@@ -14,6 +14,10 @@ pub struct ExtError {
     pub message: String,
     /// A `Retry-After` the provider sent (429, 503).
     pub retry_after: Option<Duration>,
+    /// A request parameter the provider's own error body refused (set by
+    /// `map_error`, read by `Adapter::adapt`; never from the message, which
+    /// also holds the user's label).
+    pub refused_param: Option<&'static str>,
 }
 
 impl ExtError {
@@ -23,6 +27,7 @@ impl ExtError {
             status: None,
             message: clean(&message.into()),
             retry_after: None,
+            refused_param: None,
         }
     }
 

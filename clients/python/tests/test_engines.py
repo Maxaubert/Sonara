@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import struct
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -38,6 +39,7 @@ def test_engine_messages_have_the_wire_shape(home, fake):
         c.voices("kgpu", refresh=True)
         c.engines.remove("kgpu")
         c.engines.remove("kgpu", forget_key=False)
+        c.engines.reload()
     assert _sent(f) == [
         {"type": "engine_list"},
         {"type": "engine_add", "engine": profile},
@@ -50,6 +52,7 @@ def test_engine_messages_have_the_wire_shape(home, fake):
         {"type": "voices", "engine": "kgpu", "refresh": True},
         {"type": "engine_remove", "engine": "kgpu"},
         {"type": "engine_remove", "engine": "kgpu", "forget_key": False},
+        {"type": "engine_reload"},
     ]
 
 
@@ -119,6 +122,13 @@ def test_add_test_and_remove_against_sonarad(home, sonarad, provider):
         assert e.value.code == "E_ENGINE" and e.value.reason == "auth"
         assert c.engines.remove("local")["removed"] == "local"
         assert c.engines.list()["engines"] == []
+        # A program is never added through the SDK (protocol 1.3).
+        program = {"id": "prog", "kind": "command",
+                   "options": {"argv": [sys.executable, "-c", "pass"]}}
+        with pytest.raises(SonaraError) as e:
+            c.engines.add(program)
+        assert e.value.code == "E_FORBIDDEN"
+        assert c.engines.reload()["engines"] == []
     finally:
         pid = c.runtime["pid"]
         c.close()

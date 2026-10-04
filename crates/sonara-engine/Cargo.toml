@@ -18,6 +18,12 @@ external = ["dep:ureq", "dep:serde_json", "dep:windows", "dep:sonara-log", "dep:
 # The deterministic `fake` engine for tests of higher crates.
 test-util = []
 
+# A stand-in speech program for the `command` kind's tests (never shipped).
+[[bin]]
+name = "sonara-fake-tts"
+path = "src/bin/sonara-fake-tts.rs"
+required-features = ["test-util", "external"]
+
 [dependencies]
 thiserror.workspace = true
 # Google's `audioContent` (base64 in JSON); the version ureq already uses.
@@ -36,7 +42,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier", "win-system-proxy"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows-future = { workspace = true, optional = true }
 
 [dev-dependencies]

@@ -1,6 +1,7 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-04 (0.16.0: ElevenLabs, Azure and Google as external speech engines;
+_Last updated: 2026-10-04 (0.17.0: Cartesia, Deepgram and a program of your own as external
+speech engines; 0.16.0: ElevenLabs, Azure and Google as external speech engines;
 0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
@@ -25,8 +26,8 @@ your computer and what, if anything, leaves it.
   recording text. No other file holds session text.
 - With an **external speech engine** you added and selected (opt-in; none by default), the text
   Sonara reads aloud is sent to that engine: to the cloud service you chose (OpenAI,
-  ElevenLabs, Azure AI Speech or Google Cloud Text-to-Speech), or to a speech server on your own
-  PC, which keeps it local. Nothing is sent before
+  ElevenLabs, Azure AI Speech, Google Cloud Text-to-Speech, Cartesia or Deepgram), or to a speech
+  server or a speech program on your own PC, which keeps it local. Nothing is sent before
   you add an engine **and** select it. Its key stays in Windows Credential Manager.
 - It downloads software, never your data: its runtime from Sonara's GitHub releases and the
   Kokoro voice model, once each (see Downloads).
@@ -64,7 +65,11 @@ and receives nothing.
 ## External voices (opt-in)
 
 You can add speech engines that are not part of Sonara: a cloud service (OpenAI, ElevenLabs,
-Azure AI Speech, Google Cloud Text-to-Speech), or a local OpenAI-compatible server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server). Adding
+Azure AI Speech, Google Cloud Text-to-Speech, Cartesia, Deepgram), a local OpenAI-compatible
+server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server), or a speech program you installed
+yourself (kind `command`, for example Piper; you add such a program yourself with `sonara engines
+add <id> --kind command` or in `engines.json`, and no app or web page connected to Sonara can add
+or change one). Adding
 one sends nothing; it is used only once you select it (`sonara engines use <id>`, or `set
 engine` from a client).
 
@@ -72,7 +77,12 @@ engine` from a client).
   sentences it would speak, after its own text rules) goes to that engine, one sentence at a
   time, together with the voice, the speed and the model you set. It goes to the address you
   gave: under the provider's own terms for a cloud service, or to a program on your own PC for a
-  local server (`127.0.0.1`, `localhost`), where it stays on your computer. A voice list
+  local server (`127.0.0.1`, `localhost`), where it stays on your computer. A `command` engine
+  starts the program you named, on your PC, and gives it the sentence (on its standard input or
+  in a temporary file, `%TEMP%\sonara-tts-<n>.txt`, deleted after each sentence; never on its
+  command line); Sonara sends nothing over the network for it, and what the program does with
+  the text is up to that program. Its temporary audio file, if it writes one, is in your
+  `%TEMP%` folder (`sonara-tts-<n>.wav`) and is deleted after each sentence. A voice list
   (`voices` with `refresh`, or the voice picker) asks the same address. The cloud addresses:
 
   | Engine kind | Text goes to | Key sent as |
@@ -81,6 +91,8 @@ engine` from a client).
   | ElevenLabs (`elevenlabs`) | `api.elevenlabs.io` | `xi-api-key` header |
   | Azure AI Speech (`azure`) | `<region>.tts.speech.microsoft.com`, or the endpoint you gave | `Ocp-Apim-Subscription-Key` header |
   | Google Cloud Text-to-Speech (`google`) | `texttospeech.googleapis.com` | `X-goog-api-key` header (with `x-goog-user-project` when you set a project) |
+  | Cartesia (`cartesia`) | `api.cartesia.ai` | `Authorization` header (with the `Cartesia-Version` date) |
+  | Deepgram (`deepgram`) | `api.deepgram.com` (or `api.eu.deepgram.com` when you set it) | `Authorization` header |
 
   Providers may keep what they receive under their terms: ElevenLabs, for example, keeps a
   history of generated speech on your account unless your plan offers zero retention (the
@@ -97,7 +109,8 @@ engine` from a client).
   followed. Requests to a cloud service use your Windows proxy settings, if any; requests to a
   server on your own PC never go through a proxy. A key for a server on your own PC goes to
   whatever program listens on that port, so do not store one for a local server you do not
-  keep running.
+  keep running. A `command` engine that has a key gets it in its environment
+  (`SONARA_ENGINE_KEY`), never as an argument, and only the program it was entered for.
 - **When it fails.** If the engine cannot speak (no key, a refused key, no credit, no network, a
   server problem), Sonara reads that sentence with its built-in voice (Kokoro, else the Windows
   voices) and says once why ("OpenAI cannot be reached. Reading with the built-in voice."). The

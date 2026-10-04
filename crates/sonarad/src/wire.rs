@@ -15,6 +15,9 @@ pub enum Code {
     Busy,
     Engine,
     NotFound,
+    /// Protocol 1.3: a request no protocol client may make (adding or
+    /// changing a `command` engine, which runs a program on this PC).
+    Forbidden,
 }
 
 impl Code {
@@ -28,6 +31,7 @@ impl Code {
             Code::Busy => "E_BUSY",
             Code::Engine => "E_ENGINE",
             Code::NotFound => "E_NOT_FOUND",
+            Code::Forbidden => "E_FORBIDDEN",
         }
     }
 
@@ -38,6 +42,7 @@ impl Code {
             Code::UnknownType | Code::NotFound => 404,
             Code::Busy | Code::Incompatible => 409,
             Code::Engine => 500,
+            Code::Forbidden => 403,
             Code::BadRequest | Code::Unsupported => 400,
         }
     }

@@ -13,6 +13,11 @@
 //! - `azure_live`: `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
 //! - `google_live`: `GOOGLE_TTS_API_KEY` (also the acceptance check of API-key
 //!   auth through `X-goog-api-key`, spec 13.3 item 1)
+//! - `cartesia_live`: `CARTESIA_API_KEY`, `SONARA_LIVE_CARTESIA_VOICE`
+//! - `deepgram_live`: `DEEPGRAM_API_KEY` (also prints whether Deepgram
+//!   applies `speed`, spec 13.3 item 2)
+//! - `command_live`: `SONARA_LIVE_COMMAND` (a JSON argv of a real program of
+//!   your own), optional `SONARA_LIVE_COMMAND_OPTIONS` (a JSON object)
 use serde_json::{json, Value};
 use sonara_engine::external::keys::{KeyResolver, MemoryStore};
 use sonara_engine::external::profile::Profile;
@@ -144,4 +149,76 @@ fn google_live() {
         json!({"id": "google-live", "kind": "google", "voice": "en-US-Chirp3-HD-Kore",
         "key_ref": "env:GOOGLE_TTS_API_KEY"}),
     );
+}
+
+#[test]
+#[ignore]
+fn cartesia_live() {
+    let (Some(_), Some(voice)) = (var("CARTESIA_API_KEY"), var("SONARA_LIVE_CARTESIA_VOICE"))
+    else {
+        println!("skipped: set CARTESIA_API_KEY and SONARA_LIVE_CARTESIA_VOICE (a voice id)");
+        return;
+    };
+    check(
+        json!({"id": "cartesia-live", "kind": "cartesia", "voice": voice,
+        "key_ref": "env:CARTESIA_API_KEY"}),
+    );
+}
+
+/// Also spec 13.3 fact 2: whether Deepgram takes `speed`. A refused speed
+/// is dropped (the synthesis still works), so the two durations say it: at
+/// 250 wpm the audio is shorter than at 200 only when speed was applied.
+#[test]
+#[ignore]
+fn deepgram_live() {
+    if var("DEEPGRAM_API_KEY").is_none() {
+        println!("skipped: set DEEPGRAM_API_KEY");
+        return;
+    }
+    let profile = json!({"id": "deepgram-live", "kind": "deepgram",
+        "voice": "aura-2-thalia-en", "key_ref": "env:DEEPGRAM_API_KEY"});
+    check(profile.clone());
+    let e = External::new(ExternalConfig::new(
+        Profile::from_json(&profile).unwrap(),
+        KeyResolver::new(Arc::new(MemoryStore::new())),
+    ))
+    .unwrap();
+    let len = |wpm| -> usize {
+        e.test("One two three four five six seven eight.", "", wpm)
+            .expect("one synthesis")
+            .pcm
+            .iter()
+            .map(|c| c.samples.len())
+            .sum()
+    };
+    let (normal, fast) = (len(200), len(250));
+    println!(
+        "speed: {normal} samples at 200 wpm, {fast} at 250 wpm: {}",
+        if fast * 10 < normal * 9 {
+            "Deepgram applies speed"
+        } else {
+            "Deepgram ignored or refused speed"
+        }
+    );
+}
+
+/// A real local program of the user's own (for example Piper):
+/// `SONARA_LIVE_COMMAND` is its argv as JSON, `SONARA_LIVE_COMMAND_OPTIONS`
+/// optional further options (`input`, `output`, `sample_rate`, `voices`).
+#[test]
+#[ignore]
+fn command_live() {
+    let Some(argv) = var("SONARA_LIVE_COMMAND") else {
+        println!("skipped: set SONARA_LIVE_COMMAND (a JSON argv such as [\"C:\\piper\\piper.exe\", ...])");
+        return;
+    };
+    let argv: Value = serde_json::from_str(&argv).expect("SONARA_LIVE_COMMAND is a JSON array");
+    let mut options = json!({"argv": argv});
+    if let Some(more) = var("SONARA_LIVE_COMMAND_OPTIONS") {
+        let more: Value = serde_json::from_str(&more).expect("a JSON object");
+        for (k, v) in more.as_object().expect("a JSON object") {
+            options[k] = v.clone();
+        }
+    }
+    check(json!({"id": "command-live", "kind": "command", "options": options}));
 }

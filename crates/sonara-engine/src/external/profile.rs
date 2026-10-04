@@ -51,10 +51,9 @@ impl Kind {
     /// Whether this build implements the kind (a profile of another kind is
     /// kept in `engines.json` and listed, not registered).
     pub fn implemented(&self) -> bool {
-        matches!(
-            self,
-            Kind::OpenAiCompatible | Kind::ElevenLabs | Kind::Azure | Kind::Google
-        )
+        // Every kind of `ALL` since PR3 (#226); a name this build does not
+        // know is not a `Kind` at all, so it stays unsupported.
+        true
     }
 
     /// Spoken in cues and shown when a profile has no label.
@@ -84,6 +83,23 @@ pub const AZURE_FORMATS: &[(&str, u32)] = &[
     ("raw-44100hz-16bit-mono-pcm", 44_100),
     ("raw-48khz-16bit-mono-pcm", 48_000),
 ];
+
+/// Cartesia's default model and API version (spec 5.4; the API pins its
+/// behaviour to the version date).
+pub const CARTESIA_MODEL: &str = "sonic-3.6";
+pub const CARTESIA_VERSION: &str = "2026-08-14";
+/// Cartesia's raw PCM rates.
+pub const CARTESIA_RATES: &[u64] = &[8_000, 16_000, 22_050, 24_000, 44_100, 48_000];
+/// Deepgram's `linear16` rates.
+pub const DEEPGRAM_RATES: &[u64] = &[8_000, 16_000, 24_000, 32_000, 48_000];
+/// At most this many `argv` entries and voices of a `command` profile.
+pub const COMMAND_MAX_ARGS: usize = 64;
+pub const COMMAND_MAX_VOICES: usize = 200;
+
+/// The file name of a program path (`C:\Tools\tts.exe` gives `tts.exe`).
+pub fn program_name(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
 
 /// The locale a voice name starts with: `en-US-AvaMultilingualNeural` and
 /// `en-US-Chirp3-HD-Kore` give `en-US`; a name without one gives `None`.
@@ -416,6 +432,15 @@ pub fn default_base(kind: Kind, options: &Map<String, Value>) -> Option<String> 
 /// this build or not: its `url`, else the kind's default (`default_base`).
 /// `None` when it has no valid address.
 pub fn origin_of(raw: &Value) -> Option<String> {
+    if raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str()) {
+        return raw
+            .get("options")
+            .and_then(|o| o.get("argv"))
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
+            .map(command_origin);
+    }
     let url = raw
         .get("url")
         .and_then(Value::as_str)
@@ -433,6 +458,13 @@ pub fn origin_of(raw: &Value) -> Option<String> {
     Url::parse(url.trim_end_matches('/'))
         .ok()
         .map(|u| u.origin())
+}
+
+/// What a `command` profile's key is bound to: its program, in lower case
+/// (Windows paths ignore case), not its arguments. The key goes only into
+/// that program's environment (spec 6.4).
+pub fn command_origin(program: &str) -> String {
+    format!("command:{}", program.to_lowercase())
 }
 
 /// `localhost`, `127.0.0.0/8` or `::1`.
@@ -506,6 +538,12 @@ const ELEVENLABS_OPTIONS: &[&str] = &[
 const AZURE_OPTIONS: &[&str] = &["region", "output_format", "lang"];
 /// Options of `google`.
 const GOOGLE_OPTIONS: &[&str] = &["language_code", "sample_rate", "user_project", "model_name"];
+/// Options of `cartesia`.
+const CARTESIA_OPTIONS: &[&str] = &["api_version", "language", "sample_rate"];
+/// Options of `deepgram`.
+const DEEPGRAM_OPTIONS: &[&str] = &["sample_rate"];
+/// Options of `command`.
+const COMMAND_OPTIONS: &[&str] = &["argv", "input", "output", "sample_rate", "voices"];
 /// Options of `openai-compatible`.
 const OPENAI_OPTIONS: &[&str] = &[
     "preset",
@@ -741,17 +779,75 @@ impl Profile {
             Kind::Azure if self.url.is_none() && self.option_str("region").is_none() => {
                 return Err(invalid("kind 'azure' needs options.region or url"));
             }
-            Kind::Azure | Kind::Google if self.model.is_some() => {
-                let hint = if self.kind == Kind::Google {
-                    " (a Gemini TTS model goes in options.model_name)"
-                } else {
-                    ""
+            Kind::Cartesia if self.voice.is_none() => {
+                return Err(invalid(
+                    "kind 'cartesia' needs a voice (a voice id from your Cartesia library)",
+                ));
+            }
+            Kind::Deepgram if self.voice.is_none() => {
+                return Err(invalid(
+                    "kind 'deepgram' needs a voice (a model such as aura-2-thalia-en)",
+                ));
+            }
+            Kind::Azure | Kind::Google | Kind::Deepgram | Kind::Command if self.model.is_some() => {
+                let hint = match self.kind {
+                    Kind::Google => " (a Gemini TTS model goes in options.model_name)",
+                    Kind::Deepgram => " (the voice is the model, such as aura-2-thalia-en)",
+                    _ => "",
                 };
                 return Err(invalid(format!("kind '{kind}' takes no model{hint}")));
+            }
+            Kind::Command if self.url.is_some() => {
+                return Err(invalid(
+                    "kind 'command' takes no url (the program goes in options.argv)",
+                ));
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// The checks of a profile being added (not one loaded from
+    /// `engines.json`): a `command` program must exist now, so a typo is
+    /// caught at once, while a stored profile whose program is gone stays
+    /// registered and reads with the fallback (`bad_config`) until it is
+    /// back.
+    pub fn check_new(&self) -> Result<(), ProfileError> {
+        if let Some(program) = self.command_program() {
+            if !std::path::Path::new(program).is_file() {
+                return Err(invalid(format!("the program '{program}' does not exist")));
+            }
+        }
+        Ok(())
+    }
+
+    /// `options.argv` of a `command` profile (empty for other kinds).
+    pub fn command_argv(&self) -> Vec<String> {
+        if self.kind != Kind::Command {
+            return Vec::new();
+        }
+        self.options
+            .get("argv")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The program of a `command` profile (`argv[0]`).
+    pub fn command_program(&self) -> Option<&str> {
+        if self.kind != Kind::Command {
+            return None;
+        }
+        self.options
+            .get("argv")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
     }
 
     fn validate_options(&self) -> Result<(), ProfileError> {
@@ -761,7 +857,9 @@ impl Profile {
             Kind::ElevenLabs => ELEVENLABS_OPTIONS,
             Kind::Azure => AZURE_OPTIONS,
             Kind::Google => GOOGLE_OPTIONS,
-            _ => &[],
+            Kind::Cartesia => CARTESIA_OPTIONS,
+            Kind::Deepgram => DEEPGRAM_OPTIONS,
+            Kind::Command => COMMAND_OPTIONS,
         };
         if let Some(k) = o
             .keys()
@@ -820,7 +918,155 @@ impl Profile {
                 }
             }
         }
-        self.validate_cloud_options()
+        self.validate_cloud_options()?;
+        self.validate_more_options()
+    }
+
+    /// The options of `cartesia`, `deepgram` and `command` (spec 5.4).
+    fn validate_more_options(&self) -> Result<(), ProfileError> {
+        let o = &self.options;
+        let rate_in = |rates: &[u64]| -> Result<(), ProfileError> {
+            match o.get("sample_rate") {
+                None => Ok(()),
+                Some(v) if v.as_u64().is_some_and(|r| rates.contains(&r)) => Ok(()),
+                Some(_) => {
+                    let all: Vec<String> = rates.iter().map(u64::to_string).collect();
+                    Err(invalid(format!(
+                        "option 'sample_rate' must be one of {}",
+                        all.join(", ")
+                    )))
+                }
+            }
+        };
+        match self.kind {
+            Kind::Cartesia => {
+                word(
+                    o,
+                    "api_version",
+                    10,
+                    |c| c.is_ascii_digit() || c == '-',
+                    "a date such as 2026-08-14",
+                )?;
+                word(o, "language", 16, lang_char, "a language code such as en")?;
+                rate_in(CARTESIA_RATES)?;
+            }
+            Kind::Deepgram => rate_in(DEEPGRAM_RATES)?,
+            Kind::Command => self.validate_command()?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// `argv`, `input`, `output`, `sample_rate` and `voices` of `command`.
+    fn validate_command(&self) -> Result<(), ProfileError> {
+        let o = &self.options;
+        let argv = match o.get("argv") {
+            Some(Value::Array(a)) if !a.is_empty() => a,
+            _ => {
+                return Err(invalid(
+                    "kind 'command' needs options.argv: the full path of the program \
+                     (an .exe) and its arguments",
+                ))
+            }
+        };
+        if argv.len() > COMMAND_MAX_ARGS {
+            return Err(invalid(format!(
+                "option 'argv' has more than {COMMAND_MAX_ARGS} entries"
+            )));
+        }
+        let mut args = Vec::with_capacity(argv.len());
+        for a in argv {
+            match a.as_str() {
+                Some(s) if s.chars().count() <= 1000 && !s.contains('\0') => args.push(s),
+                _ => {
+                    return Err(invalid(
+                        "option 'argv' must be a list of texts of at most 1000 characters",
+                    ))
+                }
+            }
+        }
+        let program = std::path::Path::new(args[0]);
+        if !program.is_absolute() || args[0].contains('{') {
+            return Err(invalid(format!(
+                "argv[0] '{}' must be the full path of the program, such as C:\\Tools\\tts.exe",
+                args[0]
+            )));
+        }
+        let exe = program
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("exe"));
+        if !exe {
+            return Err(invalid(format!(
+                "argv[0] '{}' must be an .exe (a .bat or .cmd runs through the command \
+                 shell, which would read the text as commands)",
+                args[0]
+            )));
+        }
+        let has = |p: &str| args[1..].iter().any(|a| a.contains(p));
+        // The text read is never put on the command line (security review
+        // of PR3): it goes on stdin or in a temporary file at {in}.
+        if has("{text}") {
+            return Err(invalid(
+                "{text} is not allowed in argv: the text is never put on the command line; \
+                 the program reads it on stdin (option input 'stdin', the default) or from \
+                 the file at {in} (option input 'file')",
+            ));
+        }
+        let input = o.get("input").map(|v| v.as_str().unwrap_or_default());
+        match input {
+            None | Some("stdin") => {}
+            Some("file") if has("{in}") => {}
+            Some("file") => return Err(invalid(
+                "option input 'file' needs {in} in argv (the UTF-8 text file the program reads)",
+            )),
+            Some(_) => return Err(invalid("option 'input' must be \"stdin\" or \"file\"")),
+        }
+        if input != Some("file") && has("{in}") {
+            return Err(invalid("{in} in argv needs option input 'file'"));
+        }
+        let output = o.get("output").map(|v| v.as_str().unwrap_or_default());
+        match output {
+            None | Some("stdout-wav") => {}
+            Some("stdout-pcm") if o.contains_key("sample_rate") => {}
+            Some("stdout-pcm") => {
+                return Err(invalid(
+                    "option output 'stdout-pcm' needs options.sample_rate (the program's rate)",
+                ))
+            }
+            Some("file") if has("{out}") => {}
+            Some("file") => {
+                return Err(invalid(
+                    "option output 'file' needs {out} in argv (the WAV file the program writes)",
+                ))
+            }
+            Some(_) => {
+                return Err(invalid(
+                    "option 'output' must be \"stdout-wav\", \"stdout-pcm\" or \"file\"",
+                ))
+            }
+        }
+        if output != Some("file") && has("{out}") {
+            return Err(invalid("{out} in argv needs option output 'file'"));
+        }
+        int_in(o, "sample_rate", 8000..=48_000)?;
+        if let Some(v) = o.get("voices") {
+            let list = v
+                .as_array()
+                .filter(|a| a.len() <= COMMAND_MAX_VOICES)
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "option 'voices' must be a list of at most {COMMAND_MAX_VOICES} voice names"
+                    ))
+                })?;
+            for item in list {
+                match item.as_str() {
+                    Some(s) if !s.is_empty() => plain_text("voices", s, 200)?,
+                    _ => return Err(invalid("option 'voices' must be a list of voice names")),
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The options of `elevenlabs`, `azure` and `google` (spec 5.4).
@@ -931,14 +1177,23 @@ impl Profile {
 
     /// The origin requests go to (`scheme://host:port`), what a stored key
     /// must be bound to (spec 6.4).
+    /// For a `command`, its program (`command_origin`).
     pub fn origin(&self) -> Option<String> {
+        if self.kind == Kind::Command {
+            return self.command_program().map(command_origin);
+        }
         self.parsed_url().map(|u| u.origin())
     }
 
     /// The origin of the provider itself (the kind's or preset's default
     /// address, never the profile's `url`): an `env:` key may always go
     /// there.
+    /// A `command`'s is its program: it comes only from the local file,
+    /// never over the protocol.
     pub fn default_origin(&self) -> Option<String> {
+        if self.kind == Kind::Command {
+            return self.origin();
+        }
         default_base(self.kind, &self.options)
             .and_then(|u| Url::parse(u.trim_end_matches('/')).ok())
             .map(|u| u.origin())
@@ -948,6 +1203,7 @@ impl Profile {
         self.model.clone().or_else(|| match self.kind {
             Kind::OpenAiCompatible => self.preset().default_model().map(str::to_string),
             Kind::ElevenLabs => Some(ELEVENLABS_MODEL.into()),
+            Kind::Cartesia => Some(CARTESIA_MODEL.into()),
             _ => None,
         })
     }
@@ -980,9 +1236,13 @@ impl Profile {
         self.kind == Kind::Command || self.parsed_url().is_some_and(|u| u.is_loopback())
     }
 
-    /// `sends_text_to` of the profile view (spec 10.1).
+    /// `sends_text_to` of the profile view (spec 10.1): the host, or for a
+    /// command `program <file name>` (never its folder or arguments).
     pub fn sends_text_to(&self) -> String {
-        self.host()
+        match self.command_program() {
+            Some(p) => format!("program {}", program_name(p)),
+            None => self.host(),
+        }
     }
 
     /// Request timeout (spec 5.4 common options).
@@ -1252,25 +1512,163 @@ mod tests {
     #[test]
     fn unknown_kinds_are_unsupported_not_invalid() {
         assert_eq!(
-            parse(json!({"id": "ca", "kind": "cartesia", "voice": "x"})),
+            parse(json!({"id": "fu", "kind": "future-kind", "voice": "x"})),
             Err(ProfileError::Unsupported {
-                id: "ca".into(),
-                kind: "cartesia".into()
+                id: "fu".into(),
+                kind: "future-kind".into()
             })
         );
-        assert!(matches!(
-            parse(json!({"id": "x", "kind": "future-kind"})),
-            Err(ProfileError::Unsupported { .. })
-        ));
+        assert_eq!(implemented_kinds(), Kind::ALL.to_vec());
+    }
+
+    #[test]
+    fn cartesia_profiles() {
+        let ca = |extra: Value| {
+            with(
+                json!({"id": "ca", "kind": "cartesia",
+                    "voice": "a0e99841-438c-4a64-b679-ae501e7d6091"}),
+                extra,
+            )
+        };
+        let p = parse(ca(json!({}))).unwrap();
+        assert_eq!(p.base_url().as_deref(), Some("https://api.cartesia.ai"));
+        assert_eq!(p.effective_model().as_deref(), Some("sonic-3.6"));
+        assert_eq!(p.key_ref, KeyRef::CredMan);
+        assert_eq!(p.display_label(), "Cartesia");
+        assert_eq!(p.sends_text_to(), "api.cartesia.ai");
+        assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
+        assert!(err(json!({"id": "ca", "kind": "cartesia"})).contains("needs a voice"));
+        assert!(parse(ca(json!({"model": "sonic-2", "options": {
+            "api_version": "2025-04-16", "language": "de", "sample_rate": 44100}})))
+        .is_ok());
+        for (opts, msg) in [
+            (json!({"api_version": "latest"}), "api_version"),
+            (json!({"language": "e n"}), "language"),
+            (json!({"sample_rate": 12000}), "sample_rate"),
+            (
+                json!({"region": "x"}),
+                "unknown option 'region' for kind 'cartesia'",
+            ),
+        ] {
+            assert!(err(ca(json!({"options": opts}))).contains(msg), "{opts}");
+        }
+    }
+
+    #[test]
+    fn deepgram_profiles() {
+        let dg = |extra: Value| {
+            with(
+                json!({"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en"}),
+                extra,
+            )
+        };
+        let p = parse(dg(json!({}))).unwrap();
+        assert_eq!(p.base_url().as_deref(), Some("https://api.deepgram.com"));
+        assert_eq!(p.effective_model(), None);
+        assert_eq!(p.key_ref, KeyRef::CredMan);
+        assert_eq!(p.display_label(), "Deepgram");
+        let eu = parse(dg(json!({"url": "https://api.eu.deepgram.com"}))).unwrap();
+        assert_eq!(eu.sends_text_to(), "api.eu.deepgram.com");
+        assert!(err(json!({"id": "dg", "kind": "deepgram"})).contains("needs a voice"));
+        assert!(err(dg(json!({"model": "aura-2"}))).contains("the voice is the model"));
+        assert!(parse(dg(json!({"options": {"sample_rate": 48000}}))).is_ok());
+        assert!(err(dg(json!({"options": {"sample_rate": 22050}}))).contains("sample_rate"));
+    }
+
+    fn exe() -> String {
+        // A real .exe that exists on every Windows (check_new).
+        std::env::var("SystemRoot")
+            .map(|r| format!("{r}\\System32\\whoami.exe"))
+            .unwrap_or_else(|_| "C:\\Windows\\System32\\whoami.exe".into())
+    }
+
+    #[test]
+    fn command_profiles() {
+        let cmd = |options: Value| json!({"id": "cmd", "kind": "command", "options": options});
+        let p = parse(cmd(json!({"argv": [exe(), "--voice", "{voice}"],
+            "voices": ["amy", "joe"]})))
+        .unwrap();
+        assert_eq!(p.key_ref, KeyRef::None, "a program needs no key by default");
+        assert_eq!(p.sends_text_to(), "program whoami.exe");
+        assert_eq!(p.host(), "");
+        assert!(p.is_local());
+        assert_eq!((p.timeout_ms(), p.prefetch()), (30_000, 1));
+        assert_eq!(p.display_label(), "The speech program");
         assert_eq!(
-            implemented_kinds(),
-            vec![
-                Kind::OpenAiCompatible,
-                Kind::ElevenLabs,
-                Kind::Azure,
-                Kind::Google
-            ]
+            p.command_argv(),
+            vec![exe(), "--voice".into(), "{voice}".into()]
         );
+        assert!(p.check_new().is_ok());
+        let gone = parse(cmd(json!({"argv": ["C:\\Nope\\missing-tts.exe"]}))).unwrap();
+        assert_eq!(
+            gone.check_new(),
+            Err(ProfileError::Invalid(
+                "the program 'C:\\Nope\\missing-tts.exe' does not exist".into()
+            ))
+        );
+        for (opts, msg) in [
+            (json!({}), "needs options.argv"),
+            (json!({"argv": []}), "needs options.argv"),
+            (json!({"argv": "tts.exe"}), "needs options.argv"),
+            (json!({"argv": ["tts.exe"]}), "full path"),
+            (json!({"argv": ["{text}.exe"]}), "full path"),
+            (json!({"argv": ["C:\\Tools\\say.bat"]}), "must be an .exe"),
+            (json!({"argv": ["C:\\Tools\\say.cmd"]}), "must be an .exe"),
+            (json!({"argv": ["C:\\Tools\\tts.exe", 3]}), "list of texts"),
+            // The text never goes on the command line (security review of
+            // PR3): stdin, or a temporary file at {in}.
+            (
+                json!({"argv": [exe(), "--say", "{text}"]}),
+                "{text} is not allowed",
+            ),
+            (
+                json!({"argv": [exe(), "--say={text}"], "input": "arg"}),
+                "{text} is not allowed",
+            ),
+            (json!({"argv": [exe()], "input": "arg"}), "'input'"),
+            (json!({"argv": [exe()], "input": "pipe"}), "'input'"),
+            (json!({"argv": [exe()], "input": "file"}), "needs {in}"),
+            (
+                json!({"argv": [exe(), "{in}"]}),
+                "needs option input 'file'",
+            ),
+            (json!({"argv": [exe()], "output": "file"}), "needs {out}"),
+            (
+                json!({"argv": [exe(), "{out}"]}),
+                "needs option output 'file'",
+            ),
+            (
+                json!({"argv": [exe()], "output": "stdout-pcm"}),
+                "sample_rate",
+            ),
+            (json!({"argv": [exe()], "output": "mp3"}), "'output'"),
+            (json!({"argv": [exe()], "voices": "amy"}), "voices"),
+            (json!({"argv": [exe()], "voices": [""]}), "voices"),
+            (
+                json!({"argv": [exe()], "preset": "x"}),
+                "unknown option 'preset'",
+            ),
+        ] {
+            assert!(err(cmd(opts.clone())).contains(msg), "{opts}");
+        }
+        let many: Vec<String> = (0..65).map(|_| exe()).collect();
+        assert!(err(cmd(json!({"argv": many}))).contains("more than 64"));
+        assert!(
+            parse(cmd(json!({"argv": [exe(), "-t", "{in}", "-o", "{out}"],
+            "input": "file", "output": "file"})))
+            .is_ok()
+        );
+        assert!(parse(cmd(json!({"argv": [exe()], "output": "stdout-pcm",
+            "sample_rate": 22050})))
+        .is_ok());
+        let mut v = cmd(json!({"argv": [exe()]}));
+        v["url"] = json!("http://127.0.0.1:1");
+        assert!(err(v).contains("takes no url"));
+        let mut v = cmd(json!({"argv": [exe()]}));
+        v["model"] = json!("m");
+        assert!(err(v).contains("takes no model"));
+        assert_eq!(program_name("C:\\Tools\\piper\\piper.exe"), "piper.exe");
+        assert_eq!(program_name("/x/y.exe"), "y.exe");
     }
 
     #[test]
@@ -1321,6 +1719,12 @@ mod tests {
             Some("https://api.eu.deepgram.com:443")
         );
         assert_eq!(o(json!({"kind": "command"})), None);
+        assert_eq!(
+            o(json!({"kind": "command", "options": {"argv": ["C:\\Tools\\TTS.exe", "-v"]}}))
+                .as_deref(),
+            Some("command:c:\\tools\\tts.exe"),
+            "a command is bound to its program"
+        );
         assert_eq!(
             o(json!({"kind": "openai-compatible", "url": "ftp://x"})),
             None

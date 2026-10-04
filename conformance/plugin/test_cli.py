@@ -2,7 +2,9 @@
 uninstall commands, against temporary homes and the fake engine."""
 from __future__ import annotations
 
+import json
 import re
+import sys
 import urllib.request
 
 import pytest
@@ -97,3 +99,28 @@ def test_uninstall_refuses_an_unknown_keep_item(cli):
     p = cli("uninstall", "--keep", "everything")
     assert p.returncode == 2
     assert "unknown --keep item" in p.stderr
+
+
+def test_engines_add_command_writes_engines_json_and_the_runtime_reloads(box, cli):
+    """A program is never sent over the protocol (sonarad refuses it): the
+    CLI writes engines.json as the user, then asks for engine_reload."""
+    argv = [sys.executable, "-c", "pass", "a & b | c > d %PATH%"]
+    p = cli("engines", "add", "say", "--kind", "command", "--option", f"argv={json.dumps(argv)}")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "Added say: it runs on this PC" in p.stdout
+    stored = json.loads((box.home / "engines.json").read_text(encoding="utf-8"))
+    assert stored["engines"][0]["options"]["argv"] == argv, "stored literally"
+    p = cli("engines", "list")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "say (" in p.stdout and "runs on this PC" in p.stdout
+    p = cli("engines", "add", "say", "--kind", "command", "--option", f"argv={json.dumps(argv)}")
+    assert p.returncode == 1 and "exists; add --replace" in p.stderr
+    # An entry the runtime cannot use is taken out of the file again.
+    bad = [sys.executable, "{in}"]
+    p = cli("engines", "add", "bad", "--kind", "command", "--option", f"argv={json.dumps(bad)}")
+    assert p.returncode == 1, p.stdout
+    assert "needs option input 'file'" in p.stderr
+    stored = json.loads((box.home / "engines.json").read_text(encoding="utf-8"))
+    assert [e["id"] for e in stored["engines"]] == ["say"]
+    p = cli("engines", "remove", "say")
+    assert p.returncode == 0, p.stdout + p.stderr

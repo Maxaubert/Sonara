@@ -39,6 +39,7 @@ describe("engines", () => {
     await client.voices("kgpu", { refresh: true });
     await client.engines.remove("kgpu");
     await client.engines.remove("kgpu", { forgetKey: false });
+    await client.engines.reload();
     const sent = fake.requests().slice(1).map(({ id, ...rest }) => rest);
     assert.deepEqual(sent, [
       { type: "engine_list" },
@@ -52,6 +53,7 @@ describe("engines", () => {
       { type: "voices", engine: "kgpu", refresh: true },
       { type: "engine_remove", engine: "kgpu" },
       { type: "engine_remove", engine: "kgpu", forget_key: false },
+      { type: "engine_reload" },
     ]);
   });
 });
