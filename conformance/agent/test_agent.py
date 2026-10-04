@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from harness import long_text
 
 LONG = long_text(1)
@@ -499,6 +501,66 @@ def test_flush_stops_only_the_session_being_read(rt):
     assert starts_long(heard(c, 1)[0], "a")
     r = ok(c, {"type": "control", "action": "flush"})
     assert (r["flushed"], r["channel"]) == ("channel", "a")
+    quiet(c)
+    stream(c, "b", " Done now.", final=True)
+    ok(c, {"type": "turn_end", "channel": "b"})
+    assert heard(c, 2) == [("Beta still arriving.", "b"), ("Done now.", "b")]
+
+
+# -- flush scope (#228, 2026-10-04) ------------------------------------------
+
+
+def test_flush_scope_is_set_and_got_and_refuses_other_values(rt):
+    c = rt.tcp(extensions=["agent"])
+    assert ok(c, {"type": "get", "key": "flush_scope"})["value"] == "session"
+    for scope in ("all", "session"):
+        assert ok(c, {"type": "set", "key": "flush_scope", "value": scope})["value"] == scope
+        assert ok(c, {"type": "get", "key": "flush_scope"})["value"] == scope
+    for bad in ("everything", 1, None):
+        r = c.request({"type": "set", "key": "flush_scope", "value": bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", bad
+
+
+def test_flush_skips_the_rest_of_the_flushed_reply_but_reads_its_question(rt):
+    c = agent_client(rt, policy="all")
+    ok(c, {"type": "channel_open", "channel": "a"})
+    ok(c, {"type": "turn_start", "channel": "a"})
+    stream(c, "a", LONG)
+    assert starts_long(heard(c, 1)[0], "a")
+    r = ok(c, {"type": "control", "action": "flush"})
+    assert (r["flushed"], r["scope"], r["others"]) == ("channel", "session", [])
+    quiet(c)
+    stream(c, "a", "Skipped too.", index=1)
+    quiet(c)
+    ok(c, {"type": "ask", "channel": "a", "kind": "question", "text": "Deploy now?"})
+    assert heard(c, 1)[0][1] == "a"
+    ok(c, {"type": "turn_start", "channel": "a"})
+    stream(c, "a", "Next reply.")
+    assert heard(c, 1) == [("Next reply.", "a")]
+
+
+@pytest.mark.parametrize("scope", ["session", "all"])
+def test_flush_keeps_a_reply_another_session_is_still_writing(rt, scope):
+    # #228, the incident, in both scopes.
+    c = agent_client(rt, policy="all")
+    for ch in ("a", "b", "z"):
+        ok(c, {"type": "channel_open", "channel": ch})
+    ok(c, {"type": "set", "key": "read_mode", "value": "done"})
+    ok(c, {"type": "set", "key": "flush_scope", "value": scope})
+    ok(c, {"type": "turn_start", "channel": "b"})
+    stream(c, "b", "Beta still arriving.", final=False)
+    stream(c, "a", LONG)
+    ok(c, {"type": "turn_end", "channel": "a"})
+    stream(c, "z", "Zeta finished.")
+    ok(c, {"type": "turn_end", "channel": "z"})
+    assert starts_long(heard(c, 1)[0], "a")
+    r = ok(c, {"type": "control", "action": "flush"})
+    assert (r["flushed"], r["channel"], r["scope"]) == ("channel", "a", scope)
+    if scope == "all":
+        assert r["others"] == ["z"]
+    else:
+        assert r["others"] == []
+        assert heard(c, 1) == [("Zeta finished.", "z")]
     quiet(c)
     stream(c, "b", " Done now.", final=True)
     ok(c, {"type": "turn_end", "channel": "b"})

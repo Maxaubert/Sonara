@@ -1,7 +1,7 @@
 //! The `agent` extension (spec 4.3) on top of `sonara_agent`: `stream`,
 //! `turn_start`, `turn_end`, `ask`, `earcon`, `tool`, `answered`, the
 //! settings `mute_level`, `verbosity`, `read_mode`, `minqueue`,
-//! `background_policy` and
+//! `background_policy`, `flush_scope` and
 //! `summaries`, the read-only key `earcons` (the custom earcons folder and
 //! the kinds it overrides), and the `earcons` event stream. It needs
 //! `channels`, which enabling it enables too. `protocol` calls in here once a client enabled it; before that its
@@ -10,7 +10,9 @@ use crate::config::Store;
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_agent::settings::{BackgroundPolicy, ReadMode, Settings, SummaryCommand, Verbosity};
+use sonara_agent::settings::{
+    BackgroundPolicy, FlushScope, ReadMode, Settings, SummaryCommand, Verbosity,
+};
 use sonara_agent::summarizer::instruction;
 use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Style, SummarySettings};
 use std::collections::BTreeMap;
@@ -39,6 +41,7 @@ pub const KEYS: &[&str] = &[
     "read_mode",
     "minqueue",
     "background_policy",
+    "flush_scope",
     "summaries",
     "earcons",
 ];
@@ -337,6 +340,13 @@ pub fn settings_from(store: &Store) -> Settings {
     {
         s.background = p;
     }
+    if let Some(f) = store
+        .value("flush_scope")
+        .as_str()
+        .and_then(FlushScope::parse)
+    {
+        s.flush_scope = f;
+    }
     if let Ok(merged) = merge_summaries(s.summaries.clone(), &Value::Object(store.summaries())) {
         s.summaries = merged;
     }
@@ -384,6 +394,13 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
                     .ok_or_else(|| bad("'background_policy' is \"all\" or \"earcon_only\""))?;
                 a.set_background_policy(p).map_err(failure)?;
             }
+            "flush_scope" => {
+                let f = v
+                    .as_str()
+                    .and_then(FlushScope::parse)
+                    .ok_or_else(|| bad("'flush_scope' is \"session\" or \"all\""))?;
+                a.set_flush_scope(f);
+            }
             _ => {
                 let mut merged = merge_summaries(a.settings().summaries, v)?;
                 let prompts = merge_prompts(store.prompts(), v, merged.style)?;
@@ -413,6 +430,7 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
         "read_mode" => json!(s.read_mode.as_str()),
         "minqueue" => json!(s.minqueue),
         "background_policy" => json!(s.background.as_str()),
+        "flush_scope" => json!(s.flush_scope.as_str()),
         "earcons" => earcons_json(a.earcons()),
         _ => summaries_json(&s.summaries, &store.prompts()),
     };
@@ -535,6 +553,8 @@ mod tests {
             json!({"type": "set", "key": "minqueue", "value": 11}),
             json!({"type": "set", "key": "read_mode", "value": "later"}),
             json!({"type": "set", "key": "read_mode", "value": 2}),
+            json!({"type": "set", "key": "flush_scope", "value": "everything"}),
+            json!({"type": "set", "key": "flush_scope", "value": true}),
             json!({"type": "set", "key": "background_policy", "value": "silent"}),
             json!({"type": "set", "key": "summaries", "value": {"timeout": 5}}),
             json!({"type": "set", "key": "summaries", "value": {"style": "long"}}),
@@ -644,6 +664,8 @@ mod tests {
             ("read_mode", json!("immediate")),
             ("read_mode", json!("queue")),
             ("read_mode", json!("done")),
+            ("flush_scope", json!("all")),
+            ("flush_scope", json!("session")),
             ("background_policy", json!("all")),
             ("background_policy", json!("earcon_only")),
         ] {

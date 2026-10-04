@@ -5,8 +5,8 @@
 //! gets a new turn, decisions read with priority, earcons and mute levels.
 use sonara_agent::earcon::Library;
 use sonara_agent::{
-    Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, Settings, Summarizer,
-    SummarySettings,
+    Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Settings,
+    Summarizer, SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};
@@ -687,12 +687,18 @@ fn flush_stops_only_the_session_being_read() {
     r.wait_for("Alpha one.");
     r.out.start();
     r.stream("b", "Beta one.", 0, None);
-    assert_eq!(r.agent.flush().unwrap(), Flushed::Channel("a".into()));
+    assert_eq!(
+        r.agent.flush().unwrap().flushed,
+        Flushed::Channel("a".into())
+    );
     r.read("Beta one.");
     r.stays_idle();
-    // The flushed session's next text is read as usual.
+    // The rest of the flushed reply is skipped; its next turn is read.
     r.stream("a", "Alpha later.", 1, None);
-    r.read("Alpha later.");
+    r.stays_idle();
+    r.agent.turn_start("a", None, None).unwrap();
+    r.stream("a", "Alpha next turn.", 0, None);
+    r.read("Alpha next turn.");
 }
 
 #[test]
@@ -707,7 +713,10 @@ fn flush_while_another_session_streams_keeps_its_message() {
         .ask("a", &Ask::new(AskKind::Plan, "Alpha plan."))
         .unwrap();
     r.wait_for("Plan ready.");
-    assert_eq!(r.agent.flush().unwrap(), Flushed::Channel("a".into()));
+    assert_eq!(
+        r.agent.flush().unwrap().flushed,
+        Flushed::Channel("a".into())
+    );
     r.stays_idle();
     r.agent
         .stream("b", None, " Done now.", 0, true, None)
@@ -721,7 +730,138 @@ fn flush_while_another_session_streams_keeps_its_message() {
 fn flush_with_nothing_being_read_drops_nothing() {
     let r = Rig::with(done(), None);
     r.stream("a", "Held for the end.", 0, None);
-    assert_eq!(r.agent.flush().unwrap(), Flushed::Nothing);
+    assert_eq!(r.agent.flush().unwrap().flushed, Flushed::Nothing);
     r.agent.turn_end("a", None, None).unwrap();
     r.read("Held for the end.");
+}
+
+// -- flush_scope all: every ready message (#228) ---------------------------
+
+fn scoped(read_mode: sonara_agent::ReadMode, scope: FlushScope) -> Settings {
+    Settings {
+        read_mode,
+        flush_scope: scope,
+        background: BackgroundPolicy::All,
+        ..Settings::default()
+    }
+}
+
+#[test]
+fn the_flush_scope_is_session_by_default() {
+    assert_eq!(Settings::default().flush_scope, FlushScope::Session);
+    let r = Rig::new();
+    r.agent.set_flush_scope(FlushScope::All);
+    assert_eq!(r.agent.settings().flush_scope, FlushScope::All);
+}
+
+#[test]
+fn flush_scope_session_reads_the_next_session() {
+    let r = Rig::with(
+        scoped(sonara_agent::ReadMode::Immediate, FlushScope::Session),
+        None,
+    );
+    r.stream("a", "Alpha one. Alpha two.", 0, None);
+    r.wait_for("Alpha one.");
+    r.out.start();
+    r.agent.turn_end("b", None, None).unwrap();
+    r.stream("b", "Beta one.", 0, None);
+    let f = r.agent.flush().unwrap();
+    assert_eq!(f.flushed, Flushed::Channel("a".into()));
+    assert!(f.others.is_empty(), "{:?}", f.others);
+    r.read("Beta one.");
+    r.stays_idle();
+}
+
+#[test]
+fn flush_scope_all_drops_every_ready_message() {
+    let r = Rig::with(scoped(sonara_agent::ReadMode::Done, FlushScope::All), None);
+    r.stream("a", "Alpha one. Alpha two.", 0, None);
+    r.agent.turn_end("a", None, None).unwrap();
+    r.wait_for("Alpha one.");
+    r.out.start();
+    // b finished its turn: its whole reply waits behind a.
+    r.stream("b", "Beta one. Beta two.", 0, None);
+    r.agent.turn_end("b", None, None).unwrap();
+    let f = r.agent.flush().unwrap();
+    assert_eq!(f.flushed, Flushed::Channel("a".into()));
+    assert_eq!(f.others, ["b"]);
+    r.stays_idle();
+    // b is not skipped for later: its next reply is read.
+    r.agent.turn_start("b", None, None).unwrap();
+    r.stream("b", "Beta again.", 0, None);
+    r.agent.turn_end("b", None, None).unwrap();
+    r.read("Beta again.");
+}
+
+#[test]
+fn flush_while_another_session_streams_keeps_its_message_in_both_scopes() {
+    // #228, the incident: another session still writing its reply when the
+    // flush lands keeps it, in both scopes and whatever the read mode.
+    for scope in [FlushScope::Session, FlushScope::All] {
+        for mode in [
+            sonara_agent::ReadMode::Immediate,
+            sonara_agent::ReadMode::Done,
+        ] {
+            let r = Rig::with(scoped(mode, scope), None);
+            r.agent.turn_start("b", None, None).unwrap();
+            r.agent.turn_start("a", None, None).unwrap();
+            r.agent
+                .ask("a", &Ask::new(AskKind::Plan, "Alpha plan."))
+                .unwrap();
+            r.wait_for("Plan ready.");
+            r.agent
+                .stream("b", None, "Beta still arriving.", 0, true, None)
+                .unwrap();
+            let f = r.agent.flush().unwrap();
+            assert_eq!(
+                f.flushed,
+                Flushed::Channel("a".into()),
+                "{scope:?} {mode:?}"
+            );
+            assert!(f.others.is_empty(), "{scope:?} {mode:?}: {:?}", f.others);
+            r.agent
+                .stream("b", None, "Done now.", 1, true, None)
+                .unwrap();
+            r.agent.turn_end("b", None, None).unwrap();
+            r.read("Beta still arriving.");
+            r.read("Done now.");
+            r.stays_idle();
+        }
+    }
+}
+
+#[test]
+fn flush_scope_all_while_idle_drops_the_ready_messages_it_holds() {
+    // Text of a finished turn waiting behind the background policy is
+    // ready: an idle flush with scope all drops it too.
+    let mut s = scoped(sonara_agent::ReadMode::Immediate, FlushScope::All);
+    s.background = BackgroundPolicy::EarconOnly;
+    let r = Rig::with(s, None);
+    r.agent.channels().focus("a").unwrap();
+    r.stream("b", "Background prose.", 0, None);
+    r.agent.turn_end("b", None, None).unwrap();
+    r.stays_idle();
+    let f = r.agent.flush().unwrap();
+    assert_eq!(f.flushed, Flushed::Nothing);
+    assert_eq!(f.others, ["b"]);
+    r.agent.channels().focus("b").unwrap();
+    r.stays_idle();
+}
+
+#[test]
+fn a_question_later_in_the_flushed_reply_is_read() {
+    let r = Rig::with(
+        scoped(sonara_agent::ReadMode::Immediate, FlushScope::Session),
+        None,
+    );
+    r.stream("a", "Alpha one.", 0, None);
+    r.wait_for("Alpha one.");
+    r.agent.flush().unwrap();
+    r.stays_idle();
+    r.stream("a", "Skipped lead-in.", 1, None);
+    r.agent
+        .ask("a", &Ask::new(AskKind::Question, "Deploy now?"))
+        .unwrap();
+    r.read("Deploy now?");
+    r.stays_idle();
 }

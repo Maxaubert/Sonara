@@ -254,6 +254,33 @@ def test_reading_mode_switches_and_shows_the_queue_size_only_for_queue(live, bro
     page.close()
 
 
+def test_flush_scope_switches_shows_its_hint_and_survives_a_reload(live, browser):
+    # #228: "Flush skips: This session | Everything queued" on the Hotkeys page.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=hotkeys]")
+    seg = "#flushscope-seg [data-value=%s]"
+    pw.expect(page.locator("#flushscope-seg")).to_have_attribute("role", "radiogroup")
+    pw.expect(page.locator(seg % "session")).to_have_text("This session")
+    pw.expect(page.locator(seg % "all")).to_have_text("Everything queued")
+    pw.expect(page.locator(seg % "session")).to_have_attribute("aria-checked", "true")  # default
+    pw.expect(page.locator("#flushscope-hint")).to_contain_text("next session")
+    page.click(seg % "all")
+    assert eventually(lambda: lv.saved().get("flush_scope") == "all")
+    assert lv.get("flush_scope") == "all"
+    pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")
+    pw.expect(page.locator("#flushscope-hint")).to_contain_text("still writing")
+    page.reload()
+    page.click("[data-page=hotkeys]")
+    pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")
+    # Keyboard: the arrows move through the options and pick them.
+    page.locator(seg % "all").focus()
+    page.keyboard.press("ArrowLeft")
+    assert eventually(lambda: lv.saved().get("flush_scope") == "session")
+    pw.expect(page.locator(seg % "session")).to_be_focused()
+    page.close()
+
+
 def test_rate_change_is_saved_and_survives_a_restart(live, browser):
     lv = live()
     page = open_page(browser, lv.url)

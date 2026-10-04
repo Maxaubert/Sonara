@@ -22,7 +22,7 @@ use crate::cues::{self, Cues};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_agent::{Earcon, Flushed};
+use sonara_agent::{Earcon, FlushReport, Flushed};
 use sonara_reader::{Control, Key, ReaderHandle, Registry, RATE_MAX, RATE_MIN};
 use sonara_system::audio::{AudioConfig, AudioControl, AudioMode};
 use sonara_system::hotkeys::Hotkeys;
@@ -128,15 +128,19 @@ impl HotkeyTarget {
         reader || self.channels.get().is_some_and(|c| !c.is_idle())
     }
 
-    /// A channel's label (else its id) as a log value.
-    fn session_value(&self, channel: &str) -> String {
-        let label = self
-            .channels
+    /// A channel's label, else its id.
+    fn session_label(&self, channel: &str) -> String {
+        self.channels
             .get()
             .and_then(|ch| ch.channel(channel))
             .and_then(|c| c.label)
-            .filter(|l| !l.is_empty());
-        sonara_system::log::value(&label.unwrap_or_else(|| channel.to_string()))
+            .filter(|l| !l.is_empty())
+            .unwrap_or_else(|| channel.to_string())
+    }
+
+    /// A channel's label (else its id) as a log value.
+    fn session_value(&self, channel: &str) -> String {
+        sonara_system::log::value(&self.session_label(channel))
     }
 
     /// Carry out `action`; what it did, for the log line, when the action
@@ -160,29 +164,58 @@ impl HotkeyTarget {
                 // item, unread text and summary work); the other sessions
                 // are read next as usual. Mute silences everything.
                 // Without channels it is `control stop`, as before.
-                let flushed = match (self.agent.get(), self.channels.get()) {
-                    (Some(a), _) => a.flush().map_err(|e| e.to_string())?,
-                    (None, Some(ch)) => ch.stop_reading("flush").map_err(|e| e.to_string())?,
+                let (flushed, scope) = match (self.agent.get(), self.channels.get()) {
+                    (Some(a), _) => (
+                        a.flush().map_err(|e| e.to_string())?,
+                        Some(a.settings().flush_scope),
+                    ),
+                    (None, Some(ch)) => (
+                        FlushReport {
+                            flushed: ch.stop_reading("flush").map_err(|e| e.to_string())?,
+                            others: Vec::new(),
+                        },
+                        None,
+                    ),
                     (None, None) => {
                         let had = self.busy();
                         self.control(Control::Stop)?;
-                        if had {
+                        let f = if had {
                             Flushed::Direct
                         } else {
                             Flushed::Nothing
-                        }
+                        };
+                        (
+                            FlushReport {
+                                flushed: f,
+                                others: Vec::new(),
+                            },
+                            None,
+                        )
                     }
                 };
-                let had = flushed != Flushed::Nothing;
+                let had = flushed.flushed != Flushed::Nothing || !flushed.others.is_empty();
                 self.earcon(if had { Earcon::Nav } else { Earcon::NavEdge });
-                Ok(Some(match flushed {
-                    Flushed::Channel(id) => format!("session={}", self.session_value(&id)),
+                let mut detail = match &flushed.flushed {
+                    Flushed::Channel(id) => format!("session={}", self.session_value(id)),
                     Flushed::Announcement(id) => {
-                        format!("announcement session={}", self.session_value(&id))
+                        format!("announcement session={}", self.session_value(id))
                     }
                     Flushed::Direct => "direct".into(),
                     Flushed::Nothing => "idle".into(),
-                }))
+                };
+                if let Some(scope) = scope {
+                    detail.push_str(&format!(" scope={}", scope.as_str()));
+                }
+                if !flushed.others.is_empty() {
+                    let names: Vec<String> = flushed
+                        .others
+                        .iter()
+                        .map(|id| self.session_label(id))
+                        .collect();
+                    let names = sonara_system::log::value(&names.join(","));
+                    detail.push_str(&format!(" others={names}"));
+                }
+                Ok(Some(detail))
             }
             Action::Mute => match self.agent.get() {
                 // The mute cycle: unmuted, muted (earcons on), super muted.

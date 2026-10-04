@@ -757,3 +757,69 @@ fn stop_reading_names_the_channel_before_its_drops_are_reported() {
         ["flush a", "drop Alpha two.", "drop Alpha one."]
     );
 }
+
+// -- flush_with: the flush hotkey with flush_scope all (#228) ----------------
+
+fn drops_of(r: &Rig) -> Arc<Mutex<Vec<String>>> {
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let seen = drops.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock()
+            .unwrap()
+            .push(format!("{} {} {}", d.channel, d.text, d.reason));
+    })));
+    drops
+}
+
+#[test]
+fn flush_with_also_flushes_the_other_channels_it_names() {
+    let r = Rig::two();
+    r.ch.open("c", Some("Gamma".into()), None, Some(Policy::Queue))
+        .unwrap();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.speak("c", "Gamma one.");
+    r.wait_for("Alpha one.");
+    r.out.start();
+    let drops = drops_of(&r);
+    let mut named = Vec::new();
+    let report =
+        r.ch.flush_with("flush", |ch| named.push(ch.to_string()), |ch| ch == "b")
+            .unwrap();
+    assert_eq!(report.flushed, Flushed::Channel("a".into()));
+    assert_eq!(report.others, ["b"]);
+    assert_eq!(named, ["a", "b"]);
+    r.read("Gamma.");
+    r.read("Gamma one.");
+    r.stays_idle();
+    assert_eq!(
+        *drops.lock().unwrap(),
+        ["a Alpha one. flush", "b Beta one. flush"]
+    );
+}
+
+#[test]
+fn flush_with_during_an_announcement_flushes_the_announced_channel_it_names() {
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.read("Alpha one.");
+    r.wait_for("Beta.");
+    let report = r.ch.flush_with("flush", |_| {}, |_| true).unwrap();
+    assert_eq!(report.flushed, Flushed::Announcement("b".into()));
+    assert_eq!(report.others, ["b"]);
+    r.stays_idle();
+}
+
+#[test]
+fn flush_with_while_idle_flushes_the_waiting_channels_it_names() {
+    let r = Rig::two();
+    r.ch.set_muted("b", true).unwrap();
+    r.speak("b", "Beta one.");
+    r.stays_idle();
+    let report = r.ch.flush_with("flush", |_| {}, |_| true).unwrap();
+    assert_eq!(report.flushed, Flushed::Nothing);
+    assert_eq!(report.others, ["b"]);
+    r.ch.set_muted("b", false).unwrap();
+    r.stays_idle();
+}

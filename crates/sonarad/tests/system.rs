@@ -801,6 +801,7 @@ fn the_schema_defaults_are_the_layers_defaults() {
         "mute_level",
         "verbosity",
         "read_mode",
+        "flush_scope",
         "minqueue",
         "background_policy",
         "audio_mode",
@@ -1534,4 +1535,125 @@ fn the_flush_hotkey_with_nothing_being_read_is_logged_idle() {
     );
     r.fake.press(Action::Flush.id());
     assert!(eventually(|| log_of(&r).contains("hotkey flush idle")));
+}
+
+#[test]
+fn the_flush_scope_is_a_persisted_agent_key() {
+    // #228 (2026-10-04): what the flush hotkey skips, "session" by default.
+    let home = tmp();
+    {
+        let r = rig_on(home.clone());
+        let s = &r.server;
+        let mut h = Session::http();
+        ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+        let g = ok(s, &mut h, json!({"type": "get", "key": "flush_scope"}));
+        assert_eq!(g["value"], "session", "the product default");
+        let g = ok(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "flush_scope", "value": "all"}),
+        );
+        assert_eq!(g["value"], "all");
+        assert_eq!(saved(&home)["flush_scope"], "all");
+        let bad = call(
+            s,
+            &mut h,
+            json!({"type": "set", "key": "flush_scope", "value": "everything"}),
+        );
+        assert_eq!(bad["error"]["code"], "E_BAD_REQUEST", "{bad}");
+    }
+    let r = rig_on(home.clone());
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+    let g = ok(s, &mut h, json!({"type": "get", "key": "flush_scope"}));
+    assert_eq!(g["value"], "all", "applied at start");
+}
+
+#[test]
+fn the_flush_hotkey_with_scope_all_drops_every_ready_message_and_keeps_a_reply_still_arriving() {
+    // #228: scope all skips the session being read and every finished
+    // reply waiting; a session still writing its reply keeps it.
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    for (key, value) in [("read_mode", "done"), ("flush_scope", "all")] {
+        ok(
+            s,
+            &mut session,
+            json!({"type": "set", "key": key, "value": value}),
+        );
+    }
+    for (id, label) in [("a", "alpha-repo"), ("b", "beta-repo"), ("c", "gamma-repo")] {
+        ok(
+            s,
+            &mut session,
+            json!({"type": "channel_open", "channel": id, "label": label}),
+        );
+        ok(
+            s,
+            &mut session,
+            json!({"type": "turn_start", "channel": id}),
+        );
+    }
+    ok(
+        s,
+        &mut session,
+        json!({"type": "stream", "channel": "c", "delta": "Gamma still arriving.", "final": false}),
+    );
+    for id in ["a", "b"] {
+        ok(
+            s,
+            &mut session,
+            json!({"type": "stream", "channel": id, "delta": "Finished reply.", "final": true}),
+        );
+        ok(s, &mut session, json!({"type": "turn_end", "channel": id}));
+    }
+    assert!(eventually(
+        || playing(s).as_deref() == Some("Finished reply.")
+    ));
+    start_playing(&r.out);
+    r.fake.press(Action::Flush.id());
+    assert!(eventually(|| log_of(&r).contains(
+        "hotkey flush session=alpha-repo scope=all others=beta-repo"
+    )));
+    assert!(eventually(|| playing(s).is_none()));
+    ok(
+        s,
+        &mut session,
+        json!({"type": "stream", "channel": "c", "delta": " Done now.", "final": true}),
+    );
+    ok(s, &mut session, json!({"type": "turn_end", "channel": "c"}));
+    assert!(eventually(
+        || playing(s).is_some_and(|t| t.contains("gamma-repo"))
+    ));
+    start_playing(&r.out);
+    r.out.finish();
+    assert!(eventually(
+        || playing(s).as_deref() == Some("Gamma still arriving.")
+    ));
+}
+
+#[test]
+fn control_flush_tells_the_scope_and_the_other_sessions() {
+    let r = rig();
+    let s = &r.server;
+    let mut h = Session::http();
+    ok(s, &mut h, json!({"type": "hello", "extensions": ["agent"]}));
+    let f = ok(s, &mut h, json!({"type": "control", "action": "flush"}));
+    assert_eq!(f["flushed"], "nothing");
+    assert_eq!(f["scope"], "session");
+    assert_eq!(f["others"], json!([]));
+    ok(
+        s,
+        &mut h,
+        json!({"type": "set", "key": "flush_scope", "value": "all"}),
+    );
+    let f = ok(s, &mut h, json!({"type": "control", "action": "flush"}));
+    assert_eq!(f["scope"], "all");
 }

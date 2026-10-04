@@ -1265,23 +1265,159 @@ fn flush_keeps_other_sessions_summaries_and_decisions() {
 }
 
 #[test]
-fn prose_after_a_flush_follows_the_read_mode() {
-    let mut r = done_rules();
-    prose(&mut r, "a", "Heard. ", 0, true);
-    r.flush("a");
-    prose(&mut r, "a", "After. ", 1, true);
-    assert_eq!(spoken(&r.turn_end("a", None, None).unwrap()), ["After."]);
+fn the_rest_of_a_flushed_reply_is_skipped() {
+    // #228 (flush_scope, 2026-10-04): the flushed session is skipped for
+    // the whole reply, also the prose that arrives after the flush.
+    for mode in [ReadMode::Immediate, ReadMode::Queue, ReadMode::Done] {
+        let mut r = Rules::new(Settings {
+            read_mode: mode,
+            ..Settings::default()
+        });
+        prose(&mut r, "a", "Heard. ", 0, true);
+        r.flush("a");
+        r.take_notes();
+        assert!(spoken(&prose(&mut r, "a", "After. ", 1, true)).is_empty());
+        assert_eq!(
+            notes_of(&r, "a"),
+            ["prose: dropped: flushed reply"],
+            "{mode:?}"
+        );
+        let end = r.turn_end("a", None, None).unwrap();
+        assert!(spoken(&end).is_empty(), "{mode:?}");
+        assert_eq!(earcons(&end), [Earcon::TurnDone], "the reply still ends");
+    }
 }
 
 #[test]
-fn a_summary_after_a_flush_covers_only_what_came_after() {
+fn the_flushed_reply_is_skipped_until_the_sessions_next_turn_start() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    // An answer does not end the reply.
+    r.answered("a");
+    assert!(spoken(&prose(&mut r, "a", "Still skipped. ", 1, true)).is_empty());
+    r.tool("a", "Bash", "");
+    r.turn_end("a", None, None).unwrap();
+    // Late prose of the flushed reply, after its turn_end (#14).
+    assert!(spoken(&prose(&mut r, "a", "Late. ", 2, true)).is_empty());
+    r.turn_start("a", None, None).unwrap();
+    prose(&mut r, "a", "Next reply. ", 0, true);
+    assert_eq!(
+        spoken(&r.turn_end("a", None, None).unwrap()),
+        ["Next reply."]
+    );
+}
+
+#[test]
+fn a_tool_in_the_flushed_reply_is_not_announced() {
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::Everything;
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    r.take_notes();
+    assert!(spoken(&r.tool("a", "Bash", "Running the tests.")).is_empty());
+    assert_eq!(notes_of(&r, "a"), ["tool: not announced: flushed reply"]);
+}
+
+#[test]
+fn a_question_later_in_the_flushed_reply_is_still_spoken() {
+    // #228: a decision needs an answer, so it is read even though the rest
+    // of its reply is skipped.
+    let mut r = done_rules();
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    prose(&mut r, "a", "Lead-in skipped. ", 1, true);
+    let out = r.ask("a", &question("Deploy?", &["Yes", "No"]));
+    let said = spoken(&out);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with('!') && said[0].contains("Deploy?"),
+        "{said:?}"
+    );
+    assert_eq!(earcons(&out), [Earcon::Choice]);
+    let perm = r.ask("a", &Ask::new(AskKind::Plan, "The plan."));
+    assert_eq!(spoken(&perm).len(), 1, "a plan too");
+}
+
+#[test]
+fn a_question_later_in_a_flushed_summary_reply_is_still_spoken() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    r.flush("a");
+    prose(&mut r, "a", &PAD.repeat(6), 1, true);
+    let asked = r.ask("a", &question("Ship?", &[]));
+    let out = r.fire(&settle_of(&asked), None);
+    assert!(
+        jobs(&out).is_empty(),
+        "nothing of the flushed reply to recap"
+    );
+    let said = spoken(&out);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("Ship?"), "{said:?}");
+}
+
+#[test]
+fn a_flushed_summary_reply_makes_no_summary_and_the_next_turn_does() {
     let mut r = summary_rules();
     prose(&mut r, "a", &PAD.repeat(6), 0, true);
     r.flush("a");
     prose(&mut r, "a", "After the flush. ", 1, true);
     let a = end_and_settle(&mut r, "a", Some("a"));
     assert!(jobs(&a).is_empty());
-    assert_eq!(spoken(&a), ["After the flush."]);
+    assert!(spoken(&a).is_empty(), "{:?}", spoken(&a));
+    r.turn_start("a", None, None).unwrap();
+    prose(&mut r, "a", "A new reply. ", 0, true);
+    assert_eq!(
+        spoken(&end_and_settle(&mut r, "a", Some("a"))),
+        ["A new reply."]
+    );
+}
+
+// -- flush_scope all: every ready message (#228) ---------------------------
+
+#[test]
+fn flush_ready_drops_a_finished_turns_work_and_keeps_a_turn_still_arriving() {
+    let mut r = summary_rules();
+    // b finished its turn: its summary is in flight.
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let job = jobs(&end_and_settle(&mut r, "b", None)).remove(0);
+    // c is still writing.
+    prose(&mut r, "c", &PAD.repeat(6), 0, false);
+    assert!(!r.writing("b"));
+    assert!(r.writing("c"));
+    r.take_notes();
+    assert!(r.flush_ready("b").is_some());
+    assert!(r.flush_ready("c").is_none(), "a turn still arriving stays");
+    assert_eq!(
+        notes_of(&r, "b"),
+        ["summary: cancelled (flush): 1 summary in flight"]
+    );
+    assert!(spoken(&r.digest_done(&job, Some("B.".into()))).is_empty());
+    // b is not skipped for later: only the session being read is.
+    prose(&mut r, "c", "Last words. ", 1, true);
+    let c = jobs(&end_and_settle(&mut r, "c", None)).remove(0);
+    assert_eq!(c.text.matches("filler").count(), 6, "{}", c.text);
+}
+
+#[test]
+fn flush_ready_with_nothing_to_drop_says_so() {
+    let mut r = done_rules();
+    prose(&mut r, "b", "Done. ", 0, true);
+    r.turn_end("b", None, None).unwrap();
+    assert!(r.flush_ready("b").is_none());
+    assert!(r.flush_ready("ghost").is_none());
+}
+
+#[test]
+fn a_session_without_a_turn_end_is_still_writing() {
+    let mut r = done_rules();
+    assert!(!r.writing("ghost"));
+    r.turn_start("a", None, None).unwrap();
+    assert!(r.writing("a"));
+    r.turn_end("a", None, None).unwrap();
+    assert!(!r.writing("a"));
+    r.turn_start("a", None, None).unwrap();
+    assert!(r.writing("a"));
 }
 
 #[test]

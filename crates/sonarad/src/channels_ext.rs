@@ -7,7 +7,8 @@ use crate::config::{PrefsUpdate, Store};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_channels::{Channels, Control, Error, Flushed, ItemId, Policy, QueueMode};
+use sonara_agent::FlushScope;
+use sonara_channels::{Channels, Control, Error, FlushReport, Flushed, ItemId, Policy, QueueMode};
 use std::sync::{Arc, OnceLock};
 
 /// The extension's state: empty until a client enables it.
@@ -119,10 +120,11 @@ pub fn control(ch: &Channels, action: Option<Control>, m: &Map<String, Value>) -
 }
 
 /// The reply of `control flush`: `flushed` (`channel`, `announcement`,
-/// `direct` or `nothing`) and the `channel` flushed or announced (`null`
-/// for `direct` and `nothing`).
-pub fn flushed_fields(f: &Flushed) -> Map<String, Value> {
-    let (what, channel) = match f {
+/// `direct` or `nothing`), the `channel` flushed or announced (`null`
+/// for `direct` and `nothing`), the `scope` in force and the `others`
+/// whose ready messages went too (scope `all`).
+pub fn flushed_fields(r: &FlushReport, scope: FlushScope) -> Map<String, Value> {
+    let (what, channel) = match &r.flushed {
         Flushed::Channel(id) => ("channel", json!(id)),
         Flushed::Announcement(id) => ("announcement", json!(id)),
         Flushed::Direct => ("direct", Value::Null),
@@ -131,6 +133,8 @@ pub fn flushed_fields(f: &Flushed) -> Map<String, Value> {
     let mut m = Map::new();
     m.insert("flushed".into(), json!(what));
     m.insert("channel".into(), channel);
+    m.insert("scope".into(), json!(scope.as_str()));
+    m.insert("others".into(), json!(r.others));
     m
 }
 

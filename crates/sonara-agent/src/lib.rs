@@ -30,9 +30,11 @@
 //!   (`Channels::engaged`); a paused reader stays paused when another
 //!   channel gets a new turn.
 //! - `Silence` (muting) is `control(Stop)` over every channel.
-//! - `flush` (the flush hotkey, #228) stops only the session being read:
-//!   L2 `stop_reading`, then `Rules::flush` on that channel. The other
-//!   sessions are untouched.
+//! - `flush` (the flush hotkey, #228) stops the session being read and
+//!   skips the rest of its reply: L2 `flush_with`, then `Rules::flush` on
+//!   that channel. With `flush_scope` `all` every other session whose
+//!   turn ended is flushed too (L2 and `Rules::flush_ready`); a session
+//!   still writing its reply is untouched in both scopes.
 //! - Earcons are played with `ReaderHandle::play_clip` and reported to
 //!   `subscribe`rs. The clips come from `Config::earcons` (the bundled
 //!   ones, or a folder of custom WAVs in front: `earcon::Library`).
@@ -62,9 +64,10 @@ pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
 pub use rules::{Action, Ask, Job, Note, Rules, Stale, Timer};
 pub use settings::{
-    BackgroundPolicy, ReadMode, Settings, Style, SummaryCommand, SummarySettings, Verbosity,
+    BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
+    Verbosity,
 };
-pub use sonara_channels::{Channels, Control, Flushed, QueueMode};
+pub use sonara_channels::{Channels, Control, FlushReport, Flushed, QueueMode};
 pub use summarizer::Summarizer;
 
 use std::collections::HashMap;
@@ -436,27 +439,66 @@ impl Agent {
             .control_because(Control::Stop, None, "stop")?)
     }
 
-    /// The flush hotkey (#228): stop only the session being read. Its
+    /// The flush hotkey (#228). The session being read is stopped: its
     /// item, its unread text, its held prose, the prose kept for its
-    /// summary and its summary work are dropped (`Rules::flush`, L2
-    /// `stop_reading`); the decisions that waited for that summary are
-    /// spoken now, and a question keeps its awaiting mark. Every other
-    /// session keeps its text, summaries and turns still arriving, and is
-    /// read next as usual. A switch announcement playing, or text spoken
-    /// to the reader directly, is skipped alone; idle, nothing happens.
-    /// Mute is the way to silence everything.
-    pub fn flush(&self) -> Result<Flushed> {
+    /// summary and its summary work are dropped, and the rest of its reply
+    /// is skipped until its next `turn_start` (`Rules::flush`, L2
+    /// `flush_with`); the decisions that waited for that summary, and the
+    /// ones it asks later, are spoken, and a question keeps its awaiting
+    /// mark. A switch announcement playing, or text spoken to the reader
+    /// directly, is skipped alone; idle, nothing of that happens.
+    ///
+    /// `flush_scope` `session` (the default): every other session keeps
+    /// its text and is read next. `all`: every other session whose turn
+    /// ended also loses its ready messages (L2 unread text, summaries,
+    /// held decisions are spoken), whatever was being read; a session
+    /// still writing its reply (no `turn_end` yet) keeps everything in
+    /// both scopes. `others` names the sessions that lost something.
+    pub fn flush(&self) -> Result<FlushReport> {
         let mut rules = self.lock();
+        let all = rules.settings.flush_scope == FlushScope::All;
         // The wipe line goes before the drops it explains, as for stop.
-        let flushed = self.inner.channels.stop_reading_with("flush", |ch| {
-            self.inner
-                .trace("flush", Some(ch), Traced::Wiped { reason: "flush" });
-        })?;
-        if let Flushed::Channel(ch) = &flushed {
+        let writing: Vec<String> = rules
+            .channels()
+            .into_iter()
+            .filter(|c| rules.writing(c))
+            .collect();
+        let mut report = self.inner.channels.flush_with(
+            "flush",
+            |ch| {
+                self.inner
+                    .trace("flush", Some(ch), Traced::Wiped { reason: "flush" });
+            },
+            |ch| all && !writing.iter().any(|w| w == ch),
+        )?;
+        let mut first = Ok(());
+        if let Flushed::Channel(ch) = &report.flushed {
             let actions = rules.flush(ch);
-            self.inner.execute(&rules, "flush", Some(ch), actions)?;
+            first = self.inner.execute(&rules, "flush", Some(ch), actions);
         }
-        Ok(flushed)
+        if all {
+            for ch in rules.channels() {
+                if report.flushed == Flushed::Channel(ch.clone()) {
+                    continue;
+                }
+                if let Some(actions) = rules.flush_ready(&ch) {
+                    if !report.others.contains(&ch) {
+                        report.others.push(ch.clone());
+                    }
+                    let done = self.inner.execute(&rules, "flush", Some(&ch), actions);
+                    if first.is_ok() {
+                        first = done;
+                    }
+                }
+            }
+        }
+        first?;
+        Ok(report)
+    }
+
+    /// What the flush hotkey skips (#228).
+    pub fn set_flush_scope(&self, scope: FlushScope) {
+        self.lock().settings.flush_scope = scope;
     }
 
     pub fn settings(&self) -> Settings {

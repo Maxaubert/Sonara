@@ -1,5 +1,5 @@
 //! L3 settings: mute level, verbosity, the reading mode and prose batching, the background
-//! speech policy and summaries. Ranges and defaults are the Python
+//! speech policy, summaries and what a flush skips. Ranges and defaults are the Python
 //! plugin's (`config_schema.py`).
 use std::time::Duration;
 
@@ -74,6 +74,35 @@ impl ReadMode {
             ReadMode::Immediate => "immediate",
             ReadMode::Queue => "queue",
             ReadMode::Done => "done",
+        }
+    }
+}
+
+/// What the flush hotkey skips (`flush_scope`, #228). Either way the
+/// session being read is skipped for the rest of its reply (until its next
+/// `turn_start`), and the decisions it asks later are still read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlushScope {
+    /// Only the session being read; the next session is read.
+    Session,
+    /// Also every other session's ready messages (queued text, finished
+    /// turns, summaries); a reply still being written is kept.
+    All,
+}
+
+impl FlushScope {
+    pub fn parse(name: &str) -> Option<FlushScope> {
+        match name {
+            "session" => Some(FlushScope::Session),
+            "all" => Some(FlushScope::All),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FlushScope::Session => "session",
+            FlushScope::All => "all",
         }
     }
 }
@@ -230,6 +259,7 @@ pub struct Settings {
     pub minqueue: usize,
     pub background: BackgroundPolicy,
     pub summaries: SummarySettings,
+    pub flush_scope: FlushScope,
 }
 
 impl Default for Settings {
@@ -241,6 +271,7 @@ impl Default for Settings {
             minqueue: 1,
             background: BackgroundPolicy::EarconOnly,
             summaries: SummarySettings::default(),
+            flush_scope: FlushScope::Session,
         }
     }
 }

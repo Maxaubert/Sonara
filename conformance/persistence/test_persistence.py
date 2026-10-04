@@ -58,6 +58,7 @@ def test_every_setting_survives_a_restart(start):
         "verbosity": "skip_code",
         "minqueue": 4,
         "read_mode": "immediate",
+        "flush_scope": "all",
         "audio_mode": "pause",
         "duck_level": 15,
     }

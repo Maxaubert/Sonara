@@ -70,6 +70,7 @@ const EXTENSION_KEYS: &[&str] = &[
     "mute_level",
     "verbosity",
     "read_mode",
+    "flush_scope",
     "minqueue",
     "background_policy",
     "summaries",
@@ -766,8 +767,10 @@ impl Server {
         Ok((f, After::Nothing))
     }
 
-    /// `control flush` (#228): stop only the session being read (the
-    /// flush hotkey); with the agent its summary work goes too.
+    /// `control flush` (#228): the flush hotkey. It stops the session
+    /// being read; with the agent the rest of that reply is skipped, and
+    /// with `flush_scope` `all` every other session's ready messages go
+    /// too.
     fn flush(&self, ch: &Channels, m: &Map<String, Value>) -> Handled {
         if opt_str(m, "channel")?.is_some() {
             return Err(bad(
@@ -775,11 +778,20 @@ impl Server {
             ));
         }
         let _admitted = self.admit()?;
-        let flushed = match self.agent.get() {
-            Some(a) => a.flush().map_err(agent_ext::failure)?,
-            None => ch.stop_reading("flush").map_err(channels_ext::failure)?,
+        let (report, scope) = match self.agent.get() {
+            Some(a) => (
+                a.flush().map_err(agent_ext::failure)?,
+                a.settings().flush_scope,
+            ),
+            None => (
+                sonara_channels::FlushReport {
+                    flushed: ch.stop_reading("flush").map_err(channels_ext::failure)?,
+                    others: Vec::new(),
+                },
+                sonara_agent::FlushScope::Session,
+            ),
         };
-        Ok((channels_ext::flushed_fields(&flushed), After::Nothing))
+        Ok((channels_ext::flushed_fields(&report, scope), After::Nothing))
     }
 
     fn control(&self, m: &Map<String, Value>) -> Handled {
