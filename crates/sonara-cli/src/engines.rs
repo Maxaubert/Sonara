@@ -11,9 +11,14 @@ pub const USAGE: &str = "usage: sonara engines <command>
   list                       the engines you added, with their key and status
   add <id> [--kind K] [--preset P] [--url U] [--model M]
           [--voice V] [--label L] [--key-env NAME | --no-key]
+          [--send-mode message|sentence]
           [--option KEY=VALUE ...] [--replace]
                              add (or with --replace, change) an engine; it is
-                             not used until `sonara engines use <id>`
+                             not used until `sonara engines use <id>`.
+                             --send-mode: `message` sends a whole message in
+                             one request (the cloud default), `sentence`
+                             each sentence as it comes (programs and servers
+                             on this PC)
   key <id>                   store its key: read from stdin, or asked for
                              without echo (never an argument)
   key <id> --clear           delete its stored key
@@ -148,6 +153,16 @@ fn parse_add(rest: &[String]) -> Result<Action, String> {
                 let v = value(a)?;
                 profile.insert(a[2..].into(), json!(v));
             }
+            "--send-mode" => {
+                let v = value("--send-mode")?;
+                if !matches!(v.as_str(), "message" | "sentence") {
+                    return Err(format!(
+                        "--send-mode '{v}': use message (a whole message per request) \
+                         or sentence (each sentence as it comes)"
+                    ));
+                }
+                profile.insert("send_mode".into(), json!(v));
+            }
             "--key-env" => {
                 profile.insert(
                     "key_ref".into(),
@@ -211,7 +226,7 @@ pub fn list_lines(reply: &Value) -> Vec<String> {
             (_, true) => "key saved".to_string(),
             (_, false) => "no key".to_string(),
         };
-        let place = if e["local"] == true {
+        let mut place = if e["local"] == true {
             "runs on this PC".to_string()
         } else {
             format!(
@@ -219,6 +234,11 @@ pub fn list_lines(reply: &Value) -> Vec<String> {
                 e["sends_text_to"].as_str().unwrap_or("?")
             )
         };
+        match e["send_mode"].as_str() {
+            Some("message") => place.push_str(", a whole message per request"),
+            Some("sentence") => place.push_str(", a sentence per request"),
+            _ => {}
+        }
         let id = e["id"].as_str().unwrap_or("?");
         let missing: Vec<&str> = e["missing"]
             .as_array()
@@ -484,6 +504,32 @@ mod tests {
         let Action::Request(r) = a else { panic!() };
         assert_eq!(r["engine"]["key_ref"], "env:OPENAI_API_KEY");
         assert!(r["engine"].get("options").is_none());
+    }
+
+    #[test]
+    fn add_takes_the_send_mode() {
+        let a = p(&[
+            "add",
+            "el",
+            "--kind",
+            "elevenlabs",
+            "--send-mode",
+            "sentence",
+        ])
+        .unwrap();
+        let Action::Request(r) = a else { panic!() };
+        assert_eq!(r["engine"]["send_mode"], "sentence");
+        let e = p(&["add", "el", "--kind", "elevenlabs", "--send-mode", "whole"]).unwrap_err();
+        assert!(e.contains("use message"), "{e}");
+        assert!(USAGE.contains("--send-mode message|sentence"));
+        let lines = list_lines(&json!({"engines": [
+            {"id": "el", "label": "ElevenLabs", "kind": "elevenlabs", "local": false,
+             "sends_text_to": "api.elevenlabs.io", "key_ref": "credman", "key_present": true,
+             "send_mode": "message", "status": {"status": "ready"}}]}));
+        assert!(
+            lines[0].contains("sends text to api.elevenlabs.io, a whole message per request"),
+            "{lines:?}"
+        );
     }
 
     #[test]

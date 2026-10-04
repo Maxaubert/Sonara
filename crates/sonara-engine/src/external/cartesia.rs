@@ -110,6 +110,17 @@ impl Adapter for Cartesia {
         )
     }
 
+    /// `/tts/bytes` sends its raw PCM as it is made (#235).
+    fn bytes_request(
+        &self,
+        text: &str,
+        voice: &str,
+        wpm: u32,
+        key: Option<&Secret>,
+    ) -> Option<HttpRequest> {
+        Some(self.synth_request(text, voice, wpm, key))
+    }
+
     fn requested_rate(&self) -> Option<u32> {
         Some(self.sample_rate)
     }

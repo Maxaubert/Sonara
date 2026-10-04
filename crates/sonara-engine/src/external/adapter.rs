@@ -226,6 +226,20 @@ pub trait Adapter: Send + Sync {
     ) -> Option<HttpRequest> {
         None
     }
+    /// Send mode `message` (#235): the request for one part whose 2xx body
+    /// is raw PCM at `requested_rate`, read as it arrives (ElevenLabs'
+    /// `/stream`, OpenAI's `pcm`, Cartesia's raw bytes), so a whole message
+    /// starts playing at its first audio. `None` (the default): the whole
+    /// answer is waited for.
+    fn bytes_request(
+        &self,
+        _text: &str,
+        _voice: &str,
+        _wpm: u32,
+        _key: Option<&Secret>,
+    ) -> Option<HttpRequest> {
+        None
+    }
     /// Whether `stream_request` is used now (a model that refused the
     /// stream once is asked for whole answers from then on).
     fn streams(&self) -> bool {

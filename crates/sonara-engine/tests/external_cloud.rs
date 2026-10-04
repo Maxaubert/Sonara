@@ -46,9 +46,11 @@ fn pcm_bytes(samples: &[i16]) -> Vec<u8> {
     samples.iter().flat_map(|s| s.to_le_bytes()).collect()
 }
 
+/// Sentence mode: the request shapes of one sentence (send mode `message`,
+/// with ElevenLabs' `/stream`, is `external_message.rs`).
 fn elevenlabs() -> Value {
     json!({"id": "el", "kind": "elevenlabs", "voice": "voiceid0000000000001",
-        "options": {"timeout_ms": 5000}})
+        "send_mode": "sentence", "options": {"timeout_ms": 5000}})
 }
 
 fn azure() -> Value {

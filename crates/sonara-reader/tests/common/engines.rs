@@ -2,7 +2,9 @@
 //! opens it (or cancels it), one that always fails, and the fake engine
 //! under another id.
 use sonara_engine::fake::FakeEngine;
-use sonara_engine::{Engine, EngineId, Error, LicenseClass, PcmChunk, PcmStream, Result, Voice};
+use sonara_engine::{
+    Engine, EngineId, Error, InputLimit, LicenseClass, PcmChunk, PcmStream, Result, SendMode, Voice,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -255,10 +257,10 @@ pub struct OpenEngine {
     pub id: &'static str,
     pub inner: FakeEngine,
     pub lookahead: usize,
-    /// `Engine::chunk_chars` (0: one sentence per chunk).
-    pub chunk_chars: usize,
-    /// `Engine::quick_start` (true: the first chunk is one sentence).
-    pub quick_start: bool,
+    /// `Engine::send_mode` (#235).
+    pub send_mode: SendMode,
+    /// `Engine::input_limit` in characters.
+    pub limit: usize,
     pub voices_seen: Mutex<Vec<String>>,
 }
 
@@ -268,8 +270,8 @@ impl OpenEngine {
             id,
             inner: FakeEngine::new(),
             lookahead,
-            chunk_chars: 0,
-            quick_start: true,
+            send_mode: SendMode::Sentence,
+            limit: 4096,
             voices_seen: Mutex::new(Vec::new()),
         }
     }
@@ -305,12 +307,12 @@ impl Engine for OpenEngine {
         self.lookahead
     }
 
-    fn chunk_chars(&self) -> usize {
-        self.chunk_chars
+    fn send_mode(&self) -> SendMode {
+        self.send_mode
     }
 
-    fn quick_start(&self) -> bool {
-        self.quick_start
+    fn input_limit(&self) -> InputLimit {
+        InputLimit::Chars(self.limit)
     }
 
     fn accepts_unlisted_voices(&self) -> bool {

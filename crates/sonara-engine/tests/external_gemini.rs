@@ -18,7 +18,7 @@ use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret};
 use sonara_engine::external::profile::Profile;
 use sonara_engine::external::{External, ExternalConfig, Notice};
 use sonara_engine::fake::FakeEngine;
-use sonara_engine::{Engine, Error, Readiness, Reason};
+use sonara_engine::{Engine, Error, InputLimit, Readiness, Reason, SendMode};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -172,7 +172,9 @@ fn gemini_speaks_base64_pcm_with_the_key_only_in_its_header() {
         body["contents"][0]["parts"][0]["speechMetadata"]["style"],
         "speaking quickly"
     );
-    assert_eq!(r.engine.chunk_chars(), 1000, "the reader joins sentences");
+    // A whole message per request (#235), at most 2000 characters.
+    assert_eq!(r.engine.send_mode(), SendMode::Message);
+    assert_eq!(r.engine.input_limit(), InputLimit::Chars(2000));
     assert_eq!(r.engine.lookahead(), 1, "a loopback url prefetches one");
 }
 
@@ -363,7 +365,8 @@ fn a_refused_stream_reads_whole_answers_from_then_on() {
     );
     r.server.on(WHOLE, whole(&[6, 7]));
     assert_eq!(samples(&r.engine, "One.", "", 200), vec![6, 7]);
-    assert!(!r.engine.streams());
+    // Still played as it comes (a whole message, send mode `message`).
+    assert!(r.engine.streams());
     assert_eq!(samples(&r.engine, "Two.", "", 200), vec![6, 7]);
     assert_eq!(r.server.count(SPEAK), 1, "the stream is asked for once");
     assert_eq!(r.server.count(WHOLE), 2);

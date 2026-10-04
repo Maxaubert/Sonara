@@ -50,10 +50,11 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
   (`Done::Part`); a chunk the reader waits for plays from its first piece
   (`Output::play_open`, `append`, `finish`), and its whole audio is kept for a replay.
 - `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
-  chunks ahead of the playing one. `Reader::set_chunk_chars` and `Engine::chunk_chars` (#235): an
-  engine billed per request (Gemini) gets joined sentences (`reader::join_chunks`: the first chunk
-  alone, then growing to the engine's limit; `Engine::quick_start` false joins from the first
-  sentence, `reader::join_whole`); the worker sets them at start and on `set engine`. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
+  chunks ahead of the playing one. Send mode (#235): `Engine::send_mode` and `Engine::input_limit`
+  set `Reader::set_chunking` at start and on `set engine`: `Sentences`, or `Message` (one chunk
+  per item, cut past the limit by `reader::pack_message`); `ReaderHandle::send_mode` tells L3,
+  whose `Rules::set_whole_messages` (set by the driver before every call) makes each release of
+  prose one `Speak`, so one entry, one item, one request. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
 - `sonara-cli` `engines.rs`: `sonara engines ...` (`engines_file.rs` writes a `command` profile
   into `engines.json` locally, then `engine_reload`); `uninstall` deletes the `sonara:*`
   credentials unless settings are kept.

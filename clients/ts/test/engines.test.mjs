@@ -27,7 +27,7 @@ describe("engines", () => {
   });
 
   it("sends the engine_* messages with the wire field names", async () => {
-    const profile = { id: "kgpu", kind: "openai-compatible", url: "http://127.0.0.1:8880/v1", options: { preset: "kokoro-fastapi" } };
+    const profile = { id: "kgpu", kind: "openai-compatible", url: "http://127.0.0.1:8880/v1", send_mode: "message", options: { preset: "kokoro-fastapi" } };
     await client.engines.list();
     await client.engines.add(profile);
     await client.engines.add(profile, { secret: "sk-x", replace: true });

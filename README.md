@@ -294,14 +294,29 @@ $S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--mo
 
 `sonara engines --help` lists the options of every kind.
 
-**Gemini** counts requests on its free tier (per minute and per day), so Sonara sends it
-several sentences at once: the first sentence of a reply alone (reading starts quickly), then
-growing chunks of up to 1000 characters, one request at a time. A 3000-character reply is about
-6 requests. To spend fewer, turn **Quick start** off (`--option quick_start=false`): a reply
-under the characters per request (`chunk_chars`, up to 4000) is then one request, and reading
-starts once all of it is made (a 3000-character reply: 1 request at 4000, 3 or 4 at 1000).
-`chunk_chars=0` sends one request per sentence. Both are on the settings page. When a
-per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
+**Send to the engine.** Every added engine has this setting, in its form on the settings page
+(or `--send-mode` with the CLI):
+
+- **Full message in one request** (`message`, the default for every cloud provider): what Sonara
+  is about to read at once goes to the provider as one request. A reply read when it is done is
+  one request, not one per sentence; the text before a question is one request and the question
+  its own short one; with *Reading: Immediately* each paragraph is one request. The audio plays
+  as it arrives (Gemini, ElevenLabs, OpenAI with `pcm`, Cartesia), so reading starts with the
+  first audio. Up reads the message again without a new request. A very long message is split
+  only past the provider's limit (at paragraphs, then sentences; `--option chunk_chars=<n>`
+  lowers it).
+- **As it comes in** (`sentence`, the default for a program or a speech server on this PC): each
+  sentence is its own request, read as soon as it is made. Nothing is billed locally, and a
+  local server answers one sentence faster than a whole message.
+
+Skipping, flushing, a new prompt or muting stops a message that is still arriving: the request
+is cancelled and nothing more is sent for it. If the provider fails before any audio, Kokoro
+reads the whole message (and says once why); if an answer breaks off midway, what was played
+stays. Kokoro and the Windows voices always read sentence by sentence.
+
+**Gemini** counts requests on its free tier (per minute and per day), so it sends a whole
+message per request by default (up to 2000 characters each; a longer one in as few parts as
+fit). When a per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
 daily limit is reached, Kokoro reads until Google's daily reset (midnight Pacific time).
 Gemini's audio is **streamed**: a sentence starts playing with its first audio, and when none
 has come after 12 seconds (`first_audio_ms`, on the settings page as *Wait for the first audio*)

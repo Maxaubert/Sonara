@@ -55,8 +55,26 @@ impl Rig {
         announce: bool,
         earcons: Option<Arc<Library>>,
     ) -> Rig {
+        Self::on(
+            Arc::new(FakeEngine::new()),
+            settings,
+            summarizer,
+            forget_after,
+            announce,
+            earcons,
+        )
+    }
+
+    fn on(
+        engine: Arc<FakeEngine>,
+        settings: Settings,
+        summarizer: Option<Arc<dyn Summarizer>>,
+        forget_after: Duration,
+        announce: bool,
+        earcons: Option<Arc<Library>>,
+    ) -> Rig {
         let registry = Registry::default();
-        registry.register(Arc::new(FakeEngine::new())).unwrap();
+        registry.register(engine).unwrap();
         let (out, rx) = TestOutput::new();
         let reader =
             ReaderHandle::new(ReaderConfig::new(registry).with_output(Box::new(out.clone()), rx))
@@ -144,6 +162,87 @@ impl Rig {
             .iter()
             .filter(|c| matches!(c, OutputCall::PlayClip { .. }))
             .count()
+    }
+}
+
+/// The evidence of 2026-10-04 (#235): a reply of 18 sentences in read mode
+/// `done` was 18 requests. With an engine that takes whole messages it is
+/// one entry, one item, one synthesis; in sentence mode still 18. Up
+/// (Restart) replays the whole message.
+#[test]
+fn a_done_reply_is_one_synthesis_with_an_engine_that_takes_whole_messages() {
+    let words = [
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+    ];
+    let sentences: Vec<String> = words.iter().map(|w| format!("This is line {w}.")).collect();
+    let reply = format!(
+        "{}\n\n{}",
+        sentences[..9].join(" "),
+        sentences[9..].join(" ")
+    );
+    for (mode, want) in [
+        (sonara_engine::SendMode::Message, 1),
+        (sonara_engine::SendMode::Sentence, 18),
+    ] {
+        let engine = Arc::new(FakeEngine::with_send_mode(mode));
+        let settings = Settings {
+            read_mode: sonara_agent::ReadMode::Done,
+            ..Default::default()
+        };
+        let r = Rig::on(
+            engine.clone(),
+            settings,
+            None,
+            sonara_agent::FORGET_AFTER,
+            false,
+            None,
+        );
+        r.agent.turn_start("a", None, Some(1.0)).unwrap();
+        for s in reply.split_inclusive('.') {
+            r.agent.stream("a", None, s, 0, false, Some(1.0)).unwrap();
+        }
+        r.agent.stream("a", None, "", 0, true, Some(1.0)).unwrap();
+        assert_eq!(engine.syntheses(), 0, "{mode:?}: held until the turn end");
+        r.agent.turn_end("a", None, Some(1.0)).unwrap();
+        if want == 1 {
+            r.read(&reply);
+            r.stays_idle();
+            assert_eq!(engine.texts(), vec![reply.clone()]);
+            // Up replays the whole message (a new item, the same text).
+            r.agent.channels().control(Control::Restart, None).unwrap();
+            r.read(&reply);
+        } else {
+            for s in &sentences {
+                r.read(s);
+            }
+        }
+        r.stays_idle();
+        assert_eq!(
+            engine.texts().len(),
+            if want == 1 { 2 } else { 18 },
+            "{mode:?}: {:?}",
+            engine.texts()
+        );
+        if want == 1 {
+            assert_eq!(engine.texts()[1], reply, "the replay is the whole message");
+        }
     }
 }
 

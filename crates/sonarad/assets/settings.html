@@ -360,6 +360,7 @@
           <div class="pref" id="ef-key-row"><div class="pref-copy"><label class="title" for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-keyref-hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref" aria-label="Where the key comes from" aria-describedby="ef-keyref-hint"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" aria-describedby="ef-key-hint" placeholder="Paste the key&hellip;"><input class="field mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" aria-describedby="ef-key-hint" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
           <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model-select">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-model-about">Which of the provider's models speaks. Sonara names none of its own: models change at the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-model-select" aria-describedby="ef-model-hint"></select><input class="field mono" id="ef-model" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Model id" aria-describedby="ef-model-hint" placeholder="Model id&hellip;" hidden></div><div class="hint" id="ef-model-hint"></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads. Sonara picks none for you; the voice you choose on the Speech page wins while this engine is in use.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint"></div></div></div>
+          <div class="pref" id="ef-send-row"><div class="pref-copy"><strong id="ef-send-label">Send to the engine</strong><div class="hint" id="ef-send-about">How Sonara hands the text over. The default suits the provider.</div></div><div class="control"><div class="segments" id="ef-send" role="radiogroup" aria-labelledby="ef-send-label" aria-describedby="ef-send-hint"><button type="button" role="radio" data-value="message">Full message in one request</button><button type="button" role="radio" data-value="sentence">As it comes in</button></div><div class="hint" id="ef-send-hint"></div></div></div>
           <div id="ef-kind-fields"></div>
           <details class="more"><summary>More options</summary>
             <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
@@ -1146,9 +1147,7 @@ const KIND_FIELDS = {
   "gemini": [
     {key: "language_code", label: "Language", hint: "Empty lets Gemini tell from the text. A locale such as en-US."},
     {key: "style", label: "Style", hint: "How to speak, such as calm and warm. Sent as a direction, never read aloud. Sonara adds the pace from your rate."},
-    {key: "chunk_chars", label: "Characters per request", type: "number", min: 0, max: 4000, step: 100, placeholder: "1000", hint: "The free tier counts requests: Sonara joins sentences up to this many characters. 0 sends one sentence per request; 200 to 4000. Empty is 1000."},
     {key: "first_audio_ms", label: "Wait for the first audio", type: "number", min: 1000, max: 60000, step: 500, placeholder: "12000", hint: "Gemini streams its audio. If none has come after this many milliseconds, Kokoro reads that part instead. Empty is 12000."},
-    {key: "quick_start", label: "Quick start", type: "select", bool: true, choices: [["", "On: the first sentence alone, reading starts at once (default)"], ["false", "Off: a reply that fits is one request, reading starts once it is made"]], hint: "Off saves requests on the free tier: a reply under the characters per request is one request."},
   ],
   "cartesia": [
     {key: "language", label: "Language", hint: "A language code; empty is en."},
@@ -1528,6 +1527,7 @@ function syncFormRows(prevPreset) {
     $("ef-url").placeholder = typeof k.url === "string" ? k.url : "";
     setText("ef-url-hint", kind === "azure" ? "Optional: your resource's endpoint, instead of the region." : "Optional. Empty uses " + possessive(providerName()) + " own address.");
   }
+  syncSendMode();
   syncKeyRow();
 }
 
@@ -1544,6 +1544,36 @@ function syncKeyRow() {
     : "For a server on this PC that needs none.");
   syncRequired();
 }
+
+// ---- send to the engine (#235) ----------------------------------------------
+// The runtime's default: a sentence at a time for a server on this PC (an
+// OpenAI-compatible one at a loopback address), a whole message for the
+// cloud. The page shows it preselected and sends send_mode only once the
+// user picks one (or the profile already had one).
+const SEND_HINTS = {
+  message: "One request per reply: fewer requests and charges. Reading starts with its first audio.",
+  sentence: "One request per sentence: reading starts after the first one. More requests.",
+};
+function loopbackUrl(u) {
+  return /^https?:\/\/(127\.[0-9.]+|localhost|\[::1\])(:[0-9]+)?(\/|$)/i.test(u || "");
+}
+function defaultSendMode() {
+  const kind = $("ef-kind").value;
+  if (kind !== "openai-compatible") return "message";
+  const url = $("ef-url").value.trim() || (PRESETS[$("ef-preset").value] || {}).url || "";
+  return loopbackUrl(url) ? "sentence" : "message";
+}
+function sendMode() { return formState.sendMode || defaultSendMode(); }
+function syncSendMode() {
+  const mode = sendMode();
+  setSegments("ef-send", mode);
+  setText("ef-send-hint", SEND_HINTS[mode] + (formState.sendMode ? "" : " The default for this provider."));
+}
+wireSegments("ef-send", v => {
+  formState.sendMode = v;
+  syncSendMode();
+  markDirty();
+});
 
 // ---- the voice list, before and after a save -------------------------------
 function fillVoiceSelect(list, current) {
@@ -1869,6 +1899,7 @@ function openForm(v) {
   // Only what the profile sets itself: the defaults (a preset's address, an
   // Azure region's endpoint) stay defaults through an edit.
   const ex = v ? (v.explicit || v) : {};
+  formState.sendMode = ex.send_mode || null;
   $("ef-url").value = ex.url || "";
   $("ef-model").value = "";
   $("ef-key").value = "";
@@ -1929,6 +1960,8 @@ function collectProfile() {
   if (k.model && model) p.model = model;
   const voice = chosenVoice();
   if (voice) p.voice = voice;
+  // Only a choice is sent; the default stays the kind's (#235).
+  if (formState.sendMode) p.send_mode = formState.sendMode;
   const ref = $("ef-keyref").value;
   p.key_ref = ref === "env" ? "env:" + $("ef-keyenv").value.trim() : ref;
   let options = {};
@@ -2025,6 +2058,7 @@ $("engine-form").addEventListener("input", e => {
 $("engine-form").addEventListener("change", e => {
   markDirty();
   if (e.target.id === "ef-url" || e.target.id === "ef-opt-region") scheduleVoices();
+  if (e.target.id === "ef-url") syncSendMode();
 });
 $("ef-id").addEventListener("change", () => {
   const id = $("ef-id").value.trim();

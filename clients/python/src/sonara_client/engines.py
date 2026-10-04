@@ -13,6 +13,12 @@ Sonara names no model or voice of its own (protocol 1.5, runtime 0.19.0):
 ``models`` and ``voices`` list the provider's live, and a profile without
 one it needs says so in ``engine_list`` (``missing``).
 
+"Send to the engine" (``send_mode`` of a profile, runtime 0.19.0, #235):
+``"message"`` sends a whole released message in one request (the default of
+the cloud kinds), ``"sentence"`` each sentence as it comes (the default of a
+program and a server on this PC). The view in ``engine_list`` tells the mode
+in force, and ``explicit["send_mode"]`` whether the profile chose it.
+
 A ``command`` engine (a program on the user's PC) is never added or changed
 through the protocol: ``add`` of one, or replacing one, is ``E_FORBIDDEN``
 (protocol 1.3). The user adds it locally (``sonara engines add <id> --kind
@@ -24,6 +30,9 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 Send = Callable[[str, dict], dict]
+
+#: The values of a profile's ``send_mode`` (#235).
+SEND_MODES = ("message", "sentence")
 
 
 class Engines:

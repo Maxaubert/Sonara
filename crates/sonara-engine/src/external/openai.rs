@@ -193,6 +193,19 @@ impl Adapter for OpenAi {
         self.with_key(req, key)
     }
 
+    /// Raw `pcm` comes as it is made (OpenAI's chunked answer, #235); WAV
+    /// is waited for whole.
+    fn bytes_request(
+        &self,
+        text: &str,
+        voice: &str,
+        wpm: u32,
+        key: Option<&Secret>,
+    ) -> Option<HttpRequest> {
+        self.raw_pcm()
+            .then(|| self.synth_request(text, voice, wpm, key))
+    }
+
     fn requested_rate(&self) -> Option<u32> {
         Some(self.sample_rate.unwrap_or(24_000))
     }

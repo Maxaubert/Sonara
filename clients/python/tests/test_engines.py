@@ -113,6 +113,13 @@ def test_add_test_and_remove_against_sonarad(home, sonarad, provider):
                    "options": {"preset": "kokoro-fastapi", "timeout_ms": 5000}}
         added = c.engines.add(profile, secret=SECRET)
         assert added["engine"]["key_present"] is True
+        # A server on this PC: a sentence at a time by default (#235).
+        assert added["engine"]["send_mode"] == "sentence"
+        assert "send_mode" not in added["engine"]["explicit"]
+        chosen = c.engines.add(dict(profile, send_mode="message"), replace=True)
+        assert chosen["engine"]["send_mode"] == "message"
+        assert chosen["engine"]["explicit"]["send_mode"] == "message"
+        c.engines.add(profile, replace=True)
         assert SECRET not in json.dumps(added)
         t = c.engines.test("local", play=False)
         assert t["sample_rate"] == 24000

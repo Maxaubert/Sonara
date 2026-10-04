@@ -1,30 +1,11 @@
 //! Split a chunk that is longer than a provider's input limit (spec 13.1
-//! "Input limits"). A reader chunk is one sentence, so this rarely runs;
-//! when it does, parts end at spaces, and only a single word longer than
-//! the limit is cut inside.
+//! "Input limits"). A reader chunk is one sentence, or a whole message cut
+//! to the limit at paragraphs and sentences (send mode `message`, #235), so
+//! this runs only for a single sentence over the limit: parts end at
+//! spaces, and only a single word longer than the limit is cut inside.
 
-/// A provider's input limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Limit {
-    Chars(usize),
-    /// UTF-8 bytes (Google).
-    Bytes(usize),
-}
-
-impl Limit {
-    fn size(&self, s: &str) -> usize {
-        match self {
-            Limit::Chars(_) => s.chars().count(),
-            Limit::Bytes(_) => s.len(),
-        }
-    }
-
-    fn max(&self) -> usize {
-        match self {
-            Limit::Chars(n) | Limit::Bytes(n) => (*n).max(1),
-        }
-    }
-}
+/// A provider's input limit (the engine-wide `InputLimit`).
+pub use crate::InputLimit as Limit;
 
 /// Cut one word into pieces of at most `limit`, at character boundaries.
 fn cut_word(word: &str, limit: Limit, out: &mut Vec<String>) {

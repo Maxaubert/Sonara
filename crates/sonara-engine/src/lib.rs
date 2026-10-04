@@ -27,7 +27,9 @@ pub mod fake;
 
 pub use error::{Error, Result, MISSING_VOICE_DATA_FIX};
 pub use registry::Registry;
-pub use types::{EngineId, EngineStatus, LicenseClass, PcmChunk, Readiness, Reason, Voice};
+pub use types::{
+    EngineId, EngineStatus, InputLimit, LicenseClass, PcmChunk, Readiness, Reason, SendMode, Voice,
+};
 
 /// The PCM chunks of one synthesis, in playback order.
 pub type PcmStream = Box<dyn Iterator<Item = Result<PcmChunk>> + Send>;
@@ -63,19 +65,17 @@ pub trait Engine: Send + Sync {
     fn lookahead(&self) -> usize {
         1
     }
-    /// Join the reader's sentences into chunks of up to this many
-    /// characters (#235; the first chunk of an item stays one sentence).
-    /// An engine whose provider counts requests (Gemini's free tier) asks
-    /// for fewer, longer chunks. Default 0: one sentence per chunk.
-    fn chunk_chars(&self) -> usize {
-        0
+    /// How the reader sends text to this engine (#235): `Sentence` (the
+    /// default) one chunk per sentence; `Message` one chunk per item, its
+    /// paragraphs and sentences joined, split only past `input_limit`.
+    fn send_mode(&self) -> SendMode {
+        SendMode::Sentence
     }
-    /// With `chunk_chars`: true (the default) keeps the first chunk of an
-    /// item one sentence, so reading starts at once; false joins every
-    /// chunk up to `chunk_chars`, so a reply under it is one request and
-    /// reading starts once all of it is made (review of #235).
-    fn quick_start(&self) -> bool {
-        true
+    /// The most text one synthesis takes in `SendMode::Message` (the
+    /// provider's input limit, or less when the profile asks). Unused in
+    /// `Sentence` mode.
+    fn input_limit(&self) -> InputLimit {
+        InputLimit::Chars(4096)
     }
     /// True when the `PcmStream` of `synthesize` yields audio while the
     /// rest is still being made (#235, Gemini's streamed answer): the

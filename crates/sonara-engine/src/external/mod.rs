@@ -30,6 +30,15 @@
 //! - **Streamed** (`streaming`, #235): an adapter with a stream (Gemini)
 //!   returns from `synthesize` at the first audio, within the profile's
 //!   `first_audio_ms`, and the rest follows while the reader plays it.
+//! - **Send to the engine** (#235, `Profile::send_mode`): `message` (the
+//!   cloud default) makes the reader send what the agent releases at once
+//!   as one text (`Engine::send_mode`, split only past `input_limit`).
+//!   Such a text plays as its audio arrives: Gemini's events, or a raw PCM
+//!   body read as it comes (ElevenLabs `/stream`, OpenAI `pcm`, Cartesia);
+//!   other providers answer whole. A complete answer is kept for a replay
+//!   (`cache`), so Up costs no request. The fallback reads a failed text
+//!   whole (the cue first), playing as Kokoro makes it. `sentence` (local
+//!   servers and programs) sends each sentence as before.
 pub mod adapter;
 pub mod audio;
 pub mod azure;
@@ -53,8 +62,8 @@ mod streaming;
 pub mod worker;
 
 use crate::{
-    Engine, EngineId, EngineStatus, Error, LicenseClass, PcmChunk, PcmStream, Readiness, Reason,
-    Result, Voice,
+    Engine, EngineId, EngineStatus, Error, InputLimit, LicenseClass, PcmChunk, PcmStream,
+    Readiness, Reason, Result, SendMode, Voice,
 };
 use adapter::{
     execute, Adapter, HttpRequest, ModelInfo, VoiceSource, MAX_AUDIO_BODY, MAX_LIST_BODY,
@@ -315,6 +324,11 @@ impl External {
         self.held() || (hold::scope() == Scope::Normal && self.hold_epoch() != epoch)
     }
 
+    /// Send mode `message` (#235): whole messages, not sentences.
+    pub fn whole_messages(&self) -> bool {
+        self.profile.send_mode() == SendMode::Message
+    }
+
     /// Speak `text` with the fallback while held: not a failure, so no cue,
     /// no notice and no change of health.
     fn quiet(&self, text: &str, rate: u32) -> Result<PcmStream> {
@@ -327,10 +341,7 @@ impl External {
                 ),
             });
         };
-        let pcm = fb
-            .synthesize(text, &self.fallback_voice, rate)?
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Box::new(pcm.into_iter().map(Ok)))
+        fb.synthesize(text, &self.fallback_voice, rate)
     }
 
     /// The voice of a chunk (the one rule, #235): the voice the caller
@@ -487,24 +498,23 @@ impl External {
         Ok(Ok(out))
     }
 
-    /// Speak `text` with the fallback, the cue first once per episode.
+    /// Speak `text` with the fallback, the cue first once per episode. The
+    /// audio comes as the fallback makes it (a whole message plays from
+    /// its first sentence, #235).
     fn fallback(&self, text: &str, rate: u32, e: ExtError) -> Result<PcmStream> {
         let Some(fb) = self.fallback.clone() else {
             return Err(e.into_engine_error());
         };
-        let mut pcm: Vec<PcmChunk> = Vec::new();
+        let mut cue: Vec<PcmChunk> = Vec::new();
         if self.health.take_cue() {
-            let cue = cue_text(e.reason, &self.label);
-            pcm.extend(
-                fb.synthesize(&cue, &self.fallback_voice, rate)?
+            let line = cue_text(e.reason, &self.label);
+            cue.extend(
+                fb.synthesize(&line, &self.fallback_voice, rate)?
                     .collect::<Result<Vec<_>>>()?,
             );
         }
-        pcm.extend(
-            fb.synthesize(text, &self.fallback_voice, rate)?
-                .collect::<Result<Vec<_>>>()?,
-        );
-        Ok(Box::new(pcm.into_iter().map(Ok)))
+        let rest = fb.synthesize(text, &self.fallback_voice, rate)?;
+        Ok(Box::new(cue.into_iter().map(Ok).chain(rest)))
     }
 
     /// One synthesis with no fallback and no cache, for `engine_test`. A
@@ -519,7 +529,7 @@ impl External {
         let key = self.key().map_err(ExtError::into_engine_error)?;
         let start = (self.clock)();
         let streamed = match &self.backend {
-            Backend::Http(a) if a.streams() => {
+            Backend::Http(a) if a.streams() || self.whole_messages() => {
                 self.stream_whole(gen, text, &voice, rate, key.as_ref())?
             }
             _ => None,
@@ -791,16 +801,26 @@ impl Engine for External {
         self.profile.prefetch()
     }
 
-    fn chunk_chars(&self) -> usize {
-        self.profile.chunk_chars()
+    fn send_mode(&self) -> SendMode {
+        self.profile.send_mode()
     }
 
-    fn quick_start(&self) -> bool {
-        self.profile.quick_start()
+    /// The provider's input limit, or the profile's `chunk_chars` when it
+    /// is lower (counted in the provider's unit).
+    fn input_limit(&self) -> InputLimit {
+        let limit = self.backend.input_limit();
+        match (limit, self.profile.chunk_chars()) {
+            (InputLimit::Chars(n), Some(c)) => InputLimit::Chars(n.min(c)),
+            (InputLimit::Bytes(n), Some(c)) => InputLimit::Bytes(n.min(c)),
+            (l, None) => l,
+        }
     }
 
+    /// Gemini's events always; any answer in send mode `message`, where a
+    /// message plays from its first audio (a raw body as it comes, the
+    /// fallback as it is made).
     fn streams(&self) -> bool {
-        matches!(&self.backend, Backend::Http(a) if a.streams())
+        self.whole_messages() || matches!(&self.backend, Backend::Http(a) if a.streams())
     }
 
     /// No network call (a cold profile must not send text or spend quota):
@@ -869,7 +889,7 @@ impl Engine for External {
             }
         };
         if let Backend::Http(adapter) = &self.backend {
-            if adapter.streams() {
+            if adapter.streams() || self.whole_messages() {
                 match self.begin_stream(gen, epoch, text, &voice, rate, key.as_ref()) {
                     Err(Error::Cancelled) if self.cut_by_hold(epoch) => {
                         return self.quiet(text, rate)
@@ -901,7 +921,8 @@ impl Engine for External {
                 if self.health.record_success() {
                     self.notify(None, None, "recovered".into());
                 }
-                self.cache.put(&voice, rate, text, pcm.clone());
+                self.cache
+                    .keep(&voice, rate, text, pcm.clone(), self.whole_messages());
                 Ok(Box::new(pcm.into_iter().map(Ok)))
             }
             Err(e) => {

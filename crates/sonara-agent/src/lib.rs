@@ -8,6 +8,10 @@
 //! their actions under one lock, so messages apply in the order they
 //! arrive:
 //!
+//! - **Whole messages** (#235): before every call into the rules the
+//!   driver tells them whether the reader's engine takes whole messages
+//!   (`ReaderHandle::send_mode`, `Rules::set_whole_messages`), so a release
+//!   of prose is one entry, one reader item and one request.
 //! - `Speak` goes to the channel as an appended entry (`Channels::add`,
 //!   whatever the channel's policy: a turn is many chunks); a decision also
 //!   `prioritize`s the channel, so it is read before the other channels
@@ -308,6 +312,7 @@ impl Agent {
         }
         let mut rules = self.lock();
         self.inner.seen(&mut rules, channel);
+        self.inner.sync_whole(&mut rules);
         match f(&mut rules) {
             Ok(actions) => {
                 self.inner.execute(&rules, source, channel, actions)?;
@@ -463,6 +468,7 @@ impl Agent {
             .into_iter()
             .filter(|c| rules.writing(c))
             .collect();
+        self.inner.sync_whole(&mut rules);
         let mut report = self.inner.channels.flush_with(
             "flush",
             |ch| {
@@ -606,6 +612,13 @@ impl Inner {
     fn lock(&self) -> MutexGuard<'_, Rules> {
         // A panic under the lock already failed a test; keep serving.
         self.rules.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Whether the reader's engine takes whole messages (#235), for the
+    /// rules' next call.
+    fn sync_whole(&self, rules: &mut Rules) {
+        let whole = self.channels.reader().send_mode() == sonara_reader::SendMode::Message;
+        rules.set_whole_messages(whole);
     }
 
     /// Report to the trace hook, if any.
@@ -787,6 +800,7 @@ impl Inner {
 
     fn fire(self: &Arc<Self>, timer: &Timer) {
         let mut rules = self.lock();
+        self.sync_whole(&mut rules);
         let focused = self.channels.focused();
         let actions = rules.fire(timer, focused.as_deref());
         if let Err(e) = self.execute(&rules, "timer", None, actions) {
@@ -834,6 +848,7 @@ impl Inner {
 
     fn digest_done(self: &Arc<Self>, job: &Job, summary: Option<String>) {
         let mut rules = self.lock();
+        self.sync_whole(&mut rules);
         let actions = rules.digest_done(job, summary);
         if let Err(e) = self.execute(&rules, "summary", Some(&job.channel), actions) {
             eprintln!("[agent] summary for {}: {e}", job.channel);

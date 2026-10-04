@@ -24,6 +24,16 @@
 //!   prose for the recap.
 //! - **turn_end** plays `turn_done` and releases held prose (the turn ends
 //!   at this signal, not at a block's `final`).
+//! - **Whole messages** (#235, `set_whole_messages`, which the driver sets
+//!   from the reader's engine: send mode `message`): every release of prose
+//!   is ONE `Speak`, the chunks joined with a space and paragraphs (a blank
+//!   line, or a new block) with a blank line, so the engine gets one
+//!   request: the turn end in `done`, a batch in `queue`, the prose before
+//!   a decision or a tool run. In `immediate` the release point is the end
+//!   of a paragraph (its blank line or its block's `final`), so reading
+//!   starts after the first paragraph and each paragraph is one request.
+//!   Decisions and tool announcements stay their own (short) `Speak`: a
+//!   decision is read with priority, ahead of other sessions.
 //! - **Decisions** (`ask`) are spoken with priority: the driver puts the
 //!   channel ahead of the others after the item playing. A question plays
 //!   `choice` (once while one is unanswered) and marks the channel as
@@ -204,8 +214,13 @@ struct Turn {
     awaiting: bool,
     /// `hint_once` was spoken in this channel.
     hinted: bool,
-    /// Prose held by `read_mode`.
-    held_prose: Vec<String>,
+    /// Prose held by `read_mode`, each chunk with whether it starts a
+    /// paragraph (joined with a blank line in whole messages).
+    held_prose: Vec<(String, bool)>,
+    /// The next chunk starts a paragraph (a blank line or a block ended).
+    new_para: bool,
+    /// The block of the last delta.
+    last_index: Option<u32>,
     /// The turn released its prose (turn_end, or a tool in read mode
     /// `queue`): no more holding.
     released: bool,
@@ -243,6 +258,8 @@ impl Turn {
             awaiting: false,
             hinted: false,
             held_prose: Vec::new(),
+            new_para: false,
+            last_index: None,
             released: false,
             ended: false,
             skip_reply: false,
@@ -275,6 +292,8 @@ pub struct Rules {
     next_gen: u64,
     next_decision: u64,
     next_token: u64,
+    /// Send mode `message` (#235, module docs).
+    whole: bool,
     /// Reorder buffer (#88): turn-end summaries are heard in dispatch
     /// order, whatever order the summarizer finishes them in.
     next_seq: u64,
@@ -294,12 +313,23 @@ impl Rules {
             next_gen: 0,
             next_decision: 0,
             next_token: 0,
+            whole: false,
             next_seq: 0,
             serve_seq: 0,
             parked: BTreeMap::new(),
             watched: HashMap::new(),
             notes: RefCell::new(Vec::new()),
         }
+    }
+
+    /// Join every release of prose into one `Speak` (#235, module docs):
+    /// the current engine takes whole messages.
+    pub fn set_whole_messages(&mut self, on: bool) {
+        self.whole = on;
+    }
+
+    pub fn whole_messages(&self) -> bool {
+        self.whole
     }
 
     /// The notes left since the last call (module docs).
@@ -417,10 +447,30 @@ impl Rules {
 
     /// Speak the prose held by `read_mode`.
     fn flush_prose(&mut self, out: &mut Vec<Action>, channel: &str) {
-        let held = std::mem::take(&mut self.turn(channel).held_prose);
-        for text in held {
-            self.speak(out, channel, text, false, "prose");
+        let n = self.turn(channel).held_prose.len();
+        self.flush_prose_upto(out, channel, n);
+    }
+
+    /// Speak the first `n` chunks of the held prose: one `Speak` in whole
+    /// messages (module docs), else one per chunk.
+    fn flush_prose_upto(&mut self, out: &mut Vec<Action>, channel: &str, n: usize) {
+        let c = self.turn(channel);
+        let n = n.min(c.held_prose.len());
+        let held: Vec<(String, bool)> = c.held_prose.drain(..n).collect();
+        if !self.whole {
+            for (text, _) in held {
+                self.speak(out, channel, text, false, "prose");
+            }
+            return;
         }
+        let mut text = String::new();
+        for (t, para) in held {
+            if !text.is_empty() {
+                text.push_str(if para { "\n\n" } else { " " });
+            }
+            text.push_str(&t);
+        }
+        self.speak(out, channel, text, false, "prose");
     }
 
     // -- messages ---------------------------------------------------------
@@ -467,25 +517,39 @@ impl Rules {
             return Ok(out);
         }
         // Every chunk is recorded for summaries; at `skip_code` a code
-        // block's announcement is not spoken (#214).
-        let mut texts: Vec<String> = Vec::new();
+        // block's announcement is not spoken (#214). Each spoken chunk
+        // notes whether it starts a paragraph; `breaks` counts the chunks
+        // of this delta before the last paragraph end in it.
+        let mut texts: Vec<(String, bool)> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
+        let mut breaks: Option<usize> = None;
+        if c.last_index.is_some_and(|i| i != index) {
+            c.new_para = true;
+        }
+        c.last_index = Some(index);
         for ch in c.assembler.feed(delta, index, is_final) {
             match ch {
                 Chunk::Text(t) => {
                     c.prose.push(t.clone());
-                    texts.push(t);
+                    texts.push((t, std::mem::take(&mut c.new_para)));
                 }
                 Chunk::Code(t) => {
                     c.prose.push(t.clone());
                     if skip_code {
                         skipped.push(t);
                     } else {
-                        texts.push(t);
+                        texts.push((t, std::mem::take(&mut c.new_para)));
                     }
                 }
-                Chunk::ParagraphBreak => {}
+                Chunk::ParagraphBreak => {
+                    c.new_para = true;
+                    breaks = Some(texts.len());
+                }
             }
+        }
+        if is_final {
+            c.new_para = true;
+            breaks = Some(texts.len());
         }
         let settle = c.settle_armed;
         for t in skipped {
@@ -497,7 +561,7 @@ impl Rules {
             );
         }
         if summaries {
-            for t in texts {
+            for (t, _) in texts {
                 self.note(
                     Some(channel),
                     "prose",
@@ -512,25 +576,39 @@ impl Rules {
             }
             return Ok(out);
         }
-        if texts.is_empty() {
+        let whole = self.whole;
+        // A paragraph that ended in this delta (immediate, whole messages).
+        let para_end = whole && mode == ReadMode::Immediate && breaks.is_some();
+        if texts.is_empty() && !para_end {
             return Ok(out);
         }
         let c = self.turn(channel);
+        let before = c.held_prose.len();
         c.held_prose.extend(texts);
         let ready = c.released
             || match mode {
-                ReadMode::Immediate => true,
+                ReadMode::Immediate => !whole,
                 ReadMode::Queue => c.held_prose.len() >= minqueue,
                 ReadMode::Done => false,
             };
+        let upto = before + breaks.unwrap_or(0);
         if ready {
             self.flush_prose(&mut out, channel);
-        } else {
-            let held = c.held_prose.len();
-            let what = if mode == ReadMode::Done {
-                format!("held: waits for the turn end (read_mode done), {held} chunk(s)")
-            } else {
-                format!("held: {held} chunk(s) wait for minqueue {minqueue} or the turn end")
+        } else if para_end && upto > 0 {
+            self.flush_prose_upto(&mut out, channel, upto);
+        }
+        let held = self.turn(channel).held_prose.len();
+        if held > 0 && !ready {
+            let what = match mode {
+                ReadMode::Done => {
+                    format!("held: waits for the turn end (read_mode done), {held} chunk(s)")
+                }
+                ReadMode::Immediate => format!(
+                    "held: {held} chunk(s) wait for the end of the paragraph (send mode message)"
+                ),
+                ReadMode::Queue => {
+                    format!("held: {held} chunk(s) wait for minqueue {minqueue} or the turn end")
+                }
             };
             self.note(Some(channel), "prose", what, None);
         }
@@ -569,6 +647,8 @@ impl Rules {
         c.released = false;
         c.ended = false;
         c.skip_reply = false;
+        c.new_para = false;
+        c.last_index = None;
         c.prose.clear();
         c.voiced = 0;
         Self::cancel(c, gen, settle);
@@ -1015,8 +1095,12 @@ impl Rules {
         let gen = c.gen;
         if text.chars().count() < SUMMARY_MIN_CHARS && !leadin {
             if focused == Some(channel) {
-                for chunk in chunks {
-                    self.speak(out, channel, chunk, false, "prose");
+                if self.whole {
+                    self.speak(out, channel, chunks.join(" "), false, "prose");
+                } else {
+                    for chunk in chunks {
+                        self.speak(out, channel, chunk, false, "prose");
+                    }
                 }
             } else {
                 // Joins the summary sequence, so a short turn finishing

@@ -115,6 +115,74 @@ impl fmt::Display for Reason {
     }
 }
 
+/// How text goes to an engine (#235, "Send to the engine"): a whole
+/// message in one request, or each sentence as it comes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SendMode {
+    /// Each sentence is its own request (the reader's chunks), read as soon
+    /// as it is made: the built-in engines, programs and local servers.
+    #[default]
+    Sentence,
+    /// What the agent releases for speech at once (a reply at its end, a
+    /// summary, the prose before a question) is joined into one request,
+    /// split only past the provider's input limit (`Engine::input_limit`),
+    /// and played as its audio streams in: the cloud engines, which bill
+    /// or limit per request.
+    Message,
+}
+
+impl SendMode {
+    pub const ALL: [SendMode; 2] = [SendMode::Message, SendMode::Sentence];
+
+    /// The wire name (`send_mode` of a profile).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SendMode::Sentence => "sentence",
+            SendMode::Message => "message",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<SendMode> {
+        SendMode::ALL.into_iter().find(|m| m.as_str() == s)
+    }
+}
+
+impl fmt::Display for SendMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The most text one request may carry (spec 13.1 "Input limits").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InputLimit {
+    Chars(usize),
+    /// UTF-8 bytes (Google).
+    Bytes(usize),
+}
+
+impl InputLimit {
+    /// The size of `s` in this limit's unit.
+    pub fn size(&self, s: &str) -> usize {
+        match self {
+            InputLimit::Chars(_) => s.chars().count(),
+            InputLimit::Bytes(_) => s.len(),
+        }
+    }
+
+    /// The limit (at least 1).
+    pub fn max(&self) -> usize {
+        match self {
+            InputLimit::Chars(n) | InputLimit::Bytes(n) => (*n).max(1),
+        }
+    }
+
+    /// Whether `s` fits.
+    pub fn fits(&self, s: &str) -> bool {
+        self.size(s) <= self.max()
+    }
+}
+
 /// One voice of one engine (protocol `voices`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Voice {

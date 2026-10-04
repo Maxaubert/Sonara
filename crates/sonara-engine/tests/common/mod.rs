@@ -261,6 +261,14 @@ impl Route {
         r
     }
 
+    /// A raw body sent piece by piece, each after its wait (#235: a
+    /// provider streaming PCM as it makes it).
+    pub fn raw(content_type: &str, pieces: Vec<(std::time::Duration, Vec<u8>)>) -> Route {
+        let mut r = Route::new(200, content_type, Vec::new());
+        r.pieces = pieces;
+        r
+    }
+
     pub fn json(status: u16, body: &str) -> Route {
         Route::new(status, "application/json", body.as_bytes().to_vec())
     }
@@ -314,6 +322,18 @@ struct Script {
     fixed: HashMap<String, Route>,
     queued: HashMap<String, VecDeque<Route>>,
     seen: Vec<Captured>,
+    streamed: Vec<Streamed>,
+}
+
+/// How a streamed answer (`Route::pieces`) went, once it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Streamed {
+    /// The path, without the query.
+    pub path: String,
+    /// Pieces written before the end.
+    pub written: usize,
+    /// A write failed: the client closed the connection.
+    pub cut: bool,
 }
 
 /// A local HTTP server that answers each path with scripted routes (one-off
@@ -376,6 +396,11 @@ impl ScriptServer {
 
     pub fn requests(&self) -> Vec<Captured> {
         self.script.lock().unwrap().seen.clone()
+    }
+
+    /// The streamed answers that ended so far.
+    pub fn streamed(&self) -> Vec<Streamed> {
+        self.script.lock().unwrap().streamed.clone()
     }
 
     /// Requests for `path` (without the query).
@@ -462,11 +487,22 @@ fn answer(conn: TcpStream, script: &Mutex<Script>) {
     let _ = out.write_all(head.as_bytes());
     let _ = out.write_all(&route.body);
     let _ = out.flush();
+    let mut written = 0;
+    let mut cut = false;
     for (wait, piece) in &route.pieces {
         thread::sleep(*wait);
         if out.write_all(piece).and_then(|_| out.flush()).is_err() {
-            return;
+            cut = true;
+            break;
         }
+        written += 1;
+    }
+    if !route.pieces.is_empty() {
+        script.lock().unwrap().streamed.push(Streamed {
+            path: bare,
+            written,
+            cut,
+        });
     }
 }
 

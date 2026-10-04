@@ -11,6 +11,7 @@ import base64
 import json
 import struct
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -171,6 +172,10 @@ class FakeCloud:
         self.key = key
         self.requests: list[dict] = []
         self.lock = threading.Lock()
+        # `slowly` (#235): raw PCM answers sent piece by piece, and how each
+        # such answer ended: (pieces written, the client closed it).
+        self.slow: tuple[int, float] | None = None
+        self.streams: list[tuple[int, bool]] = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -195,10 +200,33 @@ class FakeCloud:
             def _answer(self, r: dict, good) -> None:
                 with outer.lock:
                     key = outer.key
+                    slow = outer.slow
                 if r["headers"].get(outer.shape.key_header) != outer.shape.key_prefix + key:
                     self._send(*outer.shape.refused())
+                elif slow and r["method"] == "POST":
+                    self._trickle(*slow)
                 else:
                     self._send(*good())
+
+            def _trickle(self, n: int, every: float) -> None:
+                """A raw PCM answer made as it is sent: `n` pieces of 0.1 s,
+                `every` seconds apart, no Content-Length."""
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/pcm")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                written, cut = 0, False
+                for _ in range(n):
+                    try:
+                        self.wfile.write(pcm(2400))
+                        self.wfile.flush()
+                    except OSError:
+                        cut = True
+                        break
+                    written += 1
+                    time.sleep(every)
+                with outer.lock:
+                    outer.streams.append((written, cut))
 
             def do_GET(self):  # noqa: N802 - http.server API
                 r = self._keep(b"")
@@ -230,6 +258,11 @@ class FakeCloud:
         p = dict(PROFILES[self.shape.kind], url=self.url)
         p["options"] = {"timeout_ms": 5000}
         return p
+
+    def slowly(self, pieces: int, every: float) -> None:
+        """From now on speech answers trickle in (`_trickle`)."""
+        with self.lock:
+            self.slow = (pieces, every)
 
     def refuse_key(self) -> None:
         """From now on the key Sonara holds is wrong."""

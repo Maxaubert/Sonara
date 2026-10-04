@@ -775,10 +775,12 @@ def test_gemini_offers_googles_live_models_and_voices_and_presets_none(live, bro
         for name in ("gemini-3", "flash-lite", "Kore", "Puck"):
             assert name not in form_text, name
         assert page.locator("#ef-opt-style").is_visible()
-        pw.expect(page.locator("#ef-opt-chunk_chars")).to_have_attribute("placeholder", "1000")
         pw.expect(page.locator("#ef-opt-first_audio_ms")).to_have_attribute("placeholder", "12000")
-        quick = options(page, "#ef-opt-quick_start")
-        assert ["false", "Off: a reply that fits is one request, reading starts once it is made"] in quick
+        # The pre-release Gemini options are folded into "Send to the
+        # engine" (#235): a whole message per request by default.
+        assert page.locator("#ef-opt-chunk_chars").count() == 0
+        assert page.locator("#ef-opt-quick_start").count() == 0
+        pw.expect(page.locator("#ef-send [data-value=message]")).to_have_attribute("aria-checked", "true")
         # Before the key: the lists wait for it, nothing is fetched.
         pw.expect(page.locator("#ef-voice-hint")).to_contain_text("Enter the API key")
         pw.expect(page.locator("#ef-model-hint")).to_contain_text("Enter the API key")
@@ -806,15 +808,13 @@ def test_gemini_offers_googles_live_models_and_voices_and_presets_none(live, bro
         assert lv.request({"type": "engine_list"})["engines"] == [], "nothing saved yet"
         page.select_option("#ef-model-select", "tts-g")
         page.select_option("#ef-voice", "voice-g")
-        page.fill("#ef-opt-chunk_chars", "4000")
-        page.select_option("#ef-opt-quick_start", "false")
         page.click("#ef-save")
         pw.expect(page.locator("#ef-save")).to_have_text("Saved")
         view = lv.request({"type": "engine_list"})["engines"][0]
         assert view["kind"] == "gemini" and view["model"] == "tts-g" and view["voice"] == "voice-g"
         assert view["key_present"] and view["missing"] == []
-        assert view["options"]["chunk_chars"] == 4000
-        assert view["options"]["quick_start"] is False
+        assert view["send_mode"] == "message" and "send_mode" not in view["explicit"]
+        assert "chunk_chars" not in view["options"] and "quick_start" not in view["options"]
         page.click("#ef-test")
         pw.expect(page.locator("#ef-status")).to_contain_text("Test passed")
         sent = cloud.speech()
@@ -823,6 +823,71 @@ def test_gemini_offers_googles_live_models_and_voices_and_presets_none(live, bro
         assert json.loads(sent[-1]["body"])["generationConfig"]["speechConfig"] == {
             "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "voice-g"}}}
         assert SECRET not in page.content()
+        page.close()
+    finally:
+        cloud.stop()
+
+
+def send_choice(page):
+    return page.locator("#ef-send [aria-checked=true]").get_attribute("data-value")
+
+
+def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, browser, provider):
+    # #235: "Send to the engine" with two choices, each with its one-line
+    # hint. The default is preselected per provider (a whole message for the
+    # cloud, a sentence at a time for a server on this PC) and is sent only
+    # once the user picks one; an edit shows the stored choice.
+    cloud = FakeCloud("elevenlabs", SECRET)
+    try:
+        lv = live()
+        page, _ = open_engines(browser, lv.url)
+        page.click("#engine-new")
+        group = page.locator("#ef-send")
+        pw.expect(group).to_have_attribute("role", "radiogroup")
+        pw.expect(page.locator("#ef-send-label")).to_have_text("Send to the engine")
+        labels = [b.inner_text() for b in group.locator("[role=radio]").all()]
+        assert labels == ["Full message in one request", "As it comes in"]
+        # OpenAI (the cloud) first: a whole message.
+        assert send_choice(page) == "message"
+        pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per reply")
+        pw.expect(page.locator("#ef-send-hint")).to_contain_text("default for this provider")
+        # A server on this PC: a sentence at a time.
+        page.select_option("#ef-preset", "kokoro-fastapi")
+        assert send_choice(page) == "sentence"
+        pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per sentence")
+        # Its address moved off this PC: the cloud default again.
+        page.fill("#ef-url", "https://tts.example.com/v1")
+        page.locator("#ef-url").dispatch_event("change")
+        assert send_choice(page) == "message"
+        # A cloud kind: a whole message; the keyboard picks the other.
+        page.select_option("#ef-kind", "elevenlabs")
+        assert send_choice(page) == "message"
+        page.fill("#ef-url", cloud.url)
+        page.locator("#ef-url").dispatch_event("change")
+        page.fill("#ef-key", SECRET)
+        page.wait_for_selector("#ef-voice option[value=voice-a]", state="attached")
+        page.select_option("#ef-voice", "voice-a")
+        page.locator("#ef-send [data-value=message]").focus()
+        page.keyboard.press("ArrowRight")
+        assert send_choice(page) == "sentence"
+        pw.expect(page.locator("#ef-send [data-value=sentence]")).to_be_focused()
+        hint = page.locator("#ef-send-hint")
+        pw.expect(hint).to_contain_text("One request per sentence")
+        pw.expect(hint).not_to_contain_text("default")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["send_mode"] == "sentence" and view["explicit"]["send_mode"] == "sentence"
+        # Reopened for an edit, the stored choice shows; back to a whole
+        # message, saved.
+        page.click("#ef-cancel")
+        page.locator("#profile-rows [data-engine=elevenlabs] button.engine-edit").click()
+        pw.expect(page.locator("#engine-form")).to_be_visible()
+        assert send_choice(page) == "sentence"
+        page.click("#ef-send [data-value=message]")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        assert lv.request({"type": "engine_list"})["engines"][0]["send_mode"] == "message"
         page.close()
     finally:
         cloud.stop()

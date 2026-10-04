@@ -1,5 +1,7 @@
-//! A chunk whose audio plays as it comes (#235, Gemini): the request is
-//! `Adapter::stream_request`, its events are read by `sse`, and the first
+//! A chunk whose audio plays as it comes (#235): Gemini's events
+//! (`Adapter::stream_request`, read by `sse::start`) or, in send mode
+//! `message`, a raw PCM body read as it arrives (`Adapter::bytes_request`,
+//! `sse::start_bytes`: ElevenLabs, OpenAI `pcm`, Cartesia). The first
 //! audio decides. When it comes within the profile's `first_audio_ms`
 //! (default 12 s), `synthesize` returns at once and the rest follows on the
 //! `PcmStream`, which the reader plays while it arrives
@@ -24,6 +26,47 @@ use std::time::{Duration, Instant};
 
 /// How often a wait looks at the cancel generation.
 const POLL: Duration = Duration::from_millis(10);
+
+/// How the answer comes: server-sent events (the adapter decodes each),
+/// or raw 16-bit mono PCM at this rate.
+#[derive(Clone, Copy)]
+enum Wire {
+    Sse,
+    Raw(u32),
+}
+
+/// The audio of one event of `wire`; `carry` holds a sample cut in half
+/// between two events.
+fn decode(
+    adapter: &Arc<dyn Adapter>,
+    wire: Wire,
+    carry: &mut Vec<u8>,
+    event: Event,
+    label: &str,
+) -> std::result::Result<StreamPiece, ExtError> {
+    match (wire, event) {
+        (Wire::Sse, Event::Data(d)) => adapter.stream_piece(carry, &d, label),
+        (Wire::Raw(rate), Event::Bytes(b)) => {
+            carry.extend_from_slice(&b);
+            let (pairs, _) = carry.as_chunks::<2>();
+            let samples: Vec<i16> = pairs.iter().map(|p| i16::from_le_bytes(*p)).collect();
+            carry.drain(..samples.len() * 2);
+            Ok(StreamPiece {
+                audio: Some(PcmChunk {
+                    samples,
+                    sample_rate: rate,
+                    channels: 1,
+                }),
+                note: None,
+            })
+        }
+        (_, Event::Whole(reply)) => adapter.audio(&reply, label).map(|pcm| StreamPiece {
+            audio: Some(pcm),
+            note: None,
+        }),
+        _ => Ok(StreamPiece::default()),
+    }
+}
 
 /// How a streamed chunk began.
 pub(super) enum Begun {
@@ -64,7 +107,22 @@ impl External {
         if super::split::split(text, adapter.input_limit()).len() != 1 {
             return Ok(Begun::Whole);
         }
-        let Some(mut req) = adapter.stream_request(text, voice, rate, key) else {
+        // Gemini's events; else, for a whole message, a raw body as it
+        // comes; else the whole answer.
+        let raw = !adapter.streams() && self.whole_messages();
+        let wire = match (raw, adapter.requested_rate()) {
+            (false, _) if adapter.streams() => Wire::Sse,
+            (true, Some(r)) => Wire::Raw(r),
+            _ => return Ok(Begun::Whole),
+        };
+        let make = |adapter: &Arc<dyn Adapter>| {
+            if raw {
+                adapter.bytes_request(text, voice, rate, key)
+            } else {
+                adapter.stream_request(text, voice, rate, key)
+            }
+        };
+        let Some(mut req) = make(adapter) else {
             return Ok(Begun::Whole);
         };
         let first_audio = Duration::from_millis(self.profile.first_audio_ms());
@@ -72,12 +130,18 @@ impl External {
         let (mut retried, mut adapted) = (false, 0);
         loop {
             let started = Instant::now();
-            let rx = sse::start(self.agent.clone(), req.clone(), self.host.clone());
-            match self.first_audio(adapter, gen, rx, first_audio, voice)? {
+            let rx = match wire {
+                Wire::Sse => sse::start(self.agent.clone(), req.clone(), self.host.clone()),
+                Wire::Raw(_) => {
+                    sse::start_bytes(self.agent.clone(), req.clone(), self.host.clone())
+                }
+            };
+            match self.first_audio(adapter, wire, gen, rx, first_audio, voice)? {
                 First::Audio(pcm, rx, carry) => {
                     return Ok(Begun::Playing(Box::new(Rest {
                         first: Some(pcm),
                         rx: Some(rx),
+                        wire,
                         carry,
                         deadline: started + total,
                         adapter: adapter.clone(),
@@ -90,6 +154,7 @@ impl External {
                         got: Vec::new(),
                         cache: self.cache.clone(),
                         cache_key: (voice.to_string(), rate, text.to_string()),
+                        message: self.whole_messages(),
                         notice: self.notice.clone(),
                         engine: self.id,
                         done: false,
@@ -109,9 +174,9 @@ impl External {
                 First::Failed(e) if adapted < super::MAX_ADAPTS + 1 && adapter.adapt(&req, &e) => {
                     adapted += 1;
                     // A refused stream: the whole answer from now on.
-                    match adapter.stream_request(text, voice, rate, key) {
-                        Some(r) => req = r,
-                        None => return Ok(Begun::Whole),
+                    match make(adapter) {
+                        Some(r) if raw || adapter.streams() => req = r,
+                        _ => return Ok(Begun::Whole),
                     }
                 }
                 First::Failed(e) => return Ok(Begun::Failed(e)),
@@ -123,6 +188,7 @@ impl External {
     fn first_audio(
         &self,
         adapter: &Arc<dyn Adapter>,
+        wire: Wire,
         gen: u64,
         rx: Receiver<Event>,
         limit: Duration,
@@ -147,13 +213,15 @@ impl External {
                 )));
             }
             match rx.recv_timeout(left.min(POLL)) {
-                Ok(Event::Data(d)) => match adapter.stream_piece(&mut carry, &d, &self.label) {
-                    Ok(StreamPiece {
-                        audio: Some(pcm), ..
-                    }) if !pcm.samples.is_empty() => return Ok(First::Audio(pcm, rx, carry)),
-                    Ok(p) => note = p.note.or(note),
-                    Err(e) => return Ok(First::Failed(e)),
-                },
+                Ok(ev @ (Event::Data(_) | Event::Bytes(_) | Event::Whole(_))) => {
+                    match decode(adapter, wire, &mut carry, ev, &self.label) {
+                        Ok(StreamPiece {
+                            audio: Some(pcm), ..
+                        }) if !pcm.samples.is_empty() => return Ok(First::Audio(pcm, rx, carry)),
+                        Ok(p) => note = p.note.or(note),
+                        Err(e) => return Ok(First::Failed(e)),
+                    }
+                }
                 Ok(Event::Refused(reply)) => {
                     return Ok(First::Failed(adapter.map_error(
                         &reply,
@@ -198,6 +266,7 @@ impl External {
 struct Rest {
     first: Option<PcmChunk>,
     rx: Option<Receiver<Event>>,
+    wire: Wire,
     /// A half sample from the last event (`Adapter::stream_piece`).
     carry: Vec<u8>,
     deadline: Instant,
@@ -212,6 +281,8 @@ struct Rest {
     got: Vec<PcmChunk>,
     cache: Arc<CueCache>,
     cache_key: (String, u32, String),
+    /// A whole message (send mode `message`): kept for a replay.
+    message: bool,
     notice: Option<NoticeFn>,
     engine: EngineId,
     done: bool,
@@ -245,12 +316,22 @@ impl Rest {
                 .is_some_and(|h| h.is_held() || h.epoch() != self.epoch)
     }
 
+    /// Whether the audio is kept for the cache (a cue, or a whole message).
+    fn keeps(&self) -> bool {
+        self.message || CueCache::cacheable(&self.cache_key.2)
+    }
+
     fn finish(&mut self) -> Option<Result<PcmChunk>> {
         self.done = true;
         self.rx = None;
         let (voice, rate, text) = &self.cache_key;
-        self.cache
-            .put(voice, *rate, text, std::mem::take(&mut self.got));
+        self.cache.keep(
+            voice,
+            *rate,
+            text,
+            std::mem::take(&mut self.got),
+            self.message,
+        );
         None
     }
 }
@@ -263,7 +344,7 @@ impl Iterator for Rest {
             return None;
         }
         if let Some(pcm) = self.first.take() {
-            if CueCache::cacheable(&self.cache_key.2) {
+            if self.keeps() {
                 self.got.push(pcm.clone());
             }
             return Some(Ok(pcm));
@@ -284,12 +365,12 @@ impl Iterator for Rest {
             }
             let rx = self.rx.as_ref()?;
             match rx.recv_timeout(left.min(POLL)) {
-                Ok(Event::Data(d)) => {
-                    match self.adapter.stream_piece(&mut self.carry, &d, &self.label) {
+                Ok(ev @ (Event::Data(_) | Event::Bytes(_) | Event::Whole(_))) => {
+                    match decode(&self.adapter, self.wire, &mut self.carry, ev, &self.label) {
                         Ok(StreamPiece {
                             audio: Some(pcm), ..
                         }) if !pcm.samples.is_empty() => {
-                            if CueCache::cacheable(&self.cache_key.2) {
+                            if self.keeps() {
                                 self.got.push(pcm.clone());
                             }
                             return Some(Ok(pcm));

@@ -2,6 +2,7 @@
 //! `engines.json` and sent in `engine_add`. Parsing validates every field;
 //! the JSON in and out is a `serde_json::Value` (no serde derive), so the
 //! stored shape is exactly what `to_json` writes.
+use crate::SendMode;
 use serde_json::{json, Map, Value};
 
 /// At most this many profiles (spec 5.2).
@@ -86,16 +87,23 @@ pub const AZURE_FORMATS: &[(&str, u32)] = &[
     ("raw-48khz-16bit-mono-pcm", 48_000),
 ];
 
-/// Gemini's default `chunk_chars`: requests are what its free tier counts,
-/// so the reader joins sentences up to this many characters (#235).
-pub const GEMINI_CHUNK_CHARS: u64 = 1000;
-/// The largest `chunk_chars` (Gemini's input is 8192 tokens; the adapter
-/// splits at 4000 characters).
-pub const GEMINI_CHUNK_MAX: u64 = 4000;
+/// Gemini's default `chunk_chars` in send mode `message` (#235): a request
+/// of up to 2000 characters is about two minutes of speech, well inside
+/// the models' output limit and the two-minute `timeout_ms`.
+pub const GEMINI_CHUNK_CHARS: u64 = 2000;
+/// The range of `chunk_chars` (every kind, send mode `message`): the most
+/// characters one request takes; the provider's own input limit still
+/// applies when it is lower (`External::input_limit`).
+pub const CHUNK_CHARS_MIN: u64 = 200;
+pub const CHUNK_CHARS_MAX: u64 = 5000;
 
-/// The Gemini wait for the first audio of a streamed chunk: past it the
-/// chunk is read with the fallback (#235, option `first_audio_ms`).
+/// The wait for the first audio of a streamed answer (Gemini's events, a
+/// cloud answer read as it arrives in send mode `message`): past it the
+/// text is read with the fallback (#235, option `first_audio_ms`).
 pub const GEMINI_FIRST_AUDIO_MS: u64 = 12_000;
+/// The default `timeout_ms` of a cloud profile in send mode `message`: a
+/// whole message may be minutes of speech (#235).
+pub const MESSAGE_TIMEOUT_MS: u64 = 120_000;
 
 /// Cartesia's API version (spec 5.4; the API pins its behaviour to the
 /// version date, so it is the API's contract, not a model or a voice).
@@ -517,6 +525,9 @@ pub struct Profile {
     pub voice: Option<String>,
     pub key_ref: KeyRef,
     pub options: Map<String, Value>,
+    /// "Send to the engine" (#235): `None` takes the kind's default
+    /// (`Profile::send_mode`).
+    pub send_mode: Option<SendMode>,
     /// The origin an `env:` key may also go to besides the provider's
     /// default (spec 6.4): set by the runtime from `engines.json`
     /// (`key_origin`, written only by the user or the format 1 migration),
@@ -525,7 +536,13 @@ pub struct Profile {
 }
 
 /// Options every kind accepts.
-const COMMON_OPTIONS: &[&str] = &["timeout_ms", "prefetch", "allow_http"];
+const COMMON_OPTIONS: &[&str] = &[
+    "timeout_ms",
+    "prefetch",
+    "allow_http",
+    "chunk_chars",
+    "first_audio_ms",
+];
 /// Options of `elevenlabs`.
 const ELEVENLABS_OPTIONS: &[&str] = &[
     "output_format",
@@ -540,13 +557,7 @@ const AZURE_OPTIONS: &[&str] = &["region", "output_format", "lang"];
 /// Options of `google`.
 const GOOGLE_OPTIONS: &[&str] = &["language_code", "sample_rate", "user_project", "model_name"];
 /// Options of `gemini`.
-const GEMINI_OPTIONS: &[&str] = &[
-    "language_code",
-    "style",
-    "chunk_chars",
-    "quick_start",
-    "first_audio_ms",
-];
+const GEMINI_OPTIONS: &[&str] = &["language_code", "style"];
 /// Options of `cartesia`.
 const CARTESIA_OPTIONS: &[&str] = &["api_version", "language", "sample_rate"];
 /// Options of `deepgram`.
@@ -657,11 +668,27 @@ impl Profile {
                 })
             }
         };
-        let options = match m.get("options") {
+        let mut options = match m.get("options") {
             None | Some(Value::Null) => Map::new(),
             Some(Value::Object(o)) => o.clone(),
             Some(_) => return Err(invalid("'options' must be an object")),
         };
+        let mut send_mode = match m.get("send_mode") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(
+                v.as_str()
+                    .and_then(SendMode::parse)
+                    .ok_or_else(|| invalid("'send_mode' must be \"message\" or \"sentence\""))?,
+            ),
+        };
+        // The 0.19 pre-release Gemini options folded into `send_mode`
+        // (#235): `quick_start` is gone, and `chunk_chars` 0 was one
+        // sentence per request.
+        options.remove("quick_start");
+        if options.get("chunk_chars").and_then(Value::as_u64) == Some(0) {
+            options.remove("chunk_chars");
+            send_mode = send_mode.or(Some(SendMode::Sentence));
+        }
         let mut p = Profile {
             id,
             kind,
@@ -671,6 +698,7 @@ impl Profile {
             voice: opt_text(m, "voice")?,
             key_ref: KeyRef::None,
             options,
+            send_mode,
             key_origin: None,
         };
         p.key_ref = match KeyRef::parse(m.get("key_ref")).map_err(ProfileError::Invalid)? {
@@ -710,6 +738,9 @@ impl Profile {
             }
         }
         m.insert("key_ref".into(), json!(self.key_ref.as_wire()));
+        if let Some(mode) = self.send_mode {
+            m.insert("send_mode".into(), json!(mode.as_str()));
+        }
         m.insert("options".into(), Value::Object(self.options.clone()));
         Value::Object(m)
     }
@@ -850,6 +881,8 @@ impl Profile {
         }
         int_in(o, "timeout_ms", 1000..=120_000)?;
         int_in(o, "prefetch", 1..=4)?;
+        int_in(o, "first_audio_ms", 1000..=60_000)?;
+        int_in(o, "chunk_chars", CHUNK_CHARS_MIN..=CHUNK_CHARS_MAX)?;
         if o.get("allow_http").is_some_and(|v| !v.is_boolean()) {
             return Err(invalid("option 'allow_http' must be true or false"));
         }
@@ -949,7 +982,6 @@ impl Profile {
                 ));
             }
         }
-        int_in(o, "first_audio_ms", 1000..=60_000)?;
         word(o, "language_code", 35, lang_char, "a locale such as en-US")?;
         if let Some(v) = o.get("style") {
             let s = v
@@ -960,19 +992,6 @@ impl Profile {
                     "option 'style' must be at most 500 characters on one line",
                 ));
             }
-        }
-        let chunk_ok = |v: &Value| {
-            v.as_u64()
-                .is_some_and(|n| n == 0 || (200..=GEMINI_CHUNK_MAX).contains(&n))
-        };
-        if o.get("quick_start").is_some_and(|v| !v.is_boolean()) {
-            return Err(invalid("option 'quick_start' must be true or false"));
-        }
-        if o.get("chunk_chars").is_some_and(|v| !chunk_ok(v)) {
-            return Err(invalid(format!(
-                "option 'chunk_chars' must be 0 (one sentence per request) or a whole \
-                 number in 200..={GEMINI_CHUNK_MAX}"
-            )));
         }
         Ok(())
     }
@@ -1284,20 +1303,49 @@ impl Profile {
         }
     }
 
-    /// Request timeout (spec 5.4 common options).
+    /// Request timeout (spec 5.4 common options). A whole message may be
+    /// minutes of speech, so send mode `message` waits up to
+    /// `MESSAGE_TIMEOUT_MS` for it (#235); a streamed answer gives up much
+    /// earlier when no audio comes (`first_audio_ms`).
     pub fn timeout_ms(&self) -> u64 {
         self.option_u64("timeout_ms").unwrap_or(match self.kind {
             Kind::Command => 30_000,
-            // A joined chunk is made whole before it plays: a minute per
-            // 1000 characters (about a minute of speech), at least one and
-            // at most two (#235).
-            Kind::Gemini => (self.chunk_chars() as u64 * 60).clamp(60_000, 120_000),
-            _ if self.is_local() => 60_000,
+            _ if self.send_mode() == SendMode::Message => MESSAGE_TIMEOUT_MS,
+            _ if self.is_local() || self.kind == Kind::Gemini => 60_000,
             _ => 15_000,
         })
     }
 
-    /// How long a streamed chunk may take to send its first audio before
+    /// "Send to the engine" (#235): the profile's `send_mode`, else the
+    /// kind's default (`default_send_mode`).
+    pub fn send_mode(&self) -> SendMode {
+        self.send_mode.unwrap_or_else(|| self.default_send_mode())
+    }
+
+    /// The default send mode: `sentence` for a program and an
+    /// OpenAI-compatible server on this PC (nothing is billed, and a local
+    /// server would make a whole message before its first audio, while a
+    /// sentence comes back at once), `message` for every cloud kind (even
+    /// behind a local proxy, as for its key) and a server on another
+    /// computer.
+    pub fn default_send_mode(&self) -> SendMode {
+        if self.kind == Kind::Command || self.default_key_ref() == KeyRef::None {
+            SendMode::Sentence
+        } else {
+            SendMode::Message
+        }
+    }
+
+    /// The most characters one request takes in send mode `message`
+    /// (`options.chunk_chars`; Gemini's default `GEMINI_CHUNK_CHARS`).
+    /// `None` leaves the provider's input limit alone.
+    pub fn chunk_chars(&self) -> Option<usize> {
+        self.option_u64("chunk_chars")
+            .or((self.kind == Kind::Gemini).then_some(GEMINI_CHUNK_CHARS))
+            .map(|n| n as usize)
+    }
+
+    /// How long a streamed answer may take to send its first audio before
     /// it is read with the fallback (#235): `options.first_audio_ms`,
     /// default `GEMINI_FIRST_AUDIO_MS`, never more than `timeout_ms`.
     pub fn first_audio_ms(&self) -> u64 {
@@ -1317,25 +1365,6 @@ impl Profile {
             } else {
                 2
             })
-    }
-
-    /// `Engine::chunk_chars` (#235): `gemini` joins sentences up to
-    /// `options.chunk_chars` (default `GEMINI_CHUNK_CHARS`); other kinds 0.
-    pub fn chunk_chars(&self) -> usize {
-        match self.kind {
-            Kind::Gemini => self.option_u64("chunk_chars").unwrap_or(GEMINI_CHUNK_CHARS) as usize,
-            _ => 0,
-        }
-    }
-
-    /// `Engine::quick_start` (#235): `options.quick_start`, default true
-    /// (the first chunk of a reply is one sentence). False sends a reply
-    /// under `chunk_chars` in one request.
-    pub fn quick_start(&self) -> bool {
-        self.options
-            .get("quick_start")
-            .and_then(Value::as_bool)
-            .unwrap_or(true)
     }
 
     /// Whether the kind needs a key to work at all (a key_ref other than
@@ -1579,7 +1608,10 @@ mod tests {
         let cloud = parse(json!({"id": "openai", "kind": "openai-compatible",
             "options": {"preset": "openai"}}))
         .unwrap();
-        assert_eq!((cloud.timeout_ms(), cloud.prefetch()), (15_000, 2));
+        assert_eq!(
+            (cloud.timeout_ms(), cloud.prefetch()),
+            (MESSAGE_TIMEOUT_MS, 2)
+        );
         assert!(!cloud.is_local());
         assert_eq!(cloud.sends_text_to(), "api.openai.com");
         assert_eq!(cloud.display_label(), "OpenAI");
@@ -1616,7 +1648,7 @@ mod tests {
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "Cartesia");
         assert_eq!(p.sends_text_to(), "api.cartesia.ai");
-        assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
+        assert_eq!((p.timeout_ms(), p.prefetch()), (MESSAGE_TIMEOUT_MS, 2));
         let bare = parse(json!({"id": "ca", "kind": "cartesia"})).unwrap();
         assert_eq!(
             bare.voice, None,
@@ -1660,12 +1692,14 @@ mod tests {
         assert_eq!(p.sends_text_to(), "generativelanguage.googleapis.com");
         // One chunk ahead: the free tier's per-minute limit counts the
         // burst at the start of a reply (review of #235).
-        assert_eq!((p.timeout_ms(), p.prefetch()), (60_000, 1));
-        assert_eq!(p.chunk_chars(), 1000);
-        assert!(p.quick_start(), "the first sentence alone by default");
+        // A whole message per request (#235): two minutes for its answer,
+        // at most 2000 characters per request.
+        assert_eq!(p.send_mode(), SendMode::Message);
+        assert_eq!((p.timeout_ms(), p.prefetch()), (120_000, 1));
+        assert_eq!(p.chunk_chars(), Some(2000));
         let set = parse(ge(json!({"model": "m-1.2_x", "voice": "v1",
             "options": {"language_code": "de-DE", "style": "calm and warm",
-            "chunk_chars": 0, "first_audio_ms": 5000}})))
+            "first_audio_ms": 5000}})))
         .unwrap();
         assert!(!set.missing_model());
         assert_eq!(set.first_audio_ms(), 5000);
@@ -1675,22 +1709,21 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(short.first_audio_ms(), 8000);
-        assert_eq!(set.chunk_chars(), 0);
         let max = parse(ge(json!({"options": {"chunk_chars": 4000}}))).unwrap();
-        assert_eq!(max.chunk_chars(), 4000);
-        // The default timeout grows with the chunk: a minute per 1000
-        // characters, at most two (review of #235); a set one stays.
-        assert_eq!(max.timeout_ms(), 120_000);
-        let mid = parse(ge(json!({"options": {"chunk_chars": 1500}}))).unwrap();
-        assert_eq!(mid.timeout_ms(), 90_000);
-        assert_eq!(set.timeout_ms(), 60_000, "one sentence: a minute");
-        let own = parse(ge(
-            json!({"options": {"chunk_chars": 4000, "timeout_ms": 20000}}),
+        assert_eq!(max.chunk_chars(), Some(4000));
+        let own = parse(ge(json!({"options": {"timeout_ms": 20000}}))).unwrap();
+        assert_eq!(own.timeout_ms(), 20_000);
+        let sentence = parse(ge(json!({"send_mode": "sentence"}))).unwrap();
+        assert_eq!(sentence.timeout_ms(), 60_000, "one sentence: a minute");
+        // The pre-release options are folded into send_mode: quick_start
+        // is dropped, chunk_chars 0 meant one sentence per request.
+        let old = parse(ge(
+            json!({"options": {"quick_start": false, "chunk_chars": 0}}),
         ))
         .unwrap();
-        assert_eq!(own.timeout_ms(), 20_000);
-        let whole = parse(ge(json!({"options": {"quick_start": false}}))).unwrap();
-        assert!(!whole.quick_start());
+        assert_eq!(old.send_mode(), SendMode::Sentence);
+        assert!(old.options.is_empty(), "{:?}", old.options);
+        assert_eq!(old.to_json()["send_mode"], "sentence");
         for (extra, msg) in [
             (
                 json!({"model": "models/x"}),
@@ -1706,9 +1739,8 @@ mod tests {
             ),
             (json!({"model": "a b"}), "'model'"),
             (json!({"options": {"chunk_chars": 100}}), "chunk_chars"),
-            (json!({"options": {"chunk_chars": 4001}}), "chunk_chars"),
+            (json!({"options": {"chunk_chars": 5001}}), "chunk_chars"),
             (json!({"options": {"chunk_chars": "big"}}), "chunk_chars"),
-            (json!({"options": {"quick_start": "no"}}), "quick_start"),
             (json!({"options": {"style": "a\nb"}}), "style"),
             (json!({"options": {"style": 5}}), "style"),
             (json!({"options": {"style": "x".repeat(501)}}), "style"),
@@ -1723,10 +1755,74 @@ mod tests {
         ] {
             assert!(err(ge(extra.clone())).contains(msg), "{extra}");
         }
-        // Other kinds never join.
+        // Other kinds leave the limit to the provider unless asked.
         let g = parse(json!({"id": "g", "kind": "google", "voice": "v1"})).unwrap();
-        assert_eq!(g.chunk_chars(), 0);
-        assert!(g.quick_start());
+        assert_eq!(g.chunk_chars(), None);
+    }
+
+    /// "Send to the engine" (#235): a whole message for the cloud, a
+    /// sentence at a time on this PC; explicit in the stored form only when
+    /// the user chose it.
+    #[test]
+    fn send_mode_defaults_per_kind_and_round_trips() {
+        let cases = [
+            (json!({"id": "a", "kind": "elevenlabs"}), SendMode::Message),
+            (
+                json!({"id": "a", "kind": "azure", "options": {"region": "westeurope"}}),
+                SendMode::Message,
+            ),
+            (json!({"id": "a", "kind": "google"}), SendMode::Message),
+            (json!({"id": "a", "kind": "gemini"}), SendMode::Message),
+            (json!({"id": "a", "kind": "cartesia"}), SendMode::Message),
+            (json!({"id": "a", "kind": "deepgram"}), SendMode::Message),
+            (
+                json!({"id": "a", "kind": "openai-compatible", "options": {"preset": "openai"}}),
+                SendMode::Message,
+            ),
+            (
+                json!({"id": "a", "kind": "openai-compatible", "url": "http://127.0.0.1:8880/v1",
+                    "options": {"preset": "kokoro-fastapi"}}),
+                SendMode::Sentence,
+            ),
+            (
+                json!({"id": "a", "kind": "openai-compatible", "url": "http://localhost:4123/v1",
+                    "options": {"preset": "chatterbox-api"}}),
+                SendMode::Sentence,
+            ),
+            (
+                json!({"id": "a", "kind": "openai-compatible", "url": "https://tts.example.com/v1",
+                    "options": {"preset": "generic"}}),
+                SendMode::Message,
+            ),
+        ];
+        for (v, mode) in cases {
+            let p = parse(v.clone()).unwrap();
+            assert_eq!(p.send_mode(), mode, "{v}");
+            assert_eq!(p.default_send_mode(), mode, "{v}");
+            assert!(
+                p.to_json().get("send_mode").is_none(),
+                "a default is not stored"
+            );
+        }
+        // The user's choice wins and is stored.
+        let p = parse(json!({"id": "a", "kind": "elevenlabs", "send_mode": "sentence"})).unwrap();
+        assert_eq!(p.send_mode(), SendMode::Sentence);
+        assert_eq!(p.to_json()["send_mode"], "sentence");
+        assert_eq!(parse(p.to_json()).unwrap(), p);
+        assert_eq!(p.timeout_ms(), 15_000, "a sentence keeps the short wait");
+        let m = parse(json!({"id": "a", "kind": "elevenlabs"})).unwrap();
+        assert_eq!(m.timeout_ms(), MESSAGE_TIMEOUT_MS);
+        // Every kind takes chunk_chars and first_audio_ms now.
+        let c = parse(json!({"id": "a", "kind": "cartesia",
+            "options": {"chunk_chars": 800, "first_audio_ms": 3000}}))
+        .unwrap();
+        assert_eq!((c.chunk_chars(), c.first_audio_ms()), (Some(800), 3000));
+        for bad in [json!("whole"), json!(1), json!(true)] {
+            let e = err(json!({"id": "a", "kind": "elevenlabs", "send_mode": bad}));
+            assert!(e.contains("'send_mode' must be"), "{e}");
+        }
+        let null = parse(json!({"id": "a", "kind": "elevenlabs", "send_mode": null})).unwrap();
+        assert_eq!(null.send_mode, None);
     }
 
     #[test]
@@ -1970,7 +2066,7 @@ mod tests {
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "ElevenLabs");
         assert_eq!(p.sends_text_to(), "api.elevenlabs.io");
-        assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
+        assert_eq!((p.timeout_ms(), p.prefetch()), (MESSAGE_TIMEOUT_MS, 2));
         assert!(parse(json!({"id": "el", "kind": "elevenlabs"})).is_ok());
         // A cloud kind keeps credman even behind a loopback url.
         let proxy = parse(el(json!({"url": "http://127.0.0.1:9"}))).unwrap();

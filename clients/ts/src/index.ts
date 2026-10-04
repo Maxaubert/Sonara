@@ -18,6 +18,7 @@ export type {
   EngineAddOptions,
   EngineModelsDraft,
   EngineProfile,
+  SendMode,
   EngineTestOptions,
 } from "./engines.js";
 export type { AskKind, AudioMode, ChannelOpenOptions, ChannelPolicy, StreamMessage } from "./extensions.js";

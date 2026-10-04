@@ -7,9 +7,9 @@ use crate::synth::{Done, Job, Synth};
 use crate::{Error, Event, Result};
 use sonara_audio::{AudioEvent, Output, PcmChunk};
 use sonara_core::reader::{
-    Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
+    Chunking, Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
 };
-use sonara_engine::{Engine, EngineStatus, Registry};
+use sonara_engine::{Engine, EngineStatus, InputLimit, Registry, SendMode};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -64,6 +64,19 @@ pub(crate) struct Start {
     pub volume: u8,
     pub output: Box<dyn Output>,
     pub events: Receiver<AudioEvent>,
+    /// The current engine sends whole messages (`ReaderHandle::send_mode`).
+    pub whole: Arc<AtomicBool>,
+}
+
+/// How the reader cuts items for `engine` (#235).
+fn chunking(engine: &dyn Engine) -> Chunking {
+    match engine.send_mode() {
+        SendMode::Sentence => Chunking::Sentences,
+        SendMode::Message => match engine.input_limit() {
+            InputLimit::Chars(max) => Chunking::Message { max, bytes: false },
+            InputLimit::Bytes(max) => Chunking::Message { max, bytes: true },
+        },
+    }
 }
 
 pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<JoinHandle<()>> {
@@ -96,6 +109,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         not_ready: None,
         status: EngineStatus::ready(),
         status_changes: 0,
+        whole: start.whole,
     };
     thread::Builder::new()
         .name("sonara-reader".into())
@@ -178,6 +192,8 @@ struct Loop {
     status: EngineStatus,
     /// How many status changes were told (`Event::EngineStatus::changes`).
     status_changes: u64,
+    /// Shared with the handle: the current engine sends whole messages.
+    whole: Arc<AtomicBool>,
 }
 
 impl Loop {
@@ -192,11 +208,16 @@ impl Loop {
         self.status = self.engine.status();
         let fx = self.reader.set_lookahead(self.engine.lookahead());
         self.run(fx);
-        let fx = self.reader.set_chunk_chars(self.engine.chunk_chars());
-        self.run(fx);
-        let fx = self.reader.set_quick_start(self.engine.quick_start());
+        let fx = self.set_chunking();
         self.run(fx);
         self.synth.warm(self.engine.clone());
+    }
+
+    /// Cut items as the current engine asks (#235), and tell the handle.
+    fn set_chunking(&mut self) -> Vec<Effect> {
+        let c = chunking(self.engine.as_ref());
+        self.whole.store(c != Chunking::Sentences, Ordering::SeqCst);
+        self.reader.set_chunking(c)
     }
 
     /// Tell subscribers when the current engine's status changed (a model
@@ -330,8 +351,7 @@ impl Loop {
                 self.engine = engine;
                 self.not_ready = None;
                 let mut fx = self.reader.set_lookahead(self.engine.lookahead());
-                fx.extend(self.reader.set_chunk_chars(self.engine.chunk_chars()));
-                fx.extend(self.reader.set_quick_start(self.engine.quick_start()));
+                fx.extend(self.set_chunking());
                 self.synth.warm(self.engine.clone());
                 // A voice of the old engine means nothing to the new one.
                 match self.reader.state().voice {

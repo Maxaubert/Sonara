@@ -480,7 +480,7 @@ impl Engines {
                 let mut m = p.to_json().as_object().cloned().unwrap_or_default();
                 // What the profile itself sets, so an edit keeps the defaults
                 // as defaults (an Azure region change still moves the URL).
-                let explicit: Map<String, Value> = ["url", "model", "voice"]
+                let explicit: Map<String, Value> = ["url", "model", "voice", "send_mode"]
                     .into_iter()
                     .filter_map(|k| m.get(k).map(|v| (k.to_string(), v.clone())))
                     .collect();
@@ -508,13 +508,24 @@ impl Engines {
                 m.insert("key_present".into(), json!(x.key_present()));
                 m.insert("sends_text_to".into(), json!(p.sends_text_to()));
                 m.insert("local".into(), json!(p.is_local()));
+                // "Send to the engine" in force (#235): the profile's, else
+                // the kind's default (`explicit` says which).
+                m.insert("send_mode".into(), json!(p.send_mode().as_str()));
                 m.insert("supported".into(), json!(true));
                 m
             }
             State::Unsupported | State::Invalid(_) => {
                 let mut m = Map::new();
                 for k in [
-                    "id", "kind", "label", "url", "model", "voice", "key_ref", "options",
+                    "id",
+                    "kind",
+                    "label",
+                    "url",
+                    "model",
+                    "voice",
+                    "key_ref",
+                    "send_mode",
+                    "options",
                 ] {
                     if let Some(v) = e.raw.get(k) {
                         m.insert(k.into(), v.clone());
@@ -1175,6 +1186,10 @@ mod tests {
         let views = list["engines"].as_array().unwrap();
         assert_eq!(views[0]["url"], "https://api.openai.com/v1");
         assert_eq!(views[0]["explicit"], json!({}));
+        // "Send to the engine" (#235): the cloud default in force, not
+        // explicit; a local server's default is a sentence at a time.
+        assert_eq!(views[0]["send_mode"], "message");
+        assert_eq!(views[2]["send_mode"], "sentence");
         assert_eq!(
             views[1]["url"],
             "https://westeurope.tts.speech.microsoft.com"
@@ -1184,6 +1199,37 @@ mod tests {
             views[2]["explicit"],
             json!({"url": "http://127.0.0.1:9/v1", "model": "m1", "voice": "v1"})
         );
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// "Send to the engine" (#235): a choice is stored and explicit, a
+    /// default is neither, and an edit back to the default forgets it.
+    #[test]
+    fn send_mode_is_stored_only_when_chosen() {
+        let h = home();
+        let (e, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        e.add(
+            &json!({"id": "el", "kind": "elevenlabs", "send_mode": "sentence"}),
+            None,
+            false,
+        )
+        .unwrap();
+        let v = e.view_of("el", "").unwrap();
+        assert_eq!(v["send_mode"], "sentence");
+        assert_eq!(v["explicit"]["send_mode"], "sentence");
+        let file = std::fs::read_to_string(e.file()).unwrap();
+        assert!(file.contains("\"send_mode\": \"sentence\""), "{file}");
+        e.add(&json!({"id": "el", "kind": "elevenlabs"}), None, true)
+            .unwrap();
+        let v = e.view_of("el", "").unwrap();
+        assert_eq!(v["send_mode"], "message");
+        assert!(v["explicit"].get("send_mode").is_none());
+        let bad = e.add(
+            &json!({"id": "x", "kind": "elevenlabs", "send_mode": "whole"}),
+            None,
+            false,
+        );
+        assert!(bad.is_err());
         let _ = std::fs::remove_dir_all(&h);
     }
 

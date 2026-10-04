@@ -132,6 +132,27 @@ impl Adapter for ElevenLabs {
         self.with_key(HttpRequest::post_json(url, &self.body(text, wpm)), key)
     }
 
+    /// The `/stream` endpoint (#235): the same body, the PCM sent as it is
+    /// made.
+    fn bytes_request(
+        &self,
+        text: &str,
+        voice: &str,
+        wpm: u32,
+        key: Option<&Secret>,
+    ) -> Option<HttpRequest> {
+        if !self.raw_pcm() {
+            return None;
+        }
+        let mut req = self.synth_request(text, voice, wpm, key);
+        req.url = req.url.replacen(
+            &format!("/v1/text-to-speech/{}?", encode(voice)),
+            &format!("/v1/text-to-speech/{}/stream?", encode(voice)),
+            1,
+        );
+        Some(req)
+    }
+
     fn requested_rate(&self) -> Option<u32> {
         self.output_format
             .strip_prefix("pcm_")

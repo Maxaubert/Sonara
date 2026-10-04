@@ -8,7 +8,11 @@
 //! - Text containing `FAIL_MARK` fails with `Error::Engine`, so tests can
 //!   make one chunk of an item fail.
 //! - The audio comes as chunks of at most `CHUNK_SAMPLES` samples.
-use crate::{Engine, EngineId, Error, LicenseClass, PcmChunk, PcmStream, Result, Voice};
+//! - `with_send_mode` makes it ask for whole messages (#235), as a cloud
+//!   profile does, so tests count its syntheses per reply.
+use crate::{
+    Engine, EngineId, Error, InputLimit, LicenseClass, PcmChunk, PcmStream, Result, SendMode, Voice,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -25,11 +29,20 @@ pub struct FakeEngine {
     syntheses: AtomicUsize,
     cancels: AtomicUsize,
     texts: Mutex<Vec<String>>,
+    send_mode: SendMode,
 }
 
 impl FakeEngine {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A fake engine in this send mode (#235; input limit 4096 chars).
+    pub fn with_send_mode(mode: SendMode) -> Self {
+        FakeEngine {
+            send_mode: mode,
+            ..Self::default()
+        }
     }
 
     /// How many times `synthesize` was called.
@@ -120,5 +133,13 @@ impl Engine for FakeEngine {
 
     fn cancel(&self) {
         self.cancels.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn send_mode(&self) -> SendMode {
+        self.send_mode
+    }
+
+    fn input_limit(&self) -> InputLimit {
+        InputLimit::Chars(4096)
     }
 }

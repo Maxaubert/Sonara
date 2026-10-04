@@ -23,9 +23,9 @@
 //!   `speechMetadata` (an unknown field is a 400 naming it) gets the same
 //!   part once more without it, and never again (`adapt`, as Deepgram's
 //!   `speed`); likewise the stream.
-//! - **Requests**: the free tier counts requests, so the reader joins
-//!   sentences (`Profile::chunk_chars`, default 1000 characters; with
-//!   `quick_start: false` a reply under it is one request); the input
+//! - **Requests**: the free tier counts requests, so Gemini takes whole
+//!   messages by default (send mode `message`, #235): a reply is one
+//!   request of up to `Profile::chunk_chars` (2000) characters; the input
 //!   limit here is 4000 characters (the models take 8192 tokens).
 //! - **429**: `quota` when Google names a daily or spend limit, else
 //!   `rate_limited`; either way its `RetryInfo.retryDelay` (or

@@ -51,7 +51,9 @@ def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
         assert "authorization" not in req["headers"]
     assert SECRET not in req["path"]
     if cloud.shape.kind == "elevenlabs":
-        assert req["path"] == "/v1/text-to-speech/voice-a?output_format=pcm_24000"
+        # A whole message (send mode `message`, the cloud default, #235):
+        # the stream endpoint, its PCM played as it comes.
+        assert req["path"] == "/v1/text-to-speech/voice-a/stream?output_format=pcm_24000"
         body = json.loads(req["body"])
         assert body["text"] == "Hello from the cloud."
         # No model named: none sent, ElevenLabs uses its own (#235).

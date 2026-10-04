@@ -6,7 +6,7 @@ mod common;
 use common::engines::{GateEngine, OpenEngine};
 use common::{Rig, THREE, TIMEOUT};
 use sonara_engine::fake::FakeEngine;
-use sonara_reader::{Config, Error, Key, QueueMode, Registry, Value};
+use sonara_reader::{Config, Error, Key, QueueMode, Registry, SendMode, Value};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -97,26 +97,30 @@ fn a_replaced_engine_applies_on_the_next_set_engine() {
     assert_eq!(first.inner.syntheses(), 0);
 }
 
+/// #235: an engine in send mode `message` reads an item as one text (one
+/// synthesis), split only past its input limit; switching to an engine in
+/// `sentence` mode reads one sentence per synthesis again. The handle's
+/// `send_mode` follows the engine (L3 joins what it releases by it).
 #[test]
-fn the_worker_joins_sentences_for_an_engine_that_asks() {
-    // #235: an engine billed per request (Gemini) gets longer chunks; the
-    // first stays one sentence. Switching back to an engine that asks for
-    // none reads one sentence per chunk again.
-    let joined = Arc::new(OpenEngine {
-        chunk_chars: 1000,
-        ..OpenEngine::new("joined", 1)
+fn an_engine_in_message_mode_gets_the_whole_item() {
+    let whole = Arc::new(OpenEngine {
+        send_mode: SendMode::Message,
+        ..OpenEngine::new("whole", 1)
     });
     let plain = Arc::new(OpenEngine::new("plain", 1));
     let registry = Registry::default();
     registry.register(plain.clone()).unwrap();
-    registry.register(joined.clone()).unwrap();
+    registry.register(whole.clone()).unwrap();
     let r = Rig::config(Config::new(registry));
-    r.h.set(Key::Engine, Value::Text("joined".into())).unwrap();
-    r.h.speak("One. Two. Three.", QueueMode::Append, false, None)
+    assert_eq!(r.h.send_mode(), SendMode::Sentence);
+    r.h.set(Key::Engine, Value::Text("whole".into())).unwrap();
+    assert_eq!(r.h.send_mode(), SendMode::Message);
+    r.h.speak("One. Two.\n\nThree.", QueueMode::Append, false, None)
         .unwrap();
-    wait_for("two syntheses", || joined.inner.syntheses() == 2);
-    assert_eq!(joined.inner.texts(), vec!["One.", "Two. Three."]);
+    wait_for("one synthesis", || whole.inner.syntheses() == 1);
+    assert_eq!(whole.inner.texts(), vec!["One. Two.\n\nThree."]);
     r.h.set(Key::Engine, Value::Text("plain".into())).unwrap();
+    assert_eq!(r.h.send_mode(), SendMode::Sentence);
     r.h.speak("Four. Five.", QueueMode::Replace, true, None)
         .unwrap();
     wait_for("one sentence each", || plain.inner.syntheses() == 2);
@@ -124,20 +128,23 @@ fn the_worker_joins_sentences_for_an_engine_that_asks() {
 }
 
 #[test]
-fn the_worker_sends_a_whole_reply_for_an_engine_without_quick_start() {
-    // Review of #235: an engine that trades the fast start for fewer
-    // requests reads a reply under its limit in one synthesis.
+fn a_message_past_the_engines_limit_is_split_at_paragraphs() {
     let whole = Arc::new(OpenEngine {
-        chunk_chars: 4000,
-        quick_start: false,
-        ..OpenEngine::new("whole", 1)
+        send_mode: SendMode::Message,
+        limit: 30,
+        ..OpenEngine::new("whole", 2)
     });
-    let registry = Registry::default();
-    registry.register(whole.clone()).unwrap();
-    let r = Rig::config(Config::new(registry));
-    r.h.set(Key::Engine, Value::Text("whole".into())).unwrap();
-    r.h.speak("One. Two. Three.", QueueMode::Append, false, None)
-        .unwrap();
-    wait_for("one synthesis", || whole.inner.syntheses() == 1);
-    assert_eq!(whole.inner.texts(), vec!["One. Two. Three."]);
+    let r = Rig::with(whole.clone());
+    r.h.speak(
+        "The first one here.\n\nThe second one here.",
+        QueueMode::Append,
+        false,
+        None,
+    )
+    .unwrap();
+    wait_for("two syntheses", || whole.inner.syntheses() == 2);
+    assert_eq!(
+        whole.inner.texts(),
+        vec!["The first one here.", "The second one here."]
+    );
 }
