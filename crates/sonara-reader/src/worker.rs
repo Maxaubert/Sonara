@@ -183,6 +183,8 @@ impl Loop {
         let fx = self.reader.set_volume(volume);
         self.run(fx);
         self.status = self.engine.status();
+        let fx = self.reader.set_lookahead(self.engine.lookahead());
+        self.run(fx);
         self.synth.warm(self.engine.clone());
     }
 
@@ -307,19 +309,25 @@ impl Loop {
                     });
                 };
                 let engine = self.registry.get(id)?;
-                if engine.id() == self.engine.id() {
+                if Arc::ptr_eq(&engine, &self.engine) {
                     return Ok(());
                 }
+                // The same id in a new instance: the host replaced it (an
+                // edited profile). It applies from the next chunk, with the
+                // voice kept.
+                let same_id = engine.id() == self.engine.id();
                 self.engine = engine;
                 self.not_ready = None;
+                let mut fx = self.reader.set_lookahead(self.engine.lookahead());
                 self.synth.warm(self.engine.clone());
                 // A voice of the old engine means nothing to the new one.
                 match self.reader.state().voice {
-                    Some(v) if !settings::offers(self.engine.as_ref(), &v) => {
-                        self.reader.set_voice(None)
+                    Some(v) if !same_id && !settings::offers(self.engine.as_ref(), &v) => {
+                        fx.extend(self.reader.set_voice(None))
                     }
-                    _ => Vec::new(),
+                    _ => {}
                 }
+                fx
             }
         };
         self.run(fx);

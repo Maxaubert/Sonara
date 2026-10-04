@@ -6,6 +6,7 @@ from typing import Any, Callable, Iterator, List, Optional, Sequence
 
 from .connection import Connection
 from .errors import E_CLOSED, SonaraError
+from .engines import Engines
 from .extensions import Agent, Channels, System
 
 ALL_EVENTS = ("state", "items", "log")
@@ -64,6 +65,7 @@ class Client:
         self.channels = Channels(self.request)
         self.agent = Agent(self.request)
         self.system = System(self.request)
+        self.engines = Engines(self.request)
 
     @property
     def closed(self) -> bool:
@@ -98,9 +100,13 @@ class Client:
         """Read a setting."""
         return self.request("get", {"key": key})["value"]
 
-    def voices(self, engine: Optional[str] = None) -> list:
-        """Voices of one engine, or of all."""
-        return self.request("voices", {} if engine is None else {"engine": engine})["voices"]
+    def voices(self, engine: Optional[str] = None, refresh: bool = False) -> list:
+        """Voices of one engine, or of all. ``refresh`` asks an external
+        engine's provider again (protocol 1.2)."""
+        fields: dict = {} if engine is None else {"engine": engine}
+        if refresh:
+            fields["refresh"] = True
+        return self.request("voices", fields)["voices"]
 
     def subscribe(self, events: Sequence[str] = ALL_EVENTS) -> Subscription:
         """Open an event stream (``state``, ``items``, ``log``) on a new

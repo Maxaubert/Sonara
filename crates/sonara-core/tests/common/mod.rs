@@ -34,6 +34,8 @@ pub struct Host {
     synthesized: HashSet<(ItemId, usize)>,
     /// Item ids that have started and not yet ended.
     live: HashSet<ItemId>,
+    /// Item ids that ended (Finished, Skipped, Failed).
+    ended: HashSet<ItemId>,
     texts: HashMap<(ItemId, usize), String>,
     gens: Vec<u64>,
 }
@@ -54,6 +56,7 @@ impl Host {
             heard: Vec::new(),
             synthesized: HashSet::new(),
             live: HashSet::new(),
+            ended: HashSet::new(),
             texts: HashMap::new(),
             gens: Vec::new(),
         }
@@ -67,6 +70,12 @@ impl Host {
         let (id, fx) = self.reader.speak(text, mode, interrupt, None);
         self.apply(fx);
         id
+    }
+
+    /// Chunks to synthesize ahead of the playing one.
+    pub fn lookahead(&mut self, n: usize) {
+        let fx = self.reader.set_lookahead(n);
+        self.apply(fx);
     }
 
     pub fn ctl(&mut self, c: Control) {
@@ -196,6 +205,10 @@ impl Host {
                         chunk
                     );
                     assert!(!text.trim().is_empty(), "Synthesize of empty text");
+                    assert!(
+                        !self.ended.contains(item),
+                        "Synthesize for {item:?}, which already ended"
+                    );
                     self.texts.insert((*item, *chunk), text.clone());
                 }
                 Effect::PlayChunk { item, chunk, gen } => {
@@ -270,6 +283,7 @@ impl Host {
                         }
                         _ => {
                             self.live.remove(item_id);
+                            self.ended.insert(*item_id);
                             self.synthesized.retain(|(i, _)| i != item_id);
                         }
                     }

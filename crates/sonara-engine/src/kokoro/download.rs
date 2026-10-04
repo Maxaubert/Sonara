@@ -136,22 +136,12 @@ fn modified_ns(meta: &fs::Metadata) -> u128 {
 }
 
 fn agent() -> ureq::Agent {
-    use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
-    ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_recv_response(Some(Duration::from_secs(30)))
+    crate::http::agent(crate::http::Timeouts {
+        connect: Duration::from_secs(15),
+        recv_response: Duration::from_secs(30),
         // A whole file (325 MB) on a slow line; a stall ends the attempt.
-        .timeout_recv_body(Some(Duration::from_secs(60 * 60)))
-        .tls_config(
-            TlsConfig::builder()
-                .provider(TlsProvider::Rustls)
-                .root_certs(RootCerts::PlatformVerifier)
-                .build(),
-        )
-        .user_agent(concat!("sonara/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into()
+        recv_body: Duration::from_secs(60 * 60),
+    })
 }
 
 impl Manager {

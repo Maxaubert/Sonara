@@ -26,8 +26,10 @@
 //! - `Mute`/`Unmute` emit `Effect::Mute`/`Effect::Unmute`; the host sets the
 //!   output volume to zero and back. Playback keeps moving while muted, and
 //!   the mute survives `Stop` and new items.
-//! - Prefetch: whenever a chunk plays, the chunk after it (or the first
-//!   chunk of the next queued item) is synthesized one ahead.
+//! - Prefetch: whenever a chunk plays, the `lookahead` chunks after it in
+//!   play order (the rest of the current item, then the queued items' chunks)
+//!   are synthesized ahead; 1 by default, up to 4 (`set_lookahead`, for an
+//!   engine with a slow round trip).
 //! - Every `PlayChunk` carries a new `gen`; an `AudioEvent` whose `gen` is not
 //!   the chunk loaded in the output is stale and ignored, so a superseded
 //!   play can never move the reader. A chunk that finishes while a pause is
@@ -44,6 +46,9 @@ pub use chunks::split_chunks;
 pub use types::*;
 
 use std::collections::{HashSet, VecDeque};
+
+/// The deepest prefetch an engine may ask for.
+pub const MAX_LOOKAHEAD: usize = 4;
 
 #[derive(Debug)]
 struct Current {
@@ -72,6 +77,8 @@ pub struct Reader {
     voice: Option<String>,
     /// Chunks already sent to Synthesize, for items still alive.
     requested: HashSet<(ItemId, usize)>,
+    /// Chunks synthesized ahead of the playing one (1..=4).
+    lookahead: usize,
     /// The last state emitted (or the initial one, seq 0).
     shown: State,
 }
@@ -99,6 +106,7 @@ impl Reader {
             rate: 200,
             voice: None,
             requested: HashSet::new(),
+            lookahead: 1,
             shown: State {
                 seq: 0,
                 now_playing: None,
@@ -275,6 +283,18 @@ impl Reader {
         self.finish(Vec::new())
     }
 
+    /// How many chunks to synthesize ahead of the playing one, clamped to
+    /// `1..=MAX_LOOKAHEAD`. A larger depth requests the newly allowed chunks
+    /// at once when something plays; a smaller one cancels nothing.
+    pub fn set_lookahead(&mut self, n: usize) -> Vec<Effect> {
+        self.lookahead = n.clamp(1, MAX_LOOKAHEAD);
+        self.finish(Vec::new())
+    }
+
+    pub fn lookahead(&self) -> usize {
+        self.lookahead
+    }
+
     /// The current state, with the `seq` of the last emitted state.
     pub fn state(&self) -> State {
         self.shown.clone()
@@ -397,7 +417,8 @@ impl Reader {
         });
     }
 
-    /// Synthesize one chunk ahead of the playing one.
+    /// Synthesize the `lookahead` chunks after the playing one, in play
+    /// order: the rest of the current item, then the queued items.
     fn prefetch(&mut self, fx: &mut Vec<Effect>) {
         if self.loaded.is_none() {
             return;
@@ -405,18 +426,22 @@ impl Reader {
         let Some(cur) = &self.current else {
             return;
         };
-        let next = if cur.chunk + 1 < cur.item.chunks.len() {
-            Some((
-                cur.item.id,
-                cur.chunk + 1,
-                cur.item.chunks[cur.chunk + 1].clone(),
-            ))
-        } else {
-            self.queue
-                .front()
-                .map(|item| (item.id, 0, item.chunks[0].clone()))
-        };
-        if let Some((id, chunk, text)) = next {
+        let ahead: Vec<(ItemId, usize, String)> = cur
+            .item
+            .chunks
+            .iter()
+            .enumerate()
+            .skip(cur.chunk + 1)
+            .map(|(i, t)| (cur.item.id, i, t.clone()))
+            .chain(self.queue.iter().flat_map(|item| {
+                item.chunks
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, t)| (item.id, i, t.clone()))
+            }))
+            .take(self.lookahead)
+            .collect();
+        for (id, chunk, text) in ahead {
             self.request(fx, id, chunk, text);
         }
     }

@@ -1,6 +1,7 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-04 (0.14.1: what the flush hotkey skips is a saved setting)_
+_Last updated: 2026-10-04 (0.15.0: external speech engines you add, their keys in Windows
+Credential Manager)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -22,6 +23,10 @@ your computer and what, if anything, leaves it.
   inputs such as commands and file contents. It never leaves your computer, all logs together
   stay under 10 MB (the oldest lines are deleted first), and turning the setting off stops
   recording text. No other file holds session text.
+- With an **external speech engine** you added and selected (opt-in; none by default), the text
+  Sonara reads aloud is sent to that engine: to the cloud service you chose (for example
+  OpenAI), or to a speech server on your own PC, which keeps it local. Nothing is sent before
+  you add an engine **and** select it. Its key stays in Windows Credential Manager.
 - It downloads software, never your data: its runtime from Sonara's GitHub releases and the
   Kokoro voice model, once each (see Downloads).
 
@@ -29,7 +34,8 @@ your computer and what, if anything, leaves it.
 
 Claude Code hands Sonara text through plugin hooks: assistant prose, question options, plan text,
 permission-prompt descriptions and short tool names. Sonara turns it into sentences and speaks them
-with the Windows speech engine or the Kokoro engine, both running locally. Its parts talk to each
+with the Windows speech engine or the Kokoro engine, both running locally (or, if you added and
+selected one, with an external speech engine: see External voices). Its parts talk to each
 other over a loopback connection (`127.0.0.1`) protected by a token stored in your profile. The
 settings page is served on the same loopback address and needs that token too.
 
@@ -54,6 +60,39 @@ so its recap can be read before the question:
 The recap that comes back is spoken and kept in memory only. Sonara itself operates no service
 and receives nothing.
 
+## External voices (opt-in)
+
+You can add speech engines that are not part of Sonara: a cloud service such as OpenAI, or a
+local OpenAI-compatible server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server). Adding
+one sends nothing; it is used only once you select it (`sonara engines use <id>`, or `set
+engine` from a client).
+
+- **What is sent.** While an external engine is selected, the text Sonara reads aloud (the same
+  sentences it would speak, after its own text rules) goes to that engine, one sentence at a
+  time, together with the voice, the speed and the model you set. It goes to the address you
+  gave: under the provider's own terms for a cloud service (for OpenAI, `api.openai.com`), or to
+  a program on your own PC for a local server (`127.0.0.1`, `localhost`), where it stays on your
+  computer. A voice list (`voices` with `refresh`, or the voice picker) asks the same address.
+- **What is not sent.** No other text, file, setting or identifier. Short repeated phrases may be
+  answered from memory instead of asked again; that memory is gone when the runtime stops.
+- **Keys.** An engine's API key is stored in **Windows Credential Manager** (a generic
+  credential named `sonara:<engine id>`, for your Windows user on this PC, not roaming), or read
+  from an environment variable you named. It is never written to a file in
+  `%LOCALAPPDATA%\Sonara`, never logged and never sent back to a client. It is sent only in the
+  provider's authentication header, over HTTPS (or to a server on your own PC), never in an
+  address, and only to the address it was entered for: a redirect to another address is not
+  followed. Requests to a cloud service use your Windows proxy settings, if any; requests to a
+  server on your own PC never go through a proxy. A key for a server on your own PC goes to
+  whatever program listens on that port, so do not store one for a local server you do not
+  keep running.
+- **When it fails.** If the engine cannot speak (no key, a refused key, no credit, no network, a
+  server problem), Sonara reads that sentence with its built-in voice (Kokoro, else the Windows
+  voices) and says once why ("OpenAI cannot be reached. Reading with the built-in voice."). The
+  log line names the engine and the reason, never the text or the key.
+- **Removing it.** `sonara engines remove <id>` (or `engine_remove`) deletes the engine and its
+  stored key. `/sonara:uninstall` deletes every `sonara:*` credential unless you keep your
+  settings.
+
 ## What Sonara stores on your computer
 
 Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
@@ -75,6 +114,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 | `config.json` | The settings you changed (voice, rate, volume, audio mode, mute level, verbosity, reading mode, what the flush hotkey skips, summary options and your own summary instructions, the troubleshooting log on or off), and when the settings were imported from the Python plugin. `config.json.bad` is a copy of a file that could not be read |
 | `keymap.json` | Your hotkey bindings |
 | `session_prefs.json` | The name, mute and voice you gave a session on the Sessions page, per Claude Code session id (the 200 most recently changed) |
+| `engines.json` | The external speech engines you added: for each its id, kind, label, address, model, voice, where its key comes from (`credman`, `env:NAME` or none), for an `env:` key the address you allow it to go to (`key_origin`), and its options. Never a key. `engines.json.bad` is a copy of a file that could not be read |
 | `earcons\` | Your own chimes, if you put any there: `<kind>.wav` files (for example `session_change.wav`) that Sonara plays instead of its built-in sounds. Created empty at start; Sonara only reads it |
 
 **Runtime state**
@@ -94,7 +134,7 @@ new line would pass 10 MB the oldest files are deleted first.
 
 | File | What it holds |
 |---|---|
-| `logs\sonarad.log` (and `sonarad.<n>.log`) | One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. Also what Sonara did and when (UTC): each message it started and finished reading (a number, the session's name, how many sentences, what kind of text it was and which message produced it), text it dropped before reading it and why, questions and permission prompts that arrived (their kind and session), each hotkey used, the spoken confirmations ("Paused."), and which apps it paused, resumed, lowered or restored (their process names) and why. With the troubleshooting log on, also the session text: every message the hooks and other clients sent (what Claude wrote, questions with their options, permission prompts, tool names and summaries; never the access token), what Sonara decided to read or not and why, and the exact text it read aloud. With it off, none of that text: only the kinds, numbers and reasons |
+| `logs\sonarad.log` (and `sonarad.<n>.log`) | When an external engine is added, removed or gets a key (its id, kind and the address's host; never the key), and when it could not speak and the built-in voice read instead (the engine, the reason, the HTTP status and the provider's message with key-like words removed; never the text). One line per start (version, process id, speech engine and whether its voice model is ready, the home folder), when the voice model becomes ready or fails, what the settings import did, settings that could not be applied, and which of your own chimes are used or could not be read. Also what Sonara did and when (UTC): each message it started and finished reading (a number, the session's name, how many sentences, what kind of text it was and which message produced it), text it dropped before reading it and why, questions and permission prompts that arrived (their kind and session), each hotkey used, the spoken confirmations ("Paused."), and which apps it paused, resumed, lowered or restored (their process names) and why. With the troubleshooting log on, also the session text: every message the hooks and other clients sent (what Claude wrote, questions with their options, permission prompts, tool names and summaries; never the access token), what Sonara decided to read or not and why, and the exact text it read aloud. With it off, none of that text: only the kinds, numbers and reasons |
 | `logs\hook.log` (and `hook.<n>.log`) | One line per hook call (the Claude Code event, the session id, the tool or notification name, what was sent to the runtime and whether it arrived, and how long it took). With the troubleshooting log on, also the hook's raw input from Claude Code: your session's context such as the working folder and transcript path, Claude's messages, questions and their options, notifications, and the questions Claude asks you (any single value over 4 KB is cut short). Other tools' inputs (commands, file contents) are never kept, only their field names, and credential-looking values (API keys, tokens, passwords, `Authorization` headers) are replaced with `[redacted]` in every log line. With it off, none of that |
 | `logs\sonarad.old.log` | Left by 0.13.1 and earlier; deleted first when the logs need room |
 | `logs\bootstrap.log` | Each runtime download and install, with its address and result |
@@ -110,8 +150,18 @@ already written stay until they age out or you delete the `logs` folder.
 folder. What the old version stored there is described in this file's history, and the old
 version's own uninstall removes it.
 
-Outside `%LOCALAPPDATA%\Sonara` Sonara writes nothing: the plugin itself lives where Claude Code
-keeps plugins, and there is no autostart task, launcher or settings.json change.
+**Outside the home: Windows Credential Manager**
+
+| Entry | What it holds |
+|---|---|
+| `sonara:<engine id>` (generic credential, user `sonara`) | The API key you gave an external speech engine, for your Windows user on this PC, with the address (`scheme://host:port`) it was entered for: Sonara sends the key only there, and deletes it when the engine is changed to point elsewhere. Removed with the engine, and by `/sonara:uninstall` unless you keep your settings |
+
+Other than those credentials, Sonara writes nothing outside `%LOCALAPPDATA%\Sonara`: the plugin
+itself lives where Claude Code keeps plugins, and there is no autostart task, launcher or
+settings.json change.
+
+**Testing aid.** `sonarad --keys fake` (test runs only) keeps keys in `fake-keys.json` in the home
+instead of Credential Manager. The plugin never starts it that way.
 
 ## Downloads
 
@@ -137,8 +187,9 @@ troubleshooting. It is off unless you set it. Delete the folder to remove what i
 ## Removing your data
 
 Run `/sonara:uninstall`. It asks what to keep (your settings, the voice model, the logs), stops
-Sonara, and removes `runtime\` and every other file in `%LOCALAPPDATA%\Sonara` except those,
-then writes the `stopped` file so Sonara stays off. Remove the plugin with
+Sonara, and removes `runtime\` and every other file in `%LOCALAPPDATA%\Sonara` except those
+(and, unless you keep your settings, your external engines' keys in Credential Manager), then
+writes the `stopped` file so Sonara stays off. Remove the plugin with
 `/plugin uninstall sonara@sonara`, and delete `%LOCALAPPDATA%\Sonara` to remove what you kept.
 
 ## Changes to this policy

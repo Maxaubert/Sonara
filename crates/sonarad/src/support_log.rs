@@ -571,7 +571,7 @@ mod tests {
             dir: dir.clone(),
             is_default: false,
         };
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry.register(Arc::new(FakeEngine::new())).unwrap();
         let (out, rx) = TestOutput::new();
         let reader =

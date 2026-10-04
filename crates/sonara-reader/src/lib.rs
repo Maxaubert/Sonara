@@ -74,8 +74,10 @@ impl From<sonara_core::reader::Event> for Event {
 
 /// How to build a reader.
 pub struct Config {
-    /// The engines this host allows (R6 is enforced by the registry).
-    pub registry: Registry,
+    /// The engines this host allows (R6 is enforced by the registry). It
+    /// may be shared with the host, which can add and remove engines while
+    /// the reader runs (external engine profiles).
+    pub registry: Arc<Registry>,
     /// Engine id to start with; `None` takes the first one registered.
     pub engine: Option<String>,
     /// Voice id or name of that engine; `None` is the engine default.
@@ -92,9 +94,9 @@ pub struct Config {
 impl Config {
     /// The defaults of the Python reader: first engine, its default voice,
     /// rate 200, volume 100, the default audio device.
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: impl Into<Arc<Registry>>) -> Self {
         Config {
-            registry,
+            registry: registry.into(),
             engine: None,
             voice: None,
             rate: 200,
@@ -114,12 +116,23 @@ impl Config {
 /// The engines this build can offer, under the default licence policy
 /// (permissive and OS engines): OneCore on Windows with feature `onecore`.
 pub fn default_registry() -> Registry {
-    #[allow(unused_mut)]
-    let mut registry = Registry::default();
+    registry_with(&[
+        sonara_engine::LicenseClass::Permissive,
+        sonara_engine::LicenseClass::Os,
+    ])
+}
+
+/// The engines this build can offer, in a registry that allows `allowed`
+/// (a host that takes external engines adds `LicenseClass::External`).
+/// OneCore is registered when the OS class is allowed.
+pub fn registry_with(allowed: &[sonara_engine::LicenseClass]) -> Registry {
+    let registry = Registry::new(allowed);
     #[cfg(all(windows, feature = "onecore"))]
-    registry
-        .register(Arc::new(sonara_engine::onecore::OneCore::new()))
-        .expect("the default registry allows OS engines");
+    if registry.allows(sonara_engine::LicenseClass::Os) {
+        registry
+            .register(Arc::new(sonara_engine::onecore::OneCore::new()))
+            .expect("the OS class is allowed");
+    }
     registry
 }
 
@@ -167,7 +180,7 @@ impl ReaderHandle {
     /// Check the config and start the reader. Fails on an unknown engine or
     /// voice, an out-of-range rate or volume, or an empty registry.
     pub fn new(config: Config) -> Result<ReaderHandle> {
-        let registry = Arc::new(config.registry);
+        let registry = config.registry;
         let engine = match &config.engine {
             Some(id) => registry.get(id)?,
             None => {
@@ -266,6 +279,21 @@ impl ReaderHandle {
     /// reader has told (`Event::EngineStatus::changes`).
     pub fn engine_status_changes(&self) -> Result<(EngineStatus, u64)> {
         self.call(Msg::EngineStatus)
+    }
+
+    /// The engines this reader can switch to (shared: a host may register
+    /// more while it runs).
+    pub fn registry(&self) -> Arc<Registry> {
+        self.shared.registry.clone()
+    }
+
+    /// Fetch an engine's voice list from its source (an external engine
+    /// asks its provider; it may block up to that engine's timeout).
+    pub fn refresh_voices(&self, engine: &str) -> Result<Vec<Voice>> {
+        if self.shared.is_closed() {
+            return Err(Error::Closed);
+        }
+        Ok(self.shared.registry.get(engine)?.refresh_voices()?)
     }
 
     /// Voices of one engine, or of every registered engine.

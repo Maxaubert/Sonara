@@ -1,15 +1,36 @@
 //! The value types engines speak in.
+use std::collections::HashSet;
 use std::fmt;
+use std::sync::{Mutex, OnceLock};
 
-/// Names an engine (`onecore`, `kokoro`, `fake`). Engines are compiled in,
-/// so the id is a static string; the protocol's `engine` setting compares
-/// against `as_str`.
+/// Names an engine (`onecore`, `kokoro`, `fake`, or the id of an external
+/// engine profile). Built-in engines use a static string; profile ids are
+/// interned (`EngineId::intern`), so the id stays `Copy`. The protocol's
+/// `engine` setting compares against `as_str`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EngineId(pub &'static str);
 
 impl EngineId {
     pub fn as_str(&self) -> &'static str {
         self.0
+    }
+
+    /// The id for a run-time name (an external engine profile): the same
+    /// `&'static str` for the same text, leaked once per distinct id per
+    /// process. Callers validate ids first (at most 16 profiles of at most
+    /// 32 bytes), so the set stays small.
+    pub fn intern(id: &str) -> EngineId {
+        static IDS: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+        let mut ids = IDS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(s) = ids.get(id) {
+            return EngineId(s);
+        }
+        let s: &'static str = Box::leak(id.to_string().into_boxed_str());
+        ids.insert(s);
+        EngineId(s)
     }
 }
 
@@ -27,6 +48,71 @@ pub enum LicenseClass {
     Permissive,
     /// Part of the operating system, nothing shipped (Windows OneCore).
     Os,
+    /// An engine outside Sonara the user added at run time (a cloud API, a
+    /// local server or program): nothing shipped, the text leaves Sonara.
+    /// Hosts that bundle Sonara may refuse it.
+    External,
+}
+
+/// Why an external engine did not speak a chunk itself (spec 8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Reason {
+    NoKey,
+    Auth,
+    Quota,
+    RateLimited,
+    Network,
+    Timeout,
+    Server,
+    BadVoice,
+    BadConfig,
+    Format,
+}
+
+impl Reason {
+    pub const ALL: [Reason; 10] = [
+        Reason::NoKey,
+        Reason::Auth,
+        Reason::Quota,
+        Reason::RateLimited,
+        Reason::Network,
+        Reason::Timeout,
+        Reason::Server,
+        Reason::BadVoice,
+        Reason::BadConfig,
+        Reason::Format,
+    ];
+
+    /// The wire name (`engine_status.reason`, `error.reason`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Reason::NoKey => "no_key",
+            Reason::Auth => "auth",
+            Reason::Quota => "quota",
+            Reason::RateLimited => "rate_limited",
+            Reason::Network => "network",
+            Reason::Timeout => "timeout",
+            Reason::Server => "server",
+            Reason::BadVoice => "bad_voice",
+            Reason::BadConfig => "bad_config",
+            Reason::Format => "format",
+        }
+    }
+
+    /// A failure that may pass on its own (the breaker counts it); the
+    /// others block the engine until the user changes something.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Reason::RateLimited | Reason::Network | Reason::Timeout | Reason::Server
+        )
+    }
+}
+
+impl fmt::Display for Reason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// One voice of one engine (protocol `voices`).
@@ -104,6 +190,8 @@ pub struct EngineStatus {
     pub fallback: Option<EngineId>,
     /// Why it is not ready, when something failed.
     pub message: Option<String>,
+    /// For an external engine: the class of the failure (spec 8.1).
+    pub reason: Option<Reason>,
 }
 
 impl EngineStatus {
@@ -113,6 +201,7 @@ impl EngineStatus {
             progress: None,
             fallback: None,
             message: None,
+            reason: None,
         }
     }
 }

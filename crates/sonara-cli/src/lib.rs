@@ -17,13 +17,16 @@
 //!   token) in the default browser.
 //! - `doctor`: one row per check; informational rows never fail.
 //! - `uninstall [--keep LIST]`: stop, remove the runtime folder and the
-//!   home except what the user keeps, and leave the stop sentinel so the
-//!   plugin's hooks stay quiet until `/sonara:start`.
+//!   home except what the user keeps (and, unless settings are kept, the
+//!   external engine keys in Credential Manager), and leave the stop
+//!   sentinel so the plugin's hooks stay quiet until `/sonara:start`.
+//! - `engines ...`: the external engine profiles (`engines`).
 //!
 //! Paths: the home is `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara` (as
 //! `sonarad`); the runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
 pub mod client;
 pub mod doctor;
+pub mod engines;
 pub mod lifecycle;
 pub mod paths;
 pub mod uninstall;

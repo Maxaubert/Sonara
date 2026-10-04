@@ -18,6 +18,8 @@ pub mod args;
 pub mod channels_ext;
 pub mod config;
 pub mod cues;
+pub mod engines;
+pub mod engines_ext;
 pub mod events;
 pub mod home;
 pub mod http;

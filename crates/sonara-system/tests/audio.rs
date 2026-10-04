@@ -199,7 +199,7 @@ fn restore_after_runtime_kill() {
 
 #[test]
 fn activity_follows_the_reader_state() {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     let (out, rx) = TestOutput::new();
     let reader =
@@ -233,7 +233,7 @@ fn activity_follows_the_reader_state() {
 fn following_mid_item_engages_at_once() {
     // The system extension may be enabled while an item is already being
     // read: the current state counts, not only the next change.
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     let (out, rx) = TestOutput::new();
     let reader =

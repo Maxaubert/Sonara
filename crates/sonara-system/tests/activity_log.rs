@@ -51,7 +51,7 @@ fn control(fake: &Fake, lines: &Lines) -> (AudioControl, std::path::PathBuf) {
 }
 
 fn reader() -> ReaderHandle {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     let (out, rx) = TestOutput::new();
     ReaderHandle::new(Config::new(registry).with_output(Box::new(out), rx)).unwrap()

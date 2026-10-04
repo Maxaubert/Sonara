@@ -2,10 +2,10 @@
 //! protocol messages, and those may hold a command line with a key in it.
 //!
 //! - `secret_key(name)`: a field whose name says it holds a secret
-//!   (`api_key`, `password`, `Authorization`, ...). Its whole value is
+//!   (`api_key`, `password`, `Authorization`, `Ocp-Apim-Subscription-Key`, ...). Its whole value is
 //!   masked by the caller.
 //! - `mask(text)`: masks credential-looking words inside free text: known
-//!   token prefixes (`sk-`, `ghp_`, `github_pat_`, `AKIA`, `xoxb-`, JWTs),
+//!   token prefixes (`sk-`, `sk_car_`, `ghp_`, `github_pat_`, `AKIA`, `xoxb-`, JWTs),
 //!   the word after `Bearer`/`Basic`, and the value of an assignment whose
 //!   name is a `secret_key` (`PASSWORD=...`, `"api_key": "..."`).
 //!
@@ -30,11 +30,17 @@ const SECRET_NAMES: &[&str] = &[
     "private_key",
     "access_key",
     "client_secret",
+    // Speech providers' key headers (external engines, #224).
+    "xi-api-key",
+    "subscription-key",
+    "x-goog-api-key",
 ];
 
 /// Prefixes of well-known credential formats (case sensitive).
 const TOKEN_PREFIXES: &[&str] = &[
     "sk-",
+    // Cartesia.
+    "sk_car_",
     "ghp_",
     "gho_",
     "ghs_",
@@ -184,6 +190,32 @@ mod tests {
         assert_eq!(
             mask("login --password hunter2"),
             "login --password [redacted]"
+        );
+    }
+
+    #[test]
+    fn speech_provider_keys_and_headers_are_masked() {
+        // Spec docs/plans/2026-10-04-external-engines-spec.md 4.3.
+        for n in [
+            "secret",
+            "xi-api-key",
+            "Ocp-Apim-Subscription-Key",
+            "X-Goog-Api-Key",
+        ] {
+            assert!(secret_key(n), "{n}");
+        }
+        assert_eq!(
+            mask("cartesia key sk_car_abcdefghijklmnop1234 here"),
+            "cartesia key [redacted] here"
+        );
+        assert_eq!(
+            mask("Ocp-Apim-Subscription-Key: 0123456789abcdef"),
+            "Ocp-Apim-Subscription-Key: [redacted]"
+        );
+        assert_eq!(
+            mask("sk-proj-abcdefghijklmnopqrstuvwx"),
+            "[redacted]",
+            "OpenAI project keys are covered by sk-"
         );
     }
 

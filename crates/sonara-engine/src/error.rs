@@ -1,6 +1,6 @@
 //! Engine errors. Messages are written for the person reading a log or the
 //! `say` example: each names the cause and, where there is one, the repair.
-use crate::types::{EngineId, LicenseClass};
+use crate::types::{EngineId, LicenseClass, Reason};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -48,4 +48,9 @@ pub enum Error {
     /// Any other engine failure, with the platform's message.
     #[error("{0}")]
     Engine(String),
+    /// An external engine failed and had no fallback to speak instead (or
+    /// a test of it failed). The message is already masked: no key, no
+    /// URL query.
+    #[error("{message}")]
+    External { reason: Reason, message: String },
 }

@@ -60,7 +60,8 @@ class Connection:
                 if reply.get("ok") is True:
                     return reply
                 err = reply.get("error") or {}
-                raise SonaraError(err.get("code", "E_BAD_REQUEST"), err.get("message", "request failed"))
+                raise SonaraError(err.get("code", "E_BAD_REQUEST"), err.get("message", "request failed"),
+                                  err.get("reason"))
 
     def next_event(self, timeout: Optional[float]) -> Optional[dict]:
         """The next event; None at the end of the stream. ``socket.timeout``

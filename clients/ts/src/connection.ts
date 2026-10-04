@@ -109,8 +109,8 @@ export class Connection {
     if (m.ok === true) {
       p.resolve(m);
     } else {
-      const err = (m.error ?? {}) as { code?: string; message?: string };
-      p.reject(new SonaraError(err.code ?? "E_BAD_REQUEST", err.message ?? "request failed"));
+      const err = (m.error ?? {}) as { code?: string; message?: string; reason?: string };
+      p.reject(new SonaraError(err.code ?? "E_BAD_REQUEST", err.message ?? "request failed", err.reason));
     }
   }
 

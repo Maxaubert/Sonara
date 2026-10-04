@@ -16,6 +16,7 @@ fn downloading(done: u64) -> EngineStatus {
         progress: Some((done, 100)),
         fallback: Some(EngineId("onecore")),
         message: None,
+        reason: None,
     }
 }
 

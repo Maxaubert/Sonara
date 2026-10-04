@@ -13,3 +13,8 @@ path = "src/main.rs"
 # Protocol only, like the hook (R7): no runtime crate.
 sonara-hook = { path = "../sonara-hook" }
 serde_json.workspace = true
+
+# Credential Manager (uninstall removes the external engine keys) and the
+# console (a key prompt without echo).
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_System_Console"] }

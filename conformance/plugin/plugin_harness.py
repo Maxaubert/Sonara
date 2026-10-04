@@ -27,7 +27,7 @@ BIN = REPO / "bin"
 VERSION = (BIN / "runtime-version").read_text(encoding="utf-8").strip()
 ZIP_NAME = f"sonara-runtime-win-x64-{VERSION}.zip"
 EXES = ("sonarad.exe", "sonara-hook.exe", "sonara.exe")
-FAKE = "--engine fake --system fake"
+FAKE = "--engine fake --system fake --keys fake"
 
 
 def find_bash() -> Path | None:

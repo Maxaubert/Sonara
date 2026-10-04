@@ -13,7 +13,7 @@ path = "src/main.rs"
 # `test-util` brings the fake engine and is only used with `--engine fake`
 # (documented as a testing aid in docs/protocol-v1.md).
 sonara-reader = { workspace = true, features = ["onecore", "test-util"] }
-sonara-engine = { workspace = true, features = ["test-util", "kokoro"] }
+sonara-engine = { workspace = true, features = ["test-util", "kokoro", "external"] }
 sonara-audio.workspace = true
 sonara-channels.workspace = true
 sonara-agent = { workspace = true, features = ["summaries"] }

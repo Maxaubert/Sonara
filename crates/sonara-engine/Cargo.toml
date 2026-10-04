@@ -11,11 +11,17 @@ onecore = ["dep:windows", "dep:windows-future"]
 # The Kokoro engine: vendored misaki G2P, ONNX Runtime loaded at run time
 # (Microsoft's onnxruntime.dll next to the exe), and the model manager.
 kokoro = ["dep:misaki", "dep:ort", "dep:ureq", "dep:sha2", "dep:regex", "dep:serde_json"]
+# External engines (spec docs/plans/2026-10-04-external-engines-spec.md):
+# profiles the user adds at run time (cloud APIs, local servers), keys in
+# Windows Credential Manager, the HTTP core with fallback.
+external = ["dep:ureq", "dep:serde_json", "dep:windows", "dep:sonara-log"]
 # The deterministic `fake` engine for tests of higher crates.
 test-util = []
 
 [dependencies]
 thiserror.workspace = true
+# Secret masking of provider error messages (a leaf crate, no dependencies).
+sonara-log = { workspace = true, optional = true }
 misaki = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -28,11 +34,11 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier", "win-system-proxy"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, optional = true }
+windows = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security_Credentials"] }
 windows-future = { workspace = true, optional = true }
 
 [dev-dependencies]
 # The crate's own tests use the fake engine and test the Kokoro engine.
-sonara-engine = { path = ".", features = ["test-util", "kokoro"] }
+sonara-engine = { path = ".", features = ["test-util", "kokoro", "external"] }
 sha2.workspace = true
 serde_json.workspace = true

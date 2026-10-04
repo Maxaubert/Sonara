@@ -1,5 +1,6 @@
 import { Connection } from "./connection.js";
 import { SonaraError } from "./errors.js";
+import { EnginesApi } from "./engines.js";
 import { AgentApi, ChannelsApi, SystemApi } from "./extensions.js";
 import type {
   ControlAction,
@@ -37,6 +38,8 @@ export class SonaraClient {
   readonly agent: AgentApi;
   /** Extension `system` (pass-through). */
   readonly system: SystemApi;
+  /** External engines (protocol 1.2, capability `engines`; pass-through). */
+  readonly engines: EnginesApi;
 
   private readonly conn: Connection;
   private readonly dial: Dial;
@@ -60,6 +63,7 @@ export class SonaraClient {
     this.channels = new ChannelsApi(send);
     this.agent = new AgentApi(send);
     this.system = new SystemApi(send);
+    this.engines = new EnginesApi(send);
     conn.onClose = () => {
       this.eventConn?.close();
       for (const cb of [...this.closeListeners]) cb();
@@ -103,9 +107,14 @@ export class SonaraClient {
     return r.value;
   }
 
-  /** Voices of one engine, or of all. */
-  async voices(engine?: string): Promise<Voice[]> {
-    const r = await this.request("voices", engine === undefined ? {} : { engine });
+  /**
+   * Voices of one engine, or of all. `refresh` asks an external engine's
+   * provider again (protocol 1.2).
+   */
+  async voices(engine?: string, opts: { refresh?: boolean } = {}): Promise<Voice[]> {
+    const fields: Record<string, unknown> = engine === undefined ? {} : { engine };
+    if (opts.refresh !== undefined) fields.refresh = opts.refresh;
+    const r = await this.request("voices", fields);
     return r.voices as Voice[];
   }
 

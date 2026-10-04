@@ -150,7 +150,12 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
                 if let Some(task) = q.tasks.pop_front() {
                     q.in_flight = Some(match &task {
                         Task::Warm(engine) => (None, engine.clone()),
-                        Task::Chunk(job) => (Some(job.item), job.engine.clone()),
+                        Task::Chunk(job) => {
+                            // Under the lock `drop_item` takes: its cancel
+                            // ends this chunk even before `synthesize` runs.
+                            job.engine.begin();
+                            (Some(job.item), job.engine.clone())
+                        }
                     });
                     break task;
                 }
