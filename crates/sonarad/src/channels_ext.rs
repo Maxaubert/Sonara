@@ -118,11 +118,13 @@ pub fn control(ch: &Channels, action: Option<Control>, m: &Map<String, Value>) -
     ok(f)
 }
 
-/// The reply of `control flush`: `flushed` (`channel`, `direct` or
-/// `nothing`) and the `channel` flushed (`null` unless `channel`).
+/// The reply of `control flush`: `flushed` (`channel`, `announcement`,
+/// `direct` or `nothing`) and the `channel` flushed or announced (`null`
+/// for `direct` and `nothing`).
 pub fn flushed_fields(f: &Flushed) -> Map<String, Value> {
     let (what, channel) = match f {
         Flushed::Channel(id) => ("channel", json!(id)),
+        Flushed::Announcement(id) => ("announcement", json!(id)),
         Flushed::Direct => ("direct", Value::Null),
         Flushed::Nothing => ("nothing", Value::Null),
     };

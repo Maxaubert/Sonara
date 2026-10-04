@@ -1310,7 +1310,7 @@ fn flush_drop_is_logged() {
         [
             "prose: dropped: 1 chunk(s) kept for the summary (flush)",
             "summary: cancelled (flush): 1 summary in flight, the settle window",
-            "question: dropped: waited for the summary (flush)",
+            "question: spoken now: the summary it waited for was flushed",
         ],
         "{notes:?}"
     );
@@ -1343,4 +1343,64 @@ fn flush_of_a_session_without_turn_state_does_nothing() {
     r.flush("ghost");
     assert!(r.channels().is_empty());
     assert!(r.take_notes().is_empty());
+}
+
+#[test]
+fn flush_of_a_question_keeps_its_permission_prompt_silent() {
+    // #228 review: flushing the question being read does not answer it, so
+    // the permission prompt the same question fires stays suppressed (#11).
+    let mut r = rules();
+    r.ask("a", &question("Deploy?", &[]));
+    r.flush("a");
+    assert!(r.awaiting("a"));
+    let out = r.ask(
+        "a",
+        &Ask::new(AskKind::Permission, "Claude needs your permission"),
+    );
+    assert!(spoken(&out).is_empty(), "{:?}", spoken(&out));
+    assert!(earcons(&out).is_empty());
+}
+
+#[test]
+fn flush_speaks_the_decisions_that_waited_for_the_summary() {
+    // #228 review: skipping a session's recap must not lose its question.
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    r.ask("a", &question("Deploy?", &[]));
+    r.take_notes();
+    let out = r.flush("a");
+    let said = spoken(&out);
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(
+        said[0].starts_with('!') && said[0].contains("Deploy?"),
+        "{said:?}"
+    );
+    assert!(notes_of(&r, "a")
+        .contains(&"question: spoken now: the summary it waited for was flushed".to_string()));
+
+    // Held behind the summary in flight (after the settle window).
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    let asked = r.ask("a", &question("Ship?", &[]));
+    r.fire(&settle_of(&asked), None);
+    assert_eq!(r.summary_state("a").map(|s| s.2), Some(1), "held");
+    let said = spoken(&r.flush("a"));
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("Ship?"), "{said:?}");
+}
+
+#[test]
+fn stop_still_drops_the_decisions_that_waited_for_the_summary() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    end_and_settle(&mut r, "a", None);
+    r.ask("a", &question("Deploy?", &[]));
+    r.take_notes();
+    r.stop_all();
+    assert!(
+        notes_of(&r, "a").contains(&"question: dropped: waited for the summary (stop)".to_string())
+    );
+    assert!(!r.awaiting("a"));
 }

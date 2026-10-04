@@ -169,6 +169,10 @@ pub struct Channels {
 pub enum Flushed {
     /// The channel being read, flushed.
     Channel(String),
+    /// A switch announcement was playing: only it was skipped, and the
+    /// channel it announces (named) is read next with everything it had.
+    /// The press was aimed at the session that had just ended.
+    Announcement(String),
     /// An item spoken to the reader directly, skipped.
     Direct,
     /// Nothing was being read.
@@ -490,13 +494,32 @@ impl Channels {
     /// channel's item is in flight (playing or paused) that channel is
     /// flushed as `control(Stop, channel)` (its unread entries skipped,
     /// reported to `on_drop` with `reason`, its item cut) and the next
-    /// channel is read as usual; other channels keep everything. Text
-    /// spoken to the reader directly is skipped one item at a time. Idle,
-    /// nothing changes. A paused reader is un-paused, as `Stop` does.
+    /// channel is read as usual; other channels keep everything. A switch
+    /// announcement in flight is skipped alone (`Flushed::Announcement`):
+    /// the session it names has not been heard yet. Text spoken to the
+    /// reader directly is skipped one item at a time. Idle, nothing
+    /// changes. A paused reader is un-paused, as `Stop` does.
     pub fn stop_reading(&self, reason: &str) -> Result<Flushed> {
+        self.stop_reading_with(reason, |_| {})
+    }
+
+    /// `stop_reading`, running `before` with the channel to flush right
+    /// before its drops are reported (so a log names the flush first). It
+    /// runs under the channels' lock and must not call back into them.
+    pub fn stop_reading_with(&self, reason: &str, before: impl FnOnce(&str)) -> Result<Flushed> {
         let mut st = self.lock();
         let reader = &self.inner.reader;
-        let flushed = if let Some(ch) = st.in_flight.as_ref().map(|f| f.channel.clone()) {
+        let target = st
+            .in_flight
+            .as_ref()
+            .map(|f| (f.channel.clone(), f.entry.is_none()));
+        let flushed = if let Some((ch, true)) = target {
+            st.in_flight = None;
+            st.router.done();
+            reader.control(Control::Skip)?;
+            Flushed::Announcement(ch)
+        } else if let Some((ch, false)) = target {
+            before(&ch);
             report(&st, &ch, unread(&st, &ch), reason, None);
             st.router.flush(Some(&ch));
             self.inner.cut_if(&mut st, &ch, Some(reason))?;

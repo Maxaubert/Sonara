@@ -706,3 +706,54 @@ fn stop_reading_while_idle_does_nothing() {
     r.speak("a", "Alpha one.");
     r.read("Alpha one.");
 }
+
+#[test]
+fn stop_reading_during_a_switch_announcement_skips_only_the_announcement() {
+    // #228 review: a's item ends a moment before the press and b's switch
+    // announcement starts. The press was aimed at a: b's message must not
+    // be wiped before a word of it was heard.
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.speak("b", "Beta two.");
+    r.read("Alpha one.");
+    r.wait_for("Beta.");
+    let drops = Arc::new(Mutex::new(Vec::new()));
+    let seen = drops.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock().unwrap().push(d.text.clone());
+    })));
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Announcement("b".into())
+    );
+    r.read("Beta one.");
+    r.read("Beta two.");
+    r.stays_idle();
+    assert!(drops.lock().unwrap().is_empty());
+}
+
+#[test]
+fn stop_reading_names_the_channel_before_its_drops_are_reported() {
+    // #228 review: the agent logs `wipe reason=flush` before the drops.
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("a", "Alpha two.");
+    r.wait_for("Alpha one.");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let seen = log.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock().unwrap().push(format!("drop {}", d.text));
+    })));
+    let before = log.clone();
+    let f =
+        r.ch.stop_reading_with("flush", |ch| {
+            before.lock().unwrap().push(format!("flush {ch}"))
+        })
+        .unwrap();
+    assert_eq!(f, Flushed::Channel("a".into()));
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["flush a", "drop Alpha two.", "drop Alpha one."]
+    );
+}

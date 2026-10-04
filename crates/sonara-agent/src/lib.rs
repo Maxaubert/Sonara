@@ -439,18 +439,22 @@ impl Agent {
     /// The flush hotkey (#228): stop only the session being read. Its
     /// item, its unread text, its held prose, the prose kept for its
     /// summary and its summary work are dropped (`Rules::flush`, L2
-    /// `stop_reading`); every other session keeps its text, summaries and
-    /// turns still arriving, and is read next as usual. Text spoken to the
-    /// reader directly is skipped one item at a time; idle, nothing
-    /// happens. Mute is the way to silence everything.
+    /// `stop_reading`); the decisions that waited for that summary are
+    /// spoken now, and a question keeps its awaiting mark. Every other
+    /// session keeps its text, summaries and turns still arriving, and is
+    /// read next as usual. A switch announcement playing, or text spoken
+    /// to the reader directly, is skipped alone; idle, nothing happens.
+    /// Mute is the way to silence everything.
     pub fn flush(&self) -> Result<Flushed> {
         let mut rules = self.lock();
-        let flushed = self.inner.channels.stop_reading("flush")?;
-        if let Flushed::Channel(ch) = &flushed {
+        // The wipe line goes before the drops it explains, as for stop.
+        let flushed = self.inner.channels.stop_reading_with("flush", |ch| {
             self.inner
                 .trace("flush", Some(ch), Traced::Wiped { reason: "flush" });
-            rules.flush(ch);
-            self.inner.execute(&rules, "flush", Some(ch), Vec::new())?;
+        })?;
+        if let Flushed::Channel(ch) = &flushed {
+            let actions = rules.flush(ch);
+            self.inner.execute(&rules, "flush", Some(ch), actions)?;
         }
         Ok(flushed)
     }

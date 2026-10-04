@@ -130,7 +130,7 @@ saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt o
 | Hotkey | Action |
 |---|---|
 | Ctrl+Alt+Up | Restart the latest reply from the top (summary mode: re-read the last summary) |
-| Ctrl+Alt+Down | Flush: stop the session being read (what is playing and the rest of its reply); other sessions keep their messages and are read next. To silence everything, mute (Ctrl+Alt+M) |
+| Ctrl+Alt+Down | Flush: stop the session being read (what is playing and what it has queued); text that session sends later in the same reply is read as the reading mode says. Other sessions keep their messages and are read next. To silence everything, mute (Ctrl+Alt+M). Ctrl+Alt+Up brings the reply back |
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |
 

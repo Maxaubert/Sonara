@@ -177,6 +177,9 @@ impl HotkeyTarget {
                 self.earcon(if had { Earcon::Nav } else { Earcon::NavEdge });
                 Ok(Some(match flushed {
                     Flushed::Channel(id) => format!("session={}", self.session_value(&id)),
+                    Flushed::Announcement(id) => {
+                        format!("announcement session={}", self.session_value(&id))
+                    }
                     Flushed::Direct => "direct".into(),
                     Flushed::Nothing => "idle".into(),
                 }))

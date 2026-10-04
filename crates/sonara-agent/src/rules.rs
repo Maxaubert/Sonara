@@ -34,10 +34,12 @@
 //!   mark.
 //! - **Stop and flush.** `control stop` catches every channel up;
 //!   `flush` (the flush hotkey, #228) only the session being read: its
-//!   held prose, the prose kept for its summary, its summary work and the
-//!   decisions waiting for it are dropped. Other sessions, and turns still
-//!   arriving there, are untouched. The flushed turn goes on: later prose
-//!   follows `read_mode`, and its summary covers only what came after.
+//!   held prose, the prose kept for its summary and its summary work are
+//!   dropped; the decisions waiting for that summary are spoken now and a
+//!   question keeps its mark (a flush answers nothing). Stop drops those
+//!   decisions. Other sessions, and turns still arriving there, are
+//!   untouched. The flushed turn goes on: later prose follows
+//!   `read_mode`, and its summary covers only what came after.
 //! - **Mute levels.** 1 drops agent speech (the driver also silences what
 //!   is queued and playing), 2 also drops earcons.
 //! - **Summaries** (opt in): see `Pipeline` below; the rules are the Python
@@ -686,7 +688,9 @@ impl Rules {
     /// work and held decisions are dropped, and a later summary covers only
     /// what comes after the answer. The turn goes on.
     pub fn answered(&mut self, channel: &str) -> Vec<Action> {
-        self.catch_up(channel, "answered");
+        self.turn(channel).awaiting = false;
+        let decisions = self.catch_up(channel, "answered");
+        self.drop_decisions(channel, decisions, "answered");
         vec![Action::Wipe {
             channel: channel.to_string(),
             resume: false,
@@ -694,10 +698,11 @@ impl Rules {
     }
 
     /// Skip the channel to now: its held prose, the prose kept for a
-    /// summary and its summary work (in flight, parked, settling, and the
-    /// decisions waiting for it) are dropped, each drop noted with `why`
-    /// (#228). The turn goes on: what comes later follows the usual rules.
-    fn catch_up(&mut self, channel: &str, why: &str) {
+    /// summary and its summary work (in flight, parked, settling) are
+    /// dropped, each drop noted with `why` (#228). The decisions that
+    /// waited for that work are returned for the caller to drop or speak.
+    /// The turn goes on: what comes later follows the usual rules.
+    fn catch_up(&mut self, channel: &str, why: &str) -> Vec<Decision> {
         let gen = self.gen();
         let settle = self.gen();
         self.drop_held(channel, why);
@@ -707,7 +712,6 @@ impl Rules {
         let (inflight, settling, old) = (c.inflight, c.settle_armed, c.gen);
         let mut decisions: Vec<Decision> = std::mem::take(&mut c.pending);
         decisions.extend(c.held.take().map(|(_, v)| v).unwrap_or_default());
-        c.awaiting = false;
         c.voiced = c.prose.len();
         Self::cancel(c, gen, settle);
         if summaries && kept > 0 {
@@ -747,6 +751,11 @@ impl Rules {
                 None,
             );
         }
+        decisions
+    }
+
+    /// Drop `decisions` that waited for summary work, noted with `why`.
+    fn drop_decisions(&mut self, channel: &str, decisions: Vec<Decision>, why: &str) {
         for d in decisions {
             self.note(
                 Some(channel),
@@ -762,20 +771,36 @@ impl Rules {
     /// dropped too, #107). The driver stops L2.
     pub fn stop_all(&mut self) {
         for ch in self.channels() {
-            self.catch_up(&ch, "stop");
+            self.turn(&ch).awaiting = false;
+            let decisions = self.catch_up(&ch, "stop");
+            self.drop_decisions(&ch, decisions, "stop");
         }
     }
 
     /// The flush hotkey (#228): only `channel`, the session being read, is
-    /// caught up (as `answered`); the other sessions keep their held
-    /// prose, summary work and turns still arriving. Prose that arrives
-    /// for `channel` later follows `read_mode` (or makes a summary of only
-    /// what came after the flush). The driver flushes its L2 channel. A
-    /// channel without turn state is left alone.
-    pub fn flush(&mut self, channel: &str) {
-        if self.tracks(channel) {
-            self.catch_up(channel, "flush");
+    /// caught up; the other sessions keep their held prose, summary work
+    /// and turns still arriving. Unlike an answer, a flush answers
+    /// nothing: a question keeps its awaiting mark (its permission prompt
+    /// stays silent, #11), and the decisions that waited for the cancelled
+    /// summary are spoken now rather than lost. Prose that arrives for
+    /// `channel` later follows `read_mode` (or makes a summary of only
+    /// what came after the flush). The driver flushes its L2 channel
+    /// first. A channel without turn state is left alone.
+    pub fn flush(&mut self, channel: &str) -> Vec<Action> {
+        let mut out = Vec::new();
+        if !self.tracks(channel) {
+            return out;
         }
+        for d in self.catch_up(channel, "flush") {
+            self.note(
+                Some(channel),
+                d.kind,
+                "spoken now: the summary it waited for was flushed".into(),
+                Some(d.text.clone()),
+            );
+            self.speak(&mut out, channel, d.text, true, d.kind);
+        }
+        out
     }
 
     /// The channel closed (or was forgotten): free its turn state. Summary
