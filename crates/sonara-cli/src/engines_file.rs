@@ -120,7 +120,14 @@ pub fn write(home: &Path, profile: &Value, replace: bool) -> Result<Written, Str
         }
         None => engines.push(profile.clone()),
     }
-    doc.insert("format".into(), json!(1));
+    // Never lower the format (spec 6.4): a format 2 file written back as
+    // 1 would be migrated again at the next start. A new file is 2; a file
+    // the runtime has not migrated yet keeps its 1.
+    let format = match &before {
+        None => 2,
+        Some(_) => doc.get("format").and_then(Value::as_u64).unwrap_or(1),
+    };
+    doc.insert("format".into(), json!(format));
     doc.insert("engines".into(), Value::Array(engines));
     let text = serde_json::to_string_pretty(&Value::Object(doc)).map_err(|e| e.to_string())?;
     write_atomic(&file, &text)?;
@@ -190,6 +197,33 @@ mod tests {
         let v: Value =
             serde_json::from_str(&std::fs::read_to_string(h.join(FILE)).unwrap()).unwrap();
         assert_eq!(v["engines"].as_array().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn the_file_format_is_never_lowered() {
+        // A format 2 file written back as format 1 would be migrated again
+        // at the next start, binding env keys to addresses a protocol
+        // client set (spec 6.4). A new file is format 2; a format 1 file
+        // stays 1 so the runtime still migrates it once.
+        let format = |h: &Path| -> Value {
+            serde_json::from_str::<Value>(&std::fs::read_to_string(h.join(FILE)).unwrap()).unwrap()
+                ["format"]
+                .clone()
+        };
+        let h = home("format");
+        write(&h, &piper("a", json!([exe()])), false).unwrap();
+        assert_eq!(format(&h), 2, "a new file");
+        std::fs::write(
+            h.join(FILE),
+            r#"{"format": 2, "engines": [{"id": "oa", "kind": "openai-compatible"}]}"#,
+        )
+        .unwrap();
+        write(&h, &piper("b", json!([exe()])), false).unwrap();
+        assert_eq!(format(&h), 2, "a format 2 file");
+        std::fs::write(h.join(FILE), r#"{"engines": []}"#).unwrap();
+        write(&h, &piper("c", json!([exe()])), false).unwrap();
+        assert_eq!(format(&h), 1, "an unmigrated file");
         let _ = std::fs::remove_dir_all(&h);
     }
 

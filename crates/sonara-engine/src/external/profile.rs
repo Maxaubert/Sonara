@@ -432,6 +432,15 @@ pub fn default_base(kind: Kind, options: &Map<String, Value>) -> Option<String> 
 /// this build or not: its `url`, else the kind's default (`default_base`).
 /// `None` when it has no valid address.
 pub fn origin_of(raw: &Value) -> Option<String> {
+    if raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str()) {
+        return raw
+            .get("options")
+            .and_then(|o| o.get("argv"))
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(Value::as_str)
+            .map(command_origin);
+    }
     let url = raw
         .get("url")
         .and_then(Value::as_str)
@@ -449,6 +458,13 @@ pub fn origin_of(raw: &Value) -> Option<String> {
     Url::parse(url.trim_end_matches('/'))
         .ok()
         .map(|u| u.origin())
+}
+
+/// What a `command` profile's key is bound to: its program, in lower case
+/// (Windows paths ignore case), not its arguments. The key goes only into
+/// that program's environment (spec 6.4).
+pub fn command_origin(program: &str) -> String {
+    format!("command:{}", program.to_lowercase())
 }
 
 /// `localhost`, `127.0.0.0/8` or `::1`.
@@ -1161,14 +1177,23 @@ impl Profile {
 
     /// The origin requests go to (`scheme://host:port`), what a stored key
     /// must be bound to (spec 6.4).
+    /// For a `command`, its program (`command_origin`).
     pub fn origin(&self) -> Option<String> {
+        if self.kind == Kind::Command {
+            return self.command_program().map(command_origin);
+        }
         self.parsed_url().map(|u| u.origin())
     }
 
     /// The origin of the provider itself (the kind's or preset's default
     /// address, never the profile's `url`): an `env:` key may always go
     /// there.
+    /// A `command`'s is its program: it comes only from the local file,
+    /// never over the protocol.
     pub fn default_origin(&self) -> Option<String> {
+        if self.kind == Kind::Command {
+            return self.origin();
+        }
         default_base(self.kind, &self.options)
             .and_then(|u| Url::parse(u.trim_end_matches('/')).ok())
             .map(|u| u.origin())
@@ -1694,6 +1719,12 @@ mod tests {
             Some("https://api.eu.deepgram.com:443")
         );
         assert_eq!(o(json!({"kind": "command"})), None);
+        assert_eq!(
+            o(json!({"kind": "command", "options": {"argv": ["C:\\Tools\\TTS.exe", "-v"]}}))
+                .as_deref(),
+            Some("command:c:\\tools\\tts.exe"),
+            "a command is bound to its program"
+        );
         assert_eq!(
             o(json!({"kind": "openai-compatible", "url": "ftp://x"})),
             None

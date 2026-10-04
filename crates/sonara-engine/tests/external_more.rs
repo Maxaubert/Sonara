@@ -23,10 +23,12 @@ const FAKE_TTS: &str = env!("CARGO_BIN_EXE_sonara-fake-tts");
 fn build(v: Value, key: Option<&str>, fallback: bool) -> External {
     let id = v["id"].as_str().unwrap().to_string();
     let store = Arc::new(MemoryStore::new());
+    let profile = Profile::from_json(&v).unwrap();
     if let Some(k) = key {
-        store.set(&id, &Secret::new(k)).unwrap();
+        let origin = profile.origin().expect("every kind has an origin");
+        store.set(&id, &Secret::new(k), &origin).unwrap();
     }
-    let mut config = ExternalConfig::new(Profile::from_json(&v).unwrap(), KeyResolver::new(store));
+    let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
     if fallback {
         config.fallback = Some(Arc::new(FakeEngine::new()) as Arc<dyn Engine>);
     }
@@ -727,4 +729,96 @@ fn cancel_ends_a_command_at_once_and_kills_it() {
         !marker_after(&marker, start + Duration::from_millis(3000)),
         "the program was killed"
     );
+}
+
+/// Whether any request carried a key header or the key.
+fn saw_a_key(server: &ScriptServer) -> bool {
+    server.requests().iter().any(|r| {
+        r.headers
+            .iter()
+            .any(|(k, v)| matches!(k.as_str(), "authorization" | "x-api-key") || v.contains(KEY))
+    })
+}
+
+#[test]
+fn cartesia_and_deepgram_keys_are_bound_to_the_provider_default_host() {
+    // A key entered for the provider's own address never goes to a url
+    // set later (spec 6.4); Deepgram's EU host is an origin of its own.
+    let deepgram = json!({"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en",
+        "options": {"timeout_ms": 5000}});
+    for (mut v, default) in [
+        (cartesia(), "https://api.cartesia.ai:443"),
+        (deepgram.clone(), "https://api.deepgram.com:443"),
+    ] {
+        let id = v["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            Profile::from_json(&v).unwrap().origin().as_deref(),
+            Some(default),
+            "{id}"
+        );
+        let server = ScriptServer::start();
+        v["url"] = json!(server.base);
+        let store = Arc::new(MemoryStore::new());
+        store.set(&id, &Secret::new(KEY), default).unwrap();
+        let mut config =
+            ExternalConfig::new(Profile::from_json(&v).unwrap(), KeyResolver::new(store));
+        config.fallback = Some(Arc::new(FakeEngine::new()) as Arc<dyn Engine>);
+        let e = External::new(config).unwrap();
+        assert!(!e.key_present(), "{id}");
+        let _ = e
+            .synthesize("Where does this go?", "", 200)
+            .map(|i| i.count());
+        let _ = e.refresh_voices();
+        let _ = e.test("Hello.", "", 200);
+        assert!(!saw_a_key(&server), "{id}: the key left its host");
+    }
+    let mut eu = deepgram;
+    eu["url"] = json!("https://api.eu.deepgram.com");
+    let store = Arc::new(MemoryStore::new());
+    store
+        .set("dg", &Secret::new(KEY), "https://api.deepgram.com:443")
+        .unwrap();
+    let e = KeyResolver::new(store)
+        .resolve(&Profile::from_json(&eu).unwrap())
+        .unwrap_err();
+    assert_eq!(e.reason, Reason::NoKey);
+}
+
+#[test]
+fn a_command_key_is_bound_to_its_program() {
+    // A command's key goes into the environment of the program it was
+    // entered for, never of another program named later.
+    let dir = TempDir::new("cmd-bound");
+    let rec = dir.path().join("rec.json");
+    let mut v = command(
+        json!([FAKE_TTS, "--record", rec.display().to_string()]),
+        json!({}),
+    );
+    v["key_ref"] = json!("credman");
+    let p = Profile::from_json(&v).unwrap();
+    let origin = p.origin().unwrap();
+    assert!(origin.starts_with("command:"), "{origin}");
+    assert_eq!(p.default_origin(), Some(origin.clone()));
+    // Arguments are not part of it; the program is, in any letter case.
+    let mut other_args = v.clone();
+    other_args["options"]["argv"] = json!([FAKE_TTS.to_uppercase(), "--other"]);
+    assert_eq!(
+        Profile::from_json(&other_args).unwrap().origin(),
+        Some(origin.clone())
+    );
+    let store = Arc::new(MemoryStore::new());
+    store
+        .set("cmd", &Secret::new(KEY), "command:c:\\other\\tts.exe")
+        .unwrap();
+    let mut config = ExternalConfig::new(p.clone(), KeyResolver::new(store.clone()));
+    config.fallback = Some(Arc::new(FakeEngine::new()) as Arc<dyn Engine>);
+    let e = External::new(config).unwrap();
+    assert!(!e.key_present());
+    let _ = e.synthesize("x", "", 200).map(|i| i.count());
+    assert!(
+        !rec.exists() || record(&rec)["key"] != KEY,
+        "the key went to a program it was not entered for"
+    );
+    store.set("cmd", &Secret::new(KEY), &origin).unwrap();
+    assert!(e.key_present());
 }

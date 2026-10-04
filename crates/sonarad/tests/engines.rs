@@ -962,3 +962,75 @@ fn engine_reload_takes_no_profile() {
     assert_eq!(o["engines"], json!([]));
     assert_eq!(engines_json(&r), None);
 }
+
+/// `engines.json` in the current format, as the user edits it.
+fn write_engines_v2(r: &Rig, engines: Value) {
+    std::fs::write(
+        r.home.join(engines::FILE),
+        json!({"format": 2, "engines": engines}).to_string(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_reload_that_moves_an_address_deletes_the_key() {
+    // engine_reload (and a save that first takes in the file's changes) is
+    // an edit path too: a key whose origin is no longer its entry's is
+    // deleted, never sent to the new address (spec 6.4).
+    let mut r = rig("reload-origin", true);
+    r.add("local");
+    let stored: Value = serde_json::from_str(&engines_json(&r).unwrap()).unwrap();
+    let mut entry = stored["engines"][0].clone();
+    // Only the voice changes: the key stays.
+    entry["voice"] = json!("am_echo");
+    write_engines_v2(&r, json!([entry.clone()]));
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["engines"][0]["key_present"], true, "{o}");
+    assert!(r.keys.get("local").unwrap().is_some());
+    // The address moves: the key is deleted and never reaches the new host.
+    let other = Provider::start();
+    entry["url"] = json!(other.url);
+    write_engines_v2(&r, json!([entry.clone()]));
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["engines"][0]["key_present"], false, "{o}");
+    assert!(r.keys.get("local").unwrap().is_none(), "the key is deleted");
+    speak_through(&mut r, "local");
+    assert!(!saw_a_key(&other), "the key reached the new host");
+    // The same through a save that first reads the changed file.
+    let mut r = rig("reload-origin-save", true);
+    r.add("local");
+    let mut entry = r.profile("local");
+    entry["key_ref"] = json!("credman");
+    let third = Provider::start();
+    entry["url"] = json!(third.url);
+    write_engines_v2(&r, json!([entry]));
+    let mut extra = r.profile("extra");
+    extra["key_ref"] = json!("none");
+    let o = r.call(json!({"type": "engine_add", "engine": extra}));
+    assert_eq!(o["ok"], true, "{o}");
+    assert!(r.keys.get("local").unwrap().is_none(), "the key is deleted");
+    speak_through(&mut r, "local");
+    assert!(!saw_a_key(&third));
+}
+
+#[test]
+fn a_command_key_is_bound_to_its_program() {
+    let mut r = rig("command-key", true);
+    let mut p = command_profile("prog", &real_exe());
+    p["key_ref"] = json!("credman");
+    write_engines_v2(&r, json!([p.clone()]));
+    r.call(json!({"type": "engine_reload"}));
+    let o = r.call(json!({"type": "engine_key", "engine": "prog", "secret": SECRET}));
+    assert_eq!(o["key_present"], true, "{o}");
+    let k = r.keys.get("prog").unwrap().unwrap();
+    assert_eq!(
+        k.origin.as_deref(),
+        Some(format!("command:{}", real_exe().to_lowercase()).as_str())
+    );
+    // The user points the entry at another program: the key is deleted.
+    p["options"]["argv"] = json!([std::env::current_exe().unwrap().display().to_string()]);
+    write_engines_v2(&r, json!([p]));
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["engines"][0]["key_present"], false, "{o}");
+    assert!(r.keys.get("prog").unwrap().is_none());
+}

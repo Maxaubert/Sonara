@@ -256,6 +256,12 @@ impl Engines {
         let text = read_text(&self.file);
         let (raws, _) =
             parse_file(text.as_deref()).map_err(|why| bad(format!("{why}; nothing changed")))?;
+        // An edit of the file is an edit path too (spec 6.4): a key whose
+        // origin is no longer its entry's is deleted. A reload never binds
+        // a key (only the migration at start does).
+        for raw in &raws {
+            self.drop_key_bound_elsewhere(raw);
+        }
         *self.seen() = text;
         let old: Vec<Entry> = entries.drain(..).collect();
         let before: Vec<(String, Arc<External>)> = old
@@ -326,6 +332,25 @@ impl Engines {
     /// Before a save: take in what was written to the file since it was
     /// last read or saved (a lost update otherwise). A file that is not
     /// JSON is refused, never overwritten.
+    /// Delete the stored key of `raw`'s id when it is bound to another
+    /// origin than the entry's (or to none).
+    fn drop_key_bound_elsewhere(&self, raw: &Value) {
+        let Some(id) = raw.get("id").and_then(Value::as_str) else {
+            return;
+        };
+        let store = self.keys.store();
+        if let Ok(Some(k)) = store.get(id) {
+            if k.origin != origin_of(raw) {
+                match store.delete(id) {
+                    Ok(()) => self.note(&format!(
+                        "engine {id}: its key was for another address; deleted"
+                    )),
+                    Err(e) => self.note(&format!("engine {id}: the key could not be deleted: {e}")),
+                }
+            }
+        }
+    }
+
     fn take_in_file_changes(&self) -> Result<(), Failure> {
         let changed = *self.seen() != read_text(&self.file);
         if changed {

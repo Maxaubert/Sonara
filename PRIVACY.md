@@ -110,7 +110,7 @@ engine` from a client).
   server on your own PC never go through a proxy. A key for a server on your own PC goes to
   whatever program listens on that port, so do not store one for a local server you do not
   keep running. A `command` engine that has a key gets it in its environment
-  (`SONARA_ENGINE_KEY`), never as an argument.
+  (`SONARA_ENGINE_KEY`), never as an argument, and only the program it was entered for.
 - **When it fails.** If the engine cannot speak (no key, a refused key, no credit, no network, a
   server problem), Sonara reads that sentence with its built-in voice (Kokoro, else the Windows
   voices) and says once why ("OpenAI cannot be reached. Reading with the built-in voice."). The
