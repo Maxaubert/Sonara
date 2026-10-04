@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use sonara_cli::client::attach;
 use sonara_cli::doctor::{self, Row, Status};
 use sonara_cli::engines::{self, Action};
+use sonara_cli::engines_file;
 use sonara_cli::lifecycle::{self, Running, Stopped};
 use sonara_cli::paths::{self, Paths};
 use sonara_cli::uninstall::{self, Keep};
@@ -187,6 +188,7 @@ fn engines_cmd(paths: &Paths, action: Action) -> Result<(), String> {
     let request = match action {
         Action::List => json!({"type": "engine_list"}),
         Action::Request(r) => r,
+        Action::AddLocal { profile, replace } => return add_local(paths, &profile, replace),
         Action::SetKey { id } => {
             let key = engines::read_key()?;
             json!({"type": "engine_key", "engine": id, "secret": key})
@@ -215,6 +217,48 @@ fn engines_cmd(paths: &Paths, action: Action) -> Result<(), String> {
         println!("{}", engines::done_line(&request, &reply));
     }
     Ok(())
+}
+
+/// `sonara engines add <id> --kind command`: written into `engines.json`
+/// as the user, then the runtime reads the file again (`engine_reload`,
+/// which takes no profile). An entry the runtime cannot use is taken out
+/// again.
+fn add_local(paths: &Paths, profile: &Value, replace: bool) -> Result<(), String> {
+    let id = profile["id"].as_str().unwrap_or("?").to_string();
+    let written = engines_file::write(&paths.home, profile, replace)?;
+    let reload = |r: &mut Running| {
+        r.conn
+            .request_timeout(json!({"type": "engine_reload"}), Duration::from_secs(30))
+            .map_err(|e| format!("no answer from the runtime: {e}"))
+    };
+    let mut r = match ensure(paths, false) {
+        Ok(r) => r,
+        Err(e) => {
+            println!(
+                "Added {id} to {}; the runtime did not start ({e}), it reads it when it starts.",
+                written.file.display()
+            );
+            return Ok(());
+        }
+    };
+    let reply = reload(&mut r)?;
+    let view = if reply["ok"] == true {
+        engines_file::reloaded_view(&reply, &id)
+    } else {
+        Err(engines::error_line(&reply))
+    };
+    match view {
+        Ok(view) => {
+            let request = json!({"type": "engine_reload"});
+            println!("{}", engines::done_line(&request, &json!({"engine": view})));
+            Ok(())
+        }
+        Err(e) => {
+            written.undo()?;
+            let _ = reload(&mut r);
+            Err(e)
+        }
+    }
 }
 
 fn file_row(dir: &Path, name: &str, missing: Status, why: &str) -> Row {

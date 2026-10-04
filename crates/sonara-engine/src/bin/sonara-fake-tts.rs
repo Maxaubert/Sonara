@@ -1,6 +1,7 @@
 //! A stand-in speech program for the tests of the `command` kind (feature
-//! `test-util`; never shipped). It reads the text from `--text` or stdin and
-//! answers as told:
+//! `test-util`; never shipped). It reads the text from `--text` (used only
+//! by its own `--sleeper` child), `--text-file PATH` or stdin and answers as
+//! told:
 //!
 //! - `--mode wav|pcm|file|garbage|empty` (default `wav`): a WAV or raw PCM
 //!   on stdout, a WAV at `--out`, text that is no audio, or nothing.
@@ -8,7 +9,8 @@
 //! - `--sleep-ms N`, then `--marker PATH` is written (to see a kill).
 //! - `--exit N`: print two lines to stderr and exit with N; with
 //!   `--echo-key` the last line is `SONARA_ENGINE_KEY` as it came.
-//! - `--record PATH`: write `{"args", "stdin", "key"}` as JSON there.
+//! - `--record PATH`: write `{"args", "stdin", "text_file", "key"}` as JSON
+//!   there.
 //! - `--sleeper PATH`: first start a copy of itself that inherits the
 //!   output pipes, sleeps 2.5 s and then writes PATH (a launcher's child).
 //!
@@ -24,7 +26,8 @@ fn main() {
             .and_then(|i| args.get(i + 1))
             .cloned()
     };
-    let text = match value("--text") {
+    let from_file = value("--text-file").map(|p| std::fs::read_to_string(p).unwrap());
+    let text = match value("--text").or(from_file.clone()) {
         Some(t) => t,
         None => {
             let mut s = String::new();
@@ -35,7 +38,12 @@ fn main() {
     if let Some(path) = value("--record") {
         let record = serde_json::json!({
             "args": args,
-            "stdin": if value("--text").is_some() { String::new() } else { text.clone() },
+            "stdin": if value("--text").is_some() || from_file.is_some() {
+                String::new()
+            } else {
+                text.clone()
+            },
+            "text_file": from_file,
             "key": std::env::var("SONARA_ENGINE_KEY").ok(),
         });
         std::fs::write(path, record.to_string()).unwrap();

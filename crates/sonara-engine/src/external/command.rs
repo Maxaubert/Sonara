@@ -2,13 +2,22 @@
 //! this PC (for example a Piper install) speaks the chunk. Not an `Adapter`:
 //! no HTTP, the backend runs the program.
 //!
-//! - **No shell**: `argv[0]` is the full path of an `.exe` (validated),
-//!   started directly with its arguments, so a `&` or `|` in the text
-//!   reaches the program as it is. No console window (`CREATE_NO_WINDOW`).
-//! - **Placeholders** inside any argument: `{text}`, `{voice}`, `{rate}`
+//! - **Local only**: a `command` profile comes from `engines.json`, which
+//!   the user edits or `sonara engines add --kind command` writes; the
+//!   protocol never adds or changes one (security review of PR3).
+//! - **No shell**: `argv[0]` is the full path of an `.exe` (validated, and
+//!   checked to exist before each start), started directly with its
+//!   arguments (`std::process::Command`, which quotes each one for Windows),
+//!   so a `&` or `|` in an argument reaches the program as it is. No
+//!   console window (`CREATE_NO_WINDOW`).
+//! - **The text is never in argv**: it goes on stdin (UTF-8, then closed)
+//!   or in a temporary UTF-8 file at `{in}` (deleted afterwards).
+//! - **Placeholders** inside any argument, filled in one pass (a value that
+//!   holds a placeholder is not filled in again): `{voice}`, `{rate}`
 //!   (words per minute), `{speed}` (`rate / 200`, two decimals), `{out}`
-//!   (a temporary `.wav` path, deleted afterwards).
-//! - **Input**: the text on stdin (UTF-8, then closed) or in `{text}`.
+//!   (a temporary `.wav` path, deleted afterwards), `{in}`. A voice that
+//!   goes into argv must be one of `options.voices` when that list is set,
+//!   and never starts with `-` (it cannot read as an option).
 //! - **Output**: a WAV on stdout, raw 16-bit mono PCM on stdout at
 //!   `sample_rate`, or a WAV file at `{out}`.
 //! - **Key**: when one resolves, in the environment as `SONARA_ENGINE_KEY`
@@ -46,7 +55,7 @@ const DRAIN: Duration = Duration::from_secs(2);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
     Stdin,
-    Arg,
+    File,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,23 +74,55 @@ pub struct Command {
     timeout: Duration,
     label: String,
     program: String,
+    /// `{voice}` appears in argv.
+    voice_in_argv: bool,
 }
 
-/// A temporary output file, removed on drop (also after a kill).
-struct TempOut(PathBuf);
+/// The longest voice that goes into argv.
+const VOICE_MAX: usize = 200;
 
-impl TempOut {
-    fn new() -> TempOut {
+/// A temporary file (the output WAV, or the input text), removed on drop
+/// (also after a kill).
+struct TempFile(PathBuf);
+
+impl TempFile {
+    fn new(ext: &str) -> TempFile {
         static N: AtomicU64 = AtomicU64::new(0);
-        TempOut(std::env::temp_dir().join(format!(
-            "sonara-tts-{}-{}.wav",
+        TempFile(std::env::temp_dir().join(format!(
+            "sonara-tts-{}-{}.{ext}",
             std::process::id(),
             N.fetch_add(1, Ordering::SeqCst)
         )))
     }
 }
 
-impl Drop for TempOut {
+/// Fill in the placeholders of one argument in one pass: a filled-in value
+/// is never scanned again; an unknown `{name}` stays as it is.
+fn fill(arg: &str, value: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(arg.len());
+    let mut rest = arg;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open..];
+        match after
+            .find('}')
+            .and_then(|close| value(&after[1..close]).map(|v| (v, close)))
+        {
+            Some((v, close)) => {
+                out.push_str(&v);
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = &after[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+impl Drop for TempFile {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.0);
     }
@@ -216,7 +257,7 @@ impl Command {
             program: program_name(argv.first().map(String::as_str).unwrap_or_default()).to_string(),
             argv,
             input: match p.option_str("input") {
-                Some("arg") => Input::Arg,
+                Some("file") => Input::File,
                 _ => Input::Stdin,
             },
             output: match p.option_str("output") {
@@ -228,6 +269,11 @@ impl Command {
             voices,
             timeout: Duration::from_millis(p.timeout_ms()),
             label: p.display_label(),
+            voice_in_argv: p
+                .command_argv()
+                .iter()
+                .skip(1)
+                .any(|a| a.contains("{voice}")),
         }
     }
 
@@ -241,22 +287,51 @@ impl Command {
     }
 
     /// The arguments after `argv[0]` with the placeholders filled in.
-    pub fn args(&self, text: &str, voice: &str, wpm: u32, out: Option<&Path>) -> Vec<String> {
+    /// The text is never one of them.
+    pub fn args(
+        &self,
+        voice: &str,
+        wpm: u32,
+        out: Option<&Path>,
+        input: Option<&Path>,
+    ) -> Vec<String> {
         let speed = format!("{:.2}", rate::speed(Kind::Command, wpm).unwrap_or(1.0));
-        let out = out.map(|p| p.display().to_string()).unwrap_or_default();
-        self.argv
-            .iter()
-            .skip(1)
-            .map(|a| {
-                // `{text}` last, so text that holds a placeholder is not
-                // filled in again.
-                a.replace("{voice}", voice)
-                    .replace("{rate}", &wpm.to_string())
-                    .replace("{speed}", &speed)
-                    .replace("{out}", &out)
-                    .replace("{text}", text)
-            })
-            .collect()
+        let path = |p: Option<&Path>| p.map(|p| p.display().to_string()).unwrap_or_default();
+        let (out, input) = (path(out), path(input));
+        let value = |name: &str| match name {
+            "voice" => Some(voice.to_string()),
+            "rate" => Some(wpm.to_string()),
+            "speed" => Some(speed.clone()),
+            "out" => Some(out.clone()),
+            "in" => Some(input.clone()),
+            _ => None,
+        };
+        self.argv.iter().skip(1).map(|a| fill(a, &value)).collect()
+    }
+
+    /// A voice that goes into argv: one of `options.voices` when that list
+    /// is set, never an option (`-`), plain text of at most 200 characters.
+    pub fn check_voice(&self, voice: &str) -> Result<(), ExtError> {
+        if !self.voice_in_argv || voice.is_empty() {
+            return Ok(());
+        }
+        if !self.voices.is_empty() && !self.voices.iter().any(|v| v == voice) {
+            return Err(self.err(
+                Reason::BadConfig,
+                format_args!("was not started: the voice '{voice}' is not one of options.voices"),
+            ));
+        }
+        if voice.starts_with('-')
+            || voice.chars().any(char::is_control)
+            || voice.chars().count() > VOICE_MAX
+        {
+            return Err(self.err(
+                Reason::BadConfig,
+                "was not started: the voice cannot be passed to it (it starts with '-', \
+                 has control characters or is too long)",
+            ));
+        }
+        Ok(())
     }
 
     fn err(&self, reason: Reason, what: impl std::fmt::Display) -> ExtError {
@@ -273,20 +348,48 @@ impl Command {
         key: Option<&Secret>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<PcmChunk, ExtError> {
-        let out = (self.output == Output::File).then(TempOut::new);
-        let mut cmd = std::process::Command::new(&self.argv[0]);
-        cmd.args(self.args(text, voice, wpm, out.as_ref().map(|o| o.0.as_path())))
-            .stdin(if self.input == Input::Stdin {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(if self.output == Output::File {
-                Stdio::null()
-            } else {
-                Stdio::piped()
-            })
-            .stderr(Stdio::piped());
+        self.check_voice(voice)?;
+        // Only ever the absolute path that was validated: never a search of
+        // PATH or the current folder for a program by that name.
+        let program = Path::new(&self.argv[0]);
+        if !program.is_absolute() || !program.is_file() {
+            return Err(self.err(
+                Reason::BadConfig,
+                "cannot start: the program does not exist",
+            ));
+        }
+        let out = (self.output == Output::File).then(|| TempFile::new("wav"));
+        let input = match self.input {
+            Input::File => {
+                let f = TempFile::new("txt");
+                std::fs::write(&f.0, text.as_bytes()).map_err(|e| {
+                    self.err(
+                        Reason::BadConfig,
+                        format_args!("cannot start: the text file cannot be written: {e}"),
+                    )
+                })?;
+                Some(f)
+            }
+            Input::Stdin => None,
+        };
+        let mut cmd = std::process::Command::new(program);
+        cmd.args(self.args(
+            voice,
+            wpm,
+            out.as_ref().map(|o| o.0.as_path()),
+            input.as_ref().map(|i| i.0.as_path()),
+        ))
+        .stdin(if self.input == Input::Stdin {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(if self.output == Output::File {
+            Stdio::null()
+        } else {
+            Stdio::piped()
+        })
+        .stderr(Stdio::piped());
         match key {
             Some(k) => cmd.env(KEY_ENV, k.expose()),
             None => cmd.env_remove(KEY_ENV),
@@ -421,14 +524,14 @@ mod tests {
     fn placeholders_are_filled_in_every_argument() {
         let c = command(
             json!({"argv": ["C:\\Tools\\tts.exe", "--voice={voice}", "-r", "{rate}",
-            "-s", "{speed}", "-o", "{out}", "--say", "{text}"], "input": "arg", "output": "file"}),
+            "-s", "{speed}", "-o", "{out}", "-i", "{in}"], "input": "file", "output": "file"}),
         );
         assert_eq!(
             c.args(
-                "Fish & chips {voice}",
                 "amy",
                 250,
-                Some(Path::new("C:\\T\\o.wav"))
+                Some(Path::new("C:\\T\\o.wav")),
+                Some(Path::new("C:\\T\\i.txt"))
             ),
             vec![
                 "--voice=amy",
@@ -438,14 +541,52 @@ mod tests {
                 "1.25",
                 "-o",
                 "C:\\T\\o.wav",
-                "--say",
-                "Fish & chips {voice}"
+                "-i",
+                "C:\\T\\i.txt"
             ]
         );
-        assert_eq!(c.args("x", "", 200, None)[4], "1.00");
-        assert_eq!(c.input, Input::Arg);
+        assert_eq!(c.args("", 200, None, None)[4], "1.00");
+        assert_eq!(c.input, Input::File);
         assert_eq!(c.output, Output::File);
         assert_eq!(c.program, "tts.exe");
+    }
+
+    /// One pass: a voice that holds a placeholder is not filled in again.
+    #[test]
+    fn a_value_is_never_filled_in_twice() {
+        let c = command(json!({"argv": ["C:\\Tools\\tts.exe", "{voice}|{rate}|{nope}"]}));
+        assert_eq!(c.args("{rate}", 200, None, None), vec!["{rate}|200|{nope}"]);
+    }
+
+    /// A voice that reaches argv is a voice of the list (when there is
+    /// one), and never reads as an option.
+    #[test]
+    fn a_voice_in_argv_is_checked() {
+        let listed =
+            command(json!({"argv": ["C:\\Tools\\tts.exe", "-v", "{voice}"], "voices": ["amy"]}));
+        assert!(listed.check_voice("amy").is_ok());
+        assert!(
+            listed.check_voice("").is_ok(),
+            "no voice: {{voice}} is empty"
+        );
+        let e = listed.check_voice("joe").unwrap_err();
+        assert_eq!(e.reason, Reason::BadConfig);
+        assert!(
+            e.message.contains("not one of options.voices"),
+            "{}",
+            e.message
+        );
+        let open = command(json!({"argv": ["C:\\Tools\\tts.exe", "-v", "{voice}"]}));
+        assert!(open.check_voice("en_US-amy-medium").is_ok());
+        for bad in ["--output=C:\\x", "-v", "a\nb", "x".repeat(201).as_str()] {
+            assert_eq!(
+                open.check_voice(bad).unwrap_err().reason,
+                Reason::BadConfig,
+                "{bad}"
+            );
+        }
+        let unused = command(json!({"argv": ["C:\\Tools\\tts.exe"]}));
+        assert!(unused.check_voice("--anything").is_ok(), "{{voice}} unused");
     }
 
     #[test]
@@ -465,11 +606,9 @@ mod tests {
         let c = command(json!({"argv": ["C:\\Nope\\sonara-missing-tts.exe"]}));
         let e = c.run("x", "", 200, None, &|| false).unwrap_err();
         assert_eq!(e.reason, Reason::BadConfig);
-        assert!(
-            e.message
-                .starts_with("The speech program (sonara-missing-tts.exe) cannot start"),
-            "{}",
-            e.message
+        assert_eq!(
+            e.message,
+            "The speech program (sonara-missing-tts.exe) cannot start: the program does not exist"
         );
         assert!(!e.message.contains("C:\\Nope"), "{}", e.message);
     }

@@ -67,7 +67,9 @@ and receives nothing.
 You can add speech engines that are not part of Sonara: a cloud service (OpenAI, ElevenLabs,
 Azure AI Speech, Google Cloud Text-to-Speech, Cartesia, Deepgram), a local OpenAI-compatible
 server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server), or a speech program you installed
-yourself (kind `command`, for example Piper). Adding
+yourself (kind `command`, for example Piper; you add such a program yourself with `sonara engines
+add <id> --kind command` or in `engines.json`, and no app or web page connected to Sonara can add
+or change one). Adding
 one sends nothing; it is used only once you select it (`sonara engines use <id>`, or `set
 engine` from a client).
 
@@ -77,7 +79,8 @@ engine` from a client).
   gave: under the provider's own terms for a cloud service, or to a program on your own PC for a
   local server (`127.0.0.1`, `localhost`), where it stays on your computer. A `command` engine
   starts the program you named, on your PC, and gives it the sentence (on its standard input or
-  as an argument); Sonara sends nothing over the network for it, and what the program does with
+  in a temporary file, `%TEMP%\sonara-tts-<n>.txt`, deleted after each sentence; never on its
+  command line); Sonara sends nothing over the network for it, and what the program does with
   the text is up to that program. Its temporary audio file, if it writes one, is in your
   `%TEMP%` folder (`sonara-tts-<n>.wav`) and is deleted after each sentence. A voice list
   (`voices` with `refresh`, or the voice picker) asks the same address. The cloud addresses:

@@ -318,16 +318,26 @@ fn command_reads_stdin_and_prints_a_wav() {
     assert_eq!(e.status().readiness, Readiness::Ready);
 }
 
+/// No shell and no command line built from text: every argv entry, shell
+/// metacharacters included, reaches the program as one literal argument,
+/// and the text read goes on stdin, never into argv.
 #[test]
 fn command_arguments_reach_the_program_verbatim_without_a_shell() {
     let dir = TempDir::new("cmd-arg");
     let rec = dir.path().join("rec.json");
+    let marker = dir.path().join("pwned");
+    let meta = format!(
+        "a & echo x > {} | calc ^ %PATH% \"q\" 'r' $(y) `z` ; <in >out",
+        marker.display()
+    );
     let e = build(
         command(
             json!([
                 FAKE_TTS,
-                "--text",
-                "{text}",
+                meta,
+                "trailing\\",
+                "\"",
+                "",
                 "--voice={voice}",
                 "--wpm",
                 "{rate}",
@@ -336,20 +346,22 @@ fn command_arguments_reach_the_program_verbatim_without_a_shell() {
                 "--record",
                 rec.display().to_string()
             ]),
-            json!({"input": "arg", "voices": ["amy", "joe"]}),
+            json!({"voices": ["amy", "joe"]}),
         ),
         None,
         false,
     );
-    let text = "Fish & chips | echo \"hi\" > x %PATH% ^ $(y)";
+    let text = "Fish & chips | echo \"hi\" > x %PATH% ^ $(y) {voice} -rf";
     let got = chunks(&e, text, "amy", 250);
     assert_eq!(got[0].samples[0], text.chars().count() as i16);
     let r = record(&rec);
     assert_eq!(
         r["args"],
         json!([
-            "--text",
-            text,
+            meta,
+            "trailing\\",
+            "\"",
+            "",
             "--voice=amy",
             "--wpm",
             "250",
@@ -359,10 +371,90 @@ fn command_arguments_reach_the_program_verbatim_without_a_shell() {
             rec.display().to_string()
         ])
     );
-    assert_eq!(r["stdin"], "");
+    assert_eq!(r["stdin"], text, "the text goes on stdin only");
+    assert!(!r["args"].to_string().contains("Fish"));
+    assert!(!marker.exists(), "no shell ran the metacharacters");
     let voices: Vec<String> = e.voices().into_iter().map(|v| v.id).collect();
     assert_eq!(voices, vec!["amy", "joe"]);
     assert_eq!(e.refresh_voices().unwrap().len(), 2);
+}
+
+/// `input: file`: the text in a temporary UTF-8 file at `{in}`, removed
+/// afterwards; stdin gets nothing.
+#[test]
+fn command_reads_the_text_from_a_file_that_is_removed_afterwards() {
+    let dir = TempDir::new("cmd-in");
+    let rec = dir.path().join("rec.json");
+    let e = build(
+        command(
+            json!([
+                FAKE_TTS,
+                "--text-file",
+                "{in}",
+                "--record",
+                rec.display().to_string()
+            ]),
+            json!({"input": "file"}),
+        ),
+        None,
+        false,
+    );
+    let got = chunks(&e, "Grüße & more.", "", 200);
+    assert_eq!(got[0].samples[0], 13);
+    let r = record(&rec);
+    let path = r["args"][1].as_str().unwrap().to_string();
+    assert!(
+        path.ends_with(".txt") && path.contains("sonara-tts-"),
+        "{path}"
+    );
+    assert_eq!(r["text_file"], "Grüße & more.");
+    assert!(!Path::new(&path).exists(), "the temporary file is removed");
+}
+
+/// A voice from a client that would read as an option, or one outside the
+/// profile's list, never reaches argv.
+#[test]
+fn command_voice_never_injects_an_option() {
+    let dir = TempDir::new("cmd-voice");
+    let rec = dir.path().join("rec.json");
+    let open = build(
+        command(
+            json!([
+                FAKE_TTS,
+                "-v",
+                "{voice}",
+                "--record",
+                rec.display().to_string()
+            ]),
+            json!({}),
+        ),
+        None,
+        false,
+    );
+    let (reason, message) = failure(open.test("Hello.", "--mode=garbage", 200));
+    assert_eq!(reason, Reason::BadConfig, "{message}");
+    assert!(!rec.exists(), "the program never ran");
+    let listed = build(
+        command(
+            json!([
+                FAKE_TTS,
+                "-v",
+                "{voice}",
+                "--record",
+                rec.display().to_string()
+            ]),
+            json!({"voices": ["amy"]}),
+        ),
+        None,
+        false,
+    );
+    assert_eq!(
+        failure(listed.test("Hello.", "joe", 200)).0,
+        Reason::BadConfig
+    );
+    assert!(!rec.exists(), "the program never ran");
+    assert!(listed.test("Hello.", "amy", 200).is_ok());
+    assert_eq!(record(&rec)["args"][1], "amy");
 }
 
 #[test]

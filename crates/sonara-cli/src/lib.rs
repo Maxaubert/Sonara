@@ -20,13 +20,16 @@
 //!   home except what the user keeps (and, unless settings are kept, the
 //!   external engine keys in Credential Manager), and leave the stop
 //!   sentinel so the plugin's hooks stay quiet until `/sonara:start`.
-//! - `engines ...`: the external engine profiles (`engines`).
+//! - `engines ...`: the external engine profiles (`engines`); a `command`
+//!   engine (a program on this PC) is written into `engines.json` here,
+//!   never sent over the protocol (`engines_file`).
 //!
 //! Paths: the home is `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara` (as
 //! `sonarad`); the runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
 pub mod client;
 pub mod doctor;
 pub mod engines;
+pub mod engines_file;
 pub mod lifecycle;
 pub mod paths;
 pub mod uninstall;

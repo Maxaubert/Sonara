@@ -212,7 +212,7 @@ fn the_capability_and_the_list() {
         .as_array()
         .unwrap()
         .contains(&json!("engines")));
-    assert_eq!(o["protocol"]["minor"], 2);
+    assert_eq!(o["protocol"]["minor"], 3);
     assert!(r.server.capabilities().contains(&"engines"));
     let l = r.call(json!({"type": "engine_list"}));
     assert_eq!(l["ok"], true);
@@ -246,6 +246,7 @@ fn a_host_without_external_engines_refuses_every_engine_message() {
         "engine_remove",
         "engine_key",
         "engine_test",
+        "engine_reload",
     ] {
         let o = r.call(json!({"type": t, "engine": "x"}));
         assert_eq!(code(&o), "E_UNSUPPORTED", "{t}");
@@ -771,4 +772,193 @@ fn cloud_kinds_never_send_their_key_to_a_new_url_or_region() {
     same["voice"] = json!("v2");
     let o = r.call(json!({"type": "engine_add", "engine": same, "replace": true}));
     assert_eq!(o["engine"]["key_present"], true, "{o}");
+}
+
+// ---- command engines are local-only (security review of PR3) -----------
+
+/// A program that exists on every Windows (the profile is only stored and
+/// listed here; nothing runs it).
+fn real_exe() -> String {
+    std::env::var("SystemRoot")
+        .map(|r| format!("{r}\\System32\\whoami.exe"))
+        .unwrap_or_else(|_| "C:\\Windows\\System32\\whoami.exe".into())
+}
+
+fn command_profile(id: &str, program: &str) -> Value {
+    json!({"id": id, "kind": "command", "options": {"argv": [program, "--say"]}})
+}
+
+/// `engines.json` as the user (or `sonara engines add --kind command`)
+/// writes it.
+fn write_engines(r: &Rig, engines: Value) {
+    std::fs::write(
+        r.home.join(engines::FILE),
+        json!({"format": 1, "engines": engines}).to_string(),
+    )
+    .unwrap();
+}
+
+fn engines_json(r: &Rig) -> Option<String> {
+    std::fs::read_to_string(r.home.join(engines::FILE)).ok()
+}
+
+impl Rig {
+    /// One request over TCP (the rig's session) or HTTP (a new one).
+    fn call_on(&mut self, http: bool, req: Value) -> Value {
+        if http {
+            self.server.handle(&mut Session::http(), &req).reply
+        } else {
+            self.call(req)
+        }
+    }
+}
+
+const FORBIDDEN: &str = "a command engine runs a program on this PC, so it is never added or \
+     changed over the protocol: add it with `sonara engines add <id> --kind command`, or in \
+     engines.json";
+
+#[test]
+fn command_engines_are_never_added_over_the_protocol() {
+    let mut r = rig("cmd-forbidden", true);
+    let missing = format!("{}\\no-such-tts.exe", r.home.display());
+    for http in [false, true] {
+        for (profile, replace) in [
+            (command_profile("prog", &real_exe()), false),
+            (command_profile("prog", &real_exe()), true),
+            // Refused before any check, so the reply never says whether a
+            // path exists on this PC.
+            (command_profile("prog", &missing), false),
+            (json!({"id": "prog", "kind": "command"}), false),
+        ] {
+            let o = r.call_on(
+                http,
+                json!({"type": "engine_add", "engine": profile, "replace": replace}),
+            );
+            assert_eq!(code(&o), "E_FORBIDDEN", "{o}");
+            assert_eq!(o["error"]["message"], FORBIDDEN);
+        }
+    }
+    assert_eq!(engines_json(&r), None, "nothing was saved");
+    assert!(r.call(json!({"type": "engine_list"}))["engines"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!r
+        .lines
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|l| l.starts_with("engine add")));
+}
+
+#[test]
+fn a_local_command_engine_is_never_replaced_over_the_protocol() {
+    let mut r = rig("cmd-replace", true);
+    write_engines(&r, json!([command_profile("prog", &real_exe())]));
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["ok"], true, "{o}");
+    let before = engines_json(&r);
+    // Not as another kind either (that would drop the user's program), over
+    // TCP and HTTP.
+    let mut other = r.profile("prog");
+    other["key_ref"] = json!("none");
+    for http in [false, true] {
+        for p in [other.clone(), command_profile("prog", &real_exe())] {
+            let o = r.call_on(
+                http,
+                json!({"type": "engine_add", "engine": p, "replace": true}),
+            );
+            assert_eq!(code(&o), "E_FORBIDDEN", "{o}");
+        }
+    }
+    assert_eq!(engines_json(&r), before, "engines.json is unchanged");
+    let l = r.call(json!({"type": "engine_list"}));
+    assert_eq!(l["engines"][0]["kind"], "command");
+    // Selecting it and removing it stay allowed.
+    let o = r.call(json!({"type": "set", "key": "engine", "value": "prog"}));
+    assert_eq!(o["value"], "prog", "{o}");
+    let o = r.call(json!({"type": "engine_remove", "engine": "prog"}));
+    assert_eq!(o["removed"], "prog", "{o}");
+    assert_eq!(o["engine"], "fake");
+    assert!(!engines_json(&r).unwrap().contains("command"));
+}
+
+#[test]
+fn engine_reload_reads_the_file_the_user_wrote() {
+    let mut r = rig("reload", true);
+    r.add("local");
+    let stored: Value = serde_json::from_str(&engines_json(&r).unwrap()).unwrap();
+    let local_entry = stored["engines"][0].clone();
+    // The CLI adds a program next to the existing profile.
+    write_engines(
+        &r,
+        json!([local_entry.clone(), command_profile("prog", &real_exe())]),
+    );
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["ok"], true, "{o}");
+    assert_eq!(o["problems"], json!([]));
+    let ids: Vec<&str> = o["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["local", "prog"]);
+    assert_eq!(o["engines"][1]["sends_text_to"], "program whoami.exe");
+    assert_eq!(o["engines"][0]["key_present"], true, "keys are untouched");
+    let o = r.call(json!({"type": "set", "key": "engine", "value": "prog"}));
+    assert_eq!(o["value"], "prog", "registered: {o}");
+    // An entry that fails validation is listed with its error.
+    let bad = json!({"id": "typo", "kind": "command", "options": {"argv": ["tts.exe"]}});
+    write_engines(
+        &r,
+        json!([local_entry, command_profile("prog", &real_exe()), bad]),
+    );
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["engines"][2]["id"], "typo");
+    assert!(o["engines"][2]["error"]
+        .as_str()
+        .unwrap()
+        .contains("full path"));
+    assert_eq!(o["problems"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        r.call(json!({"type": "get", "key": "engine"}))["value"],
+        "prog",
+        "an unchanged current engine stays"
+    );
+    // The current engine removed from the file: the default reads.
+    write_engines(&r, json!([]));
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(o["engines"], json!([]));
+    assert_eq!(
+        r.call(json!({"type": "get", "key": "engine"}))["value"],
+        "fake"
+    );
+    let o = r.call(json!({"type": "set", "key": "engine", "value": "prog"}));
+    assert_eq!(code(&o), "E_NOT_FOUND", "unregistered");
+    // A file that is not JSON changes nothing.
+    r.add("local");
+    std::fs::write(r.home.join(engines::FILE), "{not json").unwrap();
+    let o = r.call(json!({"type": "engine_reload"}));
+    assert_eq!(code(&o), "E_BAD_REQUEST", "{o}");
+    assert!(o["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("engines.json is not valid JSON"));
+    assert_eq!(
+        r.call(json!({"type": "engine_list"}))["engines"][0]["id"],
+        "local"
+    );
+}
+
+#[test]
+fn engine_reload_takes_no_profile() {
+    let mut r = rig("reload-args", true);
+    // Whatever else the message carries is ignored: only the file counts.
+    let o = r.call(json!({"type": "engine_reload",
+        "engine": command_profile("prog", &real_exe()),
+        "engines": [command_profile("prog", &real_exe())]}));
+    assert_eq!(o["ok"], true, "{o}");
+    assert_eq!(o["engines"], json!([]));
+    assert_eq!(engines_json(&r), None);
 }

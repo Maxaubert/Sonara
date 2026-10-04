@@ -7,6 +7,12 @@
  *
  * A key is sent only in `add` (`secret`) or `setKey`; the runtime stores it
  * in Windows Credential Manager and never returns it.
+ *
+ * A `command` engine (a program on the user's PC) is never added or changed
+ * through the protocol: `add` of one, or replacing one, is `E_FORBIDDEN`
+ * (protocol 1.3). The user adds it locally (`sonara engines add <id> --kind
+ * command`, or `engines.json`); `reload` makes a running runtime read
+ * `engines.json` again. Listing, testing, selecting and removing one work.
  */
 import type { Reply } from "./types.js";
 
@@ -53,6 +59,14 @@ export class EnginesApi {
     if (opts.secret !== undefined) fields.secret = opts.secret;
     if (opts.replace !== undefined) fields.replace = opts.replace;
     return this.send("engine_add", fields);
+  }
+
+  /**
+   * `engine_reload` (protocol 1.3): the runtime reads `engines.json` again.
+   * It takes no profile. Replies like `list`, plus `problems`.
+   */
+  reload(): Promise<Reply> {
+    return this.send("engine_reload", {});
   }
 
   /** `engine_remove`; the stored key goes too unless `forgetKey` is false. */

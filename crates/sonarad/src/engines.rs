@@ -4,11 +4,19 @@
 //! reader's and the previews' registries, keys in a `KeyStore`, and the
 //! fallback notices as `sonarad.log` lines.
 //!
-//! - `engines.json` is read once at start, before the reader starts, so a
-//!   saved `engine` naming a profile works on the first sentence. A file
-//!   that is not JSON is copied to `engines.json.bad` and treated as empty
-//!   until the next save; an entry that fails validation, or of a kind this
-//!   build lacks, is kept in the file, listed, and not registered.
+//! - `engines.json` is read at start, before the reader starts, so a
+//!   saved `engine` naming a profile works on the first sentence, and again
+//!   on `engine_reload` (after the user or `sonara engines add --kind
+//!   command` changed it). A file that is not JSON is copied to
+//!   `engines.json.bad` and treated as empty until the next save (a reload
+//!   refuses it and keeps what it has); an entry that fails validation, or
+//!   of a kind this build lacks, is kept in the file, listed, and not
+//!   registered.
+//! - A `command` profile runs a program, so it comes only from the file:
+//!   `add` (the protocol's `engine_add`, over TCP or HTTP, from any client
+//!   or SDK) refuses to add one or to replace one with `E_FORBIDDEN`
+//!   (security review of PR3). Removing, testing and selecting one stay
+//!   allowed.
 //! - Never a key in the file, a log line or a reply: secrets go only to the
 //!   `KeyStore` (Credential Manager, or `fake-keys.json` with `--keys fake`).
 //! - Keys are bound to the origin they were entered for (spec 6.4): a stored
@@ -21,7 +29,7 @@ use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_engine::external::keys::{KeyResolver, KeyStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
-    implemented_kinds, origin_of, KeyRef, Preset, Profile, ProfileError, MAX_PROFILES,
+    implemented_kinds, origin_of, KeyRef, Kind, Preset, Profile, ProfileError, MAX_PROFILES,
 };
 use sonara_engine::external::{External, ExternalConfig, Notice};
 use sonara_engine::{Engine, Reason, Registry};
@@ -87,6 +95,43 @@ fn bad(m: impl Into<String>) -> Failure {
     Failure::new(Code::BadRequest, m)
 }
 
+/// The refusal of `engine_add` for a `command` profile.
+pub const COMMAND_FORBIDDEN: &str = "a command engine runs a program on this PC, so it is \
+     never added or changed over the protocol: add it with `sonara engines add <id> --kind \
+     command`, or in engines.json";
+
+fn is_command(raw: &Value) -> bool {
+    raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str())
+}
+
+/// What `reload` changed.
+#[derive(Debug, Default)]
+pub struct Reloaded {
+    /// For the log and the reply.
+    pub problems: Vec<String>,
+    /// Usable before, with another engine (or none) now.
+    pub changed: Vec<String>,
+}
+
+/// The `engines` array of `engines.json` (none when the file is missing)
+/// and whether the file is of an older format (to migrate), or why the
+/// file cannot be read.
+fn read_file(file: &Path) -> Result<(Vec<Value>, bool), String> {
+    match std::fs::read_to_string(file) {
+        Err(_) => Ok((Vec::new(), false)),
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(v) => Ok((
+                v.get("engines")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default(),
+                v.get("format").and_then(Value::as_u64).unwrap_or(1) < FORMAT,
+            )),
+            Err(e) => Err(format!("{FILE} is not valid JSON ({e})")),
+        },
+    }
+}
+
 /// The notice line of spec 8.3, or `None` while the gate holds it back.
 pub fn notice_line(n: &Notice) -> String {
     match n.reason {
@@ -108,27 +153,16 @@ impl Engines {
     pub fn load(setup: Setup) -> (Arc<Engines>, Vec<String>) {
         let file = setup.home.join(FILE);
         let mut problems = Vec::new();
-        let mut legacy = false;
-        let mut raws: Vec<Value> = match std::fs::read_to_string(&file) {
-            Err(_) => Vec::new(),
-            Ok(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(v) => {
-                    legacy = v.get("format").and_then(Value::as_u64).unwrap_or(1) < FORMAT;
-                    v.get("engines")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default()
-                }
-                Err(e) => {
-                    let bad = setup.home.join(format!("{FILE}.bad"));
-                    let _ = std::fs::copy(&file, &bad);
-                    problems.push(format!(
-                        "{FILE} is not valid JSON ({e}); copied to {FILE}.bad, no external \
-                         engines until the next change"
-                    ));
-                    Vec::new()
-                }
-            },
+        let (mut raws, legacy) = match read_file(&file) {
+            Ok(read) => read,
+            Err(why) => {
+                let bad = setup.home.join(format!("{FILE}.bad"));
+                let _ = std::fs::copy(&file, &bad);
+                problems.push(format!(
+                    "{why}; copied to {FILE}.bad, no external engines until the next change"
+                ));
+                (Vec::new(), false)
+            }
         };
         if legacy {
             migrate(setup.store.as_ref(), &mut raws, &mut problems);
@@ -144,6 +178,24 @@ impl Engines {
             registries: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
         });
+        let entries = engines.entries_from(raws, Vec::new(), &mut problems);
+        if legacy {
+            if let Err(e) = engines.save(&entries) {
+                problems.push(e.message);
+            }
+        }
+        *engines.lock() = entries;
+        (engines, problems)
+    }
+
+    /// The entries of the file's profiles. An entry of `old` whose stored
+    /// profile is the same is kept as it is (the same engine).
+    fn entries_from(
+        &self,
+        raws: Vec<Value>,
+        mut old: Vec<Entry>,
+        problems: &mut Vec<String>,
+    ) -> Vec<Entry> {
         let mut entries = Vec::new();
         for raw in raws.into_iter().take(MAX_PROFILES) {
             let id = raw
@@ -155,7 +207,15 @@ impl Engines {
                 problems.push(format!("{FILE}: an entry without a unique id was skipped"));
                 continue;
             }
-            let state = match engines.build(&raw) {
+            if let Some(i) = old.iter().position(|e| e.id == id && e.raw == raw) {
+                let kept = old.swap_remove(i);
+                if let State::Invalid(m) = &kept.state {
+                    problems.push(format!("{FILE}: engine '{id}' is not used: {m}"));
+                }
+                entries.push(kept);
+                continue;
+            }
+            let state = match self.build(&raw) {
                 Ok(e) => State::Ready(e),
                 Err(ProfileError::Unsupported { kind, .. }) => {
                     problems.push(format!(
@@ -171,13 +231,75 @@ impl Engines {
             };
             entries.push(Entry { id, raw, state });
         }
-        if legacy {
-            if let Err(e) = engines.save(&entries) {
-                problems.push(e.message);
+        entries
+    }
+
+    /// `engine_reload`: read `engines.json` again, the only way a `command`
+    /// profile reaches a running runtime. It takes nothing from the
+    /// request. An unchanged profile keeps its engine; a changed one is
+    /// replaced in the registries, a gone or unusable one unregistered.
+    /// A file that is not JSON changes nothing.
+    pub fn reload(&self) -> Result<Reloaded, Failure> {
+        let (raws, _) =
+            read_file(&self.file).map_err(|why| bad(format!("{why}; nothing changed")))?;
+        let mut out = Reloaded::default();
+        let mut entries = self.lock();
+        let old: Vec<Entry> = entries.drain(..).collect();
+        let before: Vec<(String, Arc<External>)> = old
+            .iter()
+            .filter_map(|e| match &e.state {
+                State::Ready(x) => Some((e.id.clone(), x.clone())),
+                _ => None,
+            })
+            .collect();
+        let next = self.entries_from(raws, old, &mut out.problems);
+        *entries = next;
+        let now: Vec<(String, Arc<External>)> = entries
+            .iter()
+            .filter_map(|e| match &e.state {
+                State::Ready(x) => Some((e.id.clone(), x.clone())),
+                _ => None,
+            })
+            .collect();
+        drop(entries);
+        let registries = self.registries();
+        for (id, x) in &before {
+            match now.iter().find(|(i, _)| i == id) {
+                Some((_, y)) if Arc::ptr_eq(x, y) => {}
+                Some((_, y)) => {
+                    x.cancel();
+                    for r in &registries {
+                        let _ = r.replace(y.clone());
+                    }
+                    out.changed.push(id.clone());
+                }
+                None => {
+                    x.cancel();
+                    for r in &registries {
+                        let _ = r.unregister(id);
+                    }
+                    out.changed.push(id.clone());
+                }
             }
         }
-        *engines.lock() = entries;
-        (engines, problems)
+        for (id, y) in &now {
+            if !before.iter().any(|(i, _)| i == id) {
+                for r in &registries {
+                    if let Err(e) = r.register(y.clone()) {
+                        self.note(&format!("engine {id}: not registered: {e}"));
+                    }
+                }
+            }
+        }
+        for p in &out.problems {
+            self.note(p);
+        }
+        self.note(&format!(
+            "engine reload engines={} changed={}",
+            self.lock().len(),
+            out.changed.len()
+        ));
+        Ok(out)
     }
 
     fn lock(&self) -> MutexGuard<'_, Vec<Entry>> {
@@ -390,6 +512,16 @@ impl Engines {
             Value::Object(m) => m.clone(),
             _ => return Err(bad("'engine' must be an object with the profile")),
         };
+        // First, before any other check: a program is never added over the
+        // protocol, and no reply says whether its path exists.
+        if is_command(engine) {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
+        if let Some(id) = engine.get("id").and_then(Value::as_str) {
+            if self.lock().iter().any(|e| e.id == id && is_command(&e.raw)) {
+                return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+            }
+        }
         if let Some(s) = secret {
             Self::check_secret(s)?;
             match raw.get("key_ref") {
@@ -422,11 +554,18 @@ impl Engines {
                 ))
             }
         };
+        if profile.kind == Kind::Command {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
         let mut stored = profile.to_json();
         let id = profile.id.clone();
         let origin = profile.origin();
         let mut entries = self.lock();
         let at = entries.iter().position(|e| e.id == id);
+        // Checked again under the lock that saves (a reload in between).
+        if at.is_some_and(|i| is_command(&entries[i].raw)) {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
         match at {
             Some(_) if !replace => {
                 return Err(bad(format!("engine '{id}' exists; send replace: true")))
@@ -822,17 +961,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&h);
     }
 
-    /// A program that is missing is refused when added (a typo), but a
-    /// stored profile whose program went away stays registered (it reads
-    /// with the fallback until the program is back).
+    /// A stored profile whose program went away stays registered (it reads
+    /// with the fallback until the program is back). A command profile is
+    /// never added through `add` (the protocol): only from the file.
     #[test]
-    fn command_programs_must_exist_when_added() {
+    fn command_profiles_come_only_from_the_file() {
         let h = home();
         let missing = "C:\\Nope\\sonara-missing-tts.exe";
+        let exe = std::env::current_exe().unwrap().display().to_string();
         std::fs::write(
             h.join(FILE),
-            json!({"format": 1, "engines": [{"id": "gone", "kind": "command",
-                "options": {"argv": [missing]}}]})
+            json!({"format": 1, "engines": [
+                {"id": "gone", "kind": "command", "options": {"argv": [missing]}},
+                {"id": "prog", "kind": "command", "options": {"argv": [exe]}}]})
             .to_string(),
         )
         .unwrap();
@@ -841,25 +982,25 @@ mod tests {
         let reg = registry();
         e.attach(reg.clone());
         assert!(reg.get("gone").is_ok());
-        let err = e
-            .add(
-                &json!({"id": "typo", "kind": "command", "options": {"argv": [missing]}}),
-                None,
+        for (p, replace) in [
+            (
+                json!({"id": "typo", "kind": "command", "options": {"argv": [missing]}}),
                 false,
-            )
-            .unwrap_err();
-        assert_eq!(err.code, Code::BadRequest);
-        assert_eq!(
-            err.message,
-            format!("the program '{missing}' does not exist")
-        );
-        let exe = std::env::current_exe().unwrap().display().to_string();
-        e.add(
-            &json!({"id": "prog", "kind": "command", "options": {"argv": [exe]}}),
-            None,
-            false,
-        )
-        .unwrap();
+            ),
+            (
+                json!({"id": "prog", "kind": "command", "options": {"argv": [exe]}}),
+                true,
+            ),
+            (
+                json!({"id": "prog", "kind": "openai-compatible",
+                    "url": "http://127.0.0.1:9/v1", "key_ref": "none"}),
+                true,
+            ),
+        ] {
+            let err = e.add(&p, None, replace).unwrap_err();
+            assert_eq!(err.code, Code::Forbidden, "{p}");
+        }
+        assert_eq!(e.ids(), vec!["gone", "prog"]);
         let list = e.list("prog");
         let view = &list["engines"].as_array().unwrap()[1];
         let name = std::path::Path::new(&exe)

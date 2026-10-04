@@ -988,16 +988,26 @@ impl Profile {
             )));
         }
         let has = |p: &str| args[1..].iter().any(|a| a.contains(p));
+        // The text read is never put on the command line (security review
+        // of PR3): it goes on stdin or in a temporary file at {in}.
+        if has("{text}") {
+            return Err(invalid(
+                "{text} is not allowed in argv: the text is never put on the command line; \
+                 the program reads it on stdin (option input 'stdin', the default) or from \
+                 the file at {in} (option input 'file')",
+            ));
+        }
         let input = o.get("input").map(|v| v.as_str().unwrap_or_default());
         match input {
             None | Some("stdin") => {}
-            Some("arg") if has("{text}") => {}
-            Some("arg") => {
-                return Err(invalid(
-                    "option input 'arg' needs {text} in argv (where the text goes)",
-                ))
-            }
-            Some(_) => return Err(invalid("option 'input' must be \"stdin\" or \"arg\"")),
+            Some("file") if has("{in}") => {}
+            Some("file") => return Err(invalid(
+                "option input 'file' needs {in} in argv (the UTF-8 text file the program reads)",
+            )),
+            Some(_) => return Err(invalid("option 'input' must be \"stdin\" or \"file\"")),
+        }
+        if input != Some("file") && has("{in}") {
+            return Err(invalid("{in} in argv needs option input 'file'"));
         }
         let output = o.get("output").map(|v| v.as_str().unwrap_or_default());
         match output {
@@ -1580,8 +1590,23 @@ mod tests {
             (json!({"argv": ["C:\\Tools\\say.bat"]}), "must be an .exe"),
             (json!({"argv": ["C:\\Tools\\say.cmd"]}), "must be an .exe"),
             (json!({"argv": ["C:\\Tools\\tts.exe", 3]}), "list of texts"),
-            (json!({"argv": [exe()], "input": "arg"}), "needs {text}"),
+            // The text never goes on the command line (security review of
+            // PR3): stdin, or a temporary file at {in}.
+            (
+                json!({"argv": [exe(), "--say", "{text}"]}),
+                "{text} is not allowed",
+            ),
+            (
+                json!({"argv": [exe(), "--say={text}"], "input": "arg"}),
+                "{text} is not allowed",
+            ),
+            (json!({"argv": [exe()], "input": "arg"}), "'input'"),
             (json!({"argv": [exe()], "input": "pipe"}), "'input'"),
+            (json!({"argv": [exe()], "input": "file"}), "needs {in}"),
+            (
+                json!({"argv": [exe(), "{in}"]}),
+                "needs option input 'file'",
+            ),
             (json!({"argv": [exe()], "output": "file"}), "needs {out}"),
             (
                 json!({"argv": [exe(), "{out}"]}),
@@ -1604,8 +1629,8 @@ mod tests {
         let many: Vec<String> = (0..65).map(|_| exe()).collect();
         assert!(err(cmd(json!({"argv": many}))).contains("more than 64"));
         assert!(
-            parse(cmd(json!({"argv": [exe(), "-t", "{text}", "-o", "{out}"],
-            "input": "arg", "output": "file"})))
+            parse(cmd(json!({"argv": [exe(), "-t", "{in}", "-o", "{out}"],
+            "input": "file", "output": "file"})))
             .is_ok()
         );
         assert!(parse(cmd(json!({"argv": [exe()], "output": "stdout-pcm",

@@ -1,6 +1,9 @@
 //! `sonara engines ...` (spec 11.1): external engine profiles through the
 //! protocol (`engine_*` messages). Parsing turns the arguments into one
 //! request; a key is never an argument (stdin or a prompt without echo).
+//! `add --kind command` is the exception: a program is never added over the
+//! protocol, so it is written into `engines.json` locally (`engines_file`)
+//! and the runtime reloads the file.
 use serde_json::{json, Map, Value};
 
 pub const USAGE: &str = "usage: sonara engines <command>
@@ -19,7 +22,9 @@ pub const USAGE: &str = "usage: sonara engines <command>
   remove <id> [--keep-key]   remove it (and its stored key)
 
 Kinds: openai-compatible (the default), elevenlabs, azure, google, cartesia,
-deepgram, command (a program of your own on this PC).
+deepgram, command (a program of your own on this PC; written into
+engines.json by this command, never sent over the protocol; the text goes
+on its stdin, or with --option input=file in a file at {in}).
 Presets of openai-compatible: openai, kokoro-fastapi, localai, speaches,
 openedai-speech, chatterbox-api, chatterbox-server, generic.
 Examples: add el --kind elevenlabs --voice <voice_id>
@@ -36,6 +41,12 @@ pub enum Action {
     List,
     /// A request to send as it is.
     Request(Value),
+    /// `add --kind command`: write the profile into `engines.json`, then
+    /// `engine_reload`.
+    AddLocal {
+        profile: Value,
+        replace: bool,
+    },
     /// `engine_key`; the key is read after parsing (stdin or a prompt).
     SetKey {
         id: String,
@@ -153,6 +164,12 @@ fn parse_add(rest: &[String]) -> Result<Action, String> {
     if !options.is_empty() {
         profile.insert("options".into(), Value::Object(options));
     }
+    if profile["kind"] == "command" {
+        return Ok(Action::AddLocal {
+            profile: Value::Object(profile),
+            replace,
+        });
+    }
     Ok(Action::Request(json!({
         "type": "engine_add",
         "engine": Value::Object(profile),
@@ -220,7 +237,7 @@ pub fn list_lines(reply: &Value) -> Vec<String> {
 /// What a successful reply means to the user.
 pub fn done_line(request: &Value, reply: &Value) -> String {
     match request["type"].as_str().unwrap_or("") {
-        "engine_add" => format!(
+        "engine_add" | "engine_reload" => format!(
             "Added {}: {}. Use it with `sonara engines use {}`{}.",
             reply["engine"]["id"].as_str().unwrap_or("?"),
             if reply["engine"]["local"] == true {
@@ -403,7 +420,8 @@ mod tests {
             "elevenlabs, azure, google, cartesia,
 deepgram, command"
         ));
-        // A command's argv is a JSON list in one --option.
+        // A command's argv is a JSON list in one --option; it is written
+        // into engines.json locally, never sent as engine_add.
         let a = p(&[
             "add",
             "piper",
@@ -417,10 +435,18 @@ deepgram, command"
         .unwrap();
         assert_eq!(
             a,
-            Action::Request(json!({"type": "engine_add", "replace": false, "engine": {
-                "id": "piper", "kind": "command", "options": {
-                    "argv": ["C:/piper/piper.exe", "-f", "{out}"], "output": "file"}}}))
+            Action::AddLocal {
+                profile: json!({"id": "piper", "kind": "command", "options": {
+                    "argv": ["C:/piper/piper.exe", "-f", "{out}"], "output": "file"}}),
+                replace: false
+            }
         );
+        let Action::AddLocal { replace, .. } =
+            p(&["add", "piper", "--kind", "command", "--replace"]).unwrap()
+        else {
+            panic!("a command is never a protocol request")
+        };
+        assert!(replace);
     }
 
     #[test]

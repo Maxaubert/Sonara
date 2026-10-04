@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 2;
+pub const PROTOCOL_MINOR: u64 = 3;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -55,6 +55,7 @@ pub const ENGINE_TYPES: &[&str] = &[
     "engine_remove",
     "engine_key",
     "engine_test",
+    "engine_reload",
 ];
 
 /// Extensions this host implements. `system` is offered only by a server
@@ -1119,7 +1120,7 @@ impl Server {
     }
 
     /// `engine_list`, `engine_add`, `engine_remove`, `engine_key`,
-    /// `engine_test` (spec 10.2).
+    /// `engine_test` (spec 10.2), `engine_reload` (protocol 1.3).
     fn engine_message(&self, kind: &str, m: &Map<String, Value>) -> Handled {
         let engines = self.engines.as_ref().ok_or_else(engines_ext::refused)?;
         let current = self.current_engine();
@@ -1131,8 +1132,33 @@ impl Server {
             // (it can take the profile's whole timeout); only the play is
             // admitted, so speech and controls never wait for a test.
             "engine_test" => engines_ext::test(engines, &self.reader, m, || self.admit()),
+            "engine_reload" => self.engine_reload(engines, &current),
             _ => self.engine_remove(engines, m, &current),
         }
+    }
+
+    /// `engine_reload` (protocol 1.3, no fields): read `engines.json` again
+    /// after the user (or `sonara engines add --kind command`) changed it.
+    /// It takes no profile: a `command` engine reaches the runtime only
+    /// through the file. A current engine that is gone or unusable now is
+    /// switched to the default choice; a changed one applies to the next
+    /// chunk. Replies like `engine_list`, plus `problems`.
+    fn engine_reload(&self, engines: &Engines, current: &str) -> Handled {
+        let done = engines.reload()?;
+        if done.changed.iter().any(|id| id == current) {
+            let value = if engines.get(current).is_some() {
+                current
+            } else {
+                engines.default_engine()
+            };
+            let mut set = Map::new();
+            set.insert("key".into(), json!("engine"));
+            set.insert("value".into(), json!(value));
+            self.set(&set)?;
+        }
+        let mut f = engines.list(&self.current_engine());
+        f.insert("problems".into(), json!(done.problems));
+        Ok((f, After::Nothing))
     }
 
     /// `engine_remove` `{engine, forget_key?}`: a current engine is switched
@@ -1242,7 +1268,7 @@ mod tests {
         let r = &o.reply;
         assert_eq!(r["id"], "h1");
         assert_eq!(r["version"], crate::VERSION);
-        assert_eq!(r["protocol"], json!({"major": 1, "minor": 2}));
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 3}));
         assert!(r["capabilities"]
             .as_array()
             .unwrap()

@@ -8,6 +8,12 @@ refuses external engines (``sonarad --no-external-engines``) answers
 ``E_UNSUPPORTED``. A key is sent only in ``add`` (``secret``) or
 ``set_key``; the runtime stores it in Windows Credential Manager and never
 returns it.
+
+A ``command`` engine (a program on the user's PC) is never added or changed
+through the protocol: ``add`` of one, or replacing one, is ``E_FORBIDDEN``
+(protocol 1.3). The user adds it locally (``sonara engines add <id> --kind
+command``, or ``engines.json``); ``reload`` makes a running runtime read
+``engines.json`` again. Listing, testing, selecting and removing one work.
 """
 from __future__ import annotations
 
@@ -18,7 +24,7 @@ Send = Callable[[str, dict], dict]
 
 class Engines:
     """``engine_list``, ``engine_add``, ``engine_remove``, ``engine_key``,
-    ``engine_test`` and ``voices`` with ``refresh``."""
+    ``engine_test``, ``engine_reload`` and ``voices`` with ``refresh``."""
 
     def __init__(self, send: Send):
         self._send = send
@@ -35,6 +41,11 @@ class Engines:
         if replace:
             fields["replace"] = True
         return self._send("engine_add", fields)
+
+    def reload(self) -> dict:
+        """``engine_reload`` (protocol 1.3): the runtime reads ``engines.json``
+        again. It takes no profile. Replies like ``list``, plus ``problems``."""
+        return self._send("engine_reload", {})
 
     def remove(self, engine: str, forget_key: bool = True) -> dict:
         """``engine_remove``; the stored key goes too unless ``forget_key`` is false."""

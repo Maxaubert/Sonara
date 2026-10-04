@@ -11,6 +11,8 @@ export type ErrorCode =
   | "E_BUSY"
   | "E_ENGINE"
   | "E_NOT_FOUND"
+  /** Protocol 1.3: never allowed over the protocol (adding or changing a `command` engine). */
+  | "E_FORBIDDEN"
   /** No runtime is running and none could be started (autostart off or no runtimePath). */
   | "E_NOT_RUNNING"
   /** The bundled runtime did not start or wrote no runtime.json within the wait. */
