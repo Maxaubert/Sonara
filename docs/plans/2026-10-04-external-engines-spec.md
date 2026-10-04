@@ -465,6 +465,18 @@ Spoken once per episode: when a reason first causes a fallback, and again only a
 
 `wire` adds `"reason": "<reason>"` to `engine_status` when set (additive field, protocol 1.2).
 
+### 8.5 Muted: nothing is sent (#227, user requirement 2026-10-04)
+
+"Make sure that API requests are never sent if Sonara is muted or super-muted." Sonara is **muted** while the reader is muted (core `control mute`, the mute hotkey without `agent`) or the agent's `mute_level` is 1 or 2 (also a saved one, from the moment the agent extension starts).
+
+- **The hold** (`sonara-engine/src/external/hold.rs`): one `Hold` per runtime (`Engines::hold`), given to every profile's `External` (and to an unsaved profile's, for its voices) through `ExternalConfig::hold`. While held, `External::synthesize` sends nothing and speaks the chunk with its fallback (Kokoro, else OneCore; the fake engine in tests): not a failure, so no cue, no notice, no breaker or block. `refresh_voices` returns the last list known without a request. This one choke point covers every path: the reader's playing chunk and its lookahead, the "Session changed" announcements, a core `speak`, the spoken cues and the voice lists polled by the settings page.
+- **Muting cuts what is in flight**: raising the hold moves every engine's cancel generation on, so a request in flight ends at once and its chunk is spoken locally; a chunk already `begin`-ed (lookahead) is spoken locally too. Nothing more is fetched or billed.
+- **The server** (`sonarad/src/quiet.rs`, `Quiet`): before a change that mutes (`set mute_level` 1 or 2, `control mute`, the mute hotkey) it raises the hold; after any mute change (and when the agent extension starts) it sets the hold to the truth (reader muted, or `mute_level` >= 1), so a failed change or an unmute releases it.
+- **Cues**: the mute transition cues ("Muted.", "Super muted.", "Unmuted.", core "Muted."/"Unmuted.") are always spoken with the local voice (`Cues::speak_local`, `hold::local`). "Unmuted." is said as the mute lifts and is still part of the muted episode, so the rule is simply: every cue of a mute transition is local. Any other cue queued while muted (a rate cue, "Paused.") is local too.
+- **Explicit user actions stay allowed**: `engine_test` (the Test button; `External::test` ignores the hold) and `preview` (run inside `hold::explicit`). A voice list is not one of them: while muted `voices` answers the known voices with `error: {reason: "muted", ...}` when a fetch was due (saved or unsaved profile).
+- **Unmuted**, everything resumes with the next chunk.
+- Tests: `crates/sonara-engine/tests/external_hold.rs`, `crates/sonarad/tests/muted_engines.rs` (a local provider that counts requests: zero while muted, super-muted, after muting mid-message, for the mute and rate cues; requests again after unmute; Test and preview reach it), `conformance/engines/test_muted_engines.py`.
+
 ## 9. Rate mapping (`rate.rs`)
 
 `s = wpm / 200` (Sonara's range 100..=400 gives 0.5..=2.0; the product default 250 gives 1.25).
@@ -825,6 +837,7 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - An untried profile reports `ready` (7.2: `warm` does not check a key on a cloud kind until the first chunk), so the page shows "Needs a key before it can read" for a profile whose key ref needs a key that is not present.
 - The Speech section names an external engine by its label and shows the reason of `engine_status.reason` (`OpenAI, cannot be reached. Kokoro reads meanwhile.`); Kokoro shows as "Kokoro (built in)".
 - `settings_page.rs` is unchanged (same-origin API, no CSP change). `docs/protocol-v1.md`'s Settings page paragraph lists the Engines section.
+- Muted means nothing is sent (8.5), added to this PR at the user's request of 2026-10-04.
 - Step 5's hands-on (a branch build deployed per the safe redeploy steps) is left for the "merge?" step: the PR4 worker must not touch `%LOCALAPPDATA%\Sonara` or the running runtime. The page was checked headless (Playwright e2e and screenshots in light and dark, desktop and phone width).
 
 ### Risks

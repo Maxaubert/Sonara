@@ -16,6 +16,11 @@
 //! - **Keys** are read per request (`keys::KeyResolver`), so a key set with
 //!   `engine_key` applies to the next chunk. A key goes only in the
 //!   provider's auth header, over https or to a loopback host.
+//! - **Muted** (`hold`, #227): while the host's `Hold` is held, nothing is
+//!   sent: chunks are spoken with the fallback and voice lists are not
+//!   fetched; raising it ends a request in flight. `test` and a synthesis
+//!   inside `hold::explicit` (the user's own actions) still reach the
+//!   provider.
 pub mod adapter;
 pub mod audio;
 pub mod azure;
@@ -27,6 +32,7 @@ pub mod elevenlabs;
 pub mod error;
 pub mod google;
 pub mod health;
+pub mod hold;
 pub mod keys;
 pub mod openai;
 pub mod profile;
@@ -42,6 +48,7 @@ use adapter::{execute, Adapter, HttpRequest, VoiceSource, MAX_AUDIO_BODY, MAX_LI
 use cache::CueCache;
 use error::{cue_text, ExtError};
 use health::{Clock, Health, View};
+use hold::{Hold, Scope};
 use keys::{KeyResolver, Secret};
 use profile::{Kind, Profile, ProfileError};
 use std::sync::{Arc, Mutex};
@@ -87,6 +94,8 @@ pub struct ExternalConfig {
     /// Tests may inject an agent; default: `http::agent` with the profile's
     /// timeouts.
     pub agent: Option<ureq::Agent>,
+    /// The host's mute (`hold`): while held, nothing is sent.
+    pub hold: Option<Arc<Hold>>,
 }
 
 impl ExternalConfig {
@@ -99,6 +108,7 @@ impl ExternalConfig {
             notice: None,
             clock: Arc::new(Instant::now),
             agent: None,
+            hold: None,
         }
     }
 }
@@ -147,6 +157,7 @@ pub struct External {
     /// When the last voice-list fetch failed (cleared by a success).
     voices_failed: Mutex<Option<Instant>>,
     clock: Clock,
+    hold: Option<Arc<Hold>>,
 }
 
 fn backend_for(p: &Profile) -> Backend {
@@ -192,6 +203,10 @@ impl External {
                 direct,
             )
         });
+        let cancel = Arc::new(CancelToken::new());
+        if let Some(h) = &config.hold {
+            h.watch(&cancel);
+        }
         Ok(External {
             id: EngineId::intern(&p.id),
             label: p.display_label(),
@@ -203,13 +218,14 @@ impl External {
             notice: config.notice,
             health: Health::new(config.clock.clone()),
             cache: CueCache::new(),
-            cancel: Arc::new(CancelToken::new()),
+            cancel,
             begun: Mutex::new(None),
             agent,
             voices_agent,
             voices: Mutex::new(None),
             voices_failed: Mutex::new(None),
             clock: config.clock,
+            hold: config.hold,
             profile: p,
         })
     }
@@ -232,6 +248,35 @@ impl External {
     pub fn reset(&self) {
         self.health.clear();
         self.cache.clear();
+    }
+
+    /// Whether nothing may be sent now (`hold`): the host is muted (unless
+    /// this thread runs an explicit action), or this thread speaks a local
+    /// cue.
+    pub fn held(&self) -> bool {
+        match hold::scope() {
+            Scope::Explicit => false,
+            Scope::Local => true,
+            Scope::Normal => self.hold.as_ref().is_some_and(|h| h.is_held()),
+        }
+    }
+
+    /// Speak `text` with the fallback while held: not a failure, so no cue,
+    /// no notice and no change of health.
+    fn quiet(&self, text: &str, rate: u32) -> Result<PcmStream> {
+        let Some(fb) = self.fallback.clone() else {
+            return Err(Error::External {
+                reason: Reason::BadConfig,
+                message: format!(
+                    "{} is not used while Sonara is muted, and there is no built-in voice",
+                    self.label
+                ),
+            });
+        };
+        let pcm = fb
+            .synthesize(text, &self.fallback_voice, rate)?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Box::new(pcm.into_iter().map(Ok)))
     }
 
     fn voice_for(&self, voice: &str) -> std::result::Result<String, ExtError> {
@@ -507,6 +552,10 @@ impl Engine for External {
     }
 
     fn refresh_voices(&self) -> Result<Vec<Voice>> {
+        // Muted: the last list known, nothing fetched.
+        if self.held() {
+            return Ok(self.voices());
+        }
         let key = self.keys.resolve(&self.profile).ok().flatten();
         let list = match (&self.backend, self.voice_source(key.as_ref())) {
             (_, VoiceSource::Fixed(v)) => v,
@@ -560,6 +609,11 @@ impl Engine for External {
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
         // The generation at `begin`, so a cancel between it and here counts.
         let begun = self.begun.lock().unwrap_or_else(|p| p.into_inner()).take();
+        // Muted: nothing is sent, not even a chunk begun before the mute
+        // (a lookahead one), whose cancel generation the hold moved on.
+        if self.held() {
+            return self.quiet(text, rate);
+        }
         let gen = begun.unwrap_or_else(|| self.cancel.generation());
         if gen != self.cancel.generation() {
             return Err(Error::Cancelled);
@@ -596,7 +650,13 @@ impl Engine for External {
                 return self.fallback(text, rate, e);
             }
         };
-        match self.provider(gen, text, &voice, rate, key.as_ref())? {
+        let answer = match self.provider(gen, text, &voice, rate, key.as_ref()) {
+            // The hold was raised while the request ran: it was cut, and the
+            // chunk is spoken locally.
+            Err(Error::Cancelled) if self.held() => return self.quiet(text, rate),
+            other => other?,
+        };
+        match answer {
             Ok(pcm) => {
                 if self.health.record_success() {
                     self.notify(None, None, "recovered".into());

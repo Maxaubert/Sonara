@@ -25,8 +25,12 @@
 //!   `env:` key goes only to the provider's default origin or the
 //!   `key_origin` of its entry, which only the local file sets (the user, or
 //!   the migration of a format 1 file at load).
+//! - Every profile's engine (and an unsaved one's, for its voices) shares
+//!   one `Hold` (`hold`), which the server raises while Sonara is muted
+//!   (`crate::quiet`, #227): nothing is sent to a provider meanwhile.
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
+use sonara_engine::external::hold::Hold;
 use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
     implemented_kinds, origin_of, KeyRef, Kind, Preset, Profile, ProfileError, MAX_PROFILES,
@@ -87,6 +91,8 @@ pub struct Engines {
     default_engine: String,
     log: Option<LogFn>,
     gate: Arc<Gate>,
+    /// Held while Sonara is muted: no profile sends anything.
+    hold: Arc<Hold>,
     registries: Mutex<Vec<Arc<Registry>>>,
     entries: Mutex<Vec<Entry>>,
     /// The file's text when it was last read or saved (`None`: missing).
@@ -202,6 +208,7 @@ impl Engines {
             default_engine: setup.default_engine,
             log: setup.log,
             gate: Arc::new(Mutex::new(HashMap::new())),
+            hold: Arc::new(Hold::new()),
             registries: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
             seen: Mutex::new(text),
@@ -392,6 +399,7 @@ impl Engines {
                 .map(str::to_string);
         }
         let mut config = ExternalConfig::new(profile, self.keys.clone());
+        config.hold = Some(self.hold.clone());
         config.fallback = self.fallback.clone();
         config.fallback_voice = self.fallback_voice.clone();
         let (log, gate) = (self.log.clone(), self.gate.clone());
@@ -431,6 +439,11 @@ impl Engines {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone()
+    }
+
+    /// The mute every profile's engine follows (`crate::quiet`).
+    pub fn hold(&self) -> &Arc<Hold> {
+        &self.hold
     }
 
     pub fn default_engine(&self) -> &str {
@@ -778,8 +791,10 @@ impl Engines {
                 .set(DRAFT_ID, &Secret::new(s), &o)
                 .map_err(|e| bad(format!("cannot use the key: {e}")))?;
         }
-        let ext = External::new(ExternalConfig::new(profile, KeyResolver::new(store)))
-            .map_err(profile_failure)?;
+        let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
+        // Muted: its voices are not fetched either.
+        config.hold = Some(self.hold.clone());
+        let ext = External::new(config).map_err(profile_failure)?;
         let (list, error) = match ext.refresh_voices() {
             Ok(v) => (v, None),
             Err(e) => (ext.voices(), Some(e)),

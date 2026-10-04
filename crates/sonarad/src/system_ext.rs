@@ -20,6 +20,7 @@ use crate::channels_ext;
 use crate::config::Store;
 use crate::cues::{self, Cues};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
+use crate::quiet::Quiet;
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_agent::{Earcon, FlushReport, Flushed};
@@ -84,6 +85,8 @@ pub struct HotkeyTarget {
     /// The support log: one line per hotkey action, and the audio worker's
     /// lines (other apps paused, resumed, ducked, restored). Else stderr.
     pub log: Option<LogFn>,
+    /// The mute of external engines (#227), raised before a mute applies.
+    pub quiet: Quiet,
 }
 
 impl HotkeyTarget {
@@ -117,6 +120,13 @@ impl HotkeyTarget {
     fn cue(&self, text: &str, key: Option<&'static str>) {
         if let Some(c) = &self.cues {
             c.speak(text, key);
+        }
+    }
+
+    /// A mute transition's cue: always the local voice (#227).
+    fn cue_local(&self, text: &str) {
+        if let Some(c) = &self.cues {
+            c.speak_local(text);
         }
     }
 
@@ -222,9 +232,14 @@ impl HotkeyTarget {
                 // The mute cycle: unmuted, muted (earcons on), super muted.
                 Some(a) => {
                     let next = (a.settings().mute_level + 1) % 3;
-                    a.set_mute_level(next).map_err(|e| e.to_string())?;
+                    if next >= 1 {
+                        self.quiet.hold_now();
+                    }
+                    let done = a.set_mute_level(next).map_err(|e| e.to_string());
+                    self.quiet.sync();
+                    done?;
                     self.store.record("mute_level", &json!(next));
-                    self.cue(cues::mute_level_cue(u64::from(next)), None);
+                    self.cue_local(cues::mute_level_cue(u64::from(next)));
                     Ok(Some(format!("level={next}")))
                 }
                 None => {
@@ -234,10 +249,15 @@ impl HotkeyTarget {
                     } else {
                         Control::Mute
                     };
-                    self.reader.control(c).map_err(|e| e.to_string())?;
+                    if !muted {
+                        self.quiet.hold_now();
+                    }
+                    let done = self.reader.control(c).map_err(|e| e.to_string());
+                    self.quiet.sync();
+                    done?;
                     // A muted reader plays clips silently: only the unmute
                     // is heard.
-                    self.cue(if muted { "Unmuted." } else { "Muted." }, None);
+                    self.cue_local(if muted { "Unmuted." } else { "Muted." });
                     Ok(Some(if muted { "unmuted" } else { "muted" }.into()))
                 }
             },
@@ -336,6 +356,7 @@ impl SystemExt {
             target.reader.clone(),
             previews.clone(),
             previewing.clone(),
+            target.quiet.clone(),
         ));
         target.cues = Some(cues.clone());
         let store = target.store.clone();
@@ -544,6 +565,13 @@ impl SystemExt {
         }
     }
 
+    /// Speak a mute transition's cue with the local voice (#227).
+    pub fn cue_local(&self, text: &str) {
+        if self.is_enabled() {
+            self.cues.speak_local(text);
+        }
+    }
+
     /// The spoken cues (the `cues` event stream).
     pub fn cues(&self) -> &Cues {
         &self.cues
@@ -658,7 +686,9 @@ impl SystemExt {
     /// without touching the queue. It is synthesized on the extension's
     /// own engines and played as a clip mixed over whatever is reading
     /// (`ReaderHandle::play_clip`, like an earcon): nothing is paused,
-    /// skipped or queued again, and a muted reader plays it silently.
+    /// skipped or queued again, and a muted reader plays it silently. The
+    /// user asked for it, so an external engine is asked even while Sonara
+    /// is muted (#227, `hold::explicit`).
     pub fn preview(&self, reader: &ReaderHandle, m: &Map<String, Value>) -> Handled {
         let engines = self
             .previews
@@ -705,11 +735,12 @@ impl SystemExt {
         let engine_err = |e| reader_failure(sonara_reader::Error::Engine(e));
         let chunks = {
             let _one = self.previewing.lock().unwrap_or_else(|p| p.into_inner());
-            engine
-                .synthesize(&text, &voice, rate)
-                .map_err(engine_err)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(engine_err)?
+            sonara_engine::external::hold::explicit(|| {
+                engine
+                    .synthesize(&text, &voice, rate)
+                    .and_then(|s| s.collect::<Result<Vec<_>, _>>())
+            })
+            .map_err(engine_err)?
         };
         let (samples, sample_rate) = cues::mono(&chunks);
         reader

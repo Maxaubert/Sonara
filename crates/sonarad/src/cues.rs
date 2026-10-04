@@ -10,10 +10,18 @@
 //! level ("Muted.", "Super muted."), as the Python cues were exempt from
 //! pause and mute; a muted reader (core `mute`) plays it silently.
 //!
+//! Muted (#227): a cue never reaches an external engine while Sonara is
+//! muted. The mute transition cues ("Muted.", "Super muted.", "Unmuted.",
+//! `speak_local`) and any cue queued while muted are synthesized inside
+//! `hold::local`, so an external engine speaks them with its local
+//! fallback (Kokoro, else OneCore).
+//!
 //! Cues run on one worker thread, in order. A cue with a key (`rate`,
 //! `duck_level`) is dropped when a newer cue with the same key is waiting,
 //! so a burst of presses or a dragged slider speaks only the last value.
 //! Every cue spoken is reported to `subscribe`rs (the `cue` event).
+use crate::quiet::Quiet;
+use sonara_engine::external::hold;
 use sonara_engine::Registry;
 use sonara_reader::{Key, ReaderHandle, Value};
 use std::collections::VecDeque;
@@ -25,6 +33,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 struct Cue {
     text: String,
     key: Option<&'static str>,
+    /// Spoken with the local voice, never an external engine.
+    local: bool,
 }
 
 /// Cues as they are spoken (`Cues::subscribe`). Dropping it unsubscribes.
@@ -55,6 +65,7 @@ struct Shared {
     queue: Mutex<Queue>,
     wake: Condvar,
     subscribers: Mutex<Vec<Subscriber>>,
+    quiet: Quiet,
 }
 
 /// The cue path (module docs).
@@ -97,11 +108,13 @@ impl Cues {
     /// Start the worker. `engines` synthesizes (the preview engines; `None`:
     /// cues are only reported, never heard), `serial` is held while
     /// synthesizing (shared with the previews), `reader` plays the clips
-    /// and gives the engine, voice and rate in force.
+    /// and gives the engine, voice and rate in force; while `quiet` holds,
+    /// cues are local.
     pub fn new(
         reader: ReaderHandle,
         engines: Option<Arc<Registry>>,
         serial: Arc<Mutex<()>>,
+        quiet: Quiet,
     ) -> Cues {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue {
@@ -110,6 +123,7 @@ impl Cues {
             }),
             wake: Condvar::new(),
             subscribers: Mutex::new(Vec::new()),
+            quiet,
         });
         let worker = shared.clone();
         let _ = std::thread::Builder::new()
@@ -120,7 +134,19 @@ impl Cues {
 
     /// Speak `text` once the cues before it are spoken. `key`: drop it if a
     /// newer cue with the same key is waiting by then.
+    /// While Sonara is muted it is spoken locally (#227).
     pub fn speak(&self, text: &str, key: Option<&'static str>) {
+        let local = self.shared.quiet.is_held();
+        self.push(text, key, local);
+    }
+
+    /// Speak a mute transition's cue ("Muted.", "Unmuted.") with the local
+    /// voice, never an external engine (#227).
+    pub fn speak_local(&self, text: &str) {
+        self.push(text, None, true);
+    }
+
+    fn push(&self, text: &str, key: Option<&'static str>, local: bool) {
         let mut q = lock(&self.shared.queue);
         if q.closed {
             return;
@@ -128,6 +154,7 @@ impl Cues {
         q.cues.push_back(Cue {
             text: text.to_string(),
             key,
+            local,
         });
         self.shared.wake.notify_one();
     }
@@ -182,7 +209,12 @@ fn next(shared: &Shared) -> Option<Cue> {
 fn run(shared: &Shared, reader: &ReaderHandle, engines: Option<&Registry>, serial: &Mutex<()>) {
     while let Some(cue) = next(shared) {
         if let Some(engines) = engines {
-            if let Err(e) = say(reader, engines, serial, &cue.text) {
+            let spoken = if cue.local {
+                hold::local(|| say(reader, engines, serial, &cue.text))
+            } else {
+                say(reader, engines, serial, &cue.text)
+            };
+            if let Err(e) = spoken {
                 eprintln!("sonarad: cue '{}': {e}", cue.text);
             }
         }
@@ -270,6 +302,10 @@ mod tests {
         (reader, out, Arc::new(engines))
     }
 
+    fn quiet(reader: &ReaderHandle) -> Quiet {
+        Quiet::new(reader.clone(), Arc::new(std::sync::OnceLock::new()))
+    }
+
     fn clips(out: &TestOutput) -> usize {
         out.calls()
             .iter()
@@ -280,7 +316,12 @@ mod tests {
     #[test]
     fn a_cue_is_played_as_a_clip_and_reported() {
         let (reader, out, engines) = reader();
-        let cues = Cues::new(reader.clone(), Some(engines), Arc::new(Mutex::new(())));
+        let cues = Cues::new(
+            reader.clone(),
+            Some(engines),
+            Arc::new(Mutex::new(())),
+            quiet(&reader),
+        );
         let heard = cues.subscribe();
         cues.speak("Paused.", None);
         assert_eq!(
@@ -296,7 +337,13 @@ mod tests {
 
     #[test]
     fn a_keyed_cue_waiting_behind_a_newer_one_is_dropped() {
-        let cues = Cues::new(reader().0, None, Arc::new(Mutex::new(())));
+        let reader = reader().0;
+        let cues = Cues::new(
+            reader.clone(),
+            None,
+            Arc::new(Mutex::new(())),
+            quiet(&reader),
+        );
         let heard = cues.subscribe();
         // Hold the worker: enqueue while it is blocked on the queue lock.
         {
@@ -306,6 +353,7 @@ mod tests {
                 q.cues.push_back(Cue {
                     text: t.into(),
                     key,
+                    local: false,
                 });
             }
             cues.shared.wake.notify_one();
@@ -334,7 +382,13 @@ mod tests {
 
     #[test]
     fn subscribers_that_went_away_are_pruned_and_shutdown_stops() {
-        let cues = Cues::new(reader().0, None, Arc::new(Mutex::new(())));
+        let reader = reader().0;
+        let cues = Cues::new(
+            reader.clone(),
+            None,
+            Arc::new(Mutex::new(())),
+            quiet(&reader),
+        );
         drop(cues.subscribe());
         let _kept = cues.subscribe();
         assert_eq!(lock(&cues.shared.subscribers).len(), 1);

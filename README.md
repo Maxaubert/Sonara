@@ -288,6 +288,11 @@ Kokoro reads that sentence instead and says once why ("OpenAI cannot be reached.
 built-in voice."); after two failures in a row Sonara stops asking the engine for a while, then
 tries again. The settings page and `sonara engines list` show the reason.
 
+**Muted means nothing is sent.** While Sonara is muted or super-muted, nothing goes to an added
+engine: Kokoro reads instead (also the "Muted." and "Unmuted." confirmations), voice lists are
+not fetched, and a sentence on its way is cut the moment you mute. Only *Test* and a voice
+preview, which you ask for yourself, still reach it.
+
 **Speed.** Sonara prepares the next sentences while one plays, so a cloud voice keeps up with a
 reply once it is reading; the first sentence waits for one round trip.
 
