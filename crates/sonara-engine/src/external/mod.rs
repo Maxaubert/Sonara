@@ -329,7 +329,7 @@ impl External {
                         .sleep(gen, e.retry_after.unwrap_or_default())
                         .map_err(|_| Error::Cancelled)?;
                 }
-                Err(e) if !adapted && adapter.adapt(&e) => {
+                Err(e) if !adapted && adapter.adapt(&req, &e) => {
                     adapted = true;
                     req = adapter.synth_request(text, voice, rate, key);
                 }

@@ -164,8 +164,8 @@ pub trait Adapter: Send + Sync {
     /// After a failed request: whether the adapter changed what it sends
     /// so that the same part is worth one more try (Deepgram drops `speed`
     /// when the API refuses it, and remembers that). Called at most once
-    /// per part.
-    fn adapt(&self, _error: &ExtError) -> bool {
+    /// per part, with the request that failed.
+    fn adapt(&self, _request: &HttpRequest, _error: &ExtError) -> bool {
         false
     }
 }

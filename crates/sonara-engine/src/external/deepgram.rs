@@ -97,11 +97,12 @@ impl Adapter for Deepgram {
     fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
         let s = reply.status;
         let eb = ErrorBody::parse(&reply.body);
+        let speed = s == 400 && eb.mentions("speed");
         let reason = match s {
             401 | 403 => Reason::Auth,
             // Not in the fetched docs (spec 13.3): by convention.
             402 => Reason::Quota,
-            400 if eb.mentions("speed") => Reason::BadConfig,
+            400 if speed => Reason::BadConfig,
             400 if eb.mentions("model") => Reason::BadVoice,
             429 => Reason::RateLimited,
             500..=599 => Reason::Server,
@@ -119,14 +120,18 @@ impl Adapter for Deepgram {
         if matches!(s, 429 | 503) {
             e.retry_after = reply.retry_after;
         }
+        if speed {
+            e.refused_param = Some("speed");
+        }
         e
     }
 
-    /// A refused `speed`: send the part once more without it, and never
-    /// again with it.
-    fn adapt(&self, error: &ExtError) -> bool {
+    /// A `speed` the request carried and Deepgram's error body refused:
+    /// send the part once more without it, and never again with it.
+    fn adapt(&self, request: &HttpRequest, error: &ExtError) -> bool {
         error.reason == Reason::BadConfig
-            && error.message.to_ascii_lowercase().contains("speed")
+            && error.refused_param == Some("speed")
+            && request.url.contains("&speed=")
             && !self.no_speed.swap(true, Ordering::SeqCst)
     }
 
@@ -293,6 +298,7 @@ mod tests {
     #[test]
     fn a_refused_speed_is_dropped_once_and_remembered() {
         let a = adapter(json!({}));
+        let fast = a.synth_request("x", "v", 250, None);
         let refused = a.map_error(
             &reply(
                 400,
@@ -303,16 +309,51 @@ mod tests {
         );
         assert_eq!(refused.reason, Reason::BadConfig);
         assert!(
-            a.adapt(&refused),
+            a.adapt(&fast, &refused),
             "first refusal: try once more without speed"
         );
         assert!(!a.sends_speed());
         assert!(!a.speak_url("v", 250).contains("speed"));
-        assert!(!a.adapt(&refused), "only once");
+        assert!(!a.adapt(&fast, &refused), "only once");
         let other = ExtError::new(Reason::BadConfig, "Invalid JSON");
-        assert!(!adapter(json!({})).adapt(&other));
+        assert!(!adapter(json!({})).adapt(&fast, &other));
         let auth = ExtError::new(Reason::Auth, "speed");
-        assert!(!adapter(json!({})).adapt(&auth));
+        assert!(!adapter(json!({})).adapt(&fast, &auth));
+    }
+
+    #[test]
+    fn only_a_provider_refusal_of_a_sent_speed_drops_it() {
+        // The label is in the message: "Speedy" must not count as the
+        // provider naming `speed`.
+        let a = Deepgram::new(
+            &Profile::from_json(&json!({"id": "dg", "kind": "deepgram",
+                "label": "Speedy Deepgram", "voice": "aura-2-thalia-en"}))
+            .unwrap(),
+        );
+        let fast = a.synth_request("x", "v", 250, None);
+        let too_big = a.map_error(
+            &reply(
+                413,
+                r#"{"err_code": "PAYLOAD_TOO_LARGE", "err_msg": "Text too long"}"#,
+            ),
+            "v",
+            None,
+        );
+        assert!(too_big.message.contains("Speedy"), "{}", too_big.message);
+        assert!(!a.adapt(&fast, &too_big));
+        // A refusal naming speed when no speed was sent (rate 200).
+        let plain = a.synth_request("x", "v", 200, None);
+        let refused = a.map_error(
+            &reply(
+                400,
+                r#"{"err_code": "BAD", "err_msg": "speed is not supported"}"#,
+            ),
+            "v",
+            None,
+        );
+        assert!(!a.adapt(&plain, &refused));
+        assert!(a.sends_speed());
+        assert!(a.adapt(&fast, &refused));
     }
 
     #[test]

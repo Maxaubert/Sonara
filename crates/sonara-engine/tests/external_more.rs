@@ -91,7 +91,7 @@ fn cartesia_speaks_raw_pcm_with_bearer_and_version() {
     assert_eq!(
         req.json(),
         json!({"model_id": "sonic-3.6", "transcript": "Hello there.",
-            "voice": {"mode": "id", "id": VOICE},
+            "voice": {"id": VOICE},
             "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 24000},
             "language": "en", "generation_config": {"speed": 1.25}})
     );
@@ -472,6 +472,21 @@ fn command_failures_map_to_reasons() {
 }
 
 #[test]
+fn a_key_the_program_prints_never_reaches_the_message() {
+    // KEY has no known token prefix, so only the exact-key redaction can
+    // catch it.
+    let mut v = command(json!([FAKE_TTS, "--exit", "2", "--echo-key"]), json!({}));
+    v["key_ref"] = json!("credman");
+    let (reason, message) = failure(build(v, Some(KEY), false).test("Hello.", "", 200));
+    assert_eq!(reason, Reason::Server);
+    assert!(!message.contains(KEY), "{message}");
+    assert!(
+        message.ends_with("fake-tts: invalid key [redacted] (Token [redacted])"),
+        "{message}"
+    );
+}
+
+#[test]
 fn a_failing_command_reads_with_the_fallback() {
     let e = build(
         command(json!([FAKE_TTS, "--exit", "1"]), json!({})),
@@ -527,6 +542,55 @@ fn command_over_its_timeout_is_killed() {
     assert!(
         !marker_after(&marker, start + Duration::from_millis(3500)),
         "the program was killed"
+    );
+}
+
+#[test]
+fn a_timeout_also_kills_the_programs_children() {
+    let dir = TempDir::new("cmd-tree");
+    let marker = dir.path().join("marker");
+    let e = build(
+        command(
+            json!([
+                FAKE_TTS,
+                "--sleeper",
+                marker.display().to_string(),
+                "--sleep-ms",
+                "5000"
+            ]),
+            json!({"timeout_ms": 1000}),
+        ),
+        None,
+        false,
+    );
+    let start = Instant::now();
+    assert_eq!(failure(e.test("x", "", 200)).0, Reason::Timeout);
+    assert!(
+        !marker_after(&marker, start + Duration::from_millis(3500)),
+        "the child of the program was killed too"
+    );
+}
+
+#[test]
+fn a_child_left_running_does_not_spoil_a_good_result() {
+    // The program answers and exits; the child it started keeps the
+    // output pipe open. The child is ended and the audio is read.
+    let dir = TempDir::new("cmd-leftover");
+    let marker = dir.path().join("marker");
+    let e = build(
+        command(
+            json!([FAKE_TTS, "--sleeper", marker.display().to_string()]),
+            json!({}),
+        ),
+        None,
+        false,
+    );
+    let start = Instant::now();
+    let got = chunks(&e, "Hi.", "", 200);
+    assert_eq!(got[0].samples, vec![3, 100, -100]);
+    assert!(
+        !marker_after(&marker, start + Duration::from_millis(3500)),
+        "the leftover child was ended"
     );
 }
 

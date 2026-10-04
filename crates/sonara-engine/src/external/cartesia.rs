@@ -58,7 +58,7 @@ impl Cartesia {
         let mut b = Map::new();
         b.insert("model_id".into(), json!(self.model));
         b.insert("transcript".into(), json!(text));
-        b.insert("voice".into(), json!({"mode": "id", "id": voice}));
+        b.insert("voice".into(), json!({"id": voice}));
         b.insert(
             "output_format".into(),
             json!({"container": "raw", "encoding": "pcm_s16le", "sample_rate": self.sample_rate}),
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(
             body,
             json!({"model_id": "sonic-3.6", "transcript": "Hallo.",
-                "voice": {"mode": "id", "id": VOICE},
+                "voice": {"id": VOICE},
                 "output_format": {"container": "raw", "encoding": "pcm_s16le",
                     "sample_rate": 44100},
                 "language": "de", "generation_config": {"speed": 1.25}})
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(
             d.body("Hi.", VOICE, 200),
             json!({"model_id": "sonic-3.6", "transcript": "Hi.",
-                "voice": {"mode": "id", "id": VOICE},
+                "voice": {"id": VOICE},
                 "output_format": {"container": "raw", "encoding": "pcm_s16le",
                     "sample_rate": 24000},
                 "language": "en"})

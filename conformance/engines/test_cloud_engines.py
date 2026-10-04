@@ -66,7 +66,7 @@ def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
         assert req["headers"]["cartesia-version"] == "2026-08-14"
         body = json.loads(req["body"])
         assert body["transcript"] == "Hello from the cloud."
-        assert body["voice"] == {"mode": "id", "id": "voice-c"}
+        assert body["voice"] == {"id": "voice-c"}
         assert body["output_format"] == {"container": "raw", "encoding": "pcm_s16le",
                                          "sample_rate": 24000}
     elif cloud.shape.kind == "deepgram":

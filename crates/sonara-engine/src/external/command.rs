@@ -12,8 +12,12 @@
 //! - **Output**: a WAV on stdout, raw 16-bit mono PCM on stdout at
 //!   `sample_rate`, or a WAV file at `{out}`.
 //! - **Key**: when one resolves, in the environment as `SONARA_ENGINE_KEY`
-//!   (never an argument); otherwise that variable is removed.
-//! - **Ends**: over `timeout_ms` or on a cancel the process is killed.
+//!   (never an argument); otherwise that variable is removed. The key is
+//!   cut out of any stderr text kept for a failure message.
+//! - **Ends**: over `timeout_ms` or on a cancel the process is killed,
+//!   with every process it started (a Job Object). When the program exits,
+//!   any child it left running is ended too, so it cannot hold the output
+//!   pipe open.
 use super::adapter::{VoiceInfo, MAX_AUDIO_BODY};
 use super::audio::decode_body;
 use super::error::{clean, ExtError};
@@ -117,7 +121,78 @@ fn reader<R: Read + Send + 'static>(
     rx
 }
 
-fn kill(child: &mut Child) {
+/// The program and every process it starts: ended together (on Windows a
+/// Job Object that kills its processes when it is closed).
+#[cfg(windows)]
+mod tree {
+    use std::os::windows::io::AsRawHandle;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    pub struct Tree(HANDLE);
+
+    impl Tree {
+        /// `None` when Windows refuses a job (the program alone is killed
+        /// then).
+        pub fn new(child: &std::process::Child) -> Option<Tree> {
+            // SAFETY: plain Win32 calls on a job handle this value owns and
+            // on the child's process handle, which outlives the calls.
+            unsafe {
+                let tree = Tree(CreateJobObjectW(None, PCWSTR::null()).ok()?);
+                let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                SetInformationJobObject(
+                    tree.0,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of_val(&info) as u32,
+                )
+                .ok()?;
+                AssignProcessToJobObject(tree.0, HANDLE(child.as_raw_handle())).ok()?;
+                Some(tree)
+            }
+        }
+
+        pub fn kill(&self) {
+            // SAFETY: the handle is owned and open until drop.
+            unsafe {
+                let _ = TerminateJobObject(self.0, 1);
+            }
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            // SAFETY: closed once; KILL_ON_JOB_CLOSE ends what is left.
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod tree {
+    pub struct Tree;
+
+    impl Tree {
+        pub fn new(_child: &std::process::Child) -> Option<Tree> {
+            None
+        }
+
+        pub fn kill(&self) {}
+    }
+}
+
+fn kill(child: &mut Child, tree: Option<&tree::Tree>) {
+    if let Some(t) = tree {
+        t.kill();
+    }
     let _ = child.kill();
     let _ = child.wait();
 }
@@ -225,6 +300,7 @@ impl Command {
         let mut child = cmd
             .spawn()
             .map_err(|e| self.err(Reason::BadConfig, format_args!("cannot start: {e}")))?;
+        let tree = tree::Tree::new(&child);
         if let Some(mut stdin) = child.stdin.take() {
             let bytes = text.as_bytes().to_vec();
             // A thread, so a program that writes before it reads all of its
@@ -244,16 +320,16 @@ impl Command {
                 Ok(Some(status)) => break status,
                 Ok(None) => {}
                 Err(e) => {
-                    kill(&mut child);
+                    kill(&mut child, tree.as_ref());
                     return Err(self.err(Reason::BadConfig, format_args!("failed: {e}")));
                 }
             }
             if cancelled() {
-                kill(&mut child);
+                kill(&mut child, tree.as_ref());
                 return Err(self.err(Reason::Timeout, "was stopped"));
             }
             if start.elapsed() >= self.timeout {
-                kill(&mut child);
+                kill(&mut child, tree.as_ref());
                 return Err(self.err(
                     Reason::Timeout,
                     format_args!("did not finish in {} s", self.timeout.as_secs()),
@@ -261,12 +337,23 @@ impl Command {
             }
             std::thread::sleep(POLL);
         };
+        // The program is done: a child it left running must not keep the
+        // output pipes open or go on using the PC.
+        if let Some(t) = &tree {
+            t.kill();
+        }
         let stderr = stderr
             .and_then(|r| r.recv_timeout(DRAIN).ok())
             .map(|(b, _)| b)
             .unwrap_or_default();
         if !status.success() {
-            let last = String::from_utf8_lossy(&stderr)
+            // The program holds the key, so it may print it; the masking of
+            // `clean` only knows token shapes, the exact key goes first.
+            let mut err_text = String::from_utf8_lossy(&stderr).into_owned();
+            if let Some(k) = key.map(Secret::expose).filter(|k| !k.is_empty()) {
+                err_text = err_text.replace(k, "[redacted]");
+            }
+            let last = err_text
                 .lines()
                 .rev()
                 .map(str::trim)

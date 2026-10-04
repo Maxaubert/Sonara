@@ -6,8 +6,11 @@
 //!   on stdout, a WAV at `--out`, text that is no audio, or nothing.
 //! - `--rate N`: the sample rate (default 22050).
 //! - `--sleep-ms N`, then `--marker PATH` is written (to see a kill).
-//! - `--exit N`: print two lines to stderr and exit with N.
+//! - `--exit N`: print two lines to stderr and exit with N; with
+//!   `--echo-key` the last line is `SONARA_ENGINE_KEY` as it came.
 //! - `--record PATH`: write `{"args", "stdin", "key"}` as JSON there.
+//! - `--sleeper PATH`: first start a copy of itself that inherits the
+//!   output pipes, sleeps 2.5 s and then writes PATH (a launcher's child).
 //!
 //! The samples are `[characters of the text, 100, -100]`.
 use sonara_engine::{wav, PcmChunk};
@@ -37,6 +40,22 @@ fn main() {
         });
         std::fs::write(path, record.to_string()).unwrap();
     }
+    if let Some(path) = value("--sleeper") {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--text",
+                "x",
+                "--mode",
+                "empty",
+                "--sleep-ms",
+                "2500",
+                "--marker",
+            ])
+            .arg(path)
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+    }
     if let Some(ms) = value("--sleep-ms").and_then(|v| v.parse::<u64>().ok()) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
@@ -46,6 +65,10 @@ fn main() {
     if let Some(code) = value("--exit").and_then(|v| v.parse::<i32>().ok()) {
         eprintln!("fake-tts: loading the voice");
         eprintln!("fake-tts: the model broke, key sk-abcdefghijklmnop0123456789");
+        if args.iter().any(|a| a == "--echo-key") {
+            let key = std::env::var("SONARA_ENGINE_KEY").unwrap_or_default();
+            eprintln!("fake-tts: invalid key {key} (Token {key})");
+        }
         eprintln!();
         std::process::exit(code);
     }

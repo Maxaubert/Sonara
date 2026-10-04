@@ -42,7 +42,7 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier", "win-system-proxy"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
-windows = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+windows = { workspace = true, optional = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials", "Win32_System_JobObjects", "Win32_System_Threading"] }
 windows-future = { workspace = true, optional = true }
 
 [dev-dependencies]
