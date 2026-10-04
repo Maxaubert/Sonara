@@ -299,6 +299,76 @@ impl Url {
     pub fn is_loopback(&self) -> bool {
         is_loopback_host(&self.host)
     }
+
+    /// `scheme://host:port`, the port always written (443 or 80 when the
+    /// URL has none), an IPv6 host in brackets: what a stored key is bound
+    /// to (spec 6.4).
+    pub fn origin(&self) -> String {
+        let scheme = if self.https { "https" } else { "http" };
+        let port = self.port.unwrap_or(if self.https { 443 } else { 80 });
+        if self.host.contains(':') {
+            format!("{scheme}://[{}]:{port}", self.host)
+        } else {
+            format!("{scheme}://{}:{port}", self.host)
+        }
+    }
+}
+
+/// An Azure region as it goes into a host name (`westeurope`).
+fn region_ok(r: &str) -> bool {
+    !r.is_empty()
+        && r.len() <= 40
+        && r.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+}
+
+/// The base URL a kind uses when the profile names no `url` (spec 5.4):
+/// the provider's address, Azure's from `options.region`, the
+/// `openai-compatible` preset's (only `openai` has one). `None` for a kind
+/// without one (`command`, a local server's preset).
+pub fn default_base(kind: Kind, options: &Map<String, Value>) -> Option<String> {
+    match kind {
+        Kind::OpenAiCompatible => options
+            .get("preset")
+            .and_then(Value::as_str)
+            .and_then(Preset::parse)
+            .unwrap_or(Preset::Generic)
+            .default_url()
+            .map(str::to_string),
+        Kind::ElevenLabs => Some("https://api.elevenlabs.io".into()),
+        Kind::Azure => options
+            .get("region")
+            .and_then(Value::as_str)
+            .filter(|r| region_ok(r))
+            .map(|r| format!("https://{r}.tts.speech.microsoft.com")),
+        Kind::Google => Some("https://texttospeech.googleapis.com".into()),
+        Kind::Cartesia => Some("https://api.cartesia.ai".into()),
+        Kind::Deepgram => Some("https://api.deepgram.com".into()),
+        Kind::Command => None,
+    }
+}
+
+/// The origin an `engines.json` entry sends to, for any kind, supported by
+/// this build or not: its `url`, else the kind's default (`default_base`).
+/// `None` when it has no valid address.
+pub fn origin_of(raw: &Value) -> Option<String> {
+    let url = raw
+        .get("url")
+        .and_then(Value::as_str)
+        .filter(|u| !u.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let kind = Kind::parse(raw.get("kind").and_then(Value::as_str)?)?;
+            let empty = Map::new();
+            let options = raw
+                .get("options")
+                .and_then(Value::as_object)
+                .unwrap_or(&empty);
+            default_base(kind, options)
+        })?;
+    Url::parse(url.trim_end_matches('/'))
+        .ok()
+        .map(|u| u.origin())
 }
 
 /// `localhost`, `127.0.0.0/8` or `::1`.
@@ -350,6 +420,11 @@ pub struct Profile {
     pub voice: Option<String>,
     pub key_ref: KeyRef,
     pub options: Map<String, Value>,
+    /// The origin an `env:` key may also go to besides the provider's
+    /// default (spec 6.4): set by the runtime from `engines.json`
+    /// (`key_origin`, written only by the user or the format 1 migration),
+    /// never parsed from a protocol message, never in `to_json`.
+    pub key_origin: Option<String>,
 }
 
 /// Options every kind accepts.
@@ -437,6 +512,7 @@ impl Profile {
             voice: opt_text(m, "voice")?,
             key_ref: KeyRef::None,
             options,
+            key_origin: None,
         };
         p.key_ref = match KeyRef::parse(m.get("key_ref")).map_err(ProfileError::Invalid)? {
             Some(k) => k,
@@ -620,19 +696,31 @@ impl Profile {
             .unwrap_or(Preset::Generic)
     }
 
-    /// The base URL in force: the profile's, else the preset's default.
+    /// The base URL in force: the profile's, else the kind's default.
     pub fn base_url(&self) -> Option<String> {
         self.url
             .clone()
-            .or_else(|| match self.kind {
-                Kind::OpenAiCompatible => self.preset().default_url().map(str::to_string),
-                _ => None,
-            })
+            .or_else(|| default_base(self.kind, &self.options))
             .map(|u| u.trim_end_matches('/').to_string())
     }
 
     pub fn parsed_url(&self) -> Option<Url> {
         self.base_url().and_then(|u| Url::parse(&u).ok())
+    }
+
+    /// The origin requests go to (`scheme://host:port`), what a stored key
+    /// must be bound to (spec 6.4).
+    pub fn origin(&self) -> Option<String> {
+        self.parsed_url().map(|u| u.origin())
+    }
+
+    /// The origin of the provider itself (the kind's or preset's default
+    /// address, never the profile's `url`): an `env:` key may always go
+    /// there.
+    pub fn default_origin(&self) -> Option<String> {
+        default_base(self.kind, &self.options)
+            .and_then(|u| Url::parse(u.trim_end_matches('/')).ok())
+            .map(|u| u.origin())
     }
 
     pub fn effective_model(&self) -> Option<String> {
@@ -942,6 +1030,80 @@ mod tests {
             Err(ProfileError::Unsupported { .. })
         ));
         assert_eq!(implemented_kinds(), vec![Kind::OpenAiCompatible]);
+    }
+
+    #[test]
+    fn origins_include_the_port_and_the_kind_defaults() {
+        let o = |v: Value| origin_of(&v);
+        assert_eq!(
+            o(json!({"kind": "openai-compatible", "options": {"preset": "openai"}})).as_deref(),
+            Some("https://api.openai.com:443")
+        );
+        assert_eq!(
+            o(json!({"kind": "openai-compatible", "url": "https://API.example.com/v1/"}))
+                .as_deref(),
+            Some("https://api.example.com:443")
+        );
+        assert_eq!(
+            o(json!({"kind": "openai-compatible", "url": "http://127.0.0.1:8880/v1"})).as_deref(),
+            Some("http://127.0.0.1:8880")
+        );
+        assert_eq!(
+            o(json!({"kind": "openai-compatible", "url": "http://[::1]/v1"})).as_deref(),
+            Some("http://[::1]:80")
+        );
+        assert_eq!(
+            o(json!({"kind": "openai-compatible", "url": "https://x.example:8443"})).as_deref(),
+            Some("https://x.example:8443")
+        );
+        // Kinds this build lacks still have an origin (their keys are
+        // bound too): the provider's default or Azure's region.
+        for (kind, want) in [
+            ("elevenlabs", "https://api.elevenlabs.io:443"),
+            ("google", "https://texttospeech.googleapis.com:443"),
+            ("cartesia", "https://api.cartesia.ai:443"),
+            ("deepgram", "https://api.deepgram.com:443"),
+        ] {
+            assert_eq!(o(json!({"kind": kind})).as_deref(), Some(want), "{kind}");
+        }
+        assert_eq!(
+            o(json!({"kind": "azure", "options": {"region": "westeurope"}})).as_deref(),
+            Some("https://westeurope.tts.speech.microsoft.com:443")
+        );
+        assert_eq!(
+            o(json!({"kind": "azure", "options": {"region": "evil.example.com/x"}})),
+            None,
+            "a region is a host label, not an address"
+        );
+        assert_eq!(
+            o(json!({"kind": "deepgram", "url": "https://api.eu.deepgram.com"})).as_deref(),
+            Some("https://api.eu.deepgram.com:443")
+        );
+        assert_eq!(o(json!({"kind": "command"})), None);
+        assert_eq!(
+            o(json!({"kind": "openai-compatible", "url": "ftp://x"})),
+            None
+        );
+        // A profile's origin and its provider default.
+        let p = parse(json!({"id": "openai", "kind": "openai-compatible",
+            "url": "https://proxy.example.com/v1", "options": {"preset": "openai"}}))
+        .unwrap();
+        assert_eq!(p.origin().as_deref(), Some("https://proxy.example.com:443"));
+        assert_eq!(
+            p.default_origin().as_deref(),
+            Some("https://api.openai.com:443")
+        );
+        assert_eq!(parse(local(json!({}))).unwrap().default_origin(), None);
+        assert_eq!(
+            parse(
+                json!({"id": "k", "kind": "openai-compatible", "key_origin": "https://evil:443",
+                "url": "https://tts.example.com/v1"})
+            )
+            .unwrap()
+            .key_origin,
+            None,
+            "key_origin never comes from the profile JSON"
+        );
     }
 
     #[test]

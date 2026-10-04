@@ -239,7 +239,7 @@ Default `key_ref` when absent: `none` for `openai-compatible` with a loopback `u
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "engines": [
     {"id": "openai", "kind": "openai-compatible", "label": "OpenAI", "url": "https://api.openai.com/v1",
      "model": "gpt-4o-mini-tts", "voice": "marin", "key_ref": "credman", "options": {"preset": "openai"}},
@@ -252,6 +252,7 @@ Default `key_ref` when absent: `none` for `openai-compatible` with a loopback `u
 - Written atomically (temp file, rename) like `config.json`; missing file = no profiles; a file that is not valid JSON is copied to `engines.json.bad`, logged, and treated as empty until the next save. An entry that fails validation is logged, kept in the file and not registered.
 - Never holds a key. A field named like a secret (`secret`, `api_key`, `key`) in an `engine_add` is never written (only `engine_key` stores secrets, in the KeyStore).
 - Read once at start, before the reader starts, so a saved `engine` naming a profile works on the first sentence.
+- Format 2 (review of #224): keys are bound to origins (6.4). An `env:` entry may hold `key_origin`, written only by the user (or the migration); `engine_add` never takes it from the client. A file of format 1 (or without `format`) is migrated at load and saved as format 2.
 
 ### 5.4 Kinds, URLs and options
 
@@ -292,9 +293,11 @@ Common options (every kind): `timeout_ms` (1000..=120000; default 15000 cloud, 6
 pub struct Secret(String);
 impl Secret { pub fn expose(&self) -> &str; }
 
+pub struct StoredKey { pub secret: Secret, pub origin: Option<String> }
+
 pub trait KeyStore: Send + Sync {
-    fn get(&self, profile: &str) -> Result<Option<Secret>, KeyError>;
-    fn set(&self, profile: &str, secret: &Secret) -> Result<(), KeyError>;
+    fn get(&self, profile: &str) -> Result<Option<StoredKey>, KeyError>;
+    fn set(&self, profile: &str, secret: &Secret, origin: &str) -> Result<(), KeyError>;
     fn delete(&self, profile: &str) -> Result<(), KeyError>;   // absent is Ok
     fn list(&self) -> Result<Vec<String>, KeyError>;           // profile ids that have a key
 }
@@ -307,14 +310,16 @@ pub struct KeyResolver { store: Arc<dyn KeyStore> }
 impl KeyResolver {
     /// The key for a profile now: None for KeyRef::None, the store's entry for CredMan,
     /// the process environment for Env(NAME). Read on every request (cheap), so a key
-    /// set with engine_key applies to the next chunk.
+    /// set with engine_key applies to the next chunk. Only for the origin the key is
+    /// bound to (6.4); otherwise a `no_key` error and nothing is sent.
     pub fn resolve(&self, profile: &Profile) -> Result<Option<Secret>, ExtError>;
 }
 ```
 
 ### 6.2 Credential Manager details
 
-- Type `CRED_TYPE_GENERIC`, `TargetName` `sonara:<profile id>`, `UserName` `sonara`, `Comment` `Sonara speech engine key`, `Persist` `CRED_PERSIST_LOCAL_MACHINE` (per user, survives logoff, does not roam).
+- Type `CRED_TYPE_GENERIC`, `TargetName` `sonara:<profile id>`, `UserName` `sonara`, `Comment` `Sonara speech engine key, sent only to <origin>`, `Persist` `CRED_PERSIST_LOCAL_MACHINE` (per user, survives logoff, does not roam).
+- The origin the key is bound to (6.4) is the credential attribute `sonara-origin` (UTF-8, at most 256 bytes), written with the secret in the same `CredWriteW`; the comment only shows it.
 - Blob: the key's UTF-8 bytes, at most 2560 bytes (`CRED_MAX_CREDENTIAL_BLOB_SIZE`); longer is `E_BAD_REQUEST` `key too long`.
 - `list` uses `CredEnumerateW` with filter `sonara:*`.
 - Not available (non-Windows build): `KeyError::Unavailable`, so `credman` profiles report `no_key`.
@@ -326,6 +331,18 @@ impl KeyResolver {
 - A secret leaves only in the provider's auth header (13), over https, or over http to a loopback host. Never in a URL (Google's `?key=` is not used; `X-goog-api-key` header instead).
 - Never logged: `trace_log` drops `secret` from `in` lines of `engine_add` and `engine_key` (not only masks it); provider error bodies are clipped to 300 chars and passed through `sonara_log::secrets::mask` before they reach any message; `ExtError` never holds request headers.
 - `sonara uninstall` deletes every `sonara:*` credential unless `--keep settings` (the default keep), together with `engines.json` handling.
+
+### 6.4 Keys are bound to their origin (security review of #224)
+
+Threat: a protocol client holding the runtime token replaces a profile, keeping its id, with a `url` (or `region`, host option) of its own server; the stored key would go there with the next request. Rule: a key is only ever sent to the origin it was entered for.
+
+- Origin: `scheme://host:port` of the base URL in force (the port always written, IPv6 in brackets): the profile's `url`, else the kind's default (`Profile::origin`, `profile::origin_of` for entries of any kind, supported or not): the `openai-compatible` preset's (`openai` only), `https://api.elevenlabs.io`, `https://<region>.tts.speech.microsoft.com` (a region is `[a-z0-9]{1,40}`), `https://texttospeech.googleapis.com`, `https://api.cartesia.ai`, `https://api.deepgram.com`; `command` has none (it takes no key).
+- `credman`: the origin is stored with the secret (6.2). `KeyResolver::resolve` returns the key only when the stored origin equals the profile's origin; a mismatch or a missing origin is `ExtError(no_key, "the key of 'x' was entered for A, not B: enter the key again")`, `key_present` is false, the engine falls back as usual and nothing is sent. Never "bind on first use".
+- Every edit path binds or deletes: `engine_add` with `secret` and `engine_key` store the key bound to the profile's origin now; `engine_add` without `secret` deletes a stored key whose origin is not the new profile's (a replace to another url or region, or a stale credential of a removed profile with the same id). There is no `engine_reload`: `engines.json` is read only at start, and a hand edit of the file that changes an address leaves the key unbound to it (refused) until it is entered again.
+- `env:NAME`: the variable is the user's, so there is nothing to delete; the key is sent only to the provider's default origin (`Profile::default_origin`), or to the entry's `key_origin` in `engines.json`, which only the local file sets: the user, or the migration below. `engine_add` never reads `key_origin` from the client, keeps the old one on a replace only when the variable and the origin stay the same, and so a `url` that arrives over the protocol must be confirmed in the file (`no_key` message names the line to add) before the key follows it.
+- Migration (format 1 to 2, at load, before any engine is built): a credential without an origin is bound to its entry's origin in the file, and an `env:` entry without `key_origin` gets its origin, because the file is local and its addresses were the user's. The file is then saved as format 2, so a credential without an origin found later (written by an older runtime) is never bound and is refused.
+- `--keys fake`: `fake-keys.json` holds `{id: {"key", "origin"}}` (a bare string, the old form, has no origin).
+- Tests: `sonarad/tests/engines.rs` (a replace over TCP and HTTP to a second fake server never sends the key there; a key bound elsewhere or unbound is refused; voice and model changes keep it; a new secret in the same `engine_add` or a later `engine_key` works; env keys follow only a confirmed url), `engines.rs` unit tests (migration, format 2), `keys.rs` and `profile.rs` unit tests, `conformance/engines/test_engines.py`, and `credman_live` (the attribute round trip).
 
 ## 7. The `External` engine
 

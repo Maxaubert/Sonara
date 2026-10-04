@@ -11,11 +11,18 @@ fn credman_round_trip() {
     store.delete(&id).unwrap();
     assert!(store.get(&id).unwrap().is_none());
     store
-        .set(&id, &Secret::new("sk-live-credman-check"))
+        .set(
+            &id,
+            &Secret::new("sk-live-credman-check"),
+            "https://api.example.com:443",
+        )
         .unwrap();
+    let got = store.get(&id).unwrap().unwrap();
+    assert_eq!(got.expose(), "sk-live-credman-check");
     assert_eq!(
-        store.get(&id).unwrap().unwrap().expose(),
-        "sk-live-credman-check"
+        got.origin.as_deref(),
+        Some("https://api.example.com:443"),
+        "the origin is kept with the secret"
     );
     assert!(store.list().unwrap().contains(&id));
     store.delete(&id).unwrap();

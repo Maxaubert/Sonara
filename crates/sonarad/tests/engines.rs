@@ -4,7 +4,7 @@
 //! success and every error row of spec 10.3.
 use serde_json::{json, Map, Value};
 use sonara_audio::{OutputCall, TestOutput};
-use sonara_engine::external::keys::{KeyStore, MemoryStore};
+use sonara_engine::external::keys::{KeyStore, MemoryStore, Secret};
 use sonara_engine::fake::FakeEngine;
 use sonara_engine::{Engine, LicenseClass};
 use sonara_reader::{Config, ReaderHandle, Registry};
@@ -524,4 +524,186 @@ fn secret_never_in_trace_log_or_engines_json() {
         .unwrap()
         .clone();
     assert_eq!(stored["key_ref"], "credman");
+}
+
+/// Whether any request `p` saw carried a key header.
+fn saw_a_key(p: &Provider) -> bool {
+    p.seen.lock().unwrap().iter().any(|(_, h, _)| {
+        h.iter().any(|(k, v)| {
+            matches!(
+                k.as_str(),
+                "authorization" | "xi-api-key" | "x-goog-api-key" | "ocp-apim-subscription-key"
+            ) || v.contains(SECRET)
+        })
+    })
+}
+
+/// Speak through `id` and wait until `p` saw a speech request (or the
+/// fallback spoke).
+fn speak_through(r: &mut Rig, id: &str) {
+    r.call(json!({"type": "set", "key": "engine", "value": id}));
+    r.call(json!({"type": "speak", "text": "Where does this go?", "interrupt": true}));
+    let _ = r.call(json!({"type": "engine_test", "engine": id, "play": false}));
+    let _ = r.call(json!({"type": "voices", "engine": id, "refresh": true}));
+    std::thread::sleep(Duration::from_millis(300));
+}
+
+#[test]
+fn replacing_the_url_never_sends_the_old_key_to_the_new_host() {
+    for (tag, http) in [("rebind-tcp", false), ("rebind-http", true)] {
+        let mut r = rig(tag, true);
+        assert_eq!(r.add("local")["ok"], true);
+        let other = Provider::start();
+        let mut p = r.profile("local");
+        p["url"] = json!(other.url);
+        let req = json!({"type": "engine_add", "engine": p, "replace": true});
+        let o = if http {
+            let mut s = Session::http();
+            r.server.handle(&mut s, &req).reply
+        } else {
+            r.call(req)
+        };
+        assert_eq!(o["ok"], true, "{o}");
+        assert_eq!(
+            o["engine"]["key_present"], false,
+            "{tag}: the key was not entered for this address"
+        );
+        assert!(
+            r.keys.get("local").unwrap().is_none(),
+            "{tag}: an origin change without a new secret deletes the stored key"
+        );
+        speak_through(&mut r, "local");
+        assert!(
+            !saw_a_key(&other),
+            "{tag}: the old key reached the new host"
+        );
+        let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+        assert_eq!(o["error"]["reason"], "no_key", "{tag}: {o}");
+    }
+}
+
+#[test]
+fn a_key_bound_elsewhere_is_never_sent() {
+    // A key stored for one address (a stale credential, a profile replaced
+    // by an older runtime) is refused for another, never sent.
+    let mut r = rig("bound-elsewhere", true);
+    let other = Provider::start();
+    let mut p = r.profile("local");
+    p["url"] = json!(other.url);
+    assert_eq!(
+        r.call(json!({"type": "engine_add", "engine": p}))["ok"],
+        true
+    );
+    let first = r.provider.url.trim_end_matches("/v1").to_string();
+    r.keys.set("local", &Secret::new(SECRET), &first).unwrap();
+    let o = r.call(json!({"type": "engine_list"}));
+    assert_eq!(o["engines"][0]["key_present"], false, "{o}");
+    speak_through(&mut r, "local");
+    assert!(!saw_a_key(&other));
+    let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+    assert_eq!(o["error"]["reason"], "no_key", "{o}");
+    assert!(
+        o["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("enter the key again"),
+        "{o}"
+    );
+    // A key without a recorded origin (written by an older runtime after
+    // the migration) is refused too.
+    r.keys.set_unbound("local", &Secret::new(SECRET));
+    speak_through(&mut r, "local");
+    assert!(!saw_a_key(&other));
+}
+
+#[test]
+fn the_key_survives_changes_that_keep_the_origin() {
+    let mut r = rig("same-origin", true);
+    r.add("local");
+    let mut p = r.profile("local");
+    p["voice"] = json!("am_echo");
+    p["model"] = json!("kokoro-2");
+    p["label"] = json!("Renamed");
+    // The same origin spelled differently (trailing slash, other path).
+    p["url"] = json!(format!("{}/", r.provider.url));
+    let o = r.call(json!({"type": "engine_add", "engine": p, "replace": true}));
+    assert_eq!(o["engine"]["key_present"], true, "{o}");
+    let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+    assert_eq!(o["ok"], true, "{o}");
+    let (headers, _) = r.provider.speech_requests().pop().unwrap();
+    assert!(headers.contains(&("authorization".into(), format!("Bearer {SECRET}"))));
+}
+
+#[test]
+fn a_new_key_with_the_new_url_works() {
+    let mut r = rig("new-key", true);
+    r.add("local");
+    let other = Provider::start();
+    let mut p = r.profile("local");
+    p["url"] = json!(other.url);
+    let o = r.call(json!({"type": "engine_add", "engine": p, "replace": true,
+        "secret": "sk-for-the-new-host-123"}));
+    assert_eq!(o["engine"]["key_present"], true, "{o}");
+    let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+    assert_eq!(o["ok"], true, "{o}");
+    let (headers, _) = other.speech_requests().pop().unwrap();
+    assert!(headers.contains(&(
+        "authorization".into(),
+        "Bearer sk-for-the-new-host-123".into()
+    )));
+    // Or with engine_key after the replace.
+    let third = Provider::start();
+    let mut p = r.profile("local");
+    p["url"] = json!(third.url);
+    r.call(json!({"type": "engine_add", "engine": p, "replace": true}));
+    let o = r.call(json!({"type": "engine_key", "engine": "local", "secret": "sk-third-host-456"}));
+    assert_eq!(o["key_present"], true, "{o}");
+    let o = r.call(json!({"type": "engine_test", "engine": "local", "play": false}));
+    assert_eq!(o["ok"], true, "{o}");
+    let (headers, _) = third.speech_requests().pop().unwrap();
+    assert!(headers.contains(&("authorization".into(), "Bearer sk-third-host-456".into())));
+    assert!(!other
+        .seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(_, h, _)| h.iter().any(|(_, v)| v.contains("sk-third-host-456"))));
+}
+
+#[test]
+fn an_env_key_follows_only_a_locally_confirmed_url() {
+    let var = "SONARA_TEST_ORIGIN_API_KEY";
+    std::env::set_var(var, SECRET);
+    let mut r = rig("env-origin", true);
+    // Added over the protocol: the url is not confirmed, the key stays home.
+    let mut p = r.profile("envy");
+    p["key_ref"] = json!(format!("env:{var}"));
+    let o = r.call(json!({"type": "engine_add", "engine": p}));
+    assert_eq!(o["engine"]["key_present"], false, "{o}");
+    speak_through(&mut r, "envy");
+    assert!(
+        !saw_a_key(&r.provider),
+        "an unconfirmed url never gets the env key"
+    );
+    let o = r.call(json!({"type": "engine_test", "engine": "envy", "play": false}));
+    assert_eq!(o["error"]["reason"], "no_key", "{o}");
+    assert!(
+        o["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("key_origin"),
+        "{o}"
+    );
+    let file = std::fs::read_to_string(r.home.join("engines.json")).unwrap();
+    assert!(!file.contains("key_origin"), "{file}");
+    // A protocol client cannot confirm it: key_origin in the profile is
+    // ignored.
+    let mut p = r.profile("envy");
+    p["key_ref"] = json!(format!("env:{var}"));
+    p["key_origin"] = json!(r.provider.url.trim_end_matches("/v1"));
+    r.call(json!({"type": "engine_add", "engine": p, "replace": true}));
+    let o = r.call(json!({"type": "engine_test", "engine": "envy", "play": false}));
+    assert_eq!(o["error"]["reason"], "no_key", "{o}");
+    assert!(!saw_a_key(&r.provider));
+    std::env::remove_var(var);
 }

@@ -260,7 +260,13 @@ fn a_missing_key_falls_back_without_a_request_until_one_is_set() {
     let n = r.notices.lock().unwrap().clone();
     assert_eq!(n.len(), 1, "{n:?}");
     assert_eq!(n[0].reason, Some(Reason::NoKey));
-    r.store.set("core-test", &Secret::new("sk-local")).unwrap();
+    r.store
+        .set(
+            "core-test",
+            &Secret::new("sk-local"),
+            &r.engine.profile().origin().unwrap(),
+        )
+        .unwrap();
     assert!(r.engine.key_present());
     assert_eq!(samples(&r.engine, "Now.").unwrap(), vec![3]);
     let seen = r.server.requests();
@@ -271,7 +277,13 @@ fn a_missing_key_falls_back_without_a_request_until_one_is_set() {
 #[test]
 fn an_auth_failure_blocks_until_a_new_key() {
     let r = rig_with(json!({"key_ref": "credman"}), true);
-    r.store.set("core-test", &Secret::new("sk-old")).unwrap();
+    r.store
+        .set(
+            "core-test",
+            &Secret::new("sk-old"),
+            &r.engine.profile().origin().unwrap(),
+        )
+        .unwrap();
     r.server.on(
         SPEECH,
         Route::json(401, r#"{"error": {"message": "nope"}}"#),
@@ -281,7 +293,13 @@ fn an_auth_failure_blocks_until_a_new_key() {
     assert_eq!(r.server.count(SPEECH), 1, "blocked after the first refusal");
     assert_eq!(r.engine.status().reason, Some(Reason::Auth));
     r.server.on(SPEECH, Route::wav(&[4], 24_000));
-    r.store.set("core-test", &Secret::new("sk-new")).unwrap();
+    r.store
+        .set(
+            "core-test",
+            &Secret::new("sk-new"),
+            &r.engine.profile().origin().unwrap(),
+        )
+        .unwrap();
     r.engine.key_changed();
     assert_eq!(samples(&r.engine, "Three.").unwrap(), vec![4]);
     let n = r.notices.lock().unwrap().clone();

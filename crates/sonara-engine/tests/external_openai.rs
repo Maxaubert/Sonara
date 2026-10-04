@@ -19,10 +19,12 @@ fn engine(server: &ScriptServer, v: Value, key: Option<&str>) -> External {
     v["id"] = json!("oa");
     v["kind"] = json!("openai-compatible");
     let store = Arc::new(MemoryStore::new());
-    if let Some(k) = key {
-        store.set("oa", &Secret::new(k)).unwrap();
-    }
     let profile = Profile::from_json(&v).unwrap();
+    if let Some(k) = key {
+        store
+            .set("oa", &Secret::new(k), &profile.origin().unwrap())
+            .unwrap();
+    }
     External::new(ExternalConfig::new(profile, KeyResolver::new(store))).unwrap()
 }
 

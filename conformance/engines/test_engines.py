@@ -154,3 +154,84 @@ def test_engine_test_reports_auth_reason(rt, client, profile, provider):
     status, body = rt.post("engine_test", {"engine": "local", "play": False})
     assert status == 500 and body["error"]["reason"] == "auth"
     assert wait_until(lambda: True)
+
+
+KEY_HEADERS = ("authorization", "xi-api-key", "x-goog-api-key", "ocp-apim-subscription-key")
+
+
+def saw_a_key(p) -> bool:
+    with p.lock:
+        reqs = list(p.requests)
+    return any(
+        k in KEY_HEADERS or SECRET in v
+        for r in reqs
+        for k, v in r["headers"].items()
+    )
+
+
+def try_to_use(rt, c, engine_id):
+    """Every way a profile sends a request: test, voices, speech."""
+    c.request({"type": "engine_test", "engine": engine_id, "play": False})
+    c.request({"type": "voices", "engine": engine_id, "refresh": True})
+    ok(c, {"type": "set", "key": "engine", "value": engine_id})
+    ok(c, {"type": "subscribe", "events": ["items"]})
+    item = ok(c, {"type": "speak", "text": "Where does this go?"})["item_id"]
+    c.item(item, "finished")
+    rt.post("engine_test", {"engine": engine_id, "play": False})
+
+
+def test_retargeted_profile_never_sends_the_old_key(rt, client, profile, provider):
+    """Spec 6.4: a key is bound to the origin it was entered for. A replace
+    to another url (over TCP or HTTP) without a new secret deletes it; the
+    new host never sees it."""
+    from fake_openai import FakeOpenAI
+
+    add(client, profile)
+    for via in ("tcp", "http"):
+        other = FakeOpenAI()
+        try:
+            moved = dict(profile, url=other.url)
+            body = {"engine": moved, "replace": True}
+            if via == "tcp":
+                view = ok(client, dict(body, type="engine_add"))["engine"]
+            else:
+                status, reply = rt.post("engine_add", body)
+                assert status == 200, reply
+                view = reply["engine"]
+            assert view["key_present"] is False, via
+            try_to_use(rt, client, "local")
+            assert not saw_a_key(other), via
+            r = client.request({"type": "engine_test", "engine": "local", "play": False})
+            assert r["error"]["reason"] == "no_key", r
+            # Back on the first host, with the key entered again.
+            ok(client, {"type": "engine_add", "engine": profile, "replace": True, "secret": SECRET})
+        finally:
+            other.stop()
+    keys = json.loads((rt.home / "fake-keys.json").read_text(encoding="utf-8"))
+    assert keys["local"]["origin"] == provider.url[: -len("/v1")]
+
+
+def test_key_kept_when_only_voice_or_model_change(client, profile, provider):
+    add(client, profile)
+    view = ok(client, {"type": "engine_add", "replace": True,
+                       "engine": dict(profile, voice="am_echo", model="kokoro-2")})["engine"]
+    assert view["key_present"] is True
+    ok(client, {"type": "engine_test", "engine": "local", "play": False})
+    assert provider.speech()[-1]["headers"]["authorization"] == f"Bearer {SECRET}"
+
+
+def test_new_secret_with_the_new_url_is_used(client, profile, provider):
+    from fake_openai import FakeOpenAI
+
+    add(client, profile)
+    other = FakeOpenAI()
+    try:
+        new = "sk-conformance-new-host-0123456789"
+        view = ok(client, {"type": "engine_add", "replace": True, "secret": new,
+                           "engine": dict(profile, url=other.url)})["engine"]
+        assert view["key_present"] is True
+        ok(client, {"type": "engine_test", "engine": "local", "play": False})
+        assert other.speech()[-1]["headers"]["authorization"] == f"Bearer {new}"
+        assert not saw_a_key(provider)
+    finally:
+        other.stop()

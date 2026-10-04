@@ -11,11 +11,17 @@
 //!   build lacks, is kept in the file, listed, and not registered.
 //! - Never a key in the file, a log line or a reply: secrets go only to the
 //!   `KeyStore` (Credential Manager, or `fake-keys.json` with `--keys fake`).
+//! - Keys are bound to the origin they were entered for (spec 6.4): a stored
+//!   key goes with its origin, `engine_add` deletes one whose origin is not
+//!   the profile's new one (unless a new secret comes with it), and an
+//!   `env:` key goes only to the provider's default origin or the
+//!   `key_origin` of its entry, which only the local file sets (the user, or
+//!   the migration of a format 1 file at load).
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_engine::external::keys::{KeyResolver, KeyStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
-    implemented_kinds, KeyRef, Preset, Profile, ProfileError, MAX_PROFILES,
+    implemented_kinds, origin_of, KeyRef, Preset, Profile, ProfileError, MAX_PROFILES,
 };
 use sonara_engine::external::{External, ExternalConfig, Notice};
 use sonara_engine::{Engine, Reason, Registry};
@@ -26,6 +32,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 pub const FILE: &str = "engines.json";
+/// The `engines.json` format. 2: keys are bound to origins; a file of
+/// format 1 (or none) is migrated at load (`migrate`).
+pub const FORMAT: u64 = 2;
+/// The field of an `env:` entry that confirms the origin its key may go to.
+pub const KEY_ORIGIN: &str = "key_origin";
 /// One fallback line per (engine, reason) per this long (spec 8.3).
 pub const NOTICE_EVERY: Duration = Duration::from_secs(60);
 
@@ -97,14 +108,17 @@ impl Engines {
     pub fn load(setup: Setup) -> (Arc<Engines>, Vec<String>) {
         let file = setup.home.join(FILE);
         let mut problems = Vec::new();
-        let raws: Vec<Value> = match std::fs::read_to_string(&file) {
+        let mut legacy = false;
+        let mut raws: Vec<Value> = match std::fs::read_to_string(&file) {
             Err(_) => Vec::new(),
             Ok(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(v) => v
-                    .get("engines")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
+                Ok(v) => {
+                    legacy = v.get("format").and_then(Value::as_u64).unwrap_or(1) < FORMAT;
+                    v.get("engines")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default()
+                }
                 Err(e) => {
                     let bad = setup.home.join(format!("{FILE}.bad"));
                     let _ = std::fs::copy(&file, &bad);
@@ -116,6 +130,9 @@ impl Engines {
                 }
             },
         };
+        if legacy {
+            migrate(setup.store.as_ref(), &mut raws, &mut problems);
+        }
         let engines = Arc::new(Engines {
             file,
             keys: KeyResolver::new(setup.store),
@@ -154,6 +171,11 @@ impl Engines {
             };
             entries.push(Entry { id, raw, state });
         }
+        if legacy {
+            if let Err(e) = engines.save(&entries) {
+                problems.push(e.message);
+            }
+        }
         *engines.lock() = entries;
         (engines, problems)
     }
@@ -167,7 +189,13 @@ impl Engines {
     }
 
     fn build(&self, raw: &Value) -> Result<Arc<External>, ProfileError> {
-        let profile = Profile::from_json(raw)?;
+        let mut profile = Profile::from_json(raw)?;
+        if matches!(profile.key_ref, KeyRef::Env(_)) {
+            profile.key_origin = raw
+                .get(KEY_ORIGIN)
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
         let mut config = ExternalConfig::new(profile, self.keys.clone());
         config.fallback = self.fallback.clone();
         config.fallback_voice = self.fallback_voice.clone();
@@ -228,7 +256,7 @@ impl Engines {
 
     fn save(&self, entries: &[Entry]) -> Result<(), Failure> {
         let v = json!({
-            "format": 1,
+            "format": FORMAT,
             "engines": entries.iter().map(|e| e.raw.clone()).collect::<Vec<_>>(),
         });
         crate::config::write_json(&self.file, &v)
@@ -389,8 +417,9 @@ impl Engines {
                 ))
             }
         };
-        let stored = profile.to_json();
+        let mut stored = profile.to_json();
         let id = profile.id.clone();
+        let origin = profile.origin();
         let mut entries = self.lock();
         let at = entries.iter().position(|e| e.id == id);
         match at {
@@ -402,11 +431,46 @@ impl Engines {
             }
             _ => {}
         }
-        if let Some(s) = secret {
-            self.keys
-                .store()
-                .set(&id, &Secret::new(s))
-                .map_err(|e| Failure::new(Code::Engine, format!("cannot store the key: {e}")))?;
+        // An env key's confirmed origin survives a replace only when the
+        // variable and the origin stay the same: a protocol client can
+        // never confirm a new one.
+        if let KeyRef::Env(_) = &profile.key_ref {
+            let old = at.map(|i| &entries[i].raw);
+            let confirmed = old
+                .filter(|r| r.get("key_ref") == stored.get("key_ref"))
+                .and_then(|r| r.get(KEY_ORIGIN))
+                .and_then(Value::as_str)
+                .filter(|o| Some(*o) == origin.as_deref());
+            if let (Some(c), Some(m)) = (confirmed, stored.as_object_mut()) {
+                m.insert(KEY_ORIGIN.into(), json!(c));
+            }
+        }
+        let store = self.keys.store();
+        match secret {
+            Some(s) => {
+                let o = origin
+                    .as_deref()
+                    .ok_or_else(|| bad("this engine has no address to bind a key to"))?;
+                store.set(&id, &Secret::new(s), o).map_err(|e| {
+                    Failure::new(Code::Engine, format!("cannot store the key: {e}"))
+                })?;
+            }
+            None => {
+                // A key entered for another origin (or none) is never sent
+                // here: delete it rather than keep a key that a later
+                // change could point somewhere else.
+                if let Ok(Some(k)) = store.get(&id) {
+                    if k.origin != origin {
+                        match store.delete(&id) {
+                            Ok(()) => self.note(&format!(
+                                "engine {id}: its key was for another address; deleted"
+                            )),
+                            Err(e) => self
+                                .note(&format!("engine {id}: the key could not be deleted: {e}")),
+                        }
+                    }
+                }
+            }
         }
         let ext = self.build(&stored).map_err(|e| bad(e.to_string()))?;
         let was_registered = at.is_some_and(|i| matches!(entries[i].state, State::Ready(_)));
@@ -473,20 +537,25 @@ impl Engines {
     /// `engine_key`: store (or with `None` delete) a profile's key.
     /// Returns whether a key resolves now.
     pub fn set_key(&self, id: &str, secret: Option<&str>) -> Result<bool, Failure> {
-        let (key_ref, ext) = {
+        let (key_ref, ext, origin) = {
             let entries = self.lock();
             let e = entries
                 .iter()
                 .find(|e| e.id == id)
                 .ok_or_else(|| Failure::new(Code::NotFound, format!("no engine '{id}'")))?;
             match &e.state {
-                State::Ready(x) => (x.profile().key_ref.clone(), Some(x.clone())),
+                State::Ready(x) => (
+                    x.profile().key_ref.clone(),
+                    Some(x.clone()),
+                    x.profile().origin(),
+                ),
                 _ => (
                     KeyRef::parse(e.raw.get("key_ref"))
                         .ok()
                         .flatten()
                         .unwrap_or(KeyRef::CredMan),
                     None,
+                    origin_of(&e.raw),
                 ),
             }
         };
@@ -503,7 +572,10 @@ impl Engines {
         match secret {
             Some(s) => {
                 Self::check_secret(s)?;
-                store.set(id, &Secret::new(s))
+                let o = origin
+                    .as_deref()
+                    .ok_or_else(|| bad(format!("engine '{id}' has no address to bind a key to")))?;
+                store.set(id, &Secret::new(s), o)
             }
             None => store.delete(id),
         }
@@ -531,10 +603,44 @@ impl Engines {
     }
 }
 
+/// Bind what a format 1 file left unbound to the entry's origin now (the
+/// file is local, so its addresses are the user's): Credential Manager keys
+/// without an origin, and `env:` entries without `key_origin`. Problems are
+/// for the log; a key that cannot be bound stays unbound and is not sent.
+fn migrate(store: &dyn KeyStore, raws: &mut [Value], problems: &mut Vec<String>) {
+    for raw in raws.iter_mut() {
+        let Some(id) = raw.get("id").and_then(Value::as_str).map(str::to_string) else {
+            continue;
+        };
+        let origin = origin_of(raw);
+        let env = raw
+            .get("key_ref")
+            .and_then(Value::as_str)
+            .is_some_and(|k| k.starts_with("env:"));
+        if let (true, Some(o), Some(m)) = (env, &origin, raw.as_object_mut()) {
+            m.entry(KEY_ORIGIN).or_insert_with(|| json!(o));
+        }
+        if let Ok(Some(k)) = store.get(&id) {
+            if k.origin.is_none() {
+                let done = match &origin {
+                    Some(o) => store.set(&id, &k.secret, o).map_err(|e| e.to_string()),
+                    None => Err("the engine has no address".into()),
+                };
+                if let Err(e) = done {
+                    problems.push(format!(
+                        "engine '{id}': its key could not be bound to an address ({e}); \
+                         enter it again"
+                    ));
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sonara_engine::external::keys::MemoryStore;
+    use sonara_engine::external::keys::{KeyStore, MemoryStore, Secret};
     use sonara_engine::fake::FakeEngine;
     use sonara_engine::LicenseClass;
 
@@ -697,6 +803,145 @@ mod tests {
         assert!(store.get("c").unwrap().is_none(), "the key went with it");
         assert!(reg.get("c").is_err());
         assert_eq!(e.remove("c", true).unwrap_err().code, Code::NotFound);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn keys_of_a_format_1_file_are_bound_to_its_origins_at_load() {
+        let h = home();
+        let var = format!("SONARA_TEST_LOAD_{}_API_KEY", std::process::id());
+        std::fs::write(
+            h.join(FILE),
+            format!(
+                r#"{{"format": 1, "engines": [
+                {{"id": "c", "kind": "openai-compatible", "url": "https://tts.example.com/v1",
+                 "key_ref": "credman"}},
+                {{"id": "e", "kind": "openai-compatible", "url": "https://env.example.com/v1",
+                 "key_ref": "env:{var}"}},
+                {{"id": "el", "kind": "elevenlabs", "voice": "abc", "key_ref": "credman"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let store = Arc::new(MemoryStore::new());
+        store.set_unbound("c", &Secret::new("sk-c"));
+        store.set_unbound("el", &Secret::new("sk-el"));
+        std::env::set_var(&var, "sk-env");
+        let (e, problems) = Engines::load(setup(&h, store.clone()));
+        assert!(
+            problems.iter().all(|p| !p.contains("bound")),
+            "{problems:?}"
+        );
+        assert_eq!(
+            store.get("c").unwrap().unwrap().origin.as_deref(),
+            Some("https://tts.example.com:443")
+        );
+        assert_eq!(
+            store.get("el").unwrap().unwrap().origin.as_deref(),
+            Some("https://api.elevenlabs.io:443"),
+            "a kind this build lacks is bound to its provider"
+        );
+        assert!(e.get("c").unwrap().key_present());
+        assert!(
+            e.get("e").unwrap().key_present(),
+            "the local file confirms it"
+        );
+        let file: Value =
+            serde_json::from_str(&std::fs::read_to_string(h.join(FILE)).unwrap()).unwrap();
+        assert_eq!(file["format"], FORMAT);
+        assert_eq!(
+            file["engines"][1]["key_origin"],
+            "https://env.example.com:443"
+        );
+        assert!(file["engines"][0].get("key_origin").is_none());
+        // Loaded again (format 2 now), nothing changes.
+        let (again, _) = Engines::load(setup(&h, store.clone()));
+        assert!(again.get("e").unwrap().key_present());
+        std::env::remove_var(&var);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn a_format_2_file_binds_nothing_new() {
+        let h = home();
+        let var = format!("SONARA_TEST_LOAD2_{}_API_KEY", std::process::id());
+        std::fs::write(
+            h.join(FILE),
+            format!(
+                r#"{{"format": 2, "engines": [
+                {{"id": "c", "kind": "openai-compatible", "url": "https://tts.example.com/v1",
+                 "key_ref": "credman"}},
+                {{"id": "e", "kind": "openai-compatible", "url": "https://env.example.com/v1",
+                 "key_ref": "env:{var}"}},
+                {{"id": "ok", "kind": "openai-compatible", "url": "https://env.example.com/v1",
+                 "key_ref": "env:{var}", "key_origin": "https://env.example.com:443"}}]}}"#
+            ),
+        )
+        .unwrap();
+        let store = Arc::new(MemoryStore::new());
+        // A key without an origin (an older runtime wrote it after the
+        // migration) stays unbound and unused.
+        store.set_unbound("c", &Secret::new("sk-c"));
+        std::env::set_var(&var, "sk-env");
+        let (e, _) = Engines::load(setup(&h, store.clone()));
+        assert!(store.get("c").unwrap().unwrap().origin.is_none());
+        assert!(!e.get("c").unwrap().key_present());
+        assert!(!e.get("e").unwrap().key_present(), "not confirmed");
+        assert!(e.get("ok").unwrap().key_present(), "confirmed in the file");
+        // A replace over the protocol that keeps the origin keeps the
+        // confirmation; one that changes it drops it.
+        let mut p = e.view_of("ok", "").unwrap();
+        p["voice"] = json!("other");
+        e.add(&p, None, true).unwrap();
+        assert!(e.get("ok").unwrap().key_present());
+        p["url"] = json!("https://evil.example.com/v1");
+        e.add(&p, None, true).unwrap();
+        assert!(!e.get("ok").unwrap().key_present());
+        p["url"] = json!("https://env.example.com/v1");
+        e.add(&p, None, true).unwrap();
+        assert!(
+            !e.get("ok").unwrap().key_present(),
+            "a confirmation dropped over the protocol is not restored by it"
+        );
+        std::env::remove_var(&var);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    #[test]
+    fn engine_key_binds_to_the_entrys_origin() {
+        let h = home();
+        std::fs::write(
+            h.join(FILE),
+            r#"{"format": 2, "engines": [
+                {"id": "az", "kind": "azure", "voice": "en-US-AvaNeural",
+                 "options": {"region": "westeurope"}}]}"#,
+        )
+        .unwrap();
+        let store = Arc::new(MemoryStore::new());
+        let (e, _) = Engines::load(setup(&h, store.clone()));
+        e.set_key("az", Some("k-az")).unwrap();
+        assert_eq!(
+            store.get("az").unwrap().unwrap().origin.as_deref(),
+            Some("https://westeurope.tts.speech.microsoft.com:443")
+        );
+        let (e, _) = Engines::load(setup(&h, store.clone()));
+        e.add(
+            &json!({"id": "c", "kind": "openai-compatible", "url": "https://a.example.com/v1"}),
+            Some("sk-a"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            store.get("c").unwrap().unwrap().origin.as_deref(),
+            Some("https://a.example.com:443")
+        );
+        // A replace to another origin without a secret deletes the key.
+        e.add(
+            &json!({"id": "c", "kind": "openai-compatible", "url": "https://b.example.com/v1"}),
+            None,
+            true,
+        )
+        .unwrap();
+        assert!(store.get("c").unwrap().is_none());
         let _ = std::fs::remove_dir_all(&h);
     }
 
