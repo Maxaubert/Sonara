@@ -220,7 +220,15 @@ fn the_capability_and_the_list() {
     assert_eq!(l["builtin"], json!(["fake"]));
     assert_eq!(
         l["kinds"],
-        json!(["openai-compatible", "elevenlabs", "azure", "google"])
+        json!([
+            "openai-compatible",
+            "elevenlabs",
+            "azure",
+            "google",
+            "cartesia",
+            "deepgram",
+            "command"
+        ])
     );
     assert!(l["presets"]
         .as_array()

@@ -18,12 +18,17 @@ pub const USAGE: &str = "usage: sonara engines <command>
   test <id> [TEXT]           speak one sentence with it, with no fallback
   remove <id> [--keep-key]   remove it (and its stored key)
 
-Kinds: openai-compatible (the default), elevenlabs, azure, google.
+Kinds: openai-compatible (the default), elevenlabs, azure, google, cartesia,
+deepgram, command (a program of your own on this PC).
 Presets of openai-compatible: openai, kokoro-fastapi, localai, speaches,
 openedai-speech, chatterbox-api, chatterbox-server, generic.
 Examples: add el --kind elevenlabs --voice <voice_id>
           add az --kind azure --voice en-US-AvaMultilingualNeural --option region=westeurope
-          add gg --kind google --voice en-US-Chirp3-HD-Kore";
+          add gg --kind google --voice en-US-Chirp3-HD-Kore
+          add ca --kind cartesia --voice <voice_id>
+          add dg --kind deepgram --voice aura-2-thalia-en
+          add piper --kind command --option output=file --option
+              'argv=[\"C:/piper/piper.exe\", \"-m\", \"C:/piper/en_US-amy.onnx\", \"-f\", \"{out}\"]'";
 
 /// What a command asks of the runtime.
 #[derive(Debug, Clone, PartialEq)]
@@ -394,7 +399,28 @@ mod tests {
                 "id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
                 "key_ref": "env:AZURE_SPEECH_KEY", "options": {"region": "westeurope"}}}))
         );
-        assert!(USAGE.contains("elevenlabs, azure, google"));
+        assert!(USAGE.contains(
+            "elevenlabs, azure, google, cartesia,
+deepgram, command"
+        ));
+        // A command's argv is a JSON list in one --option.
+        let a = p(&[
+            "add",
+            "piper",
+            "--kind",
+            "command",
+            "--option",
+            r#"argv=["C:/piper/piper.exe", "-f", "{out}"]"#,
+            "--option",
+            "output=file",
+        ])
+        .unwrap();
+        assert_eq!(
+            a,
+            Action::Request(json!({"type": "engine_add", "replace": false, "engine": {
+                "id": "piper", "kind": "command", "options": {
+                    "argv": ["C:/piper/piper.exe", "-f", "{out}"], "output": "file"}}}))
+        );
     }
 
     #[test]

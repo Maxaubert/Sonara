@@ -407,7 +407,12 @@ impl Engines {
                 Some(_) => return Err(bad("this engine has key_ref none: it takes no key")),
             }
         }
-        let profile = match Profile::from_json(&Value::Object(raw)) {
+        let profile = match Profile::from_json(&Value::Object(raw)).and_then(|p| {
+            // A new profile's program must exist now (a stored one whose
+            // program is gone stays and reads with the fallback).
+            p.check_new()?;
+            Ok(p)
+        }) {
             Ok(p) => p,
             Err(ProfileError::Invalid(m)) => return Err(bad(m)),
             Err(ProfileError::Unsupported { kind, .. }) => {
@@ -681,7 +686,7 @@ mod tests {
         std::fs::write(
             h.join(FILE),
             r#"{"format": 1, "engines": [
-                {"id": "ca", "kind": "cartesia", "voice": "abc", "key_ref": "credman"},
+                {"id": "ca", "kind": "future-kind", "voice": "abc", "key_ref": "credman"},
                 {"id": "bad", "kind": "openai-compatible", "url": "ftp://x"},
                 {"id": "loc", "kind": "openai-compatible", "url": "http://127.0.0.1:9/v1",
                  "options": {"preset": "kokoro-fastapi"}}]}"#,
@@ -707,7 +712,15 @@ mod tests {
         assert_eq!(views[2]["status"]["status"], "ready");
         assert_eq!(
             list["kinds"],
-            json!(["openai-compatible", "elevenlabs", "azure", "google"])
+            json!([
+                "openai-compatible",
+                "elevenlabs",
+                "azure",
+                "google",
+                "cartesia",
+                "deepgram",
+                "command"
+            ])
         );
         // A new profile with a secret: the file keeps the others and no key.
         e.add(
@@ -719,7 +732,7 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(h.join(FILE)).unwrap();
         assert!(!text.contains("sk-"), "{text}");
-        assert!(text.contains("cartesia") && text.contains("ftp://x"));
+        assert!(text.contains("future-kind") && text.contains("ftp://x"));
         assert_eq!(
             store.get("openai").unwrap().unwrap().expose(),
             "sk-secret-value-1234567890"
@@ -766,7 +779,7 @@ mod tests {
             "'kokoro' is a built-in engine"
         );
         assert_eq!(
-            e.add(&json!({"id": "x", "kind": "deepgram"}), None, false)
+            e.add(&json!({"id": "x", "kind": "future-kind"}), None, false)
                 .unwrap_err()
                 .code,
             Code::Unsupported
@@ -806,6 +819,57 @@ mod tests {
         assert!(store.get("c").unwrap().is_none(), "the key went with it");
         assert!(reg.get("c").is_err());
         assert_eq!(e.remove("c", true).unwrap_err().code, Code::NotFound);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// A program that is missing is refused when added (a typo), but a
+    /// stored profile whose program went away stays registered (it reads
+    /// with the fallback until the program is back).
+    #[test]
+    fn command_programs_must_exist_when_added() {
+        let h = home();
+        let missing = "C:\\Nope\\sonara-missing-tts.exe";
+        std::fs::write(
+            h.join(FILE),
+            json!({"format": 1, "engines": [{"id": "gone", "kind": "command",
+                "options": {"argv": [missing]}}]})
+            .to_string(),
+        )
+        .unwrap();
+        let (e, problems) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        assert!(problems.is_empty(), "{problems:?}");
+        let reg = registry();
+        e.attach(reg.clone());
+        assert!(reg.get("gone").is_ok());
+        let err = e
+            .add(
+                &json!({"id": "typo", "kind": "command", "options": {"argv": [missing]}}),
+                None,
+                false,
+            )
+            .unwrap_err();
+        assert_eq!(err.code, Code::BadRequest);
+        assert_eq!(
+            err.message,
+            format!("the program '{missing}' does not exist")
+        );
+        let exe = std::env::current_exe().unwrap().display().to_string();
+        e.add(
+            &json!({"id": "prog", "kind": "command", "options": {"argv": [exe]}}),
+            None,
+            false,
+        )
+        .unwrap();
+        let list = e.list("prog");
+        let view = &list["engines"].as_array().unwrap()[1];
+        let name = std::path::Path::new(&exe)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(view["sends_text_to"], format!("program {name}"));
+        assert_eq!(view["local"], true);
+        assert_eq!(view["key_ref"], "none");
         let _ = std::fs::remove_dir_all(&h);
     }
 

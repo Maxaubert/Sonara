@@ -20,6 +20,9 @@ pub mod adapter;
 pub mod audio;
 pub mod azure;
 pub mod cache;
+pub mod cartesia;
+pub mod command;
+pub mod deepgram;
 pub mod elevenlabs;
 pub mod error;
 pub mod google;
@@ -105,17 +108,32 @@ pub struct TestResult {
     pub pcm: Vec<PcmChunk>,
 }
 
+/// How one request is made (spec 3): an HTTP adapter, or a local program.
+enum Backend {
+    Http(Arc<dyn Adapter>),
+    Command(Arc<command::Command>),
+}
+
+impl Backend {
+    fn input_limit(&self) -> split::Limit {
+        match self {
+            Backend::Http(a) => a.input_limit(),
+            Backend::Command(c) => c.input_limit(),
+        }
+    }
+}
+
 pub struct External {
     id: EngineId,
     profile: Profile,
-    adapter: Arc<dyn Adapter>,
+    backend: Backend,
     keys: KeyResolver,
     fallback: Option<Arc<dyn Engine>>,
     fallback_voice: String,
     notice: Option<NoticeFn>,
     health: Health,
     cache: CueCache,
-    cancel: CancelToken,
+    cancel: Arc<CancelToken>,
     /// The cancel generation at `begin`, taken by the next `synthesize`.
     begun: Mutex<Option<u64>>,
     agent: ureq::Agent,
@@ -126,16 +144,15 @@ pub struct External {
     clock: Clock,
 }
 
-fn adapter_for(p: &Profile) -> std::result::Result<Arc<dyn Adapter>, ProfileError> {
+fn backend_for(p: &Profile) -> Backend {
     match p.kind {
-        Kind::OpenAiCompatible => Ok(Arc::new(openai::OpenAi::new(p))),
-        Kind::ElevenLabs => Ok(Arc::new(elevenlabs::ElevenLabs::new(p))),
-        Kind::Azure => Ok(Arc::new(azure::Azure::new(p))),
-        Kind::Google => Ok(Arc::new(google::Google::new(p))),
-        other => Err(ProfileError::Unsupported {
-            id: p.id.clone(),
-            kind: other.as_str().to_string(),
-        }),
+        Kind::OpenAiCompatible => Backend::Http(Arc::new(openai::OpenAi::new(p))),
+        Kind::ElevenLabs => Backend::Http(Arc::new(elevenlabs::ElevenLabs::new(p))),
+        Kind::Azure => Backend::Http(Arc::new(azure::Azure::new(p))),
+        Kind::Google => Backend::Http(Arc::new(google::Google::new(p))),
+        Kind::Cartesia => Backend::Http(Arc::new(cartesia::Cartesia::new(p))),
+        Kind::Deepgram => Backend::Http(Arc::new(deepgram::Deepgram::new(p))),
+        Kind::Command => Backend::Command(Arc::new(command::Command::new(p))),
     }
 }
 
@@ -144,7 +161,7 @@ impl External {
     pub fn new(config: ExternalConfig) -> std::result::Result<External, ProfileError> {
         let p = config.profile;
         p.validate()?;
-        let adapter = adapter_for(&p)?;
+        let backend = backend_for(&p);
         let timeout = Duration::from_millis(p.timeout_ms());
         // No redirects, and no proxy for a loopback server (spec 6.4).
         let direct = p.parsed_url().is_some_and(|u| u.is_loopback());
@@ -174,14 +191,14 @@ impl External {
             id: EngineId::intern(&p.id),
             label: p.display_label(),
             host: p.host(),
-            adapter,
+            backend,
             keys: config.keys,
             fallback: config.fallback,
             fallback_voice: config.fallback_voice,
             notice: config.notice,
             health: Health::new(config.clock.clone()),
             cache: CueCache::new(),
-            cancel: CancelToken::new(),
+            cancel: Arc::new(CancelToken::new()),
             begun: Mutex::new(None),
             agent,
             voices_agent,
@@ -217,7 +234,8 @@ impl External {
         } else {
             voice.to_string()
         };
-        if v.is_empty() {
+        // A program's voice is optional (`{voice}` may be unused).
+        if v.is_empty() && self.profile.kind != Kind::Command {
             return Err(ExtError::new(
                 Reason::BadConfig,
                 format!("{} has no voice set", self.label),
@@ -249,7 +267,7 @@ impl External {
         }
     }
 
-    /// One provider request (with the one `Retry-After` retry).
+    /// One request for one part of a chunk.
     fn request(
         &self,
         gen: u64,
@@ -258,8 +276,37 @@ impl External {
         rate: u32,
         key: Option<&Secret>,
     ) -> Result<std::result::Result<PcmChunk, ExtError>> {
-        let req = self.adapter.synth_request(text, voice, rate, key);
-        let mut retried = false;
+        match &self.backend {
+            Backend::Http(adapter) => self.http_request(adapter, gen, text, voice, rate, key),
+            Backend::Command(c) => {
+                // The program runs on the request thread, which kills it on
+                // a cancel (the wait here ends at once either way).
+                let (c, token) = (c.clone(), self.cancel.clone());
+                let (text, voice, key) = (text.to_string(), voice.to_string(), key.cloned());
+                self.cancel
+                    .run(gen, move || {
+                        c.run(&text, &voice, rate, key.as_ref(), &|| {
+                            token.generation() != gen
+                        })
+                    })
+                    .map_err(|_| Error::Cancelled)
+            }
+        }
+    }
+
+    /// One provider request, with the one `Retry-After` retry and the one
+    /// retry after the adapter adapted to a refusal (Deepgram's `speed`).
+    fn http_request(
+        &self,
+        adapter: &Arc<dyn Adapter>,
+        gen: u64,
+        text: &str,
+        voice: &str,
+        rate: u32,
+        key: Option<&Secret>,
+    ) -> Result<std::result::Result<PcmChunk, ExtError>> {
+        let mut req = adapter.synth_request(text, voice, rate, key);
+        let (mut retried, mut adapted) = (false, false);
         loop {
             let (agent, r, host) = (self.agent.clone(), req.clone(), self.host.clone());
             let reply = self
@@ -268,8 +315,8 @@ impl External {
                 .map_err(|_| Error::Cancelled)?;
             let outcome = match reply {
                 Err(e) => Err(e),
-                Ok(r) if r.ok() => self.adapter.audio(&r, &self.label),
-                Ok(r) => Err(self.adapter.map_error(&r, voice, self.voice_listed(voice))),
+                Ok(r) if r.ok() => adapter.audio(&r, &self.label),
+                Ok(r) => Err(adapter.map_error(&r, voice, self.voice_listed(voice))),
             };
             match outcome {
                 Err(e)
@@ -281,6 +328,10 @@ impl External {
                     self.cancel
                         .sleep(gen, e.retry_after.unwrap_or_default())
                         .map_err(|_| Error::Cancelled)?;
+                }
+                Err(e) if !adapted && adapter.adapt(&e) => {
+                    adapted = true;
+                    req = adapter.synth_request(text, voice, rate, key);
                 }
                 other => return Ok(other),
             }
@@ -297,7 +348,7 @@ impl External {
         key: Option<&Secret>,
     ) -> Result<std::result::Result<Vec<PcmChunk>, ExtError>> {
         let mut out = Vec::new();
-        for part in split::split(text, self.adapter.input_limit()) {
+        for part in split::split(text, self.backend.input_limit()) {
             match self.request(gen, &part, voice, rate, key)? {
                 Ok(pcm) => out.push(pcm),
                 Err(e) => return Ok(Err(e)),
@@ -380,6 +431,7 @@ impl External {
     /// Fetch a voice list, following the pages of a paged one.
     fn fetch_voices(
         &self,
+        adapter: &Arc<dyn Adapter>,
         first: HttpRequest,
         key: Option<&Secret>,
     ) -> std::result::Result<Vec<adapter::VoiceInfo>, ExtError> {
@@ -389,14 +441,21 @@ impl External {
             let Some(request) = next.take() else { break };
             let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
             if !r.ok() {
-                return Err(self.adapter.map_error(&r, "", None));
+                return Err(adapter.map_error(&r, "", None));
             }
-            out.extend(self.adapter.parse_voices(&r.body)?);
-            next = self.adapter.next_voices_page(&r.body, key);
+            out.extend(adapter.parse_voices(&r.body)?);
+            next = adapter.next_voices_page(&r.body, key);
         }
         let mut seen = std::collections::HashSet::new();
         out.retain(|v| seen.insert(v.id.clone()));
         Ok(out)
+    }
+
+    fn voice_source(&self, key: Option<&Secret>) -> VoiceSource {
+        match &self.backend {
+            Backend::Http(a) => a.voices(key),
+            Backend::Command(c) => VoiceSource::Fixed(c.voices()),
+        }
     }
 
     /// Whether the voice cache is older than `VOICES_TTL` (or empty).
@@ -428,7 +487,7 @@ impl Engine for External {
             .map(|(_, v)| v.clone());
         let list = match cached {
             Some(v) => v,
-            None => match self.adapter.voices(None) {
+            None => match self.voice_source(None) {
                 VoiceSource::Fixed(v) => v.into_iter().map(|v| self.voice_entry(v)).collect(),
                 VoiceSource::Fetch { .. } => Vec::new(),
             },
@@ -438,16 +497,20 @@ impl Engine for External {
 
     fn refresh_voices(&self) -> Result<Vec<Voice>> {
         let key = self.keys.resolve(&self.profile).ok().flatten();
-        let list = match self.adapter.voices(key.as_ref()) {
-            VoiceSource::Fixed(v) => v,
-            VoiceSource::Fetch {
-                request,
-                empty_on_error,
-            } => match self.fetch_voices(request, key.as_ref()) {
+        let list = match (&self.backend, self.voice_source(key.as_ref())) {
+            (_, VoiceSource::Fixed(v)) => v,
+            (
+                Backend::Http(adapter),
+                VoiceSource::Fetch {
+                    request,
+                    empty_on_error,
+                },
+            ) => match self.fetch_voices(adapter, request, key.as_ref()) {
                 Ok(v) => v,
                 Err(_) if empty_on_error => Vec::new(),
                 Err(e) => return Err(e.into_engine_error()),
             },
+            (Backend::Command(_), VoiceSource::Fetch { .. }) => Vec::new(),
         };
         let list: Vec<Voice> = list.into_iter().map(|v| self.voice_entry(v)).collect();
         *self.voices.lock().unwrap_or_else(|p| p.into_inner()) = Some(((self.clock)(), list));

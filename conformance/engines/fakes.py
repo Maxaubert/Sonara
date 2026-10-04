@@ -1,6 +1,6 @@
 """Fake cloud speech servers (stdlib only) for the external engine
-conformance tests, one per provider shape of PR2 (#225): ElevenLabs, Azure AI
-Speech and Google Cloud Text-to-Speech. Each answers its synthesis path with
+conformance tests, one per provider shape: ElevenLabs, Azure AI Speech and
+Google Cloud Text-to-Speech (PR2, #225), Cartesia and Deepgram (PR3, #226). Each answers its synthesis path with
 raw 16-bit PCM (Google: base64 in JSON) when the request carries the expected
 key in the provider's own header, and the provider's auth error otherwise; it
 answers its voice list path and keeps every request. Nothing here calls a
@@ -25,6 +25,8 @@ class Shape:
 
     kind = ""
     key_header = ""
+    # The key's value in that header: the key after this prefix.
+    key_prefix = ""
     synth_prefix = ""
     voices_path = ""
     voices_body: object = None
@@ -79,13 +81,43 @@ class Google(Shape):
         return 400, "application/json", json.dumps(body).encode()
 
 
-SHAPES = {s.kind: s for s in (ElevenLabs(), Azure(), Google())}
+class Cartesia(Shape):
+    kind = "cartesia"
+    key_header = "authorization"
+    key_prefix = "Bearer "
+    synth_prefix = "/tts/bytes"
+    voices_path = "/voices"
+    voices_body = {"data": [{"id": "voice-c", "name": "C", "language": "en"}], "has_more": False}
+
+    def refused(self):
+        body = {"error_code": "unauthorized", "title": "Unauthorized",
+                "message": "Invalid API key", "request_id": "r"}
+        return 401, "application/json", json.dumps(body).encode()
+
+
+class Deepgram(Shape):
+    kind = "deepgram"
+    key_header = "authorization"
+    key_prefix = "Token "
+    synth_prefix = "/v1/speak"
+    voices_path = "/v1/models"
+    voices_body = {"stt": [], "tts": [{"name": "thalia", "canonical_name": "aura-2-thalia-en",
+                                       "architecture": "aura-2", "languages": ["en"]}]}
+
+    def refused(self):
+        body = {"err_code": "INVALID_AUTH", "err_msg": "Invalid credentials.", "request_id": "r"}
+        return 401, "application/json", json.dumps(body).encode()
+
+
+SHAPES = {s.kind: s for s in (ElevenLabs(), Azure(), Google(), Cartesia(), Deepgram())}
 
 # A profile per kind, pointed at the fake server (its url is filled in).
 PROFILES = {
     "elevenlabs": {"id": "el", "kind": "elevenlabs", "voice": "voice-a"},
     "azure": {"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural"},
     "google": {"id": "gg", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"},
+    "cartesia": {"id": "ca", "kind": "cartesia", "voice": "voice-c"},
+    "deepgram": {"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en"},
 }
 
 
@@ -121,7 +153,7 @@ class FakeCloud:
             def _answer(self, r: dict, good) -> None:
                 with outer.lock:
                     key = outer.key
-                if r["headers"].get(outer.shape.key_header) != key:
+                if r["headers"].get(outer.shape.key_header) != outer.shape.key_prefix + key:
                     self._send(*outer.shape.refused())
                 else:
                     self._send(*good())

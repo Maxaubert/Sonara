@@ -264,9 +264,9 @@ Common options (every kind): `timeout_ms` (1000..=120000; default 15000 cloud, 6
 | `elevenlabs` | default `https://api.elevenlabs.io` | default `eleven_flash_v2_5` | required (voice_id) | `output_format` (`pcm_24000` default; `pcm_16000`, `pcm_22050`, `pcm_44100` (Pro tier)), `stability`, `similarity_boost`, `style` (0..=1), `language_code`, `enable_logging` (bool, default true: false only helps enterprise accounts) |
 | `azure` | optional full endpoint base, e.g. `https://westeurope.tts.speech.microsoft.com`; else from `region` | none | required ShortName, e.g. `en-US-AvaMultilingualNeural` | `region` (required without `url`), `output_format` (`raw-24khz-16bit-mono-pcm` default; any `raw-*-16bit-mono-pcm` listed in 13), `lang` (xml:lang, default from the voice's locale prefix) |
 | `google` | default `https://texttospeech.googleapis.com` | none (`model_name` option for Gemini TTS, flagged) | required, e.g. `en-US-Chirp3-HD-Kore` | `language_code` (default from the voice name prefix), `sample_rate` (default 24000), `user_project` (sent as `x-goog-user-project`) |
-| `cartesia` | default `https://api.cartesia.ai` | default `sonic-3.6` | required voice id (uuid) | `api_version` (default `2026-08-14`), `language` (default `en`), `sample_rate` (default 24000) |
+| `cartesia` | default `https://api.cartesia.ai` | default `sonic-3.6` | required voice id (uuid) | `api_version` (default `2026-08-14`), `language` (default `en`), `sample_rate` (8000, 16000, 22050, 24000 default, 44100, 48000) |
 | `deepgram` | default `https://api.deepgram.com` (EU `https://api.eu.deepgram.com` by url) | the voice is the model: `voice` holds e.g. `aura-2-thalia-en`; `model` unused | required | `sample_rate` (8000, 16000, 24000 default, 32000, 48000) |
-| `command` | none | none | optional, substituted into `{voice}` | `argv` (required, array, `argv[0]` an absolute path to an existing `.exe`, `.bat` refused), `input` (`stdin` default, or `arg`: `{text}` must appear in argv), `output` (`stdout-wav` default, `stdout-pcm`, `file`: `{out}` must appear in argv), `sample_rate` (required for `stdout-pcm`), `voices` (array of strings shown as the voice list) |
+| `command` | none | none | optional, substituted into `{voice}` | `argv` (required, array, `argv[0]` an absolute path to an `.exe`, which must exist when the profile is added; `.bat` and `.cmd` refused; at most 64 entries), `input` (`stdin` default, or `arg`: `{text}` must appear in argv), `output` (`stdout-wav` default, `stdout-pcm`, `file`: `{out}` must appear in argv), `sample_rate` (required for `stdout-pcm`), `voices` (array of strings shown as the voice list) |
 
 **Presets of `openai-compatible`** (`options.preset`, default `generic`):
 
@@ -476,7 +476,7 @@ Spoken once per episode: when a reason first causes a fallback, and again only a
 | azure | SSML `<prosody rate="1.25">` | `clamp(s, 0.5, 2.0)` as a multiplier string | |
 | google | `audioConfig.speakingRate` | `clamp(s, 0.25, 2.0)` | |
 | cartesia | `generation_config.speed` | `clamp(s, 0.6, 1.5)` | |
-| deepgram | query `speed` | `clamp(s, 0.7, 1.5)` | **uncertain**: range not in the fetched docs, likely Aura-2 only; omit the parameter when `s` is 1.0, and the live test checks a 1.25 request is accepted. If Deepgram refuses it, the adapter sends no speed (a `bad_config` on `speed` is retried once without it and remembered) |
+| deepgram | query `speed` | `clamp(s, 0.7, 1.5)` | **uncertain**: range not in the fetched docs, likely Aura-2 only; omit the parameter when `s` is 1.0, and the live test checks a 1.25 request is accepted. If Deepgram refuses it, the adapter sends no speed (a `bad_config` on `speed` is retried once without it and remembered for the engine's life, until a restart or a profile replace) |
 | command | `{rate}` (wpm), `{speed}` (`s`, 2 decimals) placeholders | as is | |
 
 ## 10. Protocol (additions to `docs/protocol-v1.md`, protocol 1.2)
@@ -706,7 +706,7 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 ### 13.3 Uncertain facts (to verify with the live tests before each PR's "merge?")
 
 1. Google API-key auth (`X-goog-api-key`) for `text:synthesize` is not on the official TTS auth page. Still open after PR2 (2026-10-04): `google_live` exists but was not run (no key on the build machine); it decides this at the PR's hands-on step.
-2. Deepgram `speed` range and model support; Deepgram 402 for exhausted credit.
+2. Deepgram `speed` range and model support; Deepgram 402 for exhausted credit. Still open after PR3 (2026-10-04): `deepgram_live` exists but was not run (no key on the build machine); it prints whether a 250 wpm request comes back shorter than a 200 wpm one.
 3. Cartesia: whether `/tts/bytes` starts sending before synthesis ends (no effect on this design, which collects the body).
 4. Chatterbox API non-streaming WAV sample format (float32 expected; `wav::decode` handles both).
 5. ElevenLabs model availability per account (`eleven_v4_turbo`); the default stays `eleven_flash_v2_5`.
@@ -793,6 +793,18 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - [ ] 4. Conformance fakes for Cartesia and Deepgram; a `command` profile with the helper binary.
 - [ ] 5. Live: `cartesia_live` (`CARTESIA_API_KEY`, `SONARA_LIVE_CARTESIA_VOICE`), `deepgram_live` (`DEEPGRAM_API_KEY`; also decides uncertain fact 2), `command_live` (`SONARA_LIVE_COMMAND`: a JSON argv of a real local program, for example a Piper install of the user's own).
 - [ ] 6. Docs, version 0.17.0, hands-on, "merge?".
+
+**Deviations found while building PR3** (the sections above are updated where they apply):
+
+- Cartesia's body names the voice `{"mode": "id", "id": ...}` (13.1 said `{"id": ...}`): `mode` is the documented shape for every API version. `generation_config` is left out at speed 1.0, as ElevenLabs' `voice_settings` is, so a model without it is not asked for it.
+- Mapping rows the tables of 13.2 leave open: Cartesia 403 other than `plan_upgrade_required` is `auth`, a 404 without an `error_code` whose text names the voice (older versions' `Title: Message` bodies) is `bad_voice`, and a `bad_config` that mentions the version, or `model_not_found`, says to check `options.api_version` and the model. Deepgram's error bodies (`err_code`, `err_msg`) are read by the shared `ErrorBody`; a 400 naming `speed` is `bad_config` (it triggers the retry without speed), one naming the model is `bad_voice`.
+- Option validation as for PR2: Cartesia `api_version` a date (digits and `-`), `language` a language code, `sample_rate` one of Cartesia's rates; Deepgram `sample_rate` one of 8000, 16000, 24000, 32000, 48000, and a `model` is refused (the voice is the model); `command` refuses `url` and `model`, `{out}` without `output: file`, more than 64 `argv` entries, and voices that are not plain text.
+- `Adapter::adapt(&ExtError) -> bool` (default `false`) is how Deepgram drops `speed`: after a failed request the engine asks the adapter once per part whether it changed what it sends, and if so rebuilds and sends the request again.
+- The `command` program must exist when the profile is **added** (`Profile::check_new`, called by `engine_add`), not when `engines.json` is loaded: a stored profile whose program is gone (a drive not mounted yet) stays registered, reads with the fallback (`bad_config`) and works again once the program is back. Only `.exe` is accepted, so `.cmd` is refused like `.bat`.
+- A `command` voice is optional (no voice is not `bad_config` for this kind). Messages name the program by its file name only, never its folder. When no key resolves, `SONARA_ENGINE_KEY` is removed from the child's environment, so it never inherits one.
+- `CancelToken::run` now also drops a result that arrives after a cancel (a program killed on the cancel answers at once with its failure, which must not reach the fallback); test `a_result_after_a_cancel_is_dropped`.
+- The test program is `src/bin/sonara-fake-tts.rs` with `required-features = ["test-util", "external"]`; Cargo builds it for the crate's own integration tests (`env!("CARGO_BIN_EXE_sonara-fake-tts")`), so no separate crate was needed. The conformance test of `command` (`conformance/engines/test_command_engine.py`) runs the Python interpreter with a small script as the program instead, since conformance builds only `sonarad`, `sonara-hook` and `sonara-cli`.
+- Live tests (`cartesia_live`, `deepgram_live`, `command_live`) were written but not run (no provider keys or local speech program on the build machine); step 6's hands-on decides them.
 
 ### PR4 (#227, 0.18.0): settings page and README
 

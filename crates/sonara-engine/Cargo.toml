@@ -18,6 +18,12 @@ external = ["dep:ureq", "dep:serde_json", "dep:windows", "dep:sonara-log", "dep:
 # The deterministic `fake` engine for tests of higher crates.
 test-util = []
 
+# A stand-in speech program for the `command` kind's tests (never shipped).
+[[bin]]
+name = "sonara-fake-tts"
+path = "src/bin/sonara-fake-tts.rs"
+required-features = ["test-util", "external"]
+
 [dependencies]
 thiserror.workspace = true
 # Google's `audioContent` (base64 in JSON); the version ureq already uses.

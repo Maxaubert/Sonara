@@ -297,8 +297,8 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
 Sonara runs on your computer and has no servers, accounts or telemetry. The only text that
 leaves your machine is a finished reply in summary mode, sent to Anthropic (`claude -p`) or
 OpenAI (`codex exec`) depending on the engine you chose, and, only if you add and select an
-external speech engine (OpenAI, ElevenLabs, Azure, Google), the text read aloud, sent to that
-provider. Details, and every file Sonara keeps,
+external speech engine (OpenAI, ElevenLabs, Azure, Google, Cartesia, Deepgram), the text read
+aloud, sent to that provider (a speech program of your own on your PC keeps it local). Details, and every file Sonara keeps,
 are in [PRIVACY.md](PRIVACY.md).
 
 ## Contributing

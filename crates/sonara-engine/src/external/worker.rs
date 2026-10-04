@@ -56,6 +56,10 @@ impl CancelToken {
         }
         loop {
             match rx.recv_timeout(POLL) {
+                // A result that comes after a cancel is dropped too: a
+                // program killed on the cancel answers with its failure,
+                // which must not reach the fallback.
+                Ok(_) if self.cancelled_since(gen) => return Err(Cancelled),
                 Ok(v) => return Ok(v),
                 Err(RecvTimeoutError::Timeout) if self.cancelled_since(gen) => {
                     return Err(Cancelled)
@@ -110,5 +114,18 @@ mod tests {
         assert_eq!(t.run(t.generation(), || 1), Ok(1));
         assert_eq!(t.sleep(gen, Duration::from_secs(5)), Err(Cancelled));
         assert_eq!(t.sleep(t.generation(), Duration::from_millis(1)), Ok(()));
+    }
+
+    #[test]
+    fn a_result_after_a_cancel_is_dropped() {
+        let t = Arc::new(CancelToken::new());
+        let gen = t.generation();
+        let t2 = t.clone();
+        // The work notices the cancel and answers at once (a killed program).
+        let r = t.run(gen, move || {
+            t2.cancel();
+            "killed"
+        });
+        assert_eq!(r, Err(Cancelled));
     }
 }

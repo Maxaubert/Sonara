@@ -161,6 +161,13 @@ pub trait Adapter: Send + Sync {
     fn next_voices_page(&self, _body: &[u8], _key: Option<&Secret>) -> Option<HttpRequest> {
         None
     }
+    /// After a failed request: whether the adapter changed what it sends
+    /// so that the same part is worth one more try (Deepgram drops `speed`
+    /// when the API refuses it, and remembers that). Called at most once
+    /// per part.
+    fn adapt(&self, _error: &ExtError) -> bool {
+        false
+    }
 }
 
 /// Percent-encode a query value or a path segment.
@@ -293,9 +300,12 @@ impl ErrorBody {
         ErrorBody {
             message: text(o.get("message"))
                 .or_else(|| text(o.get("msg")))
+                .or_else(|| text(o.get("err_msg")))
                 .or_else(|| text(o.get("error")))
                 .or_else(|| text(o.get("title"))),
-            code: text(o.get("code")).or_else(|| text(o.get("error_code"))),
+            code: text(o.get("code"))
+                .or_else(|| text(o.get("error_code")))
+                .or_else(|| text(o.get("err_code"))),
             kind: text(o.get("type")),
             param: text(o.get("param")),
             status: text(o.get("status")),
@@ -408,6 +418,16 @@ mod tests {
             br#"{"error": {"code": 500, "message": "model loading", "type": ""}}"#,
         );
         assert_eq!(localai.code.as_deref(), Some("500"));
+        let deepgram = ErrorBody::parse(
+            br#"{"err_code": "INVALID_QUERY_PARAMETER", "err_msg": "Unknown model", "request_id": "r"}"#,
+        );
+        assert_eq!(deepgram.code.as_deref(), Some("INVALID_QUERY_PARAMETER"));
+        assert_eq!(deepgram.message.as_deref(), Some("Unknown model"));
+        let cartesia = ErrorBody::parse(
+            br#"{"error_code": "voice_not_found", "title": "Not found", "message": "No voice", "request_id": "r"}"#,
+        );
+        assert_eq!(cartesia.code.as_deref(), Some("voice_not_found"));
+        assert_eq!(cartesia.message.as_deref(), Some("No voice"));
         let plain = ErrorBody::parse(b"Service Unavailable");
         assert_eq!(plain.message.as_deref(), Some("Service Unavailable"));
         assert_eq!(ErrorBody::parse(b"<html>x</html>").message, None);
