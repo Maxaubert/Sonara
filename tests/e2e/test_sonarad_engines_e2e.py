@@ -114,6 +114,12 @@ def add_through_the_form(page, provider, key=SECRET):
     pw.expect(page.locator("#profile-rows [data-engine=local]")).to_be_visible()
 
 
+def close_form(page):
+    """The form is a modal drawer (#237): close it to reach the list."""
+    page.click("#ef-cancel")
+    pw.expect(page.locator("#engine-form")).to_be_hidden()
+
+
 def test_add_a_profile_with_a_key_the_key_never_comes_back(live, browser, provider):
     lv = live()
     page, replies = open_engines(browser, lv.url)
@@ -178,6 +184,7 @@ def test_test_speaks_and_shows_the_time(live, browser, provider):
     lv = live()
     page, _ = open_engines(browser, lv.url)
     add_through_the_form(page, provider)
+    close_form(page)
     row = page.locator("#profile-rows [data-engine=local]")
     before = len(provider.speech())
     with page.expect_response(lambda r: r.url.endswith("/v1/engine_test")) as resp:
@@ -192,6 +199,7 @@ def test_an_auth_failure_shows_its_reason(live, browser, provider):
     lv = live()
     page, _ = open_engines(browser, lv.url)
     add_through_the_form(page, provider)
+    close_form(page)
     provider.fail(401, {"message": "Incorrect API key provided", "type": "invalid_request_error",
                         "code": "invalid_api_key"})
     row = page.locator("#profile-rows [data-engine=local]")
@@ -206,6 +214,7 @@ def test_use_switches_the_engine_and_the_speech_page_names_it(live, browser, pro
     lv = live()
     page, _ = open_engines(browser, lv.url)
     add_through_the_form(page, provider)
+    close_form(page)
     row = page.locator("#profile-rows [data-engine=local]")
     row.locator("button.engine-use").click()
     assert eventually(lambda: lv.get("engine") == "local")
@@ -220,6 +229,7 @@ def test_remove_asks_first_and_switches_away_from_the_current_engine(live, brows
     lv = live()
     page, _ = open_engines(browser, lv.url)
     add_through_the_form(page, provider)
+    close_form(page)
     lv.request({"type": "set", "key": "engine", "value": "local"})
     row = page.locator("#profile-rows [data-engine=local]")
     # Declining keeps it.
@@ -249,9 +259,9 @@ def test_edit_keeps_the_key_and_never_prefills_it(live, browser, provider):
     pw.expect(page.locator("#ef-id")).to_have_value("local")
     pw.expect(page.locator("#ef-id")).to_be_disabled()
     pw.expect(page.locator("#ef-key")).to_have_value("")
-    pw.expect(page.locator("#ef-key-hint")).to_contain_text("Leave empty to keep the saved key")
-    # A key is bound to its address: the hint says a new one needs it again.
-    pw.expect(page.locator("#ef-key-hint")).to_contain_text("another address or region needs the key again")
+    # #237: no helper text; the empty field says the saved key is kept.
+    assert page.locator("#ef-key-hint").count() == 0
+    pw.expect(page.locator("#ef-key")).to_have_attribute("placeholder", "Saved key kept")
     page.fill("#ef-label", "Renamed")
     page.click("#ef-save")
     assert eventually(lambda: lv.request({"type": "engine_list"})["engines"][0]["label"] == "Renamed")
@@ -326,6 +336,11 @@ def test_the_whole_path_works_with_the_keyboard(live, browser, provider):
     pw.expect(page.locator("#ef-voice")).to_have_value("af_heart")
     page.locator("#ef-url").press("Enter")   # Enter submits the form
     assert eventually(lambda: [e["id"] for e in lv.request({"type": "engine_list"})["engines"]] == ["kbd"])
+    pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+    # Escape closes the drawer (#237) and focus goes back to Add an engine.
+    page.keyboard.press("Escape")
+    pw.expect(page.locator("#engine-form")).to_be_hidden()
+    pw.expect(page.locator("#engine-new")).to_be_focused()
     row = page.locator("#profile-rows [data-engine=kbd]")
     row.locator("button.engine-use").focus()
     page.keyboard.press("Enter")
@@ -514,7 +529,8 @@ def test_selecting_an_engine_switches_to_it_and_its_voices_follow(live, browser,
     page.wait_for_selector("#engine-select option[value=local]", state="attached")
     page.select_option("#engine-select", "local")
     assert eventually(lambda: lv.get("engine") == "local")
-    pw.expect(page.locator("#speech .state")).to_contain_text("Now reading with Test server")
+    pw.expect(page.locator("#toast-text")).to_contain_text("Now reading with Test server")
+    pw.expect(page.locator("#now-text")).to_contain_text("Test server")
     pw.expect(page.locator("#engine-status")).to_contain_text("Test server")
     page.wait_for_selector("#voice-select option[value=am_echo]", state="attached")
     page.select_option("#engine-select", "fake")
@@ -766,8 +782,9 @@ def test_gemini_offers_googles_live_models_and_voices_and_presets_none(live, bro
         pw.expect(page.locator("#ef-key")).to_have_attribute("aria-required", "true")
         pw.expect(page.locator("#ef-model-req")).to_be_visible()
         pw.expect(page.locator("#ef-voice-req")).to_be_visible()
-        pw.expect(page.locator("#ef-key-hint")).to_contain_text("aistudio.google.com")
-        pw.expect(page.locator("#ef-key-hint")).to_contain_text("free tier")
+        # #237: no helper text; the key field names where the key comes from.
+        assert page.locator("#ef-key-hint").count() == 0
+        pw.expect(page.locator("#ef-key")).to_have_attribute("placeholder", re.compile("aistudio.google.com"))
         # Nothing preselected, no model or voice name anywhere in the form.
         pw.expect(page.locator("#ef-model-select")).to_have_value("")
         pw.expect(page.locator("#ef-voice")).to_have_value("")
@@ -837,8 +854,8 @@ def send_choice(page):
 
 
 def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, browser, provider):
-    # #235: "Send to the engine" with two choices, each with its one-line
-    # hint. The default is preselected per provider (a whole message for the
+    # #235: "Send to the engine" with two choices (#237: no hint under
+    # them). The default is preselected per provider (a whole message for the
     # cloud, a sentence at a time for a server on this PC) and is sent only
     # once the user picks one; an edit shows the stored choice.
     cloud = FakeCloud("elevenlabs", SECRET)
@@ -853,18 +870,16 @@ def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, 
         assert labels == ["Full message in one request", "As it comes in"]
         # OpenAI (the cloud) first: a whole message.
         assert send_choice(page) == "message"
-        pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per reply")
-        pw.expect(page.locator("#ef-send-hint")).to_contain_text("default for this provider")
+        assert page.locator("#ef-send-hint").count() == 0
         # A full message's options (review of #236): the wait for audio and
         # the split limit, shown only for it; the timeout speaks of answers.
         page.locator("#engine-form details.more").evaluate("d => { d.open = true; }")
         pw.expect(page.locator("#ef-first-audio-row")).to_be_visible()
         pw.expect(page.locator("#ef-chunk-row")).to_be_visible()
-        pw.expect(page.locator("#ef-timeout-hint")).to_contain_text("full message gets more time")
+        assert page.locator("#ef-timeout-hint").count() == 0
         # A server on this PC: a sentence at a time.
         page.select_option("#ef-preset", "kokoro-fastapi")
         assert send_choice(page) == "sentence"
-        pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per sentence")
         pw.expect(page.locator("#ef-first-audio-row")).to_be_hidden()
         pw.expect(page.locator("#ef-chunk-row")).to_be_hidden()
         # Its address moved off this PC: the cloud default again.
@@ -883,9 +898,6 @@ def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, 
         page.keyboard.press("ArrowRight")
         assert send_choice(page) == "sentence"
         pw.expect(page.locator("#ef-send [data-value=sentence]")).to_be_focused()
-        hint = page.locator("#ef-send-hint")
-        pw.expect(hint).to_contain_text("One request per sentence")
-        pw.expect(hint).not_to_contain_text("default")
         page.click("#ef-save")
         pw.expect(page.locator("#ef-save")).to_have_text("Saved")
         view = lv.request({"type": "engine_list"})["engines"][0]
@@ -962,3 +974,53 @@ def test_openai_lists_its_models_and_types_its_voice(live, browser, provider):
     assert view["model"] == "tts-b" and view["voice"] == "typed-voice", view
     page.close()
 
+
+
+# ---- the drawer (#237) -------------------------------------------------------
+
+
+def test_the_form_is_a_modal_drawer(live, browser):
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.route("**/v1/voices", lambda route: route.abort())
+    page.route("**/v1/engine_models", lambda route: route.abort())
+    pw.expect(page.locator("#engine-form")).to_be_hidden()
+    page.locator("#engine-new").focus()
+    page.keyboard.press("Enter")
+    form = page.locator("#engine-form")
+    pw.expect(form).to_be_visible()
+    pw.expect(form).to_have_attribute("role", "dialog")
+    pw.expect(form).to_have_attribute("aria-modal", "true")
+    pw.expect(page.locator("#ef-scrim")).to_be_visible()
+    # The page behind is inert while the drawer is open.
+    assert page.evaluate("document.getElementById('window').inert") is True
+    # Tab stays inside: Shift+Tab from the first control wraps to the last.
+    pw.expect(page.locator("#ef-kind")).to_be_focused()
+    page.keyboard.press("Shift+Tab")
+    assert page.evaluate("document.getElementById('engine-form').contains(document.activeElement)")
+    # A change asks before closing; declining keeps it open.
+    page.fill("#ef-label", "Draft")
+    page.once("dialog", lambda d: d.dismiss())
+    page.click("#ef-x")
+    pw.expect(form).to_be_visible()
+    page.once("dialog", lambda d: d.accept())
+    page.click("#ef-scrim", position={"x": 20, "y": 20})
+    pw.expect(form).to_be_hidden()
+    pw.expect(page.locator("#ef-scrim")).to_be_hidden()
+    assert page.evaluate("document.getElementById('window').inert") is False
+    pw.expect(page.locator("#engine-new")).to_be_focused()
+    page.close()
+
+
+def test_the_engines_page_lists_only_added_engines(live, browser, provider):
+    # Kokoro and Windows voices are built in: they are on the Speech
+    # dropdown, never in the Engines list (#237).
+    lv = live()
+    add_local(lv, provider)
+    page, _ = open_engines(browser, lv.url)
+    rows = page.locator("#profile-rows [data-engine]")
+    pw.expect(rows).to_have_count(1)
+    assert rows.first.get_attribute("data-engine") == "local"
+    pw.expect(rows.first.locator(".logo")).to_have_text("T")
+    pw.expect(page.locator("#engines-empty")).to_be_hidden()
+    page.close()

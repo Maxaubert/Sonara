@@ -4,481 +4,531 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f7f7fa" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#14151a" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#000000">
   <title>Sonara Settings</title>
-  <script>
-    // The theme: the user's choice on this page, else the system's.
-    (function () {
-      var t = null;
-      try { t = localStorage.getItem("sonara-theme"); } catch (e) {}
-      if (t !== "light" && t !== "dark") {
-        t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-      }
-      document.documentElement.dataset.theme = t;
-    })();
-  </script>
   <style>
-    /* The runtime's settings page: the Python plugin's sections and layout,
-       on protocol v1 and the public HTTP API only, showing only what the
-       runtime does (#214). */
+    /* The runtime's settings page (#237): black, layered surfaces, Geist,
+       a teal accent. Every control drives protocol v1 over the public HTTP
+       API. The fonts are compiled into sonarad and served inline
+       (settings_page.rs replaces the marker below). */
+    /*__SONARA_FONTS__*/
     :root {
-      color-scheme: light;
-      --nav: #eff0f4;
-      --content: #f7f7fa;
-      --group: #fff;
-      --subtle: #f2f2f6;
-      --text: #1c1c20;
-      --secondary: #5d5e67;
-      --tertiary: #6e6f78;
-      --line: rgba(28,28,32,.11);
-      --line-strong: rgba(28,28,32,.22);
-      --accent: #4f46e5;
-      --accent-text: #4338ca;
-      --accent-wash: #e9e8ff;
-      --on-accent: #fff;
-      --green: #1f7a54;
-      --green-wash: #e7f6ed;
-      --red: #b3263a;
-      --red-wash: #fdecee;
-      --track: #cfd1d9;
-      --focus: #4f46e5;
-    }
-    html[data-theme="dark"] {
       color-scheme: dark;
-      --nav: #1b1c22;
-      --content: #14151a;
-      --group: #202127;
-      --subtle: #292a32;
-      --text: #f4f4f6;
-      --secondary: #b9bac3;
-      --tertiary: #a2a3ad;
-      --line: rgba(255,255,255,.1);
-      --line-strong: rgba(255,255,255,.2);
-      --accent: #6d66f0;
-      --accent-text: #b4b0ff;
-      --accent-wash: #312d65;
-      --green: #66d7a3;
-      --green-wash: #1d3c31;
-      --red: #ff8b96;
-      --red-wash: #45222a;
-      --track: #464852;
-      --focus: #a5a0ff;
+      --bg: #000;
+      --s1: #08080b;          /* sidebar, drawer */
+      --s2: #0e0e13;          /* groups */
+      --s3: #16161d;          /* controls */
+      --s4: #1e1e27;          /* control hover */
+      --s5: #262631;          /* the selected segment */
+      --line: rgba(255,255,255,.07);
+      --line2: rgba(255,255,255,.12);
+      --line3: rgba(255,255,255,.2);
+      --tx: #f0f0f5;
+      --tx2: #a9a9b8;
+      --tx3: #8a8a9c;
+      --accent: #2ee6c8;
+      --accent2: #1aa39b;
+      --accent-ring: rgba(46,230,200,.6);
+      --accent-wash: rgba(46,230,200,.1);
+      --ok: #9be7ff;
+      --bad: #ff6b7f;
+      --bad-wash: rgba(255,107,127,.1);
+      --r: 10px;
+      --sans: "Geist", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --mono: "Geist Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+      --chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a9a9b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { height: 100%; }
     body {
-      margin: 0; height: 100vh; overflow: hidden;
-      color: var(--text); background: var(--content);
-      font: 14px/1.4 'Segoe UI Variable','Segoe UI',system-ui,-apple-system,sans-serif;
+      margin: 0; overflow: hidden; background: var(--bg); color: var(--tx);
+      font: 14px/1.45 var(--sans); font-feature-settings: "ss01" off;
       -webkit-font-smoothing: antialiased;
     }
-    button, input, select, textarea { font: inherit; color: inherit; }
-    button { cursor: pointer; }
-    button:disabled, select:disabled, input:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
-    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    button, input, select, textarea { font: inherit; color: inherit; margin: 0; }
+    button { cursor: pointer; background: none; border: 0; padding: 0; }
+    h1, h2, p { margin: 0; }
+    ::selection { background: rgba(46,230,200,.28); color: #fff; }
+    :focus { outline: none; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+    button:disabled, select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; }
     .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
-    .skip { position:absolute; left:8px; top:-40px; z-index:100; padding:8px 12px; border-radius:8px; background:var(--accent); color:var(--on-accent); text-decoration:none; }
+    .skip { position:absolute; left:8px; top:-48px; z-index:100; padding:8px 12px; border-radius:8px; background:var(--accent); color:#000; font-weight:500; text-decoration:none; }
     .skip:focus { top:8px; }
-    .window { width:100vw; height:100vh; display:grid; grid-template-columns:260px minmax(0,1fr); overflow:hidden; }
-    .nav-pane { background:var(--nav); border-right:1px solid var(--line); padding:22px 12px 18px; display:flex; flex-direction:column; overflow:auto; }
-    .brand { display:flex; align-items:center; gap:10px; padding:8px 8px 16px; }
-    .brand-icon { width:33px; height:33px; border-radius:10px; display:grid; place-items:center; background:linear-gradient(145deg,#746cf4,#4338ca); color:#fff; }
-    .brand-icon svg { width:20px; }
-    .brand strong { font-size:15px; letter-spacing:-.25px; }
-    .search { position:relative; display:block; margin:0 2px 16px; }
-    .search svg { position:absolute; width:14px; height:14px; left:10px; top:10px; fill:none; stroke:var(--tertiary); stroke-width:2; }
-    .search input { width:100%; height:34px; padding:0 10px 0 31px; border:1px solid var(--line-strong); border-radius:9px; background:var(--group); font-size:13px; }
-    .side-nav { display:grid; gap:2px; }
-    .side-nav button { display:flex; align-items:center; gap:10px; width:100%; min-height:36px; padding:0 8px; border:0; border-radius:9px; background:transparent; color:var(--text); text-align:left; font-size:13px; }
-    .side-nav button:hover { background:var(--subtle); }
-    .side-nav button[aria-current="page"] { background:var(--accent); color:var(--on-accent); }
-    .side-nav button[hidden], .side-nav button.cap-off { display:none; }
-    .side-icon { width:24px; height:24px; display:grid; place-items:center; border-radius:7px; color:#fff; background:#5b54d6; flex:0 0 auto; }
-    .side-icon svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    [data-page="summary"] .side-icon{background:#c46a14}[data-page="audio"] .side-icon{background:#23805b}[data-page="sessions"] .side-icon{background:#2f6fae}[data-page="hotkeys"] .side-icon{background:#5c6370}[data-page="advanced"] .side-icon{background:#7d4fb5}[data-page="system"] .side-icon{background:#5f6470}[data-page="engines"] .side-icon{background:#b0473a}
-    .side-nav button[aria-current="page"] .side-icon { background:rgba(255,255,255,.2); }
-    .empty-search { padding:10px; color:var(--secondary); font-size:13px; }
-    .nav-footer { margin-top:auto; padding:12px 9px 0; display:flex; align-items:center; justify-content:space-between; gap:8px; border-top:1px solid var(--line); color:var(--secondary); font-size:12.5px; }
-    .content-pane { position:relative; overflow-y:auto; background:var(--content); }
-    .page { display:none; max-width:1080px; margin:0 auto; padding:44px 56px 80px; animation:fade .2s ease; }
+
+    /* ---- frame: sidebar and content ---------------------------------- */
+    .window { position:fixed; inset:0; display:grid; grid-template-columns:232px minmax(0,1fr); }
+    .nav-pane { background:var(--s1); border-right:1px solid var(--line); display:flex; flex-direction:column; padding:12px 10px; min-height:0; }
+    .search { position:relative; display:block; margin-bottom:12px; }
+    .search svg { position:absolute; left:10px; top:10px; width:14px; height:14px; fill:none; stroke:var(--tx3); stroke-width:2; stroke-linecap:round; }
+    .search input { width:100%; height:34px; background:var(--s3); border:1px solid transparent; border-radius:8px; padding:0 10px 0 32px; font-size:13px; }
+    .search input::placeholder { color:var(--tx3); }
+    .search input:focus-visible { outline:none; border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+    .search input::-webkit-search-cancel-button { filter:invert(.6); }
+    .side-nav { display:flex; flex-direction:column; gap:2px; flex:1; overflow:auto; }
+    .side-nav button { position:relative; display:flex; align-items:center; gap:11px; height:36px; padding:0 10px; border-radius:8px; color:var(--tx2); text-align:left; font-size:13.5px; transition:background .12s, color .12s; }
+    .side-nav button svg { flex:none; width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .side-nav button:hover { background:var(--s3); color:var(--tx); }
+    .side-nav button[aria-current="page"] { background:var(--s3); color:var(--tx); }
+    .side-nav button[aria-current="page"]::before { content:""; position:absolute; left:-10px; top:9px; bottom:9px; width:3px; border-radius:0 3px 3px 0; background:var(--accent); }
+    .side-nav button[aria-current="page"] svg { color:var(--accent); }
+    .side-nav button.cap-off { display:none; }
+    .empty-search { padding:8px 10px; color:var(--tx3); font-size:13px; }
+    .now { margin-top:10px; padding:10px 12px; border:1px solid var(--line); border-radius:var(--r); background:var(--s2); font-size:12.5px; }
+    .now .k { color:var(--tx3); font-size:11.5px; }
+    .now .v { display:flex; align-items:center; gap:8px; margin-top:3px; color:var(--tx); min-width:0; }
+    .now .v span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--tx3); flex:none; }
+    .dot.ok { background:var(--accent); }
+    .dot.bad { background:var(--bad); }
+    @media (prefers-reduced-motion: no-preference) { .dot.ok { animation:breathe 2.4s ease-in-out infinite; } }
+    @keyframes breathe { 50% { opacity:.45; } }
+
+    .content-pane { min-width:0; min-height:0; overflow:auto; scrollbar-color:#2a2a35 transparent; scrollbar-width:thin; }
+    .page { display:none; max-width:720px; margin:0 auto; padding:28px 36px 64px; }
     .page.active { display:block; }
-    @keyframes fade { from { opacity:0; transform:translateX(4px); } }
-    .title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:26px; }
-    h1 { text-wrap:balance; margin:0; font-size:32px; line-height:1.1; letter-spacing:-.6px; font-weight:700; }
-    .title-row p { margin:8px 0 0; color:var(--secondary); font-size:14.5px; }
-    .state { display:flex; align-items:center; gap:6px; color:var(--secondary); font-size:13px; opacity:0; transition:opacity .25s; white-space:nowrap; }
-    .state.flash, .state.error { opacity:1; }
-    .state i { width:7px; height:7px; border-radius:50%; background:var(--green); }
-    .state.error { color:var(--red); font-weight:600; white-space:normal; max-width:420px; }
-    .state.error i { background:var(--red); }
-    .group-label { margin:28px 3px 10px; color:var(--secondary); font-size:13px; font-weight:650; }
-    .inset { background:var(--group); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
-    .pref { display:grid; grid-template-columns:minmax(200px,.9fr) minmax(280px,1.15fr); gap:30px; align-items:center; margin-left:20px; padding:20px 20px 20px 0; border-top:1px solid var(--line); }
-    .pref:first-child { border-top:0; }
-    .pref-copy strong, .pref-copy label.title { display:block; font-size:15px; font-weight:650; margin-bottom:4px; }
-    .hint { color:var(--secondary); font-size:13px; line-height:1.45; }
-    .control .hint { margin-top:8px; }
-    .pref.dim { opacity:.55; }
-    .pref[hidden] { display:none; }
-    .notice { margin:0 0 14px; padding:12px 14px; border-radius:12px; background:var(--accent-wash); color:var(--text); font-size:13.5px; line-height:1.45; }
-    .notice[hidden] { display:none; }
-    select, .field { width:100%; min-height:42px; border:1px solid var(--line-strong); border-radius:10px; padding:0 12px; background:var(--subtle); font-size:14px; }
-    .voice { display:grid; grid-template-columns:1fr 42px; gap:9px; }
-    .play { width:42px; height:42px; border:1px solid var(--line-strong); border-radius:10px; background:var(--subtle); display:grid; place-items:center; color:var(--text); }
-    .play svg { width:16px; fill:currentColor; }
-    .play:hover { color:var(--accent-text); border-color:var(--accent); }
-    .play[aria-busy="true"] { background:var(--accent); color:var(--on-accent); border-color:var(--accent); }
-    .range-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:9px; color:var(--secondary); font-size:13px; }
-    .range-head output { font-weight:700; color:var(--text); font-size:14.5px; }
-    input[type="range"] { width:100%; height:24px; margin:0; appearance:none; background:transparent; cursor:pointer; display:block; }
-    input[type="range"]::-webkit-slider-runnable-track { height:4px; border-radius:99px; background:linear-gradient(90deg,var(--accent) 0 var(--fill,50%),var(--track) var(--fill,50%) 100%); }
-    input[type="range"]::-webkit-slider-thumb { appearance:none; width:18px; height:18px; margin-top:-7px; border-radius:50%; background:#fff; border:1px solid rgba(0,0,0,.25); box-shadow:0 1px 4px rgba(0,0,0,.25); }
-    input[type="range"]::-moz-range-track { height:4px; border-radius:99px; background:var(--track); }
-    input[type="range"]::-moz-range-progress { height:4px; border-radius:99px; background:var(--accent); }
-    input[type="range"]::-moz-range-thumb { width:18px; height:18px; border-radius:50%; background:#fff; border:1px solid rgba(0,0,0,.25); }
-    .ends { display:flex; justify-content:space-between; margin-top:6px; color:var(--tertiary); font-size:12px; }
-    .segments { display:inline-flex; flex-wrap:wrap; background:var(--subtle); border:1px solid var(--line); border-radius:99px; padding:4px; gap:4px; }
-    .segments button { border:0; background:transparent; min-height:36px; padding:0 18px; border-radius:99px; font-size:14px; font-weight:600; color:var(--secondary); }
-    .segments button:hover { color:var(--text); }
-    .segments button[aria-checked="true"] { background:var(--accent); color:var(--on-accent); }
-    .stepper { display:inline-flex; height:42px; border:1px solid var(--line-strong); border-radius:10px; overflow:hidden; background:var(--subtle); }
-    .stepper button { width:42px; border:0; background:transparent; color:var(--text); font-size:19px; }
-    .stepper button:hover { background:var(--accent-wash); }
-    .stepper output { width:54px; display:grid; place-items:center; border-inline:1px solid var(--line); font-weight:700; }
-    .toggle-line { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-    .switch { width:48px; height:28px; border:0; border-radius:99px; padding:3px; background:var(--track); flex:0 0 auto; transition:background .2s; }
-    .switch::after { content:''; display:block; width:22px; height:22px; border-radius:50%; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.3); transition:transform .2s; }
-    .switch[aria-checked="true"] { background:var(--accent); }
-    .switch[aria-checked="true"]::after { transform:translateX(20px); }
-    .theme { width:38px; height:22px; padding:2px; }
-    .theme::after { width:18px; height:18px; }
-    .theme[aria-checked="true"]::after { transform:translateX(16px); }
-    .combo-body { padding:4px 20px 18px; }
-    #prompt-text { width:100%; min-height:200px; resize:vertical; font:12.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace; background:var(--subtle); border:1px solid var(--line-strong); border-radius:10px; padding:10px 12px; }
-    .prompt-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:8px; }
-    .btn { min-height:34px; padding:0 14px; border:1px solid var(--line-strong); border-radius:9px; background:var(--subtle); font-size:13px; font-weight:600; }
-    .btn:hover { color:var(--accent-text); border-color:var(--accent); }
-    .unit { position:relative; }
-    .unit .field { padding-right:56px; }
-    .unit span { position:absolute; right:12px; top:11px; color:var(--secondary); font-size:13px; }
-    .sess-head, .sess-row { display:grid; grid-template-columns:minmax(0,1fr) 64px; gap:14px; align-items:center; }
-    .sess-head { padding:12px 0 4px; color:var(--secondary); font-size:12px; font-weight:650; }
-    .sess-head span:nth-child(2) { text-align:center; }
-    .sess-row { padding:12px 0; border-bottom:1px solid var(--line); }
-    .sess-row:last-child { border-bottom:0; }
-    .sess-row .field { max-width:300px; }
-    .sess-row .switch { justify-self:center; }
-    .sess-sub { color:var(--secondary); font-size:12px; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-    .badge { display:inline-block; padding:1px 8px; border-radius:99px; background:var(--accent); color:var(--on-accent); font-size:11.5px; margin-left:6px; }
-    .badge.quiet { background:var(--subtle); color:var(--secondary); border:1px solid var(--line); }
-    details.older { border-top:1px solid var(--line); margin-top:4px; }
-    details.older summary { cursor:pointer; color:var(--secondary); font-size:13px; padding:10px 0 6px; }
-    .key-list .key-row { display:grid; grid-template-columns:1fr auto; gap:20px; align-items:center; margin-left:18px; padding:14px 18px 14px 0; border-top:1px solid var(--line); }
-    .key-list .key-row:first-child { border-top:0; }
-    .key-copy strong { display:block; font-size:14px; margin-bottom:3px; }
-    .key-copy span { display:block; color:var(--secondary); font-size:12.5px; }
-    .key-copy .warn { margin-top:5px; color:var(--red); font-size:12.5px; line-height:1.4; }
-    .key-copy .warn[hidden] { display:none; }
-    .keys { display:flex; align-items:center; gap:4px; }
-    .kbd { display:inline-flex; gap:4px; min-height:34px; align-items:center; padding:2px; border:0; background:transparent; border-radius:8px; }
-    .kbd i { font-style:normal; min-width:34px; padding:6px 10px; border:1px solid var(--line-strong); border-bottom-width:2px; border-radius:7px; background:var(--subtle); text-align:center; font-size:12.5px; font-weight:650; }
-    .kbd .unbound { opacity:.7; font-style:italic; }
-    .key-row.listen .kbd { outline:2px solid var(--accent); outline-offset:2px; }
-    .unbind { width:30px; height:30px; border:0; border-radius:7px; background:transparent; color:var(--secondary); font-size:17px; }
-    .unbind:hover { background:var(--red-wash); color:var(--red); }
-    .key-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:10px 4px; }
-    .key-actions .btn { flex-shrink:0; white-space:nowrap; }
-    .info { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--group); }
-    .metric { padding:12px 14px; border-top:1px solid var(--line); }
-    .metric:nth-child(-n+3) { border-top:0; }
-    .metric:not(:nth-child(3n+1)) { border-left:1px solid var(--line); }
-    .metric span { display:block; color:var(--secondary); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; }
-    .metric b { display:block; margin-top:4px; font-size:13.5px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
-    .file-row { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-left:18px; padding:14px 18px 14px 0; border-top:1px solid var(--line); }
-    .file-row:first-child { border-top:0; }
-    .file-row strong { display:block; font-size:14px; margin-bottom:3px; }
-    .engine-status { font-size:14px; font-weight:600; font-variant-numeric:tabular-nums; }
-    .engine-status.busy { color:var(--secondary); font-weight:500; }
-    .path { font:12.5px ui-monospace,"Cascadia Mono",Consolas,monospace; overflow-wrap:anywhere; }
-    .footer { display:flex; justify-content:space-between; padding:16px 3px 0; color:var(--secondary); font-size:12.5px; }
-    .banner { position:fixed; top:0; left:0; right:0; z-index:99; background:var(--red); color:#fff; padding:10px 16px; display:flex; gap:8px; font-size:13.5px; justify-content:center; }
-    html[data-theme="dark"] .banner { color:#1c1c20; }
-    .banner[hidden] { display:none; }
-    /* Engines (#227): the profiles the user added, and the add/edit form. */
-    .eng-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:20px; align-items:center; margin-left:20px; padding:16px 20px 16px 0; border-top:1px solid var(--line); }
-    .eng-row:first-child { border-top:0; }
-    .eng-name { display:flex; align-items:center; flex-wrap:wrap; gap:2px; font-size:15px; font-weight:650; overflow-wrap:anywhere; }
-    .eng-meta { display:flex; flex-wrap:wrap; gap:3px 16px; margin-top:4px; color:var(--secondary); font-size:13px; }
-    .eng-state { display:flex; align-items:center; gap:7px; margin-top:6px; font-size:13px; color:var(--secondary); }
-    .eng-state i { width:7px; height:7px; border-radius:50%; background:var(--tertiary); flex:0 0 auto; }
-    .eng-state.ok i { background:var(--green); }
-    .eng-state.bad { color:var(--red); }
-    .eng-state.bad i { background:var(--red); }
-    .engine-result { margin-top:6px; font-size:12.5px; line-height:1.45; color:var(--secondary); overflow-wrap:anywhere; }
-    .engine-result:empty { display:none; }
-    .engine-result.bad { color:var(--red); }
-    .eng-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+    h1 { font-size:22px; line-height:1.2; font-weight:600; letter-spacing:-.01em; margin-bottom:20px; }
+    h1:focus-visible { outline-offset:4px; }
+    .gl { font-size:12px; font-weight:500; color:var(--tx3); margin:26px 0 8px 2px; }
+
+    /* ---- groups and rows ---------------------------------------------- */
+    .group { background:var(--s2); border:1px solid var(--line); border-radius:12px; }
+    .group + .group { margin-top:12px; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:20px; min-height:54px; padding:10px 16px; }
+    .row + .row, .group > * + .row, .row + .line + .row { border-top:1px solid var(--line); }
+    .row .l { min-width:0; }
+    .n { font-weight:500; display:block; }
+    .row .c { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex:none; min-width:0; }
+    .row.block { display:block; }
+    .dim { opacity:.42; }
+    .notice { margin:0 0 14px; padding:11px 14px; border-radius:var(--r); background:rgba(26,163,155,.08); border:1px solid rgba(26,163,155,.3); color:var(--tx2); font-size:13px; }
+    .status-line { display:flex; align-items:center; gap:8px; padding:9px 16px; border-top:1px solid var(--line); font-size:12.5px; color:var(--tx2); }
+    .status-line .dot { width:6px; height:6px; }
+    .status-line.busy .dot { background:var(--tx3); animation:none; }
+    .status-line.bad .dot { background:var(--bad); animation:none; }
+    .sub-status { color:var(--tx2); font-size:12.5px; padding:0 16px 12px; margin-top:-4px; }
+    .empty { padding:16px; color:var(--tx3); font-size:13px; }
+
+    /* ---- controls ----------------------------------------------------- */
+    select, .fld {
+      height:34px; background-color:var(--s3); border:1px solid transparent; border-radius:8px; padding:0 12px; font-size:13.5px; transition:background-color .12s, border-color .12s;
+    }
+    select { appearance:none; -webkit-appearance:none; min-width:220px; max-width:100%; padding-right:32px; cursor:pointer;
+             background-image:var(--chev); background-repeat:no-repeat; background-position:right 12px center; text-overflow:ellipsis; }
+    select:hover:not(:disabled), .fld:hover:not(:disabled):not(:focus) { background-color:var(--s4); }
+    select:focus-visible, .fld:focus-visible { outline:none; border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+    option { background:#111117; color:var(--tx); }
+    .fld { width:100%; }
+    .fld::placeholder, textarea::placeholder { color:var(--tx3); opacity:1; }
+    .fld.mono, textarea.fld { font-family:var(--mono); font-size:12.5px; }
+    textarea.fld { height:auto; min-height:88px; padding:9px 12px; line-height:1.55; resize:vertical; }
+    .fld[aria-invalid="true"], select[aria-invalid="true"] { border-color:var(--bad); }
+    .seg { display:inline-flex; flex-wrap:wrap; background:var(--s3); border-radius:9px; padding:3px; gap:2px; }
+    .seg button { height:28px; padding:0 12px; border-radius:7px; color:var(--tx2); font-size:13px; white-space:nowrap; transition:background .12s, color .12s; }
+    .seg button:hover:not(:disabled) { color:var(--tx); }
+    .seg button[aria-checked="true"] { background:var(--s5); color:#fff; box-shadow:inset 0 0 0 1px var(--accent-ring); }
+    .seg button:focus-visible { outline-offset:1px; border-radius:7px; }
+    .switch { width:40px; height:22px; border-radius:11px; background:var(--s4); position:relative; flex:none; border:1px solid var(--line2); transition:background .15s, border-color .15s; }
+    .switch::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--tx2); transition:transform .15s, background .15s; }
+    .switch[aria-checked="true"] { background:rgba(46,230,200,.2); border-color:var(--accent); }
+    .switch[aria-checked="true"]::after { transform:translateX(18px); background:#fff; }
+    .switch:focus-visible { border-radius:11px; }
+    .range { display:flex; align-items:center; gap:12px; }
+    .range output { min-width:64px; text-align:right; font:12.5px var(--mono); color:var(--tx); font-variant-numeric:tabular-nums; }
+    input[type="range"] { -webkit-appearance:none; appearance:none; width:200px; height:20px; margin:0; background:transparent; cursor:pointer; }
+    input[type="range"]::-webkit-slider-runnable-track { height:3px; border-radius:2px; background:linear-gradient(90deg,var(--accent2),var(--accent)) 0/var(--fill,50%) 100% no-repeat, var(--s4); }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px; border-radius:50%; background:#fff; margin-top:-5.5px; border:0; }
+    input[type="range"]:focus-visible { outline:none; }
+    input[type="range"]:focus-visible::-webkit-slider-thumb { outline:2px solid var(--accent); outline-offset:2px; }
+    input[type="range"]::-moz-range-track { height:3px; background:var(--s4); border-radius:2px; }
+    input[type="range"]::-moz-range-progress { height:3px; background:var(--accent); }
+    input[type="range"]::-moz-range-thumb { width:14px; height:14px; border-radius:50%; background:#fff; border:0; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:32px; padding:0 14px; border-radius:8px; background:var(--s3); color:var(--tx); font-size:13px; white-space:nowrap; transition:background .12s; }
+    .btn:hover:not(:disabled) { background:var(--s4); }
+    .btn:active:not(:disabled) { transform:translateY(1px); }
+    .btn.primary { background:#fff; color:#000; font-weight:500; }
+    .btn.primary:hover:not(:disabled) { background:#e4e4ec; }
+    .btn.ghost { background:transparent; border:1px solid var(--line2); }
+    .btn.ghost:hover:not(:disabled) { background:var(--s3); }
+    .btn.danger { color:var(--bad); }
+    .btn.danger:hover:not(:disabled) { background:var(--bad-wash); }
+    .btn:disabled, .btn[aria-disabled="true"] { opacity:.45; }
     .btn[aria-busy="true"] { opacity:.7; cursor:progress; }
-    .btn[aria-disabled="true"] { opacity:.5; cursor:not-allowed; }
-    .btn[aria-disabled="true"]:hover { color:inherit; border-color:var(--line-strong); }
-    .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
-    .btn.primary:hover { color:var(--on-accent); filter:brightness(1.08); }
-    .btn.danger:hover { color:var(--red); border-color:var(--red); background:var(--red-wash); }
-    .list-actions { display:flex; align-items:center; justify-content:flex-end; gap:16px; padding:12px 4px 0; }
-    .list-actions .btn { flex-shrink:0; }
-    form.inset[hidden], .group-label[hidden] { display:none; }
-    .field-pair { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:9px; }
-    .field-pair [hidden] { display:none; }
-    textarea.field { min-height:88px; padding:10px 12px; resize:vertical; font:12.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace; }
-    input.field[aria-invalid="true"], textarea.field[aria-invalid="true"] { border-color:var(--red); }
-    .field::placeholder, textarea::placeholder { color:var(--secondary); opacity:1; }
-    details.more { margin-left:20px; padding:0 20px 0 0; border-top:1px solid var(--line); }
-    details.more summary { cursor:pointer; padding:16px 0; font-size:14px; font-weight:600; color:var(--secondary); }
-    details.more summary:hover { color:var(--text); }
-    details.more .pref { margin-left:0; padding-right:0; }
-    .form-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; padding:14px 20px; border-top:1px solid var(--line); background:var(--subtle); }
-    .form-msgs { margin-right:auto; min-width:0; flex:1 1 240px; }
-    .form-msgs p { margin:0; font-size:13px; line-height:1.4; }
-    .form-msgs p:empty { display:none; }
-    .form-error { color:var(--red); font-weight:600; }
-    .form-status { display:flex; align-items:flex-start; gap:7px; color:var(--secondary); }
-    .form-status::before { content:''; flex:0 0 auto; width:7px; height:7px; margin-top:6px; border-radius:50%; background:var(--tertiary); }
-    .form-status.ok { color:var(--green); font-weight:600; }
-    .form-status.ok::before, .form-status.dirty::before { background:currentColor; }
-    .form-status.dirty { color:var(--accent-text); }
-    .form-status.bad { color:var(--red); }
-    .form-status.bad::before { background:var(--red); }
-    .form-status.busy::before { background:var(--accent); animation:pulse 1s ease-in-out infinite alternate; }
-    @keyframes pulse { to { opacity:.3; } }
-    /* Required fields (#227): a red star on the label, the legend says what it means. */
-    .req { color:var(--red); margin-left:3px; font-weight:700; }
-    .req[hidden] { display:none; }
-    .form-legend { margin:0; padding:12px 20px; border-bottom:1px solid var(--line); color:var(--secondary); font-size:12.5px; }
-    .form-legend .req { margin:0 2px 0 0; }
-    .form-title { display:flex; align-items:center; gap:10px; margin:28px 3px 10px; }
-    .form-title .group-label { margin:0; }
-    .form-title[hidden] { display:none; }
-    .form-title .badge { margin-left:0; }
-    .badge.ok { background:var(--green-wash); color:var(--green); border:1px solid transparent; }
-    .badge.dirty { background:var(--accent-wash); color:var(--accent-text); }
-    .field-error { display:flex; gap:6px; align-items:flex-start; margin:7px 0 0; color:var(--red); font-size:12.5px; font-weight:600; line-height:1.4; }
-    .field-error[hidden] { display:none; }
-    .field-error::before { content:'!'; flex:0 0 auto; display:grid; place-items:center; width:15px; height:15px; border-radius:50%; background:var(--red); color:var(--group); font-size:10.5px; font-weight:800; margin-top:1px; }
-    select[aria-invalid="true"] { border-color:var(--red); }
-    .field.mono { font:13px ui-monospace,"Cascadia Mono",Consolas,monospace; }
-    .btn.primary { display:inline-flex; align-items:center; gap:6px; }
-    .btn .tick { display:none; width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
-    .btn.primary.is-saved { background:var(--green-wash); border-color:var(--green); color:var(--green); }
-    .btn.primary.is-saved:hover { color:var(--green); filter:none; }
+    .btn .tick { display:none; width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
+    .btn.primary.is-saved { background:var(--accent-wash); color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent-ring); }
     .btn.primary.is-saved .tick { display:block; }
-    .engine-line { display:flex; align-items:flex-start; gap:7px; margin-top:8px; color:var(--secondary); font-size:13px; }
-    .engine-line i { flex:0 0 auto; width:7px; height:7px; margin-top:6px; border-radius:50%; background:var(--green); }
-    .engine-line.busy i { background:var(--tertiary); }
-    .engine-line .engine-status { font-size:13px; font-weight:500; }
-    select option[value="__add"] { font-weight:600; }
-    ::selection { background:var(--accent-wash); color:var(--text); }
-    @media (max-width: 860px) {
-      body { overflow:auto; height:auto; }
-      .window { grid-template-columns:1fr; height:auto; }
-      .nav-pane { border-right:0; border-bottom:1px solid var(--line); }
-      .page { padding:28px 18px 60px; }
-      .pref { grid-template-columns:1fr; gap:12px; }
-      .sess-head { display:none; }
-      .sess-row { grid-template-columns:1fr auto; }
-      .eng-row { grid-template-columns:1fr; gap:12px; }
-      .eng-actions { justify-content:flex-start; }
-      .field-pair { grid-auto-flow:row; }
-      .list-actions { flex-direction:column; align-items:flex-start; }
+    .ib { width:34px; height:34px; border-radius:8px; background:var(--s3); display:grid; place-items:center; color:var(--tx2); flex:none; }
+    .ib:hover:not(:disabled) { background:var(--s4); color:#fff; }
+    .ib svg { width:14px; height:14px; }
+    .ib:disabled { opacity:.4; }
+    .play[aria-busy="true"] { color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent-ring); }
+    .stepper { display:inline-flex; align-items:center; background:var(--s3); border-radius:8px; }
+    .stepper button { width:32px; height:32px; color:var(--tx2); font-size:16px; border-radius:8px; }
+    .stepper button:hover:not(:disabled) { background:var(--s4); color:#fff; }
+    .stepper output { min-width:30px; text-align:center; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+    .num { display:flex; align-items:center; gap:8px; }
+    .num input { width:96px; text-align:right; font-family:var(--mono); font-size:12.5px; }
+    .num i { font-style:normal; color:var(--tx3); font-size:12px; width:20px; }
+    .code { font:12px var(--mono); color:var(--tx2); background:var(--s3); padding:8px 12px; border-radius:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:340px; direction:rtl; text-align:left; }
+    .code bdi { direction:ltr; unicode-bidi:isolate; }
+    .tag { display:inline-block; font:11px/18px var(--sans); padding:0 7px; border-radius:99px; border:1px solid var(--line2); color:var(--tx2); white-space:nowrap; vertical-align:1px; }
+    .tag.on { color:var(--accent); border-color:var(--accent-ring); }
+    .tag.dirty { color:#ffd27a; border-color:rgba(255,210,122,.4); }
+
+    /* ---- speech --------------------------------------------------------- */
+    #voice-select { min-width:240px; }
+
+    /* ---- summary prompt ------------------------------------------------- */
+    .prompt-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px; }
+    .prompt-head .btn { height:28px; }
+    #prompt-text { min-height:120px; }
+
+    /* ---- sessions ------------------------------------------------------- */
+    .sess-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:center; padding:12px 16px; }
+    .sess-row + .sess-row { border-top:1px solid var(--line); }
+    .sess-row .fld { height:32px; max-width:340px; background:transparent; border-color:var(--line); }
+    .sess-row .fld:hover:not(:focus) { background:var(--s3); }
+    .sess-sub { display:flex; align-items:center; gap:8px; margin-top:5px; color:var(--tx3); font:12px var(--mono); min-width:0; }
+    .sess-sub .where { min-width:4ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sess-sub .cid { flex:none; color:var(--tx3); opacity:.8; }
+    .sess-acts { display:flex; align-items:center; gap:10px; }
+    .sess-row.closed .fld, .sess-row.closed .sess-sub { opacity:.65; }
+    details.older { margin-top:18px; }
+    details.older summary { display:inline-flex; align-items:center; gap:8px; cursor:pointer; color:var(--tx2); font-size:13px; padding:6px 2px; list-style:none; border-radius:6px; }
+    details.older summary::-webkit-details-marker { display:none; }
+    details.older summary::before { content:""; width:6px; height:6px; border-right:1.5px solid var(--tx3); border-bottom:1.5px solid var(--tx3); transform:rotate(-45deg); transition:transform .15s; }
+    details.older[open] summary::before { transform:rotate(45deg); }
+    details.older summary:hover { color:var(--tx); }
+    details.older .group { margin-top:8px; }
+
+    /* ---- hotkeys -------------------------------------------------------- */
+    .kbd { display:inline-flex; align-items:center; gap:4px; min-height:34px; padding:3px; border-radius:9px; border:1px solid transparent; transition:border-color .12s, background .12s; }
+    .kbd:hover { border-color:var(--line2); background:var(--s3); }
+    .kbd i { font:500 12px/1 var(--mono); font-style:normal; min-width:26px; height:26px; padding:0 8px; display:inline-grid; place-items:center; background:var(--s3); border:1px solid var(--line2); border-bottom-width:2px; border-radius:6px; color:var(--tx); }
+    .kbd i.unbound { font-family:var(--sans); color:var(--tx3); border-style:dashed; border-bottom-width:1px; }
+    .key-row.listen .kbd { border-color:var(--accent); background:var(--s3); padding:3px 12px; }
+    .key-row.listen .kbd i { display:none; }
+    .key-row.listen .kbd::after { content:"Press new keys"; color:var(--accent); font-size:12.5px; }
+    .unbind:hover:not(:disabled) { color:var(--bad); background:var(--bad-wash); }
+    .warn { display:block; color:var(--bad); font-size:12.5px; margin-top:3px; }
+    .after { margin-top:16px; }
+
+    /* ---- system --------------------------------------------------------- */
+    .metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .metrics > div { padding:16px; min-width:0; }
+    .metrics > div + div { border-left:1px solid var(--line); }
+    .metrics .k { color:var(--tx3); font-size:12px; }
+    .metrics .v { font:500 17px var(--mono); margin-top:4px; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+    .foot { display:flex; justify-content:center; gap:6px; color:var(--tx3); font-size:12px; margin-top:28px; }
+
+    /* ---- engines -------------------------------------------------------- */
+    .eng-row { display:flex; align-items:center; gap:14px; padding:14px 16px; }
+    .eng-row + .eng-row { border-top:1px solid var(--line); }
+    .logo { width:34px; height:34px; border-radius:9px; background:var(--s3); display:grid; place-items:center; font-weight:600; font-size:13px; flex:none; color:var(--tx2); }
+    .eng-row .m { flex:1; min-width:0; }
+    .eng-name { font-weight:500; display:flex; flex-wrap:wrap; gap:8px; align-items:center; overflow-wrap:anywhere; }
+    .badge { font-size:11px; line-height:18px; padding:0 8px; border-radius:99px; border:1px solid var(--accent-ring); color:var(--accent); background:var(--accent-wash); white-space:nowrap; }
+    .badge.quiet { border-color:var(--line2); color:var(--tx2); background:transparent; }
+    .badge.ok { border-color:var(--accent-ring); color:var(--accent); background:var(--accent-wash); }
+    .badge.dirty { border-color:rgba(255,210,122,.4); color:#ffd27a; background:rgba(255,210,122,.08); }
+    .eng-meta { display:flex; flex-wrap:wrap; gap:2px 12px; font-size:12.5px; color:var(--tx3); margin-top:2px; }
+    .eng-state { display:flex; align-items:center; gap:7px; margin-top:4px; font-size:12.5px; color:var(--tx2); }
+    .eng-state .dot { width:6px; height:6px; }
+    .eng-state.ok { color:var(--ok); }
+    .eng-state.ok .dot { background:var(--accent); }
+    .eng-state.bad { color:var(--bad); }
+    .eng-state.bad .dot { background:var(--bad); }
+    .engine-result { margin-top:4px; font-size:12.5px; color:var(--ok); overflow-wrap:anywhere; }
+    .engine-result:empty { display:none; }
+    .engine-result.bad { color:var(--bad); }
+    .eng-local { margin-top:4px; font-size:12.5px; color:var(--tx3); }
+    .eng-local code { font:12px var(--mono); color:var(--tx2); }
+    .eng-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; flex:none; }
+    .eng-actions .btn { height:30px; padding:0 11px; }
+
+    /* ---- the engine drawer ---------------------------------------------- */
+    .scrim { position:fixed; inset:0; background:rgba(0,0,0,.62); z-index:20; }
+    .drawer { position:fixed; top:0; right:0; bottom:0; width:452px; max-width:100%; z-index:21; display:flex; flex-direction:column; background:var(--s1); border-left:1px solid var(--line2); margin:0; }
+    @media (prefers-reduced-motion: no-preference) {
+      .drawer.enter { animation:slide .24s cubic-bezier(.16,1,.3,1); }
+      .scrim.enter { animation:fade .18s ease-out; }
+    }
+    @keyframes slide { from { transform:translateX(100%); } }
+    @keyframes fade { from { opacity:0; } }
+    .dh { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px 14px 20px; border-bottom:1px solid var(--line); }
+    .dh .dt { display:flex; align-items:center; gap:10px; min-width:0; }
+    .dh h2 { font-size:16px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .df { flex:1; overflow:auto; padding:16px 20px 8px; scrollbar-width:thin; scrollbar-color:#2a2a35 transparent; }
+    .legend { color:var(--tx3); font-size:12px; margin-bottom:14px; }
+    .req { color:var(--accent); margin-left:3px; font-weight:500; }
+    .legend .req { margin:0 3px 0 0; }
+    .f { margin-bottom:14px; }
+    .f > label, .f > .flabel { display:block; font-size:12.5px; color:var(--tx2); margin-bottom:6px; }
+    .f select { width:100%; min-width:0; }
+    .pair { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:8px; }
+    .pair.key { grid-template-columns:168px minmax(0,1fr); grid-auto-columns:minmax(0,1fr); }
+    .two { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+    .hint-live { margin-top:6px; color:var(--tx3); font-size:12px; overflow-wrap:anywhere; }
+    .hint-live:empty { display:none; }
+    .field-error { display:flex; gap:6px; align-items:flex-start; margin:6px 0 0; color:var(--bad); font-size:12.5px; line-height:1.4; }
+    .field-error::before { content:"!"; flex:none; display:grid; place-items:center; width:14px; height:14px; margin-top:1px; border-radius:50%; background:var(--bad); color:#000; font-size:10px; font-weight:700; }
+    #ef-send button { white-space:nowrap; }
+    details.more { margin:4px 0 10px; border-top:1px solid var(--line); }
+    details.more summary { display:flex; align-items:center; gap:8px; cursor:pointer; color:var(--tx2); font-size:13px; padding:12px 0; list-style:none; border-radius:6px; }
+    details.more summary::-webkit-details-marker { display:none; }
+    details.more summary::before { content:""; width:6px; height:6px; border-right:1.5px solid var(--tx3); border-bottom:1.5px solid var(--tx3); transform:rotate(-45deg); transition:transform .15s; }
+    details.more[open] summary::before { transform:rotate(45deg); }
+    details.more summary:hover { color:var(--tx); }
+    .unit { position:relative; }
+    .unit .fld { padding-right:40px; font-family:var(--mono); font-size:12.5px; }
+    .unit span { position:absolute; right:12px; top:9px; color:var(--tx3); font-size:12px; }
+    .dfoot { border-top:1px solid var(--line); padding:12px 20px 14px; background:var(--s1); }
+    .dmsgs p { font-size:12.5px; line-height:1.4; margin-bottom:10px; }
+    .dmsgs p:empty { display:none; }
+    .form-error { color:var(--bad); }
+    .form-status { display:flex; align-items:flex-start; gap:7px; color:var(--tx2); }
+    .form-status::before { content:""; flex:none; width:6px; height:6px; margin-top:6px; border-radius:50%; background:var(--tx3); }
+    .form-status.ok { color:var(--accent); }
+    .form-status.ok::before { background:var(--accent); }
+    .form-status.dirty { color:#ffd27a; }
+    .form-status.dirty::before { background:#ffd27a; }
+    .form-status.bad { color:var(--bad); }
+    .form-status.bad::before { background:var(--bad); }
+    @media (prefers-reduced-motion: no-preference) { .form-status.busy::before { background:var(--accent); animation:breathe 1s ease-in-out infinite; } }
+    .dbtns { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
+    .dbtns .grow { margin-right:auto; }
+
+    /* ---- toast and banner ----------------------------------------------- */
+    .toast { position:fixed; right:20px; bottom:20px; z-index:30; display:flex; align-items:center; gap:8px; max-width:min(440px,calc(100vw - 40px)); padding:9px 14px; background:#111117; border:1px solid var(--line2); border-radius:10px; font-size:13px; opacity:0; transform:translateY(8px); transition:opacity .18s, transform .18s; pointer-events:none; }
+    .toast.on { opacity:1; transform:none; }
+    .toast svg { flex:none; width:14px; height:14px; fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
+    .toast.error { border-color:rgba(255,107,127,.45); color:var(--bad); }
+    .toast.error svg { stroke:var(--bad); }
+    .banner { position:fixed; top:0; left:0; right:0; z-index:40; background:#2a0b12; border-bottom:1px solid rgba(255,107,127,.5); color:#ffd0d6; padding:10px 16px; font-size:13px; text-align:center; }
+
+    /* ---- narrow windows ------------------------------------------------- */
+    @media (max-width: 1000px) {
+      .window { grid-template-columns:60px minmax(0,1fr); }
+      .side-nav button span { display:none; }
+      .now .k, .now .v span { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+      .nav-pane { position:relative; }
+      .search { width:38px; margin:0 auto 12px; z-index:30; }
+      .search input { padding:0; text-indent:34px; cursor:pointer; }
+      .search input::placeholder { color:transparent; }
+      .search svg { left:12px; }
+      .search:focus-within, .search:has(input:not(:placeholder-shown)) { width:240px; margin:0 0 12px; }
+      .search:focus-within input, .search:has(input:not(:placeholder-shown)) input { cursor:text; box-shadow:0 0 0 1px var(--line); }
+      .search:focus-within input::placeholder { color:var(--tx3); }
+      .empty-search { position:absolute; left:10px; top:54px; width:240px; z-index:30; background:var(--s2); border:1px solid var(--line); border-radius:8px; }
+      .side-nav button { justify-content:center; padding:0; }
+      .now { padding:10px 0; display:grid; place-items:center; }
+      .page { padding:22px 20px 56px; }
+      select { min-width:160px; }
+      #voice-select { min-width:180px; }
+      input[type="range"] { width:150px; }
+      .row { gap:12px; }
+    }
+    @media (max-width: 640px) {
+      .row { flex-wrap:wrap; }
+      .row .c { flex:1 1 100%; justify-content:flex-start; flex-wrap:wrap; }
+      .eng-row { flex-wrap:wrap; }
+      .eng-actions { justify-content:flex-start; width:100%; }
+      .row:has(> .c > .switch:only-child) { flex-wrap:nowrap; }
+      .row:has(> .c > .switch:only-child) > .c { flex:none; }
+      .metrics { grid-template-columns:1fr; }
+      .metrics > div + div { border-left:0; border-top:1px solid var(--line); }
+      .two, .pair.key { grid-template-columns:1fr; }
+      .pair { grid-auto-flow:row; }
+      .code { max-width:100%; }
+      .sess-row { grid-template-columns:minmax(0,1fr); gap:10px; }
+      .sess-acts { justify-content:flex-end; }
+      .sess-acts .session-forget { margin-right:auto; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation:none !important; transition:none !important; }
     }
     @media (forced-colors: active) {
-      .segments button[aria-checked="true"], .switch[aria-checked="true"] { outline:2px solid CanvasText; }
+      .seg button[aria-checked="true"], .switch[aria-checked="true"], .side-nav button[aria-current="page"] { outline:2px solid CanvasText; }
     }
   </style>
 </head>
 <body>
   <a class="skip" href="#main">Skip to settings</a>
-  <div id="offline-banner" class="banner" role="alert" hidden>
-    The Sonara runtime is not reachable. It may have exited; this page reconnects once its app starts it again.
-  </div>
+  <div id="offline-banner" class="banner" role="alert" hidden>The Sonara runtime is not reachable. This page reconnects once it runs again.</div>
   <div id="live" class="sr-only" role="status" aria-live="polite"></div>
-  <div class="window">
+  <div class="window" id="window">
     <aside class="nav-pane">
-      <div class="brand"><div class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 13h2m2-5v9m4-14v18m4-14v10m4-7v4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></div><strong translate="no">Sonara</strong></div>
-      <label class="search"><span class="sr-only">Search settings</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="settings-search" type="search" placeholder="Search settings…" autocomplete="off" spellcheck="false"></label>
+      <label class="search"><span class="sr-only">Search settings</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="settings-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
       <nav class="side-nav" aria-label="Settings sections">
-        <button data-page="speech" aria-current="page"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg></span>Speech</button>
-        <button data-page="engines" class="cap-off"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></svg></span>Engines</button>
-        <button data-page="summary"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>Summary</button>
-        <button data-page="audio"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6"/></svg></span>Audio</button>
-        <button data-page="sessions"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><rect x="3" y="11" width="18" height="5" rx="1.5"/><path d="M3 20h12"/></svg></span>Sessions</button>
-        <button data-page="hotkeys"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h2M7 14h10"/></svg></span>Hotkeys</button>
-        <button data-page="advanced"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></span>Advanced</button>
-        <button data-page="system"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.4 3.1a7 7 0 0 0-1.7 1L5 6.1 3 9.5 5.1 11a7 7 0 0 0 0 2L3 14.5l2 3.4 2.4-1a7 7 0 0 0 1.7 1l.4 3.1h5l.4-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2.1-1.5a7 7 0 0 0 .1-1Z"/></svg></span>System</button>
+        <button type="button" data-page="speech" aria-current="page" title="Speech"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><span>Speech</span></button>
+        <button type="button" data-page="engines" class="cap-off" title="Engines"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg><span>Engines</span></button>
+        <button type="button" data-page="summary" title="Summary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Summary</span></button>
+        <button type="button" data-page="audio" title="Audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg><span>Audio</span></button>
+        <button type="button" data-page="sessions" title="Sessions"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>Sessions</span></button>
+        <button type="button" data-page="hotkeys" title="Hotkeys"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg><span>Hotkeys</span></button>
+        <button type="button" data-page="system" title="System"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg><span>System</span></button>
       </nav>
       <div class="empty-search" id="empty-search" hidden>No settings found</div>
-      <div class="nav-footer"><span id="theme-label">Dark appearance</span><button class="switch theme" id="theme-toggle" role="switch" aria-checked="false" aria-labelledby="theme-label"></button></div>
+      <div class="now" id="now" title="">
+        <div class="k">Now</div>
+        <div class="v"><i class="dot" id="now-dot" aria-hidden="true"></i><span id="now-text">&ndash;</span></div>
+      </div>
     </aside>
 
     <main class="content-pane" id="main" tabindex="-1">
       <section class="page active" id="speech" aria-labelledby="h-speech">
-        <div class="title-row"><div><h1 id="h-speech">Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <h2 class="group-label">Voice</h2>
-        <div class="inset">
-          <div class="pref"><div class="pref-copy"><label class="title" for="engine-select">Voice engine</label><div class="hint">Which engine reads. Windows' own voice stands in while Kokoro downloads or loads, or when an engine cannot run.</div></div><div class="control"><select id="engine-select" aria-describedby="engine-status"></select><div class="engine-line"><i aria-hidden="true"></i><span class="engine-status" id="engine-status" role="status">&ndash;</span></div></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">Which voice reads.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
+        <h1 id="h-speech">Speech</h1>
+        <div class="group">
+          <div class="row"><div class="l"><label class="n" for="engine-select">Engine</label></div><div class="c"><select id="engine-select" aria-describedby="engine-status"></select></div></div>
+          <div class="status-line" id="engine-line"><i class="dot ok" aria-hidden="true"></i><span class="engine-status" id="engine-status" role="status">&ndash;</span></div>
+          <div class="row"><div class="l"><label class="n" for="voice-select">Voice</label></div><div class="c"><select id="voice-select"></select><button class="ib play" id="voice-preview" type="button" aria-label="Preview the selected voice" title="Preview"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M7 4v16l13-8z"/></svg></button></div></div>
+          <p class="sub-status" id="voice-saved" hidden></p>
+          <div class="row"><div class="l"><label class="n" for="rate">Rate</label></div><div class="c range"><input id="rate" type="range" min="100" max="400" step="5" value="200"><output id="rate-out" for="rate">200 wpm</output></div></div>
         </div>
-        <h2 class="group-label">Delivery</h2>
-        <p class="notice agent-off" hidden>Mute and verbosity are for agent sessions. They appear once an app that uses them (such as the Claude Code plugin) is connected.</p>
-        <div class="inset">
-          <div class="pref agent-pref"><div class="pref-copy"><strong id="mute-label">Mute</strong><div class="hint">Muted keeps the attention sounds; super muted silences them too. The mute hotkey cycles through these.</div></div><div class="control"><div class="segments" id="mute-seg" role="radiogroup" aria-labelledby="mute-label"><button type="button" role="radio" data-value="0">Unmuted</button><button type="button" role="radio" data-value="1">Muted</button><button type="button" role="radio" data-value="2">Super muted</button></div></div></div>
-          <div class="pref agent-pref"><div class="pref-copy"><strong id="verbosity-label">Verbosity</strong><div class="hint">What is read besides the agent's answer and its questions.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="skip_code">Skip code</button></div><div class="hint" id="verbosity-hint"></div></div></div>
-          <div class="pref agent-pref"><div class="pref-copy"><strong id="background-label">Background sessions</strong><div class="hint">With several sessions open: read every session in turn, or only the one you last prompted (the others chime; switch to them to hear them).</div></div><div class="control"><div class="segments" id="background-seg" role="radiogroup" aria-labelledby="background-label"><button type="button" role="radio" data-value="all">Read all</button><button type="button" role="radio" data-value="earcon_only">Chime only</button></div></div></div>
+        <h2 class="gl">Delivery</h2>
+        <p class="notice agent-off" hidden>Needs an agent app, such as the Claude Code plugin, connected.</p>
+        <div class="group">
+          <div class="row agent-pref"><div class="l"><span class="n" id="mute-label">Mute</span></div><div class="c"><div class="seg" id="mute-seg" role="radiogroup" aria-labelledby="mute-label"><button type="button" role="radio" data-value="0">Unmuted</button><button type="button" role="radio" data-value="1">Muted</button><button type="button" role="radio" data-value="2">Super muted</button></div></div></div>
+          <div class="row agent-pref"><div class="l"><span class="n" id="verbosity-label">Detail</span></div><div class="c"><div class="seg" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="skip_code">Skip code</button></div></div></div>
+          <div class="row agent-pref"><div class="l"><span class="n" id="background-label">Other sessions</span></div><div class="c"><div class="seg" id="background-seg" role="radiogroup" aria-labelledby="background-label"><button type="button" role="radio" data-value="all">Read all</button><button type="button" role="radio" data-value="earcon_only">Chime only</button></div></div></div>
         </div>
       </section>
 
       <section class="page" id="engines" aria-labelledby="h-engines">
-        <div class="title-row"><div><h1 id="h-engines">Engines</h1><p>Read with a cloud voice, or with a speech server or program on this PC.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <h2 class="group-label">Your engines</h2>
-        <div class="inset">
+        <h1 id="h-engines">Engines</h1>
+        <h2 class="gl" style="margin-top:0">Added engines</h2>
+        <div class="group">
           <div id="profile-rows" role="list" aria-label="Your engines"></div>
-          <p class="hint" id="engines-empty" style="padding:16px 20px;margin:0">No engines added. Kokoro, built in, reads everything.</p>
+          <p class="empty" id="engines-empty">No engines added yet.</p>
         </div>
-        <div class="list-actions"><button class="btn" id="engine-new" type="button">Add an engine</button></div>
-        <div class="form-title" id="ef-head" hidden><h2 class="group-label" id="ef-title">Add an engine</h2><span class="badge quiet" id="ef-badge"></span></div>
-        <form class="inset" id="engine-form" aria-labelledby="ef-title" aria-describedby="ef-legend" novalidate hidden>
-          <p class="form-legend" id="ef-legend"><span class="req" aria-hidden="true">*</span> Required field</p>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-kind">Provider<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-kind-hint">Who makes the speech: a cloud service, or a speech server on this PC.</div></div><div class="control"><select id="ef-kind" aria-required="true" aria-describedby="ef-kind-hint"></select></div></div>
-          <div class="pref" id="ef-preset-row"><div class="pref-copy"><label class="title" for="ef-preset">Server<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-preset-hint">OpenAI itself, or a server that speaks its API.</div></div><div class="control"><select id="ef-preset" aria-required="true" aria-describedby="ef-preset-hint"></select></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-label">Label<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-label-hint">The name you see in Sonara, and hear when it cannot reach this engine.</div></div><div class="control"><input class="field" id="ef-label" type="text" maxlength="40" autocomplete="off" aria-required="true" aria-describedby="ef-label-hint"></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-id">ID<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-id-hint">Made from the label; change it if you like. Lowercase a to z, 0 to 9, - and _. The <span class="path">sonara engines</span> commands use it.</div></div><div class="control"><input class="field mono" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-required="true" aria-describedby="ef-id-hint"></div></div>
-          <div class="pref" id="ef-url-row"><div class="pref-copy"><label class="title" for="ef-url">Address<span class="req" id="ef-url-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-url-hint">The server's address.</div></div><div class="control"><input class="field" id="ef-url" type="url" autocomplete="off" spellcheck="false" aria-describedby="ef-url-hint"></div></div>
-          <div class="pref" id="ef-key-row"><div class="pref-copy"><label class="title" for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-keyref-hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref" aria-label="Where the key comes from" aria-describedby="ef-keyref-hint"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" aria-describedby="ef-key-hint" placeholder="Paste the key&hellip;"><input class="field mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" aria-describedby="ef-key-hint" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
-          <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model-select">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-model-about">Which of the provider's models speaks. Sonara names none of its own: models change at the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-model-select" aria-describedby="ef-model-hint"></select><input class="field mono" id="ef-model" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Model id" aria-describedby="ef-model-hint" placeholder="Model id&hellip;" hidden></div><div class="hint" id="ef-model-hint"></div></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads. Sonara picks none for you; the voice you choose on the Speech page wins while this engine is in use.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint"></div></div></div>
-          <div class="pref" id="ef-send-row"><div class="pref-copy"><strong id="ef-send-label">Send to the engine</strong><div class="hint" id="ef-send-about">How Sonara hands the text over. The default suits the provider.</div></div><div class="control"><div class="segments" id="ef-send" role="radiogroup" aria-labelledby="ef-send-label" aria-describedby="ef-send-hint"><button type="button" role="radio" data-value="message">Full message in one request</button><button type="button" role="radio" data-value="sentence">As it comes in</button></div><div class="hint" id="ef-send-hint"></div></div></div>
-          <div id="ef-kind-fields"></div>
-          <details class="more"><summary>More options</summary>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for an answer before Kokoro reads it instead. A full message gets more time for its length.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
-            <div class="pref" id="ef-first-audio-row"><div class="pref-copy"><label class="title" for="ef-first-audio">Wait for audio</label><div class="hint" id="ef-first-audio-hint">If no audio comes for this long, at the start or midway, Kokoro reads the rest. Empty is 12000.</div></div><div class="control"><div class="unit"><input class="field" id="ef-first-audio" type="number" inputmode="numeric" min="1000" max="60000" step="500" placeholder="12000" aria-describedby="ef-first-audio-hint"><span aria-hidden="true">ms</span></div></div></div>
-            <div class="pref" id="ef-chunk-row"><div class="pref-copy"><label class="title" for="ef-chunk">Characters per request</label><div class="hint" id="ef-chunk-hint">A longer message is sent in parts, split between paragraphs or sentences. 200 to 5000; empty uses the provider's limit.</div></div><div class="control"><input class="field" id="ef-chunk" type="number" inputmode="numeric" min="200" max="5000" step="100" placeholder="Default" aria-describedby="ef-chunk-hint"></div></div>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-prefetch">Read ahead</label><div class="hint" id="ef-prefetch-hint">Sentences prepared ahead of the one playing, 1 to 4. More hides a slow connection.</div></div><div class="control"><input class="field" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default" aria-describedby="ef-prefetch-hint"></div></div>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-options">Other options</label><div class="hint" id="ef-options-hint">A JSON object with the provider's further options (see the README).</div></div><div class="control"><textarea class="field" id="ef-options" spellcheck="false" placeholder="{}" aria-describedby="ef-options-hint"></textarea></div></div>
-          </details>
-          <div class="form-actions">
-            <div class="form-msgs"><p class="form-status" id="ef-status" role="status" aria-live="polite"></p><p class="form-error" id="ef-error" role="alert"></p></div>
-            <button class="btn" id="ef-test" type="button" aria-describedby="ef-test-why">Test saved engine</button><span class="sr-only" id="ef-test-why"></span>
-            <button class="btn" id="ef-cancel" type="button">Close</button>
-            <button class="btn primary" id="ef-save" type="submit"><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span id="ef-save-text">Save engine</span></button>
-          </div>
-        </form>
-        <p class="hint" style="padding:12px 4px">A cloud engine receives the text Sonara reads aloud, under that provider's terms. Nothing is sent before you choose Use. A server or program on this PC keeps the text here.</p>
+        <div class="after"><button class="btn primary" id="engine-new" type="button">Add an engine</button></div>
       </section>
 
       <section class="page" id="summary" aria-labelledby="h-summary">
-        <div class="title-row"><div><h1 id="h-summary">Summary</h1><p>Turn long responses into focused spoken briefings.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <p class="notice agent-off" hidden>Summaries are for agent sessions. They appear once an app that uses them (such as the Claude Code plugin) is connected.</p>
-        <h2 class="group-label">Spoken summaries</h2>
-        <div class="inset">
-          <div class="pref agent-pref"><div class="pref-copy"><strong id="mode-label">Mode</strong><div class="hint">From reading everything to a short recap.</div></div><div class="control"><div class="segments" id="summary-seg" role="radiogroup" aria-labelledby="mode-label" aria-describedby="summary-mode-hint"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="tidy">Tidy</button><button type="button" role="radio" data-value="natural">Natural</button><button type="button" role="radio" data-value="brief">Brief</button></div><div class="hint" id="summary-mode-hint">Read everything live, as it streams.</div></div></div>
-          <div class="combo-body agent-pref" id="prompt-card"><label class="sr-only" for="prompt-text">Summary instruction</label><textarea id="prompt-text" spellcheck="false" aria-describedby="prompt-state"></textarea><div class="prompt-actions"><span class="hint" id="prompt-state"></span><button class="btn" id="prompt-reset" type="button">Reset to default</button></div></div>
+        <h1 id="h-summary">Summary</h1>
+        <p class="notice agent-off" hidden>Needs an agent app, such as the Claude Code plugin, connected.</p>
+        <div class="group">
+          <div class="row agent-pref"><div class="l"><span class="n" id="mode-label">Summary</span></div><div class="c"><div class="seg" id="summary-seg" role="radiogroup" aria-labelledby="mode-label"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="tidy">Tidy</button><button type="button" role="radio" data-value="natural">Natural</button><button type="button" role="radio" data-value="brief">Brief</button></div></div></div>
+          <div class="row agent-pref" id="model-row"><div class="l"><label class="n" for="model-select">Model</label></div><div class="c"><select id="model-select"></select></div></div>
+          <div class="row block agent-pref" id="prompt-card"><div class="prompt-head"><div class="n"><label for="prompt-text">Prompt</label> <span class="tag" id="prompt-state"></span></div><button class="btn ghost" id="prompt-reset" type="button">Reset</button></div><textarea class="fld" id="prompt-text" spellcheck="false"></textarea></div>
         </div>
-        <h2 class="group-label">Summarizer</h2>
-        <div class="inset">
-          <div class="pref agent-pref" id="model-row"><div class="pref-copy"><label class="title" for="model-select">Model</label><div class="hint">Which model writes the spoken summary.</div></div><div class="control"><select id="model-select"></select><div class="hint">Fastest first. Every model runs headless and never touches your session.</div></div></div>
+        <h2 class="gl">Live reading</h2>
+        <div class="group">
+          <div class="row agent-pref" id="read-row"><div class="l"><span class="n" id="readmode-label">Reading</span></div><div class="c"><div class="seg" id="readmode-seg" role="radiogroup" aria-labelledby="readmode-label"><button type="button" role="radio" data-value="immediate">Immediately</button><button type="button" role="radio" data-value="queue">Queue</button><button type="button" role="radio" data-value="done">When done</button></div></div></div>
+          <div class="row agent-pref" id="minqueue-row" hidden><div class="l"><span class="n" id="mq-label">Queue size</span></div><div class="c"><div class="stepper" role="group" aria-labelledby="mq-label"><button id="mq-minus" type="button" aria-label="Fewer sentences">&minus;</button><output id="minqueue-out" aria-live="polite">5</output><button id="mq-plus" type="button" aria-label="More sentences">+</button></div></div></div>
         </div>
-        <h2 class="group-label">Live reading</h2>
-        <div class="inset">
-          <div class="pref agent-pref" id="read-row"><div class="pref-copy"><strong id="readmode-label">Reading</strong><div class="hint">When Sonara reads the answer. Applies while the mode above is Off.</div></div><div class="control"><div class="segments" id="readmode-seg" role="radiogroup" aria-labelledby="readmode-label" aria-describedby="readmode-hint"><button type="button" role="radio" data-value="immediate">Immediately</button><button type="button" role="radio" data-value="queue">Queue</button><button type="button" role="radio" data-value="done">When done</button></div><div class="hint" id="readmode-hint"></div></div></div>
-          <div class="pref agent-pref" id="minqueue-row" hidden><div class="pref-copy"><strong id="mq-label">Queue size</strong><div class="hint">Sentences Sonara waits for before it starts reading.</div></div><div class="control"><div class="stepper" role="group" aria-labelledby="mq-label"><button id="mq-minus" type="button" aria-label="Fewer sentences">&minus;</button><output id="minqueue-out" aria-live="polite">5</output><button id="mq-plus" type="button" aria-label="More sentences">+</button></div><div class="hint">0 and 1 start speaking immediately.</div></div></div>
+        <h2 class="gl">Advanced</h2>
+        <div class="group">
+          <div class="row agent-pref" id="timeout-row"><div class="l"><label class="n" for="timeout">Summary timeout</label></div><div class="c num"><input class="fld" id="timeout" type="number" inputmode="numeric" min="15" max="300" step="1"><i aria-hidden="true">s</i></div></div>
+          <div class="row agent-pref" id="settle-row"><div class="l"><label class="n" for="settle">Settle time</label></div><div class="c num"><input class="fld" id="settle" type="number" inputmode="numeric" min="0" max="5000" step="100"><i aria-hidden="true">ms</i></div></div>
         </div>
       </section>
 
       <section class="page" id="audio" aria-labelledby="h-audio">
-        <div class="title-row"><div><h1 id="h-audio">Audio</h1><p>Balance spoken output with the rest of Windows.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <h2 class="group-label">Background sound</h2>
-        <div class="inset">
-          <div class="pref"><div class="pref-copy"><label class="title" for="volume">Speech volume</label><div class="hint">How loud Sonara speaks.</div></div><div class="control"><div class="range-head"><span>Volume</span><output id="volume-out" for="volume">100 %</output></div><input id="volume" type="range" min="0" max="100" step="5" value="100"><div class="ends" aria-hidden="true"><span>Silent</span><span>Full</span></div><div class="hint">Attention sounds follow it.</div></div></div>
-          <div class="pref"><div class="pref-copy"><strong id="audio-label">Other apps</strong><div class="hint">What happens to other apps while Sonara speaks.</div></div><div class="control"><div class="segments" id="audio-seg" role="radiogroup" aria-labelledby="audio-label" aria-describedby="audio-mode-hint"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="duck">Duck</button><button type="button" role="radio" data-value="pause">Pause</button></div><div class="hint" id="audio-mode-hint">Other apps play at full volume.</div></div></div>
-          <div class="pref" id="duck-row"><div class="pref-copy"><label class="title" for="duck">Duck level</label><div class="hint">Volume other apps keep while ducked.</div></div><div class="control"><div class="range-head"><span>Background volume</span><output id="duck-out" for="duck">30 %</output></div><input id="duck" type="range" min="0" max="100" value="30"><div class="ends" aria-hidden="true"><span>Silent</span><span>Full</span></div><div class="hint">Lower values keep context without competing with speech.</div></div></div>
+        <h1 id="h-audio">Audio</h1>
+        <div class="group">
+          <div class="row"><div class="l"><label class="n" for="volume">Volume</label></div><div class="c range"><input id="volume" type="range" min="0" max="100" step="5" value="100"><output id="volume-out" for="volume">100 %</output></div></div>
+          <div class="row"><div class="l"><span class="n" id="audio-label">Other apps</span></div><div class="c"><div class="seg" id="audio-seg" role="radiogroup" aria-labelledby="audio-label"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="duck">Duck</button><button type="button" role="radio" data-value="pause">Pause</button></div></div></div>
+          <div class="row" id="duck-row"><div class="l"><label class="n" for="duck">Duck to</label></div><div class="c range"><input id="duck" type="range" min="0" max="100" value="30"><output id="duck-out" for="duck">30 %</output></div></div>
         </div>
-        <p class="hint" style="padding:12px 4px">Other apps always come back: when speech pauses or ends, when the app that turned this on closes, and after a crash at the next start.</p>
-        <h2 class="group-label">Attention sounds</h2>
-        <div class="inset"><div class="file-row"><div><strong>Your own chimes</strong><div class="hint path" id="earcons-folder">&ndash;</div><div class="hint" id="earcons-custom" aria-live="polite">&ndash;</div></div></div></div>
-        <p class="hint" style="padding:12px 4px">To replace a chime, paste this folder into File Explorer's address bar and put a WAV file there named after the chime: <span class="path">session_change.wav</span>, <span class="path">turn_done.wav</span>, <span class="path">choice.wav</span>, <span class="path">permission.wav</span>, <span class="path">summary_failed.wav</span>, <span class="path">error.wav</span>, <span class="path">nav.wav</span> or <span class="path">nav_edge.wav</span>. Any WAV works (mono or stereo, any sample rate, up to 10 seconds). It plays from the next time that chime sounds; delete the file to get the built-in sound back.</p>
+        <h2 class="gl">Chimes</h2>
+        <div class="group">
+          <div class="row"><div class="l"><span class="n">Folder</span></div><div class="c"><div class="code" id="earcons-folder-box"><bdi id="earcons-folder">&ndash;</bdi></div></div></div>
+          <div class="row"><div class="l"><span class="n">Your chimes</span></div><div class="c"><span class="tag" id="earcons-custom" aria-live="polite">&ndash;</span></div></div>
+        </div>
       </section>
 
       <section class="page" id="sessions" aria-labelledby="h-sessions">
-        <div class="title-row"><div><h1 id="h-sessions">Sessions</h1><p>Name each session or switch its audio.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <p class="notice" id="sessions-off" hidden>Sessions appear once an app that reads several sessions or tabs (such as the Claude Code plugin) is connected.</p>
-        <h2 class="group-label">Switching</h2>
-        <div class="inset">
-          <div class="pref channels-pref"><div class="pref-copy"><strong id="announce-label">Announce switches</strong><div class="hint">Say the session's name when reading moves to it.</div></div><div class="control"><div class="toggle-line"><span class="hint" id="announce-status" aria-hidden="true">On</span><button class="switch" id="announce-switch" type="button" role="switch" aria-checked="true" aria-labelledby="announce-label"></button></div></div></div>
+        <h1 id="h-sessions">Sessions</h1>
+        <p class="notice" id="sessions-off" hidden>Sessions appear once an agent app, such as the Claude Code plugin, is connected.</p>
+        <div class="group">
+          <div class="row channels-pref"><div class="l"><span class="n" id="announce-label">Announce switches</span></div><div class="c"><button class="switch" id="announce-switch" type="button" role="switch" aria-checked="true" aria-labelledby="announce-label"></button></div></div>
         </div>
-        <h2 class="group-label">Sessions</h2>
-        <div class="inset">
-          <div style="padding:4px 20px">
-            <div class="sess-head" id="sessions-head" aria-hidden="true" hidden><span>Name</span><span>Audio</span></div>
-            <div id="session-rows" role="list" aria-label="Open sessions"></div>
-            <p class="hint" id="sessions-empty" style="padding:14px 0;margin:0">No sessions yet. Start an agent session and it appears here.</p>
-            <details class="older" id="sessions-older" hidden><summary id="sessions-older-sum">Earlier sessions</summary><div id="session-rows-older" role="list" aria-label="Earlier sessions"></div></details>
-          </div>
+        <h2 class="gl">Open now</h2>
+        <div class="group">
+          <div id="session-rows" role="list" aria-label="Open sessions"></div>
+          <p class="empty" id="sessions-empty">No open sessions.</p>
         </div>
-        <p class="hint" style="padding:12px 4px">A name you give a session is what Sonara says when it switches to it. A session with its audio off is not read: its messages wait until you turn it back on.</p>
+        <details class="older" id="sessions-older" hidden><summary id="sessions-older-sum">Earlier</summary><div class="group"><div id="session-rows-older" role="list" aria-label="Earlier sessions"></div></div></details>
       </section>
 
       <section class="page" id="hotkeys" aria-labelledby="h-hotkeys">
-        <div class="title-row"><div><h1 id="h-hotkeys">Hotkeys</h1><p>Global speech controls that work from any application.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <p class="notice" id="hotkeys-inactive" hidden>Hotkeys are registered while an app that uses them is connected. Changes here apply the next time they are.</p>
-        <h2 class="group-label">Keyboard shortcuts</h2>
-        <div class="inset key-list">
-          <div class="key-row" data-action="restart"><div class="key-copy"><strong>Restart / re-read</strong><span>Read the latest message again from the top.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Restart">&times;</button></div></div>
-          <div class="key-row" data-action="flush"><div class="key-copy"><strong>Flush</strong><span>Skip the reply being read. What else it skips is set below.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Flush">&times;</button></div></div>
-          <div class="key-row" data-action="pause"><div class="key-copy"><strong>Pause / resume</strong><span>Pause or resume what is being read.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Pause / resume">&times;</button></div></div>
-          <div class="key-row" data-action="mute"><div class="key-copy"><strong>Mute cycle</strong><span>Muted, super muted, unmuted.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Mute cycle">&times;</button></div></div>
-          <div class="key-row" data-action="next_channel"><div class="key-copy"><strong>Next session</strong><span>Move to the next session or tab.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Next session">&times;</button></div></div>
-          <div class="key-row" data-action="faster"><div class="key-copy"><strong>Faster</strong><span>Increase the speaking rate.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Faster">&times;</button></div></div>
-          <div class="key-row" data-action="slower"><div class="key-copy"><strong>Slower</strong><span>Decrease the speaking rate.</span></div><div class="keys"><button type="button" class="kbd"></button><button type="button" class="unbind" aria-label="Unbind Slower">&times;</button></div></div>
+        <h1 id="h-hotkeys">Hotkeys</h1>
+        <p class="notice" id="hotkeys-inactive" hidden>Hotkeys are off until an app that uses them is connected.</p>
+        <div class="group key-list">
+          <div class="row key-row" data-action="restart"><div class="l key-copy"><span class="n">Restart</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Restart"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="flush"><div class="l key-copy"><span class="n">Flush</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Flush"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="pause"><div class="l key-copy"><span class="n">Pause</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Pause / resume"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="mute"><div class="l key-copy"><span class="n">Mute</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Mute cycle"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="next_channel"><div class="l key-copy"><span class="n">Next session</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Next session"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="faster"><div class="l key-copy"><span class="n">Faster</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Faster"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="slower"><div class="l key-copy"><span class="n">Slower</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Slower"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
         </div>
-        <div class="key-actions"><p class="hint" style="margin:0">Select a shortcut and press the new keys (Escape cancels), or use &times; to unbind it. The defaults use Ctrl+Alt, which is AltGr on many European keyboards: if a shortcut warns that it takes a character away, rebind it with Win. A shortcut another program owns has to be changed.</p><button class="btn" id="keymap-reset" type="button">Reset hotkeys to defaults</button></div>
-        <h2 class="group-label">Flush</h2>
-        <div class="inset">
-          <div class="pref agent-pref" id="flushscope-row"><div class="pref-copy"><strong id="flushscope-label">Flush skips</strong><div class="hint">The rest of the flushed reply is skipped either way; its questions are still read.</div></div><div class="control"><div class="segments" id="flushscope-seg" role="radiogroup" aria-labelledby="flushscope-label" aria-describedby="flushscope-hint"><button type="button" role="radio" data-value="session">This session</button><button type="button" role="radio" data-value="all">Everything queued</button></div><div class="hint" id="flushscope-hint"></div></div></div>
+        <h2 class="gl">Flush scope</h2>
+        <div class="group">
+          <div class="row agent-pref" id="flushscope-row"><div class="l"><span class="n" id="flushscope-label">Flush skips</span></div><div class="c"><div class="seg" id="flushscope-seg" role="radiogroup" aria-labelledby="flushscope-label"><button type="button" role="radio" data-value="session">This session</button><button type="button" role="radio" data-value="all">Everything queued</button></div></div></div>
         </div>
-      </section>
-
-      <section class="page" id="advanced" aria-labelledby="h-advanced">
-        <div class="title-row"><div><h1 id="h-advanced">Advanced</h1><p>Tuning you rarely need to touch.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
-        <p class="notice agent-off" hidden>These settings are for agent sessions and appear once an app that uses them is connected.</p>
-        <h2 class="group-label">Summaries</h2>
-        <div class="inset">
-          <div class="pref agent-pref" id="timeout-row"><div class="pref-copy"><label class="title" for="timeout">Timeout</label><div class="hint">Longest wait for a generated summary.</div></div><div class="control"><div class="unit"><input class="field" id="timeout" type="number" inputmode="numeric" min="15" max="300" step="1" aria-describedby="timeout-hint"><span aria-hidden="true">s</span></div><div class="hint" id="timeout-hint">15 to 300 seconds. After it, Sonara reads the original response instead.</div></div></div>
-          <div class="pref agent-pref" id="settle-row"><div class="pref-copy"><label class="title" for="settle">Settle time</label><div class="hint">Wait for streaming text to stop changing.</div></div><div class="control"><div class="unit"><input class="field" id="settle" type="number" inputmode="numeric" min="0" max="5000" step="100" aria-describedby="settle-hint"><span aria-hidden="true">ms</span></div><div class="hint" id="settle-hint">0 to 5000 milliseconds. Keeps unfinished sentences out of summaries.</div></div></div>
-        </div>
+        <div class="after"><button class="btn ghost" id="keymap-reset" type="button">Reset all</button></div>
       </section>
 
       <section class="page" id="system" aria-labelledby="h-system">
-        <div class="title-row"><div><h1 id="h-system">System</h1><p>The Sonara runtime this page talks to.</p></div></div>
-        <h2 class="group-label">Runtime</h2>
-        <div class="info">
-          <div class="metric"><span>Version</span><b id="rt-version">&ndash;</b></div>
-          <div class="metric"><span>Uptime</span><b id="rt-uptime">&ndash;</b></div>
-          <div class="metric"><span>Protocol</span><b id="rt-protocol">&ndash;</b></div>
+        <h1 id="h-system">System</h1>
+        <div class="group">
+          <div class="metrics">
+            <div><div class="k">Version</div><div class="v" id="rt-version">&ndash;</div></div>
+            <div><div class="k">Uptime</div><div class="v" id="rt-uptime">&ndash;</div></div>
+            <div><div class="k">Protocol</div><div class="v" id="rt-protocol">&ndash;</div></div>
+          </div>
         </div>
-        <h2 class="group-label">Settings file</h2>
-        <div class="inset"><div class="file-row"><div><strong>Saved settings</strong><div class="hint path" id="rt-config">&ndash;</div></div></div></div>
-        <h2 class="group-label">Troubleshooting</h2>
-        <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong id="debuglog-label">Troubleshooting log</strong><div class="hint" id="debuglog-hint">Record what is read and what hooks send, in the logs folder (10 MB at most, oldest first out). Off keeps only which item was read and when, without its text.</div></div><div class="control"><div class="toggle-line"><span class="hint" id="debuglog-status" aria-hidden="true">On</span><button class="switch" id="debuglog-switch" type="button" role="switch" aria-checked="true" aria-labelledby="debuglog-label" aria-describedby="debuglog-hint"></button></div></div></div>
+        <div class="group">
+          <div class="row"><div class="l"><span class="n">Config file</span></div><div class="c"><div class="code" id="rt-config-box"><bdi id="rt-config">&ndash;</bdi></div></div></div>
+          <div class="row"><div class="l"><span class="n" id="debuglog-label">Debug log</span></div><div class="c"><button class="switch" id="debuglog-switch" type="button" role="switch" aria-checked="true" aria-labelledby="debuglog-label"></button></div></div>
         </div>
-        <footer class="footer"><span>Sonara for Windows</span><span id="app-version"></span></footer>
+        <footer class="foot"><span translate="no">Sonara</span><span id="app-version"></span></footer>
       </section>
     </main>
   </div>
+
+  <div class="scrim" id="ef-scrim" hidden></div>
+  <form class="drawer" id="engine-form" role="dialog" aria-modal="true" aria-labelledby="ef-title" aria-describedby="ef-legend" novalidate hidden>
+    <div class="dh"><div class="dt"><h2 id="ef-title">Add an engine</h2><span class="badge quiet" id="ef-badge"></span></div><button class="ib" id="ef-x" type="button" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div>
+    <div class="df">
+      <p class="legend" id="ef-legend"><span class="req" aria-hidden="true">*</span>Required field</p>
+      <div class="f"><label for="ef-kind">Provider<span class="req" aria-hidden="true">*</span></label><div class="control"><select id="ef-kind" aria-required="true"></select></div></div>
+      <div class="f" id="ef-preset-row"><label for="ef-preset">Server<span class="req" aria-hidden="true">*</span></label><div class="control"><select id="ef-preset" aria-required="true"></select></div></div>
+      <div class="two">
+        <div class="f"><label for="ef-label">Label<span class="req" aria-hidden="true">*</span></label><div class="control"><input class="fld" id="ef-label" type="text" maxlength="40" autocomplete="off" aria-required="true"></div></div>
+        <div class="f"><label for="ef-id">ID<span class="req" aria-hidden="true">*</span></label><div class="control"><input class="fld mono" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-required="true"></div></div>
+      </div>
+      <div class="f" id="ef-url-row"><label for="ef-url">Address<span class="req" id="ef-url-req" aria-hidden="true" hidden>*</span></label><div class="control"><input class="fld mono" id="ef-url" type="url" autocomplete="off" spellcheck="false"></div></div>
+      <div class="f" id="ef-key-row"><label for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="control"><div class="pair key"><select id="ef-keyref" aria-label="Where the key comes from"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="fld mono" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" placeholder="Paste the key"><input class="fld mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" placeholder="OPENAI_API_KEY" hidden></div></div></div>
+      <div class="f" id="ef-model-row"><label for="ef-model-select">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="control"><div class="pair"><select id="ef-model-select" aria-describedby="ef-model-hint"></select><input class="fld mono" id="ef-model" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Model id" aria-describedby="ef-model-hint" placeholder="Model id" hidden></div><p class="hint-live" id="ef-model-hint"></p></div></div>
+      <div class="f"><label for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="control"><div class="pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="fld mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id" hidden></div><p class="hint-live" id="ef-voice-hint"></p></div></div>
+      <div class="f" id="ef-send-row"><span class="flabel" id="ef-send-label">Send to the engine</span><div class="control"><div class="seg" id="ef-send" role="radiogroup" aria-labelledby="ef-send-label"><button type="button" role="radio" data-value="message">Full message in one request</button><button type="button" role="radio" data-value="sentence">As it comes in</button></div></div></div>
+      <div id="ef-kind-fields"></div>
+      <details class="more"><summary>More options</summary>
+        <div class="two">
+          <div class="f"><label for="ef-timeout">Timeout</label><div class="control"><div class="unit"><input class="fld" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default"><span aria-hidden="true">ms</span></div></div></div>
+          <div class="f" id="ef-first-audio-row"><label for="ef-first-audio">Wait for audio</label><div class="control"><div class="unit"><input class="fld" id="ef-first-audio" type="number" inputmode="numeric" min="1000" max="60000" step="500" placeholder="12000"><span aria-hidden="true">ms</span></div></div></div>
+          <div class="f" id="ef-chunk-row"><label for="ef-chunk">Characters per request</label><div class="control"><input class="fld mono" id="ef-chunk" type="number" inputmode="numeric" min="200" max="5000" step="100" placeholder="Default"></div></div>
+          <div class="f"><label for="ef-prefetch">Read ahead</label><div class="control"><input class="fld mono" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default"></div></div>
+        </div>
+        <div class="f"><label for="ef-options">Other options (JSON)</label><div class="control"><textarea class="fld" id="ef-options" spellcheck="false" placeholder="{}"></textarea></div></div>
+      </details>
+    </div>
+    <div class="dfoot">
+      <div class="dmsgs"><p class="form-status" id="ef-status" role="status" aria-live="polite"></p><p class="form-error" id="ef-error" role="alert"></p></div>
+      <div class="dbtns">
+        <button class="btn ghost grow" id="ef-test" type="button" aria-describedby="ef-test-why">Test saved engine</button><span class="sr-only" id="ef-test-why"></span>
+        <button class="btn" id="ef-cancel" type="button">Close</button>
+        <button class="btn primary" id="ef-save" type="submit"><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span id="ef-save-text">Save engine</span></button>
+      </div>
+    </div>
+  </form>
+
+  <div class="toast" id="toast" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg><span id="toast-text">Saved</span></div>
 
   <script>
 // The runtime fills in its token when it serves this page (settings_page.rs).
@@ -487,10 +537,10 @@ const TOKEN = "__SONARA_TOKEN__";
 const $ = id => document.getElementById(id);
 class ApiError extends Error {}
 
-// ---- navigation, search and theme -------------------------------------
+// ---- navigation and search ----------------------------------------------
 const navButtons = [...document.querySelectorAll(".side-nav button")];
 function showPage(name, focus) {
-  const btn = navButtons.find(b => b.dataset.page === name && !b.hidden) || navButtons[0];
+  const btn = navButtons.find(b => b.dataset.page === name && !b.hidden && !b.classList.contains("cap-off")) || navButtons[0];
   navButtons.forEach(b => b === btn ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   document.querySelectorAll(".page").forEach(p => p.classList.toggle("active", p.id === btn.dataset.page));
   $("main").scrollTop = 0;
@@ -512,16 +562,6 @@ $("settings-search").addEventListener("input", e => {
   const current = navButtons.find(b => b.getAttribute("aria-current") === "page");
   if (current && current.hidden) { const first = navButtons.find(b => !b.hidden); if (first) showPage(first.dataset.page); }
 });
-function syncTheme() {
-  $("theme-toggle").setAttribute("aria-checked", document.documentElement.dataset.theme === "dark" ? "true" : "false");
-}
-$("theme-toggle").addEventListener("click", () => {
-  const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  document.documentElement.dataset.theme = t;
-  try { localStorage.setItem("sonara-theme", t); } catch (e) {}
-  syncTheme();
-});
-syncTheme();
 
 // ---- the API: protocol v1 over HTTP ------------------------------------
 async function call(type, body) {
@@ -552,13 +592,17 @@ async function call(type, body) {
 const get = key => call("get", {key}).then(j => j.value);
 const put = (key, value) => call("set", {key, value}).then(j => j.value);
 
+let offline = false;
 function setOffline(down) {
   const b = $("offline-banner");
   if (b.hidden === !down) return;
   b.hidden = !down;
+  offline = down;
+  renderNow(state.runtime && state.runtime.engine_status);
 }
 
-// ---- status: a visual chip per page plus one polite live region ---------
+// ---- status: a small toast plus one polite live region -------------------
+// The toast is visual only (aria-hidden); the live region says it once.
 function announce(msg) {
   const live = $("live");
   live.textContent = "";
@@ -566,17 +610,16 @@ function announce(msg) {
 }
 let stateT;
 function showState(msg, error) {
-  document.querySelectorAll(".state").forEach(el => {
-    el.classList.toggle("error", !!error);
-    el.classList.add("flash");
-    el.lastChild.textContent = msg;
-  });
+  // While the engine drawer is open its own status line says it; the toast
+  // would cover the drawer's buttons.
+  if (!$("engine-form").hidden) { announce(msg); return; }
+  const t = $("toast");
+  t.classList.toggle("error", !!error);
+  setText("toast-text", msg);
+  t.classList.add("on");
   announce(msg);
   clearTimeout(stateT);
-  stateT = setTimeout(() => document.querySelectorAll(".state").forEach(el => {
-    el.classList.remove("flash", "error");
-    el.lastChild.textContent = "Saved";
-  }), error ? 5000 : 1500);
+  stateT = setTimeout(() => t.classList.remove("on"), error ? 5000 : 1800);
 }
 
 let state = {};
@@ -702,7 +745,8 @@ function wireSegments(id, onPick) {
   });
 }
 function setSwitch(id, on) {
-  $(id).setAttribute("aria-checked", on ? "true" : "false");
+  const v = on ? "true" : "false";
+  if ($(id).getAttribute("aria-checked") !== v) $(id).setAttribute("aria-checked", v);
 }
 function gate(el, off) {
   // A control whose setting does not apply now is dimmed and locked.
@@ -710,30 +754,6 @@ function gate(el, off) {
   el.querySelectorAll("input,select,button,textarea").forEach(c => setDisabled(c, off));
 }
 
-const AUDIO_HINTS = {
-  off: "Other apps play at full volume.",
-  duck: "Other apps get quieter while Sonara speaks.",
-  pause: "Playing music and video pause while Sonara speaks, then resume.",
-};
-const VERBOSITY_HINTS = {
-  everything: "The answer, questions, tool announcements, and each code block by its size and language (\u201c3-line python code block\u201d).",
-  skip_code: "The answer and questions. Code blocks and tool announcements are skipped without a word.",
-};
-const READ_HINTS = {
-  immediate: "Each sentence as soon as it arrives.",
-  queue: "Once the queue size of sentences waits. A tool run, a question or the end of the turn starts it sooner.",
-  done: "The whole answer once the agent is done. A question or permission prompt reads what came before it first.",
-};
-const FLUSH_HINTS = {
-  session: "Only the session being read. Sonara goes on to the next session.",
-  all: "Every finished reply waiting in every session. A session still writing its reply is read when done.",
-};
-const MODE_HINTS = {
-  off: "Read the answer itself, as set under Live reading.",
-  tidy: "Everything, rewritten for the ear at the end of the turn.",
-  natural: "The full story, minus the noise.",
-  brief: "Just the outcome.",
-};
 // The summary models, fastest first; picking one also picks the command.
 const SUMMARY_MODELS = [
   {cmd: "codex", model: "gpt-5.6-luna", label: "GPT-5.6 Luna (fastest)"},
@@ -741,7 +761,7 @@ const SUMMARY_MODELS = [
   {cmd: "claude", model: "haiku", label: "Haiku (fast)"},
 ];
 
-const SUMMARY_GATED = new Set(["model-row", "timeout-row", "settle-row", "read-row", "minqueue-row"]);
+const SUMMARY_GATED = new Set(["prompt-card", "model-row", "timeout-row", "settle-row", "read-row", "minqueue-row"]);
 
 function voiceOptions(engine, withDefault) {
   const own = voices.filter(v => v.engine === engine);
@@ -781,13 +801,15 @@ function render() {
   if (switching && ((st && st.engine === switching.id) || Date.now() > switching.until)) switching = null;
   if (switching) {
     setText("engine-status", "Switching to " + pickerName(switching.id) + "…");
-    $("engine-status").classList.add("busy");
-    $("engine-status").parentNode.classList.add("busy");
+    $("engine-line").classList.add("busy");
+    $("engine-line").classList.remove("bad");
   } else if (!pickerPending) {
     setText("engine-status", engineText(st));
-    $("engine-status").classList.toggle("busy", !!st && !st.ready);
-    $("engine-status").parentNode.classList.toggle("busy", !!st && !st.ready);
+    const bad = !!st && !st.ready && (st.status === "unavailable" || !!st.reason);
+    $("engine-line").classList.toggle("bad", bad);
+    $("engine-line").classList.toggle("busy", !!st && !st.ready && !bad);
   }
+  renderNow(st);
   const vopts = voiceOptions(s.engine, true);
   if (s.voice && !vopts.some(o => o[0] === s.voice)) vopts.push([s.voice, s.voice]);
   fillSelect($("voice-select"), vopts, s.voice || "");
@@ -800,51 +822,43 @@ function render() {
   if (agentOn) {
     setSegments("mute-seg", s.mute_level);
     setSegments("verbosity-seg", s.verbosity);
-    setText("verbosity-hint", VERBOSITY_HINTS[s.verbosity] || "");
     setSegments("background-seg", s.background_policy);
     renderSummary(s.summaries);
     setSegments("readmode-seg", s.read_mode);
-    setText("readmode-hint", READ_HINTS[s.read_mode] || "");
     $("minqueue-row").hidden = s.read_mode !== "queue";
     setText("minqueue-out", String(s.minqueue));
     setSegments("flushscope-seg", s.flush_scope);
-    setText("flushscope-hint", FLUSH_HINTS[s.flush_scope] || "");
   }
 
   // Audio
   if (s.volume !== undefined) { setVal("volume", s.volume); setText("volume-out", s.volume + " %"); }
   if (s.audio_mode !== undefined) {
     setSegments("audio-seg", s.audio_mode);
-    setText("audio-mode-hint", AUDIO_HINTS[s.audio_mode] || "");
+    // The duck level applies only while ducking: hidden and locked otherwise.
     gate($("duck-row"), s.audio_mode !== "duck");
+    $("duck-row").hidden = s.audio_mode !== "duck";
   }
   if (s.duck_level !== undefined) { setVal("duck", s.duck_level); setText("duck-out", s.duck_level + " %"); }
   if (s.earcons) {
-    setText("earcons-folder", s.earcons.folder || "This runtime has no folder for your own chimes");
-    setText("earcons-custom", s.earcons.custom.length
-      ? "Your own: " + s.earcons.custom.join(", ") + ". The others are built in."
-      : "None yet: the built-in sounds play.");
+    setText("earcons-folder", s.earcons.folder || "None in this runtime");
+    $("earcons-folder-box").title = s.earcons.folder || "";
+    setText("earcons-custom", s.earcons.custom.length ? "Your own: " + s.earcons.custom.join(", ") : "None yet");
+    $("earcons-custom").classList.toggle("on", s.earcons.custom.length > 0);
   } else {
-    setText("earcons-custom", "Shown once an app that plays chimes (such as the Claude Code plugin) is connected.");
+    setText("earcons-custom", "Needs an agent app");
   }
 
   // Sessions
   $("sessions-off").hidden = channelsOn;
   document.querySelectorAll(".channels-pref").forEach(p => gate(p, !channelsOn));
-  if (s.channel_announce !== undefined) {
-    setSwitch("announce-switch", s.channel_announce === "on");
-    setText("announce-status", s.channel_announce === "on" ? "On" : "Off");
-  }
+  if (s.channel_announce !== undefined) setSwitch("announce-switch", s.channel_announce === "on");
   renderSessions(channelsOn ? s.channel_prefs : []);
 
   // Hotkeys
   if (s.hotkeys) renderHotkeys(s.hotkeys);
 
   // System
-  if (s.debug_log !== undefined) {
-    setSwitch("debuglog-switch", s.debug_log === true);
-    setText("debuglog-status", s.debug_log === true ? "On" : "Off");
-  }
+  if (s.debug_log !== undefined) setSwitch("debuglog-switch", s.debug_log === true);
   if (s.hello) {
     setText("rt-version", s.hello.version);
     setText("rt-protocol", s.hello.protocol.major + "." + s.hello.protocol.minor);
@@ -852,15 +866,37 @@ function render() {
   }
   if (s.runtime) {
     setText("rt-uptime", fmtUptime(s.runtime.uptime_s));
-    setText("rt-config", s.runtime.config || "Not saved (this runtime keeps settings in memory)");
+    setText("rt-config", s.runtime.config || "Not saved, kept in memory");
+    $("rt-config-box").title = s.runtime.config || "";
     setDisabled($("voice-preview"), !s.runtime.previews);
     // A saved voice this engine lacks waits in config.json: say so, so a
     // migrated choice does not look lost.
     const saved = s.runtime.saved_voice;
     const note = $("voice-saved");
     note.hidden = !saved || saved === s.voice;
-    if (!note.hidden) note.textContent = "Saved voice " + saved + " is not available yet. It is kept and applies once it is.";
+    if (!note.hidden) setText("voice-saved", "Saved voice " + saved + " is not available yet. It is kept and applies once it is.");
   }
+}
+
+// The sidebar's "Now" card: the engine reading and how it is doing. It
+// follows the runtime's status, so it never names the engine it left.
+function renderNow(st) {
+  let text = "–", cls = "";
+  if (offline) { text = "Not connected"; cls = "bad"; }
+  else if (switching) text = "Switching to " + pickerName(switching.id);
+  else if (st) {
+    const name = pickerName(st.engine);
+    if (st.ready) { text = "Reading with " + name; cls = "ok"; }
+    else {
+      text = name + ", " + ((st.reason && REASONS[st.reason]) || ENGINE_STATES[st.status] || st.status);
+      cls = st.status === "unavailable" || st.reason ? "bad" : "";
+    }
+  }
+  setText("now-text", text);
+  $("now").title = text;
+  const dot = $("now-dot");
+  const want = "dot" + (cls ? " " + cls : "");
+  if (dot.className !== want) dot.className = want;
 }
 
 const ENGINE_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows"};
@@ -881,7 +917,6 @@ function renderSummary(sm) {
   if (!sm) return;
   const active = sm.enabled ? sm.style : "off";
   setSegments("summary-seg", active);
-  setText("summary-mode-hint", MODE_HINTS[active] || "");
   // Model list: a model picks its command too ("command|model").
   const opts = SUMMARY_MODELS.map(m => [m.cmd + "|" + m.model, m.label]);
   const cur = sm.command + "|" + sm.model;
@@ -895,8 +930,11 @@ function renderSummary(sm) {
   const sig = style + "|" + effective;
   if (document.activeElement !== ta && ta.dataset.sig !== sig) { ta.value = effective; ta.dataset.sig = sig; }
   ta.dataset.style = style;
-  setText("prompt-state", custom != null ? "Customized for " + style + " mode." : "Default " + style + " instruction.");
+  setText("prompt-state", custom != null ? "Custom" : "Default");
+  $("prompt-state").classList.toggle("on", custom != null);
+  $("prompt-state").title = (custom != null ? "Your own " : "The built-in ") + style + " prompt";
   setDisabled($("prompt-reset"), custom == null);
+  gate($("prompt-card"), active === "off");
   gate($("model-row"), active === "off");
   gate($("timeout-row"), active === "off");
   gate($("settle-row"), active === "off");
@@ -915,37 +953,48 @@ function fmtUptime(sec) {
 // ---- sessions ---------------------------------------------------------
 let sessionsSig = "";
 function buildSessionRow(sess) {
-  const row = document.createElement("div");
-  row.className = "sess-row";
+  const row = el("div", "sess-row" + (sess.open ? "" : " closed"));
   row.setAttribute("role", "listitem");
-  const id = document.createElement("div");
-  const input = document.createElement("input");
+  row.dataset.channel = sess.channel;
+  const id = el("div");
+  const input = el("input", "fld");
   input.type = "text";
-  input.className = "field";
   input.maxLength = 60;
   input.value = sess.label || "";
   input.placeholder = sess.client_label || "Name this session…";
   input.autocomplete = "off";
   const shown = sess.label || sess.client_label || sess.channel.slice(0, 8);
   input.setAttribute("aria-label", "Name of session " + shown);
-  const sub = document.createElement("div");
-  sub.className = "sess-sub";
-  sub.textContent = (sess.client_label || "unknown folder") + " · " + sess.channel.slice(0, 8);
-  if (sess.reading) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "Reading"; sub.appendChild(b); }
-  else if (sess.open) { const b = document.createElement("span"); b.className = "badge quiet"; b.textContent = "Open"; sub.appendChild(b); }
+  const sub = el("div", "sess-sub");
+  sub.append(el("span", "where", sess.client_label || "unknown folder"), el("span", "cid", sess.channel.slice(0, 8)));
+  sub.append(el("span", "tag" + (sess.reading ? " on" : ""), sess.reading ? "Reading" : sess.open ? "Open" : "Closed"));
   id.append(input, sub);
   input.addEventListener("change", () => changePrefs({channel: sess.channel, label: input.value.trim() || null}, "Name"));
   input.addEventListener("keydown", e => { if (e.key === "Enter") input.blur(); });
+  const acts = el("div", "sess-acts");
+  // A closed session can be forgotten: its name, audio choice and anything
+  // it left unread (channel_prefs forget).
+  if (!sess.open) {
+    acts.appendChild(actionButton("ghost session-forget", "Forget", "Forget session " + shown, () => forgetSession(sess.channel, shown)));
+  }
   // An Audio switch (on = heard); the stored preference is `muted`.
-  const audio = document.createElement("button");
+  const audio = el("button", "switch");
   audio.type = "button";
-  audio.className = "switch";
   audio.setAttribute("role", "switch");
   audio.setAttribute("aria-checked", sess.muted ? "false" : "true");
   audio.setAttribute("aria-label", "Audio for session " + shown);
   audio.addEventListener("click", () => changePrefs({channel: sess.channel, muted: audio.getAttribute("aria-checked") === "true"}, "Audio"));
-  row.append(id, audio);
+  acts.appendChild(audio);
+  row.append(id, acts);
   return row;
+}
+async function forgetSession(channel, shown) {
+  const v = await change("channel_prefs", {channel, forget: true}, null, shown + " forgotten");
+  if (v !== undefined) sessionsSig = "";
+  render();
+  // Focus stays in the list: the next Forget, else the summary.
+  const next = document.querySelector("#session-rows-older .session-forget");
+  (next || $("sessions-older-sum")).focus();
 }
 async function changePrefs(update, label) {
   const v = await change("channel_prefs", update, label);
@@ -956,8 +1005,7 @@ function renderSessions(list) {
   const rows = $("session-rows"), older = $("session-rows-older");
   const open = list.filter(x => x.open), closed = list.filter(x => !x.open);
   const sig = JSON.stringify(list);
-  $("sessions-empty").hidden = list.length > 0;
-  $("sessions-head").hidden = open.length === 0;
+  $("sessions-empty").hidden = open.length > 0;
   if (sig === sessionsSig) return;
   // Never rebuild under a field the user is editing.
   const ae = document.activeElement;
@@ -967,7 +1015,7 @@ function renderSessions(list) {
   rows.textContent = "";
   for (const s of open) rows.appendChild(buildSessionRow(s));
   $("sessions-older").hidden = closed.length === 0;
-  setText("sessions-older-sum", "Earlier sessions (" + closed.length + ")");
+  setText("sessions-older-sum", "Earlier (" + closed.length + ")");
   older.textContent = "";
   for (const s of closed) older.appendChild(buildSessionRow(s));
   if (refocus) {
@@ -992,18 +1040,16 @@ function renderHotkeys(h) {
       kbd.textContent = "";
       for (const p of parts || ["unbound"]) {
         const i = document.createElement("i");
-        i.textContent = p;
+        i.textContent = parts ? keyName(p) : p;
         if (!parts) i.className = "unbound";
         kbd.appendChild(i);
       }
       kbd.setAttribute("aria-label", (ACTION_NAMES[b.action] || b.action) + ": " + (b.combo || "unbound") + ". Press to change.");
     }
-    // AltGr (E16, #160) and chords another program owns.
+    // A chord another program owns, or one Windows refused. (An AltGr clash,
+    // E16 #160, is reported by doctor, not here.)
     let text = "";
-    if (b.altgr) {
-      text = "This is AltGr+" + (b.mods.includes("shift") ? "Shift+" : "") + b.key.toUpperCase() +
-        " on your keyboard, so " + b.altgr + " cannot be typed. Rebind it with Win, for example Win+Alt+Home or Ctrl+Win+Up.";
-    } else if (b.error === "already_owned") {
+    if (b.error === "already_owned") {
       text = "Another program owns " + (b.combo || "this shortcut") + ". Pick another one.";
     } else if (b.error) {
       text = "Windows refused this shortcut (" + b.error + ").";
@@ -1018,6 +1064,12 @@ function renderHotkeys(h) {
     if (warn.textContent !== text) warn.textContent = text;
     warn.hidden = !text;
   }
+}
+// How a key shows on its keycap: "ctrl" is Ctrl, "up" is Up, "s" is S.
+const KEY_NAMES = {ctrl: "Ctrl", alt: "Alt", shift: "Shift", win: "Win", pageup: "PgUp", pagedown: "PgDn",
+                   leftbracket: "[", rightbracket: "]", period: "."};
+function keyName(k) {
+  return KEY_NAMES[k] || (k.length === 1 ? k.toUpperCase() : k.charAt(0).toUpperCase() + k.slice(1));
 }
 const KEY_ALIASES = {arrowup: "up", arrowdown: "down", arrowleft: "left", arrowright: "right",
                      ".": "period", "[": "leftbracket", "]": "rightbracket"};
@@ -1130,29 +1182,30 @@ const KINDS = {
 const LOCAL_ONLY_KINDS = ["command"];
 const PRESET_URLS = Object.values(PRESETS).map(p => p.url).filter(Boolean);
 // The options of each kind that get their own field; the rest go to "Other options".
+// The placeholder shows an example or what empty means; no helper text (#237).
 const KIND_FIELDS = {
   "openai-compatible": [
-    {key: "instructions", label: "Instructions", hint: "How to speak, for models that take it. A model that refuses it is asked without it."},
+    {key: "instructions", label: "Instructions", placeholder: "How to speak, for models that take it"},
   ],
   "elevenlabs": [
     {key: "output_format", label: "Audio quality", type: "select", choices: [["", "Default (24 kHz)"], ["pcm_16000", "16 kHz"], ["pcm_22050", "22 kHz"], ["pcm_24000", "24 kHz"], ["pcm_44100", "44.1 kHz (Pro plans)"]]},
-    {key: "language_code", label: "Language", hint: "A language code such as en, for models that take one."},
+    {key: "language_code", label: "Language", placeholder: "en"},
   ],
   "azure": [
-    {key: "region", label: "Region", hint: "Your Speech resource's region, such as westeurope. Not needed with an address."},
-    {key: "lang", label: "Language", hint: "Empty uses the voice's own, such as en-US."},
+    {key: "region", label: "Region", placeholder: "westeurope"},
+    {key: "lang", label: "Language", placeholder: "The voice's own"},
   ],
   "google": [
-    {key: "language_code", label: "Language", hint: "Empty uses the voice's own, such as en-US."},
-    {key: "user_project", label: "Billing project", hint: "A Google Cloud project id, when your key needs one."},
+    {key: "language_code", label: "Language", placeholder: "The voice's own"},
+    {key: "user_project", label: "Billing project", placeholder: "Google Cloud project id"},
   ],
   "gemini": [
-    {key: "language_code", label: "Language", hint: "Empty lets Gemini tell from the text. A locale such as en-US."},
-    {key: "style", label: "Style", hint: "How to speak, such as calm and warm. Sent as a direction, never read aloud. Sonara adds the pace from your rate."},
+    {key: "language_code", label: "Language", placeholder: "From the text"},
+    {key: "style", label: "Style", placeholder: "calm and warm"},
   ],
   "cartesia": [
-    {key: "language", label: "Language", hint: "A language code; empty is en."},
-    {key: "api_version", label: "API version", hint: "Empty uses the version this Sonara was built for."},
+    {key: "language", label: "Language", placeholder: "en"},
+    {key: "api_version", label: "API version", placeholder: "Default"},
   ],
   "deepgram": [],
 };
@@ -1240,7 +1293,12 @@ function buildEngineRow(v) {
   const row = el("div", "eng-row");
   row.setAttribute("role", "listitem");
   row.dataset.engine = v.id;
-  const copy = el("div");
+  // The monogram: the label's first letter (or first two digits).
+  const word = (name.match(/[A-Za-z0-9]+/) || ["?"])[0];
+  const logo = el("div", "logo", /^[0-9]/.test(word) ? word.slice(0, 2) : word[0].toUpperCase());
+  logo.setAttribute("aria-hidden", "true");
+  row.appendChild(logo);
+  const copy = el("div", "m");
   const title = el("div", "eng-name", name);
   if (current) title.appendChild(el("span", "badge", "In use"));
   const meta = el("div", "eng-meta");
@@ -1249,7 +1307,7 @@ function buildEngineRow(v) {
   const st = statusOf(v);
   if (st.text) {
     const line = el("div", "eng-state" + (st.bad ? " bad" : st.ok ? " ok" : ""));
-    line.append(el("i"), el("span", null, st.text));
+    line.append(el("i", "dot"), el("span", null, st.text));
     line.firstChild.setAttribute("aria-hidden", "true");
     copy.appendChild(line);
   }
@@ -1264,7 +1322,10 @@ function buildEngineRow(v) {
   test.hidden = v.supported === false;
   actions.append(use, test);
   if (LOCAL_ONLY_KINDS.includes(v.kind)) {
-    copy.insertBefore(el("div", "hint", "Set up with sonara.exe engines add or in engines.json; change it there."), out);
+    // No Edit: a program on this PC is changed where it was set up.
+    const local = el("div", "eng-local", "Edit with ");
+    local.append(el("code", null, "sonara.exe engines add"), document.createTextNode(" or engines.json"));
+    copy.insertBefore(local, out);
   } else {
     actions.appendChild(actionButton("engine-edit", "Edit", "Edit " + name, () => openForm(v)));
   }
@@ -1407,14 +1468,9 @@ function buildKindFields(kind, options) {
   const box = $("ef-kind-fields");
   box.textContent = "";
   for (const f of KIND_FIELDS[kind] || []) {
-    const row = el("div", "pref");
-    const copy = el("div", "pref-copy");
-    const lab = el("label", "title", f.label);
+    const row = el("div", "f");
+    const lab = el("label", null, f.label);
     lab.htmlFor = "ef-opt-" + f.key;
-    copy.appendChild(lab);
-    const hint = el("div", "hint", f.hint || "Optional.");
-    hint.id = "ef-opt-" + f.key + "-hint";
-    copy.appendChild(hint);
     const ctl = el("div", "control");
     let input;
     if (f.type === "select") {
@@ -1425,20 +1481,20 @@ function buildKindFields(kind, options) {
         input.appendChild(o);
       }
     } else if (f.type === "lines") {
-      input = el("textarea", "field");
+      input = el("textarea", "fld");
       input.spellcheck = false;
     } else {
-      input = el("input", "field");
+      input = el("input", "fld");
       input.type = f.type === "number" ? "number" : "text";
       if (f.type === "number") {
         input.inputMode = "numeric";
-        for (const k of ["min", "max", "step", "placeholder"]) if (f[k] != null) input[k] = f[k];
+        for (const k of ["min", "max", "step"]) if (f[k] != null) input[k] = f[k];
       }
       input.autocomplete = "off";
       input.spellcheck = false;
     }
+    if (f.placeholder && f.type !== "select") input.placeholder = f.placeholder;
     input.id = "ef-opt-" + f.key;
-    input.setAttribute("aria-describedby", hint.id);
     const value = optionText(options[f.key]);
     if (f.type === "select" && value && !f.choices.some(c => c[0] === value)) {
       // A value set elsewhere (the CLI, for example) stays through an edit.
@@ -1448,7 +1504,7 @@ function buildKindFields(kind, options) {
     }
     input.value = value;
     ctl.appendChild(input);
-    row.append(copy, ctl);
+    row.append(lab, ctl);
     box.appendChild(row);
   }
 }
@@ -1522,11 +1578,8 @@ function syncFormRows(prevPreset) {
     const old = (PRESETS[prevPreset] || {}).url || "";
     if ((old && url.value === old) || (!editing && url.value === "")) url.value = editing ? "" : pr.url || "";
     url.placeholder = pr.url || "http://127.0.0.1:8000/v1";
-    setText("ef-url-hint", preset === "openai" ? "OpenAI's address. Change it only for a proxy."
-      : pr.url ? "The server's address, with /v1. The usual one is filled in." : "The server's address, with /v1, such as http://127.0.0.1:8000/v1.");
   } else {
     $("ef-url").placeholder = typeof k.url === "string" ? k.url : "";
-    setText("ef-url-hint", kind === "azure" ? "Optional: your resource's endpoint, instead of the region." : "Optional. Empty uses " + possessive(providerName()) + " own address.");
   }
   syncSendMode();
   syncKeyRow();
@@ -1536,13 +1589,13 @@ function syncKeyRow() {
   const ref = $("ef-keyref").value;
   $("ef-key").hidden = ref !== "credman";
   $("ef-keyenv").hidden = ref !== "env";
+  // What the key field holds says itself in its placeholder (#237: no
+  // helper text): an edit keeps the saved key while the field is empty.
   const saved = savedKey();
-  setText("ef-key-hint", ref === "credman"
-    ? (editing ? (saved ? "Leave empty to keep the saved key; another address or region needs the key again." : "No key saved yet. Leave empty to keep the saved key once there is one.")
-      : $("ef-kind").value === "gemini" ? "Get a key at aistudio.google.com (Get API key) and paste it here. On the free tier Google may use the text it reads to improve its products; with billing on, it does not."
-      : needsKey() ? "Paste the key from " + possessive(providerName()) + " site. Its voices" + (hasModelList() ? " and models" : "") + " load as soon as the key is in." : "Only if the server asks for one.")
-    : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY. It goes only to the provider's own address, or to one confirmed as key_origin in engines.json."
-    : "For a server on this PC that needs none.");
+  $("ef-key").placeholder = editing && saved ? "Saved key kept"
+    : $("ef-kind").value === "gemini" ? "Paste the key from aistudio.google.com"
+    : needsKey() ? "Paste the key" : "Only if the server asks for one";
+  $("ef-keyenv").placeholder = "NAME_API_KEY";
   syncRequired();
 }
 
@@ -1551,10 +1604,6 @@ function syncKeyRow() {
 // OpenAI-compatible one at a loopback address), a whole message for the
 // cloud. The page shows it preselected and sends send_mode only once the
 // user picks one (or the profile already had one).
-const SEND_HINTS = {
-  message: "One request per reply: fewer requests and charges. Reading starts with its first audio.",
-  sentence: "One request per sentence: reading starts after the first one. More requests.",
-};
 function loopbackUrl(u) {
   return /^https?:\/\/(127\.[0-9.]+|localhost|\[::1\])(:[0-9]+)?(\/|$)/i.test(u || "");
 }
@@ -1574,7 +1623,6 @@ function syncSendMode() {
   $("ef-first-audio-row").hidden = mode !== "message" && kind !== "gemini";
   $("ef-chunk-row").hidden = mode !== "message";
   $("ef-chunk").placeholder = kind === "gemini" ? "2000" : "Default";
-  setText("ef-send-hint", SEND_HINTS[mode] + (formState.sendMode ? "" : " The default for this provider."));
 }
 wireSegments("ef-send", v => {
   formState.sendMode = v;
@@ -1658,7 +1706,7 @@ async function loadFormModels(msg, wait) {
   if (!hasModelList()) {
     const page = (KINDS[$("ef-kind").value] || {}).modelPage;
     fillModelSelect([], chosenModel());
-    setText("ef-model-hint", (modelRequired() ? "Required. " : "") + "Type the model id from " + possessive(prov) + " documentation" + (page ? " (" + page + ")" : "") + "; names change, so Sonara lists none.");
+    setText("ef-model-hint", "Type the model id from " + (page || possessive(prov) + " documentation") + ".");
     return;
   }
   if (wait || !msg) {
@@ -1671,14 +1719,13 @@ async function loadFormModels(msg, wait) {
     const r = await call("engine_models", Object.assign({}, msg, msg.engine ? {refresh: true} : {}));
     if (seq !== formState.modelsSeq) return;
     fillModelSelect(r.models, chosenModel());
-    const own = modelRequired() ? "" : " Leave it at " + possessive(prov) + " own choice to let it pick.";
     modelsNote(r.error
-      ? "Could not fetch the models: " + r.error.message + " A model id still works through Other model id."
-      : r.models.length ? r.models.length + (r.models.length === 1 ? " model" : " models") + " from " + prov + "." + own
-      : "It lists no models: choose Other model id and enter one." + own);
+      ? "Could not fetch the models: " + r.error.message
+      : r.models.length ? r.models.length + (r.models.length === 1 ? " model" : " models") + " from " + prov + "."
+      : "It lists no models. Choose Other model id.");
   } catch (e) {
     if (seq !== formState.modelsSeq) return;
-    modelsNote((e instanceof ApiError ? "Could not fetch the models: " + e.message : "Could not reach the runtime.") + " A model id still works through Other model id.");
+    modelsNote(e instanceof ApiError ? "Could not fetch the models: " + e.message : "Could not reach the runtime.");
   }
 }
 
@@ -1722,15 +1769,15 @@ async function loadFormVoices() {
   if (editing && !(ref === "credman" && key)) {
     msg = {engine: editing, refresh: true};
   } else if (kind !== "openai-compatible" && ref === "credman" && !key) {
-    wait = "Enter the API key above and " + possessive(prov) + " voices appear here.";
+    wait = "Enter the API key to list " + possessive(prov) + " voices.";
   } else if (ref === "env" && !$("ef-keyenv").value.trim()) {
-    wait = "Name the environment variable above and " + possessive(prov) + " voices appear here.";
+    wait = "Name the environment variable to list " + possessive(prov) + " voices.";
   } else if (kind === "azure" && !$("ef-url").value.trim() && !(($("ef-opt-region") || {}).value || "").trim()) {
-    wait = "Enter the region below and the voices appear here.";
+    wait = "Enter the region to list the voices.";
   } else if (urlRequired() && !$("ef-url").value.trim()) {
-    wait = "Enter the server's address and its voices appear here.";
+    wait = "Enter the server's address to list its voices.";
   } else if ($("ef-url").value.trim() && !completeUrl($("ef-url").value.trim())) {
-    wait = "Finish the address above and the voices appear here.";
+    wait = "Finish the address to list the voices.";
   } else {
     const p = collectProfile();
     delete p.id;
@@ -1752,13 +1799,13 @@ async function loadFormVoices() {
     fillVoiceSelect(r.voices, chosenVoice());
     const page = voicePage();
     voicesNote(r.error
-      ? "Could not fetch the voices: " + r.error.message + " A voice id still works through Other voice id."
-      : r.voices.length ? r.voices.length + (r.voices.length === 1 ? " voice" : " voices") + " from " + prov + ". For one it does not list (a cloned voice), choose Other voice id."
-      : page ? prov + " has no voice list: choose Other voice id and enter one of the voices named at " + page + "."
-      : "It lists no voices: choose Other voice id and enter one.");
+      ? "Could not fetch the voices: " + r.error.message
+      : r.voices.length ? r.voices.length + (r.voices.length === 1 ? " voice" : " voices") + " from " + prov + "."
+      : page ? prov + " has no voice list. Choose Other voice id; the voices are at " + page + "."
+      : "It lists no voices. Choose Other voice id.");
   } catch (e) {
     if (seq !== formState.voicesSeq) return;
-    voicesNote((e instanceof ApiError ? "Could not fetch the voices: " + e.message : "Could not reach the runtime.") + " A voice id still works through Other voice id.");
+    voicesNote(e instanceof ApiError ? "Could not fetch the voices: " + e.message : "Could not reach the runtime.");
   }
 }
 
@@ -1931,13 +1978,27 @@ function openForm(v) {
   showErrors([], "");
   setFormStatus("");
   syncSaveState();
-  $("ef-head").hidden = false;
-  $("engine-form").hidden = false;
-  $("ef-head").scrollIntoView({block: "start"});
+  showDrawer();
   (v ? $("ef-label") : $("ef-kind")).focus({preventScroll: true});
   loadFormVoices();
 }
 
+// The form is a modal slide-over: the page behind it is inert while it is
+// open, Tab stays inside, Escape and the scrim close it, and focus goes
+// back to what opened it.
+let formOpener = null;
+function showDrawer() {
+  const form = $("engine-form"), scrim = $("ef-scrim");
+  if (form.hidden) {
+    const ae = document.activeElement;
+    formOpener = ae && ae !== document.body && !form.contains(ae) ? ae : null;
+    form.hidden = false;
+    scrim.hidden = false;
+    for (const n of [form, scrim]) { n.classList.remove("enter"); void n.offsetWidth; n.classList.add("enter"); }
+    $("window").inert = true;
+  }
+  form.querySelector(".df").scrollTop = 0;
+}
 function closeForm() {
   editing = null;
   formState.dirty = false;
@@ -1945,13 +2006,29 @@ function closeForm() {
   formState.voicesSeq++;
   $("ef-key").value = "";
   $("engine-form").hidden = true;
-  $("ef-head").hidden = true;
+  $("ef-scrim").hidden = true;
+  $("window").inert = false;
 }
 function closeFormAsked() {
   if (formState.dirty && !confirm("Close without saving your changes?")) return;
   closeForm();
-  $("engine-new").focus();
+  // Back to what opened the form; an opener on another page (the engine
+  // dropdown) or one rebuilt since gives way to Add an engine.
+  const back = formOpener && formOpener.isConnected && formOpener.offsetParent !== null ? formOpener : $("engine-new");
+  formOpener = null;
+  back.focus();
 }
+$("engine-form").addEventListener("keydown", e => {
+  if (e.key !== "Tab") return;
+  const f = [...$("engine-form").querySelectorAll("button, input, select, textarea, summary")]
+    .filter(x => !x.disabled && x.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+$("ef-scrim").addEventListener("click", closeFormAsked);
+$("ef-x").addEventListener("click", closeFormAsked);
 
 // The profile as the form has it now (checked by `validate`, or a draft for
 // the voice list).
@@ -2035,8 +2112,7 @@ $("engine-form").addEventListener("submit", async e => {
     await loadEngines();
     if (state.engine === editing) loadVoicesFor(editing);
     syncKeyRow();
-    const where = state.engine === editing ? " It reads from the next sentence."
-      : " Choose it under Voice engine on the Speech page, or test it here.";
+    const where = state.engine === editing ? " It reads from the next sentence." : "";
     setFormStatus((wasNew ? name + " is saved." : "Changes to " + name + " are saved.") + where, "ok");
     showState(name + " saved");
     loadFormVoices();
@@ -2245,7 +2321,7 @@ function pickerShowPending() {
   setText("engine-status", sel.value === ADD_ENGINE ? "Press Enter to add a new engine."
     : "Press Enter to switch to " + pickerName(sel.value) + ".");
   $("engine-status").classList.remove("busy");
-  $("engine-status").parentNode.classList.remove("busy");
+  $("engine-status").parentNode.classList.remove("busy", "bad");
 }
 function pickerCommit() {
   const sel = $("engine-select");
