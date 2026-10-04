@@ -198,3 +198,63 @@ fn muted_the_joined_message_is_noted_not_spoken() {
         "{notes:?}"
     );
 }
+
+/// A tool run releases the prose held so far, but the release rules keep
+/// holding after it (review of #236): in `immediate` the next paragraph is
+/// still one request, not one per delta. Deltas are numbered 0, 1, 2, ...
+/// within a message block, as Claude Code's MessageDisplay sends them.
+#[test]
+fn immediate_whole_keeps_paragraphs_after_a_tool_run() {
+    let mut r = rules(ReadMode::Immediate, true);
+    r.settings.verbosity = sonara_agent::Verbosity::Everything;
+    prose(&mut r, "Let me look. ", 0, true);
+    assert_eq!(spoken(&r.tool("fg", "Bash", "ls")), ["ls"]);
+    assert!(spoken(&prose(&mut r, "Found it. ", 0, false)).is_empty());
+    assert!(spoken(&prose(&mut r, "It is here. ", 1, false)).is_empty());
+    assert!(spoken(&prose(&mut r, "All good. ", 2, false)).is_empty());
+    assert_eq!(
+        spoken(&prose(
+            &mut r, "
+
+Next. ", 3, false
+        )),
+        ["Found it. It is here. All good."],
+        "one paragraph, one Speak, no blank lines between deltas"
+    );
+}
+
+/// `queue` in whole messages batches at minqueue again after a tool run.
+#[test]
+fn queue_whole_batches_again_after_a_tool_run() {
+    let mut r = rules(ReadMode::Queue, true);
+    r.settings.verbosity = sonara_agent::Verbosity::Everything;
+    prose(&mut r, "Looking. ", 0, false);
+    assert_eq!(spoken(&r.tool("fg", "Bash", "ls")), ["Looking.", "ls"]);
+    assert!(spoken(&prose(&mut r, "One. ", 0, false)).is_empty());
+    assert!(spoken(&prose(&mut r, "Two. ", 1, false)).is_empty());
+    assert_eq!(
+        spoken(&prose(&mut r, "Three. ", 2, false)),
+        ["One. Two. Three."]
+    );
+    // The turn end still releases the rest.
+    prose(&mut r, "Four. ", 3, false);
+    assert_eq!(spoken(&r.turn_end("fg", None, None).unwrap()), ["Four."]);
+}
+
+/// A new delta of the same block is no new paragraph; a new block (its
+/// deltas restart at 0) is.
+#[test]
+fn deltas_of_one_block_join_with_a_space_a_new_block_with_a_blank_line() {
+    let mut r = rules(ReadMode::Done, true);
+    prose(&mut r, "One. ", 0, false);
+    prose(&mut r, "Two. ", 1, false);
+    prose(&mut r, "Three. ", 2, false);
+    prose(&mut r, "Four. ", 0, false);
+    prose(&mut r, "Five.", 1, true);
+    assert_eq!(
+        spoken(&r.turn_end("fg", None, None).unwrap()),
+        ["One. Two. Three.
+
+Four. Five."]
+    );
+}

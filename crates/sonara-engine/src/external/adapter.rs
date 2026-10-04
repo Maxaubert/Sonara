@@ -277,8 +277,9 @@ pub fn execute(
     req: &HttpRequest,
     max_body: u64,
     host: &str,
+    within: Option<Within>,
 ) -> Result<HttpReply, ExtError> {
-    let mut resp = send(agent, req).map_err(|e| transport(e, host))?;
+    let mut resp = send(agent, req, within).map_err(|e| transport(e, host))?;
     let (status, content_type, retry_after) = head(&resp);
     let limit = if (200..300).contains(&status) {
         max_body
@@ -311,11 +312,23 @@ pub fn execute(
     })
 }
 
+/// Timeouts of one request in place of its agent's (#235: a whole message
+/// may take as long as its text needs; a streamed answer's headers must
+/// come within `first_audio_ms`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Within {
+    /// Until the response headers arrived.
+    pub response: Duration,
+    /// For the whole body.
+    pub body: Duration,
+}
+
 /// Send `req` and return the response with its body unread (`stream`
-/// reads it as it comes).
+/// reads it as it comes); `within` replaces the agent's timeouts.
 pub fn send(
     agent: &ureq::Agent,
     req: &HttpRequest,
+    within: Option<Within>,
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     match req.method {
         Method::Get => {
@@ -323,12 +336,26 @@ pub fn send(
             for (k, v) in &req.headers {
                 b = b.header(k.as_str(), v.as_str());
             }
+            if let Some(w) = within {
+                b = b
+                    .config()
+                    .timeout_recv_response(Some(w.response))
+                    .timeout_recv_body(Some(w.body))
+                    .build();
+            }
             b.call()
         }
         Method::Post => {
             let mut b = agent.post(&req.url);
             for (k, v) in &req.headers {
                 b = b.header(k.as_str(), v.as_str());
+            }
+            if let Some(w) = within {
+                b = b
+                    .config()
+                    .timeout_recv_response(Some(w.response))
+                    .timeout_recv_body(Some(w.body))
+                    .build();
             }
             b.send(req.body.as_deref().unwrap_or_default())
         }

@@ -8,7 +8,7 @@
 //! is dropped (the wait for it was cancelled or gave up): it then stops at
 //! the next bytes that arrive and closes the connection (`ureq` cannot
 //! abort a read that waits).
-use super::adapter::{head, send, transport, HttpReply, HttpRequest, MAX_ERROR_BODY};
+use super::adapter::{head, send, transport, HttpReply, HttpRequest, Within, MAX_ERROR_BODY};
 use super::error::ExtError;
 use crate::Reason;
 use std::io::{BufRead, BufReader};
@@ -36,14 +36,24 @@ pub enum Event {
 }
 
 /// Start `req` on its own thread; its events come on the receiver.
-pub fn start(agent: ureq::Agent, req: HttpRequest, host: String) -> Receiver<Event> {
-    spawn(move |tx| run(&agent, &req, &host, &tx))
+pub fn start(
+    agent: ureq::Agent,
+    req: HttpRequest,
+    host: String,
+    within: Option<Within>,
+) -> Receiver<Event> {
+    spawn(move |tx| run(&agent, &req, &host, &tx, within))
 }
 
 /// Start `req`, whose 2xx body is raw PCM, on its own thread: its bytes
 /// come on the receiver as `Bytes`, then `End`.
-pub fn start_bytes(agent: ureq::Agent, req: HttpRequest, host: String) -> Receiver<Event> {
-    spawn(move |tx| run_bytes(&agent, &req, &host, &tx))
+pub fn start_bytes(
+    agent: ureq::Agent,
+    req: HttpRequest,
+    host: String,
+    within: Option<Within>,
+) -> Receiver<Event> {
+    spawn(move |tx| run_bytes(&agent, &req, &host, &tx, within))
 }
 
 fn spawn(f: impl FnOnce(Sender<Event>) + Send + 'static) -> Receiver<Event> {
@@ -70,8 +80,9 @@ fn open(
     req: &HttpRequest,
     host: &str,
     tx: &Sender<Event>,
+    within: Option<Within>,
 ) -> Option<ureq::http::Response<ureq::Body>> {
-    let mut resp = match send(agent, req) {
+    let mut resp = match send(agent, req, within) {
         Ok(r) => r,
         Err(e) => {
             let _ = tx.send(Event::Failed(transport(e, host)));
@@ -136,8 +147,14 @@ fn not_raw(content_type: Option<&str>) -> bool {
 /// The most bytes passed on at once.
 const READ_BYTES: usize = 16 * 1024;
 
-fn run_bytes(agent: &ureq::Agent, req: &HttpRequest, host: &str, tx: &Sender<Event>) {
-    let Some(mut resp) = open(agent, req, host, tx) else {
+fn run_bytes(
+    agent: &ureq::Agent,
+    req: &HttpRequest,
+    host: &str,
+    tx: &Sender<Event>,
+    within: Option<Within>,
+) {
+    let Some(mut resp) = open(agent, req, host, tx, within) else {
         return;
     };
     let (status, content_type, retry_after) = head(&resp);
@@ -184,8 +201,14 @@ fn run_bytes(agent: &ureq::Agent, req: &HttpRequest, host: &str, tx: &Sender<Eve
     let _ = tx.send(Event::End);
 }
 
-fn run(agent: &ureq::Agent, req: &HttpRequest, host: &str, tx: &Sender<Event>) {
-    let Some(resp) = open(agent, req, host, tx) else {
+fn run(
+    agent: &ureq::Agent,
+    req: &HttpRequest,
+    host: &str,
+    tx: &Sender<Event>,
+    within: Option<Within>,
+) {
+    let Some(resp) = open(agent, req, host, tx, within) else {
         return;
     };
     let reader = resp
@@ -289,7 +312,7 @@ mod tests {
                 (0, "data: last"),
             ],
         );
-        let rx = start(agent(), HttpRequest::get(url), "h".into());
+        let rx = start(agent(), HttpRequest::get(url), "h".into(), None);
         let first = rx.recv_timeout(Duration::from_millis(250));
         assert_eq!(
             first,
@@ -313,7 +336,7 @@ mod tests {
     #[test]
     fn raw_bytes_arrive_as_they_are_sent() {
         let url = serve(RAW, vec![(0, "ab"), (300, "cde")]);
-        let rx = start_bytes(agent(), HttpRequest::get(url), "h".into());
+        let rx = start_bytes(agent(), HttpRequest::get(url), "h".into(), None);
         assert_eq!(
             rx.recv_timeout(Duration::from_millis(250)),
             Ok(Event::Bytes(b"ab".to_vec())),
@@ -332,7 +355,7 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nConnection: close\r\n\r\n",
             vec![(0, "RIFF"), (50, "rest")],
         );
-        let rx = start_bytes(agent(), HttpRequest::get(url), "h".into());
+        let rx = start_bytes(agent(), HttpRequest::get(url), "h".into(), None);
         match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
             Event::Whole(r) => assert_eq!(r.body, b"RIFFrest"),
             other => panic!("{other:?}"),
@@ -365,6 +388,7 @@ mod tests {
             agent(),
             HttpRequest::get(format!("http://{addr}/s")),
             "h".into(),
+            None,
         );
         assert!(matches!(
             rx.recv_timeout(Duration::from_secs(5)),
@@ -383,7 +407,7 @@ mod tests {
             "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 13\r\nConnection: close\r\n\r\n{\"error\":\"x\"}",
             vec![],
         );
-        let rx = start(agent(), HttpRequest::get(url), "h".into());
+        let rx = start(agent(), HttpRequest::get(url), "h".into(), None);
         match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
             Event::Refused(r) => {
                 assert_eq!(r.status, 404);
@@ -402,6 +426,7 @@ mod tests {
             agent(),
             HttpRequest::get(format!("http://{addr}/s")),
             "h".into(),
+            None,
         );
         match rx.recv_timeout(Duration::from_secs(5)).unwrap() {
             // Windows retries a refused connect until the connect timeout.

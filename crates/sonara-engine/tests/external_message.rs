@@ -12,6 +12,7 @@ mod common;
 use common::{Route, ScriptServer};
 use serde_json::{json, Value};
 use sonara_engine::external::error::cue_text;
+use sonara_engine::external::hold::Hold;
 use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret};
 use sonara_engine::external::profile::Profile;
 use sonara_engine::external::{External, ExternalConfig, Notice};
@@ -34,7 +35,15 @@ struct Rig {
     notices: Arc<Mutex<Vec<Notice>>>,
 }
 
-fn rig(mut v: Value) -> Rig {
+fn rig(v: Value) -> Rig {
+    rig_with(v, None)
+}
+
+fn rig_held(v: Value, hold: Arc<Hold>) -> Rig {
+    rig_with(v, Some(hold))
+}
+
+fn rig_with(mut v: Value, hold: Option<Arc<Hold>>) -> Rig {
     let server = ScriptServer::start();
     v["url"] = json!(server.base);
     let store = Arc::new(MemoryStore::new());
@@ -44,6 +53,7 @@ fn rig(mut v: Value) -> Rig {
         .unwrap();
     let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
     config.fallback = Some(Arc::new(FakeEngine::new()) as Arc<dyn Engine>);
+    config.hold = hold;
     let notices: Arc<Mutex<Vec<Notice>>> = Arc::default();
     let n = notices.clone();
     config.notice = Some(Arc::new(move |x| n.lock().unwrap().push(x)));
@@ -234,23 +244,133 @@ fn no_first_audio_in_time_reads_with_the_fallback() {
     assert_eq!(r.notices.lock().unwrap()[0].reason, Some(Reason::Timeout));
 }
 
-/// An answer cut after audio came (here: `timeout_ms` reached): the audio
-/// received stays, the log says why once, nothing is read twice and the
-/// partial audio is not kept for a replay.
+/// The audio of `secs` seconds at ElevenLabs' 24 kHz.
+fn seconds(secs: f64) -> Vec<u8> {
+    pcm(&vec![1i16; (secs * 24_000.0) as usize])
+}
+
+/// The fallback's reading of `text`, the cue first when `cue` names it.
+fn local(text: &str, cue: Option<Reason>) -> Vec<i16> {
+    let mut want = match cue {
+        Some(r) => FakeEngine::render(&cue_text(r, "ElevenLabs"), "", 200).unwrap(),
+        None => Vec::new(),
+    };
+    want.extend(FakeEngine::render(text, "", 200).unwrap());
+    want
+}
+
+/// What follows the first sentence of `MESSAGE` (35 characters with its
+/// space): the estimated boundary after 3.5 s of audio, at 12 characters
+/// a second, is in the second sentence, so the rest starts there.
+const AFTER_FIRST: &str = "All tests are green.
+
+The release goes out tonight. Nothing else is needed.";
+
+/// A long answer that streams steadily is never cut by `timeout_ms` (review
+/// of #236): the timeout is a stall limit between pieces, and the whole
+/// answer may take as long as its text needs. It is kept for a replay.
 #[test]
-fn a_message_cut_after_audio_keeps_what_came() {
+fn a_long_answer_streaming_steadily_past_timeout_ms_is_not_cut() {
     let r = rig(elevenlabs(
         json!({"options": {"timeout_ms": 1000, "first_audio_ms": 1000}}),
     ));
-    r.server.on(STREAM, pieces(100, Duration::from_millis(50)));
+    r.server.on(STREAM, pieces(25, Duration::from_millis(100)));
+    let start = Instant::now();
     let got = all(&r.engine, MESSAGE);
-    assert!(!got.is_empty() && got.len() < 200, "{}", got.len());
+    assert!(start.elapsed() > Duration::from_millis(2000));
+    assert_eq!(got.len(), 50, "every piece played");
+    assert!(r.notices.lock().unwrap().is_empty());
+    all(&r.engine, MESSAGE);
+    assert_eq!(r.server.count(STREAM), 1, "complete, so kept for a replay");
+}
+
+/// An answer that stalls after audio came (no audio for `first_audio_ms`):
+/// the audio received stays, and the rest of the text is read with the
+/// fallback from the start of the sentence the audio had reached (an
+/// estimate that errs towards reading a little twice, never towards
+/// dropping). One notice; the cut answer is not kept for a replay.
+#[test]
+fn a_stalled_answer_reads_the_rest_with_the_fallback_from_a_sentence() {
+    let r = rig(elevenlabs(
+        json!({"options": {"timeout_ms": 5000, "first_audio_ms": 1000}}),
+    ));
+    let mut route = Route::raw(
+        "application/octet-stream",
+        vec![(Duration::ZERO, seconds(3.5))],
+    );
+    route.pieces.push((Duration::from_millis(2500), pcm(&[5])));
+    r.server.on(STREAM, route);
+    let got = all(&r.engine, MESSAGE);
+    let played = (3.5 * 24_000.0) as usize;
+    assert_eq!(&got[..played], &vec![1i16; played][..]);
+    assert_eq!(got[played..], local(AFTER_FIRST, Some(Reason::Timeout))[..]);
     let n = r.notices.lock().unwrap().clone();
     assert_eq!(n.len(), 1, "{n:?}");
-    assert_eq!(n[0].fallback, None, "no fallback: part was spoken");
+    assert_eq!(n[0].reason, Some(Reason::Timeout));
+    assert_eq!(
+        n[0].fallback,
+        Some(FakeEngine::new().id()),
+        "the rest is read"
+    );
     r.server.on(STREAM, pieces(2, Duration::ZERO));
     all(&r.engine, MESSAGE);
     assert_eq!(r.server.count(STREAM), 2, "a cut answer is not replayed");
+}
+
+/// A connection that breaks after audio came: as a stall, the rest is
+/// read with the fallback from the sentence reached.
+#[test]
+fn a_broken_answer_reads_the_rest_with_the_fallback() {
+    let r = rig(elevenlabs(json!({})));
+    let route = Route::raw(
+        "application/octet-stream",
+        vec![(Duration::ZERO, seconds(0.5))],
+    );
+    // More promised than sent: the connection breaks after the audio.
+    r.server
+        .on(STREAM, route.header("Content-Length", "10000000"));
+    let got = all(&r.engine, MESSAGE);
+    let played = 12_000;
+    // 0.5 s is in the first sentence: all of it is read again.
+    assert_eq!(
+        got[played..],
+        local(MESSAGE, Some(Reason::Network))[..],
+        "{}",
+        got.len()
+    );
+    assert_eq!(r.notices.lock().unwrap().len(), 1);
+}
+
+/// A mute during a streamed message (the hold) ends the provider's answer,
+/// but not the message: the rest is read locally from the sentence the
+/// audio had reached, with no cue and no notice (a mute is no failure).
+#[test]
+fn a_mute_mid_message_reads_the_rest_locally() {
+    let hold = Arc::new(Hold::new());
+    let r = rig_held(elevenlabs(json!({})), hold.clone());
+    let mut route = Route::raw(
+        "application/octet-stream",
+        vec![(Duration::ZERO, seconds(3.5))],
+    );
+    for _ in 0..50 {
+        route.pieces.push((Duration::from_millis(50), pcm(&[5])));
+    }
+    r.server.on(STREAM, route);
+    r.engine.begin();
+    let mut stream = r.engine.synthesize(MESSAGE, "", 200).unwrap();
+    let mut got: Vec<i16> = Vec::new();
+    while got.len() < (3.5 * 24_000.0) as usize {
+        got.extend(stream.next().unwrap().unwrap().samples);
+    }
+    hold.set(true);
+    let rest: Vec<i16> = stream
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .flat_map(|c| c.samples)
+        .collect();
+    assert_eq!(rest, local(AFTER_FIRST, None));
+    assert!(r.notices.lock().unwrap().is_empty());
 }
 
 /// A body that is WAV after all (a server that ignores the raw format) is

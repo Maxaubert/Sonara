@@ -363,7 +363,9 @@
           <div class="pref" id="ef-send-row"><div class="pref-copy"><strong id="ef-send-label">Send to the engine</strong><div class="hint" id="ef-send-about">How Sonara hands the text over. The default suits the provider.</div></div><div class="control"><div class="segments" id="ef-send" role="radiogroup" aria-labelledby="ef-send-label" aria-describedby="ef-send-hint"><button type="button" role="radio" data-value="message">Full message in one request</button><button type="button" role="radio" data-value="sentence">As it comes in</button></div><div class="hint" id="ef-send-hint"></div></div></div>
           <div id="ef-kind-fields"></div>
           <details class="more"><summary>More options</summary>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for an answer before Kokoro reads it instead. A full message gets more time for its length.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
+            <div class="pref" id="ef-first-audio-row"><div class="pref-copy"><label class="title" for="ef-first-audio">Wait for audio</label><div class="hint" id="ef-first-audio-hint">If no audio comes for this long, at the start or midway, Kokoro reads the rest. Empty is 12000.</div></div><div class="control"><div class="unit"><input class="field" id="ef-first-audio" type="number" inputmode="numeric" min="1000" max="60000" step="500" placeholder="12000" aria-describedby="ef-first-audio-hint"><span aria-hidden="true">ms</span></div></div></div>
+            <div class="pref" id="ef-chunk-row"><div class="pref-copy"><label class="title" for="ef-chunk">Characters per request</label><div class="hint" id="ef-chunk-hint">A longer message is sent in parts, split between paragraphs or sentences. 200 to 5000; empty uses the provider's limit.</div></div><div class="control"><input class="field" id="ef-chunk" type="number" inputmode="numeric" min="200" max="5000" step="100" placeholder="Default" aria-describedby="ef-chunk-hint"></div></div>
             <div class="pref"><div class="pref-copy"><label class="title" for="ef-prefetch">Read ahead</label><div class="hint" id="ef-prefetch-hint">Sentences prepared ahead of the one playing, 1 to 4. More hides a slow connection.</div></div><div class="control"><input class="field" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default" aria-describedby="ef-prefetch-hint"></div></div>
             <div class="pref"><div class="pref-copy"><label class="title" for="ef-options">Other options</label><div class="hint" id="ef-options-hint">A JSON object with the provider's further options (see the README).</div></div><div class="control"><textarea class="field" id="ef-options" spellcheck="false" placeholder="{}" aria-describedby="ef-options-hint"></textarea></div></div>
           </details>
@@ -1147,7 +1149,6 @@ const KIND_FIELDS = {
   "gemini": [
     {key: "language_code", label: "Language", hint: "Empty lets Gemini tell from the text. A locale such as en-US."},
     {key: "style", label: "Style", hint: "How to speak, such as calm and warm. Sent as a direction, never read aloud. Sonara adds the pace from your rate."},
-    {key: "first_audio_ms", label: "Wait for the first audio", type: "number", min: 1000, max: 60000, step: 500, placeholder: "12000", hint: "Gemini streams its audio. If none has come after this many milliseconds, Kokoro reads that part instead. Empty is 12000."},
   ],
   "cartesia": [
     {key: "language", label: "Language", hint: "A language code; empty is en."},
@@ -1567,6 +1568,12 @@ function sendMode() { return formState.sendMode || defaultSendMode(); }
 function syncSendMode() {
   const mode = sendMode();
   setSegments("ef-send", mode);
+  // The options of a full message (#235): a streamed answer's wait for
+  // audio (Gemini streams in both modes) and the split limit.
+  const kind = $("ef-kind").value;
+  $("ef-first-audio-row").hidden = mode !== "message" && kind !== "gemini";
+  $("ef-chunk-row").hidden = mode !== "message";
+  $("ef-chunk").placeholder = kind === "gemini" ? "2000" : "Default";
   setText("ef-send-hint", SEND_HINTS[mode] + (formState.sendMode ? "" : " The default for this provider."));
 }
 wireSegments("ef-send", v => {
@@ -1867,6 +1874,7 @@ function fieldForMessage(msg) {
                  [/environment variable|key_ref/, "ef-keyenv"], [/\bkey\b|secret/, "ef-key"],
                  [/'url'|address|\burl\b/, "ef-url"], [/model/, "ef-model-select"], [/label/, "ef-label"],
                  [/region/, "ef-opt-region"], [/timeout_ms/, "ef-timeout"], [/prefetch/, "ef-prefetch"],
+                 [/first_audio_ms/, "ef-first-audio"], [/chunk_chars/, "ef-chunk"],
                  [/option/, "ef-options"]];
   for (const [re, id] of rules) {
     let n = $(id);
@@ -1908,7 +1916,9 @@ function openForm(v) {
   $("ef-keyenv").value = ref.startsWith("env:") ? ref.slice(4) : "";
   $("ef-timeout").value = optionText(opts.timeout_ms);
   $("ef-prefetch").value = optionText(opts.prefetch);
-  for (const k of ["preset", "timeout_ms", "prefetch"].concat((KIND_FIELDS[v ? v.kind : ""] || []).map(f => f.key))) delete opts[k];
+  $("ef-first-audio").value = optionText(opts.first_audio_ms);
+  $("ef-chunk").value = optionText(opts.chunk_chars);
+  for (const k of ["preset", "timeout_ms", "prefetch", "first_audio_ms", "chunk_chars"].concat((KIND_FIELDS[v ? v.kind : ""] || []).map(f => f.key))) delete opts[k];
   $("ef-options").value = Object.keys(opts).length ? JSON.stringify(opts, null, 2) : "";
   buildKindFields($("ef-kind").value, (v && v.options) || {});
   lastPreset = $("ef-preset").value;
@@ -1980,7 +1990,9 @@ function collectProfile() {
     else if (f.type === "lines") options[f.key] = n.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
     else options[f.key] = val;
   }
-  for (const [id, key] of [["ef-timeout", "timeout_ms"], ["ef-prefetch", "prefetch"]]) {
+  for (const [id, key] of [["ef-timeout", "timeout_ms"], ["ef-prefetch", "prefetch"],
+                           ["ef-first-audio", "first_audio_ms"], ["ef-chunk", "chunk_chars"]]) {
+    if ($(id).closest("[hidden]")) continue;
     const val = $(id).value.trim();
     if (val) options[key] = Number(val);
   }

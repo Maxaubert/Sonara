@@ -304,9 +304,11 @@ fn a_first_audio_too_late_reads_with_the_fallback_and_the_cue() {
 
 #[test]
 fn a_stream_that_stops_keeps_the_audio_it_sent() {
-    // Past the whole timeout after the first audio: the chunk ends with
-    // what came, and the log says why (no fallback repeats spoken text).
+    // No audio for `first_audio_ms` after the first: the answer stalled.
+    // In send mode `sentence` the chunk ends with what came, and the log
+    // says why (no fallback repeats spoken text).
     let mut v = gemini();
+    v["send_mode"] = json!("sentence");
     v["options"]["timeout_ms"] = json!(1500);
     v["options"]["first_audio_ms"] = json!(1000);
     let r = rig_with(v, Some(KEY), true, None);
@@ -323,9 +325,25 @@ fn a_stream_that_stops_keeps_the_audio_it_sent() {
     let n = r.notices.lock().unwrap().clone();
     assert!(
         n.iter()
-            .any(|x| x.reason == Some(Reason::Timeout) && x.message.contains("did not finish")),
+            .any(|x| x.reason == Some(Reason::Timeout) && x.message.contains("no audio for 1 s")),
         "{n:?}"
     );
+    // In send mode `message` (the default) the rest of the message is
+    // read with the fallback from the sentence the audio had reached
+    // (here the only one), the cue first.
+    let mut v = gemini();
+    v["options"]["first_audio_ms"] = json!(1000);
+    let r = rig_with(v, Some(KEY), true, None);
+    r.server.on(
+        SPEAK,
+        Route::sse(vec![
+            (Duration::ZERO, response(&[1], false)),
+            (Duration::from_secs(5), response(&[2], true)),
+        ]),
+    );
+    let got = samples(&r.engine, "Cut.", "", 200);
+    assert_eq!(got[0], 1);
+    assert_eq!(got[1..], with_cue(Reason::Timeout, "Cut.")[..]);
 }
 
 #[test]

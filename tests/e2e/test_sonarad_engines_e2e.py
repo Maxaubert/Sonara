@@ -775,7 +775,11 @@ def test_gemini_offers_googles_live_models_and_voices_and_presets_none(live, bro
         for name in ("gemini-3", "flash-lite", "Kore", "Puck"):
             assert name not in form_text, name
         assert page.locator("#ef-opt-style").is_visible()
-        pw.expect(page.locator("#ef-opt-first_audio_ms")).to_have_attribute("placeholder", "12000")
+        # The wait for audio and the split limit are common options now
+        # (review of #236), with Gemini's defaults as placeholders.
+        assert page.locator("#ef-opt-first_audio_ms").count() == 0
+        pw.expect(page.locator("#ef-first-audio")).to_have_attribute("placeholder", "12000")
+        pw.expect(page.locator("#ef-chunk")).to_have_attribute("placeholder", "2000")
         # The pre-release Gemini options are folded into "Send to the
         # engine" (#235): a whole message per request by default.
         assert page.locator("#ef-opt-chunk_chars").count() == 0
@@ -851,10 +855,18 @@ def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, 
         assert send_choice(page) == "message"
         pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per reply")
         pw.expect(page.locator("#ef-send-hint")).to_contain_text("default for this provider")
+        # A full message's options (review of #236): the wait for audio and
+        # the split limit, shown only for it; the timeout speaks of answers.
+        page.locator("#engine-form details.more").evaluate("d => { d.open = true; }")
+        pw.expect(page.locator("#ef-first-audio-row")).to_be_visible()
+        pw.expect(page.locator("#ef-chunk-row")).to_be_visible()
+        pw.expect(page.locator("#ef-timeout-hint")).to_contain_text("full message gets more time")
         # A server on this PC: a sentence at a time.
         page.select_option("#ef-preset", "kokoro-fastapi")
         assert send_choice(page) == "sentence"
         pw.expect(page.locator("#ef-send-hint")).to_contain_text("One request per sentence")
+        pw.expect(page.locator("#ef-first-audio-row")).to_be_hidden()
+        pw.expect(page.locator("#ef-chunk-row")).to_be_hidden()
         # Its address moved off this PC: the cloud default again.
         page.fill("#ef-url", "https://tts.example.com/v1")
         page.locator("#ef-url").dispatch_event("change")
@@ -885,9 +897,14 @@ def test_send_to_the_engine_is_preselected_per_kind_and_saved_when_chosen(live, 
         pw.expect(page.locator("#engine-form")).to_be_visible()
         assert send_choice(page) == "sentence"
         page.click("#ef-send [data-value=message]")
+        page.locator("#engine-form details.more").evaluate("d => { d.open = true; }")
+        page.fill("#ef-first-audio", "8000")
+        page.fill("#ef-chunk", "1500")
         page.click("#ef-save")
         pw.expect(page.locator("#ef-save")).to_have_text("Saved")
-        assert lv.request({"type": "engine_list"})["engines"][0]["send_mode"] == "message"
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["send_mode"] == "message"
+        assert view["options"]["first_audio_ms"] == 8000 and view["options"]["chunk_chars"] == 1500
         page.close()
     finally:
         cloud.stop()

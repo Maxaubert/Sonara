@@ -89,7 +89,7 @@ pub const AZURE_FORMATS: &[(&str, u32)] = &[
 
 /// Gemini's default `chunk_chars` in send mode `message` (#235): a request
 /// of up to 2000 characters is about two minutes of speech, well inside
-/// the models' output limit and the two-minute `timeout_ms`.
+/// the models' output limit.
 pub const GEMINI_CHUNK_CHARS: u64 = 2000;
 /// The range of `chunk_chars` (every kind, send mode `message`): the most
 /// characters one request takes; the provider's own input limit still
@@ -97,13 +97,16 @@ pub const GEMINI_CHUNK_CHARS: u64 = 2000;
 pub const CHUNK_CHARS_MIN: u64 = 200;
 pub const CHUNK_CHARS_MAX: u64 = 5000;
 
-/// The wait for the first audio of a streamed answer (Gemini's events, a
-/// cloud answer read as it arrives in send mode `message`): past it the
-/// text is read with the fallback (#235, option `first_audio_ms`).
+/// The wait for audio of a streamed answer (Gemini's events, a cloud
+/// answer read as it arrives in send mode `message`), the first and each
+/// next: no first audio in time reads the text with the fallback, a stall
+/// after audio reads the rest with it (#235, option `first_audio_ms`).
 pub const GEMINI_FIRST_AUDIO_MS: u64 = 12_000;
-/// The default `timeout_ms` of a cloud profile in send mode `message`: a
-/// whole message may be minutes of speech (#235).
-pub const MESSAGE_TIMEOUT_MS: u64 = 120_000;
+/// What a whole message adds to `timeout_ms` per character of its text in
+/// send mode `message` (#235): about the time it takes to speak it (15
+/// characters a second), so a provider that makes audio no faster than it
+/// plays still finishes, while a short message keeps a short limit.
+pub const ANSWER_MS_PER_CHAR: u64 = 70;
 
 /// Cartesia's API version (spec 5.4; the API pins its behaviour to the
 /// version date, so it is the API's contract, not a model or a voice).
@@ -1303,17 +1306,28 @@ impl Profile {
         }
     }
 
-    /// Request timeout (spec 5.4 common options). A whole message may be
-    /// minutes of speech, so send mode `message` waits up to
-    /// `MESSAGE_TIMEOUT_MS` for it (#235); a streamed answer gives up much
-    /// earlier when no audio comes (`first_audio_ms`).
+    /// Request timeout (spec 5.4 common options): the wait for an answer
+    /// to a sentence. A whole message (send mode `message`) gets this plus
+    /// `ANSWER_MS_PER_CHAR` per character (`answer_ms`, #235); a streamed
+    /// answer is cut by a stall (`first_audio_ms` without audio), not by
+    /// its length.
     pub fn timeout_ms(&self) -> u64 {
         self.option_u64("timeout_ms").unwrap_or(match self.kind {
             Kind::Command => 30_000,
-            _ if self.send_mode() == SendMode::Message => MESSAGE_TIMEOUT_MS,
             _ if self.is_local() || self.kind == Kind::Gemini => 60_000,
             _ => 15_000,
         })
+    }
+
+    /// The longest a request for `chars` characters may take, its whole
+    /// answer included: `timeout_ms`, plus `ANSWER_MS_PER_CHAR` per
+    /// character in send mode `message` (#235).
+    pub fn answer_ms(&self, chars: usize) -> u64 {
+        let per_char = match self.send_mode() {
+            SendMode::Message => ANSWER_MS_PER_CHAR,
+            SendMode::Sentence => 0,
+        };
+        self.timeout_ms() + per_char * chars as u64
     }
 
     /// "Send to the engine" (#235): the profile's `send_mode`, else the
@@ -1345,9 +1359,10 @@ impl Profile {
             .map(|n| n as usize)
     }
 
-    /// How long a streamed answer may take to send its first audio before
-    /// it is read with the fallback (#235): `options.first_audio_ms`,
-    /// default `GEMINI_FIRST_AUDIO_MS`, never more than `timeout_ms`.
+    /// How long a streamed answer may go without audio (#235): before its
+    /// first audio the text is read with the fallback, after it the rest
+    /// is. `options.first_audio_ms`, default `GEMINI_FIRST_AUDIO_MS`, never
+    /// more than `timeout_ms`.
     pub fn first_audio_ms(&self) -> u64 {
         self.option_u64("first_audio_ms")
             .unwrap_or(GEMINI_FIRST_AUDIO_MS)
@@ -1608,10 +1623,9 @@ mod tests {
         let cloud = parse(json!({"id": "openai", "kind": "openai-compatible",
             "options": {"preset": "openai"}}))
         .unwrap();
-        assert_eq!(
-            (cloud.timeout_ms(), cloud.prefetch()),
-            (MESSAGE_TIMEOUT_MS, 2)
-        );
+        assert_eq!((cloud.timeout_ms(), cloud.prefetch()), (15_000, 2));
+        // A whole message adds the time its text takes to speak.
+        assert_eq!(cloud.answer_ms(1000), 15_000 + 1000 * ANSWER_MS_PER_CHAR);
         assert!(!cloud.is_local());
         assert_eq!(cloud.sends_text_to(), "api.openai.com");
         assert_eq!(cloud.display_label(), "OpenAI");
@@ -1648,7 +1662,7 @@ mod tests {
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "Cartesia");
         assert_eq!(p.sends_text_to(), "api.cartesia.ai");
-        assert_eq!((p.timeout_ms(), p.prefetch()), (MESSAGE_TIMEOUT_MS, 2));
+        assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
         let bare = parse(json!({"id": "ca", "kind": "cartesia"})).unwrap();
         assert_eq!(
             bare.voice, None,
@@ -1692,10 +1706,11 @@ mod tests {
         assert_eq!(p.sends_text_to(), "generativelanguage.googleapis.com");
         // One chunk ahead: the free tier's per-minute limit counts the
         // burst at the start of a reply (review of #235).
-        // A whole message per request (#235): two minutes for its answer,
-        // at most 2000 characters per request.
+        // A whole message per request (#235), at most 2000 characters per
+        // request; its answer may take as long as the text needs.
         assert_eq!(p.send_mode(), SendMode::Message);
-        assert_eq!((p.timeout_ms(), p.prefetch()), (120_000, 1));
+        assert_eq!((p.timeout_ms(), p.prefetch()), (60_000, 1));
+        assert_eq!(p.answer_ms(2000), 60_000 + 2000 * ANSWER_MS_PER_CHAR);
         assert_eq!(p.chunk_chars(), Some(2000));
         let set = parse(ge(json!({"model": "m-1.2_x", "voice": "v1",
             "options": {"language_code": "de-DE", "style": "calm and warm",
@@ -1810,8 +1825,10 @@ mod tests {
         assert_eq!(p.to_json()["send_mode"], "sentence");
         assert_eq!(parse(p.to_json()).unwrap(), p);
         assert_eq!(p.timeout_ms(), 15_000, "a sentence keeps the short wait");
+        assert_eq!(p.answer_ms(1000), 15_000, "no time per character");
         let m = parse(json!({"id": "a", "kind": "elevenlabs"})).unwrap();
-        assert_eq!(m.timeout_ms(), MESSAGE_TIMEOUT_MS);
+        assert_eq!(m.timeout_ms(), 15_000);
+        assert_eq!(m.answer_ms(100), 15_000 + 100 * ANSWER_MS_PER_CHAR);
         // Every kind takes chunk_chars and first_audio_ms now.
         let c = parse(json!({"id": "a", "kind": "cartesia",
             "options": {"chunk_chars": 800, "first_audio_ms": 3000}}))
@@ -2066,7 +2083,7 @@ mod tests {
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "ElevenLabs");
         assert_eq!(p.sends_text_to(), "api.elevenlabs.io");
-        assert_eq!((p.timeout_ms(), p.prefetch()), (MESSAGE_TIMEOUT_MS, 2));
+        assert_eq!((p.timeout_ms(), p.prefetch()), (15_000, 2));
         assert!(parse(json!({"id": "el", "kind": "elevenlabs"})).is_ok());
         // A cloud kind keeps credman even behind a loopback url.
         let proxy = parse(el(json!({"url": "http://127.0.0.1:9"}))).unwrap();

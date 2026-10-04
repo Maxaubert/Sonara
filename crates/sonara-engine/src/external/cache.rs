@@ -5,8 +5,8 @@
 //! In send mode `message` (#235) it also keeps the last few whole
 //! messages (`keep` with `message`), so Up (Restart), which reads the
 //! message again as a new item, plays it without a new request. They are
-//! bounded by count and by samples (about five minutes of 24 kHz speech
-//! each), and only a complete answer goes in (never one cut off).
+//! bounded by count and by samples (about ten minutes of 24 kHz speech
+//! in all, some 30 MB), and only a complete answer goes in (never one cut off).
 use crate::PcmChunk;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -17,8 +17,9 @@ pub const MAX_TEXT_CHARS: usize = 64;
 pub const CAPACITY: usize = 128;
 /// Whole messages kept (send mode `message`).
 pub const MESSAGES: usize = 4;
-/// The most samples of whole messages kept in all (about 64 MB).
-pub const MESSAGE_SAMPLES: usize = 32 * 1024 * 1024;
+/// The most samples of whole messages kept in all (about 30 MB, ten
+/// minutes of 24 kHz speech: a replay needs only the last message).
+pub const MESSAGE_SAMPLES: usize = 15 * 1024 * 1024;
 
 type Key = (String, u32, String);
 

@@ -66,7 +66,7 @@ use crate::{
     Readiness, Reason, Result, SendMode, Voice,
 };
 use adapter::{
-    execute, Adapter, HttpRequest, ModelInfo, VoiceSource, MAX_AUDIO_BODY, MAX_LIST_BODY,
+    execute, Adapter, HttpRequest, ModelInfo, VoiceSource, Within, MAX_AUDIO_BODY, MAX_LIST_BODY,
 };
 use cache::CueCache;
 use error::{choose_model, choose_voice, cue_text, ExtError};
@@ -174,7 +174,7 @@ pub struct External {
     fallback: Option<Arc<dyn Engine>>,
     fallback_voice: String,
     notice: Option<NoticeFn>,
-    health: Health,
+    health: Arc<Health>,
     cache: Arc<CueCache>,
     cancel: Arc<CancelToken>,
     /// The hold epoch and cancel generation at `begin`, taken by the next
@@ -254,7 +254,7 @@ impl External {
             fallback: config.fallback,
             fallback_voice: config.fallback_voice,
             notice: config.notice,
-            health: Health::new(config.clock.clone()),
+            health: Arc::new(Health::new(config.clock.clone())),
             cache: Arc::new(CueCache::new()),
             cancel,
             begun: Mutex::new(None),
@@ -446,12 +446,22 @@ impl External {
         key: Option<&Secret>,
     ) -> Result<std::result::Result<PcmChunk, ExtError>> {
         let mut req = adapter.synth_request(text, voice, rate, key);
+        // A whole message may take as long as its text needs (#235).
+        let within = self.whole_messages().then(|| {
+            let answer = Duration::from_millis(self.profile.answer_ms(text.chars().count()));
+            Within {
+                response: answer,
+                body: answer,
+            }
+        });
         let (mut retried, mut adapted) = (false, 0);
         loop {
             let (agent, r, host) = (self.agent.clone(), req.clone(), self.host.clone());
             let reply = self
                 .cancel
-                .run(gen, move || execute(&agent, &r, MAX_AUDIO_BODY, &host))
+                .run(gen, move || {
+                    execute(&agent, &r, MAX_AUDIO_BODY, &host, within)
+                })
                 .map_err(|_| Error::Cancelled)?;
             let outcome = match reply {
                 Err(e) => Err(e),
@@ -598,7 +608,13 @@ impl External {
             if self.held() {
                 return Ok(None);
             }
-            let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
+            let r = execute(
+                &self.voices_agent,
+                &request,
+                MAX_LIST_BODY,
+                &self.host,
+                None,
+            )?;
             if !r.ok() {
                 return Err(adapter.map_error(&r, "", None));
             }
@@ -704,7 +720,13 @@ impl External {
             if self.held() {
                 return Ok(None);
             }
-            let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
+            let r = execute(
+                &self.voices_agent,
+                &request,
+                MAX_LIST_BODY,
+                &self.host,
+                None,
+            )?;
             if !r.ok() {
                 return Err(adapter.map_error(&r, "", None));
             }

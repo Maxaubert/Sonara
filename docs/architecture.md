@@ -25,7 +25,8 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
   `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes, paged voice and model
   lists, the stream hooks), `sse.rs` (a request whose server-sent events arrive on a channel),
   `streaming.rs` (#235: a streamed chunk returns at its first audio within `first_audio_ms`, the
-  rest follows on the `PcmStream`),
+  rest follows on the `PcmStream`; a stall or break after audio reads the rest of a message with
+  the fallback from the sentence reached, `rest_of`),
   `openai.rs` (kind `openai-compatible`), `elevenlabs.rs`, `azure.rs` (SSML, XML escaping),
   `google.rs` (base64 `audioContent`), `gemini.rs` (`streamGenerateContent?alt=sse`, else
   `generateContent`; base64 `inlineData`; models and voices from `/v1beta/models` and

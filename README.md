@@ -309,18 +309,21 @@ $S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--mo
   sentence is its own request, read as soon as it is made. Nothing is billed locally, and a
   local server answers one sentence faster than a whole message.
 
-Skipping, flushing, a new prompt or muting stops a message that is still arriving: the request
-is cancelled and nothing more is sent for it. If the provider fails before any audio, Kokoro
-reads the whole message (and says once why); if an answer breaks off midway, what was played
-stays. Kokoro and the Windows voices always read sentence by sentence.
+Skipping, flushing or a new prompt stops a message that is still arriving: the request is
+cancelled and nothing more is sent for it (a provider that already started may still bill that
+one request). If the provider fails before any audio, Kokoro reads the whole message (and says
+once why); if an answer stalls or breaks off midway, what was played stays and Kokoro reads the
+rest from the sentence it had reached (that sentence may be heard twice). Muting midway reads
+the rest with Kokoro the same way. A long message is never cut for its length: the time limit
+grows with the text. Kokoro and the Windows voices always read sentence by sentence.
 
 **Gemini** counts requests on its free tier (per minute and per day), so it sends a whole
 message per request by default (up to 2000 characters each; a longer one in as few parts as
 fit). When a per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
 daily limit is reached, Kokoro reads until Google's daily reset (midnight Pacific time).
 Gemini's audio is **streamed**: a sentence starts playing with its first audio, and when none
-has come after 12 seconds (`first_audio_ms`, on the settings page as *Wait for the first audio*)
-Kokoro reads that part instead, so a slow free tier never holds a reply for a minute. Gemini
+has come after 12 seconds (`first_audio_ms`, on the settings page as *Wait for audio* under
+*More options*, with *Characters per request* for `chunk_chars`) Kokoro reads that part instead, so a slow free tier never holds a reply for a minute. Gemini
 has no speed setting: away from the default rate Sonara asks it to speak slowly or quickly, an
 approximate direction. On the free tier Google may use the text to improve its products; with
 billing on it does not.

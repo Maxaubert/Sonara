@@ -29,7 +29,9 @@
 //!   is ONE `Speak`, the chunks joined with a space and paragraphs (a blank
 //!   line, or a new block) with a blank line, so the engine gets one
 //!   request: the turn end in `done`, a batch in `queue`, the prose before
-//!   a decision or a tool run. In `immediate` the release point is the end
+//!   a decision or a tool run (which releases what is held but does not
+//!   lift the batch or paragraph rule for the rest of the turn). In
+//!   `immediate` the release point is the end
 //!   of a paragraph (its blank line or its block's `final`), so reading
 //!   starts after the first paragraph and each paragraph is one request.
 //!   Decisions and tool announcements stay their own (short) `Speak`: a
@@ -219,7 +221,7 @@ struct Turn {
     held_prose: Vec<(String, bool)>,
     /// The next chunk starts a paragraph (a blank line or a block ended).
     new_para: bool,
-    /// The block of the last delta.
+    /// The index of the last delta (its number within its block).
     last_index: Option<u32>,
     /// The turn released its prose (turn_end, or a tool in read mode
     /// `queue`): no more holding.
@@ -475,7 +477,8 @@ impl Rules {
 
     // -- messages ---------------------------------------------------------
 
-    /// A delta of streamed prose (`index` is the block, `final` ends it).
+    /// A delta of streamed prose (`index` numbers the deltas of a block,
+    /// restarting at 0 for a new block; `final` ends the block).
     pub fn stream(
         &mut self,
         channel: &str,
@@ -523,7 +526,10 @@ impl Rules {
         let mut texts: Vec<(String, bool)> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut breaks: Option<usize> = None;
-        if c.last_index.is_some_and(|i| i != index) {
+        // `index` numbers the deltas of a message block (0, 1, 2, ...): a
+        // new block restarts at 0 and starts a paragraph; the next delta of
+        // the same block does not.
+        if index == 0 && c.last_index.is_some_and(|i| i != 0) {
             c.new_para = true;
         }
         c.last_index = Some(index);
@@ -805,7 +811,11 @@ impl Rules {
             return out;
         }
         if self.settings.read_mode != ReadMode::Done {
-            self.turn(channel).released = true;
+            // In whole messages the tool run is one release point; the
+            // paragraph and batch rules keep holding after it (#235).
+            if !self.whole {
+                self.turn(channel).released = true;
+            }
             self.flush_prose(&mut out, channel);
         }
         self.speak(&mut out, channel, text, false, "tool");
