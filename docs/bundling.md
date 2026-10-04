@@ -128,6 +128,17 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 
 `channels`, `agent` and `system` (spec sections 4.2 to 4.4) are optional layers. Ask for them in `connect({ extensions: [...] })`; the clients expose them as `client.channels`, `client.agent` and `client.system`, which send the protocol messages as they are. The current runtime offers the core only, so these answer `E_UNSUPPORTED` and `client.info.unavailable` lists what you asked for and did not get.
 
+## External engines
+
+Protocol 1.2 lets the user add speech engines that are not part of Sonara (OpenAI, a local
+OpenAI-compatible server) as profiles; the clients expose them as `client.engines` (`list`,
+`add`, `remove`, `setKey`/`set_key`, `test`) and `client.voices(engine, { refresh })`. Text goes
+to such an engine only once a client selects it with `set engine`; keys live in Windows Credential
+Manager. A host that must not send text off the PC, or does not want the feature, starts the
+runtime with `--no-external-engines`: the `engines` capability is then absent and every
+`engine_*` message is `E_UNSUPPORTED`. Library hosts that embed the engine crates get the same
+choice from the licence policy: `Registry::default()` refuses the `External` class.
+
 ## Licensing
 
 Summary of `LICENSING.md`: you may sell your app, keep it closed-source, choose its licence and code-sign it (including the bundled `sonarad.exe`). Ship `THIRD_PARTY_NOTICES.md` and `LICENSE` with it; both are in the runtime package and the release zip. Everything that ships is under a permissive licence, CI enforces that (`cargo deny`), and the clients have no dependencies.

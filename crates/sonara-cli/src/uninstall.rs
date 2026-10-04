@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 /// What the user may keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keep {
-    /// `config.json`, `keymap.json`, `session_prefs.json` and the custom
-    /// earcons (`earcons\`).
+    /// `config.json`, `keymap.json`, `session_prefs.json`, `engines.json`,
+    /// the custom earcons (`earcons\`) and the external engine keys in
+    /// Credential Manager.
     Settings,
     /// `models\` (the Kokoro voice model, about 350 MB).
     Models,
@@ -25,6 +26,7 @@ impl Keep {
                 "config.json",
                 "keymap.json",
                 "session_prefs.json",
+                "engines.json",
                 "earcons",
             ],
             Keep::Models => &["models"],
@@ -146,6 +148,104 @@ pub fn remove_all(home: &Path, runtime_root: Option<&Path>, exe: &Path, keep: &[
     report
 }
 
+/// Where external engine keys are kept: Windows Credential Manager,
+/// generic credentials `sonara:<profile id>` (spec 6.2).
+pub trait Credentials {
+    /// Profile ids that have a key.
+    fn list(&self) -> Result<Vec<String>, String>;
+    fn delete(&self, id: &str) -> Result<(), String>;
+}
+
+/// Delete every `sonara:*` credential unless settings are kept. Returns
+/// the ids removed and those that failed.
+pub fn remove_credentials(
+    creds: &dyn Credentials,
+    keep: &[Keep],
+) -> (Vec<String>, Vec<(String, String)>) {
+    if keep.contains(&Keep::Settings) {
+        return (Vec::new(), Vec::new());
+    }
+    let ids = match creds.list() {
+        Ok(ids) => ids,
+        Err(e) => return (Vec::new(), vec![("sonara:*".into(), e)]),
+    };
+    let mut removed = Vec::new();
+    let mut failed = Vec::new();
+    for id in ids {
+        match creds.delete(&id) {
+            Ok(()) => removed.push(id),
+            Err(e) => failed.push((id, e)),
+        }
+    }
+    (removed, failed)
+}
+
+/// Windows Credential Manager.
+pub struct WindowsCredentials;
+
+#[cfg(windows)]
+impl Credentials for WindowsCredentials {
+    fn list(&self) -> Result<Vec<String>, String> {
+        use windows::core::HSTRING;
+        use windows::Win32::Security::Credentials::{
+            CredEnumerateW, CredFree, CREDENTIALW, CRED_TYPE_GENERIC,
+        };
+        let filter = HSTRING::from("sonara:*");
+        let mut count = 0u32;
+        let mut creds: *mut *mut CREDENTIALW = std::ptr::null_mut();
+        // SAFETY: valid out pointers; freed below.
+        if let Err(e) = unsafe { CredEnumerateW(&filter, None, &mut count, &mut creds) } {
+            // ERROR_NOT_FOUND: none.
+            if e.code().0 as u32 == 0x8007_0490 {
+                return Ok(Vec::new());
+            }
+            return Err(e.message().to_string());
+        }
+        let mut out = Vec::new();
+        // SAFETY: `creds` holds `count` credential pointers.
+        unsafe {
+            for i in 0..count as usize {
+                let c = &**creds.add(i);
+                if c.Type != CRED_TYPE_GENERIC {
+                    continue;
+                }
+                if let Some(id) = c
+                    .TargetName
+                    .to_string()
+                    .ok()
+                    .and_then(|n| n.strip_prefix("sonara:").map(str::to_string))
+                {
+                    out.push(id);
+                }
+            }
+            CredFree(creds as *const _);
+        }
+        Ok(out)
+    }
+
+    fn delete(&self, id: &str) -> Result<(), String> {
+        use windows::core::HSTRING;
+        use windows::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+        let target = HSTRING::from(format!("sonara:{id}"));
+        // SAFETY: a valid target string.
+        match unsafe { CredDeleteW(&target, CRED_TYPE_GENERIC, None) } {
+            Ok(()) => Ok(()),
+            Err(e) if e.code().0 as u32 == 0x8007_0490 => Ok(()),
+            Err(e) => Err(e.message().to_string()),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl Credentials for WindowsCredentials {
+    fn list(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+    fn delete(&self, _id: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +309,51 @@ mod tests {
         assert!(home.join(STOPPED).is_file());
         assert!(r.removed.contains(&root));
         assert_eq!(r.kept.len(), 5);
+    }
+
+    /// Credentials in memory.
+    struct FakeCreds(std::cell::RefCell<Vec<String>>);
+
+    impl Credentials for FakeCreds {
+        fn list(&self) -> Result<Vec<String>, String> {
+            Ok(self.0.borrow().clone())
+        }
+        fn delete(&self, id: &str) -> Result<(), String> {
+            self.0.borrow_mut().retain(|x| x != id);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn engine_keys_go_unless_settings_are_kept() {
+        let creds = FakeCreds(std::cell::RefCell::new(vec![
+            "openai".into(),
+            "kgpu".into(),
+        ]));
+        let (removed, failed) = remove_credentials(&creds, &[Keep::Settings, Keep::Logs]);
+        assert!(removed.is_empty() && failed.is_empty());
+        assert_eq!(creds.0.borrow().len(), 2);
+        let (removed, failed) = remove_credentials(&creds, &[Keep::Logs]);
+        assert_eq!(removed, vec!["openai", "kgpu"]);
+        assert!(failed.is_empty());
+        assert!(creds.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn engines_json_is_a_setting() {
+        let lad = tmp();
+        let home = lad.join("Sonara");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("engines.json"), b"{}").unwrap();
+        std::fs::write(home.join("fake-keys.json"), b"{}").unwrap();
+        let exe = lad.join("sonara.exe");
+        remove_all(&home, None, &exe, &[Keep::Settings]);
+        assert!(home.join("engines.json").exists());
+        assert!(
+            !home.join("fake-keys.json").exists(),
+            "a testing aid, never kept"
+        );
+        remove_all(&home, None, &exe, &[]);
+        assert!(!home.join("engines.json").exists());
     }
 }

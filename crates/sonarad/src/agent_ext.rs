@@ -468,7 +468,7 @@ mod tests {
     use std::time::Duration;
 
     fn server() -> Server {
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry.register(Arc::new(FakeEngine::new())).unwrap();
         let (out, rx) = TestOutput::new();
         let reader =

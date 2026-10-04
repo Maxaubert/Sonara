@@ -51,7 +51,7 @@ fn parse() -> Result<Args, String> {
 }
 
 fn start(args: &Args) -> Result<ReaderHandle, String> {
-    let mut registry = sonara_reader::default_registry();
+    let registry = sonara_reader::default_registry();
     registry
         .register(Arc::new(sonara_engine::fake::FakeEngine::new()))
         .map_err(|e| e.to_string())?;

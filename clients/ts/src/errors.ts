@@ -22,10 +22,16 @@ export type ErrorCode =
 /** Any failure of a Sonara call: a coded protocol error or a client-side one. */
 export class SonaraError extends Error {
   readonly code: ErrorCode;
+  /**
+   * Protocol 1.2: why an external engine failed (`auth`, `quota`,
+   * `network`...), on an `E_ENGINE` of `engine_test`.
+   */
+  readonly reason?: string;
 
-  constructor(code: ErrorCode, message: string) {
+  constructor(code: ErrorCode, message: string, reason?: string) {
     super(`${code}: ${message}`);
     this.name = "SonaraError";
     this.code = code;
+    if (reason !== undefined) this.reason = reason;
   }
 }

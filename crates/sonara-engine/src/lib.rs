@@ -11,6 +11,12 @@ mod registry;
 mod types;
 pub mod wav;
 
+#[cfg(any(feature = "kokoro", feature = "external"))]
+pub mod http;
+
+#[cfg(feature = "external")]
+pub mod external;
+
 pub mod onecore;
 
 #[cfg(feature = "kokoro")]
@@ -21,7 +27,7 @@ pub mod fake;
 
 pub use error::{Error, Result, MISSING_VOICE_DATA_FIX};
 pub use registry::Registry;
-pub use types::{EngineId, EngineStatus, LicenseClass, PcmChunk, Readiness, Voice};
+pub use types::{EngineId, EngineStatus, LicenseClass, PcmChunk, Readiness, Reason, Voice};
 
 /// The PCM chunks of one synthesis, in playback order.
 pub type PcmStream = Box<dyn Iterator<Item = Result<PcmChunk>> + Send>;
@@ -45,5 +51,21 @@ pub trait Engine: Send + Sync {
     /// Readiness (spec 4.1 `engine_status`); cheap, polled by the reader.
     fn status(&self) -> EngineStatus {
         EngineStatus::ready()
+    }
+    /// How many chunks the reader should synthesize ahead of the playing
+    /// one (1..=4). A cloud engine asks for more to hide its round trip.
+    fn lookahead(&self) -> usize {
+        1
+    }
+    /// True when `synthesize` accepts voice ids that `voices()` does not
+    /// list (cloud voice ids, cloned voices, file names of a local server).
+    fn accepts_unlisted_voices(&self) -> bool {
+        false
+    }
+    /// Fetch the voice list from its source (for an external engine: the
+    /// network, bounded by a timeout; it may block). `voices()` stays cheap
+    /// and returns the last list.
+    fn refresh_voices(&self) -> Result<Vec<Voice>> {
+        Ok(self.voices())
     }
 }

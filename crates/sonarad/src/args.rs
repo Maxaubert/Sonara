@@ -2,9 +2,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake] \
+pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake|ID] \
 [--output device|null] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
-       [--migrate-from DIR] [--version]
+       [--keys windows|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
   --engine ID         engine to start with (default: the saved one, else kokoro
@@ -12,12 +12,19 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
                       onecore). Kokoro downloads its model on first use and
                       speaks with onecore until it is ready. 'fake' is a
                       deterministic tone engine for tests and conformance runs
-                      (no Kokoro, no download)
+                      (no Kokoro, no download); a saved external engine still
+                      applies, with the fake engine as its fallback
   --output KIND       'device' (default; 'null' with --engine fake) or 'null',
                       a silent output that keeps real time
   --system KIND       platform of the 'system' extension: 'windows' (default)
                       or 'fake', a testing aid that keeps fake apps, media
                       and hotkeys in <home>\\fake-system.json
+  --keys KIND         where external engine keys are kept: 'windows'
+                      (default, Windows Credential Manager) or 'fake', a
+                      testing aid that keeps them in <home>\\fake-keys.json
+  --no-external-engines
+                      refuse external engines (speech servers and cloud
+                      services the user adds): no 'engines' capability
   --idle-exit SECONDS exit this long after the last client left and nothing is
                       playing (default 30)
   --standalone        never exit for idleness
@@ -29,6 +36,15 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
 pub enum OutputKind {
     Device,
     Null,
+}
+
+/// Where external engine keys are kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeysKind {
+    /// Windows Credential Manager.
+    Windows,
+    /// `<home>\fake-keys.json` (tests).
+    Fake,
 }
 
 /// The platform behind the `system` extension.
@@ -51,6 +67,9 @@ pub struct Args {
     pub system: SystemKind,
     pub idle_exit: Duration,
     pub standalone: bool,
+    pub keys: KeysKind,
+    /// False with `--no-external-engines`.
+    pub external_engines: bool,
 }
 
 /// What the command line asks for.
@@ -69,6 +88,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     let mut system = SystemKind::Windows;
     let mut idle_exit = crate::lifetime::DEFAULT_IDLE_EXIT;
     let mut standalone = false;
+    let mut keys = KeysKind::Windows;
+    let mut external_engines = true;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         let mut value = |name: &str| it.next().ok_or(format!("{name} needs a value"));
@@ -100,6 +121,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
                 idle_exit = Duration::from_secs_f64(secs);
             }
             "--standalone" => standalone = true,
+            "--keys" => {
+                keys = match value("--keys")?.as_str() {
+                    "windows" => KeysKind::Windows,
+                    "fake" => KeysKind::Fake,
+                    other => return Err(format!("unknown --keys '{other}'")),
+                }
+            }
+            "--no-external-engines" => external_engines = false,
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             other => return Err(format!("unknown argument '{other}'")),
@@ -118,6 +147,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
         system,
         idle_exit,
         standalone,
+        keys,
+        external_engines,
     }))
 }
 
@@ -141,6 +172,16 @@ mod tests {
         assert!(!a.standalone);
         assert_eq!(a.system, SystemKind::Windows);
         assert_eq!(a.migrate_from, None);
+        assert_eq!(a.keys, KeysKind::Windows);
+        assert!(a.external_engines);
+    }
+
+    #[test]
+    fn keys_and_external_engines_flags() {
+        let a = run(&["--keys", "fake", "--no-external-engines"]);
+        assert_eq!(a.keys, KeysKind::Fake);
+        assert!(!a.external_engines);
+        assert!(parse(["--keys".to_string(), "vault".to_string()]).is_err());
     }
 
     #[test]

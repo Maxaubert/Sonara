@@ -48,6 +48,9 @@ impl Code {
 pub struct Failure {
     pub code: Code,
     pub message: String,
+    /// The class of an external engine's failure (`error.reason`,
+    /// protocol 1.2, additive).
+    pub reason: Option<&'static str>,
 }
 
 impl Failure {
@@ -55,7 +58,13 @@ impl Failure {
         Failure {
             code,
             message: message.into(),
+            reason: None,
         }
+    }
+
+    pub fn with_reason(mut self, reason: &'static str) -> Self {
+        self.reason = Some(reason);
+        self
     }
 }
 
@@ -77,10 +86,11 @@ pub fn error_reply(id: Option<&Value>, f: &Failure) -> Value {
         m.insert("id".into(), id.clone());
     }
     m.insert("ok".into(), Value::Bool(false));
-    m.insert(
-        "error".into(),
-        json!({"code": f.code.as_str(), "message": f.message}),
-    );
+    let mut e = json!({"code": f.code.as_str(), "message": f.message});
+    if let Some(r) = f.reason {
+        e["reason"] = json!(r);
+    }
+    m.insert("error".into(), e);
     Value::Object(m)
 }
 
@@ -145,6 +155,10 @@ pub fn engine_status_json(engine: &str, status: &EngineStatus) -> Value {
     if let Some(msg) = &status.message {
         m.insert("message".into(), json!(msg));
     }
+    // Protocol 1.2: why an external engine is not speaking itself.
+    if let Some(r) = status.reason {
+        m.insert("reason".into(), json!(r.as_str()));
+    }
     v
 }
 
@@ -160,6 +174,7 @@ pub fn license_str(c: LicenseClass) -> &'static str {
     match c {
         LicenseClass::Permissive => "permissive",
         LicenseClass::Os => "os",
+        LicenseClass::External => "external",
     }
 }
 

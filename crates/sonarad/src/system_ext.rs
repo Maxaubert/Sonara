@@ -64,8 +64,9 @@ pub struct SystemHost {
     /// Engines for voice previews and spoken cues: a registry of their own
     /// (built like the reader's), so a preview or a cue never cancels or
     /// waits for the reader's synthesis. `None`: `preview` is
-    /// `E_UNSUPPORTED` and cues are reported but not heard.
-    pub previews: Option<Registry>,
+    /// `E_UNSUPPORTED` and cues are reported but not heard. Shared, so the
+    /// host can add external engine profiles while it runs.
+    pub previews: Option<Arc<Registry>>,
 }
 
 /// What a hotkey acts on: the same layers a client drives.
@@ -329,7 +330,7 @@ impl SystemExt {
             &host.platform,
             AudioConfig::new(host.home.join("state")).with_log(target.log.clone()),
         );
-        let previews = host.previews.map(Arc::new);
+        let previews = host.previews;
         let previewing = Arc::new(Mutex::new(()));
         let cues = Arc::new(Cues::new(
             target.reader.clone(),
@@ -689,6 +690,7 @@ impl SystemExt {
                 .into_iter()
                 .find(|v| v.id == *w || v.name == *w)
                 .map(|v| v.id)
+                .or_else(|| engine.accepts_unlisted_voices().then(|| w.clone()))
                 .ok_or_else(|| {
                     Failure::new(
                         Code::NotFound,

@@ -81,7 +81,7 @@ fn a_voice_is_set_by_id_or_name_and_reaches_the_engine() {
 fn switching_engines_resets_a_voice_the_new_engine_lacks() {
     let fake = Arc::new(FakeEngine::new());
     let other = Arc::new(OtherEngine::default());
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(fake.clone()).unwrap();
     registry.register(other.clone()).unwrap();
     let r = Rig::config(Config::new(registry));
@@ -108,7 +108,7 @@ fn switching_engines_resets_a_voice_the_new_engine_lacks() {
 
 #[test]
 fn voices_per_engine_and_for_all() {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     registry.register(Arc::new(OtherEngine::default())).unwrap();
     let r = Rig::config(Config::new(registry));
@@ -134,7 +134,7 @@ fn start(config: Config) -> Result<ReaderHandle, Error> {
 }
 
 fn fake_registry() -> Registry {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     registry
 }

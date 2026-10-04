@@ -797,6 +797,18 @@ pub fn apply_reader(
                 None => continue,
             },
         };
+        // A default voice only for an engine that lists it: an external
+        // engine takes any id, and its own voice applies otherwise.
+        if key == Key::Voice && !from_user {
+            if let (V::Text(d), Ok(V::Text(engine))) = (&value, reader.get(Key::Engine)) {
+                let listed = reader
+                    .voices(Some(&engine))
+                    .is_ok_and(|vs| vs.iter().any(|v| v.id == *d || v.name == *d));
+                if !listed {
+                    continue;
+                }
+            }
+        }
         if let Err(e) = reader.set(key, value) {
             if !from_user {
                 continue;
@@ -871,7 +883,7 @@ mod tests {
     #[test]
     fn the_reader_starts_with_the_defaults_and_skips_a_default_voice_it_lacks() {
         use sonara_reader::{Config, Key, ReaderHandle, Registry, Value as V};
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry
             .register(Arc::new(sonara_engine::fake::FakeEngine::new()))
             .unwrap();
@@ -1142,7 +1154,7 @@ mod tests {
     #[test]
     fn the_reader_starts_with_the_persisted_settings_and_keeps_an_unknown_voice() {
         use sonara_reader::{Config, Key, ReaderHandle, Registry, Value as V};
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry
             .register(Arc::new(sonara_engine::fake::FakeEngine::new()))
             .unwrap();

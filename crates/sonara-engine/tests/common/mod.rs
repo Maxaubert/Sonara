@@ -225,6 +225,222 @@ fn serve(conn: TcpStream, s: &Shared) {
     }
 }
 
+/// One scripted answer of the `ScriptServer`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Route {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+    /// Wait this long before answering (a slow provider).
+    pub delay: Option<std::time::Duration>,
+}
+
+impl Route {
+    pub fn new(status: u16, content_type: &str, body: impl Into<Vec<u8>>) -> Route {
+        Route {
+            status,
+            headers: vec![("Content-Type".into(), content_type.into())],
+            body: body.into(),
+            delay: None,
+        }
+    }
+
+    pub fn json(status: u16, body: &str) -> Route {
+        Route::new(status, "application/json", body.as_bytes().to_vec())
+    }
+
+    pub fn wav(samples: &[i16], rate: u32) -> Route {
+        let pcm = sonara_engine::PcmChunk {
+            samples: samples.to_vec(),
+            sample_rate: rate,
+            channels: 1,
+        };
+        Route::new(200, "audio/wav", sonara_engine::wav::encode(&pcm))
+    }
+
+    pub fn header(mut self, k: &str, v: &str) -> Route {
+        self.headers.push((k.into(), v.into()));
+        self
+    }
+
+    pub fn delayed(mut self, d: std::time::Duration) -> Route {
+        self.delay = Some(d);
+        self
+    }
+}
+
+/// One request the `ScriptServer` received.
+#[derive(Debug, Clone)]
+pub struct Captured {
+    pub method: String,
+    /// With the query.
+    pub path: String,
+    /// Names in lower case.
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl Captured {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k == &name.to_ascii_lowercase())
+            .map(|(_, v)| v.as_str())
+    }
+
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::from_slice(&self.body).expect("a JSON body")
+    }
+}
+
+#[derive(Default)]
+struct Script {
+    fixed: HashMap<String, Route>,
+    queued: HashMap<String, VecDeque<Route>>,
+    seen: Vec<Captured>,
+}
+
+/// A local HTTP server that answers each path with scripted routes (one-off
+/// answers queued first, then the path's fixed answer, else 404) and keeps
+/// every request: a stand-in for a speech provider.
+pub struct ScriptServer {
+    /// `http://127.0.0.1:<port>`.
+    pub base: String,
+    addr: std::net::SocketAddr,
+    script: Arc<Mutex<Script>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl ScriptServer {
+    pub fn start() -> ScriptServer {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let script = Arc::new(Mutex::new(Script::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (s, st) = (script.clone(), stop.clone());
+        thread::spawn(move || {
+            for conn in listener.incoming() {
+                if st.load(Ordering::SeqCst) {
+                    return;
+                }
+                if let Ok(conn) = conn {
+                    let s = s.clone();
+                    thread::spawn(move || answer(conn, &s));
+                }
+            }
+        });
+        ScriptServer {
+            base: format!("http://{addr}"),
+            addr,
+            script,
+            stop,
+        }
+    }
+
+    /// Answer every request for `path` (without the query) with `route`.
+    pub fn on(&self, path: &str, route: Route) {
+        self.script
+            .lock()
+            .unwrap()
+            .fixed
+            .insert(path.to_string(), route);
+    }
+
+    /// Answer the next request for `path` with `route` (before the fixed
+    /// answer).
+    pub fn queue(&self, path: &str, route: Route) {
+        self.script
+            .lock()
+            .unwrap()
+            .queued
+            .entry(path.to_string())
+            .or_default()
+            .push_back(route);
+    }
+
+    pub fn requests(&self) -> Vec<Captured> {
+        self.script.lock().unwrap().seen.clone()
+    }
+
+    /// Requests for `path` (without the query).
+    pub fn count(&self, path: &str) -> usize {
+        self.requests()
+            .iter()
+            .filter(|c| c.path.split('?').next() == Some(path))
+            .count()
+    }
+}
+
+impl Drop for ScriptServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(self.addr);
+    }
+}
+
+fn answer(conn: TcpStream, script: &Mutex<Script>) {
+    use std::io::Read;
+    let mut reader = BufReader::new(conn.try_clone().unwrap());
+    let mut first = String::new();
+    if reader.read_line(&mut first).is_err() || first.is_empty() {
+        return;
+    }
+    let mut parts = first.split_whitespace();
+    let method = parts.next().unwrap_or("").to_string();
+    let path = parts.next().unwrap_or("").to_string();
+    let mut headers = Vec::new();
+    let mut length = 0usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((k, v)) = line.split_once(':') {
+            let k = k.trim().to_ascii_lowercase();
+            let v = v.trim().to_string();
+            if k == "content-length" {
+                length = v.parse().unwrap_or(0);
+            }
+            headers.push((k, v));
+        }
+    }
+    let mut body = vec![0u8; length];
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
+    let bare = path.split('?').next().unwrap_or("").to_string();
+    let route = {
+        let mut s = script.lock().unwrap();
+        s.seen.push(Captured {
+            method,
+            path: path.clone(),
+            headers,
+            body,
+        });
+        s.queued
+            .get_mut(&bare)
+            .and_then(VecDeque::pop_front)
+            .or_else(|| s.fixed.get(&bare).cloned())
+    };
+    let route = route.unwrap_or_else(|| Route::json(404, r#"{"detail": "Not Found"}"#));
+    if let Some(d) = route.delay {
+        thread::sleep(d);
+    }
+    let mut out = conn;
+    let mut head = format!(
+        "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n",
+        route.status,
+        route.body.len()
+    );
+    for (k, v) in &route.headers {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    let _ = out.write_all(head.as_bytes());
+    let _ = out.write_all(&route.body);
+    let _ = out.flush();
+}
+
 /// Lower-case hex SHA-256.
 pub fn sha256(b: &[u8]) -> String {
     use sha2::Digest;

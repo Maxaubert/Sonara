@@ -42,14 +42,20 @@ impl Conn {
     }
 
     /// Send `msg` and wait for its reply (events read meanwhile are kept).
-    pub fn request(&mut self, mut msg: Value) -> std::io::Result<Value> {
+    pub fn request(&mut self, msg: Value) -> std::io::Result<Value> {
+        self.request_timeout(msg, TIMEOUT)
+    }
+
+    /// `request` with its own reply timeout (an engine test waits for the
+    /// provider).
+    pub fn request_timeout(&mut self, mut msg: Value, timeout: Duration) -> std::io::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
         msg["id"] = json!(id);
         let mut line = serde_json::to_vec(&msg)?;
         line.push(b'\n');
         self.reader.get_mut().write_all(&line)?;
-        let end = Instant::now() + TIMEOUT;
+        let end = Instant::now() + timeout;
         loop {
             let v = self.read(end)?;
             if v.get("id") == Some(&json!(id)) {

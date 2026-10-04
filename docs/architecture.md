@@ -9,6 +9,31 @@ behaviour is in the [README](../README.md); the wire contract for embedding host
 > contract is [protocol-v1.md](protocol-v1.md), its design the runtime spec and plan in
 > `docs/plans/`.
 
+## External engines (Rust runtime, 0.15+)
+
+Speech engines the user adds at run time (#224, spec
+`docs/plans/2026-10-04-external-engines-spec.md`; contract: "External engines" in
+[protocol-v1.md](protocol-v1.md)). Each profile is an `Engine` of licence class `External` in the
+reader's `Registry` (shared, with interior mutability, so profiles come and go while the reader
+runs), next to Kokoro and OneCore; the reader and the higher layers only see engines.
+
+- `crates/sonara-engine/src/external/` (feature `external`): `profile.rs` (validation, presets),
+  `keys.rs` (`Secret`, `KeyStore`: Credential Manager, memory, the `--keys fake` file;
+  `KeyResolver`), `error.rs` (`ExtError`, cue texts), `health.rs` (breaker, blocked state, the
+  once-per-episode cue; injectable clock), `cache.rs` (cue cache), `audio.rs` (body to PCM),
+  `rate.rs`, `split.rs`, `worker.rs` (a request on its own thread, a wait `cancel` ends),
+  `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes), `openai.rs` (kind
+  `openai-compatible`), `mod.rs` (the `External` engine: fallback with the cue, retry policy,
+  status). `http.rs` holds the `ureq` agent shared with the Kokoro download.
+- `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or
+  the fake engine) as its fallback, registration in the reader's and the previews' registries,
+  the notice lines of `sonarad.log`. `engines_ext.rs`: the protocol handlers; `engine_remove`
+  lives in `protocol.rs` because it switches `engine` first.
+- `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
+  chunks ahead of the playing one. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
+- `sonara-cli` `engines.rs`: `sonara engines ...`; `uninstall` deletes the `sonara:*`
+  credentials unless settings are kept.
+
 ## Big picture
 
 Sonara is two kinds of process:

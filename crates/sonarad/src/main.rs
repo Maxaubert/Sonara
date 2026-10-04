@@ -3,10 +3,13 @@
 //! Exit codes: 0 clean exit (idle, takeover, Ctrl+C), 1 startup failure,
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
+use sonara_engine::external::keys::{CredentialStore, FileStore, KeyStore};
 use sonara_engine::kokoro::{self, Kokoro};
+use sonara_engine::{Engine, LicenseClass};
 use sonara_reader::{Config, ReaderHandle, Registry};
-use sonarad::args::{self, Command, OutputKind, SystemKind};
+use sonarad::args::{self, Command, KeysKind, OutputKind, SystemKind};
 use sonarad::config::{self, Store};
+use sonarad::engines::{self, Engines};
 use sonarad::home::{self, Home};
 use sonarad::instance::{self, AcquireError};
 use sonarad::lifetime::{self, ExitReason, Lifetime};
@@ -67,21 +70,52 @@ fn onnxruntime_dll() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("onnxruntime.dll"))
 }
 
+/// The engines, the one to start with, and what external engine profiles
+/// speak with when they cannot.
+struct Built {
+    registry: Arc<Registry>,
+    /// The saved or named engine, else the default choice.
+    chosen: String,
+    /// Kokoro when ONNX Runtime is installed (or there is no OneCore), else
+    /// OneCore; `fake` in test runs.
+    default_engine: String,
+    kokoro: Option<Kokoro>,
+    /// What a profile speaks with when it cannot (Kokoro, or the fake
+    /// engine), and its voice.
+    fallback: Option<Arc<dyn Engine>>,
+    fallback_voice: String,
+}
+
+/// The licence classes this runtime allows: external engines unless
+/// `--no-external-engines`.
+fn classes(external: bool) -> Vec<LicenseClass> {
+    let mut c = vec![LicenseClass::Permissive, LicenseClass::Os];
+    if external {
+        c.push(LicenseClass::External);
+    }
+    c
+}
+
 /// The engines and the one to start with. `fake` runs alone (tests,
 /// conformance: no Kokoro, so nothing is ever downloaded). Otherwise OneCore
 /// and Kokoro, with OneCore speaking while Kokoro is not ready; without a
 /// named engine, Kokoro when ONNX Runtime is installed, else OneCore.
-fn build_registry(
-    engine: Option<&str>,
-    home: &Home,
-) -> Result<(Registry, String, Option<Kokoro>), String> {
+fn build_registry(engine: Option<&str>, home: &Home, external: bool) -> Result<Built, String> {
+    let allowed = classes(external);
     if engine == Some("fake") {
-        let mut r = Registry::default();
-        r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
-            .map_err(|e| e.to_string())?;
-        return Ok((r, "fake".into(), None));
+        let r = Registry::new(&allowed);
+        let fake: Arc<dyn Engine> = Arc::new(sonara_engine::fake::FakeEngine::new());
+        r.register(fake.clone()).map_err(|e| e.to_string())?;
+        return Ok(Built {
+            registry: Arc::new(r),
+            chosen: "fake".into(),
+            default_engine: "fake".into(),
+            kokoro: None,
+            fallback: Some(fake),
+            fallback_voice: String::new(),
+        });
     }
-    let mut registry = sonara_reader::default_registry();
+    let registry = sonara_reader::registry_with(&allowed);
     let runtime = onnxruntime_dll();
     let mut config = kokoro::Config::new(
         home.models().join(kokoro::download::MODEL_SUBDIR),
@@ -90,15 +124,28 @@ fn build_registry(
     config.fallback = registry.get(sonara_engine::onecore::ID.as_str()).ok();
     let has_onecore = config.fallback.is_some();
     let k = Kokoro::new(config);
+    let shared: Arc<dyn Engine> = Arc::new(k.clone());
     registry
-        .register(Arc::new(k.clone()))
+        .register(shared.clone())
         .map_err(|e| e.to_string())?;
-    let chosen = match engine {
-        Some(e) => e.to_string(),
-        None if runtime.is_file() || !has_onecore => kokoro::ID.to_string(),
-        None => sonara_engine::onecore::ID.to_string(),
+    let default_engine = if runtime.is_file() || !has_onecore {
+        kokoro::ID.to_string()
+    } else {
+        sonara_engine::onecore::ID.to_string()
     };
-    Ok((registry, chosen, Some(k)))
+    let fallback_voice = if shared.voices().iter().any(|v| v.id == "af_sarah") {
+        "af_sarah".to_string()
+    } else {
+        String::new()
+    };
+    Ok(Built {
+        registry: Arc::new(registry),
+        chosen: engine.map(str::to_string).unwrap_or(default_engine.clone()),
+        default_engine,
+        kokoro: Some(k),
+        fallback: Some(shared),
+        fallback_voice,
+    })
 }
 
 /// Engines for voice previews: their own OneCore (a preview never waits
@@ -106,41 +153,43 @@ fn build_registry(
 /// itself rather than a second copy: one model in memory and one download
 /// manager per model folder. A preview on Kokoro waits at most for the
 /// sentence the reader is synthesizing, and a skip on the reader cancels it.
-fn preview_registry(engine: &str, kokoro: Option<&Kokoro>) -> Option<Registry> {
+/// External engine profiles are added by `Engines::attach`.
+fn preview_registry(
+    engine: &str,
+    kokoro: Option<&Kokoro>,
+    external: bool,
+) -> Option<Arc<Registry>> {
+    let allowed = classes(external);
     if engine == "fake" {
-        let mut r = Registry::default();
+        let r = Registry::new(&allowed);
         r.register(Arc::new(sonara_engine::fake::FakeEngine::new()))
             .ok()?;
-        return Some(r);
+        return Some(Arc::new(r));
     }
-    let mut r = sonara_reader::default_registry();
+    let r = sonara_reader::registry_with(&allowed);
     if let Some(k) = kokoro {
         r.register(Arc::new(k.clone())).ok()?;
     }
-    Some(r)
+    Some(Arc::new(r))
 }
 
-/// The reader, the Kokoro engine (unless `fake`) and the id of the engine
-/// it started with.
-fn build_reader(
-    engine: Option<&str>,
-    output: OutputKind,
-    home: &Home,
-) -> Result<(ReaderHandle, Option<Kokoro>, String), String> {
-    let (registry, engine, kokoro) = build_registry(engine, home)?;
-    let mut config = Config::new(registry);
-    config.engine = Some(engine.clone());
+/// The reader on `built`, starting with `engine`.
+fn build_reader(built: &Built, engine: &str, output: OutputKind) -> Result<ReaderHandle, String> {
+    let mut config = Config::new(built.registry.clone());
+    config.engine = Some(engine.to_string());
     if output == OutputKind::Null {
         let (out, events) = NullOutput::new();
         config = config.with_output(Box::new(out), events);
     }
-    let reader = ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))?;
-    // Prefetch: verify, download (in the background) and load the model now,
-    // so the first sentence is soon Kokoro's.
-    if let (Some(k), true) = (&kokoro, engine == kokoro::ID.as_str()) {
-        k.prepare();
+    ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))
+}
+
+/// Where profile keys are kept.
+fn key_store(kind: KeysKind, home: &Home) -> Arc<dyn KeyStore> {
+    match kind {
+        KeysKind::Windows => Arc::new(CredentialStore),
+        KeysKind::Fake => Arc::new(FileStore::new(home.dir.join("fake-keys.json"))),
     }
-    Ok((reader, kokoro, engine))
 }
 
 /// The platform of the `system` extension.
@@ -206,18 +255,50 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     let saved = store
         .user("engine")
         .and_then(|v| v.as_str().map(str::to_string));
-    let wanted = args.engine.clone().or(saved);
-    let (reader, kokoro, engine) = match build_reader(wanted.as_deref(), args.output, &home) {
-        Ok(r) => r,
+    let wanted = args.engine.clone().or(saved.clone());
+    let built = build_registry(wanted.as_deref(), &home, args.external_engines).map_err(fail)?;
+    // External engine profiles, registered before the reader starts so a
+    // saved `engine` naming one works on the first sentence.
+    let engines = args.external_engines.then(|| {
+        let log_home = home.clone();
+        let (e, problems) = Engines::load(engines::Setup {
+            home: home.dir.clone(),
+            store: key_store(args.keys, &home),
+            fallback: built.fallback.clone(),
+            fallback_voice: built.fallback_voice.clone(),
+            default_engine: built.default_engine.clone(),
+            log: Some(Arc::new(move |line: &str| log_home.log(line))),
+        });
+        for p in problems {
+            home.log(&p);
+        }
+        e.attach(built.registry.clone());
+        e
+    });
+    // A test run (`--engine fake`) keeps a saved external engine; the fake
+    // engine is its fallback.
+    let chosen = match (args.engine.as_deref(), &saved, &engines) {
+        (Some("fake"), Some(s), Some(x)) if x.get(s).is_some() => s.clone(),
+        _ => built.chosen.clone(),
+    };
+    let (reader, engine) = match build_reader(&built, &chosen, args.output) {
+        Ok(r) => (r, chosen.clone()),
         Err(e) if args.engine.is_none() && wanted.is_some() => {
             home.log(&format!(
                 "config.json: engine '{}' not available ({e}); using the default",
                 wanted.as_deref().unwrap_or_default()
             ));
-            build_reader(None, args.output, &home).map_err(fail)?
+            let r = build_reader(&built, &built.default_engine, args.output).map_err(fail)?;
+            (r, built.default_engine.clone())
         }
         Err(e) => return Err(fail(e)),
     };
+    // Prefetch: verify, download (in the background) and load the model now,
+    // so the first sentence is soon Kokoro's.
+    if let (Some(k), true) = (&built.kokoro, engine == kokoro::ID.as_str()) {
+        k.prepare();
+    }
+    let kokoro = built.kokoro.clone();
     // Before the first client: nothing speaks with the defaults first.
     for p in config::apply_reader(&store, &reader, false) {
         home.log(&p);
@@ -226,7 +307,10 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     support_log::log_startup(&home, VERSION, &reader, &engine);
     support_log::watch_engine(&home, &reader);
     // Previews use the engines of the reader actually started.
-    let previews = preview_registry(&engine, kokoro.as_ref());
+    let previews = preview_registry(&engine, kokoro.as_ref(), args.external_engines);
+    if let (Some(e), Some(p)) = (&engines, &previews) {
+        e.attach(p.clone());
+    }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -240,6 +324,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         store,
         previews,
         kokoro,
+        engines,
     ));
     reader.shutdown();
     rt.shutdown_timeout(Duration::from_millis(500));
@@ -260,8 +345,9 @@ async fn run(
     token: String,
     reader: ReaderHandle,
     store: Arc<Store>,
-    previews: Option<Registry>,
+    previews: Option<Arc<Registry>>,
     kokoro: Option<Kokoro>,
+    engines: Option<Arc<Engines>>,
 ) -> Result<(), String> {
     // Loopback only, never another address (spec section 4).
     let tcp_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -289,6 +375,9 @@ async fn run(
         .with_config(store)
         .with_log(Arc::new(move |line: &str| activity_home.log(line)))
         .with_earcons(Arc::new(earcons));
+    if let Some(e) = engines {
+        server = server.with_engines(e);
+    }
     if let Some(platform) = system_platform(args.system, home) {
         server = server.with_system(SystemHost {
             platform,
@@ -329,7 +418,8 @@ async fn run(
         token,
         version: VERSION.to_string(),
         protocol: (protocol::PROTOCOL_MAJOR, protocol::PROTOCOL_MINOR),
-        capabilities: protocol::CAPABILITIES
+        capabilities: server
+            .capabilities()
             .iter()
             .map(|s| s.to_string())
             .collect(),

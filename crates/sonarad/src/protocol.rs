@@ -7,6 +7,8 @@
 use crate::agent_ext;
 use crate::channels_ext::{self, Slot};
 use crate::config::{self, Store};
+use crate::engines::Engines;
+use crate::engines_ext;
 use crate::events::{self, EngineName, EventSet, WireEvent};
 use crate::lifetime::{ExitReason, Lifetime};
 use crate::system_ext::{self, HotkeyTarget, SystemExt, SystemHold, SystemHost};
@@ -21,12 +23,14 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 1;
+pub const PROTOCOL_MINOR: u64 = 2;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
 /// and a client can `require` it. 1.1 added `engine_status` (readiness and
-/// model download progress in `state.engine_status`).
+/// model download progress in `state.engine_status`). 1.2 added `engines`
+/// (external engine profiles, `ENGINES_CAPABILITY`), offered only by a host
+/// that allows external engines (`Server::capabilities`).
 pub const CAPABILITIES: &[&str] = &[
     "core",
     "speak",
@@ -39,6 +43,18 @@ pub const CAPABILITIES: &[&str] = &[
     "events.items",
     "events.log",
     "engine_status",
+];
+
+/// The capability of the `engine_*` messages (protocol 1.2).
+pub const ENGINES_CAPABILITY: &str = "engines";
+
+/// The core messages of external engine profiles (spec 10.2).
+pub const ENGINE_TYPES: &[&str] = &[
+    "engine_list",
+    "engine_add",
+    "engine_remove",
+    "engine_key",
+    "engine_test",
 ];
 
 /// Extensions this host implements. `system` is offered only by a server
@@ -169,6 +185,9 @@ pub struct Server {
     /// What produced each channel entry the agent added (#219), for the
     /// reading log's `read text` lines.
     origins: Origins,
+    /// External engine profiles, when this host allows them
+    /// (`with_engines`; without, `engine_*` is `E_UNSUPPORTED`).
+    engines: Option<Arc<Engines>>,
 }
 
 pub(crate) type Handled = Result<(Map<String, Value>, After), Failure>;
@@ -270,7 +289,32 @@ impl Server {
             setting: Mutex::new(()),
             log: None,
             origins: Origins::default(),
+            engines: None,
         }
+    }
+
+    /// Allow external engine profiles (capability `engines`).
+    pub fn with_engines(mut self, engines: Arc<Engines>) -> Self {
+        self.engines = Some(engines);
+        self
+    }
+
+    pub fn engines(&self) -> Option<&Arc<Engines>> {
+        self.engines.as_ref()
+    }
+
+    /// `hello.capabilities` and `runtime.json`: the core ones, plus
+    /// `engines` when this host allows external engines.
+    pub fn capabilities(&self) -> Vec<&'static str> {
+        let mut c = CAPABILITIES.to_vec();
+        if self.engines.is_some() {
+            c.push(ENGINES_CAPABILITY);
+        }
+        c
+    }
+
+    fn current_engine(&self) -> String {
+        events::engine_name(&self.engine)
     }
 
     /// The origins of channel entries (shared with the reading log).
@@ -588,6 +632,7 @@ impl Server {
             "get" => self.get(m),
             "voices" => self.voices(m),
             "subscribe" => self.subscribe(session, m),
+            k if ENGINE_TYPES.contains(&k) => self.engine_message(k, m),
             "channel_open" | "channel_close" | "focus" if self.channels.get().is_some() => {
                 let ch = self.channels.get().expect("checked");
                 let _admitted = self.admit()?;
@@ -647,7 +692,7 @@ impl Server {
             "protocol".into(),
             json!({"major": PROTOCOL_MAJOR, "minor": PROTOCOL_MINOR}),
         );
-        f.insert("capabilities".into(), json!(CAPABILITIES));
+        f.insert("capabilities".into(), json!(self.capabilities()));
         f.insert("extensions".into(), json!(self.enabled()));
         f.insert("unavailable".into(), json!(unavailable));
         f
@@ -690,11 +735,12 @@ impl Server {
             }
         }
         let offered = self.offered();
+        let capabilities = self.capabilities();
         let require = str_list(m, "require")?.unwrap_or_default();
         let missing: Vec<&str> = require
             .iter()
             .copied()
-            .filter(|r| !CAPABILITIES.contains(r) && !offered.contains(r))
+            .filter(|r| !capabilities.contains(r) && !offered.contains(r))
             .collect();
         if !missing.is_empty() {
             return Err(Failure::new(
@@ -952,9 +998,16 @@ impl Server {
         }
         let Some(Value::String(saved)) = self.store.user("voice") else {
             // No voice of the user's: the default voice (af_sarah) comes
-            // back with an engine that has it.
+            // back with an engine that lists it (an external engine takes
+            // any id, so it must list it: its own voice applies otherwise).
             if let Some(Value::String(d)) = config::default("voice") {
-                let _ = self.reader.set(Key::Voice, sonara_reader::Value::Text(d));
+                let listed = self
+                    .reader
+                    .voices(Some(&now))
+                    .is_ok_and(|vs| vs.iter().any(|v| v.id == d));
+                if listed {
+                    let _ = self.reader.set(Key::Voice, sonara_reader::Value::Text(d));
+                }
             }
             return;
         };
@@ -1022,6 +1075,12 @@ impl Server {
 
     fn voices(&self, m: &Map<String, Value>) -> Handled {
         let engine = opt_str(m, "engine")?;
+        let refresh = opt_bool(m, "refresh")?;
+        if let (Some(e), Some(id)) = (&self.engines, engine) {
+            if let Some(done) = engines_ext::voices(e, &self.reader, id, refresh) {
+                return done;
+            }
+        }
         let voices = self.reader.voices(engine).map_err(reader_failure)?;
         let mut f = Map::new();
         f.insert(
@@ -1059,6 +1118,50 @@ impl Server {
         Ok((f, After::Subscribe(rx)))
     }
 
+    /// `engine_list`, `engine_add`, `engine_remove`, `engine_key`,
+    /// `engine_test` (spec 10.2).
+    fn engine_message(&self, kind: &str, m: &Map<String, Value>) -> Handled {
+        let engines = self.engines.as_ref().ok_or_else(engines_ext::refused)?;
+        let current = self.current_engine();
+        match kind {
+            "engine_list" => engines_ext::list(engines, &current),
+            "engine_add" => engines_ext::add(engines, &self.reader, m, &current),
+            "engine_key" => engines_ext::key(engines, m),
+            "engine_test" => {
+                let _admitted = self.admit()?;
+                engines_ext::test(engines, &self.reader, m)
+            }
+            _ => self.engine_remove(engines, m, &current),
+        }
+    }
+
+    /// `engine_remove` `{engine, forget_key?}`: a current engine is switched
+    /// to the default choice first (saved like any `set`).
+    fn engine_remove(&self, engines: &Engines, m: &Map<String, Value>, current: &str) -> Handled {
+        let id = opt_str(m, "engine")?
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| bad("missing 'engine'"))?;
+        let forget_key = match m.get("forget_key") {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => return Err(bad("'forget_key' must be true or false")),
+        };
+        if !engines.contains(id) {
+            return Err(Failure::new(Code::NotFound, format!("no engine '{id}'")));
+        }
+        if current == id {
+            let mut set = Map::new();
+            set.insert("key".into(), json!("engine"));
+            set.insert("value".into(), json!(engines.default_engine()));
+            self.set(&set)?;
+        }
+        engines.remove(id, forget_key)?;
+        let mut f = Map::new();
+        f.insert("removed".into(), json!(id));
+        f.insert("engine".into(), json!(self.current_engine()));
+        Ok((f, After::Nothing))
+    }
+
     /// `shutdown` (extension `system`, #202): the user's stop (`sonara
     /// stop`, uninstall, an upgrade replacing this runtime). Whatever is
     /// reading or queued ends; requests after it are `E_BUSY`, and the
@@ -1085,7 +1188,7 @@ mod tests {
     use std::time::Duration;
 
     fn server() -> (Server, TestOutput) {
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry.register(Arc::new(FakeEngine::new())).unwrap();
         let (out, rx) = TestOutput::new();
         let reader =
@@ -1139,7 +1242,7 @@ mod tests {
         let r = &o.reply;
         assert_eq!(r["id"], "h1");
         assert_eq!(r["version"], crate::VERSION);
-        assert_eq!(r["protocol"], json!({"major": 1, "minor": 1}));
+        assert_eq!(r["protocol"], json!({"major": 1, "minor": 2}));
         assert!(r["capabilities"]
             .as_array()
             .unwrap()

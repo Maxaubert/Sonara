@@ -1,9 +1,10 @@
 """Black-box harness for protocol v1 conformance (stdlib only).
 
 Starts a built ``sonarad.exe`` with a temporary home, the fake engine, the
-silent timed output and the fake ``system`` platform (fake apps, media and
+silent timed output, the fake ``system`` platform (fake apps, media and
 hotkeys in ``<home>/fake-system.json``, so no test touches this PC's audio
-or hotkeys), and talks to it over TCP JSON lines and HTTP/SSE exactly as a
+or hotkeys) and fake engine keys (``<home>/fake-keys.json``, never the
+Windows Credential Manager), and talks to it over TCP JSON lines and HTTP/SSE exactly as a
 client would. The binary is ``$SONARAD`` if set, else the
 newest of ``target/release/sonarad.exe`` and ``target/debug/sonarad.exe``.
 """
@@ -70,7 +71,7 @@ class Hook:
             e.pop(k, None)
         # A runtime the hook starts never touches this PC's audio or
         # hotkeys; a test that wants the start passes its own arguments.
-        e["SONARA_RUNTIME_ARGS"] = "--engine fake --system fake"
+        e["SONARA_RUNTIME_ARGS"] = "--engine fake --system fake --keys fake"
         e.update(env or {})
         self.proc = subprocess.Popen(
             [str(exe), event],
@@ -112,7 +113,7 @@ class Runtime:
         env.update(extra)
         self._stderr = open(self.stderr_path, "wb")
         self.proc = subprocess.Popen(
-            [str(exe), "--engine", "fake", "--system", "fake", *args],
+            [str(exe), "--engine", "fake", "--system", "fake", "--keys", "fake", *args],
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

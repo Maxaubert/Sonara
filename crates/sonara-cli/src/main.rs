@@ -3,6 +3,7 @@
 use serde_json::{json, Value};
 use sonara_cli::client::attach;
 use sonara_cli::doctor::{self, Row, Status};
+use sonara_cli::engines::{self, Action};
 use sonara_cli::lifecycle::{self, Running, Stopped};
 use sonara_cli::paths::{self, Paths};
 use sonara_cli::uninstall::{self, Keep};
@@ -21,7 +22,9 @@ const USAGE: &str = "usage: sonara <command>
   uninstall [--keep LIST]
                      stop Sonara and remove its runtime and files; LIST is
                      any of settings, models, logs (comma-separated) or
-                     none (default: settings)
+                     none (default: settings; settings include the engines
+                     you added and their keys)
+  engines ...        the speech engines you added (sonara engines help)
   version            print the version
 
 Environment: SONARA_HOME (the home, default %LOCALAPPDATA%\\Sonara),
@@ -52,6 +55,19 @@ fn main() -> ExitCode {
         "stop" => stop(&paths),
         "settings" => settings(&paths),
         "doctor" => return doctor(&paths),
+        "engines" => match rest.first().map(String::as_str) {
+            None | Some("help") | Some("--help") | Some("-h") => {
+                println!("{}", engines::USAGE);
+                Ok(())
+            }
+            _ => match engines::parse(rest) {
+                Ok(action) => engines_cmd(&paths, action),
+                Err(e) => {
+                    eprintln!("sonara: {e}\n{}", engines::USAGE);
+                    return ExitCode::from(2);
+                }
+            },
+        },
         "uninstall" => match parse_uninstall(rest) {
             Ok(keep) => uninstall(&paths, &exe, &keep),
             Err(e) => {
@@ -161,6 +177,42 @@ fn settings(paths: &Paths) -> Result<(), String> {
         println!("Opened the Sonara settings page in your browser: {url}");
     } else {
         println!("Sonara settings page: {url}");
+    }
+    Ok(())
+}
+
+/// `sonara engines ...`: one protocol request to the running runtime
+/// (started if needed).
+fn engines_cmd(paths: &Paths, action: Action) -> Result<(), String> {
+    let request = match action {
+        Action::List => json!({"type": "engine_list"}),
+        Action::Request(r) => r,
+        Action::SetKey { id } => {
+            let key = engines::read_key()?;
+            json!({"type": "engine_key", "engine": id, "secret": key})
+        }
+    };
+    let mut r = ensure(paths, false)?;
+    // A test or a voice list may wait for the provider.
+    let reply = r
+        .conn
+        .request_timeout(request.clone(), Duration::from_secs(150))
+        .map_err(|e| format!("no answer from the runtime: {e}"))?;
+    if reply["ok"] != true {
+        if reply["error"]["code"] == "E_UNKNOWN_TYPE" || reply["error"]["code"] == "E_UNSUPPORTED" {
+            return Err(format!(
+                "{} (this runtime has no external engines)",
+                engines::error_line(&reply)
+            ));
+        }
+        return Err(engines::error_line(&reply));
+    }
+    if request["type"] == "engine_list" {
+        for line in engines::list_lines(&reply) {
+            println!("{line}");
+        }
+    } else {
+        println!("{}", engines::done_line(&request, &reply));
     }
     Ok(())
 }
@@ -369,6 +421,13 @@ fn uninstall(paths: &Paths, exe: &Path, keep: &[Keep]) -> Result<(), String> {
         Err(e) => return Err(format!("Sonara did not stop ({e}); nothing was removed")),
     }
     let r = uninstall::remove_all(&paths.home, paths.runtime_root.as_deref(), exe, keep);
+    let (keys, key_failures) = uninstall::remove_credentials(&uninstall::WindowsCredentials, keep);
+    for id in &keys {
+        println!("Removed the key of engine {id} from Credential Manager");
+    }
+    for (id, e) in &key_failures {
+        println!("Could not remove the key of engine {id} ({e})");
+    }
     for p in &r.removed {
         println!("Removed {}", p.display());
     }

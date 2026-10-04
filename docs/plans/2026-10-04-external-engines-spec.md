@@ -341,7 +341,8 @@ pub struct ExternalConfig {
     pub clock: Arc<dyn Fn() -> Instant + Send + Sync>,       // tests inject
     pub agent: Option<ureq::Agent>,            // tests inject; default http::agent(timeouts)
 }
-pub struct Notice { pub engine: EngineId, pub reason: Reason, pub status: Option<u16>, pub message: String }
+pub struct Notice { pub engine: EngineId, pub reason: Option<Reason>, pub status: Option<u16>, pub message: String, pub fallback: Option<EngineId> }
+// reason None: a recovery after failures ("engine <id> recovered"); fallback: the engine that spoke instead
 ```
 
 `External::new(config) -> Result<External>` fails only on an invalid profile or an unsupported kind.
@@ -493,11 +494,13 @@ Capability `engines` in `hello.capabilities` and `runtime.json` when the host al
 < {"ok": true, "key": "engine", "value": "openai"}
 ```
 
-**`engine_remove`** `{id, forget_key?: bool (default true)}`: when it is the current engine, first `set engine` to the default choice (Kokoro when installed, else OneCore; saved like any `set`); then unregisters it from both registries, removes it from `engines.json`, deletes `sonara:<id>` when `forget_key`. Reply `{removed: "openai", engine: "<engine now in force>"}`. Unknown id: `E_NOT_FOUND`.
+A request's `id` is its correlation id (the reply echoes it; every SDK sets it), so the three messages below name the profile with **`engine`**, as `voices {engine}` does (changed in PR1: the first draft used `id`, which the SDKs overwrite).
 
-**`engine_key`** `{id, secret: string | null}`: stores (or with `null` deletes) the profile's key in the KeyStore; clears `no_key`/`auth` blocks. A profile whose `key_ref` is `env:` or `none` is `E_BAD_REQUEST` (`engine 'x' reads its key from the environment variable NAME`). Reply `{id, key_present}`.
+**`engine_remove`** `{engine, forget_key?: bool (default true)}`: when it is the current engine, first `set engine` to the default choice (Kokoro when installed, else OneCore; saved like any `set`); then unregisters it from both registries, removes it from `engines.json`, deletes `sonara:<id>` when `forget_key`. Reply `{removed: "openai", engine: "<engine now in force>"}`. Unknown id: `E_NOT_FOUND`.
 
-**`engine_test`** `{id, text?: string (default "Hello. This is how Sonara sounds with this voice.", at most 300 chars), voice?: string, play?: bool (default true)}`: one synthesis on that profile with **no fallback** and no cache, at the current rate; with `play`, played as a clip over whatever is read (as `preview`). Success clears the profile's blocked state and breaker. Reply `{ok: true, engine, voice, ms, sample_rate, duration_ms}`. Failure: `E_ENGINE` with the masked provider message and an additive `reason` in the error object:
+**`engine_key`** `{engine, secret: string | null}`: stores (or with `null` deletes) the profile's key in the KeyStore; clears `no_key`/`auth` blocks. A profile whose `key_ref` is `env:` or `none` is `E_BAD_REQUEST` (`engine 'x' reads its key from the environment variable NAME`). Reply `{engine, key_present}`.
+
+**`engine_test`** `{engine, text?: string (default "Hello. This is how Sonara sounds with this voice.", at most 300 chars), voice?: string, play?: bool (default true)}`: one synthesis on that profile with **no fallback** and no cache, at the current rate; with `play`, played as a clip over whatever is read (as `preview`). Success clears the profile's blocked state and breaker. Reply `{ok: true, engine, voice, ms, sample_rate, duration_ms}`. Failure: `E_ENGINE` with the masked provider message and an additive `reason` in the error object:
 
 ```json
 < {"ok": false, "error": {"code": "E_ENGINE", "message": "OpenAI refused the key (401): Incorrect API key provided", "reason": "auth"}}
@@ -721,6 +724,19 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - [ ] 19. Live `external_live.rs` (`#[ignore]`): `openai_live` (`OPENAI_API_KEY`), `kokoro_fastapi_live` (`SONARA_LIVE_KOKORO_FASTAPI_URL`), `localai_live` (`SONARA_LIVE_LOCALAI_URL`, `SONARA_LIVE_LOCALAI_MODEL`), `speaches_live` (`SONARA_LIVE_SPEACHES_URL`, `SONARA_LIVE_SPEACHES_MODEL`). Each skips with a message when its variables are unset.
 - [ ] 20. Docs: `protocol-v1.md` (10), `architecture.md`, `bundling.md`, `PRIVACY.md` (12); `CLAUDE.md` build line: the live test commands. Version 0.15.0 everywhere; notices regenerated.
 - [ ] 21. Hands-on: branch build deployed per the safe redeploy steps, a Kokoro-FastAPI or OpenAI profile added with the CLI, a real Claude turn read, the network pulled mid-turn (fallback cue heard once), then "merge?".
+
+**Deviations found while building PR1** (the sections above are updated where they apply):
+
+- `engine_remove`, `engine_key`, `engine_test` name the profile with `engine`, not `id` (10.2): `id` is the request's correlation id, which the TS and Python SDKs and `sonara.exe` set on every request.
+- `Notice` carries `reason: Option<Reason>` (`None` is a recovery) and `fallback` (7.1), so the host can write both log lines of 8.3 from one callback.
+- The engine crate masks provider messages with `sonara_log::mask` (the leaf crate `sonara-log` becomes an optional dependency of feature `external`; it has no dependencies, so R7 holds).
+- The product default voice (`af_sarah`) is applied at start and after `set engine` only when the engine lists it: an external engine accepts any voice id, so the default would otherwise be sent to the provider as a voice (a `bad_voice` on every first sentence). A user's saved voice still applies.
+- `sonarad --engine fake` keeps a saved external engine (with the fake engine as its fallback), so conformance can check that a profile survives a restart; any other `--engine` still wins over the saved one.
+- `SystemHost.previews` is `Option<Arc<Registry>>` (was `Option<Registry>`) so profiles are added to the previews' registry while the runtime runs; `sonara_reader::Config::registry` is `Arc<Registry>` (`Config::new` takes either) and `ReaderHandle::registry()` returns it.
+- `sonara.exe` gains a `windows` dependency (Credential Manager for `uninstall`, the console mode for the key prompt without echo).
+- The reader test of 4 is `unlisted_voice_refused_by_a_listed_only_engine` (the reader's tests have no Kokoro; the fake engine lists its voices like Kokoro).
+- Prefetch with a deeper lookahead also runs while a loaded chunk is paused (the existing one-ahead rule already did).
+- Step 21 (hands-on with a deployed branch build) is left for the "merge?" step: the PR1 worker must not touch `%LOCALAPPDATA%\Sonara` or the running runtime.
 
 ### PR2 (#225, 0.16.0): elevenlabs, azure, google
 

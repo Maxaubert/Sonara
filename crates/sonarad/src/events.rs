@@ -314,6 +314,7 @@ mod tests {
             progress: Some((10, 100)),
             fallback: Some(EngineId("onecore")),
             message: None,
+            reason: None,
         };
         let w = render(
             Event::EngineStatus {
@@ -366,6 +367,7 @@ mod tests {
             progress: Some((done, 100)),
             fallback: None,
             message: None,
+            reason: None,
         };
         let event = |done, changes| Event::EngineStatus {
             engine: EngineId("kokoro"),

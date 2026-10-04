@@ -259,13 +259,13 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn reader() -> (ReaderHandle, TestOutput, Arc<Registry>) {
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry.register(Arc::new(FakeEngine::new())).unwrap();
         let (out, rx) = TestOutput::new();
         let reader =
             ReaderHandle::new(Config::new(registry).with_output(Box::new(out.clone()), rx))
                 .unwrap();
-        let mut engines = Registry::default();
+        let engines = Registry::default();
         engines.register(Arc::new(FakeEngine::new())).unwrap();
         (reader, out, Arc::new(engines))
     }

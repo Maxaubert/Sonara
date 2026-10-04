@@ -82,7 +82,9 @@ pub(crate) fn number(key: Key, value: &Value) -> Result<u64> {
 }
 
 /// The voice id for `voice` (an id or a display name of `engine`), `None`
-/// for the default (`None` or empty).
+/// for the default (`None` or empty). An engine that accepts unlisted
+/// voices (an external engine: cloud voice ids, cloned voices) takes any
+/// other id as given.
 pub(crate) fn resolve_voice(engine: &dyn Engine, voice: Option<&str>) -> Result<Option<String>> {
     let wanted = match voice {
         None | Some("") => return Ok(None),
@@ -93,6 +95,11 @@ pub(crate) fn resolve_voice(engine: &dyn Engine, voice: Option<&str>) -> Result<
         .into_iter()
         .find(|v| v.id == wanted || v.name == wanted)
         .map(|v| Some(v.id))
+        .or_else(|| {
+            engine
+                .accepts_unlisted_voices()
+                .then(|| Some(wanted.to_string()))
+        })
         .ok_or_else(|| sonara_engine::Error::UnknownVoice(wanted.to_string()).into())
 }
 

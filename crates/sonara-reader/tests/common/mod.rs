@@ -27,7 +27,7 @@ impl Rig {
     }
 
     pub fn with(engine: Arc<dyn Engine>) -> Self {
-        let mut registry = Registry::default();
+        let registry = Registry::default();
         registry.register(engine).unwrap();
         Self::config(Config::new(registry))
     }

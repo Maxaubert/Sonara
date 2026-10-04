@@ -63,6 +63,12 @@ export interface EngineStatus {
   progress?: { done: number; total: number };
   fallback?: string;
   message?: string;
+  /**
+   * Protocol 1.2: why an external engine is not speaking itself
+   * (`no_key`, `auth`, `quota`, `rate_limited`, `network`, `timeout`,
+   * `server`, `bad_voice`, `bad_config`, `format`).
+   */
+  reason?: string;
   [extra: string]: unknown;
 }
 
@@ -86,7 +92,7 @@ export interface Voice {
   name: string;
   language: string;
   engine: string;
-  license_class: "permissive" | "os";
+  license_class: "permissive" | "os" | "external";
   installed: boolean;
   [extra: string]: unknown;
 }

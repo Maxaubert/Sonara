@@ -504,6 +504,7 @@ impl Engine for Kokoro {
             progress,
             fallback,
             message,
+            reason: None,
         };
         if let Some(why) = &p.unavailable {
             return status(Readiness::Unavailable, None, Some(why.clone()));

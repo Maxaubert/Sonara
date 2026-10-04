@@ -248,3 +248,58 @@ impl Engine for StatusEngine {
         self.status.lock().unwrap().clone()
     }
 }
+
+/// Like an external engine: any voice id is accepted (it speaks the fake
+/// tone and records the voice), and it asks for a deeper prefetch.
+pub struct OpenEngine {
+    pub id: &'static str,
+    pub inner: FakeEngine,
+    pub lookahead: usize,
+    pub voices_seen: Mutex<Vec<String>>,
+}
+
+impl OpenEngine {
+    pub fn new(id: &'static str, lookahead: usize) -> Self {
+        OpenEngine {
+            id,
+            inner: FakeEngine::new(),
+            lookahead,
+            voices_seen: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl Engine for OpenEngine {
+    fn id(&self) -> EngineId {
+        EngineId(self.id)
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Permissive
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
+        self.voices_seen.lock().unwrap().push(voice.to_string());
+        self.inner.synthesize(text, "", rate)
+    }
+
+    fn cancel(&self) {
+        self.inner.cancel()
+    }
+
+    fn lookahead(&self) -> usize {
+        self.lookahead
+    }
+
+    fn accepts_unlisted_voices(&self) -> bool {
+        true
+    }
+}

@@ -233,7 +233,9 @@ fn plain(m: &Map<String, Value>, v: &Value) -> bool {
 pub fn input_json(m: &Map<String, Value>, debug: bool) -> Value {
     let mut out = Map::new();
     for (k, v) in m {
-        if k == "token" {
+        // The token, and the key of `engine_add`/`engine_key`: dropped,
+        // not masked (spec 6.3).
+        if k == "token" || k == "secret" {
             continue;
         }
         if k == "options" {

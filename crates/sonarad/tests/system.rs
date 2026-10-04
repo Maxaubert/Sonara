@@ -58,7 +58,7 @@ struct Rig {
 }
 
 fn fake_registry() -> Registry {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     registry
 }
@@ -72,7 +72,7 @@ fn rig() -> Rig {
 
 /// A rig on `home`, with the settings persisted there.
 fn rig_on(home: PathBuf) -> Rig {
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(FakeEngine::new())).unwrap();
     let (out, rx) = TestOutput::new();
     let reader =
@@ -94,7 +94,7 @@ fn rig_on(home: PathBuf) -> Rig {
         home: home.clone(),
         http_port: 4321,
         token: TOKEN.into(),
-        previews: Some(fake_registry()),
+        previews: Some(Arc::new(fake_registry())),
     });
     Rig {
         server: Arc::new(server),
@@ -1377,7 +1377,7 @@ fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
     )
     .unwrap();
     let k = offline_kokoro(&home);
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(Arc::new(k.clone())).unwrap();
     let mut config = Config::new(registry);
     config.engine = Some("kokoro".into());
@@ -1390,7 +1390,7 @@ fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
     assert_eq!(reader.get(Key::Voice).unwrap(), V::Text("af_sarah".into()));
     assert_eq!(reader.get(Key::Rate).unwrap(), V::Number(250));
     // The previews share the reader's Kokoro (one model, one download).
-    let mut previews = Registry::default();
+    let previews = Registry::default();
     previews.register(Arc::new(k)).unwrap();
     let server = Server::new(
         reader,
@@ -1403,7 +1403,7 @@ fn saved_kokoro_settings_apply_and_previews_use_the_readers_kokoro() {
         home: home.clone(),
         http_port: 4321,
         token: TOKEN.into(),
-        previews: Some(previews),
+        previews: Some(Arc::new(previews)),
     });
     let s = &server;
     let mut h = Session::http();

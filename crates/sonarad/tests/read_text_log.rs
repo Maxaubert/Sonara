@@ -22,7 +22,7 @@ fn the_text_lines_are_what_the_engine_was_given() {
         is_default: false,
     };
     let engine = Arc::new(FakeEngine::new());
-    let mut registry = Registry::default();
+    let registry = Registry::default();
     registry.register(engine.clone()).unwrap();
     let (out, events) = NullOutput::new();
     let reader =
