@@ -162,18 +162,18 @@ every binding back on them.
 
 Run `/sonara:settings` to open the settings page in your browser. It is served by the runtime on
 `127.0.0.1` and protected by a token. Changes apply immediately and are saved in
-`%LOCALAPPDATA%\Sonara\config.json`.
+`%LOCALAPPDATA%\Sonara\config.json`. The sidebar has a search box and a *Now* card that says which
+engine is reading.
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
-| Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
-| Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and live reading: Immediately, Queue (with its queue size) or When done |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Everything or Skip code), other sessions (Read all or Chime only) |
+| Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a slide-over form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
+| Summary | Summary mode (Off, Tidy, Natural, Brief), the model, the prompt for each style, live reading: Immediately, Queue (with its queue size) or When done, and the summary timeout and settle time |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
-| Sessions | A name and audio on/off per Claude Code session, and switch announcements |
-| Hotkeys | Every binding, with AltGr and conflict warnings, and a reset to defaults |
-| Advanced | Summary timeout and settle time |
-| System | Runtime version, uptime and protocol, the settings file |
+| Sessions | A name and audio on/off per Claude Code session, closed sessions under *Earlier* (forget one there), and switch announcements |
+| Hotkeys | Every binding, with conflict warnings (`/sonara:doctor` reports AltGr clashes), what Flush skips, and a reset to defaults |
+| System | Runtime version, uptime and protocol, the settings file, the debug log |
 
 **Audio mode.** *Duck* lowers other apps to the duck level while Sonara speaks; *Pause* pauses
 media that Windows can control (music, video players) and resumes it afterwards. Either way

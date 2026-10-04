@@ -11,3 +11,5 @@ crates/misaki/data/*.txt text eol=lf
 # Bundled earcons (#211): compiled in byte for byte, pinned by SHA256SUMS.
 crates/sonara-agent/sounds/*.wav binary
 crates/sonara-agent/sounds/SHA256SUMS text eol=lf
+# The settings page fonts (#237): embedded byte for byte.
+crates/sonarad/assets/fonts/*.woff2 binary

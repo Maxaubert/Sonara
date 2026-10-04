@@ -11,12 +11,76 @@
 //! - the API sends no CORS headers, and the page forbids framing, external
 //!   connections and referrers (`Content-Security-Policy`,
 //!   `Referrer-Policy: no-referrer`).
+//!
+//! The page's fonts (Geist and Geist Mono, SIL OFL 1.1, `assets/fonts`)
+//! are compiled in too and inlined as `data:` URLs, so the page loads
+//! nothing from another origin (#237).
+use std::sync::OnceLock;
+
 use crate::protocol::token_eq;
 
 pub const PAGE: &str = include_str!("../assets/settings.html");
 
 /// The placeholder the token replaces (a JSON string in the page script).
 pub const TOKEN_SLOT: &str = "\"__SONARA_TOKEN__\"";
+
+/// The placeholder in the page's style sheet the `@font-face` rules replace.
+pub const FONTS_SLOT: &str = "/*__SONARA_FONTS__*/";
+
+/// The fonts: (family, woff2 bytes). Latin subsets of the variable fonts
+/// (weights 100 to 900); other scripts fall back to the system font.
+const FONTS: &[(&str, &[u8])] = &[
+    ("Geist", include_bytes!("../assets/fonts/Geist-latin.woff2")),
+    (
+        "Geist Mono",
+        include_bytes!("../assets/fonts/GeistMono-latin.woff2"),
+    ),
+];
+
+/// Standard base64 with padding (RFC 4648), for the `data:` URLs.
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// The `@font-face` rules, built once.
+fn font_css() -> &'static str {
+    static CSS: OnceLock<String> = OnceLock::new();
+    CSS.get_or_init(|| {
+        FONTS
+            .iter()
+            .map(|(family, woff2)| {
+                format!(
+                    "@font-face{{font-family:\"{family}\";font-style:normal;font-weight:100 900;                     font-display:swap;src:url(data:font/woff2;base64,{}) format(\"woff2\")}}",
+                    base64(woff2)
+                )
+            })
+            .collect()
+    })
+}
+
+/// The page with its fonts in place, built once (the token goes in per
+/// request).
+fn page_with_fonts() -> &'static str {
+    static FULL: OnceLock<String> = OnceLock::new();
+    FULL.get_or_init(|| PAGE.replacen(FONTS_SLOT, font_css(), 1))
+}
 
 /// Response headers of the page.
 pub const HEADERS: &[(&str, &str)] = &[
@@ -28,8 +92,8 @@ pub const HEADERS: &[(&str, &str)] = &[
     (
         "content-security-policy",
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
-         connect-src 'self'; img-src data:; base-uri 'none'; form-action 'none'; \
-         frame-ancestors 'none'",
+         connect-src 'self'; img-src data:; font-src data:; base-uri 'none'; \
+         form-action 'none'; frame-ancestors 'none'",
     ),
 ];
 
@@ -62,7 +126,7 @@ pub fn render(
     }
     // The token is hex, so it needs no escaping inside a JS string.
     debug_assert!(token.chars().all(|c| c.is_ascii_alphanumeric()));
-    Ok(PAGE.replacen(TOKEN_SLOT, &format!("\"{token}\""), 1))
+    Ok(page_with_fonts().replacen(TOKEN_SLOT, &format!("\"{token}\""), 1))
 }
 
 #[cfg(test)]
@@ -127,5 +191,50 @@ mod tests {
             "the Python daemon's private API is gone"
         );
         assert!(PAGE.contains("/v1/"));
+    }
+
+    #[test]
+    fn base64_matches_rfc_4648() {
+        for (raw, enc) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64(raw.as_bytes()), enc, "{raw:?}");
+        }
+        assert_eq!(base64(&[0xff, 0xfe, 0xfd]), "//79");
+    }
+
+    #[test]
+    fn the_page_carries_its_fonts_inline_and_nothing_external() {
+        assert_eq!(PAGE.matches(FONTS_SLOT).count(), 1);
+        let page = render(Some("127.0.0.1:5000"), Some("token=abc123"), 5000, "abc123").unwrap();
+        assert!(!page.contains(FONTS_SLOT));
+        assert_eq!(page.matches("@font-face").count(), FONTS.len());
+        assert!(page.contains("font-family:\"Geist Mono\""));
+        // Only data: URLs: the CSP forbids any other origin anyway.
+        for needle in ["http://", "https://"] {
+            for (i, _) in page.match_indices(needle) {
+                let before = &page[i.saturating_sub(12)..i];
+                assert!(
+                    !before.contains("url(") && !before.contains("src="),
+                    "an external resource at {i}"
+                );
+            }
+        }
+        let csp = HEADERS
+            .iter()
+            .find(|(k, _)| *k == "content-security-policy")
+            .unwrap()
+            .1;
+        assert!(csp.contains("font-src data:"));
+        // Each font is a whole woff2 file.
+        for (_, woff2) in FONTS {
+            assert_eq!(&woff2[..4], b"wOF2");
+        }
     }
 }

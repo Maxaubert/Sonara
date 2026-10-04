@@ -94,9 +94,10 @@ def test_every_section_of_the_old_page_is_there(live, browser):
     lv = live()
     page = open_page(browser, lv.url)
     names = page.locator(".side-nav button").all_text_contents()
-    # Engines (#227) sits under Speech when the runtime allows external engines.
+    # Engines (#227) sits under Speech when the runtime allows external engines;
+    # the summary timeout and settle time moved into Summary (#237).
     assert [n.strip() for n in names] == ["Speech", "Engines", "Summary", "Audio", "Sessions", "Hotkeys",
-                                          "Advanced", "System"]
+                                          "System"]
     page.click("[data-page=system]")
     assert page.locator("#app-version").text_content().startswith("Version ")
     assert "config.json" in page.locator("#rt-config").text_content()
@@ -136,13 +137,13 @@ def test_verbosity_has_two_levels_and_persists_across_a_reload(live, browser):
     assert [b.strip() for b in buttons.all_text_contents()] == ["Everything", "Skip code"]
     seg = "#verbosity-seg [data-value=%s]"
     pw.expect(page.locator(seg % "skip_code")).to_have_attribute("aria-checked", "true")
-    pw.expect(page.locator("#verbosity-hint")).to_contain_text("Code blocks")
+    # #237: no helper text under a setting.
+    assert page.locator("#verbosity-hint").count() == 0
     page.click(seg % "everything")
     assert eventually(lambda: lv.saved().get("verbosity") == "everything")
     assert lv.get("verbosity") == "everything"
     page.reload()
     pw.expect(page.locator(seg % "everything")).to_have_attribute("aria-checked", "true")
-    pw.expect(page.locator("#verbosity-hint")).to_contain_text("code block")
     page.close()
 
 
@@ -176,11 +177,10 @@ def test_every_remaining_control_saves_and_survives_a_reload(live, browser):
     assert eventually(lambda: lv.saved().get("minqueue") == before + 1)
     page.click("#mq-minus")
     assert eventually(lambda: lv.saved().get("minqueue") == before)
-    # Advanced: timeout and settle time apply with a summary mode on
+    # Summary > Advanced: timeout and settle time apply with a summary mode on
     page.click("[data-page=summary]")
     page.click("#summary-seg [data-value=natural]")
     assert eventually(lambda: lv.get("summaries")["enabled"] is True)
-    page.click("[data-page=advanced]")
     pw.expect(page.locator("#timeout")).to_be_enabled()
     page.locator("#timeout").fill("120")
     page.locator("#timeout").dispatch_event("change")
@@ -267,12 +267,11 @@ def test_flush_scope_switches_shows_its_hint_and_survives_a_reload(live, browser
     pw.expect(page.locator(seg % "session")).to_have_text("This session")
     pw.expect(page.locator(seg % "all")).to_have_text("Everything queued")
     pw.expect(page.locator(seg % "session")).to_have_attribute("aria-checked", "true")  # default
-    pw.expect(page.locator("#flushscope-hint")).to_contain_text("next session")
+    assert page.locator("#flushscope-hint").count() == 0   # #237: no helper text
     page.click(seg % "all")
     assert eventually(lambda: lv.saved().get("flush_scope") == "all")
     assert lv.get("flush_scope") == "all"
     pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")
-    pw.expect(page.locator("#flushscope-hint")).to_contain_text("still writing")
     page.reload()
     page.click("[data-page=hotkeys]")
     pw.expect(page.locator(seg % "all")).to_have_attribute("aria-checked", "true")
@@ -465,4 +464,71 @@ def test_the_audio_page_shows_the_custom_chimes_folder(live, browser):
     page = open_page(browser, lv.url)
     page.click("[data-page=audio]")
     pw.expect(page.locator("#earcons-custom")).to_contain_text("Your own: turn_done")
+    page.close()
+
+
+# ---- the redesign (#237) ---------------------------------------------------
+
+
+def test_a_closed_session_is_listed_under_earlier_and_can_be_forgotten(live, browser):
+    lv = live()
+    lv.client.request({"type": "channel_open", "channel": "sess-open0001", "label": "here"})
+    lv.client.request({"type": "channel_open", "channel": "sess-gone0002", "label": "gone"})
+    r = lv.client.request({"type": "set", "key": "channel_prefs", "value": {"channel": "sess-gone0002", "label": "Old"}})
+    assert r["ok"], r
+    lv.client.request({"type": "channel_close", "channel": "sess-gone0002"})
+    assert eventually(lambda: any(not x["open"] and x["channel"] == "sess-gone0002" for x in lv.get("channel_prefs")))
+    page = open_page(browser, lv.url)
+    page.click("[data-page=sessions]")
+    pw.expect(page.locator("#session-rows .sess-row")).to_have_count(1)
+    pw.expect(page.locator("#session-rows .sess-row .tag")).to_have_text(re.compile("Open|Reading"))
+    older = page.locator("#sessions-older")
+    pw.expect(older).to_be_visible()
+    pw.expect(page.locator("#sessions-older-sum")).to_have_text("Earlier (1)")
+    page.click("#sessions-older-sum")
+    row = page.locator("#session-rows-older .sess-row")
+    pw.expect(row).to_have_count(1)
+    pw.expect(row.locator("input")).to_have_value("Old")
+    pw.expect(row.locator(".tag")).to_have_text("Closed")
+    # Open sessions have no Forget; a closed one does.
+    assert page.locator("#session-rows .session-forget").count() == 0
+    row.locator("button.session-forget").click()
+    assert eventually(lambda: not any(x["channel"] == "sess-gone0002" for x in lv.get("channel_prefs")))
+    pw.expect(older).to_be_hidden()
+    pw.expect(page.locator("#live")).to_contain_text("Old forgotten")
+    page.close()
+
+
+def test_saves_show_a_toast_and_the_sidebar_says_what_reads(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#now-text")).to_have_text("Reading with fake")
+    pw.expect(page.locator("#toast")).not_to_have_class(re.compile(r"\bon\b"))
+    page.click("#background-seg [data-value=earcon_only]")
+    pw.expect(page.locator("#toast")).to_have_class(re.compile(r"\bon\b"))
+    pw.expect(page.locator("#toast-text")).to_contain_text("saved")
+    # The toast is visual: the live region announces it once.
+    pw.expect(page.locator("#toast")).to_have_attribute("aria-hidden", "true")
+    page.close()
+
+
+def test_no_helper_text_and_no_theme_switch(live, browser):
+    # #237: labels, live statuses, errors and required markers only.
+    lv = live()
+    page = open_page(browser, lv.url)
+    for gone in (".hint", ".pref-copy .hint", "#theme-toggle", "#readmode-hint", "#summary-mode-hint",
+                 "#audio-mode-hint", "#voice-hint", "#rate-hint", "#timeout-hint", "#settle-hint",
+                 "#debuglog-hint", ".brand", "[data-page=advanced]"):
+        assert page.locator(gone).count() == 0, gone
+    page.close()
+
+
+def test_the_page_uses_its_own_fonts(live, browser):
+    lv = live()
+    page = open_page(browser, lv.url)
+    # A family with no face would load nothing; the inline faces load.
+    assert page.evaluate("document.fonts.load('14px Geist').then(f => f.length)") >= 1
+    assert page.evaluate("document.fonts.load('12px \"Geist Mono\"').then(f => f.length)") >= 1
+    family = page.evaluate("getComputedStyle(document.body).fontFamily")
+    assert family.startswith('Geist') or family.startswith('"Geist"'), family
     page.close()
