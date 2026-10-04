@@ -104,7 +104,8 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   its own short confirmations ("Muted.", "Unmuted.") with that voice too, does not ask for voice
   lists, and cuts a sentence that was on its way the moment you mute. Only two things you ask for
   on purpose still reach the engine while muted: the *Test* button (`engine_test`) and a voice
-  preview. Unmuted, the next sentence goes to the engine again.
+  preview (with the reader itself muted they are still sent, but you hear nothing). Unmuted,
+  the next sentence goes to the engine again.
 - **What is not sent.** No other text, file, setting or identifier. Short repeated phrases may be
   answered from memory instead of asked again; that memory is gone when the runtime stops.
 - **Keys.** An engine's API key is stored in **Windows Credential Manager** (a generic

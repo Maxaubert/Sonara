@@ -147,8 +147,9 @@ pub struct External {
     health: Health,
     cache: CueCache,
     cancel: Arc<CancelToken>,
-    /// The cancel generation at `begin`, taken by the next `synthesize`.
-    begun: Mutex<Option<u64>>,
+    /// The hold epoch and cancel generation at `begin`, taken by the next
+    /// `synthesize`.
+    begun: Mutex<Option<(u64, u64)>>,
     agent: ureq::Agent,
     voices_agent: ureq::Agent,
     label: String,
@@ -259,6 +260,28 @@ impl External {
             Scope::Local => true,
             Scope::Normal => self.hold.as_ref().is_some_and(|h| h.is_held()),
         }
+    }
+
+    /// The hold's epoch now (0 without a hold).
+    fn hold_epoch(&self) -> u64 {
+        self.hold.as_ref().map_or(0, |h| h.epoch())
+    }
+
+    /// The hold epoch, then the cancel generation: in this order, a hold
+    /// raised after the generation was read is either seen by the `held`
+    /// check that follows or has moved the generation, so the request is
+    /// never sent (`Hold::set` holds before it cancels).
+    fn mark(&self) -> (u64, u64) {
+        let epoch = self.hold_epoch();
+        (epoch, self.cancel.generation())
+    }
+
+    /// A cancel seen since `epoch` came from the hold (now held, or held
+    /// and lifted again meanwhile), not from the reader: the chunk is
+    /// spoken locally rather than dropped. An explicit action is cut like
+    /// any other cancel.
+    fn cut_by_hold(&self, epoch: u64) -> bool {
+        self.held() || (hold::scope() == Scope::Normal && self.hold_epoch() != epoch)
     }
 
     /// Speak `text` with the fallback while held: not a failure, so no cue,
@@ -479,17 +502,22 @@ impl External {
             .map(|(_, list)| list.iter().any(|v| v.id == voice))
     }
 
-    /// Fetch a voice list, following the pages of a paged one.
+    /// Fetch a voice list, following the pages of a paged one (`None`: muted
+    /// meanwhile, so no further page was asked for).
     fn fetch_voices(
         &self,
         adapter: &Arc<dyn Adapter>,
         first: HttpRequest,
         key: Option<&Secret>,
-    ) -> std::result::Result<Vec<adapter::VoiceInfo>, ExtError> {
+    ) -> std::result::Result<Option<Vec<adapter::VoiceInfo>>, ExtError> {
         let mut out = Vec::new();
         let mut next = Some(first);
         for _ in 0..VOICES_MAX_PAGES {
             let Some(request) = next.take() else { break };
+            // Muted meanwhile: no further page (and no partial list).
+            if self.held() {
+                return Ok(None);
+            }
             let r = execute(&self.voices_agent, &request, MAX_LIST_BODY, &self.host)?;
             if !r.ok() {
                 return Err(adapter.map_error(&r, "", None));
@@ -499,7 +527,11 @@ impl External {
         }
         let mut seen = std::collections::HashSet::new();
         out.retain(|v| seen.insert(v.id.clone()));
-        Ok(out)
+        // A mute during the last page: the list is not kept either.
+        if self.held() {
+            return Ok(None);
+        }
+        Ok(Some(out))
     }
 
     fn voice_source(&self, key: Option<&Secret>) -> VoiceSource {
@@ -566,7 +598,8 @@ impl Engine for External {
                     empty_on_error,
                 },
             ) => match self.fetch_voices(adapter, request, key.as_ref()) {
-                Ok(v) => v,
+                Ok(Some(v)) => v,
+                Ok(None) => return Ok(self.voices()),
                 Err(_) if empty_on_error => Vec::new(),
                 Err(e) => {
                     *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner()) =
@@ -607,15 +640,20 @@ impl Engine for External {
     }
 
     fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
-        // The generation at `begin`, so a cancel between it and here counts.
+        // The marks at `begin`, so a cancel between it and here counts;
+        // taken before the hold is checked (`mark`).
         let begun = self.begun.lock().unwrap_or_else(|p| p.into_inner()).take();
+        let (epoch, gen) = begun.unwrap_or_else(|| self.mark());
+        hold::race_point();
         // Muted: nothing is sent, not even a chunk begun before the mute
         // (a lookahead one), whose cancel generation the hold moved on.
         if self.held() {
             return self.quiet(text, rate);
         }
-        let gen = begun.unwrap_or_else(|| self.cancel.generation());
         if gen != self.cancel.generation() {
+            if self.cut_by_hold(epoch) {
+                return self.quiet(text, rate);
+            }
             return Err(Error::Cancelled);
         }
         let voice = match self.voice_for(voice) {
@@ -651,9 +689,9 @@ impl Engine for External {
             }
         };
         let answer = match self.provider(gen, text, &voice, rate, key.as_ref()) {
-            // The hold was raised while the request ran: it was cut, and the
-            // chunk is spoken locally.
-            Err(Error::Cancelled) if self.held() => return self.quiet(text, rate),
+            // The hold was raised while the request ran (even if lifted
+            // again since): it was cut, and the chunk is spoken locally.
+            Err(Error::Cancelled) if self.cut_by_hold(epoch) => return self.quiet(text, rate),
             other => other?,
         };
         match answer {
@@ -673,7 +711,7 @@ impl Engine for External {
     }
 
     fn begin(&self) {
-        *self.begun.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.cancel.generation());
+        *self.begun.lock().unwrap_or_else(|p| p.into_inner()) = Some(self.mark());
     }
 
     fn cancel(&self) {

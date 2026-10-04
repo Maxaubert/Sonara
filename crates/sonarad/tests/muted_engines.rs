@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 const SECRET: &str = "sk-test-secret-0123456789abcdef";
 
 struct Rig {
-    server: Server,
+    server: Arc<Server>,
     out: TestOutput,
     session: Session,
     provider: Provider,
@@ -114,7 +114,7 @@ fn rig(agent: bool) -> Rig {
     );
     assert_eq!(o.reply["ok"], true, "{}", o.reply);
     let mut r = Rig {
-        server,
+        server: Arc::new(server),
         out,
         session,
         provider: Provider::start(),
@@ -358,4 +358,38 @@ fn a_persisted_mute_level_holds_from_the_start() {
     r.ok(json!({"type": "speak", "text": MESSAGE}));
     r.play_through();
     assert_eq!(r.requests(), 0);
+}
+
+#[test]
+fn concurrent_mute_changes_leave_the_hold_matching_the_mute() {
+    // A core mute/unmute on one connection races agent mute_level changes
+    // on another: whatever lands last, the hold follows the truth.
+    let r = rig(true);
+    let server = r.server.clone();
+    let mut threads = Vec::new();
+    for t in 0..2 {
+        let server = server.clone();
+        threads.push(std::thread::spawn(move || {
+            let mut s = Session::tcp();
+            let o = server.handle(
+                &mut s,
+                &json!({"type": "hello", "token": "secret", "extensions": ["agent"]}),
+            );
+            assert_eq!(o.reply["ok"], true);
+            for i in 0..200 {
+                let req = if t == 0 {
+                    let action = if i % 2 == 0 { "mute" } else { "unmute" };
+                    json!({"type": "control", "action": action})
+                } else {
+                    json!({"type": "set", "key": "mute_level", "value": (i % 3)})
+                };
+                server.handle(&mut s, &req);
+            }
+        }));
+    }
+    for t in threads {
+        t.join().unwrap();
+    }
+    let q = r.server.quiet();
+    assert_eq!(q.is_held(), q.muted(), "the hold follows the mute");
 }

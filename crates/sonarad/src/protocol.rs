@@ -501,6 +501,11 @@ impl Server {
         v
     }
 
+    /// Whether Sonara is muted and external engines held (#227).
+    pub fn quiet(&self) -> &Quiet {
+        &self.quiet
+    }
+
     pub fn reader(&self) -> &ReaderHandle {
         &self.reader
     }
@@ -856,14 +861,15 @@ impl Server {
     /// (#227).
     fn control(&self, m: &Map<String, Value>) -> Handled {
         let action = opt_str(m, "action")?.ok_or_else(|| bad("missing 'action'"))?;
+        if action != "mute" && action != "unmute" {
+            return self.control_now(m, action);
+        }
+        // One mute change at a time; the hold follows it on drop.
+        let change = self.quiet.change();
         if action == "mute" {
-            self.quiet.hold_now();
+            change.hold_now();
         }
-        let done = self.control_now(m, action);
-        if action == "mute" || action == "unmute" {
-            self.quiet.sync();
-        }
-        done
+        self.control_now(m, action)
     }
 
     fn control_now(&self, m: &Map<String, Value>, action: &str) -> Handled {
@@ -987,18 +993,20 @@ impl Server {
             .clone();
         let mute_before = self.agent.get().map(|a| a.settings().mute_level);
         let mute_key = opt_str(m, "key").ok().flatten() == Some("mute_level");
-        if mute_key
-            && m.get("value")
+        // One mute change at a time; the hold follows it on drop.
+        let change = mute_key.then(|| self.quiet.change());
+        if let Some(c) = &change {
+            if m.get("value")
                 .and_then(Value::as_u64)
                 .is_some_and(|l| l >= 1)
-        {
-            // Nothing is sent from here on (#227).
-            self.quiet.hold_now();
+            {
+                // Nothing is sent from here on (#227).
+                c.hold_now();
+            }
         }
         let result = self.set_now(m);
-        if mute_key {
-            self.quiet.sync();
-        }
+        // The hold follows the outcome before the cue is spoken.
+        drop(change);
         if let (Ok((fields, _)), Some(name)) = (&result, opt_str(m, "key").ok().flatten()) {
             // The mute level's spoken cue (the hotkey's, #197), when it
             // changed; `audio_mode` and `duck_level` speak theirs in the

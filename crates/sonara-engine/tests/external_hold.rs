@@ -199,3 +199,103 @@ fn an_engine_without_a_hold_is_unaffected() {
     .unwrap();
     assert_eq!(samples(&engine, "Free.").unwrap(), vec![9]);
 }
+
+#[test]
+fn a_mute_between_taking_the_generation_and_the_check_sends_nothing() {
+    // The hold lands after `synthesize` took its cancel generation but
+    // before it looked at the hold: the request must still not be sent.
+    let r = rig();
+    let hold = r.hold.clone();
+    let got = hold::with_race_hook(
+        move || {
+            hold.set(true);
+        },
+        || samples(&r.engine, "Raced."),
+    );
+    assert_eq!(got.unwrap(), fake_audio("Raced."));
+    assert_eq!(r.server.requests().len(), 0, "nothing sent once muted");
+}
+
+#[test]
+fn a_mute_and_unmute_within_one_request_still_speaks_the_chunk() {
+    // "Nothing may silently drop it": the cut request is spoken locally,
+    // not reported as a failed chunk, even though the hold lifted again.
+    let r = rig();
+    r.server.on(
+        SPEECH,
+        Route::wav(&[1], 24_000).delayed(Duration::from_secs(3)),
+    );
+    let hold = r.hold.clone();
+    let cycler = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        hold.set(true);
+        hold.set(false);
+    });
+    let got = samples(&r.engine, "Cycled.");
+    cycler.join().unwrap();
+    assert_eq!(got.unwrap(), fake_audio("Cycled."));
+    assert_eq!(r.server.count(SPEECH), 1, "only the request already sent");
+}
+
+#[test]
+fn a_chunk_begun_before_a_mute_and_unmute_is_still_spoken() {
+    let r = rig();
+    r.engine.begin();
+    r.hold.set(true);
+    r.hold.set(false);
+    assert_eq!(samples(&r.engine, "Ahead.").unwrap(), fake_audio("Ahead."));
+    assert_eq!(r.server.count(SPEECH), 0);
+    // A reader cancel alone is still a cancel.
+    r.engine.begin();
+    r.engine.cancel();
+    assert!(matches!(
+        samples(&r.engine, "Skipped."),
+        Err(Error::Cancelled)
+    ));
+}
+
+#[test]
+fn a_mute_during_a_paged_voice_list_stops_the_pages() {
+    use sonara_engine::external::keys::{KeyStore, Secret};
+    let server = ScriptServer::start();
+    let page1 = r#"{"voices": [{"voice_id": "a", "name": "A"}], "has_more": true,
+        "next_page_token": "p2"}"#;
+    let page2 = r#"{"voices": [{"voice_id": "b", "name": "B"}], "has_more": false}"#;
+    server.queue(
+        "/v2/voices",
+        Route::json(200, page1).delayed(Duration::from_millis(400)),
+    );
+    server.queue("/v2/voices", Route::json(200, page2));
+    let profile = Profile::from_json(&json!({"id": "el", "kind": "elevenlabs",
+        "url": server.base, "voice": "JBFqnCBsd6RMkjVDRZzb",
+        "options": {"timeout_ms": 5000}}))
+    .unwrap();
+    let store = Arc::new(MemoryStore::new());
+    store
+        .set(
+            "el",
+            &Secret::new("cloud-test-key-0123456789"),
+            &profile.origin().unwrap(),
+        )
+        .unwrap();
+    let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
+    let hold = Arc::new(Hold::new());
+    config.hold = Some(hold.clone());
+    let engine = External::new(config).unwrap();
+    let h = hold.clone();
+    let raiser = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        h.set(true);
+    });
+    let listed = engine.refresh_voices().unwrap();
+    raiser.join().unwrap();
+    assert_eq!(server.requests().len(), 1, "no page after the mute");
+    assert!(listed.iter().all(|v| v.id != "b"), "{listed:?}");
+    assert!(engine.voices_stale(), "a cut list is not kept as fresh");
+    // Unmuted, the whole list is fetched again.
+    hold.set(false);
+    server.queue("/v2/voices", Route::json(200, page1));
+    server.queue("/v2/voices", Route::json(200, page2));
+    let listed = engine.refresh_voices().unwrap();
+    assert!(listed.iter().any(|v| v.id == "b"), "{listed:?}");
+}

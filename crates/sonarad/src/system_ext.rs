@@ -231,18 +231,22 @@ impl HotkeyTarget {
             Action::Mute => match self.agent.get() {
                 // The mute cycle: unmuted, muted (earcons on), super muted.
                 Some(a) => {
+                    // One mute change at a time: the level read here is the
+                    // one changed, and the hold follows it on drop.
+                    let change = self.quiet.change();
                     let next = (a.settings().mute_level + 1) % 3;
                     if next >= 1 {
-                        self.quiet.hold_now();
+                        change.hold_now();
                     }
                     let done = a.set_mute_level(next).map_err(|e| e.to_string());
-                    self.quiet.sync();
+                    drop(change);
                     done?;
                     self.store.record("mute_level", &json!(next));
                     self.cue_local(cues::mute_level_cue(u64::from(next)));
                     Ok(Some(format!("level={next}")))
                 }
                 None => {
+                    let change = self.quiet.change();
                     let muted = self.reader.state().map(|s| s.muted).unwrap_or(false);
                     let c = if muted {
                         Control::Unmute
@@ -250,10 +254,10 @@ impl HotkeyTarget {
                         Control::Mute
                     };
                     if !muted {
-                        self.quiet.hold_now();
+                        change.hold_now();
                     }
                     let done = self.reader.control(c).map_err(|e| e.to_string());
-                    self.quiet.sync();
+                    drop(change);
                     done?;
                     // A muted reader plays clips silently: only the unmute
                     // is heard.

@@ -15,15 +15,21 @@
 //!   even while held) and `local` (Sonara's own mute cues such as
 //!   "Unmuted.": the fallback speaks them even when not held).
 //!   `External::test` (the Test button) is always explicit.
+//! - Every change moves the hold's `epoch`, so an engine whose request was
+//!   cut by a mute that already lifted again (a quick mute and unmute) can
+//!   tell it from a reader cancel and still speak the chunk locally,
+//!   instead of dropping it.
 use super::worker::CancelToken;
-use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 /// The host's mute, as the external engines see it.
 #[derive(Debug, Default)]
 pub struct Hold {
     held: AtomicBool,
+    /// Moved by every `set`, before the hold changes.
+    epoch: AtomicU64,
     /// The cancel tokens of the engines built with this hold.
     tokens: Mutex<Vec<Weak<CancelToken>>>,
 }
@@ -37,9 +43,17 @@ impl Hold {
         self.held.load(Ordering::SeqCst)
     }
 
+    /// How many times the hold was set (see the module notes).
+    pub fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
+    }
+
     /// Hold or release; true when it changed. Holding ends every request in
     /// flight of the engines built with it.
     pub fn set(&self, held: bool) -> bool {
+        // First, so an engine that sees the hold released after a cut also
+        // sees the epoch moved.
+        self.epoch.fetch_add(1, Ordering::SeqCst);
         let changed = self.held.swap(held, Ordering::SeqCst) != held;
         if changed && held {
             let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());
@@ -71,6 +85,31 @@ pub(crate) enum Scope {
 
 thread_local! {
     static SCOPE: Cell<Scope> = const { Cell::new(Scope::Normal) };
+    static RACE: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// For tests: run `hook` at the point of `External::synthesize` between
+/// taking the cancel generation and checking the hold (where a mute that
+/// lands must still stop the request), for calls on this thread in `f`.
+#[doc(hidden)]
+pub fn with_race_hook<T>(hook: impl Fn() + 'static, f: impl FnOnce() -> T) -> T {
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            RACE.with(|r| *r.borrow_mut() = None);
+        }
+    }
+    RACE.with(|r| *r.borrow_mut() = Some(Box::new(hook)));
+    let _clear = Clear;
+    f()
+}
+
+pub(crate) fn race_point() {
+    RACE.with(|r| {
+        if let Some(h) = r.borrow().as_ref() {
+            h();
+        }
+    });
 }
 
 pub(crate) fn scope() -> Scope {
