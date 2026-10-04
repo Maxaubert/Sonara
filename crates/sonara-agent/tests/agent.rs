@@ -831,6 +831,50 @@ fn flush_while_another_session_streams_keeps_its_message_in_both_scopes() {
 }
 
 #[test]
+fn flush_while_another_session_streams_keeps_its_summary_in_both_scopes() {
+    // #228, the incident as it happened (summaries on): b still writing
+    // when a is flushed gets its summary, made from all of its prose.
+    for scope in [FlushScope::Session, FlushScope::All] {
+        let fake = Arc::new(Fake {
+            answer: Some("Beta summary.".into()),
+            seen: Mutex::new(Vec::new()),
+        });
+        let mut settings = scoped(sonara_agent::ReadMode::Immediate, scope);
+        settings.summaries = SummarySettings {
+            enabled: true,
+            settle_ms: 0,
+            model: "test-model".into(),
+            ..SummarySettings::default()
+        };
+        let r = Rig::with(settings, Some(fake.clone() as Arc<dyn Summarizer>));
+        r.agent.turn_start("b", None, None).unwrap();
+        r.agent.turn_start("a", None, None).unwrap();
+        r.agent
+            .ask("a", &Ask::new(AskKind::Plan, "Alpha plan."))
+            .unwrap();
+        r.wait_for("Plan ready.");
+        r.agent.stream("b", None, LONG, 0, true, None).unwrap();
+        let f = r.agent.flush().unwrap();
+        assert_eq!(f.flushed, Flushed::Channel("a".into()), "{scope:?}");
+        assert!(f.others.is_empty(), "{scope:?}: {:?}", f.others);
+        r.agent
+            .stream("b", None, "Beta last words.", 1, true, None)
+            .unwrap();
+        r.agent.turn_end("b", None, None).unwrap();
+        r.read("Beta summary.");
+        r.stays_idle();
+        let seen = fake.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1, "{scope:?}: {seen:?}");
+        assert!(seen[0].contains("This filler"), "{scope:?}: {}", seen[0]);
+        assert!(
+            seen[0].contains("Beta last words."),
+            "{scope:?}: {}",
+            seen[0]
+        );
+    }
+}
+
+#[test]
 fn flush_scope_all_while_idle_drops_the_ready_messages_it_holds() {
     // Text of a finished turn waiting behind the background policy is
     // ready: an idle flush with scope all drops it too.
@@ -846,6 +890,28 @@ fn flush_scope_all_while_idle_drops_the_ready_messages_it_holds() {
     assert_eq!(f.others, ["b"]);
     r.agent.channels().focus("b").unwrap();
     r.stays_idle();
+}
+
+#[test]
+fn flush_scope_all_skips_the_late_prose_of_a_flushed_finished_reply() {
+    // Review of #228: late prose (#14) of another session's reply that a
+    // flush-all dropped is not read after the flush.
+    let mut s = scoped(sonara_agent::ReadMode::Immediate, FlushScope::All);
+    s.background = BackgroundPolicy::EarconOnly;
+    let r = Rig::with(s, None);
+    r.agent.channels().focus("a").unwrap();
+    r.agent.turn_start("b", None, None).unwrap();
+    r.stream("b", "Background prose.", 0, None);
+    r.agent.turn_end("b", None, None).unwrap();
+    let f = r.agent.flush().unwrap();
+    assert_eq!(f.others, ["b"]);
+    r.stream("b", "Late paragraph.", 1, None);
+    r.agent.channels().focus("b").unwrap();
+    r.stays_idle();
+    // Its next reply is read.
+    r.agent.turn_start("b", None, None).unwrap();
+    r.stream("b", "Next reply.", 0, None);
+    r.read("Next reply.");
 }
 
 #[test]

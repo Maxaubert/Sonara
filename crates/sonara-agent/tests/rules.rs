@@ -1386,8 +1386,11 @@ fn flush_ready_drops_a_finished_turns_work_and_keeps_a_turn_still_arriving() {
     assert!(!r.writing("b"));
     assert!(r.writing("c"));
     r.take_notes();
-    assert!(r.flush_ready("b").is_some());
-    assert!(r.flush_ready("c").is_none(), "a turn still arriving stays");
+    assert!(r.flush_ready("b", false).is_some());
+    assert!(
+        r.flush_ready("c", true).is_none(),
+        "a turn still arriving stays"
+    );
     assert_eq!(
         notes_of(&r, "b"),
         ["summary: cancelled (flush): 1 summary in flight"]
@@ -1404,8 +1407,44 @@ fn flush_ready_with_nothing_to_drop_says_so() {
     let mut r = done_rules();
     prose(&mut r, "b", "Done. ", 0, true);
     r.turn_end("b", None, None).unwrap();
-    assert!(r.flush_ready("b").is_none());
-    assert!(r.flush_ready("ghost").is_none());
+    assert!(r.flush_ready("b", false).is_none());
+    assert!(r.flush_ready("ghost", true).is_none());
+    // Nothing was flushed: its late prose is still read.
+    assert_eq!(spoken(&prose(&mut r, "b", "Late. ", 1, true)), ["Late."]);
+}
+
+#[test]
+fn flush_all_skips_the_late_prose_of_another_sessions_flushed_reply() {
+    // Review of #228: b's reply ended and its text was queued in L2 (the
+    // driver says so); late prose of that reply (#14) is skipped too.
+    let mut r = rules();
+    prose(&mut r, "b", "Read. ", 0, true);
+    r.turn_end("b", None, None).unwrap();
+    r.take_notes();
+    assert!(r.flush_ready("b", true).is_some());
+    assert!(spoken(&prose(&mut r, "b", "Late. ", 1, true)).is_empty());
+    assert_eq!(notes_of(&r, "b"), ["prose: dropped: flushed reply"]);
+    // Its next reply is read as usual.
+    r.turn_start("b", None, None).unwrap();
+    assert_eq!(
+        spoken(&prose(&mut r, "b", "Next reply. ", 0, true)),
+        ["Next reply."]
+    );
+}
+
+#[test]
+fn flush_all_skips_late_prose_after_cancelling_a_summary() {
+    // Summaries on: the settle window was cancelled, so late prose would be
+    // kept and never summarized; it is dropped instead.
+    let mut r = summary_rules();
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let a = r.turn_end("b", None, None).unwrap();
+    let settle = settle_of(&a);
+    assert!(r.flush_ready("b", false).is_some());
+    r.take_notes();
+    assert!(spoken(&prose(&mut r, "b", "Late. ", 1, true)).is_empty());
+    assert_eq!(notes_of(&r, "b"), ["prose: dropped: flushed reply"]);
+    assert!(jobs(&r.fire(&settle, None)).is_empty());
 }
 
 #[test]

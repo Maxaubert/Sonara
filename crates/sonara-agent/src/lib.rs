@@ -481,7 +481,8 @@ impl Agent {
                 if report.flushed == Flushed::Channel(ch.clone()) {
                     continue;
                 }
-                if let Some(actions) = rules.flush_ready(&ch) {
+                let queued = report.others.contains(&ch);
+                if let Some(actions) = rules.flush_ready(&ch, queued) {
                     if !report.others.contains(&ch) {
                         report.others.push(ch.clone());
                     }

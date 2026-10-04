@@ -41,8 +41,9 @@
 //!   tool announcements arriving before the session's next `turn_start`
 //!   are dropped (`dropped: flushed reply`); its decisions are still
 //!   spoken. With flush scope `all` the driver also calls `flush_ready`
-//!   on every other session whose turn ended; a session still writing its
-//!   reply (no `turn_end` yet) is untouched in both scopes.
+//!   on every other session whose turn ended (the late prose of a reply it
+//!   flushed is skipped the same way); a session still writing its reply
+//!   (no `turn_end` yet) is untouched in both scopes.
 //! - **Mute levels.** 1 drops agent speech (the driver also silences what
 //!   is queued and playing), 2 also drops earcons.
 //! - **Summaries** (opt in): see `Pipeline` below; the rules are the Python
@@ -850,16 +851,22 @@ impl Rules {
     /// Flush scope `all` (#228) for a session other than the one being
     /// read: when its turn ended, its ready work is dropped (held prose,
     /// the prose kept for its summary, its summaries in flight, waiting or
-    /// settling) and the decisions that waited for it are spoken now. Its
-    /// later replies are read as usual. `None` when it is still writing
-    /// its reply (kept: it is read when done), has no turn state, or had
-    /// nothing to drop.
-    pub fn flush_ready(&mut self, channel: &str) -> Option<Vec<Action>> {
+    /// settling) and the decisions that waited for it are spoken now.
+    /// `queued` says the driver dropped text of it from its L2 channel.
+    /// When anything was flushed, late prose of that reply (#14) is
+    /// skipped too, as for the session being read; its next reply is read
+    /// as usual. `None` when it is still writing its reply (kept: it is
+    /// read when done), has no turn state, or had nothing to drop.
+    pub fn flush_ready(&mut self, channel: &str, queued: bool) -> Option<Vec<Action>> {
         if !self.tracks(channel) || self.writing(channel) {
             return None;
         }
         let (decisions, any) = self.catch_up(channel, "flush");
-        any.then(|| self.release(channel, decisions))
+        if !(any || queued) {
+            return None;
+        }
+        self.turn(channel).skip_reply = true;
+        Some(self.release(channel, decisions))
     }
 
     /// Speak the decisions a flush released from the summary they waited
