@@ -445,7 +445,10 @@ fn custom_earcons_replace_the_bundled_clips() {
         samples: 800,
         sample_rate: 8_000,
     }));
+    // turn_done waits for the session_change clip to end (#238).
+    let heard = r.agent.subscribe();
     r.agent.turn_end("b", None, None).unwrap();
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
     assert!(r.out.calls().contains(&OutputCall::PlayClip {
         samples: 1200,
         sample_rate: 12_000,
@@ -1029,4 +1032,215 @@ fn a_question_later_in_the_flushed_reply_is_read() {
         .unwrap();
     r.read("Deploy now?");
     r.stays_idle();
+}
+
+// -- earcons one after the other (#238) -----------------------------------
+
+/// How long a clip of `samples` at `rate` lasts.
+fn clip_len(samples: usize, rate: u32) -> Duration {
+    Duration::from_secs_f64(samples as f64 / rate as f64)
+}
+
+/// The clips played so far: when, and how many samples at what rate.
+fn timed_clips(out: &TestOutput) -> Vec<(Instant, usize, u32)> {
+    out.timed_calls()
+        .into_iter()
+        .filter_map(|(at, c)| match c {
+            OutputCall::PlayClip {
+                samples,
+                sample_rate,
+            } => Some((at, samples, sample_rate)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Each clip starts after the one before it ended.
+fn assert_no_overlap(clips: &[(Instant, usize, u32)]) {
+    for w in clips.windows(2) {
+        let (at, samples, rate) = w[0];
+        assert!(
+            w[1].0 >= at + clip_len(samples, rate),
+            "a clip started {:?} after the one before it, which lasts {:?}",
+            w[1].0 - at,
+            clip_len(samples, rate)
+        );
+    }
+}
+
+/// The evidence of 2026-10-04 (#238): `turn_end` played turn_done and, 1 ms
+/// later, the switch to another session played session_change on top of
+/// it. Now session_change waits for turn_done to end, and the spoken
+/// "Session changed" waits for session_change.
+#[test]
+fn turn_done_and_session_change_play_one_after_the_other() {
+    let r = Rig::announcing(None);
+    let heard = r.agent.subscribe();
+    r.stream("a", "From alpha.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.wait_for("From alpha.");
+    r.out.start();
+    r.agent.turn_end("a", None, None).unwrap();
+    r.out.finish();
+    r.wait_for("Session changed: Beta.");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    let clips = timed_clips(&r.out);
+    let (done, change) = (Earcon::TurnDone.clip(), Earcon::SessionChange.clip());
+    assert_eq!(
+        clips.iter().map(|c| (c.1, c.2)).collect::<Vec<_>>(),
+        [
+            (done.samples.len(), done.sample_rate),
+            (change.samples.len(), change.sample_rate)
+        ],
+        "turn_done, then session_change"
+    );
+    assert_no_overlap(&clips);
+    // The announcement is heard after the chime, not under it.
+    let spoken = r
+        .out
+        .timed_calls()
+        .into_iter()
+        .filter(|(_, c)| matches!(c, OutputCall::Play { .. }))
+        .map(|(at, _)| at)
+        .next_back()
+        .unwrap();
+    let (at, samples, rate) = clips[1];
+    assert!(
+        spoken >= at + clip_len(samples, rate),
+        "the announcement started under the session_change chime"
+    );
+    r.out.start();
+    r.out.finish();
+    r.read("From beta.");
+}
+
+#[test]
+fn session_change_is_logged() {
+    let r = Rig::announcing(None);
+    let traced: Arc<Mutex<Vec<sonara_agent::Trace>>> = Arc::default();
+    let t = traced.clone();
+    r.agent
+        .on_trace(Some(Arc::new(move |x: &sonara_agent::Trace| {
+            t.lock().unwrap().push(x.clone())
+        })));
+    r.stream("a", "From alpha.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.read("From alpha.");
+    r.wait_for("Session changed: Beta.");
+    let traced = traced.lock().unwrap();
+    assert!(
+        traced.iter().any(|t| t.source == "announce"
+            && t.channel.as_deref() == Some("b")
+            && t.what == sonara_agent::Traced::Earcon(Earcon::SessionChange)),
+        "{traced:?}"
+    );
+}
+
+/// A burst never plays a long chain: an earcon equal to the one queued
+/// right before it is dropped, and at most `EARCON_QUEUE` wait or play.
+#[test]
+fn a_burst_of_earcons_is_capped_and_never_overlaps() {
+    let r = Rig::new();
+    let heard = r.agent.subscribe();
+    let traced: Arc<Mutex<Vec<sonara_agent::Trace>>> = Arc::default();
+    let t = traced.clone();
+    r.agent
+        .on_trace(Some(Arc::new(move |x: &sonara_agent::Trace| {
+            t.lock().unwrap().push(x.clone())
+        })));
+    for e in [
+        Earcon::TurnDone,
+        Earcon::TurnDone,
+        Earcon::Choice,
+        Earcon::Permission,
+        Earcon::Error,
+        Earcon::Nav,
+    ] {
+        r.agent.earcon(e).unwrap();
+    }
+    assert_eq!(sonara_agent::EARCON_QUEUE, 3);
+    for e in [Earcon::TurnDone, Earcon::Choice, Earcon::Permission] {
+        assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), e);
+    }
+    // Long enough for a fourth to have played after the third.
+    assert!(heard.recv_timeout(Duration::from_millis(1500)).is_err());
+    assert_eq!(timed_clips(&r.out).len(), 3);
+    assert_no_overlap(&timed_clips(&r.out));
+    let dropped = traced
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|t| matches!(t.what, sonara_agent::Traced::EarconDropped { .. }))
+        .count();
+    assert_eq!(dropped, 3, "the duplicate, error and nav are logged");
+}
+
+#[test]
+fn super_mute_drops_queued_earcons() {
+    let r = Rig::new();
+    let heard = r.agent.subscribe();
+    r.agent.earcon(Earcon::TurnDone).unwrap();
+    r.agent.earcon(Earcon::Choice).unwrap();
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    r.agent.set_mute_level(2).unwrap();
+    assert!(heard.recv_timeout(Duration::from_millis(1200)).is_err());
+    assert_eq!(timed_clips(&r.out).len(), 1);
+}
+
+/// An earcon skipped at mute level 2 says so in the log, rather than the
+/// log claiming an earcon that was never heard.
+#[test]
+fn an_earcon_skipped_at_super_mute_is_logged_as_dropped() {
+    let r = Rig::new();
+    let traced: Arc<Mutex<Vec<sonara_agent::Trace>>> = Arc::default();
+    let t = traced.clone();
+    r.agent
+        .on_trace(Some(Arc::new(move |x: &sonara_agent::Trace| {
+            t.lock().unwrap().push(x.clone())
+        })));
+    r.agent.earcon(Earcon::TurnDone).unwrap();
+    r.agent.earcon(Earcon::Choice).unwrap();
+    r.agent.set_mute_level(2).unwrap();
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let found = traced.lock().unwrap().iter().any(|t| {
+            t.what
+                == sonara_agent::Traced::EarconDropped {
+                    earcon: Earcon::Choice,
+                    why: sonara_agent::sequencer::MUTED,
+                }
+        });
+        if found {
+            break;
+        }
+        assert!(Instant::now() < deadline, "{:?}", traced.lock().unwrap());
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Earcons skipped at mute level 2 do not keep their slots: after an
+/// unmute the next earcon waits only for the one still playing.
+#[test]
+fn after_super_mute_the_next_earcon_does_not_wait_for_skipped_ones() {
+    let r = Rig::new();
+    let heard = r.agent.subscribe();
+    r.agent.earcon(Earcon::TurnDone).unwrap();
+    r.agent.earcon(Earcon::Choice).unwrap();
+    r.agent.earcon(Earcon::Permission).unwrap();
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+    r.agent.set_mute_level(2).unwrap();
+    r.agent.set_mute_level(0).unwrap();
+    r.agent.earcon(Earcon::Error).unwrap();
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::Error);
+    let clips = timed_clips(&r.out);
+    assert_eq!(clips.len(), 2, "the skipped ones are never played");
+    assert_no_overlap(&clips);
+    let (at, samples, rate) = clips[0];
+    let latest = at + clip_len(samples, rate) + sonara_agent::sequencer::GAP;
+    assert!(
+        clips[1].0 < latest + Duration::from_millis(150),
+        "error waited {:?} after turn_done, behind earcons that never played",
+        clips[1].0 - at
+    );
 }

@@ -4,6 +4,7 @@
 use crate::{AudioEvent, ItemId, Output, PcmChunk};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 
 /// One call the output received.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +43,8 @@ pub enum OutputCall {
 #[derive(Debug, Default)]
 struct Inner {
     calls: Vec<OutputCall>,
+    /// Every call with when it came (`timed_calls`; never taken).
+    timed: Vec<(Instant, OutputCall)>,
     /// gen of the loaded chunk.
     loaded: Option<u64>,
     paused: bool,
@@ -55,6 +58,13 @@ struct Inner {
 pub struct TestOutput {
     inner: Arc<Mutex<Inner>>,
     events: Sender<AudioEvent>,
+}
+
+impl Inner {
+    fn record(&mut self, call: OutputCall) {
+        self.timed.push((Instant::now(), call.clone()));
+        self.calls.push(call);
+    }
 }
 
 impl TestOutput {
@@ -76,6 +86,12 @@ impl TestOutput {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // A test that panicked while holding the lock already failed.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Every call so far with when it came (`take_calls` does not clear
+    /// it): for tests about timing, such as clips that must not overlap.
+    pub fn timed_calls(&self) -> Vec<(Instant, OutputCall)> {
+        self.lock().timed.clone()
     }
 
     /// Every call so far.
@@ -137,7 +153,7 @@ impl Output for TestOutput {
     fn play(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk_index: usize, gen: u64) {
         let samples = pcm.iter().map(|c| c.samples.len()).sum();
         let mut inner = self.lock();
-        inner.calls.push(OutputCall::Play {
+        inner.record(OutputCall::Play {
             item,
             chunk: chunk_index,
             gen,
@@ -156,7 +172,7 @@ impl Output for TestOutput {
     fn play_open(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk_index: usize, gen: u64) {
         let samples = pcm.iter().map(|c| c.samples.len()).sum();
         let mut inner = self.lock();
-        inner.calls.push(OutputCall::PlayOpen {
+        inner.record(OutputCall::PlayOpen {
             item,
             chunk: chunk_index,
             gen,
@@ -168,40 +184,40 @@ impl Output for TestOutput {
 
     fn append(&mut self, gen: u64, pcm: Vec<PcmChunk>) {
         let samples = pcm.iter().map(|c| c.samples.len()).sum();
-        self.lock().calls.push(OutputCall::Append { gen, samples });
+        self.lock().record(OutputCall::Append { gen, samples });
     }
 
     fn finish(&mut self, gen: u64) {
-        self.lock().calls.push(OutputCall::Finish { gen });
+        self.lock().record(OutputCall::Finish { gen });
     }
 
     fn pause(&mut self) {
         let mut inner = self.lock();
-        inner.calls.push(OutputCall::Pause);
+        inner.record(OutputCall::Pause);
         inner.paused = true;
     }
 
     fn resume(&mut self) {
         let mut inner = self.lock();
-        inner.calls.push(OutputCall::Resume);
+        inner.record(OutputCall::Resume);
         inner.paused = false;
     }
 
     fn stop(&mut self) {
         let mut inner = self.lock();
-        inner.calls.push(OutputCall::Stop);
+        inner.record(OutputCall::Stop);
         inner.loaded = None;
         inner.paused = false;
     }
 
     fn set_volume(&mut self, percent: u8) {
         let mut inner = self.lock();
-        inner.calls.push(OutputCall::SetVolume(percent));
+        inner.record(OutputCall::SetVolume(percent));
         inner.volume = percent;
     }
 
     fn play_clip(&mut self, samples: &[i16], sample_rate: u32) {
-        self.lock().calls.push(OutputCall::PlayClip {
+        self.lock().record(OutputCall::PlayClip {
             samples: samples.len(),
             sample_rate,
         });

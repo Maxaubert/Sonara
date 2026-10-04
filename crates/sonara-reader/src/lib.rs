@@ -343,6 +343,16 @@ impl ReaderHandle {
         })
     }
 
+    /// Keep any item from starting before `until` (#238: L3 holds a switch
+    /// announcement until its chime ended). An item whose first chunk
+    /// would play sooner waits, its synthesis going on, and starts then;
+    /// pause, skip and stop act on it as on a chunk still being
+    /// synthesized. Chunks after an item's first are never held. A later
+    /// call replaces the hold; one in the past ends it.
+    pub fn hold_start(&self, until: std::time::Instant) -> Result<()> {
+        self.call(|reply| Msg::HoldStart(until, reply))
+    }
+
     /// Stop speech, cancel synthesis and stop the threads. Subscribers see
     /// the final events, then their channel closes. Idempotent.
     pub fn shutdown(&self) {

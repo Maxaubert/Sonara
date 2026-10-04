@@ -11,7 +11,9 @@
 //!   (`sonara_agent::Trace`): `speak kind=<k> entry=<n>` with the text
 //!   added to the channel (and `waits=` when a muted session or the
 //!   background policy holds it), a note when the rules spoke nothing and
-//!   why, `dropped: late text ...`, `earcon <name>`, `wipe reason=<r>`.
+//!   why, `dropped: late text ...`, `earcon <name>` (`agent announce
+//!   channel=<id> earcon session_change` for a switch's chime, #238),
+//!   `earcon <name> dropped: <why>` (a burst, #238), `wipe reason=<r>`.
 //! - `drop channel=<id> entry=<n> kind=<k> reason=<r>`: text dropped
 //!   before it was heard (`sonara_channels::Dropped`), `item=<id>` when it
 //!   was cut while being read.
@@ -137,6 +139,9 @@ pub fn agent_line(t: &Trace, debug: bool) -> String {
              last turn_start, #174)"
         ),
         Traced::Earcon(e) => format!("{head} earcon {}", e.as_str()),
+        Traced::EarconDropped { earcon, why } => {
+            format!("{head} earcon {} dropped: {why}", earcon.as_str())
+        }
         Traced::Wiped { reason } => format!("{head} wipe reason={reason}"),
     }
 }
@@ -506,6 +511,27 @@ mod tests {
         assert_eq!(
             agent_line(&e, true),
             "agent turn_end channel=c1 earcon turn_done"
+        );
+        let switch = Trace {
+            source: "announce".into(),
+            channel: Some("c2".into()),
+            what: Traced::Earcon(Earcon::SessionChange),
+        };
+        assert_eq!(
+            agent_line(&switch, true),
+            "agent announce channel=c2 earcon session_change"
+        );
+        let burst = Trace {
+            source: "earcon".into(),
+            channel: None,
+            what: Traced::EarconDropped {
+                earcon: Earcon::Nav,
+                why: "too many earcons queued",
+            },
+        };
+        assert_eq!(
+            agent_line(&burst, true),
+            "agent earcon earcon nav dropped: too many earcons queued"
         );
     }
 
