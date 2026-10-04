@@ -1976,7 +1976,7 @@ addEventListener("beforeunload", e => {
 });
 
 // ---- the engine picker on the Speech page ---------------------------------
-// The picker groups these under "Built in", so the names do not say it again.
+// One plain list: the built-in engines first, then the user's own, then "Add new engine...".
 const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices"};
 const ADD_ENGINE = "__add";
 function pickerName(id) { return PICKER_NAMES[id] || engineName(id); }
@@ -1994,21 +1994,15 @@ function renderEnginePicker(enginesOn) {
     .filter(v => v.supported !== false && !v.error)
     .map(v => [v.id, v.label || v.id]);
   if (cur && isProfile(cur) && !own.some(o => o[0] === cur)) own.push([cur, engineName(cur) + " (cannot read now)"]);
-  const groups = [["Built in", builtin.map(id => [id, pickerName(id)])]];
-  if (own.length) groups.push(["Your engines", own]);
-  const sig = JSON.stringify([groups, cur, enginesOn]);
+  const items = builtin.map(id => [id, pickerName(id)]).concat(own);
+  const sig = JSON.stringify([items, cur, enginesOn]);
   if (sel.dataset.sig === sig || document.activeElement === sel) return;
   sel.dataset.sig = sig;
   sel.textContent = "";
-  for (const [label, opts] of groups) {
-    const g = el("optgroup");
-    g.label = label;
-    for (const [value, text] of opts) {
-      const o = el("option", null, text);
-      o.value = value;
-      g.appendChild(o);
-    }
-    sel.appendChild(g);
+  for (const [value, text] of items) {
+    const o = el("option", null, text);
+    o.value = value;
+    sel.appendChild(o);
   }
   if (enginesOn) {
     const o = el("option", null, "Add new engine…");

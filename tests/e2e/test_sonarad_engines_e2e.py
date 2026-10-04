@@ -470,6 +470,8 @@ def test_the_engine_dropdown_lists_the_engines_and_add_new_opens_the_form(live, 
     opts = options(page, "#engine-select")
     assert ["fake", "fake"] in opts and ["local", "Test server"] in opts, opts
     assert opts[-1] == ["__add", "Add new engine…"], opts
+    # One plain list: no "Built in" / "Your engines" headings.
+    assert page.locator("#engine-select optgroup").count() == 0
     pw.expect(page.locator("#engine-select")).to_have_value("fake")
     page.select_option("#engine-select", "__add")
     pw.expect(page.locator("#h-engines")).to_be_visible()
