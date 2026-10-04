@@ -89,6 +89,10 @@ pub struct Engines {
     gate: Arc<Gate>,
     registries: Mutex<Vec<Arc<Registry>>>,
     entries: Mutex<Vec<Entry>>,
+    /// The file's text when it was last read or saved (`None`: missing).
+    /// A save first reloads a file changed since (the user's edit, or
+    /// `sonara engines add`), so it never writes an older list over it.
+    seen: Mutex<Option<String>>,
 }
 
 fn bad(m: impl Into<String>) -> Failure {
@@ -113,13 +117,18 @@ pub struct Reloaded {
     pub changed: Vec<String>,
 }
 
+/// The text of `engines.json` (`None` when it is missing).
+fn read_text(file: &Path) -> Option<String> {
+    std::fs::read_to_string(file).ok()
+}
+
 /// The `engines` array of `engines.json` (none when the file is missing)
 /// and whether the file is of an older format (to migrate), or why the
 /// file cannot be read.
-fn read_file(file: &Path) -> Result<(Vec<Value>, bool), String> {
-    match std::fs::read_to_string(file) {
-        Err(_) => Ok((Vec::new(), false)),
-        Ok(text) => match serde_json::from_str::<Value>(&text) {
+fn parse_file(text: Option<&str>) -> Result<(Vec<Value>, bool), String> {
+    match text {
+        None => Ok((Vec::new(), false)),
+        Some(text) => match serde_json::from_str::<Value>(text) {
             Ok(v) => Ok((
                 v.get("engines")
                     .and_then(Value::as_array)
@@ -153,7 +162,8 @@ impl Engines {
     pub fn load(setup: Setup) -> (Arc<Engines>, Vec<String>) {
         let file = setup.home.join(FILE);
         let mut problems = Vec::new();
-        let (mut raws, legacy) = match read_file(&file) {
+        let text = read_text(&file);
+        let (mut raws, legacy) = match parse_file(text.as_deref()) {
             Ok(read) => read,
             Err(why) => {
                 let bad = setup.home.join(format!("{FILE}.bad"));
@@ -177,6 +187,7 @@ impl Engines {
             gate: Arc::new(Mutex::new(HashMap::new())),
             registries: Mutex::new(Vec::new()),
             entries: Mutex::new(Vec::new()),
+            seen: Mutex::new(text),
         });
         let entries = engines.entries_from(raws, Vec::new(), &mut problems);
         if legacy {
@@ -240,10 +251,12 @@ impl Engines {
     /// replaced in the registries, a gone or unusable one unregistered.
     /// A file that is not JSON changes nothing.
     pub fn reload(&self) -> Result<Reloaded, Failure> {
-        let (raws, _) =
-            read_file(&self.file).map_err(|why| bad(format!("{why}; nothing changed")))?;
         let mut out = Reloaded::default();
         let mut entries = self.lock();
+        let text = read_text(&self.file);
+        let (raws, _) =
+            parse_file(text.as_deref()).map_err(|why| bad(format!("{why}; nothing changed")))?;
+        *self.seen() = text;
         let old: Vec<Entry> = entries.drain(..).collect();
         let before: Vec<(String, Arc<External>)> = old
             .iter()
@@ -304,6 +317,24 @@ impl Engines {
 
     fn lock(&self) -> MutexGuard<'_, Vec<Entry>> {
         self.entries.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn seen(&self) -> MutexGuard<'_, Option<String>> {
+        self.seen.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Before a save: take in what was written to the file since it was
+    /// last read or saved (a lost update otherwise). A file that is not
+    /// JSON is refused, never overwritten.
+    fn take_in_file_changes(&self) -> Result<(), Failure> {
+        let changed = *self.seen() != read_text(&self.file);
+        if changed {
+            self.note(&format!(
+                "{FILE} changed on disk; read again before the save"
+            ));
+            self.reload()?;
+        }
+        Ok(())
     }
 
     fn note(&self, line: &str) {
@@ -382,7 +413,9 @@ impl Engines {
             "engines": entries.iter().map(|e| e.raw.clone()).collect::<Vec<_>>(),
         });
         crate::config::write_json(&self.file, &v)
-            .map_err(|e| Failure::new(Code::Engine, format!("cannot save {FILE}: {e}")))
+            .map_err(|e| Failure::new(Code::Engine, format!("cannot save {FILE}: {e}")))?;
+        *self.seen() = read_text(&self.file);
+        Ok(())
     }
 
     /// The profile view of spec 10.1 (never a secret).
@@ -560,6 +593,7 @@ impl Engines {
         let mut stored = profile.to_json();
         let id = profile.id.clone();
         let origin = profile.origin();
+        self.take_in_file_changes()?;
         let mut entries = self.lock();
         let at = entries.iter().position(|e| e.id == id);
         // Checked again under the lock that saves (a reload in between).
@@ -655,6 +689,7 @@ impl Engines {
 
     /// `engine_remove` (after the caller moved off it when current).
     pub fn remove(&self, id: &str, forget_key: bool) -> Result<(), Failure> {
+        self.take_in_file_changes()?;
         let mut entries = self.lock();
         let at = entries
             .iter()
@@ -879,6 +914,49 @@ mod tests {
         assert!(reg.get("openai").is_ok());
         let (again, _) = Engines::load(setup(&h, store));
         assert_eq!(again.ids(), vec!["ca", "bad", "loc", "openai"]);
+        let _ = std::fs::remove_dir_all(&h);
+    }
+
+    /// `sonara engines add` writes engines.json as the user and then
+    /// reloads; a protocol add or remove that saves in between must not
+    /// write its older list over the user's new entry.
+    #[test]
+    fn a_save_never_loses_an_entry_written_to_the_file_meanwhile() {
+        let h = home();
+        let loc = |id: &str| {
+            json!({"id": id, "kind": "openai-compatible",
+                "url": "http://127.0.0.1:9/v1", "options": {"preset": "kokoro-fastapi"}})
+        };
+        let (e, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        let reg = registry();
+        e.attach(reg.clone());
+        e.add(&loc("a"), None, false).unwrap();
+        // The user's own edit (the CLI's write), not yet reloaded.
+        let write_with = |ids: &[&str]| {
+            let engines: Vec<Value> = ids.iter().map(|i| loc(i)).collect();
+            std::fs::write(
+                h.join(FILE),
+                json!({"format": 1, "engines": engines}).to_string(),
+            )
+            .unwrap();
+        };
+        write_with(&["a", "mine"]);
+        e.add(&loc("b"), None, false).unwrap();
+        let (again, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        assert_eq!(again.ids(), vec!["a", "mine", "b"]);
+        assert!(
+            reg.get("mine").is_ok(),
+            "the user's entry is registered too"
+        );
+        write_with(&["a", "mine", "b", "mine2"]);
+        e.remove("a", false).unwrap();
+        let (again, _) = Engines::load(setup(&h, Arc::new(MemoryStore::new())));
+        assert_eq!(again.ids(), vec!["mine", "b", "mine2"]);
+        // A file the user broke is never overwritten by a protocol save.
+        std::fs::write(h.join(FILE), "{ not json").unwrap();
+        let err = e.add(&loc("c"), None, false).unwrap_err();
+        assert!(err.message.contains("not valid JSON"), "{}", err.message);
+        assert_eq!(std::fs::read_to_string(h.join(FILE)).unwrap(), "{ not json");
         let _ = std::fs::remove_dir_all(&h);
     }
 

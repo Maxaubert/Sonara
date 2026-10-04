@@ -331,6 +331,21 @@ impl Command {
                  has control characters or is too long)",
             ));
         }
+        // Without the user's own list, a voice from a client is a plain
+        // name: never a path (a UNC share, a drive, a folder, `..`) that
+        // would change what the program loads.
+        if self.voices.is_empty()
+            && (voice.contains("..")
+                || !voice
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
+        {
+            return Err(self.err(
+                Reason::BadConfig,
+                "was not started: the voice must be a plain name (letters, digits, '_', '-' \
+                 and '.'), never a path; list other voices in options.voices",
+            ));
+        }
         Ok(())
     }
 
@@ -587,6 +602,39 @@ mod tests {
         }
         let unused = command(json!({"argv": ["C:\\Tools\\tts.exe"]}));
         assert!(unused.check_voice("--anything").is_ok(), "{{voice}} unused");
+    }
+
+    /// Without options.voices, a protocol client may only pick a plain
+    /// name for {voice}: never a path (a UNC share, a drive, a folder)
+    /// that would change what the user's program loads.
+    #[test]
+    fn a_voice_without_a_list_is_a_plain_name_never_a_path() {
+        let open = command(json!({"argv": ["C:\\piper\\piper.exe", "--model", "{voice}"]}));
+        for good in ["en_US-amy-medium", "amy.onnx", "v2", "\u{e9}l\u{e9}na"] {
+            assert!(open.check_voice(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "\\\\attacker\\share\\m.onnx",
+            "C:\\Users\\x\\m.onnx",
+            "C:m.onnx",
+            "models/m.onnx",
+            "..",
+            "a..b",
+            "a b",
+            "x;y",
+        ] {
+            let e = open.check_voice(bad).unwrap_err();
+            assert_eq!(e.reason, Reason::BadConfig, "{bad}");
+            assert!(e.message.contains("plain name"), "{}", e.message);
+        }
+        let listed = command(json!({
+            "argv": ["C:\\piper\\piper.exe", "--model", "{voice}"],
+            "voices": ["C:\\piper\\amy.onnx"]
+        }));
+        assert!(
+            listed.check_voice("C:\\piper\\amy.onnx").is_ok(),
+            "the user's own list may hold paths"
+        );
     }
 
     #[test]

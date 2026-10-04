@@ -434,6 +434,13 @@ fn command_voice_never_injects_an_option() {
     let (reason, message) = failure(open.test("Hello.", "--mode=garbage", 200));
     assert_eq!(reason, Reason::BadConfig, "{message}");
     assert!(!rec.exists(), "the program never ran");
+    // Without options.voices a client cannot point {voice} at a path: a
+    // UNC share (an SMB/NTLM leak) or any local file.
+    for path in ["\\\\attacker\\share\\m.onnx", "C:\\Windows\\win.ini"] {
+        let (reason, message) = failure(open.test("Hello.", path, 200));
+        assert_eq!(reason, Reason::BadConfig, "{path}: {message}");
+        assert!(!rec.exists(), "the program never ran for {path}");
+    }
     let listed = build(
         command(
             json!([
