@@ -604,3 +604,112 @@ def test_voices_load_before_a_save_and_name_the_engine(live, browser):
         page.close()
     finally:
         cloud.stop()
+
+
+def test_arrow_keys_browse_the_engine_dropdown_and_enter_switches(live, browser, provider):
+    # Browsing a closed select with the arrows fires change in Chromium:
+    # it must not switch the engine or leave the page (WCAG 3.2.2).
+    lv = live()
+    add_local(lv, provider)
+    page = open_speech(browser, lv.url)
+    page.wait_for_selector("#engine-select option[value=local]", state="attached")
+    sel = page.locator("#engine-select")
+    sel.focus()
+    page.keyboard.press("ArrowDown")
+    pw.expect(sel).to_have_value("local")
+    pw.expect(page.locator("#engine-status")).to_have_text("Press Enter to switch to Test server.")
+    page.wait_for_timeout(400)
+    assert lv.get("engine") == "fake"
+    page.keyboard.press("ArrowDown")
+    pw.expect(sel).to_have_value("__add")
+    page.wait_for_timeout(400)
+    pw.expect(page.locator("#speech")).to_be_visible()
+    pw.expect(page.locator("#engine-form")).to_be_hidden()
+    assert lv.get("engine") == "fake"
+    page.keyboard.press("Escape")
+    pw.expect(sel).to_have_value("fake")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Enter")
+    assert eventually(lambda: lv.get("engine") == "local")
+    pw.expect(page.locator("#speech")).to_be_visible()
+    pw.expect(page.locator("#engine-status")).to_contain_text("Test server")
+    page.close()
+
+
+def test_the_status_line_never_names_the_engine_it_left(live, browser, provider):
+    lv = live()
+    add_local(lv, provider)
+    page = open_speech(browser, lv.url)
+    page.wait_for_selector("#engine-select option[value=local]", state="attached")
+    pw.expect(page.locator("#engine-status")).to_contain_text("fake")
+    page.evaluate("""() => {
+      window.__lines = [];
+      const n = document.getElementById("engine-status");
+      new MutationObserver(() => window.__lines.push(n.textContent))
+        .observe(n, {childList: true, characterData: true, subtree: true});
+    }""")
+    page.select_option("#engine-select", "local")
+    pw.expect(page.locator("#engine-status")).to_contain_text("Test server, ")
+    page.wait_for_timeout(3500)   # a poll or more
+    lines = page.evaluate("window.__lines")
+    assert lines and not any(t.startswith("fake") for t in lines), lines
+    page.close()
+
+
+def test_an_open_page_does_not_ask_a_failing_provider_for_voices_each_poll(live, browser):
+    cloud = FakeCloud("elevenlabs", SECRET)
+    try:
+        lv = live()
+        lv.request({"type": "engine_add", "secret": "the-wrong-key-0123456789", "engine": {
+            "id": "el", "kind": "elevenlabs", "label": "ElevenLabs", "url": cloud.url,
+            "voice": "voice-a", "key_ref": "credman"}})
+        lv.request({"type": "set", "key": "engine", "value": "el"})
+        page = open_speech(browser, lv.url)
+        page.wait_for_timeout(10000)   # three polls and more
+        asked = [r for r in cloud.requests if r["path"].startswith("/v2/voices")]
+        assert len(asked) <= 1, asked
+        page.close()
+    finally:
+        cloud.stop()
+
+
+def test_a_half_typed_address_never_gets_the_key(live, browser):
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    sent = []
+
+    def keep(route):
+        body = route.request.post_data_json or {}
+        if "profile" in body:   # a draft's voices (the poll asks for none)
+            sent.append(body)
+        route.abort()
+
+    page.route("**/v1/voices", keep)
+    page.click("#engine-new")
+    page.select_option("#ef-kind", "elevenlabs")
+    page.fill("#ef-key", SECRET)
+    page.wait_for_timeout(700)
+    before = len(sent)
+    page.locator("#ef-url").press_sequentially("https://api.e", delay=20)
+    page.wait_for_timeout(900)
+    assert len(sent) == before, sent[before:]
+    page.locator("#ef-url").press_sequentially("u.example", delay=20)
+    page.keyboard.press("Tab")   # change: the address is complete
+    for _ in range(50):   # the route handler runs while Playwright waits
+        if len(sent) > before:
+            break
+        page.wait_for_timeout(100)
+    assert len(sent) > before
+    assert sent[-1]["profile"]["url"] == "https://api.eu.example"
+    page.close()
+
+
+def test_the_speech_page_names_the_engine_on_its_voices(live, browser, provider):
+    lv = live()
+    add_local(lv, provider)
+    lv.request({"type": "set", "key": "engine", "value": "local"})
+    page = open_speech(browser, lv.url)
+    page.wait_for_selector("#voice-select option[value=am_echo]", state="attached")
+    labels = [t for v, t in options(page, "#voice-select") if v == "am_echo"]
+    assert labels and labels[0].endswith("(Test server)"), labels
+    page.close()

@@ -485,3 +485,37 @@ fn a_redirect_never_carries_a_custom_key_header_away() {
         assert_eq!(server.count(path), 3);
     }
 }
+
+#[test]
+fn a_failed_voice_list_is_not_fetched_again_at_once() {
+    // A refused key is not asked again on each stale check: the list stays
+    // fresh for VOICES_RETRY after a failure, then is stale again.
+    use sonara_engine::external::VOICES_RETRY;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    let server = ScriptServer::start();
+    server.on(
+        "/v2/voices",
+        Route::json(401, r#"{"detail": {"status": "invalid_api_key"}}"#),
+    );
+    let mut v = elevenlabs();
+    v["url"] = json!(server.base);
+    let profile = Profile::from_json(&v).unwrap();
+    let store = Arc::new(MemoryStore::new());
+    store
+        .set("el", &Secret::new(KEY), &profile.origin().unwrap())
+        .unwrap();
+    let now = Arc::new(Mutex::new(Instant::now()));
+    let mut config = ExternalConfig::new(profile, KeyResolver::new(store));
+    let clock = now.clone();
+    config.clock = Arc::new(move || *clock.lock().unwrap());
+    let e = External::new(config).unwrap();
+    assert!(e.voices_stale(), "nothing fetched yet");
+    assert!(e.refresh_voices().is_err());
+    assert_eq!(server.requests().len(), 1);
+    assert!(!e.voices_stale(), "a failure is not retried at once");
+    *now.lock().unwrap() += VOICES_RETRY - Duration::from_secs(1);
+    assert!(!e.voices_stale());
+    *now.lock().unwrap() += Duration::from_secs(2);
+    assert!(e.voices_stale(), "retried after VOICES_RETRY");
+}

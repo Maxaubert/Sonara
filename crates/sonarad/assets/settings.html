@@ -360,7 +360,7 @@
           <div class="pref" id="ef-url-row"><div class="pref-copy"><label class="title" for="ef-url">Address<span class="req" id="ef-url-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-url-hint">The server's address.</div></div><div class="control"><input class="field" id="ef-url" type="url" autocomplete="off" spellcheck="false" aria-describedby="ef-url-hint"></div></div>
           <div class="pref" id="ef-key-row"><div class="pref-copy"><label class="title" for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-keyref-hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref" aria-label="Where the key comes from" aria-describedby="ef-keyref-hint"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" aria-describedby="ef-key-hint" placeholder="Paste the key&hellip;"><input class="field mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" aria-describedby="ef-key-hint" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
           <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-model-hint">Empty uses the default shown.</div></div><div class="control"><input class="field" id="ef-model" type="text" autocomplete="off" spellcheck="false" aria-describedby="ef-model-hint"></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint" aria-live="polite"></div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint"></div></div></div>
           <div id="ef-kind-fields"></div>
           <details class="more"><summary>More options</summary>
             <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
@@ -600,6 +600,7 @@ const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "
               "channel_prefs", "earcons", "debug_log"];
 let voices = [];
 let engineData = null;   // the engine_list reply, when this runtime allows external engines
+const profileVoices = {}; // added engine id -> its voices as last fetched (null: the fetch failed)
 
 async function refresh() {
   const seq = mutationSeq;
@@ -612,13 +613,17 @@ async function refresh() {
   if ((hello.capabilities || []).includes("engines")) {
     try { engs = await call("engine_list", {}); } catch (e) {}
   }
-  // An added engine's voices (its list, fetched when old) follow it.
+  // An added engine's voices follow it. They are asked of the provider once
+  // (on load, a switch or a save), never by this 3 s poll, so a refused key
+  // or an offline host is not asked again and again.
   const cur = got[KEYS.indexOf("engine")];
-  if (engs && cur.status === "fulfilled" && engs.engines.some(e => e.id === cur.value)) {
-    try {
-      const own = (await call("voices", {engine: cur.value})).voices;
-      vs = vs.filter(v => v.engine !== cur.value).concat(own);
-    } catch (e) {}
+  if (engs && cur.status === "fulfilled" && engs.engines.some(e => e.id === cur.value)
+      && !(cur.value in profileVoices)) {
+    profileVoices[cur.value] = null;
+    try { profileVoices[cur.value] = (await call("voices", {engine: cur.value})).voices; } catch (e) {}
+  }
+  for (const [id, own] of Object.entries(profileVoices)) {
+    if (own) vs = vs.filter(v => v.engine !== id).concat(own);
   }
   if (seq !== mutationSeq) return;
   engineData = engs;
@@ -739,7 +744,11 @@ const SUMMARY_GATED = new Set(["model-row", "timeout-row", "settle-row", "read-r
 function voiceOptions(engine, withDefault) {
   const own = voices.filter(v => v.engine === engine);
   const opts = withDefault ? [["", "Default"]] : [];
-  return opts.concat(own.map(v => [v.id, v.name + (v.language ? " (" + v.language + ")" : "") + (v.installed ? "" : ", not installed")]));
+  // An added engine's voices carry its name, so "Adam (ElevenLabs)" is never
+  // taken for a Kokoro voice of the same name.
+  return opts.concat(own.map(v => [v.id, v.license_class === "external"
+    ? (v.name || v.id) + " (" + engineName(v.engine) + ")"
+    : v.name + (v.language ? " (" + v.language + ")" : "") + (v.installed ? "" : ", not installed")]));
 }
 
 function render() {
@@ -759,9 +768,18 @@ function render() {
   // added ones, then "Add new engine"; the line below says how it is doing.
   renderEnginePicker(enginesOn);
   const st = s.runtime && s.runtime.engine_status;
-  setText("engine-status", engineText(st));
-  $("engine-status").classList.toggle("busy", !!st && !st.ready);
-  $("engine-status").parentNode.classList.toggle("busy", !!st && !st.ready);
+  // Until the runtime reports the new engine the line says it is switching,
+  // never the engine it left. A browsed choice keeps its Enter hint.
+  if (switching && ((st && st.engine === switching.id) || Date.now() > switching.until)) switching = null;
+  if (switching) {
+    setText("engine-status", "Switching to " + pickerName(switching.id) + "…");
+    $("engine-status").classList.add("busy");
+    $("engine-status").parentNode.classList.add("busy");
+  } else if (!pickerPending) {
+    setText("engine-status", engineText(st));
+    $("engine-status").classList.toggle("busy", !!st && !st.ready);
+    $("engine-status").parentNode.classList.toggle("busy", !!st && !st.ready);
+  }
   const vopts = voiceOptions(s.engine, true);
   if (s.voice && !vopts.some(o => o[0] === s.voice)) vopts.push([s.voice, s.voice]);
   fillSelect($("voice-select"), vopts, s.voice || "");
@@ -1252,7 +1270,12 @@ async function loadEngines() {
 
 async function useEngine(id, name) {
   const v = await change("engine", id, "Voice engine");
-  if (v !== undefined) { announce(name + " reads from the next sentence."); loadEngines(); }
+  if (v !== undefined) {
+    announce(name + " reads from the next sentence.");
+    await loadVoicesFor(id);
+    $("voice-select").dataset.sig = "";
+    loadEngines();
+  }
 }
 
 async function testEngine(id, btn) {
@@ -1285,6 +1308,7 @@ async function removeEngine(v) {
     mutationSeq++;
     state.engine = r.engine;
     delete testResults[v.id];
+    delete profileVoices[v.id];
     if (editing === v.id) closeForm();
     showState(name + " removed");
   } catch (e) {
@@ -1300,13 +1324,16 @@ const PROVIDER_NAMES = {elevenlabs: "ElevenLabs", azure: "Azure Speech", google:
 const RESERVED_IDS = ["kokoro", "onecore", "fake"];
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 // Fields whose change can change the voice list (it loads before a save).
-const VOICE_INPUTS = ["ef-url", "ef-key", "ef-keyenv", "ef-model", "ef-opt-region"];
+// Not the address or the region: a key must never go to a half-typed host,
+// so those two load the voices on change, once complete.
+const VOICE_INPUTS = ["ef-key", "ef-keyenv", "ef-model"];
 const formState = {
   auto: {label: true, id: true},   // the label and ID still follow the provider
   dirty: false,                    // changed since it was opened or saved
   busy: false,
   voicesSeq: 0,
   voicesTimer: null,
+  voicesNote: "",                  // the last voice-list result announced
 };
 
 function optionText(v) { return v == null ? "" : Array.isArray(v) ? v.join("\n") : String(v); }
@@ -1515,6 +1542,21 @@ function chosenVoice() {
   return v === "__other" ? $("ef-voice-other").value.trim() : v;
 }
 
+// A whole http(s) address with a host: only then may a key go to it.
+function completeUrl(text) {
+  try {
+    const u = new URL(text);
+    return (u.protocol === "https:" || u.protocol === "http:") && !!u.hostname;
+  } catch (e) { return false; }
+}
+
+// The voice hint is not a live region (it changes while typing); its final
+// word is announced once, and only when it is new.
+function voicesNote(text) {
+  setText("ef-voice-hint", text);
+  if (text !== formState.voicesNote) { formState.voicesNote = text; announce(text); }
+}
+
 function scheduleVoices() {
   clearTimeout(formState.voicesTimer);
   formState.voicesTimer = setTimeout(loadFormVoices, 450);
@@ -1542,6 +1584,8 @@ async function loadFormVoices() {
     wait = "Enter the region below and the voices appear here.";
   } else if (urlRequired() && !$("ef-url").value.trim()) {
     wait = "Enter the server's address and its voices appear here.";
+  } else if ($("ef-url").value.trim() && !completeUrl($("ef-url").value.trim())) {
+    wait = "Finish the address above and the voices appear here.";
   } else {
     const p = collectProfile();
     delete p.id;
@@ -1559,13 +1603,13 @@ async function loadFormVoices() {
     const r = await call("voices", msg);
     if (seq !== formState.voicesSeq) return;
     fillVoiceSelect(r.voices, chosenVoice(), defaultVoice());
-    setText("ef-voice-hint", r.error
+    voicesNote(r.error
       ? "Could not fetch the voices: " + r.error.message + " A voice id still works through Other voice id."
       : r.voices.length ? r.voices.length + (r.voices.length === 1 ? " voice" : " voices") + " from " + prov + ". For one it does not list (a cloned voice), choose Other voice id."
       : "It lists no voices: choose Other voice id and enter one.");
   } catch (e) {
     if (seq !== formState.voicesSeq) return;
-    setText("ef-voice-hint", (e instanceof ApiError ? "Could not fetch the voices: " + e.message : "Could not reach the runtime.") + " A voice id still works through Other voice id.");
+    voicesNote((e instanceof ApiError ? "Could not fetch the voices: " + e.message : "Could not reach the runtime.") + " A voice id still works through Other voice id.");
   }
 }
 
@@ -1822,7 +1866,9 @@ $("engine-form").addEventListener("submit", async e => {
     $("ef-id").disabled = true;
     const name = r.engine.label || r.engine.id;
     setText("ef-title", "Edit " + name);
+    delete profileVoices[editing];
     await loadEngines();
+    if (state.engine === editing) loadVoicesFor(editing);
     syncKeyRow();
     const where = state.engine === editing ? " It reads from the next sentence."
       : " Choose it under Voice engine on the Speech page, or test it here.";
@@ -1854,7 +1900,10 @@ $("engine-form").addEventListener("input", e => {
   if (VOICE_INPUTS.includes(t.id)) scheduleVoices();
   markDirty();
 });
-$("engine-form").addEventListener("change", markDirty);
+$("engine-form").addEventListener("change", e => {
+  markDirty();
+  if (e.target.id === "ef-url" || e.target.id === "ef-opt-region") scheduleVoices();
+});
 $("ef-id").addEventListener("change", () => {
   const id = $("ef-id").value.trim();
   if (id === "") { formState.auto.id = true; syncAutoId(); return; }
@@ -1927,7 +1976,8 @@ addEventListener("beforeunload", e => {
 });
 
 // ---- the engine picker on the Speech page ---------------------------------
-const PICKER_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows voices"};
+// The picker groups these under "Built in", so the names do not say it again.
+const PICKER_NAMES = {kokoro: "Kokoro", onecore: "Windows voices"};
 const ADD_ENGINE = "__add";
 function pickerName(id) { return PICKER_NAMES[id] || engineName(id); }
 function isProfile(id) { return !!(engineData && engineData.engines.some(e => e.id === id)); }
@@ -1968,36 +2018,98 @@ function renderEnginePicker(enginesOn) {
   sel.value = cur || "";
 }
 
-// The voices of an added engine, fetched when its list is old.
+// The voices of an added engine (the runtime asks the provider when its
+// list is old), kept for the poll.
 async function loadVoicesFor(id) {
   if (!isProfile(id)) return;
+  profileVoices[id] = null;
   try {
     const r = await call("voices", {engine: id});
+    profileVoices[id] = r.voices;
     voices = voices.filter(v => v.engine !== id).concat(r.voices);
   } catch (e) {}
 }
 
-$("engine-select").addEventListener("change", async e => {
-  const sel = e.target;
-  const id = sel.value;
+let switching = null;      // {id, until}: a switch the runtime has not reported yet
+let pickerPending = false; // the picker shows a choice browsed with the keys, not made yet
+let pickerByKey = false;   // the picker's last change came from a browsing key
+
+async function switchEngine(id) {
+  const sel = $("engine-select");
   if (id === ADD_ENGINE) {
     sel.value = state.engine || "";
+    sel.dataset.sig = "";
     showPage("engines");
     openForm(null);
     return;
   }
+  if (!id || id === state.engine) return;
   const name = pickerName(id);
-  const line = $("engine-status");
-  line.parentNode.classList.add("busy");
-  setText("engine-status", "Switching to " + name + "…");
+  switching = {id, until: Date.now() + 20000};
   const v = await change("engine", id, "Voice engine", "Now reading with " + name);
   sel.dataset.sig = "";
-  if (v !== undefined) {
-    await loadVoicesFor(id);
-    $("voice-select").dataset.sig = "";
-    render();
-    loadEngines();
+  if (v === undefined) { switching = null; render(); return; }
+  try { state.runtime = await get("runtime"); } catch (e) {}
+  await loadVoicesFor(id);
+  $("voice-select").dataset.sig = "";
+  render();
+  loadEngines();
+  // The engine may take a moment to report itself; look again soon.
+  if (switching) setTimeout(refresh, 600);
+}
+
+// A choice is made by a click, in the open list, or with Enter. Browsing a
+// closed list with the arrow keys (which fires change in Chromium) only
+// shows the choice, so arrowing past an entry never switches the engine
+// or leaves the page (WCAG 3.2.2).
+const BROWSE_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
+function pickerShowPending() {
+  const sel = $("engine-select");
+  pickerPending = sel.value !== (state.engine || "");
+  if (!pickerPending) { render(); return; }
+  setText("engine-status", sel.value === ADD_ENGINE ? "Press Enter to add a new engine."
+    : "Press Enter to switch to " + pickerName(sel.value) + ".");
+  $("engine-status").classList.remove("busy");
+  $("engine-status").parentNode.classList.remove("busy");
+}
+function pickerCommit() {
+  const sel = $("engine-select");
+  pickerByKey = false;
+  pickerPending = false;
+  if (sel.value !== (state.engine || "")) switchEngine(sel.value);
+  else render();
+}
+function pickerRevert() {
+  const sel = $("engine-select");
+  pickerByKey = false;
+  pickerPending = false;
+  sel.value = state.engine || "";
+  render();
+}
+$("engine-select").addEventListener("keydown", e => {
+  if (BROWSE_KEYS.has(e.key) && !e.altKey) { pickerByKey = true; return; }
+  if (e.key === "Enter") {
+    e.preventDefault();
+    setTimeout(pickerCommit, 0);
+  } else if (e.key === "Escape" && pickerPending) {
+    e.preventDefault();
+    e.stopPropagation();
+    pickerRevert();
+  } else if (e.key === " " || e.key === "F4" || e.altKey) {
+    pickerByKey = false;   // the list opens; picking in it is a choice
   }
+});
+$("engine-select").addEventListener("pointerdown", () => { pickerByKey = false; });
+$("engine-select").addEventListener("change", () => {
+  if (pickerByKey) { pickerShowPending(); return; }
+  pickerCommit();
+});
+// Leaving the picker makes a browsed engine the choice; a browsed "Add new
+// engine" is dropped, since it would leave the page.
+$("engine-select").addEventListener("blur", () => {
+  if (!pickerPending) { pickerByKey = false; return; }
+  if ($("engine-select").value === ADD_ENGINE) pickerRevert();
+  else pickerCommit();
 });
 
 // ---- wiring ---------------------------------------------------------------

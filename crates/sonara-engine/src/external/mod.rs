@@ -52,6 +52,9 @@ use worker::CancelToken;
 pub const RETRY_AFTER_MAX: Duration = Duration::from_millis(1500);
 /// The voice list is fetched again after this long.
 pub const VOICES_TTL: Duration = Duration::from_secs(600);
+/// After a failed voice-list fetch the list is not stale for this long, so
+/// a host that asks often does not repeat a refused key or a dead host.
+pub const VOICES_RETRY: Duration = Duration::from_secs(60);
 /// A voice-list request may take this long.
 pub const VOICES_TIMEOUT: Duration = Duration::from_secs(10);
 /// At most this many pages of a paged voice list are read.
@@ -141,6 +144,8 @@ pub struct External {
     label: String,
     host: String,
     voices: Mutex<Option<(Instant, Vec<Voice>)>>,
+    /// When the last voice-list fetch failed (cleared by a success).
+    voices_failed: Mutex<Option<Instant>>,
     clock: Clock,
 }
 
@@ -203,6 +208,7 @@ impl External {
             agent,
             voices_agent,
             voices: Mutex::new(None),
+            voices_failed: Mutex::new(None),
             clock: config.clock,
             profile: p,
         })
@@ -458,9 +464,14 @@ impl External {
         }
     }
 
-    /// Whether the voice cache is older than `VOICES_TTL` (or empty).
+    /// Whether the voice cache is older than `VOICES_TTL` (or empty), and
+    /// no fetch failed in the last `VOICES_RETRY`.
     pub fn voices_stale(&self) -> bool {
         let now = (self.clock)();
+        let failed = *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner());
+        if failed.is_some_and(|at| now.saturating_duration_since(at) < VOICES_RETRY) {
+            return false;
+        }
         self.voices
             .lock()
             .unwrap_or_else(|p| p.into_inner())
@@ -508,11 +519,16 @@ impl Engine for External {
             ) => match self.fetch_voices(adapter, request, key.as_ref()) {
                 Ok(v) => v,
                 Err(_) if empty_on_error => Vec::new(),
-                Err(e) => return Err(e.into_engine_error()),
+                Err(e) => {
+                    *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner()) =
+                        Some((self.clock)());
+                    return Err(e.into_engine_error());
+                }
             },
             (Backend::Command(_), VoiceSource::Fetch { .. }) => Vec::new(),
         };
         let list: Vec<Voice> = list.into_iter().map(|v| self.voice_entry(v)).collect();
+        *self.voices_failed.lock().unwrap_or_else(|p| p.into_inner()) = None;
         *self.voices.lock().unwrap_or_else(|p| p.into_inner()) = Some(((self.clock)(), list));
         Ok(self.voices())
     }
