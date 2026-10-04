@@ -93,10 +93,10 @@
     .side-nav button { display:flex; align-items:center; gap:10px; width:100%; min-height:36px; padding:0 8px; border:0; border-radius:9px; background:transparent; color:var(--text); text-align:left; font-size:13px; }
     .side-nav button:hover { background:var(--subtle); }
     .side-nav button[aria-current="page"] { background:var(--accent); color:var(--on-accent); }
-    .side-nav button[hidden] { display:none; }
+    .side-nav button[hidden], .side-nav button.cap-off { display:none; }
     .side-icon { width:24px; height:24px; display:grid; place-items:center; border-radius:7px; color:#fff; background:#5b54d6; flex:0 0 auto; }
     .side-icon svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
-    [data-page="summary"] .side-icon{background:#c46a14}[data-page="audio"] .side-icon{background:#23805b}[data-page="sessions"] .side-icon{background:#2f6fae}[data-page="hotkeys"] .side-icon{background:#5c6370}[data-page="advanced"] .side-icon{background:#7d4fb5}[data-page="system"] .side-icon{background:#5f6470}
+    [data-page="summary"] .side-icon{background:#c46a14}[data-page="audio"] .side-icon{background:#23805b}[data-page="sessions"] .side-icon{background:#2f6fae}[data-page="hotkeys"] .side-icon{background:#5c6370}[data-page="advanced"] .side-icon{background:#7d4fb5}[data-page="system"] .side-icon{background:#5f6470}[data-page="engines"] .side-icon{background:#b0473a}
     .side-nav button[aria-current="page"] .side-icon { background:rgba(255,255,255,.2); }
     .empty-search { padding:10px; color:var(--secondary); font-size:13px; }
     .nav-footer { margin-top:auto; padding:12px 9px 0; display:flex; align-items:center; justify-content:space-between; gap:8px; border-top:1px solid var(--line); color:var(--secondary); font-size:12.5px; }
@@ -205,6 +205,39 @@
     .banner { position:fixed; top:0; left:0; right:0; z-index:99; background:var(--red); color:#fff; padding:10px 16px; display:flex; gap:8px; font-size:13.5px; justify-content:center; }
     html[data-theme="dark"] .banner { color:#1c1c20; }
     .banner[hidden] { display:none; }
+    /* Engines (#227): the profiles the user added, and the add/edit form. */
+    .eng-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:20px; align-items:center; margin-left:20px; padding:16px 20px 16px 0; border-top:1px solid var(--line); }
+    .eng-row:first-child { border-top:0; }
+    .eng-name { display:flex; align-items:center; flex-wrap:wrap; gap:2px; font-size:15px; font-weight:650; overflow-wrap:anywhere; }
+    .eng-meta { display:flex; flex-wrap:wrap; gap:3px 16px; margin-top:4px; color:var(--secondary); font-size:13px; }
+    .eng-state { display:flex; align-items:center; gap:7px; margin-top:6px; font-size:13px; color:var(--secondary); }
+    .eng-state i { width:7px; height:7px; border-radius:50%; background:var(--tertiary); flex:0 0 auto; }
+    .eng-state.ok i { background:var(--green); }
+    .eng-state.bad { color:var(--red); }
+    .eng-state.bad i { background:var(--red); }
+    .engine-result { margin-top:6px; font-size:12.5px; line-height:1.45; color:var(--secondary); overflow-wrap:anywhere; }
+    .engine-result:empty { display:none; }
+    .engine-result.bad { color:var(--red); }
+    .eng-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+    .btn[aria-busy="true"] { opacity:.7; cursor:progress; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+    .btn.primary:hover { color:var(--on-accent); filter:brightness(1.08); }
+    .btn.danger:hover { color:var(--red); border-color:var(--red); background:var(--red-wash); }
+    .list-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 4px 0; }
+    .list-actions .btn { flex-shrink:0; }
+    form.inset[hidden], .group-label[hidden] { display:none; }
+    .field-pair { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); gap:9px; }
+    .field-pair [hidden] { display:none; }
+    textarea.field { min-height:88px; padding:10px 12px; resize:vertical; font:12.5px/1.5 ui-monospace,"Cascadia Mono",Consolas,monospace; }
+    input.field[aria-invalid="true"], textarea.field[aria-invalid="true"] { border-color:var(--red); }
+    .field::placeholder, textarea::placeholder { color:var(--secondary); opacity:1; }
+    details.more { margin-left:20px; padding:0 20px 0 0; border-top:1px solid var(--line); }
+    details.more summary { cursor:pointer; padding:16px 0; font-size:14px; font-weight:600; color:var(--secondary); }
+    details.more summary:hover { color:var(--text); }
+    details.more .pref { margin-left:0; padding-right:0; }
+    .form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:14px 20px; border-top:1px solid var(--line); background:var(--subtle); }
+    .form-error { margin-right:auto; color:var(--red); font-size:13px; font-weight:600; line-height:1.4; }
+    ::selection { background:var(--accent-wash); color:var(--text); }
     @media (max-width: 860px) {
       body { overflow:auto; height:auto; }
       .window { grid-template-columns:1fr; height:auto; }
@@ -213,6 +246,10 @@
       .pref { grid-template-columns:1fr; gap:12px; }
       .sess-head { display:none; }
       .sess-row { grid-template-columns:1fr auto; }
+      .eng-row { grid-template-columns:1fr; gap:12px; }
+      .eng-actions { justify-content:flex-start; }
+      .field-pair { grid-auto-flow:row; }
+      .list-actions { flex-direction:column; align-items:flex-start; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation:none !important; transition:none !important; }
@@ -234,6 +271,7 @@
       <label class="search"><span class="sr-only">Search settings</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5"/></svg><input id="settings-search" type="search" placeholder="Search settings…" autocomplete="off" spellcheck="false"></label>
       <nav class="side-nav" aria-label="Settings sections">
         <button data-page="speech" aria-current="page"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3"/></svg></span>Speech</button>
+        <button data-page="engines" class="cap-off"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/></svg></span>Engines</button>
         <button data-page="summary"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5"/></svg></span>Summary</button>
         <button data-page="audio"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 14h4l5 4V6L8 10H4zM17 9a5 5 0 0 1 0 6"/></svg></span>Audio</button>
         <button data-page="sessions"><span class="side-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5"/><rect x="3" y="11" width="18" height="5" rx="1.5"/><path d="M3 20h12"/></svg></span>Sessions</button>
@@ -250,7 +288,7 @@
         <div class="title-row"><div><h1 id="h-speech">Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
         <h2 class="group-label">Voice</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong id="engine-label">Voice engine</strong><div class="hint">Kokoro reads. Windows' own voice stands in while Kokoro downloads or loads, or if it cannot run.</div></div><div class="control"><div class="toggle-line"><span class="engine-status" id="engine-status" role="status" aria-labelledby="engine-label">&ndash;</span><button class="btn" id="engine-kokoro" type="button" hidden>Use Kokoro</button></div></div></div>
+          <div class="pref"><div class="pref-copy"><strong id="engine-label">Voice engine</strong><div class="hint">Kokoro reads. Windows' own voice stands in while Kokoro downloads or loads, or if it cannot run. Other voices are added under Engines.</div></div><div class="control"><div class="toggle-line"><span class="engine-status" id="engine-status" role="status" aria-labelledby="engine-label">&ndash;</span><button class="btn" id="engine-kokoro" type="button" hidden>Use Kokoro</button></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">Which voice reads.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
         </div>
@@ -261,6 +299,35 @@
           <div class="pref agent-pref"><div class="pref-copy"><strong id="verbosity-label">Verbosity</strong><div class="hint">What is read besides the agent's answer and its questions.</div></div><div class="control"><div class="segments" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="skip_code">Skip code</button></div><div class="hint" id="verbosity-hint"></div></div></div>
           <div class="pref agent-pref"><div class="pref-copy"><strong id="background-label">Background sessions</strong><div class="hint">With several sessions open: read every session in turn, or only the one you last prompted (the others chime; switch to them to hear them).</div></div><div class="control"><div class="segments" id="background-seg" role="radiogroup" aria-labelledby="background-label"><button type="button" role="radio" data-value="all">Read all</button><button type="button" role="radio" data-value="earcon_only">Chime only</button></div></div></div>
         </div>
+      </section>
+
+      <section class="page" id="engines" aria-labelledby="h-engines">
+        <div class="title-row"><div><h1 id="h-engines">Engines</h1><p>Read with a cloud voice, or with a speech server or program on this PC.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
+        <h2 class="group-label">Your engines</h2>
+        <div class="inset">
+          <div id="profile-rows" role="list" aria-label="Your engines"></div>
+          <p class="hint" id="engines-empty" style="padding:16px 20px;margin:0">No engines added. Kokoro, built in, reads everything.</p>
+        </div>
+        <div class="list-actions"><p class="hint" style="margin:0">An engine reads only once you choose Use. Kokoro stays the stand-in: if an engine fails, Kokoro reads that sentence and says once why.</p><button class="btn" id="engine-new" type="button">Add an engine</button></div>
+        <h2 class="group-label" id="ef-title" hidden>Add an engine</h2>
+        <form class="inset" id="engine-form" aria-labelledby="ef-title" novalidate hidden>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-kind">Kind</label><div class="hint">Who makes the speech.</div></div><div class="control"><select id="ef-kind"></select></div></div>
+          <div class="pref" id="ef-preset-row"><div class="pref-copy"><label class="title" for="ef-preset">Server</label><div class="hint">OpenAI itself, or a server that speaks its API.</div></div><div class="control"><select id="ef-preset"></select></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-id">Name</label><div class="hint">Short and unique: a to z, 0 to 9, - and _. The <span class="path">sonara engines</span> commands use it.</div></div><div class="control"><input class="field" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" required></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-label">Label</label><div class="hint">What Sonara calls it, here and when it says it cannot reach it.</div></div><div class="control"><input class="field" id="ef-label" type="text" maxlength="40" autocomplete="off"></div></div>
+          <div class="pref" id="ef-url-row"><div class="pref-copy"><label class="title" for="ef-url">Address</label><div class="hint" id="ef-url-hint">The server's address.</div></div><div class="control"><input class="field" id="ef-url" type="url" autocomplete="off" spellcheck="false" aria-describedby="ef-url-hint"></div></div>
+          <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model">Model</label><div class="hint">Empty uses the default shown.</div></div><div class="control"><input class="field" id="ef-model" type="text" autocomplete="off" spellcheck="false"></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice</label><div class="hint" id="ef-voice-hint">The engine's voices are listed once it is saved.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Other voice id" placeholder="Voice id" hidden></div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-keyref">Key</label><div class="hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="Key" aria-describedby="ef-key-hint" placeholder="Paste the key"><input class="field" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
+          <div id="ef-kind-fields"></div>
+          <details class="more"><summary>More options</summary>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default"><span aria-hidden="true">ms</span></div></div></div>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-prefetch">Read ahead</label><div class="hint">Sentences prepared ahead of the one playing, 1 to 4. More hides a slow connection.</div></div><div class="control"><input class="field" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default"></div></div>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-options">Other options</label><div class="hint">A JSON object with the kind's further options (see the README).</div></div><div class="control"><textarea class="field" id="ef-options" spellcheck="false" placeholder="{}"></textarea></div></div>
+          </details>
+          <div class="form-actions"><span class="form-error" id="ef-error" role="alert"></span><button class="btn" id="ef-cancel" type="button">Close</button><button class="btn primary" id="ef-save" type="submit">Save</button></div>
+        </form>
+        <p class="hint" style="padding:12px 4px">A cloud engine receives the text Sonara reads aloud, under that provider's terms. Nothing is sent before you choose Use. A server or program on this PC keeps the text here.</p>
       </section>
 
       <section class="page" id="summary" aria-labelledby="h-summary">
@@ -428,6 +495,7 @@ async function call(type, body) {
   if (!r.ok || !j || !j.ok) {
     const err = new ApiError(j && j.error ? j.error.message : "HTTP " + r.status);
     err.code = j && j.error ? j.error.code : null;
+    err.reason = j && j.error ? j.error.reason || null : null;
     throw err;
   }
   return j;
@@ -484,6 +552,7 @@ const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "
               "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
               "channel_prefs", "earcons", "debug_log"];
 let voices = [];
+let engineData = null;   // the engine_list reply, when this runtime allows external engines
 
 async function refresh() {
   const seq = mutationSeq;
@@ -492,7 +561,12 @@ async function refresh() {
   const got = await Promise.allSettled(KEYS.map(get));
   let vs = voices;
   try { vs = (await call("voices", {})).voices; } catch (e) {}
+  let engs = null;
+  if ((hello.capabilities || []).includes("engines")) {
+    try { engs = await call("engine_list", {}); } catch (e) {}
+  }
   if (seq !== mutationSeq) return;
+  engineData = engs;
   const fresh = {hello};
   KEYS.forEach((k, i) => { fresh[k] = got[i].status === "fulfilled" ? got[i].value : undefined; });
   state = fresh;
@@ -619,6 +693,13 @@ function render() {
   const agentOn = ext.includes("agent") && s.summaries !== undefined;
   const channelsOn = ext.includes("channels") && s.channel_prefs !== undefined;
 
+  // Engines (#227): only when this runtime allows external engines.
+  const enginesOn = !!engineData && ((s.hello && s.hello.capabilities) || []).includes("engines");
+  const engNav = navButtons.find(b => b.dataset.page === "engines");
+  engNav.classList.toggle("cap-off", !enginesOn);
+  if (!enginesOn && engNav.getAttribute("aria-current") === "page") showPage("speech");
+  if (enginesOn) renderEngines();
+
   // Speech: the engine is Kokoro (#214); the page shows how it is doing.
   // An engine picked before #214 (or by an app) gets a way back to Kokoro.
   const st = s.runtime && s.runtime.engine_status;
@@ -700,17 +781,17 @@ function render() {
   }
 }
 
-const ENGINE_NAMES = {kokoro: "Kokoro", onecore: "Windows"};
+const ENGINE_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows"};
 const ENGINE_STATES = {loading: "loading", downloading: "downloading voices",
                        waiting: "download failed, retrying soon", unavailable: "cannot run on this PC"};
 function engineText(st) {
   if (!st) return "\u2013";
-  const name = ENGINE_NAMES[st.engine] || st.engine;
+  const name = engineName(st.engine);
   if (st.ready) return name + ", ready";
-  let what = ENGINE_STATES[st.status] || st.status;
+  let what = (st.reason && REASONS[st.reason]) || ENGINE_STATES[st.status] || st.status;
   const p = st.progress;
   if (st.status === "downloading" && p && p.total) what += " " + Math.floor(p.done * 100 / p.total) + " %";
-  const stand = st.fallback ? ". " + (ENGINE_NAMES[st.fallback] || st.fallback) + " reads meanwhile." : "";
+  const stand = st.fallback ? ". " + engineName(st.fallback).replace(" (built in)", "") + " reads meanwhile." : "";
   return name + ", " + what + stand;
 }
 
@@ -924,6 +1005,504 @@ $("keymap-reset").addEventListener("click", () => {
   cancelCapture();
   change("hotkeys", "reset", "Hotkeys");
 });
+
+// ---- engines (#227): profiles over engine_list/add/remove/test -----------
+const KIND_NAMES = {"openai-compatible": "OpenAI or a compatible server", elevenlabs: "ElevenLabs",
+                    azure: "Azure Speech", google: "Google Text-to-Speech", cartesia: "Cartesia",
+                    deepgram: "Deepgram", command: "A program on this PC"};
+// Per preset: the usual address of the server, and whether it needs a key.
+const PRESETS = {
+  "openai": {name: "OpenAI", url: "https://api.openai.com/v1", model: "gpt-4o-mini-tts", voice: "marin", key: true},
+  "kokoro-fastapi": {name: "Kokoro FastAPI", url: "http://127.0.0.1:8880/v1", model: "kokoro", voice: "af_heart"},
+  "localai": {name: "LocalAI", url: "http://127.0.0.1:8080/v1"},
+  "speaches": {name: "Speaches", url: "http://127.0.0.1:8000/v1", voice: "af_heart"},
+  "openedai-speech": {name: "openedai-speech", url: "http://127.0.0.1:8000/v1", model: "tts-1", voice: "alloy"},
+  "chatterbox-api": {name: "Chatterbox (TTS API)", url: "http://127.0.0.1:4123/v1", model: "chatterbox", voice: "alloy"},
+  "chatterbox-server": {name: "Chatterbox TTS Server", url: "http://127.0.0.1:8004/v1", model: "chatterbox"},
+  "generic": {name: "Another compatible server", model: "tts-1", voice: "alloy"},
+};
+// Per kind: the default address and model (placeholders) and which rows apply.
+const KINDS = {
+  "openai-compatible": {url: true, model: true},
+  "elevenlabs": {url: "https://api.elevenlabs.io", model: "eleven_flash_v2_5", key: true},
+  "azure": {url: "From the region", key: true},
+  "google": {url: "https://texttospeech.googleapis.com", key: true},
+  "cartesia": {url: "https://api.cartesia.ai", model: "sonic-3.6", key: true},
+  "deepgram": {url: "https://api.deepgram.com", key: true},
+  "command": {},
+};
+// The options of each kind that get their own field; the rest go to "Other options".
+const KIND_FIELDS = {
+  "openai-compatible": [
+    {key: "instructions", label: "Instructions", hint: "How to speak, for models that take it (gpt-4o-mini-tts)."},
+  ],
+  "elevenlabs": [
+    {key: "output_format", label: "Audio quality", type: "select", choices: [["", "Default (24 kHz)"], ["pcm_16000", "16 kHz"], ["pcm_22050", "22 kHz"], ["pcm_24000", "24 kHz"], ["pcm_44100", "44.1 kHz (Pro plans)"]]},
+    {key: "language_code", label: "Language", hint: "A language code such as en, for models that take one."},
+  ],
+  "azure": [
+    {key: "region", label: "Region", hint: "Your Speech resource's region, such as westeurope. Not needed with an address."},
+    {key: "lang", label: "Language", hint: "Empty uses the voice's own, such as en-US."},
+  ],
+  "google": [
+    {key: "language_code", label: "Language", hint: "Empty uses the voice's own, such as en-US."},
+    {key: "user_project", label: "Billing project", hint: "A Google Cloud project id, when your key needs one."},
+  ],
+  "cartesia": [
+    {key: "language", label: "Language", hint: "A language code; empty is en."},
+    {key: "api_version", label: "API version", hint: "Empty uses the version this Sonara was built for."},
+  ],
+  "deepgram": [],
+  "command": [
+    {key: "argv", label: "Program", type: "lines", hint: "The full path of an .exe, then one argument per line. {text}, {voice}, {rate}, {speed} and {out} are filled in."},
+    {key: "input", label: "Text goes in", type: "select", choices: [["", "On standard input"], ["arg", "As the {text} argument"]]},
+    {key: "output", label: "Audio comes out", type: "select", choices: [["", "WAV on standard output"], ["stdout-pcm", "Raw 16-bit PCM on standard output"], ["file", "A WAV file at {out}"]]},
+    {key: "sample_rate", label: "Sample rate", type: "number", hint: "Needed for raw PCM, in Hz."},
+    {key: "voices", label: "Voices", type: "lines", hint: "One per line, offered as the voice list."},
+  ],
+};
+const REASONS = {
+  no_key: "no key", auth: "the key was refused", quota: "out of credit", rate_limited: "busy",
+  network: "cannot be reached", timeout: "cannot be reached", server: "has a server problem",
+  bad_voice: "does not know this voice", bad_config: "its settings do not work",
+  format: "sent audio Sonara cannot play",
+};
+const TEST_REASONS = {
+  no_key: "It has no key", auth: "The provider refused the key", quota: "The account is out of credit",
+  rate_limited: "The provider is busy", network: "It cannot be reached", timeout: "It did not answer in time",
+  server: "It has a server problem", bad_voice: "It does not know this voice",
+  bad_config: "Its settings do not work", format: "It sent audio Sonara cannot play",
+};
+
+let lastPreset = "";      // the server picked before the current one (the address follows it)
+let editing = null;       // the id of the profile the form edits, or null for a new one
+const testResults = {};   // id -> {ok, text}, shown under the profile
+
+function engineName(id) {
+  if (ENGINE_NAMES[id]) return ENGINE_NAMES[id];
+  const p = engineData && engineData.engines.find(e => e.id === id);
+  return p && p.label ? p.label : id;
+}
+function kindText(v) {
+  if (v.kind === "openai-compatible") {
+    const pr = PRESETS[(v.options || {}).preset || "generic"];
+    return pr ? pr.name : v.kind;
+  }
+  return KIND_NAMES[v.kind] || v.kind;
+}
+function whereText(v) {
+  if (v.kind === "command") return "Runs " + String(v.sends_text_to || "").replace(/^program /, "") + " on this PC";
+  if (v.local) return "Runs on this PC";
+  return v.sends_text_to ? "Sends text to " + v.sends_text_to : "";
+}
+function keyText(v) {
+  const ref = v.key_ref || "";
+  if (ref === "none") return "No key needed";
+  if (ref.startsWith("env:")) return "Key from " + ref.slice(4) + (v.key_present ? "" : " (not set)");
+  return v.key_present ? "Key saved" : "No key";
+}
+function statusOf(v) {
+  if (v.supported === false) return {bad: true, text: "Needs a newer Sonara"};
+  if (v.error) return {bad: true, text: v.error};
+  const st = v.status;
+  if (!st) return {bad: false, text: ""};
+  const needsKey = v.key_ref && v.key_ref !== "none" && !v.key_present;
+  if (st.ready && needsKey) return {bad: true, text: "Needs a key before it can read"};
+  if (st.ready) return {ok: true, text: "Ready"};
+  let t = (st.reason && REASONS[st.reason]) || st.message || st.status;
+  t = t.charAt(0).toUpperCase() + t.slice(1);
+  if (st.fallback) t += ". " + engineName(st.fallback).replace(" (built in)", "") + " reads meanwhile.";
+  return {bad: true, text: t};
+}
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+function actionButton(cls, text, label, onClick) {
+  const b = el("button", "btn " + cls, text);
+  b.type = "button";
+  b.setAttribute("aria-label", label);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function buildEngineRow(v) {
+  const name = v.label || v.id;
+  const current = v.id === state.engine;
+  const row = el("div", "eng-row");
+  row.setAttribute("role", "listitem");
+  row.dataset.engine = v.id;
+  const copy = el("div");
+  const title = el("div", "eng-name", name);
+  if (current) title.appendChild(el("span", "badge", "In use"));
+  const meta = el("div", "eng-meta");
+  for (const t of [kindText(v), whereText(v), keyText(v)]) if (t) meta.appendChild(el("span", null, t));
+  copy.append(title, meta);
+  const st = statusOf(v);
+  if (st.text) {
+    const line = el("div", "eng-state" + (st.bad ? " bad" : st.ok ? " ok" : ""));
+    line.append(el("i"), el("span", null, st.text));
+    line.firstChild.setAttribute("aria-hidden", "true");
+    copy.appendChild(line);
+  }
+  const res = testResults[v.id];
+  const out = el("div", "engine-result" + (res && !res.ok ? " bad" : ""), res ? res.text : "");
+  out.setAttribute("aria-live", "polite");
+  copy.appendChild(out);
+  const actions = el("div", "eng-actions");
+  const use = actionButton("engine-use", "Use", "Use " + name, () => useEngine(v.id, name));
+  use.hidden = current || v.supported === false;
+  const test = actionButton("engine-test", "Test", "Test " + name, e => testEngine(v.id, e.currentTarget));
+  test.hidden = v.supported === false;
+  actions.append(use, test,
+    actionButton("engine-edit", "Edit", "Edit " + name, () => openForm(v)),
+    actionButton("engine-remove danger", "Remove", "Remove " + name, () => removeEngine(v)));
+  row.append(copy, actions);
+  return row;
+}
+
+let enginesSig = "";
+function renderEngines() {
+  const list = engineData ? engineData.engines : [];
+  $("engines-empty").hidden = list.length > 0;
+  const sig = JSON.stringify([list, state.engine, testResults]);
+  if (sig === enginesSig) return;
+  const rows = $("profile-rows");
+  const ae = document.activeElement;
+  const refocus = ae && rows.contains(ae) ? ae.getAttribute("aria-label") : null;
+  enginesSig = sig;
+  rows.textContent = "";
+  for (const v of list) rows.appendChild(buildEngineRow(v));
+  if (refocus) {
+    const again = [...rows.querySelectorAll("[aria-label]")].find(n => n.getAttribute("aria-label") === refocus && !n.hidden);
+    if (again) again.focus();
+  }
+}
+
+async function loadEngines() {
+  try { engineData = await call("engine_list", {}); } catch (e) { return; }
+  render();
+}
+
+async function useEngine(id, name) {
+  const v = await change("engine", id, "Voice engine");
+  if (v !== undefined) { announce(name + " reads from the next sentence."); loadEngines(); }
+}
+
+async function testEngine(id, btn) {
+  if (btn.getAttribute("aria-busy") === "true") return;
+  btn.setAttribute("aria-busy", "true");
+  btn.textContent = "Testing…";
+  try {
+    const r = await call("engine_test", {engine: id, play: true});
+    const secs = (r.duration_ms / 1000).toFixed(1);
+    testResults[id] = {ok: true, text: "Spoke in " + r.ms + " ms (" + secs + " s of speech, voice " + r.voice + ")."};
+  } catch (e) {
+    const why = e.reason && TEST_REASONS[e.reason];
+    const msg = e instanceof ApiError ? e.message : "Could not reach the runtime";
+    testResults[id] = {ok: false, text: why ? why + ". " + msg : msg};
+  } finally {
+    btn.removeAttribute("aria-busy");
+    btn.textContent = "Test";
+  }
+  announce(testResults[id].text);
+  enginesSig = "";
+  loadEngines();
+}
+
+async function removeEngine(v) {
+  const name = v.label || v.id;
+  const keyNote = v.key_ref === "credman" && v.key_present ? " Its saved key is deleted too." : "";
+  if (!confirm("Remove " + name + "?" + keyNote)) return;
+  try {
+    const r = await call("engine_remove", {engine: v.id});
+    mutationSeq++;
+    state.engine = r.engine;
+    delete testResults[v.id];
+    if (editing === v.id) closeForm();
+    showState(name + " removed");
+  } catch (e) {
+    showState(e instanceof ApiError ? e.message : "Could not reach the runtime", true);
+  }
+  loadEngines();
+}
+
+// ---- the add/edit form ---------------------------------------------------
+function optionText(v) { return v == null ? "" : Array.isArray(v) ? v.join("\n") : String(v); }
+
+function buildKindFields(kind, options) {
+  const box = $("ef-kind-fields");
+  box.textContent = "";
+  for (const f of KIND_FIELDS[kind] || []) {
+    const row = el("div", "pref");
+    const copy = el("div", "pref-copy");
+    const lab = el("label", "title", f.label);
+    lab.htmlFor = "ef-opt-" + f.key;
+    copy.appendChild(lab);
+    if (f.hint) copy.appendChild(el("div", "hint", f.hint));
+    const ctl = el("div", "control");
+    let input;
+    if (f.type === "select") {
+      input = el("select");
+      for (const [value, text] of f.choices) {
+        const o = el("option", null, text);
+        o.value = value;
+        input.appendChild(o);
+      }
+    } else if (f.type === "lines") {
+      input = el("textarea", "field");
+      input.spellcheck = false;
+    } else {
+      input = el("input", "field");
+      input.type = f.type === "number" ? "number" : "text";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+    }
+    input.id = "ef-opt-" + f.key;
+    input.value = optionText(options[f.key]);
+    ctl.appendChild(input);
+    row.append(copy, ctl);
+    box.appendChild(row);
+  }
+}
+
+function keyDefault(kind, preset) {
+  if (kind === "command") return "none";
+  if (kind === "openai-compatible") return (PRESETS[preset] || {}).key ? "credman" : "none";
+  return "credman";
+}
+
+function syncFormRows(prevPreset) {
+  const kind = $("ef-kind").value;
+  const k = KINDS[kind] || {};
+  const preset = $("ef-preset").value;
+  const pr = PRESETS[preset] || {};
+  $("ef-preset-row").hidden = kind !== "openai-compatible";
+  $("ef-url-row").hidden = !k.url;
+  $("ef-model-row").hidden = !k.model;
+  if (kind === "openai-compatible") {
+    // A new profile's address follows the server picked, unless the user typed one.
+    const url = $("ef-url");
+    const old = (PRESETS[prevPreset] || {}).url || "";
+    if (!editing && (url.value === "" || url.value === old)) url.value = pr.url || "";
+    url.placeholder = pr.url || "http://127.0.0.1:8000/v1";
+    $("ef-model").placeholder = pr.model ? "Default: " + pr.model : "Required by this server";
+    setText("ef-url-hint", preset === "openai" ? "OpenAI's address. Change it only for a proxy." : "The server's address, with /v1.");
+  } else {
+    $("ef-url").placeholder = typeof k.url === "string" ? k.url : "";
+    $("ef-model").placeholder = k.model ? "Default: " + k.model : "";
+    setText("ef-url-hint", kind === "azure" ? "Optional: your resource's endpoint, instead of the region." : "Empty uses the provider's own address.");
+  }
+  syncKeyRow();
+}
+
+function syncKeyRow() {
+  const ref = $("ef-keyref").value;
+  $("ef-key").hidden = ref !== "credman";
+  $("ef-keyenv").hidden = ref !== "env";
+  const saved = editing && engineData && (engineData.engines.find(e => e.id === editing) || {}).key_present;
+  setText("ef-key-hint", ref === "credman"
+    ? (editing ? (saved ? "Leave empty to keep the saved key." : "No key saved yet. Leave empty to keep the saved key once there is one.") : "Paste the key from the provider's site.")
+    : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY."
+    : "For a server on this PC that needs none.");
+}
+
+function fillVoiceSelect(list, current, fallbackDefault) {
+  const sel = $("ef-voice");
+  const opts = [["", fallbackDefault ? "Default (" + fallbackDefault + ")" : "Default"]];
+  for (const v of list) opts.push([v.id, v.name && v.name !== v.id ? v.name + " (" + v.id + ")" : v.id + (v.language ? " (" + v.language + ")" : "")]);
+  opts.push(["__other", "Other voice id…"]);
+  sel.textContent = "";
+  for (const [value, text] of opts) {
+    const o = el("option", null, text);
+    o.value = value;
+    sel.appendChild(o);
+  }
+  const listed = !current || list.some(v => v.id === current);
+  sel.value = !current ? "" : listed ? current : "__other";
+  $("ef-voice-other").value = listed ? "" : current;
+  $("ef-voice-other").hidden = sel.value !== "__other";
+}
+
+function defaultVoice() {
+  return $("ef-kind").value === "openai-compatible" ? (PRESETS[$("ef-preset").value] || {}).voice : null;
+}
+
+async function loadVoices(id) {
+  const cur = chosenVoice();
+  setText("ef-voice-hint", "Fetching the voices…");
+  try {
+    const r = await call("voices", {engine: id, refresh: true});
+    if (editing !== id) return;
+    fillVoiceSelect(r.voices, chosenVoice() || cur, defaultVoice());
+    setText("ef-voice-hint", r.error
+      ? "Could not fetch the voices: " + r.error.message + " A voice id still works through Other."
+      : r.voices.length ? "Its voices, or any other id it accepts (a cloned voice, for example)." : "It lists no voices: enter the voice id.");
+  } catch (e) {
+    setText("ef-voice-hint", e instanceof ApiError ? e.message : "Could not reach the runtime");
+  }
+}
+
+function chosenVoice() {
+  const v = $("ef-voice").value;
+  return v === "__other" ? $("ef-voice-other").value.trim() : v;
+}
+
+function setFormError(msg, field) {
+  setText("ef-error", msg || "");
+  document.querySelectorAll("#engine-form [aria-invalid]").forEach(n => n.removeAttribute("aria-invalid"));
+  if (field) { field.setAttribute("aria-invalid", "true"); field.focus(); }
+}
+
+function openForm(v) {
+  editing = v ? v.id : null;
+  const opts = Object.assign({}, (v && v.options) || {});
+  const kinds = engineData ? engineData.kinds : Object.keys(KINDS);
+  const presets = engineData ? engineData.presets : Object.keys(PRESETS);
+  fillSelect($("ef-kind"), kinds.map(k => [k, KIND_NAMES[k] || k]), v ? v.kind : "openai-compatible");
+  $("ef-kind").value = v ? v.kind : "openai-compatible";
+  fillSelect($("ef-preset"), presets.map(p => [p, (PRESETS[p] || {}).name || p]), opts.preset || (v ? "generic" : "openai"));
+  $("ef-preset").value = opts.preset || (v ? "generic" : "openai");
+  $("ef-id").value = v ? v.id : "";
+  $("ef-id").disabled = !!v;
+  $("ef-label").value = v && v.label ? v.label : "";
+  $("ef-url").value = v && v.url ? v.url : "";
+  $("ef-model").value = v && v.model ? v.model : "";
+  $("ef-key").value = "";
+  const ref = v ? (v.key_ref || "credman") : keyDefault("openai-compatible", "openai");
+  $("ef-keyref").value = ref.startsWith("env:") ? "env" : ref;
+  $("ef-keyenv").value = ref.startsWith("env:") ? ref.slice(4) : "";
+  $("ef-timeout").value = optionText(opts.timeout_ms);
+  $("ef-prefetch").value = optionText(opts.prefetch);
+  for (const k of ["preset", "timeout_ms", "prefetch"].concat((KIND_FIELDS[v ? v.kind : ""] || []).map(f => f.key))) delete opts[k];
+  $("ef-options").value = Object.keys(opts).length ? JSON.stringify(opts, null, 2) : "";
+  buildKindFields($("ef-kind").value, (v && v.options) || {});
+  lastPreset = $("ef-preset").value;
+  syncFormRows(lastPreset);
+  fillVoiceSelect([], v ? v.voice : "", defaultVoice());
+  setText("ef-voice-hint", "The engine's voices are listed once it is saved.");
+  setText("ef-title", v ? "Edit " + (v.label || v.id) : "Add an engine");
+  setFormError("");
+  $("ef-title").hidden = false;
+  $("engine-form").hidden = false;
+  (v ? $("ef-label") : $("ef-kind")).focus();
+  if (v) loadVoices(v.id);
+}
+
+function closeForm() {
+  editing = null;
+  $("ef-key").value = "";
+  $("engine-form").hidden = true;
+  $("ef-title").hidden = true;
+}
+
+function collectProfile() {
+  const kind = $("ef-kind").value;
+  const k = KINDS[kind] || {};
+  const p = {id: (editing || $("ef-id").value.trim()), kind};
+  if (!p.id) throw [new Error("Give the engine a name."), $("ef-id")];
+  const label = $("ef-label").value.trim();
+  if (label) p.label = label;
+  const url = $("ef-url").value.trim();
+  if (k.url && url) p.url = url;
+  const model = $("ef-model").value.trim();
+  if (k.model && model) p.model = model;
+  const voice = chosenVoice();
+  if (voice) p.voice = voice;
+  const ref = $("ef-keyref").value;
+  if (ref === "env") {
+    const name = $("ef-keyenv").value.trim();
+    if (!name) throw [new Error("Name the environment variable that holds the key."), $("ef-keyenv")];
+    p.key_ref = "env:" + name;
+  } else {
+    p.key_ref = ref;
+  }
+  let options = {};
+  const raw = $("ef-options").value.trim();
+  if (raw) {
+    try { options = JSON.parse(raw); } catch (e) { options = null; }
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw [new Error("Other options must be a JSON object, such as {\"allow_http\": true}."), $("ef-options")];
+    }
+  }
+  if (kind === "openai-compatible") options.preset = $("ef-preset").value;
+  for (const f of KIND_FIELDS[kind] || []) {
+    const n = $("ef-opt-" + f.key);
+    const val = n.value.trim();
+    if (!val) continue;
+    if (f.type === "number") options[f.key] = Number(val);
+    else if (f.type === "lines") options[f.key] = n.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    else options[f.key] = val;
+  }
+  for (const [id, key] of [["ef-timeout", "timeout_ms"], ["ef-prefetch", "prefetch"]]) {
+    const val = $(id).value.trim();
+    if (val) options[key] = Number(val);
+  }
+  p.options = options;
+  return p;
+}
+
+$("engine-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const btn = $("ef-save");
+  if (btn.getAttribute("aria-busy") === "true") return;
+  let profile;
+  try { profile = collectProfile(); } catch (err) {
+    const [error, field] = Array.isArray(err) ? err : [err, null];
+    setFormError(error.message, field);
+    return;
+  }
+  setFormError("");
+  const msg = {engine: profile};
+  if (editing) msg.replace = true;
+  const key = $("ef-key").value;
+  if (key && profile.key_ref === "credman") msg.secret = key;
+  btn.setAttribute("aria-busy", "true");
+  try {
+    const r = await call("engine_add", msg);
+    // The key is stored by the runtime; it never comes back into the page.
+    $("ef-key").value = "";
+    const wasNew = !editing;
+    editing = r.engine.id;
+    $("ef-id").disabled = true;
+    setText("ef-title", "Edit " + (r.engine.label || r.engine.id));
+    showState((r.engine.label || r.engine.id) + " saved");
+    await loadEngines();
+    syncKeyRow();
+    if (wasNew) loadVoices(r.engine.id);
+  } catch (err) {
+    setFormError(err instanceof ApiError ? err.message : "Could not reach the runtime");
+  } finally {
+    btn.removeAttribute("aria-busy");
+  }
+});
+$("ef-kind").addEventListener("change", () => {
+  const kind = $("ef-kind").value;
+  buildKindFields(kind, {});
+  if (!editing) $("ef-keyref").value = keyDefault(kind, $("ef-preset").value);
+  syncFormRows($("ef-preset").value);
+  fillVoiceSelect([], chosenVoice(), defaultVoice());
+});
+$("ef-preset").addEventListener("change", () => {
+  if (!editing) $("ef-keyref").value = keyDefault("openai-compatible", $("ef-preset").value);
+  syncFormRows(lastPreset);
+  lastPreset = $("ef-preset").value;
+  fillVoiceSelect([], chosenVoice(), defaultVoice());
+});
+$("ef-keyref").addEventListener("change", syncKeyRow);
+$("ef-voice").addEventListener("change", () => {
+  const other = $("ef-voice").value === "__other";
+  $("ef-voice-other").hidden = !other;
+  if (other) $("ef-voice-other").focus();
+});
+$("ef-cancel").addEventListener("click", () => { closeForm(); $("engine-new").focus(); });
+$("engine-form").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.preventDefault(); closeForm(); $("engine-new").focus(); }
+});
+$("engine-new").addEventListener("click", () => openForm(null));
 
 // ---- wiring ---------------------------------------------------------------
 $("engine-kokoro").addEventListener("click", () => change("engine", "kokoro", "Voice engine"));

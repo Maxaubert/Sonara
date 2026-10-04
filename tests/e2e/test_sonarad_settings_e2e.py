@@ -94,7 +94,8 @@ def test_every_section_of_the_old_page_is_there(live, browser):
     lv = live()
     page = open_page(browser, lv.url)
     names = page.locator(".side-nav button").all_text_contents()
-    assert [n.strip() for n in names] == ["Speech", "Summary", "Audio", "Sessions", "Hotkeys",
+    # Engines (#227) sits under Speech when the runtime allows external engines.
+    assert [n.strip() for n in names] == ["Speech", "Engines", "Summary", "Audio", "Sessions", "Hotkeys",
                                           "Advanced", "System"]
     page.click("[data-page=system]")
     assert page.locator("#app-version").text_content().startswith("Version ")

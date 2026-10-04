@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-04 (0.17.0: Cartesia, Deepgram and a program of your own as external
+_Last updated: 2026-10-04 (0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
 speech engines; 0.16.0: ElevenLabs, Azure and Google as external speech engines;
 0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
@@ -68,10 +68,10 @@ You can add speech engines that are not part of Sonara: a cloud service (OpenAI,
 Azure AI Speech, Google Cloud Text-to-Speech, Cartesia, Deepgram), a local OpenAI-compatible
 server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server), or a speech program you installed
 yourself (kind `command`, for example Piper; you add such a program yourself with `sonara engines
-add <id> --kind command` or in `engines.json`, and no app or web page connected to Sonara can add
-or change one). Adding
-one sends nothing; it is used only once you select it (`sonara engines use <id>`, or `set
-engine` from a client).
+add <id> --kind command` or in `engines.json`, and no app or web page connected to Sonara, the
+settings page included, can add or change one). Adding
+one sends nothing; it is used only once you select it (*Use* under Engines on the settings page,
+`sonara engines use <id>`, or `set engine` from a client).
 
 - **What is sent.** While an external engine is selected, the text Sonara reads aloud (the same
   sentences it would speak, after its own text rules) goes to that engine, one sentence at a
@@ -115,7 +115,11 @@ engine` from a client).
   server problem), Sonara reads that sentence with its built-in voice (Kokoro, else the Windows
   voices) and says once why ("OpenAI cannot be reached. Reading with the built-in voice."). The
   log line names the engine and the reason, never the text or the key.
-- **Removing it.** `sonara engines remove <id>` (or `engine_remove`) deletes the engine and its
+- **The settings page.** Its Engines section adds, tests, edits and removes engines through the
+  runtime's local API, like the CLI. A key typed there goes to the runtime once, when you save,
+  and is never shown again: the field empties and no reply carries it. *Test* sends one sample
+  sentence (or the text you give) to the engine.
+- **Removing it.** *Remove* on the settings page, `sonara engines remove <id>` (or `engine_remove`) deletes the engine and its
   stored key. `/sonara:uninstall` deletes every `sonara:*` credential unless you keep your
   settings.
 

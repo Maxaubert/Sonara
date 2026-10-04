@@ -9,7 +9,7 @@ Four PRs, stacked, each a feature with its own version bump:
 | PR1 | #224 | `feat/224-http-engine` | 0.15.0 | Core: profiles, `engines.json`, keys, Registry changes, `External` engine with fallback, cue, breaker, prefetch depth, cue cache, the `openai-compatible` kind (OpenAI and local servers), protocol `engine_*` messages, CLI, SDK helpers, conformance |
 | PR2 | #225 | `feat/225-cloud-adapters` | 0.16.0 | Kinds `elevenlabs`, `azure`, `google` |
 | PR3 | #226 | `feat/226-more-engines` | 0.17.0 | Kinds `cartesia`, `deepgram`, `command` |
-| PR4 | #227 | `feat/227-engines-page` | 0.18.0 | Settings page Engines section; README engines section |
+| PR4 | #227 | `feat/227-engines-settings` | 0.18.0 | Settings page Engines section; README engines section |
 
 PR2 branches from PR1, PR3 from PR2, PR4 from PR3. Each PR is reviewed and merged on its own; nothing is merged without the user's "merge?" answer.
 
@@ -815,6 +815,17 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - [ ] 3. E2E (`tests/e2e/test_sonarad_engines_e2e.py`, headless Playwright, `sonarad --engine fake --keys fake --system fake` with a Python fake OpenAI server): add a profile with a key (the key field empties after save and the key never appears in the DOM or in the page's network replies), the voice select fills from `voices`, Test speaks (reply shown), the "Sends text to" line, Use switches `engine`, Remove with confirmation, an auth failure shows its reason, keyboard-only path.
 - [ ] 4. README Engines section (12); `PRIVACY.md` mentions the page.
 - [ ] 5. Version 0.18.0, gates incl. e2e, hands-on in the browser on this PC, "merge?".
+
+**Deviations found while building PR4** (the sections above are updated where they apply):
+
+- Branch `feat/227-engines-settings` (the table said `feat/227-engines-page`).
+- Engines is its own page in the side navigation, directly under Speech, rather than a group inside the Speech page: the list and the add/edit form are too long to share a page with the voice and rate. The nav entry is hidden when `hello.capabilities` lacks `engines` (`--no-external-engines`). Element ids avoid `#engine-rows` and `#engine-select`, which the #214 test keeps absent (the old picker).
+- After a profile is added the form stays open, now editing it, so its voice list (`voices {engine, refresh: true}`) fills at once; Close hides it.
+- Each kind's main options have their own fields (Azure region, ElevenLabs output format and language, Google language and billing project, Cartesia language and API version, OpenAI-compatible instructions, the `command` program, input, output, sample rate and voices); `timeout_ms` and `prefetch` sit under "More options" with a JSON object field for the rest, so every option of 5.4 stays reachable.
+- An untried profile reports `ready` (7.2: `warm` does not check a key on a cloud kind until the first chunk), so the page shows "Needs a key before it can read" for a profile whose key ref needs a key that is not present.
+- The Speech section names an external engine by its label and shows the reason of `engine_status.reason` (`OpenAI, cannot be reached. Kokoro reads meanwhile.`); Kokoro shows as "Kokoro (built in)".
+- `settings_page.rs` is unchanged (same-origin API, no CSP change). `docs/protocol-v1.md`'s Settings page paragraph lists the Engines section.
+- Step 5's hands-on (a branch build deployed per the safe redeploy steps) is left for the "merge?" step: the PR4 worker must not touch `%LOCALAPPDATA%\Sonara` or the running runtime. The page was checked headless (Playwright e2e and screenshots in light and dark, desktop and phone width).
 
 ### Risks
 
