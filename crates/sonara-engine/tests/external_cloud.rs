@@ -347,3 +347,34 @@ fn cloud_kinds_without_a_key_never_send_text() {
         assert_eq!(e.status().reason, Some(Reason::NoKey), "{profile}");
     }
 }
+
+/// Near-silent neural TTS often starts with sample -1 (bytes FF FF), which
+/// looks like an MP3 frame sync. Raw PCM that the adapter asked for is
+/// never sniffed as MP3: each kind speaks it, and stays usable.
+#[test]
+fn cloud_pcm_that_starts_with_minus_one_is_spoken() {
+    let quiet = [-1i16, 0, -2, 7];
+    let server = ScriptServer::start();
+    server.on(
+        "/v1/text-to-speech/JBFqnCBsd6RMkjVDRZzb",
+        Route::new(200, "audio/pcm", pcm_bytes(&quiet)),
+    );
+    server.on(
+        "/cognitiveservices/v1",
+        Route::new(200, "audio/x-wav", pcm_bytes(&quiet)),
+    );
+    let b64 = base64::engine::general_purpose::STANDARD.encode(pcm_bytes(&quiet));
+    server.on(
+        "/v1/text:synthesize",
+        Route::json(200, &json!({"audioContent": b64}).to_string()),
+    );
+    for v in [elevenlabs(), azure(), google()] {
+        let kind = v["kind"].as_str().unwrap().to_string();
+        let e = engine(&server, v, Some(KEY), false);
+        for _ in 0..2 {
+            let got = chunks(&e, "Hello.", "", 200);
+            assert_eq!(got[0].samples, quiet.to_vec(), "{kind}");
+        }
+        assert_eq!(e.status().readiness, Readiness::Ready, "{kind}");
+    }
+}

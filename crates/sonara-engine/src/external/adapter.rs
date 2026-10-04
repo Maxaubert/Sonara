@@ -134,6 +134,12 @@ pub trait Adapter: Send + Sync {
         -> HttpRequest;
     /// The rate asked for, for raw PCM without a rate in its reply.
     fn requested_rate(&self) -> Option<u32>;
+    /// Whether the request asks for headerless PCM: then a reply is
+    /// compressed audio only when its `Content-Type` says so, since samples
+    /// may start with bytes that look like a magic number.
+    fn raw_pcm(&self) -> bool {
+        false
+    }
     /// The reason and message of a non-2xx reply. `listed` says whether
     /// `voice` is in the last fetched voice list (`None`: no list yet).
     fn map_error(&self, reply: &HttpReply, voice: &str, listed: Option<bool>) -> ExtError;
@@ -144,6 +150,7 @@ pub trait Adapter: Send + Sync {
             &reply.body,
             reply.content_type.as_deref(),
             self.requested_rate(),
+            self.raw_pcm(),
             label,
         )
     }

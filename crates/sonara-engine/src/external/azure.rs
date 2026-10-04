@@ -10,7 +10,7 @@ use super::adapter::{
 };
 use super::error::{clean, headline, ExtError};
 use super::keys::Secret;
-use super::profile::{voice_locale, Kind, Profile, AZURE_FORMATS};
+use super::profile::{voice_locale, Kind, Profile, Url, AZURE_FORMATS};
 use super::rate;
 use super::split::Limit;
 use crate::Reason;
@@ -86,6 +86,15 @@ impl Azure {
             .unwrap_or_else(|| "en-US".into())
     }
 
+    /// The voice list: a resource host (`<resource>.cognitiveservices.
+    /// azure.com`) serves it under `/tts`, a regional host at the root.
+    fn voices_url(&self) -> String {
+        let resource =
+            Url::parse(&self.base).is_ok_and(|u| u.host.ends_with(".cognitiveservices.azure.com"));
+        let prefix = if resource { "/tts" } else { "" };
+        format!("{}{prefix}/cognitiveservices/voices/list", self.base)
+    }
+
     /// The SSML body (tests check it).
     pub fn ssml(&self, text: &str, voice: &str, wpm: u32) -> String {
         let speed = rate::speed(Kind::Azure, wpm).unwrap_or(1.0);
@@ -131,6 +140,10 @@ impl Adapter for Azure {
         Some(self.rate)
     }
 
+    fn raw_pcm(&self) -> bool {
+        self.output_format.starts_with("raw-")
+    }
+
     fn map_error(&self, reply: &HttpReply, voice: &str, listed: Option<bool>) -> ExtError {
         let s = reply.status;
         let reason = match s {
@@ -162,10 +175,7 @@ impl Adapter for Azure {
 
     fn voices(&self, key: Option<&Secret>) -> VoiceSource {
         VoiceSource::Fetch {
-            request: self.with_key(
-                HttpRequest::get(format!("{}/cognitiveservices/voices/list", self.base)),
-                key,
-            ),
+            request: self.with_key(HttpRequest::get(self.voices_url()), key),
             empty_on_error: false,
         }
     }
@@ -303,7 +313,14 @@ mod tests {
         match by_url.voices(None) {
             VoiceSource::Fetch { request, .. } => assert_eq!(
                 request.url,
-                "https://my-resource.cognitiveservices.azure.com/cognitiveservices/voices/list"
+                "https://my-resource.cognitiveservices.azure.com/tts/cognitiveservices/voices/list"
+            ),
+            VoiceSource::Fixed(_) => panic!("fetched"),
+        }
+        match adapter(json!({})).voices(None) {
+            VoiceSource::Fetch { request, .. } => assert_eq!(
+                request.url,
+                "https://westeurope.tts.speech.microsoft.com/cognitiveservices/voices/list"
             ),
             VoiceSource::Fixed(_) => panic!("fetched"),
         }

@@ -165,6 +165,10 @@ impl Adapter for OpenAi {
         Some(self.sample_rate.unwrap_or(24_000))
     }
 
+    fn raw_pcm(&self) -> bool {
+        self.response_format == "pcm"
+    }
+
     fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
         let s = reply.status;
         let eb = ErrorBody::parse(&reply.body);
@@ -478,6 +482,22 @@ mod tests {
             json!({"voice": "Emily.wav", "options": {"response_format": "pcm"}}),
         );
         assert_eq!(server.body("a", "Emily.wav", 200)["response_format"], "wav");
+    }
+
+    /// Raw PCM that starts with sample -1 (FF FF, an MP3 frame sync) is
+    /// speech when `pcm` was asked for.
+    #[test]
+    fn requested_pcm_starting_with_minus_one_is_audio() {
+        let quiet = HttpReply {
+            status: 200,
+            content_type: Some("application/octet-stream".into()),
+            retry_after: None,
+            body: vec![0xFF, 0xFF, 0x00, 0x00],
+        };
+        let pcm = preset("generic", json!({"options": {"response_format": "pcm"}}));
+        assert!(pcm.raw_pcm());
+        assert_eq!(pcm.audio(&quiet, "T").unwrap().samples, vec![-1, 0]);
+        assert!(!preset("generic", json!({})).raw_pcm(), "wav was asked for");
     }
 
     #[test]

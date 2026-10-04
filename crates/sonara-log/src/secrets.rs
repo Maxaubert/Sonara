@@ -5,9 +5,10 @@
 //!   (`api_key`, `password`, `Authorization`, `Ocp-Apim-Subscription-Key`, ...). Its whole value is
 //!   masked by the caller.
 //! - `mask(text)`: masks credential-looking words inside free text: known
-//!   token prefixes (`sk-`, `sk_car_`, `ghp_`, `github_pat_`, `AKIA`, `xoxb-`, JWTs),
-//!   the word after `Bearer`/`Basic`, and the value of an assignment whose
-//!   name is a `secret_key` (`PASSWORD=...`, `"api_key": "..."`).
+//!   token prefixes (`sk-`, `sk_` for ElevenLabs and Cartesia, `ghp_`,
+//!   `github_pat_`, `AKIA`, `xoxb-`, JWTs), the word after `Bearer`/`Basic`,
+//!   and the value of an assignment whose name is a `secret_key`
+//!   (`PASSWORD=...`, `"api_key": "..."`).
 //!
 //! Best effort: it catches the common shapes, not every secret.
 use std::borrow::Cow;
@@ -39,8 +40,8 @@ const SECRET_NAMES: &[&str] = &[
 /// Prefixes of well-known credential formats (case sensitive).
 const TOKEN_PREFIXES: &[&str] = &[
     "sk-",
-    // Cartesia.
-    "sk_car_",
+    // ElevenLabs (`sk_<hex>`) and Cartesia (`sk_car_`).
+    "sk_",
     "ghp_",
     "gho_",
     "ghs_",
@@ -212,6 +213,11 @@ mod tests {
             mask("Ocp-Apim-Subscription-Key: 0123456789abcdef"),
             "Ocp-Apim-Subscription-Key: [redacted]"
         );
+        assert_eq!(
+            mask("elevenlabs key sk_0123456789abcdef0123456789abcdef0123456789abcdef here"),
+            "elevenlabs key [redacted] here"
+        );
+        assert_eq!(mask("sk_short"), "sk_short", "too short to be a key");
         assert_eq!(
             mask("sk-proj-abcdefghijklmnopqrstuvwx"),
             "[redacted]",

@@ -69,16 +69,22 @@ impl ElevenLabs {
         req
     }
 
-    /// The request body (tests check it).
+    /// The request body (tests check it). `voice_settings` replaces the
+    /// voice's stored settings for the request, so it is left out when no
+    /// setting is set and the speed is 1.0.
     pub fn body(&self, text: &str, wpm: u32) -> Value {
         let mut settings = self.settings.clone();
         if let Some(s) = rate::speed(Kind::ElevenLabs, wpm) {
-            settings.insert("speed".into(), json!(s));
+            if !settings.is_empty() || (s - 1.0).abs() > f64::EPSILON {
+                settings.insert("speed".into(), json!(s));
+            }
         }
         let mut b = Map::new();
         b.insert("text".into(), json!(text));
         b.insert("model_id".into(), json!(self.model));
-        b.insert("voice_settings".into(), Value::Object(settings));
+        if !settings.is_empty() {
+            b.insert("voice_settings".into(), Value::Object(settings));
+        }
         if let Some(l) = &self.language_code {
             b.insert("language_code".into(), json!(l));
         }
@@ -123,6 +129,10 @@ impl Adapter for ElevenLabs {
         self.output_format
             .strip_prefix("pcm_")
             .and_then(|r| r.parse().ok())
+    }
+
+    fn raw_pcm(&self) -> bool {
+        self.output_format.starts_with("pcm_")
     }
 
     fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
@@ -347,6 +357,21 @@ mod tests {
                 "voice_settings": {"speed": 0.7}})
         );
         assert_eq!(d.requested_rate(), Some(24_000));
+    }
+
+    /// `voice_settings` replaces the voice's stored settings for the
+    /// request, so it is left out when there is nothing to change.
+    #[test]
+    fn voice_settings_left_out_at_the_default_rate() {
+        assert_eq!(
+            adapter(json!({})).body("Hi.", 200),
+            json!({"text": "Hi.", "model_id": "eleven_flash_v2_5"})
+        );
+        assert_eq!(
+            adapter(json!({"stability": 0.3})).body("Hi.", 200),
+            json!({"text": "Hi.", "model_id": "eleven_flash_v2_5",
+                "voice_settings": {"stability": 0.3, "speed": 1.0}})
+        );
     }
 
     #[test]

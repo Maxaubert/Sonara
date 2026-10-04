@@ -616,7 +616,7 @@ Section **Engines** under Speech (`crates/sonarad/assets/settings.html`, served 
 
 Input limits (`split.rs`): OpenAI 4096 chars; ElevenLabs 5000 chars (the smallest per-model limit, v3; flash models allow more, but a sentence chunk never needs it); Azure 2000 chars per request (Sonara's choice, well under the 10-minute audio cap); Google 5000 UTF-8 bytes of the text (SSML not used); Cartesia 2000 chars (no documented limit; Sonara's choice); Deepgram 2000 chars; Chatterbox API 3000 chars; others 4096 chars.
 
-Audio parsing (`audio.rs`): `RIFF....WAVE` goes through `wav::decode` (handles float, LIST, placeholder sizes); otherwise raw s16le at, in order, the `Content-Type` `rate=` parameter, the requested rate, 24000; an odd trailing byte is dropped; a body starting with `ID3`, `0xFF 0xE?`/`0xFF 0xF?` (MP3 frame), `OggS`, `fLaC`, `{` or `<` with a 200 status is `format` (`the server sent MP3, not WAV/PCM; set response_format`).
+Audio parsing (`audio.rs`): `RIFF....WAVE` goes through `wav::decode` (handles float, LIST, placeholder sizes); otherwise raw s16le at, in order, the `Content-Type` `rate=` parameter, the requested rate, 24000; an odd trailing byte is dropped; a body starting with `ID3`, a valid MP3 frame header (sync, version and layer not reserved, bitrate index not 15, sample-rate index not 3), `OggS`, `fLaC`, `{` or `<` with a 200 status is `format` (`the server sent MP3, not WAV/PCM; set response_format`). When the adapter asked for raw PCM (`Adapter::raw_pcm`: OpenAI `pcm`, ElevenLabs, Azure, Google) the magic numbers are not sniffed, only a `Content-Type` naming mpeg, ogg/opus or flac is `format`: near-silent speech starts with sample -1 (`FF FF`), an MP3 frame sync, and a `format` error blocks the engine.
 
 ### 13.2 Error mapping per provider
 
@@ -711,6 +711,8 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 4. Chatterbox API non-streaming WAV sample format (float32 expected; `wav::decode` handles both).
 5. ElevenLabs model availability per account (`eleven_v4_turbo`); the default stays `eleven_flash_v2_5`.
 6. Azure 400 versus another code for an unknown voice name (the cached-list check covers both).
+7. Azure voice list on a resource host (`<resource>.cognitiveservices.azure.com`): Sonara asks `/tts/cognitiveservices/voices/list` there (researched docs, 2026-10-04), the root path on a regional host. Not verified live: `azure_live` uses a region.
+8. ElevenLabs: whether a partial `voice_settings` (only `speed`, or one of `stability`/`similarity_boost`/`style`) keeps the voice's stored values for the fields it leaves out. Sonara leaves `voice_settings` out when nothing is set at speed 1.0 (2026-10-04); `elevenlabs_live` should compare at the hands-on step.
 
 ---
 
@@ -781,6 +783,7 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - Azure: `xml:lang` from `options.lang`, else the voice's locale, else `en-US`; the voice name is XML-escaped too (an attribute); control characters other than tab and newlines become spaces (XML 1.0 forbids them).
 - Conformance: `conformance/engines/fakes.py` (one fake per shape, checking the key header) and `test_cloud_engines.py` (speak with the key in the provider's header, voices, `engine_test`; a refused key reports `auth` and the fallback reads).
 - Live tests were written but not run (no provider keys on the build machine); step 7's hands-on decides them.
+- Review fixes (2026-10-04): raw PCM that an adapter asked for is not sniffed for MP3/Ogg/FLAC magic numbers (a first sample of -1 made a sentence `format` and blocked the engine; this also fixes PR1's `pcm` path), and the generic MP3 sniff needs a valid frame header; the Azure voice list on a resource host is under `/tts`; ElevenLabs leaves `voice_settings` out when nothing is set at speed 1.0; a Google 400 is `bad_voice` only when the message says the voice does not exist or is not found (a feature the voice lacks is `bad_config`); `sonara-log` masks `sk_` keys (ElevenLabs).
 
 ### PR3 (#226, 0.17.0): cartesia, deepgram, command
 

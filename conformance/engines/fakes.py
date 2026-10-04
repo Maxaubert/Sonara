@@ -15,8 +15,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 def pcm(samples: int = 4800, value: int = 3000) -> bytes:
-    """Raw mono 16-bit little-endian samples."""
-    return struct.pack("<h", value) * samples
+    """Raw mono 16-bit little-endian samples. The first is -1 (FF FF, an MP3
+    frame sync), as near-silent neural speech often starts."""
+    return struct.pack("<h", -1) + struct.pack("<h", value) * (samples - 1)
 
 
 class Shape:

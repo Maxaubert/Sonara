@@ -75,6 +75,20 @@ impl Google {
     }
 }
 
+/// Whether a 400's message says the voice does not exist (not that it
+/// lacks a feature, such as speaking rate or SSML: a settings problem).
+fn unknown_voice(message: &str) -> bool {
+    message.contains("voice")
+        && [
+            "does not exist",
+            "not found",
+            "invalid voice name",
+            "unknown voice",
+        ]
+        .iter()
+        .any(|p| message.contains(p))
+}
+
 impl Adapter for Google {
     fn input_limit(&self) -> Limit {
         Limit::Bytes(5000)
@@ -112,7 +126,7 @@ impl Adapter for Google {
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(b64.trim())
             .map_err(|_| format("sent audioContent that is not base64"))?;
-        decode_body(&bytes, None, Some(self.sample_rate), label)
+        decode_body(&bytes, None, Some(self.sample_rate), true, label)
     }
 
     fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
@@ -127,7 +141,7 @@ impl Adapter for Google {
         let reason = match s {
             400 if raw.contains("API_KEY_INVALID") => Reason::Auth,
             401 | 403 => Reason::Auth,
-            400 if eb.mentions("voice") => Reason::BadVoice,
+            400 if unknown_voice(&message) => Reason::BadVoice,
             429 if message.contains("per day") || message.contains("billing") => Reason::Quota,
             429 => Reason::RateLimited,
             500..=599 => Reason::Server,
@@ -355,6 +369,32 @@ mod tests {
                 )
             ),
             Reason::BadConfig
+        );
+        // A setting the voice does not support is a settings problem.
+        for m in [
+            "This voice does not support speaking rate or pitch parameters at this time.",
+            "Voice 'en-US-Chirp3-HD-Kore' does not support SSML input.",
+            "Requested model name does not match the voice.",
+        ] {
+            assert_eq!(
+                err(400, google_error(400, "INVALID_ARGUMENT", m, None)),
+                Reason::BadConfig,
+                "{m}"
+            );
+        }
+        assert_eq!(
+            err(
+                400,
+                google_error(400, "INVALID_ARGUMENT", "Invalid voice name: x.", None)
+            ),
+            Reason::BadVoice
+        );
+        assert_eq!(
+            err(
+                400,
+                google_error(400, "INVALID_ARGUMENT", "Voice x not found.", None)
+            ),
+            Reason::BadVoice
         );
         assert_eq!(
             err(
