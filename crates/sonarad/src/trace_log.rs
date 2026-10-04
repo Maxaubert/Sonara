@@ -3,8 +3,8 @@
 //! answered from the log alone:
 //!
 //! - `in {json}`: every protocol message received, before it is handled
-//!   (but the read-only `get` and `voices`, and the settings page's
-//!   `hello` polls), compact: the token is never written, `options` become
+//!   (but the read-only `get`, `voices` and `engine_list`, and the
+//!   settings page's `hello` polls), compact: the token is never written, `options` become
 //!   their labels and a string over `FIELD_MAX` is clipped; `in failed
 //!   type=<t> E_...: <message>` when it was refused.
 //! - `agent <source> channel=<id> ...`: what the agent did with it
@@ -269,8 +269,8 @@ pub fn input_json(m: &Map<String, Value>, debug: bool) -> Value {
 }
 
 /// Message types never logged as `in`: read-only queries the settings page
-/// polls.
-const QUIET: &[&str] = &["get", "voices"];
+/// polls (`engine_list` every 3 s, #227).
+const QUIET: &[&str] = &["get", "voices", "engine_list"];
 
 /// Whether a message of type `kind` gets `in` lines: not `QUIET`, nor a
 /// `hello` over HTTP (the settings page's poll).
@@ -358,6 +358,17 @@ mod tests {
             failed_line("ask", "E_UNSUPPORTED", "not enabled"),
             "in failed type=ask E_UNSUPPORTED: not enabled"
         );
+    }
+
+    #[test]
+    fn the_settings_pages_engine_list_poll_is_quiet() {
+        // The page polls engine_list every 3 s (#227): no line per poll,
+        // over HTTP or TCP, while a change is still logged.
+        for http in [true, false] {
+            assert!(input_line(&map(json!({"type": "engine_list"})), http, true).is_none());
+        }
+        let add = map(json!({"type": "engine_add", "engine": {"id": "x"}}));
+        assert!(input_line(&add, true, true).is_some());
     }
 
     #[test]

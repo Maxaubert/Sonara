@@ -220,6 +220,8 @@
     .engine-result.bad { color:var(--red); }
     .eng-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
     .btn[aria-busy="true"] { opacity:.7; cursor:progress; }
+    .btn[aria-disabled="true"] { opacity:.5; cursor:not-allowed; }
+    .btn[aria-disabled="true"]:hover { color:inherit; border-color:var(--line-strong); }
     .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
     .btn.primary:hover { color:var(--on-accent); filter:brightness(1.08); }
     .btn.danger:hover { color:var(--red); border-color:var(--red); background:var(--red-wash); }
@@ -235,8 +237,46 @@
     details.more summary { cursor:pointer; padding:16px 0; font-size:14px; font-weight:600; color:var(--secondary); }
     details.more summary:hover { color:var(--text); }
     details.more .pref { margin-left:0; padding-right:0; }
-    .form-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:14px 20px; border-top:1px solid var(--line); background:var(--subtle); }
-    .form-error { margin-right:auto; color:var(--red); font-size:13px; font-weight:600; line-height:1.4; }
+    .form-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:8px; padding:14px 20px; border-top:1px solid var(--line); background:var(--subtle); }
+    .form-msgs { margin-right:auto; min-width:0; flex:1 1 240px; }
+    .form-msgs p { margin:0; font-size:13px; line-height:1.4; }
+    .form-msgs p:empty { display:none; }
+    .form-error { color:var(--red); font-weight:600; }
+    .form-status { display:flex; align-items:flex-start; gap:7px; color:var(--secondary); }
+    .form-status::before { content:''; flex:0 0 auto; width:7px; height:7px; margin-top:6px; border-radius:50%; background:var(--tertiary); }
+    .form-status.ok { color:var(--green); font-weight:600; }
+    .form-status.ok::before, .form-status.dirty::before { background:currentColor; }
+    .form-status.dirty { color:var(--accent-text); }
+    .form-status.bad { color:var(--red); }
+    .form-status.bad::before { background:var(--red); }
+    .form-status.busy::before { background:var(--accent); animation:pulse 1s ease-in-out infinite alternate; }
+    @keyframes pulse { to { opacity:.3; } }
+    /* Required fields (#227): a red star on the label, the legend says what it means. */
+    .req { color:var(--red); margin-left:3px; font-weight:700; }
+    .req[hidden] { display:none; }
+    .form-legend { margin:0; padding:12px 20px; border-bottom:1px solid var(--line); color:var(--secondary); font-size:12.5px; }
+    .form-legend .req { margin:0 2px 0 0; }
+    .form-title { display:flex; align-items:center; gap:10px; margin:28px 3px 10px; }
+    .form-title .group-label { margin:0; }
+    .form-title[hidden] { display:none; }
+    .form-title .badge { margin-left:0; }
+    .badge.ok { background:var(--green-wash); color:var(--green); border:1px solid transparent; }
+    .badge.dirty { background:var(--accent-wash); color:var(--accent-text); }
+    .field-error { display:flex; gap:6px; align-items:flex-start; margin:7px 0 0; color:var(--red); font-size:12.5px; font-weight:600; line-height:1.4; }
+    .field-error[hidden] { display:none; }
+    .field-error::before { content:'!'; flex:0 0 auto; display:grid; place-items:center; width:15px; height:15px; border-radius:50%; background:var(--red); color:var(--group); font-size:10.5px; font-weight:800; margin-top:1px; }
+    select[aria-invalid="true"] { border-color:var(--red); }
+    .field.mono { font:13px ui-monospace,"Cascadia Mono",Consolas,monospace; }
+    .btn.primary { display:inline-flex; align-items:center; gap:6px; }
+    .btn .tick { display:none; width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; }
+    .btn.primary.is-saved { background:var(--green-wash); border-color:var(--green); color:var(--green); }
+    .btn.primary.is-saved:hover { color:var(--green); filter:none; }
+    .btn.primary.is-saved .tick { display:block; }
+    .engine-line { display:flex; align-items:flex-start; gap:7px; margin-top:8px; color:var(--secondary); font-size:13px; }
+    .engine-line i { flex:0 0 auto; width:7px; height:7px; margin-top:6px; border-radius:50%; background:var(--green); }
+    .engine-line.busy i { background:var(--tertiary); }
+    .engine-line .engine-status { font-size:13px; font-weight:500; }
+    select option[value="__add"] { font-weight:600; }
     ::selection { background:var(--accent-wash); color:var(--text); }
     @media (max-width: 860px) {
       body { overflow:auto; height:auto; }
@@ -288,7 +328,7 @@
         <div class="title-row"><div><h1 id="h-speech">Speech</h1><p>How Sonara sounds when it reads aloud.</p></div><span class="state" aria-hidden="true"><i></i><span>Saved</span></span></div>
         <h2 class="group-label">Voice</h2>
         <div class="inset">
-          <div class="pref"><div class="pref-copy"><strong id="engine-label">Voice engine</strong><div class="hint">Kokoro reads. Windows' own voice stands in while Kokoro downloads or loads, or if it cannot run. Other voices are added under Engines.</div></div><div class="control"><div class="toggle-line"><span class="engine-status" id="engine-status" role="status" aria-labelledby="engine-label">&ndash;</span><button class="btn" id="engine-kokoro" type="button" hidden>Use Kokoro</button></div></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="engine-select">Voice engine</label><div class="hint">Which engine reads. Windows' own voice stands in while Kokoro downloads or loads, or when an engine cannot run.</div></div><div class="control"><select id="engine-select" aria-describedby="engine-status"></select><div class="engine-line"><i aria-hidden="true"></i><span class="engine-status" id="engine-status" role="status">&ndash;</span></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="voice-select">Voice</label><div class="hint">Which voice reads.</div></div><div class="control"><div class="voice"><select id="voice-select" aria-describedby="voice-hint"></select><button class="play" id="voice-preview" type="button" aria-label="Preview the selected voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg></button></div><div class="hint" id="voice-hint">Play a short sample before choosing. It plays over anything being read, without changing it.</div><div class="hint" id="voice-saved" hidden></div></div></div>
           <div class="pref"><div class="pref-copy"><label class="title" for="rate">Speaking rate</label><div class="hint">Words per minute.</div></div><div class="control"><div class="range-head"><span>Rate</span><output id="rate-out" for="rate">200 wpm</output></div><input id="rate" type="range" min="100" max="400" step="5" value="200" aria-describedby="rate-hint"><div class="ends" aria-hidden="true"><span>100</span><span>400</span></div><div class="hint" id="rate-hint">Higher values keep technical prose moving. Applies from the next sentence.</div></div></div>
         </div>
@@ -310,23 +350,29 @@
         </div>
         <div class="list-actions"><p class="hint" style="margin:0">An engine reads only once you choose Use. Kokoro stays the stand-in: if an engine fails, Kokoro reads that sentence and says once why.</p><button class="btn" id="engine-new" type="button">Add an engine</button></div>
         <p class="hint" id="engines-command-note" style="margin:0;padding:8px 4px 0">A program on this PC, such as Piper, is never set up here: it runs a program, so only you add it, with <span class="path" style="white-space:nowrap">sonara.exe engines add &lt;name&gt; --kind command</span> or in <span class="path">engines.json</span>. Once added, it shows up here to use, test or remove.</p>
-        <h2 class="group-label" id="ef-title" hidden>Add an engine</h2>
-        <form class="inset" id="engine-form" aria-labelledby="ef-title" novalidate hidden>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-kind">Kind</label><div class="hint">Who makes the speech.</div></div><div class="control"><select id="ef-kind"></select></div></div>
-          <div class="pref" id="ef-preset-row"><div class="pref-copy"><label class="title" for="ef-preset">Server</label><div class="hint">OpenAI itself, or a server that speaks its API.</div></div><div class="control"><select id="ef-preset"></select></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-id">Name</label><div class="hint">Short and unique: a to z, 0 to 9, - and _. The <span class="path">sonara engines</span> commands use it.</div></div><div class="control"><input class="field" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" required></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-label">Label</label><div class="hint">What Sonara calls it, here and when it says it cannot reach it.</div></div><div class="control"><input class="field" id="ef-label" type="text" maxlength="40" autocomplete="off"></div></div>
-          <div class="pref" id="ef-url-row"><div class="pref-copy"><label class="title" for="ef-url">Address</label><div class="hint" id="ef-url-hint">The server's address.</div></div><div class="control"><input class="field" id="ef-url" type="url" autocomplete="off" spellcheck="false" aria-describedby="ef-url-hint"></div></div>
-          <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model">Model</label><div class="hint">Empty uses the default shown.</div></div><div class="control"><input class="field" id="ef-model" type="text" autocomplete="off" spellcheck="false"></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice</label><div class="hint" id="ef-voice-hint">The engine's voices are listed once it is saved.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Other voice id" placeholder="Voice id" hidden></div></div></div>
-          <div class="pref"><div class="pref-copy"><label class="title" for="ef-keyref">Key</label><div class="hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="Key" aria-describedby="ef-key-hint" placeholder="Paste the key"><input class="field" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
+        <div class="form-title" id="ef-head" hidden><h2 class="group-label" id="ef-title">Add an engine</h2><span class="badge quiet" id="ef-badge"></span></div>
+        <form class="inset" id="engine-form" aria-labelledby="ef-title" aria-describedby="ef-legend" novalidate hidden>
+          <p class="form-legend" id="ef-legend"><span class="req" aria-hidden="true">*</span> Required field</p>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-kind">Provider<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-kind-hint">Who makes the speech: a cloud service, or a speech server on this PC.</div></div><div class="control"><select id="ef-kind" aria-required="true" aria-describedby="ef-kind-hint"></select></div></div>
+          <div class="pref" id="ef-preset-row"><div class="pref-copy"><label class="title" for="ef-preset">Server<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-preset-hint">OpenAI itself, or a server that speaks its API.</div></div><div class="control"><select id="ef-preset" aria-required="true" aria-describedby="ef-preset-hint"></select></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-label">Label<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-label-hint">The name you see in Sonara, and hear when it cannot reach this engine.</div></div><div class="control"><input class="field" id="ef-label" type="text" maxlength="40" autocomplete="off" aria-required="true" aria-describedby="ef-label-hint"></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-id">ID<span class="req" aria-hidden="true">*</span></label><div class="hint" id="ef-id-hint">Made from the label; change it if you like. Lowercase a to z, 0 to 9, - and _. The <span class="path">sonara engines</span> commands use it.</div></div><div class="control"><input class="field mono" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-required="true" aria-describedby="ef-id-hint"></div></div>
+          <div class="pref" id="ef-url-row"><div class="pref-copy"><label class="title" for="ef-url">Address<span class="req" id="ef-url-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-url-hint">The server's address.</div></div><div class="control"><input class="field" id="ef-url" type="url" autocomplete="off" spellcheck="false" aria-describedby="ef-url-hint"></div></div>
+          <div class="pref" id="ef-key-row"><div class="pref-copy"><label class="title" for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-keyref-hint">Kept in Windows Credential Manager, never in a file. It leaves this PC only to the provider.</div></div><div class="control"><div class="field-pair"><select id="ef-keyref" aria-label="Where the key comes from" aria-describedby="ef-keyref-hint"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="field" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" aria-describedby="ef-key-hint" placeholder="Paste the key&hellip;"><input class="field mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" aria-describedby="ef-key-hint" placeholder="OPENAI_API_KEY" hidden></div><div class="hint" id="ef-key-hint"></div></div></div>
+          <div class="pref" id="ef-model-row"><div class="pref-copy"><label class="title" for="ef-model">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-model-hint">Empty uses the default shown.</div></div><div class="control"><input class="field" id="ef-model" type="text" autocomplete="off" spellcheck="false" aria-describedby="ef-model-hint"></div></div>
+          <div class="pref"><div class="pref-copy"><label class="title" for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="hint" id="ef-voice-about">Which of the engine's voices reads.</div></div><div class="control"><div class="field-pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="field mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id&hellip;" hidden></div><div class="hint" id="ef-voice-hint" aria-live="polite"></div></div></div>
           <div id="ef-kind-fields"></div>
           <details class="more"><summary>More options</summary>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default"><span aria-hidden="true">ms</span></div></div></div>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-prefetch">Read ahead</label><div class="hint">Sentences prepared ahead of the one playing, 1 to 4. More hides a slow connection.</div></div><div class="control"><input class="field" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default"></div></div>
-            <div class="pref"><div class="pref-copy"><label class="title" for="ef-options">Other options</label><div class="hint">A JSON object with the kind's further options (see the README).</div></div><div class="control"><textarea class="field" id="ef-options" spellcheck="false" placeholder="{}"></textarea></div></div>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-timeout">Timeout</label><div class="hint" id="ef-timeout-hint">Longest wait for one sentence before Kokoro reads it instead.</div></div><div class="control"><div class="unit"><input class="field" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default" aria-describedby="ef-timeout-hint"><span aria-hidden="true">ms</span></div></div></div>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-prefetch">Read ahead</label><div class="hint" id="ef-prefetch-hint">Sentences prepared ahead of the one playing, 1 to 4. More hides a slow connection.</div></div><div class="control"><input class="field" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default" aria-describedby="ef-prefetch-hint"></div></div>
+            <div class="pref"><div class="pref-copy"><label class="title" for="ef-options">Other options</label><div class="hint" id="ef-options-hint">A JSON object with the provider's further options (see the README).</div></div><div class="control"><textarea class="field" id="ef-options" spellcheck="false" placeholder="{}" aria-describedby="ef-options-hint"></textarea></div></div>
           </details>
-          <div class="form-actions"><span class="form-error" id="ef-error" role="alert"></span><button class="btn" id="ef-cancel" type="button">Close</button><button class="btn primary" id="ef-save" type="submit">Save</button></div>
+          <div class="form-actions">
+            <div class="form-msgs"><p class="form-status" id="ef-status" role="status" aria-live="polite"></p><p class="form-error" id="ef-error" role="alert"></p></div>
+            <button class="btn" id="ef-test" type="button" aria-describedby="ef-test-why">Test saved engine</button><span class="sr-only" id="ef-test-why"></span>
+            <button class="btn" id="ef-cancel" type="button">Close</button>
+            <button class="btn primary" id="ef-save" type="submit"><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span id="ef-save-text">Save engine</span></button>
+          </div>
         </form>
         <p class="hint" style="padding:12px 4px">A cloud engine receives the text Sonara reads aloud, under that provider's terms. Nothing is sent before you choose Use. A server or program on this PC keeps the text here.</p>
       </section>
@@ -534,13 +580,13 @@ function showState(msg, error) {
 let state = {};
 let mutationSeq = 0;   // a poll that started before a change never overwrites it
 
-async function change(key, value, label) {
+async function change(key, value, label, done) {
   try {
     const v = await put(key, value);
     mutationSeq++;
     state[key] = v;
     render();
-    showState(label ? label + " saved" : "Saved");
+    showState(done || (label ? label + " saved" : "Saved"));
     return v;
   } catch (e) {
     showState(e instanceof ApiError ? e.message : "Could not reach the runtime", true);
@@ -565,6 +611,14 @@ async function refresh() {
   let engs = null;
   if ((hello.capabilities || []).includes("engines")) {
     try { engs = await call("engine_list", {}); } catch (e) {}
+  }
+  // An added engine's voices (its list, fetched when old) follow it.
+  const cur = got[KEYS.indexOf("engine")];
+  if (engs && cur.status === "fulfilled" && engs.engines.some(e => e.id === cur.value)) {
+    try {
+      const own = (await call("voices", {engine: cur.value})).voices;
+      vs = vs.filter(v => v.engine !== cur.value).concat(own);
+    } catch (e) {}
   }
   if (seq !== mutationSeq) return;
   engineData = engs;
@@ -701,12 +755,13 @@ function render() {
   if (!enginesOn && engNav.getAttribute("aria-current") === "page") showPage("speech");
   if (enginesOn) renderEngines();
 
-  // Speech: the engine is Kokoro (#214); the page shows how it is doing.
-  // An engine picked before #214 (or by an app) gets a way back to Kokoro.
+  // Speech: the engine picker (#227) lists the built-in engines and the
+  // added ones, then "Add new engine"; the line below says how it is doing.
+  renderEnginePicker(enginesOn);
   const st = s.runtime && s.runtime.engine_status;
   setText("engine-status", engineText(st));
   $("engine-status").classList.toggle("busy", !!st && !st.ready);
-  $("engine-kokoro").hidden = !s.engine || s.engine === "kokoro" || !voices.some(v => v.engine === "kokoro");
+  $("engine-status").parentNode.classList.toggle("busy", !!st && !st.ready);
   const vopts = voiceOptions(s.engine, true);
   if (s.voice && !vopts.some(o => o[0] === s.voice)) vopts.push([s.voice, s.voice]);
   fillSelect($("voice-select"), vopts, s.voice || "");
@@ -1239,7 +1294,57 @@ async function removeEngine(v) {
 }
 
 // ---- the add/edit form ---------------------------------------------------
+// What the form calls each provider: the label a new engine starts with.
+const PROVIDER_NAMES = {elevenlabs: "ElevenLabs", azure: "Azure Speech", google: "Google Text-to-Speech",
+                        cartesia: "Cartesia", deepgram: "Deepgram"};
+const RESERVED_IDS = ["kokoro", "onecore", "fake"];
+const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+// Fields whose change can change the voice list (it loads before a save).
+const VOICE_INPUTS = ["ef-url", "ef-key", "ef-keyenv", "ef-model", "ef-opt-region"];
+const formState = {
+  auto: {label: true, id: true},   // the label and ID still follow the provider
+  dirty: false,                    // changed since it was opened or saved
+  busy: false,
+  voicesSeq: 0,
+  voicesTimer: null,
+};
+
 function optionText(v) { return v == null ? "" : Array.isArray(v) ? v.join("\n") : String(v); }
+
+function providerName() {
+  const kind = $("ef-kind").value;
+  if (kind === "openai-compatible") {
+    const preset = $("ef-preset").value;
+    return preset === "generic" ? "Speech server" : (PRESETS[preset] || {}).name || "Speech server";
+  }
+  return PROVIDER_NAMES[kind] || KIND_NAMES[kind] || kind;
+}
+
+// "ElevenLabs'" and "OpenAI's".
+function possessive(name) { return name + (/s$/i.test(name) ? "'" : "'s"); }
+
+// The ID made from a label: lowercase, a-z 0-9 - _ only, unique.
+function slugify(text) {
+  let s = String(text || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .replace(/[\s./\\:]+/g, "-").replace(/[^a-z0-9_-]/g, "")
+    .replace(/[-_]{2,}/g, m => m[0]).replace(/^[-_]+|[-_]+$/g, "");
+  if (!s) s = "engine";
+  if (RESERVED_IDS.includes(s) || s.startsWith("sonara")) s = "my-" + s;
+  return s.slice(0, 32).replace(/[-_]+$/, "");
+}
+function uniqueId(base) {
+  const taken = new Set(engineData ? engineData.engines.map(e => e.id) : []);
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    const suffix = "-" + n;
+    const id = base.slice(0, 32 - suffix.length).replace(/[-_]+$/, "") + suffix;
+    if (!taken.has(id)) return id;
+  }
+}
+function syncAutoId() {
+  if (editing || !formState.auto.id) return;
+  $("ef-id").value = uniqueId(slugify($("ef-label").value.trim() || providerName()));
+}
 
 function buildKindFields(kind, options) {
   const box = $("ef-kind-fields");
@@ -1250,7 +1355,9 @@ function buildKindFields(kind, options) {
     const lab = el("label", "title", f.label);
     lab.htmlFor = "ef-opt-" + f.key;
     copy.appendChild(lab);
-    if (f.hint) copy.appendChild(el("div", "hint", f.hint));
+    const hint = el("div", "hint", f.hint || "Optional.");
+    hint.id = "ef-opt-" + f.key + "-hint";
+    copy.appendChild(hint);
     const ctl = el("div", "control");
     let input;
     if (f.type === "select") {
@@ -1270,6 +1377,7 @@ function buildKindFields(kind, options) {
       input.spellcheck = false;
     }
     input.id = "ef-opt-" + f.key;
+    input.setAttribute("aria-describedby", hint.id);
     const value = optionText(options[f.key]);
     if (f.type === "select" && value && !f.choices.some(c => c[0] === value)) {
       // A value set elsewhere (the CLI, for example) stays through an edit.
@@ -1289,6 +1397,49 @@ function keyDefault(kind, preset) {
   return "credman";
 }
 
+// ---- what is required now -------------------------------------------------
+function needsKey() {
+  const kind = $("ef-kind").value;
+  return kind === "openai-compatible" ? !!(PRESETS[$("ef-preset").value] || {}).key : !!(KINDS[kind] || {}).key;
+}
+function savedKey() {
+  return !!(editing && engineData && (engineData.engines.find(e => e.id === editing) || {}).key_present);
+}
+// A new engine needs its key; an edit may leave a missing key for later
+// (its row says it needs one).
+function keyRequiredNow() {
+  return !editing && $("ef-keyref").value === "credman" && needsKey();
+}
+function urlRequired() {
+  return $("ef-kind").value === "openai-compatible" && !(PRESETS[$("ef-preset").value] || {}).url;
+}
+function modelRequired() {
+  const p = $("ef-preset").value;
+  return $("ef-kind").value === "openai-compatible" && (p === "localai" || p === "speaches");
+}
+function voiceRequired() {
+  const kind = $("ef-kind").value;
+  return Object.prototype.hasOwnProperty.call(VOICE_EXAMPLES, kind) ||
+    (kind === "openai-compatible" && $("ef-preset").value === "chatterbox-server");
+}
+function markRequired(input, on) {
+  if (on) input.setAttribute("aria-required", "true");
+  else input.removeAttribute("aria-required");
+}
+function syncRequired() {
+  const env = $("ef-keyref").value === "env";
+  $("ef-url-req").hidden = !urlRequired();
+  markRequired($("ef-url"), urlRequired());
+  $("ef-model-req").hidden = !modelRequired();
+  markRequired($("ef-model"), modelRequired());
+  $("ef-key-req").hidden = !(keyRequiredNow() || env);
+  markRequired($("ef-key"), keyRequiredNow());
+  markRequired($("ef-keyenv"), env);
+  $("ef-voice-req").hidden = !voiceRequired();
+  markRequired($("ef-voice"), voiceRequired());
+  markRequired($("ef-voice-other"), voiceRequired());
+}
+
 function syncFormRows(prevPreset) {
   const kind = $("ef-kind").value;
   const k = KINDS[kind] || {};
@@ -1305,11 +1456,14 @@ function syncFormRows(prevPreset) {
     if ((old && url.value === old) || (!editing && url.value === "")) url.value = editing ? "" : pr.url || "";
     url.placeholder = pr.url || "http://127.0.0.1:8000/v1";
     $("ef-model").placeholder = pr.model ? "Default: " + pr.model : "Required by this server";
-    setText("ef-url-hint", preset === "openai" ? "OpenAI's address. Change it only for a proxy." : "The server's address, with /v1.");
+    setText("ef-url-hint", preset === "openai" ? "OpenAI's address. Change it only for a proxy."
+      : pr.url ? "The server's address, with /v1. The usual one is filled in." : "The server's address, with /v1, such as http://127.0.0.1:8000/v1.");
+    setText("ef-model-hint", pr.model ? "Empty uses " + pr.model + "." : "The model name the server runs.");
   } else {
     $("ef-url").placeholder = typeof k.url === "string" ? k.url : "";
     $("ef-model").placeholder = k.model ? "Default: " + k.model : "";
-    setText("ef-url-hint", kind === "azure" ? "Optional: your resource's endpoint, instead of the region." : "Empty uses the provider's own address.");
+    setText("ef-url-hint", kind === "azure" ? "Optional: your resource's endpoint, instead of the region." : "Optional. Empty uses " + possessive(providerName()) + " own address.");
+    setText("ef-model-hint", k.model ? "Empty uses " + k.model + "." : "Empty uses the default shown.");
   }
   syncKeyRow();
 }
@@ -1318,18 +1472,28 @@ function syncKeyRow() {
   const ref = $("ef-keyref").value;
   $("ef-key").hidden = ref !== "credman";
   $("ef-keyenv").hidden = ref !== "env";
-  const saved = editing && engineData && (engineData.engines.find(e => e.id === editing) || {}).key_present;
+  const saved = savedKey();
   setText("ef-key-hint", ref === "credman"
-    ? (editing ? (saved ? "Leave empty to keep the saved key; another address or region needs the key again." : "No key saved yet. Leave empty to keep the saved key once there is one.") : "Paste the key from the provider's site.")
+    ? (editing ? (saved ? "Leave empty to keep the saved key; another address or region needs the key again." : "No key saved yet. Leave empty to keep the saved key once there is one.")
+      : needsKey() ? "Paste the key from " + possessive(providerName()) + " site. Its voices load as soon as the key is in." : "Only if the server asks for one.")
     : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY. It goes only to the provider's own address, or to one confirmed as key_origin in engines.json."
     : "For a server on this PC that needs none.");
+  syncRequired();
 }
 
+// ---- the voice list, before and after a save -------------------------------
 function fillVoiceSelect(list, current, fallbackDefault) {
   const sel = $("ef-voice");
-  const opts = [["", fallbackDefault ? "Default (" + fallbackDefault + ")" : "Default"]];
-  for (const v of list) opts.push([v.id, v.name && v.name !== v.id ? v.name + " (" + v.id + ")" : v.id + (v.language ? " (" + v.language + ")" : "")]);
+  const prov = providerName();
+  // The provider's name on every voice, so "Adam (ElevenLabs)" is never
+  // taken for a Kokoro voice of the same name.
+  const opts = [voiceRequired()
+    ? ["", list.length ? "Choose a voice" : "Choose a voice (none listed yet)"]
+    : ["", fallbackDefault ? "Default (" + fallbackDefault + ", " + prov + ")" : "Default"]];
+  for (const v of list) opts.push([v.id, (v.name || v.id) + " (" + prov + ")"]);
   opts.push(["__other", "Other voice id…"]);
+  // A list that arrives while the user is typing another id keeps it open.
+  const typing = sel.value === "__other" && !current;
   sel.textContent = "";
   for (const [value, text] of opts) {
     const o = el("option", null, text);
@@ -1337,44 +1501,13 @@ function fillVoiceSelect(list, current, fallbackDefault) {
     sel.appendChild(o);
   }
   const listed = !current || list.some(v => v.id === current);
-  sel.value = !current ? "" : listed ? current : "__other";
+  sel.value = typing ? "__other" : !current ? "" : listed ? current : "__other";
   $("ef-voice-other").value = listed ? "" : current;
   $("ef-voice-other").hidden = sel.value !== "__other";
 }
 
-function voiceRequired() {
-  return Object.prototype.hasOwnProperty.call(VOICE_EXAMPLES, $("ef-kind").value);
-}
-
-// A new profile of a kind that needs a voice asks for its id directly.
-function voiceForNew() {
-  if (editing) return;
-  if (voiceRequired() && !chosenVoice()) {
-    $("ef-voice").value = "__other";
-    $("ef-voice-other").hidden = false;
-  }
-  setText("ef-voice-hint", voiceRequired()
-    ? "A voice id is required now, such as " + VOICE_EXAMPLES[$("ef-kind").value] + ". Its voices are listed once it is saved."
-    : "The engine's voices are listed once it is saved.");
-}
-
 function defaultVoice() {
   return $("ef-kind").value === "openai-compatible" ? (PRESETS[$("ef-preset").value] || {}).voice : null;
-}
-
-async function loadVoices(id) {
-  const cur = chosenVoice();
-  setText("ef-voice-hint", "Fetching the voices…");
-  try {
-    const r = await call("voices", {engine: id, refresh: true});
-    if (editing !== id) return;
-    fillVoiceSelect(r.voices, chosenVoice() || cur, defaultVoice());
-    setText("ef-voice-hint", r.error
-      ? "Could not fetch the voices: " + r.error.message + " A voice id still works through Other."
-      : r.voices.length ? "Its voices, or any other id it accepts (a cloned voice, for example)." : "It lists no voices: enter the voice id.");
-  } catch (e) {
-    setText("ef-voice-hint", e instanceof ApiError ? e.message : "Could not reach the runtime");
-  }
 }
 
 function chosenVoice() {
@@ -1382,16 +1515,187 @@ function chosenVoice() {
   return v === "__other" ? $("ef-voice-other").value.trim() : v;
 }
 
+function scheduleVoices() {
+  clearTimeout(formState.voicesTimer);
+  formState.voicesTimer = setTimeout(loadFormVoices, 450);
+}
+
+// The engine's voices: of the saved profile when editing (and no new key
+// is typed), else of the form as it is now (protocol 1.4 `voices` with
+// `profile`, nothing saved), so a voice id is never needed up front.
+async function loadFormVoices() {
+  clearTimeout(formState.voicesTimer);
+  const seq = ++formState.voicesSeq;
+  const kind = $("ef-kind").value;
+  const ref = $("ef-keyref").value;
+  const key = $("ef-key").value.trim();
+  const prov = providerName();
+  let msg;
+  let wait = "";
+  if (editing && !(ref === "credman" && key)) {
+    msg = {engine: editing, refresh: true};
+  } else if (kind !== "openai-compatible" && ref === "credman" && !key) {
+    wait = "Enter the API key above and " + possessive(prov) + " voices appear here.";
+  } else if (ref === "env" && !$("ef-keyenv").value.trim()) {
+    wait = "Name the environment variable above and " + possessive(prov) + " voices appear here.";
+  } else if (kind === "azure" && !$("ef-url").value.trim() && !(($("ef-opt-region") || {}).value || "").trim()) {
+    wait = "Enter the region below and the voices appear here.";
+  } else if (urlRequired() && !$("ef-url").value.trim()) {
+    wait = "Enter the server's address and its voices appear here.";
+  } else {
+    const p = collectProfile();
+    delete p.id;
+    delete p.voice;
+    msg = {profile: p};
+    if (ref === "credman" && key) msg.secret = key;
+  }
+  if (wait) {
+    fillVoiceSelect([], chosenVoice(), defaultVoice());
+    setText("ef-voice-hint", wait);
+    return;
+  }
+  setText("ef-voice-hint", "Fetching " + possessive(prov) + " voices…");
+  try {
+    const r = await call("voices", msg);
+    if (seq !== formState.voicesSeq) return;
+    fillVoiceSelect(r.voices, chosenVoice(), defaultVoice());
+    setText("ef-voice-hint", r.error
+      ? "Could not fetch the voices: " + r.error.message + " A voice id still works through Other voice id."
+      : r.voices.length ? r.voices.length + (r.voices.length === 1 ? " voice" : " voices") + " from " + prov + ". For one it does not list (a cloned voice), choose Other voice id."
+      : "It lists no voices: choose Other voice id and enter one.");
+  } catch (e) {
+    if (seq !== formState.voicesSeq) return;
+    setText("ef-voice-hint", (e instanceof ApiError ? "Could not fetch the voices: " + e.message : "Could not reach the runtime.") + " A voice id still works through Other voice id.");
+  }
+}
+
+// ---- errors next to their field, and the form's state ------------------------
+function fieldName(input) {
+  const lab = document.querySelector('#engine-form label[for="' + input.id + '"]');
+  return (lab ? lab.textContent : input.getAttribute("aria-label") || input.id).replace("*", "").trim();
+}
+function setFieldError(input, msg) {
+  const ctl = input.closest(".control");
+  let n = ctl.querySelector(".field-error");
+  if (!n) {
+    n = el("p", "field-error");
+    n.id = input.id + "-err";
+    ctl.appendChild(n);
+  }
+  n.textContent = msg || "";
+  n.hidden = !msg;
+  const ids = (input.getAttribute("aria-describedby") || "").split(/\s+/).filter(x => x && x !== n.id);
+  if (msg) {
+    ids.unshift(n.id);
+    input.setAttribute("aria-invalid", "true");
+  } else {
+    input.removeAttribute("aria-invalid");
+  }
+  if (ids.length) input.setAttribute("aria-describedby", ids.join(" "));
+  else input.removeAttribute("aria-describedby");
+}
+function showErrors(errors, summary) {
+  document.querySelectorAll("#engine-form [aria-invalid]").forEach(n => setFieldError(n, ""));
+  document.querySelectorAll("#engine-form .field-error").forEach(n => { n.textContent = ""; n.hidden = true; });
+  for (const [input, msg] of errors) setFieldError(input, msg);
+  setText("ef-error", summary || "");
+  if (errors.length) {
+    const first = errors[0][0];
+    const more = first.closest("details");
+    if (more) more.open = true;
+    first.focus();
+  }
+}
+// Kept for callers of the older form: one message, on one field or none.
 function setFormError(msg, field) {
-  setText("ef-error", msg || "");
-  document.querySelectorAll("#engine-form [aria-invalid]").forEach(n => n.removeAttribute("aria-invalid"));
-  if (field) { field.setAttribute("aria-invalid", "true"); field.focus(); }
+  showErrors(field ? [[field, msg]] : [], msg);
+}
+function setFormStatus(text, cls) {
+  const n = $("ef-status");
+  n.className = "form-status" + (cls ? " " + cls : "");
+  setText("ef-status", text || "");
+}
+
+function syncSaveState() {
+  const saved = !!editing && !formState.dirty;
+  $("ef-save").classList.toggle("is-saved", saved);
+  setText("ef-save-text", formState.busy ? "Saving…" : saved ? "Saved" : editing ? "Save changes" : "Save engine");
+  const badge = $("ef-badge");
+  badge.className = "badge " + (saved ? "ok" : editing ? "dirty" : "quiet");
+  setText("ef-badge", saved ? "Saved" : editing ? "Unsaved changes" : "Not saved yet");
+  // Test always uses the saved engine: it waits for a save.
+  const why = !editing ? "Save the engine first, then test it."
+    : formState.dirty ? "Save your changes first: Test uses the saved engine." : "";
+  const t = $("ef-test");
+  if (why) t.setAttribute("aria-disabled", "true");
+  else t.removeAttribute("aria-disabled");
+  t.title = why;
+  setText("ef-test-why", why);
+}
+
+function markDirty() {
+  if (formState.dirty || $("engine-form").hidden) return;
+  formState.dirty = true;
+  if (editing) setFormStatus("Unsaved changes. Save to use them.", "dirty");
+  syncSaveState();
+}
+
+function validate() {
+  const errs = [];
+  if (!$("ef-label").value.trim()) errs.push([$("ef-label"), "Give the engine a label, such as " + providerName() + "."]);
+  if (!editing) {
+    const id = $("ef-id").value.trim();
+    if (!id) errs.push([$("ef-id"), "Give the engine an ID."]);
+    else if (!ID_RE.test(id)) errs.push([$("ef-id"), "Use only a to z, 0 to 9, - and _, starting with a letter or digit."]);
+    else if (RESERVED_IDS.includes(id) || id.startsWith("sonara")) errs.push([$("ef-id"), "This ID belongs to Sonara itself. Pick another one."]);
+    else if (engineData && engineData.engines.some(e => e.id === id)) errs.push([$("ef-id"), "Another engine has this ID. Pick another one."]);
+  }
+  if (!$("ef-url-row").hidden) {
+    const url = $("ef-url").value.trim();
+    if (!url && urlRequired()) errs.push([$("ef-url"), "Enter the server's address, such as http://127.0.0.1:8000/v1."]);
+    else if (url && !/^https?:\/\/[^\s/]+/i.test(url)) errs.push([$("ef-url"), "Start the address with https://, or http:// for a server on this PC."]);
+  }
+  const ref = $("ef-keyref").value;
+  if (ref === "credman" && keyRequiredNow() && !$("ef-key").value.trim()) errs.push([$("ef-key"), "Paste the API key from " + possessive(providerName()) + " site."]);
+  if (ref === "env" && !$("ef-keyenv").value.trim()) errs.push([$("ef-keyenv"), "Name the environment variable that holds the key."]);
+  if (!$("ef-model-row").hidden && modelRequired() && !$("ef-model").value.trim()) errs.push([$("ef-model"), "This server needs a model name."]);
+  if (voiceRequired() && !chosenVoice()) {
+    errs.push([$("ef-voice").value === "__other" ? $("ef-voice-other") : $("ef-voice"), "Pick a voice, or choose Other voice id and enter one."]);
+  }
+  const raw = $("ef-options").value.trim();
+  if (raw) {
+    let o = null;
+    try { o = JSON.parse(raw); } catch (e) {}
+    if (!o || typeof o !== "object" || Array.isArray(o)) errs.push([$("ef-options"), "Other options must be a JSON object, such as {\"allow_http\": true}."]);
+  }
+  return errs;
+}
+
+// The field a runtime refusal is about, to show it there too.
+function fieldForMessage(msg) {
+  const m = msg.toLowerCase();
+  const rules = [[/engine id|'id'|built-in engine|exists; send replace/, "ef-id"], [/voice/, "ef-voice"],
+                 [/environment variable|key_ref/, "ef-keyenv"], [/\bkey\b|secret/, "ef-key"],
+                 [/'url'|address|\burl\b/, "ef-url"], [/model/, "ef-model"], [/label/, "ef-label"],
+                 [/region/, "ef-opt-region"], [/timeout_ms/, "ef-timeout"], [/prefetch/, "ef-prefetch"],
+                 [/option/, "ef-options"]];
+  for (const [re, id] of rules) {
+    let n = $(id);
+    if (!re.test(m) || !n || n.hidden || n.closest("[hidden]")) continue;
+    if (id === "ef-voice" && n.value === "__other") n = $("ef-voice-other");
+    if (n.disabled) continue;
+    return n;
+  }
+  return null;
 }
 
 function openForm(v) {
-  editing = v ? v.id : null;
-  const opts = Object.assign({}, (v && v.options) || {});
   if (v && LOCAL_ONLY_KINDS.includes(v.kind)) return;
+  editing = v ? v.id : null;
+  formState.auto = {label: !v, id: !v};
+  formState.dirty = false;
+  formState.busy = false;
+  const opts = Object.assign({}, (v && v.options) || {});
   const kinds = (engineData ? engineData.kinds : Object.keys(KINDS)).filter(k => !LOCAL_ONLY_KINDS.includes(k));
   const presets = engineData ? engineData.presets : Object.keys(PRESETS);
   fillSelect($("ef-kind"), kinds.map(k => [k, KIND_NAMES[k] || k]), v ? v.kind : "openai-compatible");
@@ -1400,7 +1704,8 @@ function openForm(v) {
   $("ef-preset").value = opts.preset || (v ? "generic" : "openai");
   $("ef-id").value = v ? v.id : "";
   $("ef-id").disabled = !!v;
-  $("ef-label").value = v && v.label ? v.label : "";
+  $("ef-label").value = v ? v.label || v.id : providerName();
+  syncAutoId();
   // Only what the profile sets itself: the defaults (a preset's address, an
   // Azure region's endpoint) stay defaults through an edit.
   const ex = v ? (v.explicit || v) : {};
@@ -1417,29 +1722,40 @@ function openForm(v) {
   buildKindFields($("ef-kind").value, (v && v.options) || {});
   lastPreset = $("ef-preset").value;
   syncFormRows(lastPreset);
+  $("ef-voice").value = "";
   fillVoiceSelect([], ex.voice || "", defaultVoice());
-  setText("ef-voice-hint", "The engine's voices are listed once it is saved.");
-  voiceForNew();
   setText("ef-title", v ? "Edit " + (v.label || v.id) : "Add an engine");
-  setFormError("");
-  $("ef-title").hidden = false;
+  showErrors([], "");
+  setFormStatus("");
+  syncSaveState();
+  $("ef-head").hidden = false;
   $("engine-form").hidden = false;
-  (v ? $("ef-label") : $("ef-kind")).focus();
-  if (v) loadVoices(v.id);
+  $("ef-head").scrollIntoView({block: "start"});
+  (v ? $("ef-label") : $("ef-kind")).focus({preventScroll: true});
+  loadFormVoices();
 }
 
 function closeForm() {
   editing = null;
+  formState.dirty = false;
+  clearTimeout(formState.voicesTimer);
+  formState.voicesSeq++;
   $("ef-key").value = "";
   $("engine-form").hidden = true;
-  $("ef-title").hidden = true;
+  $("ef-head").hidden = true;
+}
+function closeFormAsked() {
+  if (formState.dirty && !confirm("Close without saving your changes?")) return;
+  closeForm();
+  $("engine-new").focus();
 }
 
+// The profile as the form has it now (checked by `validate`, or a draft for
+// the voice list).
 function collectProfile() {
   const kind = $("ef-kind").value;
   const k = KINDS[kind] || {};
   const p = {id: (editing || $("ef-id").value.trim()), kind};
-  if (!p.id) throw [new Error("Give the engine a name."), $("ef-id")];
   const label = $("ef-label").value.trim();
   if (label) p.label = label;
   // A value equal to the preset's default is left out, so it stays a default.
@@ -1451,20 +1767,12 @@ function collectProfile() {
   const voice = chosenVoice();
   if (voice) p.voice = voice;
   const ref = $("ef-keyref").value;
-  if (ref === "env") {
-    const name = $("ef-keyenv").value.trim();
-    if (!name) throw [new Error("Name the environment variable that holds the key."), $("ef-keyenv")];
-    p.key_ref = "env:" + name;
-  } else {
-    p.key_ref = ref;
-  }
+  p.key_ref = ref === "env" ? "env:" + $("ef-keyenv").value.trim() : ref;
   let options = {};
   const raw = $("ef-options").value.trim();
   if (raw) {
-    try { options = JSON.parse(raw); } catch (e) { options = null; }
-    if (!options || typeof options !== "object" || Array.isArray(options)) {
-      throw [new Error("Other options must be a JSON object, such as {\"allow_http\": true}."), $("ef-options")];
-    }
+    try { options = JSON.parse(raw); } catch (e) { options = {}; }
+    if (!options || typeof options !== "object" || Array.isArray(options)) options = {};
   }
   if (kind === "openai-compatible") options.preset = $("ef-preset").value;
   for (const f of KIND_FIELDS[kind] || []) {
@@ -1485,37 +1793,72 @@ function collectProfile() {
 
 $("engine-form").addEventListener("submit", async e => {
   e.preventDefault();
-  const btn = $("ef-save");
-  if (btn.getAttribute("aria-busy") === "true") return;
-  let profile;
-  try { profile = collectProfile(); } catch (err) {
-    const [error, field] = Array.isArray(err) ? err : [err, null];
-    setFormError(error.message, field);
+  if (formState.busy) return;
+  const errs = validate();
+  if (errs.length) {
+    showErrors(errs, errs.length === 1
+      ? "Not saved. Check " + fieldName(errs[0][0]) + "."
+      : "Not saved. Check the " + errs.length + " marked fields: " + errs.map(x => fieldName(x[0])).join(", ") + ".");
     return;
   }
-  setFormError("");
+  showErrors([], "");
+  const profile = collectProfile();
   const msg = {engine: profile};
   if (editing) msg.replace = true;
   const key = $("ef-key").value;
   if (key && profile.key_ref === "credman") msg.secret = key;
+  const btn = $("ef-save");
+  formState.busy = true;
   btn.setAttribute("aria-busy", "true");
+  syncSaveState();
   try {
     const r = await call("engine_add", msg);
     // The key is stored by the runtime; it never comes back into the page.
     $("ef-key").value = "";
     const wasNew = !editing;
     editing = r.engine.id;
+    formState.dirty = false;
+    formState.auto = {label: false, id: false};
     $("ef-id").disabled = true;
-    setText("ef-title", "Edit " + (r.engine.label || r.engine.id));
-    showState((r.engine.label || r.engine.id) + " saved");
+    const name = r.engine.label || r.engine.id;
+    setText("ef-title", "Edit " + name);
     await loadEngines();
     syncKeyRow();
-    if (wasNew) loadVoices(r.engine.id);
+    const where = state.engine === editing ? " It reads from the next sentence."
+      : " Choose it under Voice engine on the Speech page, or test it here.";
+    setFormStatus((wasNew ? name + " is saved." : "Changes to " + name + " are saved.") + where, "ok");
+    showState(name + " saved");
+    loadFormVoices();
   } catch (err) {
-    setFormError(err instanceof ApiError ? err.message : "Could not reach the runtime");
+    const text = err instanceof ApiError ? err.message : "Could not reach the runtime";
+    const field = err instanceof ApiError ? fieldForMessage(text) : null;
+    showErrors(field ? [[field, text]] : [], "Not saved: " + text);
   } finally {
+    formState.busy = false;
     btn.removeAttribute("aria-busy");
+    syncSaveState();
   }
+});
+$("engine-form").addEventListener("input", e => {
+  const t = e.target;
+  if (t.getAttribute("aria-invalid") === "true") {
+    setFieldError(t, "");
+    if (!document.querySelector("#engine-form [aria-invalid]")) setText("ef-error", "");
+  }
+  if (t.id === "ef-label") {
+    formState.auto.label = false;
+    syncAutoId();
+  } else if (t.id === "ef-id") {
+    formState.auto.id = t.value === "";
+  }
+  if (VOICE_INPUTS.includes(t.id)) scheduleVoices();
+  markDirty();
+});
+$("engine-form").addEventListener("change", markDirty);
+$("ef-id").addEventListener("change", () => {
+  const id = $("ef-id").value.trim();
+  if (id === "") { formState.auto.id = true; syncAutoId(); return; }
+  if (!ID_RE.test(id)) setFieldError($("ef-id"), "Use only a to z, 0 to 9, - and _, starting with a letter or digit.");
 });
 $("ef-kind").addEventListener("change", () => {
   const kind = $("ef-kind").value;
@@ -1525,30 +1868,139 @@ $("ef-kind").addEventListener("change", () => {
   // text would go to the wrong host.
   if (kind !== "openai-compatible" && PRESET_URLS.includes($("ef-url").value.trim())) $("ef-url").value = "";
   lastPreset = $("ef-preset").value;
+  if (formState.auto.label) { $("ef-label").value = providerName(); syncAutoId(); }
   syncFormRows("");
-  fillVoiceSelect([], chosenVoice(), defaultVoice());
-  voiceForNew();
+  $("ef-voice").value = "";
+  fillVoiceSelect([], "", defaultVoice());
+  loadFormVoices();
 });
 $("ef-preset").addEventListener("change", () => {
   if (!editing) $("ef-keyref").value = keyDefault("openai-compatible", $("ef-preset").value);
   syncFormRows(lastPreset);
   lastPreset = $("ef-preset").value;
+  if (formState.auto.label) { $("ef-label").value = providerName(); syncAutoId(); }
   fillVoiceSelect([], chosenVoice(), defaultVoice());
+  loadFormVoices();
 });
-$("ef-keyref").addEventListener("change", syncKeyRow);
+$("ef-keyref").addEventListener("change", () => { syncKeyRow(); loadFormVoices(); });
 $("ef-voice").addEventListener("change", () => {
   const other = $("ef-voice").value === "__other";
   $("ef-voice-other").hidden = !other;
+  if ($("ef-voice").getAttribute("aria-invalid") === "true") setFieldError($("ef-voice"), "");
   if (other) $("ef-voice-other").focus();
 });
-$("ef-cancel").addEventListener("click", () => { closeForm(); $("engine-new").focus(); });
+$("ef-test").addEventListener("click", async () => {
+  const b = $("ef-test");
+  if (b.getAttribute("aria-disabled") === "true") {
+    setFormStatus($("ef-test-why").textContent, editing ? "dirty" : "");
+    return;
+  }
+  if (b.getAttribute("aria-busy") === "true" || !editing) return;
+  const id = editing;
+  b.setAttribute("aria-busy", "true");
+  b.textContent = "Testing…";
+  setFormStatus("Testing the saved engine…", "busy");
+  try {
+    const r = await call("engine_test", {engine: id, play: true});
+    testResults[id] = {ok: true, text: "Spoke in " + r.ms + " ms (" + (r.duration_ms / 1000).toFixed(1) + " s of speech, voice " + r.voice + ")."};
+    if (editing === id) setFormStatus("Test passed: the saved engine spoke in " + r.ms + " ms, voice " + r.voice + ".", "ok");
+  } catch (e) {
+    const why = e.reason && TEST_REASONS[e.reason];
+    const msg = e instanceof ApiError ? e.message : "Could not reach the runtime";
+    testResults[id] = {ok: false, text: why ? why + ". " + msg : msg};
+    if (editing === id) setFormStatus("Test failed. " + testResults[id].text, "bad");
+  } finally {
+    b.removeAttribute("aria-busy");
+    b.textContent = "Test saved engine";
+  }
+  enginesSig = "";
+  loadEngines();
+});
+$("ef-cancel").addEventListener("click", closeFormAsked);
 $("engine-form").addEventListener("keydown", e => {
-  if (e.key === "Escape") { e.preventDefault(); closeForm(); $("engine-new").focus(); }
+  if (e.key === "Escape") { e.preventDefault(); closeFormAsked(); }
 });
 $("engine-new").addEventListener("click", () => openForm(null));
+// Leaving the page with unsaved engine changes asks first.
+addEventListener("beforeunload", e => {
+  if (formState.dirty && !$("engine-form").hidden) e.preventDefault();
+});
+
+// ---- the engine picker on the Speech page ---------------------------------
+const PICKER_NAMES = {kokoro: "Kokoro (built in)", onecore: "Windows voices"};
+const ADD_ENGINE = "__add";
+function pickerName(id) { return PICKER_NAMES[id] || engineName(id); }
+function isProfile(id) { return !!(engineData && engineData.engines.some(e => e.id === id)); }
+
+function renderEnginePicker(enginesOn) {
+  const sel = $("engine-select");
+  const cur = state.engine;
+  const builtin = [];
+  const add = id => { if (id && !isProfile(id) && !builtin.includes(id)) builtin.push(id); };
+  for (const id of (engineData && engineData.builtin) || []) if (id === cur || voices.some(v => v.engine === id)) add(id);
+  voices.forEach(v => add(v.engine));
+  if (cur && !isProfile(cur)) add(cur);
+  const own = (engineData ? engineData.engines : [])
+    .filter(v => v.supported !== false && !v.error)
+    .map(v => [v.id, v.label || v.id]);
+  if (cur && isProfile(cur) && !own.some(o => o[0] === cur)) own.push([cur, engineName(cur) + " (cannot read now)"]);
+  const groups = [["Built in", builtin.map(id => [id, pickerName(id)])]];
+  if (own.length) groups.push(["Your engines", own]);
+  const sig = JSON.stringify([groups, cur, enginesOn]);
+  if (sel.dataset.sig === sig || document.activeElement === sel) return;
+  sel.dataset.sig = sig;
+  sel.textContent = "";
+  for (const [label, opts] of groups) {
+    const g = el("optgroup");
+    g.label = label;
+    for (const [value, text] of opts) {
+      const o = el("option", null, text);
+      o.value = value;
+      g.appendChild(o);
+    }
+    sel.appendChild(g);
+  }
+  if (enginesOn) {
+    const o = el("option", null, "Add new engine…");
+    o.value = ADD_ENGINE;
+    sel.appendChild(o);
+  }
+  sel.value = cur || "";
+}
+
+// The voices of an added engine, fetched when its list is old.
+async function loadVoicesFor(id) {
+  if (!isProfile(id)) return;
+  try {
+    const r = await call("voices", {engine: id});
+    voices = voices.filter(v => v.engine !== id).concat(r.voices);
+  } catch (e) {}
+}
+
+$("engine-select").addEventListener("change", async e => {
+  const sel = e.target;
+  const id = sel.value;
+  if (id === ADD_ENGINE) {
+    sel.value = state.engine || "";
+    showPage("engines");
+    openForm(null);
+    return;
+  }
+  const name = pickerName(id);
+  const line = $("engine-status");
+  line.parentNode.classList.add("busy");
+  setText("engine-status", "Switching to " + name + "…");
+  const v = await change("engine", id, "Voice engine", "Now reading with " + name);
+  sel.dataset.sig = "";
+  if (v !== undefined) {
+    await loadVoicesFor(id);
+    $("voice-select").dataset.sig = "";
+    render();
+    loadEngines();
+  }
+});
 
 // ---- wiring ---------------------------------------------------------------
-$("engine-kokoro").addEventListener("click", () => change("engine", "kokoro", "Voice engine"));
 $("voice-select").addEventListener("change", e => change("voice", e.target.value || null, "Voice"));
 $("voice-preview").addEventListener("click", async () => {
   const btn = $("voice-preview");

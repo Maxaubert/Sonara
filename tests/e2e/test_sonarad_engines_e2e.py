@@ -9,6 +9,7 @@ Skipped unless playwright + chromium are installed and sonarad is built
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ sys.path.insert(0, str(REPO / "conformance"))
 sys.path.insert(0, str(REPO / "conformance" / "engines"))
 import harness  # noqa: E402
 from fake_openai import FakeOpenAI  # noqa: E402
+from fakes import FakeCloud  # noqa: E402
 
 EXE = harness.find_sonarad()
 pytestmark = pytest.mark.skipif(EXE is None, reason="sonarad.exe not built (cargo build -p sonarad)")
@@ -254,15 +256,39 @@ def test_edit_keeps_the_key_and_never_prefills_it(live, browser, provider):
     page.close()
 
 
-def test_a_validation_error_is_shown_on_the_form(live, browser, provider):
+def test_a_validation_error_is_shown_next_to_its_field(live, browser, provider):
     lv = live()
     page, _ = open_engines(browser, lv.url)
     page.click("#engine-new")
     page.select_option("#ef-kind", "openai-compatible")
+    page.select_option("#ef-preset", "kokoro-fastapi")
     page.fill("#ef-id", "Bad Id!")
     page.fill("#ef-url", provider.url)
     page.click("#ef-save")
-    pw.expect(page.locator("#ef-error")).to_contain_text("invalid engine id")
+    pw.expect(page.locator("#ef-id-err")).to_contain_text("Use only a to z")
+    pw.expect(page.locator("#ef-id")).to_have_attribute("aria-invalid", "true")
+    pw.expect(page.locator("#ef-id")).to_be_focused()
+    assert "ef-id-err" in page.get_attribute("#ef-id", "aria-describedby")
+    pw.expect(page.locator("#ef-error")).to_contain_text("Not saved. Check ID.")
+    # Typing in the field clears its error.
+    page.fill("#ef-id", "good")
+    pw.expect(page.locator("#ef-id-err")).to_be_hidden()
+    pw.expect(page.locator("#ef-id")).not_to_have_attribute("aria-invalid", "true")
+    assert lv.request({"type": "engine_list"})["engines"] == []
+    page.close()
+
+
+def test_a_refusal_of_the_runtime_is_shown_at_its_field(live, browser, provider):
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.click("#engine-new")
+    page.select_option("#ef-preset", "kokoro-fastapi")
+    page.fill("#ef-url", provider.url)
+    page.click("details.more summary")
+    page.fill("#ef-timeout", "5")
+    page.click("#ef-save")
+    pw.expect(page.locator("#ef-timeout-err")).to_contain_text("timeout_ms")
+    pw.expect(page.locator("#ef-error")).to_contain_text("Not saved:")
     assert lv.request({"type": "engine_list"})["engines"] == []
     page.close()
 
@@ -280,6 +306,7 @@ def test_the_whole_path_works_with_the_keyboard(live, browser, provider):
     page.select_option("#ef-kind", "openai-compatible")
     page.select_option("#ef-preset", "kokoro-fastapi")
     page.locator("#ef-id").focus()
+    page.keyboard.press("Control+A")
     page.keyboard.type("kbd")
     page.locator("#ef-url").focus()
     page.keyboard.type(provider.url)
@@ -309,16 +336,19 @@ def stored(lv, engine_id):
 def test_a_new_cloud_profile_does_not_keep_the_openai_address(live, browser):
     lv = live()
     page, _ = open_engines(browser, lv.url)
+    # No real provider is ever called: the voice list of the unsaved form
+    # (which would go to api.elevenlabs.io) is stopped in the page.
+    page.route("**/v1/voices", lambda route: route.abort())
     page.click("#engine-new")
     # The form opens on OpenAI with its address filled in; another kind drops it.
     pw.expect(page.locator("#ef-url")).to_have_value("https://api.openai.com/v1")
     page.select_option("#ef-kind", "elevenlabs")
     pw.expect(page.locator("#ef-url")).to_have_value("")
     page.fill("#ef-id", "eleven")
-    # A voice id is required now, so the form asks for one directly.
-    pw.expect(page.locator("#ef-voice")).to_have_value("__other")
-    pw.expect(page.locator("#ef-voice-other")).to_be_visible()
-    pw.expect(page.locator("#ef-voice-hint")).to_contain_text("required")
+    # A voice is required: starred, and the list waits for the key.
+    pw.expect(page.locator("#ef-voice-req")).to_be_visible()
+    pw.expect(page.locator("#ef-voice-hint")).to_contain_text("Enter the API key")
+    page.select_option("#ef-voice", "__other")
     page.fill("#ef-voice-other", "21m00Tcm4TlvDq8ikWAM")
     page.fill("#ef-key", SECRET)
     page.click("#ef-save")
@@ -409,3 +439,168 @@ def test_a_command_engine_is_listed_used_and_removed_but_never_edited(live, brow
     pw.expect(row).to_have_count(0)
     assert eventually(lambda: lv.request({"type": "engine_list"})["engines"] == [])
     page.close()
+
+
+# ---- the Speech page's engine picker and the setup form (#227) -------------
+
+
+def add_local(lv, provider, label="Test server"):
+    lv.request({"type": "engine_add", "engine": {
+        "id": "local", "kind": "openai-compatible", "label": label, "url": provider.url,
+        "key_ref": "none", "options": {"preset": "kokoro-fastapi"}}})
+
+
+def open_speech(browser, url):
+    page = browser.new_page()
+    page.goto(url)
+    pw.expect(page.locator("#rt-version")).not_to_have_text("–")
+    page.click("[data-page=speech]")
+    return page
+
+
+def options(page, sel):
+    return page.locator(sel + " option").evaluate_all("os => os.map(o => [o.value, o.textContent])")
+
+
+def test_the_engine_dropdown_lists_the_engines_and_add_new_opens_the_form(live, browser, provider):
+    lv = live()
+    add_local(lv, provider)
+    page = open_speech(browser, lv.url)
+    page.wait_for_selector("#engine-select option[value=local]", state="attached")
+    opts = options(page, "#engine-select")
+    assert ["fake", "fake"] in opts and ["local", "Test server"] in opts, opts
+    assert opts[-1] == ["__add", "Add new engine…"], opts
+    pw.expect(page.locator("#engine-select")).to_have_value("fake")
+    page.select_option("#engine-select", "__add")
+    pw.expect(page.locator("#h-engines")).to_be_visible()
+    pw.expect(page.locator("#engine-form")).to_be_visible()
+    pw.expect(page.locator("#ef-kind")).to_be_focused()
+    pw.expect(page.locator("#ef-title")).to_have_text("Add an engine")
+    # The current engine did not change.
+    assert lv.get("engine") == "fake"
+    page.close()
+
+
+def test_selecting_an_engine_switches_to_it_and_its_voices_follow(live, browser, provider):
+    lv = live()
+    add_local(lv, provider)
+    page = open_speech(browser, lv.url)
+    page.wait_for_selector("#engine-select option[value=local]", state="attached")
+    page.select_option("#engine-select", "local")
+    assert eventually(lambda: lv.get("engine") == "local")
+    pw.expect(page.locator("#speech .state")).to_contain_text("Now reading with Test server")
+    pw.expect(page.locator("#engine-status")).to_contain_text("Test server")
+    page.wait_for_selector("#voice-select option[value=am_echo]", state="attached")
+    page.select_option("#engine-select", "fake")
+    assert eventually(lambda: lv.get("engine") == "fake")
+    page.close()
+
+
+def test_required_fields_are_starred(live, browser):
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.route("**/v1/voices", lambda route: route.abort())
+    page.click("#engine-new")
+    pw.expect(page.locator("#ef-legend")).to_contain_text("Required field")
+    for fid in ("ef-kind", "ef-label", "ef-id"):
+        assert page.locator(f"label[for={fid}] .req").is_visible(), fid
+        pw.expect(page.locator("#" + fid)).to_have_attribute("aria-required", "true")
+    # OpenAI needs a key and no voice; ElevenLabs needs both.
+    pw.expect(page.locator("#ef-key-req")).to_be_visible()
+    pw.expect(page.locator("#ef-voice-req")).to_be_hidden()
+    page.select_option("#ef-kind", "elevenlabs")
+    pw.expect(page.locator("#ef-voice-req")).to_be_visible()
+    pw.expect(page.locator("#ef-key")).to_have_attribute("aria-required", "true")
+    # Save with everything missing: each field says what is wrong.
+    page.fill("#ef-label", "")
+    page.click("#ef-save")
+    pw.expect(page.locator("#ef-label-err")).to_contain_text("Give the engine a label")
+    pw.expect(page.locator("#ef-key-err")).to_contain_text("Paste the API key")
+    pw.expect(page.locator("#ef-voice-err")).to_contain_text("Pick a voice")
+    pw.expect(page.locator("#ef-label")).to_be_focused()
+    pw.expect(page.locator("#ef-error")).to_contain_text("3 marked fields")
+    assert lv.request({"type": "engine_list"})["engines"] == []
+    page.close()
+
+
+def test_the_id_is_made_from_the_label(live, browser, provider):
+    lv = live()
+    add_local(lv, provider, label="Local")
+    page, _ = open_engines(browser, lv.url)
+    page.route("**/v1/voices", lambda route: route.abort())
+    page.click("#engine-new")
+    pw.expect(page.locator("#ef-label")).to_have_value("OpenAI")
+    pw.expect(page.locator("#ef-id")).to_have_value("openai")
+    page.select_option("#ef-kind", "elevenlabs")
+    pw.expect(page.locator("#ef-label")).to_have_value("ElevenLabs")
+    pw.expect(page.locator("#ef-id")).to_have_value("elevenlabs")
+    page.fill("#ef-label", "My Voice! (Prod) été")
+    pw.expect(page.locator("#ef-id")).to_have_value("my-voice-prod-ete")
+    page.fill("#ef-label", "Local")
+    pw.expect(page.locator("#ef-id")).to_have_value("local-2")   # unique
+    page.fill("#ef-label", "Kokoro")
+    pw.expect(page.locator("#ef-id")).to_have_value("my-kokoro")   # a built-in id is taken
+    # An ID the user typed stays.
+    page.fill("#ef-id", "custom")
+    page.fill("#ef-label", "Something else")
+    pw.expect(page.locator("#ef-id")).to_have_value("custom")
+    page.close()
+
+
+def test_saving_says_it_is_saved_and_changes_are_marked(live, browser, provider):
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    page.click("#engine-new")
+    pw.expect(page.locator("#ef-badge")).to_have_text("Not saved yet")
+    pw.expect(page.locator("#ef-test")).to_have_attribute("aria-disabled", "true")
+    page.click("#ef-cancel")
+    add_through_the_form(page, provider)
+    save = page.locator("#ef-save")
+    pw.expect(save).to_have_text("Saved")
+    pw.expect(save).to_have_class(re.compile(r"\bis-saved\b"))
+    pw.expect(page.locator("#ef-status")).to_contain_text("Test server is saved.")
+    pw.expect(page.locator("#ef-status")).to_have_attribute("role", "status")
+    pw.expect(page.locator("#ef-badge")).to_have_text("Saved")
+    pw.expect(page.locator("#ef-title")).to_have_text("Edit Test server")
+    pw.expect(page.locator("#ef-id")).to_be_disabled()
+    # Test is tied to the saved engine: on now, off while there are changes.
+    pw.expect(page.locator("#ef-test")).not_to_have_attribute("aria-disabled", "true")
+    page.fill("#ef-label", "Renamed")
+    pw.expect(save).to_have_text("Save changes")
+    pw.expect(page.locator("#ef-badge")).to_have_text("Unsaved changes")
+    pw.expect(page.locator("#ef-status")).to_contain_text("Unsaved changes")
+    pw.expect(page.locator("#ef-test")).to_have_attribute("aria-disabled", "true")
+    page.click("#ef-save")
+    pw.expect(save).to_have_text("Saved")
+    pw.expect(page.locator("#ef-status")).to_contain_text("Changes to Renamed are saved.")
+    before = len(provider.speech())
+    page.click("#ef-test")
+    pw.expect(page.locator("#ef-status")).to_contain_text("Test passed")
+    assert len(provider.speech()) == before + 1
+    page.close()
+
+
+def test_voices_load_before_a_save_and_name_the_engine(live, browser):
+    cloud = FakeCloud("elevenlabs", SECRET)
+    try:
+        lv = live()
+        page, _ = open_engines(browser, lv.url)
+        page.click("#engine-new")
+        page.select_option("#ef-kind", "elevenlabs")
+        page.fill("#ef-url", cloud.url)
+        page.fill("#ef-key", SECRET)
+        # No voice id typed and nothing saved: the voices are there.
+        page.wait_for_selector("#ef-voice option[value=voice-a]", state="attached")
+        assert ["voice-a", "A (ElevenLabs)"] in options(page, "#ef-voice")
+        pw.expect(page.locator("#ef-voice-hint")).to_contain_text("1 voice from ElevenLabs")
+        assert lv.request({"type": "engine_list"})["engines"] == []
+        assert any(r["path"].startswith("/v2/voices") and r["headers"].get("xi-api-key") == SECRET
+                   for r in cloud.requests)
+        page.select_option("#ef-voice", "voice-a")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["id"] == "elevenlabs" and view["voice"] == "voice-a" and view["key_present"]
+        page.close()
+    finally:
+        cloud.stop()

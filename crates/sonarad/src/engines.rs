@@ -27,12 +27,12 @@
 //!   the migration of a format 1 file at load).
 use crate::wire::{self, Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_engine::external::keys::{KeyResolver, KeyStore, Secret, MAX_KEY_BYTES};
+use sonara_engine::external::keys::{KeyResolver, KeyStore, MemoryStore, Secret, MAX_KEY_BYTES};
 use sonara_engine::external::profile::{
     implemented_kinds, origin_of, KeyRef, Kind, Preset, Profile, ProfileError, MAX_PROFILES,
 };
 use sonara_engine::external::{External, ExternalConfig, Notice};
-use sonara_engine::{Engine, Reason, Registry};
+use sonara_engine::{Engine, Reason, Registry, Voice};
 use sonara_system::LogFn;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -106,6 +106,23 @@ pub const COMMAND_FORBIDDEN: &str = "a command engine runs a program on this PC,
 
 fn is_command(raw: &Value) -> bool {
     raw.get("kind").and_then(Value::as_str) == Some(Kind::Command.as_str())
+}
+
+/// The id an unsaved profile is built under (`voices` with `profile`).
+pub const DRAFT_ID: &str = "draft";
+/// Stands in for the voice an unsaved cloud profile needs to validate; the
+/// voice list never uses it and it is never listed.
+const DRAFT_VOICE: &str = "sonara-draft-voice";
+
+/// A profile that fails `Profile::from_json` as a reply.
+fn profile_failure(e: ProfileError) -> Failure {
+    match e {
+        ProfileError::Invalid(m) => bad(m),
+        ProfileError::Unsupported { kind, .. } => Failure::new(
+            Code::Unsupported,
+            format!("kind '{kind}' is not supported by this version"),
+        ),
+    }
 }
 
 /// What `reload` changed.
@@ -604,21 +621,14 @@ impl Engines {
                 Some(_) => return Err(bad("this engine has key_ref none: it takes no key")),
             }
         }
-        let profile = match Profile::from_json(&Value::Object(raw)).and_then(|p| {
-            // A new profile's program must exist now (a stored one whose
-            // program is gone stays and reads with the fallback).
-            p.check_new()?;
-            Ok(p)
-        }) {
-            Ok(p) => p,
-            Err(ProfileError::Invalid(m)) => return Err(bad(m)),
-            Err(ProfileError::Unsupported { kind, .. }) => {
-                return Err(Failure::new(
-                    Code::Unsupported,
-                    format!("kind '{kind}' is not supported by this version"),
-                ))
-            }
-        };
+        let profile = Profile::from_json(&Value::Object(raw))
+            .and_then(|p| {
+                // A new profile's program must exist now (a stored one whose
+                // program is gone stays and reads with the fallback).
+                p.check_new()?;
+                Ok(p)
+            })
+            .map_err(profile_failure)?;
         if profile.kind == Kind::Command {
             return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
         }
@@ -717,6 +727,68 @@ impl Engines {
             if secret.is_some() { " key=set" } else { "" }
         ));
         Ok(at.is_some())
+    }
+
+    /// `voices` with `profile` (protocol 1.4, #227): the voice list of a
+    /// profile that is not saved, so the settings page can offer voices
+    /// before the user picks one. The profile is built for this request
+    /// only, under `DRAFT_ID`, with `secret` as its only stored key (never
+    /// another profile's): nothing is saved, stored or registered. Its id
+    /// and voice may be missing. A `command` profile is `E_FORBIDDEN`, as in
+    /// `engine_add`: a request never runs a program it names. Returns the
+    /// voices and the error of the fetch, when it failed.
+    pub fn draft_voices(
+        &self,
+        profile: &Value,
+        secret: Option<&str>,
+    ) -> Result<(Vec<Voice>, Option<sonara_engine::Error>), Failure> {
+        let mut raw = match profile {
+            Value::Object(m) => m.clone(),
+            _ => return Err(bad("'profile' must be an object with the profile")),
+        };
+        if is_command(profile) {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
+        raw.insert("id".into(), json!(DRAFT_ID));
+        raw.remove(KEY_ORIGIN);
+        let placeholder = !matches!(raw.get("voice"), Some(Value::String(v)) if !v.is_empty());
+        if placeholder {
+            raw.insert("voice".into(), json!(DRAFT_VOICE));
+        }
+        if let Some(s) = secret {
+            Self::check_secret(s)?;
+            match raw.get("key_ref") {
+                None | Some(Value::Null) => {
+                    raw.insert("key_ref".into(), json!("credman"));
+                }
+                Some(Value::String(k)) if k == "credman" => {}
+                Some(_) => return Err(bad("send a secret only with key_ref credman")),
+            }
+        }
+        let profile = Profile::from_json(&Value::Object(raw)).map_err(profile_failure)?;
+        if profile.kind == Kind::Command {
+            return Err(Failure::new(Code::Forbidden, COMMAND_FORBIDDEN));
+        }
+        let store = Arc::new(MemoryStore::new());
+        if let Some(s) = secret {
+            let o = profile.origin().ok_or_else(|| {
+                bad("this engine has no address yet (a region or url) to send the key to")
+            })?;
+            store
+                .set(DRAFT_ID, &Secret::new(s), &o)
+                .map_err(|e| bad(format!("cannot use the key: {e}")))?;
+        }
+        let ext = External::new(ExternalConfig::new(profile, KeyResolver::new(store)))
+            .map_err(profile_failure)?;
+        let (list, error) = match ext.refresh_voices() {
+            Ok(v) => (v, None),
+            Err(e) => (ext.voices(), Some(e)),
+        };
+        let list = list
+            .into_iter()
+            .filter(|v| !(placeholder && v.id == DRAFT_VOICE))
+            .collect();
+        Ok((list, error))
     }
 
     /// `engine_remove` (after the caller moved off it when current).

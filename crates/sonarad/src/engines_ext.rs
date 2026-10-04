@@ -1,6 +1,6 @@
 //! Protocol handlers of the external engine messages (spec 10.2):
-//! `engine_list`, `engine_add`, `engine_key`, `engine_test`, and the
-//! `refresh` of `voices`. `engine_remove` is in `protocol.rs`, which owns
+//! `engine_list`, `engine_add`, `engine_key`, `engine_test`, the
+//! `refresh` of `voices` and its `profile` (an unsaved one, protocol 1.4). `engine_remove` is in `protocol.rs`, which owns
 //! `set engine` (the current engine is switched away first).
 use crate::cues;
 use crate::engines::Engines;
@@ -162,6 +162,36 @@ pub fn test<G>(
     f.insert("ms".into(), json!(result.ms));
     f.insert("sample_rate".into(), json!(sample_rate));
     f.insert("duration_ms".into(), json!(duration_ms));
+    Ok((f, After::Nothing))
+}
+
+/// `voices` `{profile, secret?}` (protocol 1.4, #227): the voices of a
+/// profile that is not saved (`Engines::draft_voices`); a failed fetch is
+/// an empty list with `error`, as for a saved one.
+pub fn draft_voices(engines: &Engines, m: &Map<String, Value>) -> Handled {
+    let profile = m.get("profile").ok_or_else(|| bad("missing 'profile'"))?;
+    let secret = match m.get("secret") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.is_empty() => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(_) => return Err(bad("'secret' must be a string")),
+    };
+    let (list, error) = engines.draft_voices(profile, secret)?;
+    let mut f = Map::new();
+    f.insert(
+        "voices".into(),
+        Value::Array(list.iter().map(wire::voice_json).collect()),
+    );
+    if let Some(e) = error {
+        let failure = engine_failure(e);
+        f.insert(
+            "error".into(),
+            json!({
+                "reason": failure.reason.unwrap_or("network"),
+                "message": failure.message,
+            }),
+        );
+    }
     Ok((f, After::Nothing))
 }
 

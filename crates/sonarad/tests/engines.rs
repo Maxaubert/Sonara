@@ -212,7 +212,7 @@ fn the_capability_and_the_list() {
         .as_array()
         .unwrap()
         .contains(&json!("engines")));
-    assert_eq!(o["protocol"]["minor"], 3);
+    assert_eq!(o["protocol"]["minor"], 4);
     assert!(r.server.capabilities().contains(&"engines"));
     let l = r.call(json!({"type": "engine_list"}));
     assert_eq!(l["ok"], true);
@@ -1033,4 +1033,71 @@ fn a_command_key_is_bound_to_its_program() {
     let o = r.call(json!({"type": "engine_reload"}));
     assert_eq!(o["engines"][0]["key_present"], false, "{o}");
     assert!(r.keys.get("prog").unwrap().is_none());
+}
+
+#[test]
+fn voices_of_an_unsaved_profile_use_the_key_sent_and_save_nothing() {
+    // Protocol 1.4 (#227): the settings page lists a new engine's voices
+    // before it is saved, so a voice need not be typed up front.
+    let mut r = rig("draft", true);
+    let p = r.profile("not-saved");
+    let o = r.call(json!({"type": "voices", "profile": p, "secret": SECRET}));
+    assert_eq!(o["ok"], true, "{o}");
+    let ids: Vec<&str> = o["voices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["af_heart", "am_echo"]);
+    assert!(saw_a_key(&r.provider), "the key sent went to the server");
+    assert!(!o.to_string().contains(SECRET));
+    // Nothing is saved: no profile, no key, no file, no registered engine.
+    assert!(r.call(json!({"type": "engine_list"}))["engines"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(r.keys.list().unwrap().is_empty());
+    assert_eq!(engines_json(&r), None);
+    let all = r.call(json!({"type": "voices"}));
+    assert!(!all.to_string().contains("am_echo"), "{all}");
+    for l in r.lines.lock().unwrap().iter() {
+        assert!(!l.contains(SECRET), "a log line: {l}");
+    }
+}
+
+#[test]
+fn an_unsaved_cloud_profile_lists_voices_without_a_voice_yet() {
+    let mut r = rig("draft-cloud", true);
+    let root = r.provider.url.trim_end_matches("/v1").to_string();
+    let o = r.call(json!({"type": "voices", "secret": SECRET,
+        "profile": {"kind": "elevenlabs", "url": root}}));
+    // The fake provider is no ElevenLabs: the list fails, but not for a
+    // missing voice or id, and no placeholder leaks into the list.
+    assert_eq!(o["ok"], true, "{o}");
+    assert!(o["voices"].as_array().unwrap().is_empty(), "{o}");
+    assert!(o["error"]["message"].is_string(), "{o}");
+    assert!(
+        r.provider
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(p, _, _)| p.starts_with("/v2/voices")),
+        "the voice list was asked for"
+    );
+}
+
+#[test]
+fn an_unsaved_profile_is_never_a_program_and_needs_engines() {
+    let mut r = rig("draft-cmd", true);
+    let o = r.call(json!({"type": "voices",
+        "profile": command_profile("prog", &real_exe())}));
+    assert_eq!(code(&o), "E_FORBIDDEN", "{o}");
+    let o = r.call(json!({"type": "voices", "profile": "x"}));
+    assert_eq!(code(&o), "E_BAD_REQUEST", "{o}");
+    let mut off = rig("draft-off", false);
+    let p = off.profile("x");
+    let o = off.call(json!({"type": "voices", "profile": p}));
+    assert_eq!(code(&o), "E_UNSUPPORTED", "{o}");
 }

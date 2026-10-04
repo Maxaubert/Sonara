@@ -166,8 +166,8 @@ Run `/sonara:settings` to open the settings page in your browser. It is served b
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine's status (Kokoro, with Windows' voice standing in while it downloads, or the engine you chose under Engines with a *Use Kokoro* button), voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
-| Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a form to add one. Shown when the runtime allows external engines |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, verbosity (Everything or Skip code), background sessions |
+| Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the instruction for each style, the model, and live reading: Immediately, Queue (with its queue size) or When done |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
 | Sessions | A name and audio on/off per Claude Code session, and switch announcements |
