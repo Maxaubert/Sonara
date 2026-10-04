@@ -325,3 +325,44 @@ fn a_streamed_chunk_replays_whole() {
     r.h.control(Control::Restart).unwrap();
     assert_eq!(r.calls(2), [OutputCall::Stop, play(1, 0, 2, 30)]);
 }
+
+/// #238: the agent holds the start of a switch announcement until its
+/// chime ended. The item is synthesized at once but its first chunk reaches
+/// the output only when the hold ends; its next chunk is not held again.
+#[test]
+fn an_item_does_not_start_before_the_hold_ends() {
+    let (r, _) = Rig::new();
+    let until = std::time::Instant::now() + Duration::from_millis(300);
+    r.h.hold_start(until).unwrap();
+    speak(&r, "First one. Second one.");
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(r.calls_now(), [], "held: nothing played yet");
+    assert_eq!(r.calls(1), [play(1, 0, 1, len("First one.", 200))]);
+    let started = r
+        .out
+        .timed_calls()
+        .into_iter()
+        .find(|(_, c)| matches!(c, OutputCall::Play { .. }))
+        .map(|(at, _)| at)
+        .unwrap();
+    assert!(started >= until, "played before the hold ended");
+    r.out.finish();
+    assert_eq!(r.calls(1), [play(1, 1, 2, len("Second one.", 200))]);
+}
+
+/// A held item that is stopped meanwhile never plays.
+#[test]
+fn a_held_item_that_is_stopped_never_plays() {
+    let (r, _) = Rig::new();
+    r.h.hold_start(std::time::Instant::now() + Duration::from_millis(200))
+        .unwrap();
+    speak(&r, "Never heard.");
+    r.h.control(Control::Stop).unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(
+        !r.calls_now()
+            .iter()
+            .any(|c| matches!(c, OutputCall::Play { .. })),
+        "a stopped item played"
+    );
+}

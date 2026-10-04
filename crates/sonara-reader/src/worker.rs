@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// How often the audio forwarder looks for shutdown while the output is
 /// quiet.
@@ -50,6 +50,7 @@ pub(crate) enum Msg {
         sample_rate: u32,
         reply: Sender<()>,
     },
+    HoldStart(Instant, Sender<()>),
     Audio(AudioEvent),
     Synthesized(Done),
     Shutdown,
@@ -110,13 +111,14 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         status: EngineStatus::ready(),
         status_changes: 0,
         whole: start.whole,
+        hold: None,
     };
     thread::Builder::new()
         .name("sonara-reader".into())
         .spawn(move || {
             l.init(start.voice, start.rate, start.volume);
             loop {
-                match rx.recv_timeout(STATUS_POLL) {
+                match rx.recv_timeout(l.poll()) {
                     Ok(msg) => {
                         if !l.handle(msg) {
                             break;
@@ -125,6 +127,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
+                l.release_hold();
                 l.check_status();
             }
             l.close();
@@ -194,6 +197,9 @@ struct Loop {
     status_changes: u64,
     /// Shared with the handle: the current engine sends whole messages.
     whole: Arc<AtomicBool>,
+    /// No item's first chunk reaches the output before this
+    /// (`ReaderHandle::hold_start`, #238): it waits as `waiting`.
+    hold: Option<Instant>,
 }
 
 impl Loop {
@@ -292,6 +298,10 @@ impl Loop {
                 reply,
             } => {
                 self.output.play_clip(&samples, sample_rate);
+                let _ = reply.send(());
+            }
+            Msg::HoldStart(until, reply) => {
+                self.hold = Some(until);
                 let _ = reply.send(());
             }
             Msg::Audio(e) => self.audio_event(e),
@@ -485,9 +495,61 @@ impl Loop {
         }
     }
 
+    /// How long the loop may wait for a message: until the next status
+    /// poll, or the end of a hold.
+    fn poll(&self) -> Duration {
+        match self.hold {
+            Some(until) => until
+                .saturating_duration_since(Instant::now())
+                .min(STATUS_POLL),
+            None => STATUS_POLL,
+        }
+    }
+
+    /// Whether the hold still keeps items from starting (dropped once over).
+    fn held(&mut self) -> bool {
+        match self.hold {
+            Some(until) if Instant::now() < until => true,
+            _ => {
+                self.hold = None;
+                false
+            }
+        }
+    }
+
+    /// The hold is over: load the chunk it kept, if its audio is there (else
+    /// it loads when synthesized, as any waiting chunk).
+    fn release_hold(&mut self) {
+        if self.hold.is_none() || self.held() {
+            return;
+        }
+        let ready = matches!(&self.waiting, Some(w) if !w.paused && matches!(
+            self.audio.get(&(w.item, w.chunk)),
+            Some(Slot::Ready(_)) | Some(Slot::Streaming(_))
+        ));
+        if ready {
+            let w = self.waiting.take().expect("waiting");
+            self.load(w.item, w.chunk, w.gen);
+            self.drain();
+        }
+    }
+
     /// Hand a chunk's audio to the output, or report why there is none.
+    /// An item's first chunk waits while a hold is on (`release_hold`).
     fn load(&mut self, item: ItemId, chunk: usize, gen: u64) {
         self.open = None;
+        if chunk == 0 && self.held() {
+            self.waiting = Some(Waiting {
+                item,
+                chunk,
+                gen,
+                paused: false,
+            });
+            if matches!(self.audio.get(&(item, chunk)), Some(Slot::Pending)) {
+                self.synth.promote(item, chunk);
+            }
+            return;
+        }
         match self.audio.get(&(item, chunk)) {
             Some(Slot::Ready(Ok(pcm))) => self.output.play(pcm.clone(), item, chunk, gen),
             // Still arriving: play what came, the rest is appended.

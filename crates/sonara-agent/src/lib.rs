@@ -40,15 +40,25 @@
 //!   turn ended is flushed too (L2 and `Rules::flush_ready`); a session
 //!   still writing its reply is untouched in both scopes.
 //! - Earcons are played with `ReaderHandle::play_clip` and reported to
-//!   `subscribe`rs. The clips come from `Config::earcons` (the bundled
-//!   ones, or a folder of custom WAVs in front: `earcon::Library`).
+//!   `subscribe`rs as they play. The clips come from `Config::earcons` (the
+//!   bundled ones, or a folder of custom WAVs in front: `earcon::Library`).
+//! - **One earcon at a time** (#238, `sequencer`): an earcon fired while
+//!   another plays waits until it ended (and a 60 ms gap), so earcons play
+//!   one after the other in the order they were triggered, never mixed. A
+//!   burst is capped: an earcon equal to the one queued right before it is
+//!   dropped, and at most `EARCON_QUEUE` wait or play. A waiting earcon is
+//!   played by the agent's earcon thread, not at mute level 2. Stop and
+//!   flush do not cancel waiting earcons.
 //! - **Session switches** (the Python daemon's "Session changed"): the
 //!   agent sets L2's announcement texts to `SESSION_CHANGED` /
 //!   `SESSION_CHANGED_AGAIN` and plays the `session_change` earcon right
 //!   before each announcement is handed to the reader (L2's
 //!   `on_announce`), so every switch the user hears, automatic or manual,
-//!   chimes first and then says "Session changed: <label>.". Not at mute
-//!   level 2.
+//!   chimes first and then says "Session changed: <label>.". The chime
+//!   queues behind any earcon playing, and the announcement is held
+//!   (`ReaderHandle::hold_start`) until the chime ended, so the name is
+//!   heard after it, not under it (#238). The chime is traced as source
+//!   `announce` with the channel switched to. Not at mute level 2.
 //! - Timers and summarizer jobs run on their own threads, which hold the
 //!   agent weakly and end with it.
 //! - **Trace** (#219, `on_trace`): every message's outcome for the
@@ -61,6 +71,7 @@
 pub mod decision;
 pub mod earcon;
 pub mod rules;
+pub mod sequencer;
 pub mod settings;
 pub mod summarizer;
 
@@ -74,8 +85,9 @@ pub use settings::{
 pub use sonara_channels::{Channels, Control, FlushReport, Flushed, QueueMode};
 pub use summarizer::Summarizer;
 
+use sonara_engine::PcmChunk;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
@@ -90,6 +102,9 @@ pub const FORGET_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
 pub const SESSION_CHANGED: &str = "Session changed: {label}.";
 /// The switch announcement when the session is read again from the top.
 pub const SESSION_CHANGED_AGAIN: &str = "Session changed: {label}, reading again.";
+
+/// The most earcons waiting or playing at one time (#238).
+pub const EARCON_QUEUE: usize = sequencer::MAX;
 
 /// How often the dead-session sweep runs at most.
 const SWEEP_EVERY: Duration = Duration::from_secs(60);
@@ -155,12 +170,13 @@ pub enum Traced {
     /// The message was late text of an earlier turn and was dropped
     /// (stamped before the channel's last `turn_start`, #174).
     Late,
+    /// The earcon was played, or queued behind the one playing (#238).
     Earcon(Earcon),
+    /// The earcon was not played: `why` (a burst, #238).
+    EarconDropped { earcon: Earcon, why: &'static str },
     /// The channel's unread text (every channel's when `channel` is
     /// `None`) was dropped and its item cut, for `reason`.
-    Wiped {
-        reason: &'static str,
-    },
+    Wiped { reason: &'static str },
 }
 
 /// The hook of `Agent::on_trace`.
@@ -227,6 +243,20 @@ struct Inner {
     mute_level: AtomicU8,
     /// `Agent::on_trace`.
     trace: Mutex<Option<TraceHook>>,
+    /// The earcons waiting or playing (#238). Held while one is played at
+    /// once or handed to the earcon thread, so they keep their order.
+    schedule: Mutex<sequencer::Schedule>,
+    /// Earcons handed to the earcon thread and not played yet.
+    deferred: AtomicUsize,
+    /// The earcon thread's inbox, started at the first earcon that waits.
+    player: Mutex<Option<Sender<Deferred>>>,
+}
+
+/// An earcon that waits for the one before it (#238).
+struct Deferred {
+    earcon: Earcon,
+    clip: Arc<PcmChunk>,
+    start: Instant,
 }
 
 /// L3 over L2. Clones share it.
@@ -264,14 +294,26 @@ impl Agent {
             earcons: config.earcons,
             mute_level,
             trace: Mutex::new(None),
+            schedule: Mutex::new(sequencer::Schedule::default()),
+            deferred: AtomicUsize::new(0),
+            player: Mutex::new(None),
         });
-        // Called under L2's lock: it only plays a clip and reports it.
+        // Called under L2's lock: it only queues a clip, reports it and
+        // holds the announcement until the chime ended (#238).
         let weak = Arc::downgrade(&inner);
-        channels.on_announce(Some(Arc::new(move |_| {
+        channels.on_announce(Some(Arc::new(move |a| {
             if let Some(inner) = weak.upgrade() {
                 if inner.mute_level.load(Ordering::SeqCst) < 2 {
-                    if let Err(e) = inner.play(Earcon::SessionChange) {
-                        eprintln!("[agent] session_change earcon: {e}");
+                    match inner.queue(Earcon::SessionChange) {
+                        Ok(traced) => inner.trace("announce", Some(&a.channel), traced),
+                        Err(err) => eprintln!("[agent] session_change earcon: {err}"),
+                    }
+                    let now = Instant::now();
+                    let quiet = inner.lock_schedule().quiet_at(now);
+                    if quiet > now {
+                        if let Err(err) = inner.channels.reader().hold_start(quiet) {
+                            eprintln!("[agent] hold the announcement: {err}");
+                        }
                     }
                 }
             }
@@ -637,9 +679,55 @@ impl Inner {
         self.seen.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Play an earcon now and report it to the subscribers.
-    fn play(&self, e: Earcon) -> Result<()> {
+    fn lock_schedule(&self) -> MutexGuard<'_, sequencer::Schedule> {
+        self.schedule.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Play an earcon once the one playing ended (#238, module docs): at
+    /// once when none is, else on the earcon thread. Returns what to trace:
+    /// the earcon, or why a burst dropped it.
+    fn queue(self: &Arc<Self>, e: Earcon) -> Result<Traced> {
         let clip = self.earcons.clip(e);
+        let len = sequencer::length(clip.samples.len(), clip.sample_rate);
+        let now = Instant::now();
+        let mut schedule = self.lock_schedule();
+        let start = match schedule.admit(e, len, now) {
+            Ok(start) => start,
+            Err(why) => return Ok(Traced::EarconDropped { earcon: e, why }),
+        };
+        if start <= now && self.deferred.load(Ordering::SeqCst) == 0 {
+            self.sound(e, &clip)?;
+            return Ok(Traced::Earcon(e));
+        }
+        let mut player = self.player.lock().unwrap_or_else(|p| p.into_inner());
+        if player.is_none() {
+            let (tx, rx) = channel();
+            let weak = Arc::downgrade(self);
+            let started = std::thread::Builder::new()
+                .name("sonara-earcons".into())
+                .spawn(move || earcon_thread(weak, rx));
+            if started.is_err() {
+                // No thread to wait on: heard over the other, not lost.
+                self.sound(e, &clip)?;
+                return Ok(Traced::Earcon(e));
+            }
+            *player = Some(tx);
+        }
+        self.deferred.fetch_add(1, Ordering::SeqCst);
+        let job = Deferred {
+            earcon: e,
+            clip,
+            start,
+        };
+        // The thread lives as long as the agent, so the send cannot fail.
+        if player.as_ref().is_some_and(|tx| tx.send(job).is_err()) {
+            self.deferred.fetch_sub(1, Ordering::SeqCst);
+        }
+        Ok(Traced::Earcon(e))
+    }
+
+    /// Play a clip now and report it to the subscribers.
+    fn sound(&self, e: Earcon, clip: &PcmChunk) -> Result<()> {
         self.channels
             .reader()
             .play_clip(clip.samples.clone(), clip.sample_rate)?;
@@ -760,8 +848,8 @@ impl Inner {
                 );
             }
             Action::Earcon(e) => {
-                self.play(e)?;
-                self.trace(source, None, Traced::Earcon(e));
+                let traced = self.queue(e)?;
+                self.trace(source, None, traced);
             }
             Action::Wipe { channel, resume } => {
                 if ch.channel(&channel).is_none() {
@@ -853,5 +941,23 @@ impl Inner {
         if let Err(e) = self.execute(&rules, "summary", Some(&job.channel), actions) {
             eprintln!("[agent] summary for {}: {e}", job.channel);
         }
+    }
+}
+
+/// The earcon thread (#238): plays each waiting earcon at its start time,
+/// in order, unless mute level 2 came meanwhile. It holds the agent weakly
+/// and ends with it.
+fn earcon_thread(agent: Weak<Inner>, inbox: Receiver<Deferred>) {
+    while let Ok(job) = inbox.recv() {
+        std::thread::sleep(job.start.saturating_duration_since(Instant::now()));
+        let Some(inner) = agent.upgrade() else {
+            return;
+        };
+        if inner.mute_level.load(Ordering::SeqCst) < 2 {
+            if let Err(e) = inner.sound(job.earcon, &job.clip) {
+                eprintln!("[agent] {} earcon: {e}", job.earcon.as_str());
+            }
+        }
+        inner.deferred.fetch_sub(1, Ordering::SeqCst);
     }
 }
