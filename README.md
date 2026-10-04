@@ -268,6 +268,14 @@ $S engines use openai                        # read with it; `use kokoro` goes b
 $S engines list                              # every engine, its key and status
 ```
 
+A **program on this PC** (`command`) is never added on the settings page or by any app over
+the API, since it runs a program: add it yourself with the CLI or in `engines.json` in the home.
+The settings page then lists it to use, test or remove.
+
+```bash
+$S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--model","C:\\piper\\en_US-amy-medium.onnx","--output_file","{out}"]' --option output=file
+```
+
 `sonara engines --help` lists the options of every kind.
 
 **Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment

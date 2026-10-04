@@ -116,7 +116,8 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   voices) and says once why ("OpenAI cannot be reached. Reading with the built-in voice."). The
   log line names the engine and the reason, never the text or the key.
 - **The settings page.** Its Engines section adds, tests, edits and removes engines through the
-  runtime's local API, like the CLI. A key typed there goes to the runtime once, when you save,
+  runtime's local API, like the CLI (a program on this PC it only uses, tests and removes: you add
+  that yourself). A key typed there goes to the runtime once, when you save,
   and is never shown again: the field empties and no reply carries it. *Test* sends one sample
   sentence (or the text you give) to the engine.
 - **Removing it.** *Remove* on the settings page, `sonara engines remove <id>` (or `engine_remove`) deletes the engine and its

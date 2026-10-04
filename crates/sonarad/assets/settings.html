@@ -309,6 +309,7 @@
           <p class="hint" id="engines-empty" style="padding:16px 20px;margin:0">No engines added. Kokoro, built in, reads everything.</p>
         </div>
         <div class="list-actions"><p class="hint" style="margin:0">An engine reads only once you choose Use. Kokoro stays the stand-in: if an engine fails, Kokoro reads that sentence and says once why.</p><button class="btn" id="engine-new" type="button">Add an engine</button></div>
+        <p class="hint" id="engines-command-note" style="margin:0;padding:8px 4px 0">A program on this PC, such as Piper, is never set up here: it runs a program, so only you add it, with <span class="path" style="white-space:nowrap">sonara.exe engines add &lt;name&gt; --kind command</span> or in <span class="path">engines.json</span>. Once added, it shows up here to use, test or remove.</p>
         <h2 class="group-label" id="ef-title" hidden>Add an engine</h2>
         <form class="inset" id="engine-form" aria-labelledby="ef-title" novalidate hidden>
           <div class="pref"><div class="pref-copy"><label class="title" for="ef-kind">Kind</label><div class="hint">Who makes the speech.</div></div><div class="control"><select id="ef-kind"></select></div></div>
@@ -1029,8 +1030,11 @@ const KINDS = {
   "google": {url: "https://texttospeech.googleapis.com", key: true},
   "cartesia": {url: "https://api.cartesia.ai", model: "sonic-3.6", key: true},
   "deepgram": {url: "https://api.deepgram.com", key: true},
-  "command": {},
 };
+// Kinds the page never adds or edits: a program on this PC is set up only
+// locally (sonara.exe engines add, or engines.json); the runtime refuses it
+// over the protocol (E_FORBIDDEN).
+const LOCAL_ONLY_KINDS = ["command"];
 // Kinds that need a voice id when added, with an example of one.
 const VOICE_EXAMPLES = {
   "elevenlabs": "21m00Tcm4TlvDq8ikWAM", "azure": "en-US-AvaMultilingualNeural",
@@ -1060,13 +1064,6 @@ const KIND_FIELDS = {
     {key: "api_version", label: "API version", hint: "Empty uses the version this Sonara was built for."},
   ],
   "deepgram": [],
-  "command": [
-    {key: "argv", label: "Program", type: "lines", hint: "The full path of an .exe, then one argument per line. {text}, {voice}, {rate}, {speed} and {out} are filled in."},
-    {key: "input", label: "Text goes in", type: "select", choices: [["", "On standard input"], ["arg", "As the {text} argument"]]},
-    {key: "output", label: "Audio comes out", type: "select", choices: [["", "WAV on standard output"], ["stdout-pcm", "Raw 16-bit PCM on standard output"], ["file", "A WAV file at {out}"]]},
-    {key: "sample_rate", label: "Sample rate", type: "number", hint: "Needed for raw PCM, in Hz."},
-    {key: "voices", label: "Voices", type: "lines", hint: "One per line, offered as the voice list."},
-  ],
 };
 const REASONS = {
   no_key: "no key", auth: "the key was refused", quota: "out of credit", rate_limited: "busy",
@@ -1164,9 +1161,13 @@ function buildEngineRow(v) {
   use.hidden = current || v.supported === false;
   const test = actionButton("engine-test", "Test", "Test " + name, e => testEngine(v.id, e.currentTarget));
   test.hidden = v.supported === false;
-  actions.append(use, test,
-    actionButton("engine-edit", "Edit", "Edit " + name, () => openForm(v)),
-    actionButton("engine-remove danger", "Remove", "Remove " + name, () => removeEngine(v)));
+  actions.append(use, test);
+  if (LOCAL_ONLY_KINDS.includes(v.kind)) {
+    copy.insertBefore(el("div", "hint", "Set up with sonara.exe engines add or in engines.json; change it there."), out);
+  } else {
+    actions.appendChild(actionButton("engine-edit", "Edit", "Edit " + name, () => openForm(v)));
+  }
+  actions.appendChild(actionButton("engine-remove danger", "Remove", "Remove " + name, () => removeEngine(v)));
   row.append(copy, actions);
   return row;
 }
@@ -1284,7 +1285,6 @@ function buildKindFields(kind, options) {
 }
 
 function keyDefault(kind, preset) {
-  if (kind === "command") return "none";
   if (kind === "openai-compatible") return (PRESETS[preset] || {}).key ? "credman" : "none";
   return "credman";
 }
@@ -1391,7 +1391,8 @@ function setFormError(msg, field) {
 function openForm(v) {
   editing = v ? v.id : null;
   const opts = Object.assign({}, (v && v.options) || {});
-  const kinds = engineData ? engineData.kinds : Object.keys(KINDS);
+  if (v && LOCAL_ONLY_KINDS.includes(v.kind)) return;
+  const kinds = (engineData ? engineData.kinds : Object.keys(KINDS)).filter(k => !LOCAL_ONLY_KINDS.includes(k));
   const presets = engineData ? engineData.presets : Object.keys(PRESETS);
   fillSelect($("ef-kind"), kinds.map(k => [k, KIND_NAMES[k] || k]), v ? v.kind : "openai-compatible");
   $("ef-kind").value = v ? v.kind : "openai-compatible";

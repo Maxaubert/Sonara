@@ -371,3 +371,39 @@ def test_an_unlisted_select_value_is_kept_by_the_form(live, browser):
     opts = page.evaluate("collectProfile().options")
     assert opts["output_format"] == "pcm_48000"
     page.close()
+
+
+def test_the_form_never_offers_a_program_on_this_pc(live, browser):
+    # A command engine runs a program: it is set up only locally (engines.json
+    # or `sonara engines add`), never from the settings page.
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    pw.expect(page.locator("#engines-command-note")).to_contain_text("sonara.exe engines add")
+    page.click("#engine-new")
+    kinds = page.locator("#ef-kind option").evaluate_all("os => os.map(o => o.value)")
+    assert "command" not in kinds and "openai-compatible" in kinds, kinds
+    assert page.evaluate("Object.keys(KIND_FIELDS)").count("command") == 0
+    page.close()
+
+
+def test_a_command_engine_is_listed_used_and_removed_but_never_edited(live, browser, tmp_path):
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "engines.json").write_text(json.dumps({"format": 1, "engines": [
+        {"id": "piper", "kind": "command", "label": "Piper",
+         "options": {"argv": [sys.executable, "-c", "pass"]}}]}), encoding="utf-8")
+    lv = live()
+    page, _ = open_engines(browser, lv.url)
+    row = page.locator("#profile-rows [data-engine=piper]")
+    pw.expect(row).to_be_visible()
+    pw.expect(row).to_contain_text("on this PC")
+    pw.expect(row.locator("button.engine-edit")).to_have_count(0)
+    pw.expect(row.locator("button.engine-test")).to_be_visible()
+    pw.expect(row).to_contain_text("sonara.exe engines add")
+    row.locator("button.engine-use").click()
+    assert eventually(lambda: lv.get("engine") == "piper")
+    page.once("dialog", lambda d: d.accept())
+    row.locator("button.engine-remove").click()
+    pw.expect(row).to_have_count(0)
+    assert eventually(lambda: lv.request({"type": "engine_list"})["engines"] == [])
+    page.close()
