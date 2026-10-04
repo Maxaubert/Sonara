@@ -1,7 +1,7 @@
 """Fake cloud speech servers (stdlib only) for the external engine
 conformance tests, one per provider shape: ElevenLabs, Azure AI Speech and
-Google Cloud Text-to-Speech (PR2, #225), Cartesia and Deepgram (PR3, #226). Each answers its synthesis path with
-raw 16-bit PCM (Google: base64 in JSON) when the request carries the expected
+Google Cloud Text-to-Speech (PR2, #225), Cartesia and Deepgram (PR3, #226), Gemini (#235). Each answers its
+synthesis path with raw 16-bit PCM (Google and Gemini: base64 in JSON) when the request carries the expected
 key in the provider's own header, and the provider's auth error otherwise; it
 answers its voice list path and keeps every request. Nothing here calls a
 real provider."""
@@ -81,6 +81,27 @@ class Google(Shape):
         return 400, "application/json", json.dumps(body).encode()
 
 
+class Gemini(Shape):
+    kind = "gemini"
+    key_header = "x-goog-api-key"
+    synth_prefix = "/v1beta/models/"
+    # A fixed list of prebuilt voices: Sonara never asks for it.
+    voices_path = "/never-asked"
+
+    def ok(self):
+        part = {"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+                               "data": base64.b64encode(pcm()).decode()}}
+        body = {"candidates": [{"content": {"role": "model", "parts": [part]}, "finishReason": "STOP"}]}
+        return 200, "application/json", json.dumps(body).encode()
+
+    def refused(self):
+        body = {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.",
+                          "status": "INVALID_ARGUMENT",
+                          "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                       "reason": "API_KEY_INVALID", "domain": "googleapis.com"}]}}
+        return 400, "application/json", json.dumps(body).encode()
+
+
 class Cartesia(Shape):
     kind = "cartesia"
     key_header = "authorization"
@@ -109,13 +130,14 @@ class Deepgram(Shape):
         return 401, "application/json", json.dumps(body).encode()
 
 
-SHAPES = {s.kind: s for s in (ElevenLabs(), Azure(), Google(), Cartesia(), Deepgram())}
+SHAPES = {s.kind: s for s in (ElevenLabs(), Azure(), Google(), Gemini(), Cartesia(), Deepgram())}
 
 # A profile per kind, pointed at the fake server (its url is filled in).
 PROFILES = {
     "elevenlabs": {"id": "el", "kind": "elevenlabs", "voice": "voice-a"},
     "azure": {"id": "az", "kind": "azure", "voice": "en-US-AvaMultilingualNeural"},
     "google": {"id": "gg", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"},
+    "gemini": {"id": "ge", "kind": "gemini"},
     "cartesia": {"id": "ca", "kind": "cartesia", "voice": "voice-c"},
     "deepgram": {"id": "dg", "kind": "deepgram", "voice": "aura-2-thalia-en"},
 }

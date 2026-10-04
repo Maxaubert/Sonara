@@ -24,7 +24,8 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
   `rate.rs`, `split.rs`, `worker.rs` (a request on its own thread, a wait `cancel` ends),
   `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes, paged voice lists),
   `openai.rs` (kind `openai-compatible`), `elevenlabs.rs`, `azure.rs` (SSML, XML escaping),
-  `google.rs` (base64 `audioContent`), `cartesia.rs`, `deepgram.rs` (drops a refused `speed`
+  `google.rs` (base64 `audioContent`), `gemini.rs` (`generateContent`, base64 `inlineData`, the
+  rate as a style, drops a refused field through `Adapter::adapt`, 429 `retryDelay`), `cartesia.rs`, `deepgram.rs` (drops a refused `speed`
   through `Adapter::adapt`), `command.rs` (kind `command`: not an `Adapter`; runs the user's
   program with no shell, kills it on timeout or cancel), `mod.rs` (the `External` engine over a
   `Backend` of an adapter or a program: fallback with the cue, retry policy, status).
@@ -35,7 +36,9 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
   `command` profile in `engine_add` (local-only). `engines_ext.rs`: the protocol handlers;
   `engine_remove` and `engine_reload` live in `protocol.rs` because they may switch `engine`.
 - `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
-  chunks ahead of the playing one. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
+  chunks ahead of the playing one. `Reader::set_chunk_chars` and `Engine::chunk_chars` (#235): an
+  engine billed per request (Gemini) gets joined sentences (`reader::join_chunks`: the first chunk
+  alone, then growing to the engine's limit); the worker sets both at start and on `set engine`. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
 - `sonara-cli` `engines.rs`: `sonara engines ...` (`engines_file.rs` writes a `command` profile
   into `engines.json` locally, then `engine_reload`); `uninstall` deletes the `sonara:*`
   credentials unless settings are kept.

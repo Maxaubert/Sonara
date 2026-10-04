@@ -96,3 +96,29 @@ fn a_replaced_engine_applies_on_the_next_set_engine() {
     wait_for("the new instance", || second.inner.syntheses() == 1);
     assert_eq!(first.inner.syntheses(), 0);
 }
+
+#[test]
+fn the_worker_joins_sentences_for_an_engine_that_asks() {
+    // #235: an engine billed per request (Gemini) gets longer chunks; the
+    // first stays one sentence. Switching back to an engine that asks for
+    // none reads one sentence per chunk again.
+    let joined = Arc::new(OpenEngine {
+        chunk_chars: 1000,
+        ..OpenEngine::new("joined", 1)
+    });
+    let plain = Arc::new(OpenEngine::new("plain", 1));
+    let registry = Registry::default();
+    registry.register(plain.clone()).unwrap();
+    registry.register(joined.clone()).unwrap();
+    let r = Rig::config(Config::new(registry));
+    r.h.set(Key::Engine, Value::Text("joined".into())).unwrap();
+    r.h.speak("One. Two. Three.", QueueMode::Append, false, None)
+        .unwrap();
+    wait_for("two syntheses", || joined.inner.syntheses() == 2);
+    assert_eq!(joined.inner.texts(), vec!["One.", "Two. Three."]);
+    r.h.set(Key::Engine, Value::Text("plain".into())).unwrap();
+    r.h.speak("Four. Five.", QueueMode::Replace, true, None)
+        .unwrap();
+    wait_for("one sentence each", || plain.inner.syntheses() == 2);
+    assert_eq!(plain.inner.texts(), vec!["Four.", "Five."]);
+}

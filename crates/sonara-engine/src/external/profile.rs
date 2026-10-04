@@ -16,17 +16,19 @@ pub enum Kind {
     ElevenLabs,
     Azure,
     Google,
+    Gemini,
     Cartesia,
     Deepgram,
     Command,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 7] = [
+    pub const ALL: [Kind; 8] = [
         Kind::OpenAiCompatible,
         Kind::ElevenLabs,
         Kind::Azure,
         Kind::Google,
+        Kind::Gemini,
         Kind::Cartesia,
         Kind::Deepgram,
         Kind::Command,
@@ -38,6 +40,7 @@ impl Kind {
             Kind::ElevenLabs => "elevenlabs",
             Kind::Azure => "azure",
             Kind::Google => "google",
+            Kind::Gemini => "gemini",
             Kind::Cartesia => "cartesia",
             Kind::Deepgram => "deepgram",
             Kind::Command => "command",
@@ -63,6 +66,7 @@ impl Kind {
             Kind::ElevenLabs => "ElevenLabs",
             Kind::Azure => "Azure Speech",
             Kind::Google => "Google Text-to-Speech",
+            Kind::Gemini => "Gemini",
             Kind::Cartesia => "Cartesia",
             Kind::Deepgram => "Deepgram",
             Kind::Command => "The speech program",
@@ -83,6 +87,51 @@ pub const AZURE_FORMATS: &[(&str, u32)] = &[
     ("raw-44100hz-16bit-mono-pcm", 44_100),
     ("raw-48khz-16bit-mono-pcm", 48_000),
 ];
+
+/// Gemini's default model and voice (#235): the fast, cost-efficient TTS
+/// model Google names for read-aloud features (research 2026-10-05).
+pub const GEMINI_MODEL: &str = "gemini-3.8-flash-lite-tts";
+pub const GEMINI_VOICE: &str = "Kore";
+/// Gemini's 30 prebuilt voices (the voice list; any other voice id, such
+/// as a stored `voice_...`, is still accepted).
+pub const GEMINI_VOICES: &[&str] = &[
+    "Zephyr",
+    "Puck",
+    "Charon",
+    "Kore",
+    "Fenrir",
+    "Leda",
+    "Orus",
+    "Aoede",
+    "Callirrhoe",
+    "Autonoe",
+    "Enceladus",
+    "Iapetus",
+    "Umbriel",
+    "Algieba",
+    "Despina",
+    "Erinome",
+    "Algenib",
+    "Rasalgethi",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat",
+];
+/// Gemini's default `chunk_chars`: requests are what its free tier counts,
+/// so the reader joins sentences up to this many characters (#235).
+pub const GEMINI_CHUNK_CHARS: u64 = 1000;
+/// The largest `chunk_chars` (Gemini's input is 8192 tokens; the adapter
+/// splits at 4000 characters).
+pub const GEMINI_CHUNK_MAX: u64 = 4000;
 
 /// Cartesia's default model and API version (spec 5.4; the API pins its
 /// behaviour to the version date).
@@ -422,6 +471,7 @@ pub fn default_base(kind: Kind, options: &Map<String, Value>) -> Option<String> 
             .filter(|r| region_ok(r))
             .map(|r| format!("https://{r}.tts.speech.microsoft.com")),
         Kind::Google => Some("https://texttospeech.googleapis.com".into()),
+        Kind::Gemini => Some("https://generativelanguage.googleapis.com".into()),
         Kind::Cartesia => Some("https://api.cartesia.ai".into()),
         Kind::Deepgram => Some("https://api.deepgram.com".into()),
         Kind::Command => None,
@@ -538,6 +588,8 @@ const ELEVENLABS_OPTIONS: &[&str] = &[
 const AZURE_OPTIONS: &[&str] = &["region", "output_format", "lang"];
 /// Options of `google`.
 const GOOGLE_OPTIONS: &[&str] = &["language_code", "sample_rate", "user_project", "model_name"];
+/// Options of `gemini`.
+const GEMINI_OPTIONS: &[&str] = &["language_code", "style", "chunk_chars"];
 /// Options of `cartesia`.
 const CARTESIA_OPTIONS: &[&str] = &["api_version", "language", "sample_rate"];
 /// Options of `deepgram`.
@@ -857,6 +909,7 @@ impl Profile {
             Kind::ElevenLabs => ELEVENLABS_OPTIONS,
             Kind::Azure => AZURE_OPTIONS,
             Kind::Google => GOOGLE_OPTIONS,
+            Kind::Gemini => GEMINI_OPTIONS,
             Kind::Cartesia => CARTESIA_OPTIONS,
             Kind::Deepgram => DEEPGRAM_OPTIONS,
             Kind::Command => COMMAND_OPTIONS,
@@ -952,7 +1005,45 @@ impl Profile {
             }
             Kind::Deepgram => rate_in(DEEPGRAM_RATES)?,
             Kind::Command => self.validate_command()?,
+            Kind::Gemini => self.validate_gemini()?,
             _ => {}
+        }
+        Ok(())
+    }
+
+    /// The model and options of `gemini` (#235).
+    fn validate_gemini(&self) -> Result<(), ProfileError> {
+        let o = &self.options;
+        if let Some(m) = &self.model {
+            let ok = m
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_'));
+            if !ok || m.chars().count() > 100 {
+                return Err(invalid(format!(
+                    "'model' must be a Gemini model name such as {GEMINI_MODEL}"
+                )));
+            }
+        }
+        word(o, "language_code", 35, lang_char, "a locale such as en-US")?;
+        if let Some(v) = o.get("style") {
+            let s = v
+                .as_str()
+                .ok_or_else(|| invalid("option 'style' must be a string"))?;
+            if s.chars().count() > 500 || s.chars().any(char::is_control) {
+                return Err(invalid(
+                    "option 'style' must be at most 500 characters on one line",
+                ));
+            }
+        }
+        let chunk_ok = |v: &Value| {
+            v.as_u64()
+                .is_some_and(|n| n == 0 || (200..=GEMINI_CHUNK_MAX).contains(&n))
+        };
+        if o.get("chunk_chars").is_some_and(|v| !chunk_ok(v)) {
+            return Err(invalid(format!(
+                "option 'chunk_chars' must be 0 (one sentence per request) or a whole \
+                 number in 200..={GEMINI_CHUNK_MAX}"
+            )));
         }
         Ok(())
     }
@@ -1204,6 +1295,7 @@ impl Profile {
             Kind::OpenAiCompatible => self.preset().default_model().map(str::to_string),
             Kind::ElevenLabs => Some(ELEVENLABS_MODEL.into()),
             Kind::Cartesia => Some(CARTESIA_MODEL.into()),
+            Kind::Gemini => Some(GEMINI_MODEL.into()),
             _ => None,
         })
     }
@@ -1211,6 +1303,7 @@ impl Profile {
     pub fn effective_voice(&self) -> Option<String> {
         self.voice.clone().or_else(|| match self.kind {
             Kind::OpenAiCompatible => self.preset().default_voice().map(str::to_string),
+            Kind::Gemini => Some(GEMINI_VOICE.into()),
             _ => None,
         })
     }
@@ -1249,6 +1342,9 @@ impl Profile {
     pub fn timeout_ms(&self) -> u64 {
         self.option_u64("timeout_ms").unwrap_or(match self.kind {
             Kind::Command => 30_000,
+            // A joined chunk of up to 1000 characters is a minute of
+            // speech, made before the reply starts (#235).
+            Kind::Gemini => 60_000,
             _ if self.is_local() => 60_000,
             _ => 15_000,
         })
@@ -1259,6 +1355,15 @@ impl Profile {
         self.option_u64("prefetch")
             .map(|n| n.clamp(1, 4) as usize)
             .unwrap_or(if self.is_local() { 1 } else { 2 })
+    }
+
+    /// `Engine::chunk_chars` (#235): `gemini` joins sentences up to
+    /// `options.chunk_chars` (default `GEMINI_CHUNK_CHARS`); other kinds 0.
+    pub fn chunk_chars(&self) -> usize {
+        match self.kind {
+            Kind::Gemini => self.option_u64("chunk_chars").unwrap_or(GEMINI_CHUNK_CHARS) as usize,
+            _ => 0,
+        }
     }
 
     /// Whether the kind needs a key to work at all (a key_ref other than
@@ -1555,6 +1660,66 @@ mod tests {
     }
 
     #[test]
+    fn gemini_profiles() {
+        let ge = |extra: Value| with(json!({"id": "ge", "kind": "gemini"}), extra);
+        let p = parse(ge(json!({}))).unwrap();
+        assert_eq!(
+            p.base_url().as_deref(),
+            Some("https://generativelanguage.googleapis.com")
+        );
+        assert_eq!(
+            p.origin().as_deref(),
+            Some("https://generativelanguage.googleapis.com:443")
+        );
+        assert_eq!(
+            p.effective_model().as_deref(),
+            Some("gemini-3.8-flash-lite-tts")
+        );
+        assert_eq!(p.effective_voice().as_deref(), Some("Kore"), "optional");
+        assert_eq!(p.key_ref, KeyRef::CredMan);
+        assert_eq!(p.display_label(), "Gemini");
+        assert_eq!(p.sends_text_to(), "generativelanguage.googleapis.com");
+        assert_eq!((p.timeout_ms(), p.prefetch()), (60_000, 2));
+        assert_eq!(p.chunk_chars(), 1000);
+        assert_eq!(GEMINI_VOICES.len(), 30);
+        assert!(GEMINI_VOICES.contains(&"Kore"));
+        let set = parse(ge(json!({"model": "gemini-3.8-flash-tts", "voice": "Puck",
+            "options": {"language_code": "de-DE", "style": "calm and warm",
+            "chunk_chars": 0}})))
+        .unwrap();
+        assert_eq!(set.chunk_chars(), 0);
+        let max = parse(ge(json!({"options": {"chunk_chars": 4000}}))).unwrap();
+        assert_eq!(max.chunk_chars(), 4000);
+        for (extra, msg) in [
+            (
+                json!({"model": "models/x"}),
+                "'model' must be a Gemini model name",
+            ),
+            (json!({"model": "a b"}), "'model'"),
+            (json!({"options": {"chunk_chars": 100}}), "chunk_chars"),
+            (json!({"options": {"chunk_chars": 4001}}), "chunk_chars"),
+            (json!({"options": {"chunk_chars": "big"}}), "chunk_chars"),
+            (json!({"options": {"style": "a\nb"}}), "style"),
+            (json!({"options": {"style": 5}}), "style"),
+            (json!({"options": {"style": "x".repeat(501)}}), "style"),
+            (
+                json!({"options": {"language_code": "e n"}}),
+                "language_code",
+            ),
+            (
+                json!({"options": {"sample_rate": 24000}}),
+                "unknown option 'sample_rate' for kind 'gemini'",
+            ),
+        ] {
+            assert!(err(ge(extra.clone())).contains(msg), "{extra}");
+        }
+        // Other kinds never join.
+        let g =
+            parse(json!({"id": "g", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"})).unwrap();
+        assert_eq!(g.chunk_chars(), 0);
+    }
+
+    #[test]
     fn deepgram_profiles() {
         let dg = |extra: Value| {
             with(
@@ -1700,6 +1865,7 @@ mod tests {
         for (kind, want) in [
             ("elevenlabs", "https://api.elevenlabs.io:443"),
             ("google", "https://texttospeech.googleapis.com:443"),
+            ("gemini", "https://generativelanguage.googleapis.com:443"),
             ("cartesia", "https://api.cartesia.ai:443"),
             ("deepgram", "https://api.deepgram.com:443"),
         ] {

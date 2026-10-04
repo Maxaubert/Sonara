@@ -63,6 +63,13 @@ pub trait Engine: Send + Sync {
     fn lookahead(&self) -> usize {
         1
     }
+    /// Join the reader's sentences into chunks of up to this many
+    /// characters (#235; the first chunk of an item stays one sentence).
+    /// An engine whose provider counts requests (Gemini's free tier) asks
+    /// for fewer, longer chunks. Default 0: one sentence per chunk.
+    fn chunk_chars(&self) -> usize {
+        0
+    }
     /// True when `synthesize` accepts voice ids that `voices()` does not
     /// list (cloud voice ids, cloned voices, file names of a local server).
     fn accepts_unlisted_voices(&self) -> bool {

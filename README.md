@@ -251,6 +251,7 @@ until you add one **and** choose *Use*.
 | `elevenlabs` | ElevenLabs (a voice id, cloned voices too) | yes | 140 to 240 wpm (faster stays at 240) |
 | `azure` | Azure AI Speech (a region and a voice such as `en-US-AvaMultilingualNeural`) | yes | all |
 | `google` | Google Cloud Text-to-Speech (a voice such as `en-US-Chirp3-HD-Kore`) | yes | all |
+| `gemini` | Gemini speech (`gemini-3.8-flash-lite-tts`, 30 voices such as `Kore`; a free key from [Google AI Studio](https://aistudio.google.com), *Get API key*) | yes | roughly: a style (*speaking slowly* / *quickly*), no exact speed |
 | `cartesia` | Cartesia (a voice id) | yes | 120 to 300 wpm |
 | `deepgram` | Deepgram Aura (a voice such as `aura-2-thalia-en`) | yes | 140 to 300 wpm (not yet confirmed live) |
 | `command` | A program of yours on this PC (an `.exe`, for example Piper): text in, WAV or PCM out | none | gets `{rate}` and `{speed}` to use as it likes |
@@ -260,6 +261,7 @@ name, paste the key, save; its voices are then listed), or with the CLI from Git
 
 ```bash
 S="bash <plugin folder>/bin/sonara"
+$S engines add gemini --kind gemini          # Gemini (voice Kore; --voice Puck for another)
 $S engines add openai --preset openai        # OpenAI
 $S engines key openai                        # paste the key when asked (never an argument)
 $S engines add gpu --preset kokoro-fastapi --url http://127.0.0.1:8880/v1 --no-key
@@ -277,6 +279,13 @@ $S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--mo
 ```
 
 `sonara engines --help` lists the options of every kind.
+
+**Gemini** counts requests on its free tier (per minute and per day), so Sonara sends it
+several sentences at once: the first sentence of a reply alone (reading starts quickly), then
+growing chunks of up to 1000 characters (`--option chunk_chars=0` for one request per
+sentence). A 3000-character reply is about 6 requests. When the free tier's limit is reached,
+Kokoro reads and Sonara waits as long as Google asks before trying again. On the free tier
+Google may use the text to improve its products; with billing on it does not.
 
 **Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment
 variable you name (one ending in `_API_KEY` or `_SPEECH_KEY`). They are never written to a file,
@@ -360,7 +369,7 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
 Sonara runs on your computer and has no servers, accounts or telemetry. The only text that
 leaves your machine is a finished reply in summary mode, sent to Anthropic (`claude -p`) or
 OpenAI (`codex exec`) depending on the engine you chose, and, only if you add and select an
-external speech engine (OpenAI, ElevenLabs, Azure, Google, Cartesia, Deepgram), the text read
+external speech engine (OpenAI, ElevenLabs, Azure, Google, Gemini, Cartesia, Deepgram), the text read
 aloud, sent to that provider (a speech program of your own on your PC keeps it local). Details, and every file Sonara keeps,
 are in [PRIVACY.md](PRIVACY.md).
 

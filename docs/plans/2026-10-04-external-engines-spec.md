@@ -10,6 +10,7 @@ Four PRs, stacked, each a feature with its own version bump:
 | PR2 | #225 | `feat/225-cloud-adapters` | 0.16.0 | Kinds `elevenlabs`, `azure`, `google` |
 | PR3 | #226 | `feat/226-more-engines` | 0.17.0 | Kinds `cartesia`, `deepgram`, `command` |
 | PR4 | #227 | `feat/227-engines-settings` | 0.18.0 | Settings page Engines section; README engines section |
+| Gemini | #235 | `feat/235-gemini-engine` | 0.19.0 | Kind `gemini` (added after PR4, user request of 2026-10-05; section 14 "Gemini") |
 
 PR2 branches from PR1, PR3 from PR2, PR4 from PR3. Each PR is reviewed and merged on its own; nothing is merged without the user's "merge?" answer.
 
@@ -264,6 +265,7 @@ Common options (every kind): `timeout_ms` (1000..=120000; default 15000 cloud, 6
 | `elevenlabs` | default `https://api.elevenlabs.io` | default `eleven_flash_v2_5` | required (voice_id) | `output_format` (`pcm_24000` default; `pcm_16000`, `pcm_22050`, `pcm_44100` (Pro tier)), `stability`, `similarity_boost`, `style` (0..=1), `language_code`, `enable_logging` (bool, default true: false only helps enterprise accounts) |
 | `azure` | optional full endpoint base, e.g. `https://westeurope.tts.speech.microsoft.com`; else from `region` | none | required ShortName, e.g. `en-US-AvaMultilingualNeural` | `region` (required without `url`), `output_format` (`raw-24khz-16bit-mono-pcm` default; any `raw-*-16bit-mono-pcm` listed in 13), `lang` (xml:lang, default from the voice's locale prefix) |
 | `google` | default `https://texttospeech.googleapis.com` | none (`model_name` option for Gemini TTS, flagged) | required, e.g. `en-US-Chirp3-HD-Kore` | `language_code` (default from the voice name prefix), `sample_rate` (default 24000), `user_project` (sent as `x-goog-user-project`) |
+| `gemini` (#235) | default `https://generativelanguage.googleapis.com` | default `gemini-3.8-flash-lite-tts` (letters, digits, `-`, `.`, `_`) | optional, default `Kore` (30 prebuilt voices; a stored `voice_...` id) | `language_code` (`speechConfig.languageCode`), `style` (at most 500 chars, `speechMetadata.style`), `chunk_chars` (0 or 200..=4000, default 1000: `Engine::chunk_chars`). Default `timeout_ms` 60000 |
 | `cartesia` | default `https://api.cartesia.ai` | default `sonic-3.6` | required voice id (uuid) | `api_version` (default `2026-08-14`), `language` (default `en`), `sample_rate` (8000, 16000, 22050, 24000 default, 44100, 48000) |
 | `deepgram` | default `https://api.deepgram.com` (EU `https://api.eu.deepgram.com` by url) | the voice is the model: `voice` holds e.g. `aura-2-thalia-en`; `model` unused | required | `sample_rate` (8000, 16000, 24000 default, 32000, 48000) |
 | `command` | none | none | optional, substituted into `{voice}` (one of `voices` when that list is set; never starting with `-`; without the list a plain name of letters, digits, `_`, `-` and `.`, never a path) | `argv` (required, array, `argv[0]` an absolute path to an `.exe`, which must exist when the profile is added and before each start; `.bat` and `.cmd` refused; at most 64 entries; `{text}` refused: the text is never an argument), `input` (`stdin` default, or `file`: `{in}`, a temporary UTF-8 file with the text, must appear in argv), `output` (`stdout-wav` default, `stdout-pcm`, `file`: `{out}` must appear in argv), `sample_rate` (required for `stdout-pcm`), `voices` (array of strings shown as the voice list). **Local only**: never added or replaced over the protocol (`E_FORBIDDEN`, 14 PR3 security review) |
@@ -431,7 +433,7 @@ fallback(text, rate, reason):
 | `timeout` | any ureq timeout | transient | breaker |
 | `server` | 5xx, 503 overloaded | transient | breaker |
 
-**Breaker** (`health.rs`): two consecutive transient failures open it for 30 s, then 60, 120, 240, capped at 300 s; while open, chunks go straight to the fallback with no network wait; when it expires the next chunk is a probe; a success closes it and resets the backoff. One transient failure alone only sends that chunk to the fallback.
+**Breaker** (`health.rs`): two consecutive transient failures open it for 30 s, then 60, 120, 240, capped at 300 s; while open, chunks go straight to the fallback with no network wait; when it expires the next chunk is a probe; a success closes it and resets the backoff. One transient failure alone only sends that chunk to the fallback, unless it carries a `Retry-After` (or Gemini's `retryDelay`) longer than the one 1.5 s retry: then the breaker opens at once for that long, capped at 300 s (#235). A `quota` block lasts that wait when it is longer than 10 minutes, capped at 24 hours.
 
 ### 8.2 Cue
 
@@ -490,6 +492,7 @@ Spoken once per episode: when a reason first causes a fallback, and again only a
 | cartesia | `generation_config.speed` | `clamp(s, 0.6, 1.5)` | |
 | deepgram | query `speed` | `clamp(s, 0.7, 1.5)` | **uncertain**: range not in the fetched docs, likely Aura-2 only; omit the parameter when `s` is 1.0, and the live test checks a 1.25 request is accepted. If Deepgram refuses it, the adapter sends no speed (a `bad_config` on `speed` is retried once without it and remembered for the engine's life, until a restart or a profile replace) |
 | command | `{rate}` (wpm), `{speed}` (`s`, 2 decimals) placeholders | as is | |
+| gemini (#235) | `speechMetadata.style` (no speed parameter exists) | at most 150 wpm `speaking slowly`; 151..=230 nothing; 231..=320 `speaking quickly`; above `speaking very quickly`; after the profile's `style`, joined with `, ` | approximate: a direction the model interprets. Never in the text (3.8 models read the text verbatim). A model that refuses `speechMetadata` gets no style from then on (`adapt`) |
 
 ## 10. Protocol (additions to `docs/protocol-v1.md`, protocol 1.2)
 
@@ -624,9 +627,10 @@ Section **Engines** under Speech (`crates/sonarad/assets/settings.html`, served 
 | Google | `POST {url}/v1/text:synthesize` JSON `{input: {text}, voice: {languageCode, name}, audioConfig: {audioEncoding: "PCM", sampleRateHertz: 24000, speakingRate}}`; reply `{audioContent: base64}` | `X-goog-api-key: <key>` (**uncertain**: API keys are not on the TTS auth page; widely used; the live test is the acceptance check), `x-goog-user-project` when set | headerless s16le mono (`LINEAR16` would carry a WAV header; `PCM` is used) | `GET {url}/v1/voices?languageCode=`; id `name`, language `languageCodes[0]` |
 | Cartesia | `POST {url}/tts/bytes` JSON `{model_id, transcript, voice: {"id": ...}, output_format: {container: "raw", encoding: "pcm_s16le", sample_rate: 24000}, language, generation_config: {speed}}` | `Authorization: Bearer <key>` and `Cartesia-Version: 2026-08-14` | raw s16le mono | `GET {url}/voices?limit=100&starting_after=`, loop on `has_more`/`next_page`; id `id`, name `name`, language from `accents[0].locale` or `language` |
 | Deepgram | `POST {url}/v1/speak?model={voice}&encoding=linear16&container=none&sample_rate=24000[&speed=]` JSON `{text}` | `Authorization: Token <key>` | raw s16le mono at `sample_rate` | `GET {url}/v1/models`, the `tts` array; id `canonical_name`, language `languages[0]` |
+| Gemini (#235) | `POST {url}/v1beta/models/{model}:generateContent` JSON `{contents: [{role: "user", parts: [{text, speechMetadata?: {style}}]}], generationConfig: {responseModalities: ["AUDIO"], speechConfig: {voiceConfig: {prebuiltVoiceConfig: {voiceName}}, languageCode?}, responseFormat: {audio: {mimeType: "AUDIO_L16", sampleRate: 24000}}}}` (a stored `voice_...`/`voicekey_...` id goes as `voiceConfig: {voice}`); reply `candidates[0].content.parts[].inlineData {mimeType, data: base64}` | `x-goog-api-key: <key>` (never `?key=`) | headerless s16le mono 24 kHz (`AUDIO_L16`; without `responseFormat` the 3.8 models answer WAV, older ones L16: both are read) | fixed: the 30 prebuilt voices (`GET /v1beta/voices` exists since 2026-09-22 but is beta; not used) |
 | command | `argv` with placeholders, no shell, `CREATE_NO_WINDOW`; text on stdin (UTF-8, then closed) or in a temp file at `{in}`, never in argv; env `SONARA_ENGINE_KEY` when a key resolves | n/a | WAV on stdout, raw s16le on stdout at `sample_rate`, or a WAV file at `{out}` (a temp path, deleted after) | `options.voices` |
 
-Input limits (`split.rs`): OpenAI 4096 chars; ElevenLabs 5000 chars (the smallest per-model limit, v3; flash models allow more, but a sentence chunk never needs it); Azure 2000 chars per request (Sonara's choice, well under the 10-minute audio cap); Google 5000 UTF-8 bytes of the text (SSML not used); Cartesia 2000 chars (no documented limit; Sonara's choice); Deepgram 2000 chars; Chatterbox API 3000 chars; others 4096 chars.
+Input limits (`split.rs`): OpenAI 4096 chars; ElevenLabs 5000 chars (the smallest per-model limit, v3; flash models allow more, but a sentence chunk never needs it); Azure 2000 chars per request (Sonara's choice, well under the 10-minute audio cap); Google 5000 UTF-8 bytes of the text (SSML not used); Cartesia 2000 chars (no documented limit; Sonara's choice); Gemini 4000 chars (the models take 8192 input tokens; the reader's joined chunks are at most `chunk_chars`, 1000 by default); Deepgram 2000 chars; Chatterbox API 3000 chars; others 4096 chars.
 
 Audio parsing (`audio.rs`): `RIFF....WAVE` goes through `wav::decode` (handles float, LIST, placeholder sizes); otherwise raw s16le at, in order, the `Content-Type` `rate=` parameter, the requested rate, 24000; an odd trailing byte is dropped; a body starting with `ID3`, a valid MP3 frame header (sync, version and layer not reserved, bitrate index not 15, sample-rate index not 3), `OggS`, `fLaC`, `{` or `<` with a 200 status is `format` (`the server sent MP3, not WAV/PCM; set response_format`). When the adapter asked for raw PCM (`Adapter::raw_pcm`: OpenAI `pcm`, ElevenLabs, Azure, Google) the magic numbers are not sniffed, only a `Content-Type` naming mpeg, ogg/opus or flac is `format`: near-silent speech starts with sample -1 (`FF FF`), an MP3 frame sync, and a `format` error blocks the engine.
 
@@ -683,6 +687,20 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 | 429 `RESOURCE_EXHAUSTED` | `quota` when the message mentions quota per day/billing, else `rate_limited` |
 | 500 `INTERNAL`, 503 `UNAVAILABLE` | `server` |
 
+**Gemini** (#235; generateContent errors are google.rpc.Status `{"error": {code, message, status, details}}`, with `RetryInfo.retryDelay` and `QuotaFailure.violations[].quotaId` on 429; that body shape comes from community reports, not the TTS docs):
+
+| Status / status | Reason |
+|---|---|
+| 400 with `API_KEY_INVALID` (or "API key not valid"), 401, 403 `PERMISSION_DENIED` | `auth` |
+| 400 whose message says a voice is not found, does not exist, or is invalid | `bad_voice` |
+| 400 naming an unknown field `responseFormat` or `speechMetadata` (`Unknown name "..."`) | `bad_config` with `refused_param`; the part is sent once more without the field, which is never sent again (`adapt`) |
+| 400 otherwise (`INVALID_ARGUMENT`, `FAILED_PRECONDITION`: billing, a region the API does not serve), 404 `NOT_FOUND` (the model; the message says to check it) | `bad_config` |
+| 402 (Interactions `payment_required`) | `quota` |
+| 429 `RESOURCE_EXHAUSTED` with a `...PerDay...` quota id, or a message about a daily or spend limit | `quota` (blocked for `max(10 min, retryDelay)`) |
+| 429 otherwise (per minute; Google's message also says "check your plan and billing details", which is not taken as quota) | `rate_limited` (breaker open for the `retryDelay`) |
+| 500, 503 `UNAVAILABLE` (overloaded), 504 | `server` |
+| 200 without audio (`promptFeedback.blockReason`, a `finishReason` such as `SAFETY` or `OTHER`, text instead of audio) | `server` (transient: that sentence reads with the fallback; the engine is not blocked) |
+
 **Cartesia** (body `{"error_code", "title", "message", "request_id"}` for version 2026-03-01 and later; older versions `Title: Message` text):
 
 | Status / error_code | Reason |
@@ -725,6 +743,9 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 6. Azure 400 versus another code for an unknown voice name (the cached-list check covers both).
 7. Azure voice list on a resource host (`<resource>.cognitiveservices.azure.com`): Sonara asks `/tts/cognitiveservices/voices/list` there (researched docs, 2026-10-04), the root path on a regional host. Not verified live: `azure_live` uses a region.
 8. ElevenLabs: whether a partial `voice_settings` (only `speed`, or one of `stability`/`similarity_boost`/`style`) keeps the voice's stored values for the fields it leaves out. Sonara leaves `voice_settings` out when nothing is set at speed 1.0 (2026-10-04); `elevenlabs_live` should compare at the hands-on step.
+9. Gemini (#235): the TTS body follows the official guide and API reference of 2026-10-05; not run live (no key on the build machine). `gemini_live` (`GEMINI_API_KEY`) decides that `responseFormat` with `AUDIO_L16` is accepted by `gemini-3.8-flash-lite-tts`, that `speechMetadata` (camelCase; the guide writes `speech_metadata`, proto JSON takes both) carries the style, and that `prebuiltVoiceConfig.voiceName` still selects a voice. A refusal of either field is handled (`adapt`), so a wrong guess costs one request.
+10. Gemini rate limits per model (RPM, RPD) are not published; they show only in AI Studio. The default `chunk_chars` 1000 is Sonara's choice, not a documented optimum.
+11. Gemini error bodies for generateContent (google.rpc.Status with `RetryInfo`) come from community reports; the docs name only 429 `RESOURCE_EXHAUSTED` and 503 `UNAVAILABLE`.
 
 ---
 
@@ -839,6 +860,29 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - `settings_page.rs` is unchanged (same-origin API, no CSP change). `docs/protocol-v1.md`'s Settings page paragraph lists the Engines section.
 - Muted means nothing is sent (8.5), added to this PR at the user's request of 2026-10-04.
 - Step 5's hands-on (a branch build deployed per the safe redeploy steps) is left for the "merge?" step: the PR4 worker must not touch `%LOCALAPPDATA%\Sonara` or the running runtime. The page was checked headless (Playwright e2e and screenshots in light and dark, desktop and phone width).
+
+### Gemini (#235, 0.19.0): kind `gemini`
+
+Added on the user's request of 2026-10-05 (make Sonara ready for Gemini TTS), after PR4. Facts: the official ai.google.dev pages (speech generation guide, API reference, models, pricing, terms, troubleshooting), fetched 2026-10-05 (13.1, 13.2, 13.3 items 9 to 11).
+
+- [x] 1. `profile.rs`: `Kind::Gemini` (wire `gemini`, label `Gemini`), default url, model `gemini-3.8-flash-lite-tts`, voice `Kore`, the 30 prebuilt voices, options `language_code`, `style`, `chunk_chars`, default `timeout_ms` 60000; test `gemini_profiles`.
+- [x] 2. `gemini.rs`: request golden, base64 PCM (and WAV) decode, no audio is `server`, the mapping table of 13.2 incl. 429 with `retryDelay` (per minute against per day), 403, 400 bad voice, a refused field dropped once (`adapt`), the fixed voice list.
+- [x] 3. `rate.rs` `gemini_pace` (9). `health.rs`: a long `Retry-After` opens the breaker at once; a quota block keeps a longer one.
+- [x] 4. Joined chunks: `Engine::chunk_chars` (default 0), `Reader::set_chunk_chars` and `reader::join_chunks` in `sonara-core`, set by the worker at start and on `set engine`; `External::chunk_chars` is the profile's.
+- [x] 5. `external_gemini.rs` against the scripted server (key only in `x-goog-api-key`, no key in the URL, muted sends nothing, fallback and cue, `retryDelay` respected, key bound to Google's origin, no redirect); `external_live.rs` `gemini_live`.
+- [x] 6. `sonarad` kinds, CLI usage, conformance fake `Gemini` in `fakes.py`, settings page (provider, voices without a key, a required key, the AI Studio and free-tier hint, Style and Language fields), e2e test.
+- [x] 7. Docs: protocol-v1, PRIVACY (Gemini's free tier may use the text), README, architecture, bundling, the CLAUDE.md live list. Version 0.19.0.
+
+**Decisions**
+
+- **Endpoint**: `generateContent`, not the Interactions API the guide now leads with: the Interactions API stores each interaction by default (1 day free, 55 days paid) and is beta; `generateContent` is "fully supported" and stores nothing.
+- **Model**: `gemini-3.8-flash-lite-tts`, Google's "fast, cost-efficient workhorse ... read-aloud features" (GA 2026-09-22, on the free tier, about $0.009 per minute of speech paid until 2027). `model` is free text, so `gemini-3.8-flash-tts` (higher fidelity) is one field away.
+- **Audio**: `responseFormat.audio` `AUDIO_L16` at 24 kHz, decoded as raw PCM without magic-number sniffing (`raw_pcm`); a WAV answer is read too.
+- **Rate**: Gemini has no speed parameter. The rate becomes a style in `speechMetadata` (documented for sustained delivery, e.g. "speaking slowly"), in four bands, never in the text (3.8 reads the text verbatim, so an inline direction would be spoken). Approximate by nature; the README says so.
+- **Requests**: the free tier limits requests, not characters, so the reader joins sentences for an engine that asks (`chunk_chars`). The first chunk of an item stays one sentence, so reading starts as soon as before; each later chunk grows to twice the one before (at least 200 characters) up to `chunk_chars`, so it is ready before the playing one ends even if Gemini makes speech only about twice as fast as it plays. A 3000-character reply is about 6 requests instead of about 30. Previous and Next move by these chunks for Gemini. The adapter's own split limit is 4000 characters.
+- **429**: `quota` only for a daily or spend limit (the quota id), else `rate_limited`; both keep the `retryDelay` (`health.rs`), so nothing is sent before it ends and the fallback reads with one cue.
+- **Voices**: the fixed list of 30 (no request, no key, no quota); a stored voice by id through "Other voice id". The beta `GET /v1beta/voices` is left for later.
+- **Live**: not run (no key on the build machine); 13.3 item 9 lists what `gemini_live` decides at the hands-on step.
 
 ### Risks
 

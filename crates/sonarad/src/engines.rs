@@ -1010,6 +1010,7 @@ mod tests {
                 "elevenlabs",
                 "azure",
                 "google",
+                "gemini",
                 "cartesia",
                 "deepgram",
                 "command"

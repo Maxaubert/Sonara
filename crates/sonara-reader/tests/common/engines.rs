@@ -255,6 +255,8 @@ pub struct OpenEngine {
     pub id: &'static str,
     pub inner: FakeEngine,
     pub lookahead: usize,
+    /// `Engine::chunk_chars` (0: one sentence per chunk).
+    pub chunk_chars: usize,
     pub voices_seen: Mutex<Vec<String>>,
 }
 
@@ -264,6 +266,7 @@ impl OpenEngine {
             id,
             inner: FakeEngine::new(),
             lookahead,
+            chunk_chars: 0,
             voices_seen: Mutex::new(Vec::new()),
         }
     }
@@ -297,6 +300,10 @@ impl Engine for OpenEngine {
 
     fn lookahead(&self) -> usize {
         self.lookahead
+    }
+
+    fn chunk_chars(&self) -> usize {
+        self.chunk_chars
     }
 
     fn accepts_unlisted_voices(&self) -> bool {

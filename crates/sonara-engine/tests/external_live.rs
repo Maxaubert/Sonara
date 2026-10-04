@@ -13,6 +13,9 @@
 //! - `azure_live`: `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
 //! - `google_live`: `GOOGLE_TTS_API_KEY` (also the acceptance check of API-key
 //!   auth through `X-goog-api-key`, spec 13.3 item 1)
+//! - `gemini_live`: `GEMINI_API_KEY`, optional `SONARA_LIVE_GEMINI_MODEL`
+//!   (default `gemini-3.8-flash-lite-tts`); one request for the sentence,
+//!   none for the voices (a fixed list)
 //! - `cartesia_live`: `CARTESIA_API_KEY`, `SONARA_LIVE_CARTESIA_VOICE`
 //! - `deepgram_live`: `DEEPGRAM_API_KEY` (also prints whether Deepgram
 //!   applies `speed`, spec 13.3 item 2)
@@ -149,6 +152,21 @@ fn google_live() {
         json!({"id": "google-live", "kind": "google", "voice": "en-US-Chirp3-HD-Kore",
         "key_ref": "env:GOOGLE_TTS_API_KEY"}),
     );
+}
+
+#[test]
+#[ignore]
+fn gemini_live() {
+    if var("GEMINI_API_KEY").is_none() {
+        println!("skipped: set GEMINI_API_KEY");
+        return;
+    }
+    let mut p = json!({"id": "gemini-live", "kind": "gemini", "voice": "Kore",
+        "key_ref": "env:GEMINI_API_KEY"});
+    if let Some(m) = var("SONARA_LIVE_GEMINI_MODEL") {
+        p["model"] = json!(m);
+    }
+    check(p);
 }
 
 #[test]

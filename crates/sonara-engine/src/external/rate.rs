@@ -29,8 +29,23 @@ pub fn speed(kind: Kind, wpm: u32) -> Option<f64> {
             (0.7, 1.5)
         }
         Kind::Command => return Some(round2(s)),
+        // No speed parameter: the rate becomes a style (`gemini_pace`).
+        Kind::Gemini => return None,
     };
     Some(round2(s.clamp(lo, hi)))
+}
+
+/// Gemini has no speed parameter (#235): its documented style control
+/// (`speechMetadata.style`, examples such as "speaking slowly") carries
+/// the rate in four bands, sent as metadata and never spoken. Approximate:
+/// the model chooses the pace. Around the normal rate nothing is sent.
+pub fn gemini_pace(wpm: u32) -> Option<&'static str> {
+    match wpm {
+        0..=150 => Some("speaking slowly"),
+        151..=230 => None,
+        231..=320 => Some("speaking quickly"),
+        _ => Some("speaking very quickly"),
+    }
 }
 
 #[cfg(test)]
@@ -39,7 +54,7 @@ mod tests {
 
     #[test]
     fn every_kind_at_100_200_250_400_wpm() {
-        let table: [(Kind, [Option<f64>; 4]); 7] = [
+        let table: [(Kind, [Option<f64>; 4]); 8] = [
             (
                 Kind::OpenAiCompatible,
                 [Some(0.5), Some(1.0), Some(1.25), Some(2.0)],
@@ -56,6 +71,7 @@ mod tests {
             ),
             (Kind::Deepgram, [Some(0.7), None, Some(1.25), Some(1.5)]),
             (Kind::Command, [Some(0.5), Some(1.0), Some(1.25), Some(2.0)]),
+            (Kind::Gemini, [None, None, None, None]),
         ];
         for (kind, want) in table {
             let got: Vec<Option<f64>> = [100, 200, 250, 400].map(|w| speed(kind, w)).to_vec();
@@ -64,5 +80,27 @@ mod tests {
         assert_eq!(speed(Kind::ElevenLabs, 140), Some(0.7));
         assert_eq!(speed(Kind::ElevenLabs, 240), Some(1.2));
         assert_eq!(speed(Kind::OpenAiCompatible, 333), Some(1.67));
+    }
+
+    #[test]
+    fn gemini_rate_is_a_style_in_four_bands() {
+        let got: Vec<Option<&str>> = [100, 150, 151, 200, 230, 231, 250, 320, 321, 400]
+            .map(gemini_pace)
+            .to_vec();
+        assert_eq!(
+            got,
+            vec![
+                Some("speaking slowly"),
+                Some("speaking slowly"),
+                None,
+                None,
+                None,
+                Some("speaking quickly"),
+                Some("speaking quickly"),
+                Some("speaking quickly"),
+                Some("speaking very quickly"),
+                Some("speaking very quickly"),
+            ]
+        );
     }
 }

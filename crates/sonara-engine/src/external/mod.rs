@@ -30,6 +30,7 @@ pub mod command;
 pub mod deepgram;
 pub mod elevenlabs;
 pub mod error;
+pub mod gemini;
 pub mod google;
 pub mod health;
 pub mod hold;
@@ -167,6 +168,7 @@ fn backend_for(p: &Profile) -> Backend {
         Kind::ElevenLabs => Backend::Http(Arc::new(elevenlabs::ElevenLabs::new(p))),
         Kind::Azure => Backend::Http(Arc::new(azure::Azure::new(p))),
         Kind::Google => Backend::Http(Arc::new(google::Google::new(p))),
+        Kind::Gemini => Backend::Http(Arc::new(gemini::Gemini::new(p))),
         Kind::Cartesia => Backend::Http(Arc::new(cartesia::Cartesia::new(p))),
         Kind::Deepgram => Backend::Http(Arc::new(deepgram::Deepgram::new(p))),
         Kind::Command => Backend::Command(Arc::new(command::Command::new(p))),
@@ -621,6 +623,10 @@ impl Engine for External {
 
     fn lookahead(&self) -> usize {
         self.profile.prefetch()
+    }
+
+    fn chunk_chars(&self) -> usize {
+        self.profile.chunk_chars()
     }
 
     /// No network call (a cold profile must not send text or spend quota):

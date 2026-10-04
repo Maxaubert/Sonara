@@ -128,6 +128,7 @@ fn the_capability_and_the_list() {
             "elevenlabs",
             "azure",
             "google",
+            "gemini",
             "cartesia",
             "deepgram",
             "command"
@@ -625,13 +626,14 @@ fn an_env_key_follows_only_a_locally_confirmed_url() {
 
 #[test]
 fn cloud_kinds_never_send_their_key_to_a_new_url_or_region() {
-    // ElevenLabs, Google and Azure profiles without a url send to the
+    // ElevenLabs, Google, Gemini and Azure profiles without a url send to the
     // provider's host (Azure's from its region): a replace to a url of
     // another server, over TCP or HTTP, or to another region, deletes the
     // key and never sends it (spec 6.4).
     for (kind, options) in [
         ("elevenlabs", json!({})),
         ("google", json!({})),
+        ("gemini", json!({})),
         ("azure", json!({"region": "westeurope"})),
     ] {
         for http in [false, true] {

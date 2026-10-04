@@ -15,3 +15,41 @@ pub fn split_chunks(text: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// The least a joined chunk after the first may grow to (`join_chunks`).
+pub const JOIN_MIN: usize = 200;
+
+/// Join sentence chunks for an engine that asks for longer ones
+/// (`Engine::chunk_chars`, #235): the first stays alone, so reading starts
+/// after one sentence; each later chunk joins whole sentences, with a
+/// space, up to twice the length of the chunk before it (at least
+/// `JOIN_MIN`) and never past `max` characters, so the next chunk is ready
+/// before the playing one ends. A sentence longer than that stays whole.
+/// `max` 0 leaves the chunks as they are.
+pub fn join_chunks(chunks: Vec<String>, max: usize) -> Vec<String> {
+    if max == 0 || chunks.len() < 2 {
+        return chunks;
+    }
+    let len = |s: &str| s.chars().count();
+    let budget = |prev: usize| (2 * prev).max(JOIN_MIN).min(max);
+    let mut it = chunks.into_iter();
+    let first = it.next().unwrap_or_default();
+    let mut limit = budget(len(&first));
+    let mut out = vec![first];
+    let mut cur = String::new();
+    for c in it {
+        if cur.is_empty() {
+            cur = c;
+        } else if len(&cur) + 1 + len(&c) <= limit {
+            cur.push(' ');
+            cur.push_str(&c);
+        } else {
+            limit = budget(len(&cur));
+            out.push(std::mem::replace(&mut cur, c));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}

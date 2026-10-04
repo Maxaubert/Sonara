@@ -1081,7 +1081,8 @@ $("keymap-reset").addEventListener("click", () => {
 
 // ---- engines (#227): profiles over engine_list/add/remove/test -----------
 const KIND_NAMES = {"openai-compatible": "OpenAI or a compatible server", elevenlabs: "ElevenLabs",
-                    azure: "Azure Speech", google: "Google Text-to-Speech", cartesia: "Cartesia",
+                    azure: "Azure Speech", google: "Google Text-to-Speech", gemini: "Gemini (Google AI Studio)",
+                    cartesia: "Cartesia",
                     deepgram: "Deepgram", command: "A program on this PC"};
 // Per preset: the usual address of the server, and whether it needs a key.
 const PRESETS = {
@@ -1100,6 +1101,7 @@ const KINDS = {
   "elevenlabs": {url: "https://api.elevenlabs.io", model: "eleven_flash_v2_5", key: true},
   "azure": {url: "From the region", key: true},
   "google": {url: "https://texttospeech.googleapis.com", key: true},
+  "gemini": {url: "https://generativelanguage.googleapis.com", model: "gemini-3.8-flash-lite-tts", key: true, voice: "Kore", fixedVoices: true},
   "cartesia": {url: "https://api.cartesia.ai", model: "sonic-3.6", key: true},
   "deepgram": {url: "https://api.deepgram.com", key: true},
 };
@@ -1130,6 +1132,10 @@ const KIND_FIELDS = {
   "google": [
     {key: "language_code", label: "Language", hint: "Empty uses the voice's own, such as en-US."},
     {key: "user_project", label: "Billing project", hint: "A Google Cloud project id, when your key needs one."},
+  ],
+  "gemini": [
+    {key: "language_code", label: "Language", hint: "Empty lets Gemini tell from the text. A locale such as en-US."},
+    {key: "style", label: "Style", hint: "How to speak, such as calm and warm. Sent as a direction, never read aloud. Sonara adds the pace from your rate."},
   ],
   "cartesia": [
     {key: "language", label: "Language", hint: "A language code; empty is en."},
@@ -1319,7 +1325,7 @@ async function removeEngine(v) {
 // ---- the add/edit form ---------------------------------------------------
 // What the form calls each provider: the label a new engine starts with.
 const PROVIDER_NAMES = {elevenlabs: "ElevenLabs", azure: "Azure Speech", google: "Google Text-to-Speech",
-                        cartesia: "Cartesia", deepgram: "Deepgram"};
+                        gemini: "Gemini", cartesia: "Cartesia", deepgram: "Deepgram"};
 const RESERVED_IDS = ["kokoro", "onecore", "fake"];
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 // Fields whose change can change the voice list (it loads before a save).
@@ -1501,6 +1507,7 @@ function syncKeyRow() {
   const saved = savedKey();
   setText("ef-key-hint", ref === "credman"
     ? (editing ? (saved ? "Leave empty to keep the saved key; another address or region needs the key again." : "No key saved yet. Leave empty to keep the saved key once there is one.")
+      : $("ef-kind").value === "gemini" ? "Get a key at aistudio.google.com (Get API key) and paste it here. On the free tier Google may use the text it reads to improve its products; with billing on, it does not."
       : needsKey() ? "Paste the key from " + possessive(providerName()) + " site. Its voices load as soon as the key is in." : "Only if the server asks for one.")
     : ref === "env" ? "The variable must be set where Sonara starts (for the plugin, Claude Code's environment), and end in _API_KEY or _SPEECH_KEY. It goes only to the provider's own address, or to one confirmed as key_origin in engines.json."
     : "For a server on this PC that needs none.");
@@ -1533,7 +1540,8 @@ function fillVoiceSelect(list, current, fallbackDefault) {
 }
 
 function defaultVoice() {
-  return $("ef-kind").value === "openai-compatible" ? (PRESETS[$("ef-preset").value] || {}).voice : null;
+  const kind = $("ef-kind").value;
+  return kind === "openai-compatible" ? (PRESETS[$("ef-preset").value] || {}).voice : (KINDS[kind] || {}).voice || null;
 }
 
 function chosenVoice() {
@@ -1575,7 +1583,7 @@ async function loadFormVoices() {
   let wait = "";
   if (editing && !(ref === "credman" && key)) {
     msg = {engine: editing, refresh: true};
-  } else if (kind !== "openai-compatible" && ref === "credman" && !key) {
+  } else if (kind !== "openai-compatible" && !(KINDS[kind] || {}).fixedVoices && ref === "credman" && !key) {
     wait = "Enter the API key above and " + possessive(prov) + " voices appear here.";
   } else if (ref === "env" && !$("ef-keyenv").value.trim()) {
     wait = "Name the environment variable above and " + possessive(prov) + " voices appear here.";

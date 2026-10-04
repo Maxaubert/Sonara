@@ -1,0 +1,766 @@
+//! Kind `gemini` (#235): the Gemini API's speech models, `POST {url}/v1beta/
+//! models/{model}:generateContent` with `responseModalities: ["AUDIO"]`
+//! (generateContent, not the Interactions API, which stores each request
+//! for a day or more by default). The reply is JSON with the audio in
+//! base64 (`candidates[0].content.parts[].inlineData`). Sonara asks for
+//! headerless 16-bit PCM at 24 kHz (`responseFormat.audio.mimeType
+//! AUDIO_L16`); the 3.8 models would otherwise answer WAV, which is read
+//! too. The key goes in the `x-goog-api-key` header, never in the URL.
+//!
+//! - **Rate**: Gemini has no speed parameter; the rate is sent as a style
+//!   (`speechMetadata.style`, `rate::gemini_pace`) after the profile's own
+//!   `style`. Metadata, never part of the text (3.8 models read the text
+//!   verbatim, so a spoken direction would be read aloud).
+//! - **Older models**: a model that refuses `responseFormat` or
+//!   `speechMetadata` (an unknown field is a 400 naming it) gets the same
+//!   part once more without it, and never again (`adapt`, as Deepgram's
+//!   `speed`).
+//! - **Requests**: the free tier counts requests, so the reader joins
+//!   sentences (`Profile::chunk_chars`, default 1000 characters); the input
+//!   limit here is 4000 characters (the models take 8192 tokens).
+//! - **429**: `quota` when Google names a daily or spend limit, else
+//!   `rate_limited`; either way its `RetryInfo.retryDelay` (or
+//!   `Retry-After`) is kept, so nothing is sent before it ends (`health`).
+use super::adapter::{encode, VoiceSource};
+use super::adapter::{key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo};
+use super::audio::decode_body;
+use super::error::{headline, ExtError};
+use super::keys::Secret;
+use super::profile::{Profile, GEMINI_MODEL, GEMINI_VOICES};
+use super::rate;
+use super::split::Limit;
+use crate::{PcmChunk, Reason};
+use base64::Engine as _;
+use serde_json::{json, Map, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// The rate Sonara asks Gemini for (24 kHz is its native rate).
+pub const GEMINI_RATE: u32 = 24_000;
+
+/// Fields a model may refuse, as `ExtError::refused_param` names them.
+const FORMAT_FIELD: &str = "responseFormat";
+const STYLE_FIELD: &str = "speechMetadata";
+
+pub struct Gemini {
+    base: String,
+    model: String,
+    language_code: Option<String>,
+    style: Option<String>,
+    label: String,
+    /// The model refused `responseFormat`: it is not sent again.
+    no_format: AtomicBool,
+    /// The model refused `speechMetadata`: no style is sent again.
+    no_style: AtomicBool,
+}
+
+impl Gemini {
+    /// From a validated profile of kind `gemini`.
+    pub fn new(p: &Profile) -> Gemini {
+        Gemini {
+            base: p.base_url().unwrap_or_default(),
+            model: p.effective_model().unwrap_or_else(|| GEMINI_MODEL.into()),
+            language_code: p.option_str("language_code").map(str::to_string),
+            style: p
+                .option_str("style")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
+            label: p.display_label(),
+            no_format: AtomicBool::new(false),
+            no_style: AtomicBool::new(false),
+        }
+    }
+
+    fn with_key(&self, req: HttpRequest, key: Option<&Secret>) -> HttpRequest {
+        match key.filter(|_| key_allowed(&req.url)) {
+            Some(k) => req.header("x-goog-api-key", k.expose()),
+            None => req,
+        }
+    }
+
+    /// The synthesis URL (tests check it): never a key in it.
+    pub fn url(&self) -> String {
+        format!(
+            "{}/v1beta/models/{}:generateContent",
+            self.base,
+            encode(&self.model)
+        )
+    }
+
+    /// The style sent for `wpm`: the profile's, then the pace.
+    pub fn style_for(&self, wpm: u32) -> Option<String> {
+        if self.no_style.load(Ordering::SeqCst) {
+            return None;
+        }
+        let parts: Vec<&str> = self
+            .style
+            .as_deref()
+            .into_iter()
+            .chain(rate::gemini_pace(wpm))
+            .collect();
+        (!parts.is_empty()).then(|| parts.join(", "))
+    }
+
+    /// The request body (tests check it).
+    pub fn body(&self, text: &str, voice: &str, wpm: u32) -> Value {
+        let mut part = Map::new();
+        part.insert("text".into(), json!(text));
+        if let Some(style) = self.style_for(wpm) {
+            part.insert(STYLE_FIELD.into(), json!({"style": style}));
+        }
+        // A stored or replicated voice is an id; a prebuilt one a name,
+        // in the form every TTS model takes.
+        let voice_config = if voice.starts_with("voice_") || voice.starts_with("voicekey_") {
+            json!({"voice": voice})
+        } else {
+            json!({"prebuiltVoiceConfig": {"voiceName": voice}})
+        };
+        let mut speech = Map::new();
+        speech.insert("voiceConfig".into(), voice_config);
+        if let Some(l) = &self.language_code {
+            speech.insert("languageCode".into(), json!(l));
+        }
+        let mut generation = Map::new();
+        generation.insert("responseModalities".into(), json!(["AUDIO"]));
+        generation.insert("speechConfig".into(), Value::Object(speech));
+        if !self.no_format.load(Ordering::SeqCst) {
+            generation.insert(
+                FORMAT_FIELD.into(),
+                json!({"audio": {"mimeType": "AUDIO_L16", "sampleRate": GEMINI_RATE}}),
+            );
+        }
+        json!({"contents": [{"role": "user", "parts": [Value::Object(part)]}],
+            "generationConfig": Value::Object(generation)})
+    }
+
+    /// Whether `responseFormat` is still sent.
+    pub fn sends_format(&self) -> bool {
+        !self.no_format.load(Ordering::SeqCst)
+    }
+}
+
+/// `RetryInfo.retryDelay` of a google.rpc.Status body (`"39s"`, `"1.5s"`).
+pub fn retry_delay(body: &Value) -> Option<Duration> {
+    body.pointer("/error/details")?
+        .as_array()?
+        .iter()
+        .filter(|d| {
+            d.get("@type")
+                .and_then(Value::as_str)
+                .is_some_and(|t| t.ends_with("google.rpc.RetryInfo"))
+        })
+        .find_map(|d| {
+            let s = d.get("retryDelay")?.as_str()?.trim().strip_suffix('s')?;
+            s.parse::<f64>()
+                .ok()
+                .filter(|x| x.is_finite() && *x >= 0.0)
+                .map(Duration::from_secs_f64)
+        })
+}
+
+/// Which field a 400 refuses, from Google's unknown-field message
+/// (`Unknown name "responseFormat" at 'generation_config'`).
+fn refused_field(message: &str) -> Option<&'static str> {
+    let m = message.to_ascii_lowercase();
+    if !(m.contains("unknown name")
+        || m.contains("cannot find field")
+        || m.contains("not supported"))
+    {
+        return None;
+    }
+    if m.contains("responseformat") || m.contains("response_format") {
+        Some(FORMAT_FIELD)
+    } else if m.contains("speechmetadata") || m.contains("speech_metadata") {
+        Some(STYLE_FIELD)
+    } else {
+        None
+    }
+}
+
+/// Whether a 400's message says the voice does not exist.
+fn unknown_voice(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("voice")
+        && [
+            "not found",
+            "does not exist",
+            "invalid voice",
+            "unknown voice",
+            "voice name",
+        ]
+        .iter()
+        .any(|p| m.contains(p))
+}
+
+/// Whether a 429 is a daily or spend limit (`quota`), not a per-minute one.
+/// The quota id decides when Google sends one (its per-minute message also
+/// says "check your plan and billing details", so billing alone is not a
+/// sign).
+fn daily_or_spend(raw: &str, message: &str) -> bool {
+    if raw.contains("PerDay") {
+        return true;
+    }
+    if raw.contains("PerMinute") || raw.contains("PerSecond") {
+        return false;
+    }
+    let m = message.to_ascii_lowercase();
+    ["per day", "daily", "spend", "credit"]
+        .iter()
+        .any(|p| m.contains(p))
+        || raw.contains("\"quota_exceeded\"")
+        || raw.contains("\"payment_required\"")
+}
+
+impl Adapter for Gemini {
+    fn input_limit(&self) -> Limit {
+        Limit::Chars(4000)
+    }
+
+    fn synth_request(
+        &self,
+        text: &str,
+        voice: &str,
+        wpm: u32,
+        key: Option<&Secret>,
+    ) -> HttpRequest {
+        self.with_key(
+            HttpRequest::post_json(self.url(), &self.body(text, voice, wpm)),
+            key,
+        )
+    }
+
+    fn requested_rate(&self) -> Option<u32> {
+        Some(GEMINI_RATE)
+    }
+
+    fn raw_pcm(&self) -> bool {
+        true
+    }
+
+    /// The `inlineData` parts of the first candidate, in order, as one
+    /// chunk. No audio at all (a blocked or empty generation) is `server`:
+    /// it belongs to this text, so it must not block the engine.
+    fn audio(&self, reply: &HttpReply, label: &str) -> Result<PcmChunk, ExtError> {
+        let format = |why: &str| ExtError::new(Reason::Format, format!("{label} {why}"));
+        let v: Value = serde_json::from_slice(&reply.body)
+            .map_err(|_| format("sent an answer that is not JSON"))?;
+        let parts = v
+            .pointer("/candidates/0/content/parts")
+            .and_then(Value::as_array)
+            .map(|a| a.as_slice())
+            .unwrap_or_default();
+        let mut out: Option<PcmChunk> = None;
+        for data in parts.iter().filter_map(|p| p.get("inlineData")) {
+            let b64 = data.get("data").and_then(Value::as_str).unwrap_or_default();
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64.trim())
+                .map_err(|_| format("sent audio that is not base64"))?;
+            let mime = data.get("mimeType").and_then(Value::as_str);
+            let pcm = decode_body(&bytes, mime, Some(GEMINI_RATE), true, label)?;
+            match &mut out {
+                None => out = Some(pcm),
+                Some(o) if o.sample_rate == pcm.sample_rate => o.samples.extend(pcm.samples),
+                Some(_) => return Err(format("sent audio parts at different rates")),
+            }
+        }
+        out.ok_or_else(|| {
+            let why = v
+                .pointer("/promptFeedback/blockReason")
+                .or_else(|| v.pointer("/candidates/0/finishReason"))
+                .and_then(Value::as_str)
+                .unwrap_or("none given");
+            ExtError::new(
+                Reason::Server,
+                format!("{label} sent no audio for this text (reason: {why})"),
+            )
+        })
+    }
+
+    fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
+        let s = reply.status;
+        let eb = ErrorBody::parse(&reply.body);
+        let raw = String::from_utf8_lossy(&reply.body);
+        let message = eb.message.clone().unwrap_or_default();
+        let lower = message.to_ascii_lowercase();
+        let refused = (s == 400).then(|| refused_field(&message)).flatten();
+        let key_invalid = raw.contains("API_KEY_INVALID") || lower.contains("api key not valid");
+        let reason = match s {
+            400 | 401 | 403 if key_invalid => Reason::Auth,
+            401 | 403 => Reason::Auth,
+            402 => Reason::Quota,
+            400 if refused.is_none() && unknown_voice(&message) => Reason::BadVoice,
+            429 if daily_or_spend(&raw, &message) => Reason::Quota,
+            429 => Reason::RateLimited,
+            500..=599 => Reason::Server,
+            _ => Reason::BadConfig,
+        };
+        let hint = match s {
+            404 => format!(" Check the model (Sonara's default is {GEMINI_MODEL})."),
+            _ => String::new(),
+        };
+        let mut e = ExtError::new(
+            reason,
+            format!(
+                "{} ({s}): {}{hint}",
+                headline(reason, &self.label, ""),
+                eb.text_or(s)
+            ),
+        )
+        .with_status(s);
+        if matches!(s, 429 | 503) {
+            let body: Value = serde_json::from_slice(&reply.body).unwrap_or(Value::Null);
+            e.retry_after = reply.retry_after.or_else(|| retry_delay(&body));
+        }
+        e.refused_param = refused;
+        e
+    }
+
+    /// A field the request carried and the model's error refused: send the
+    /// part once more without it, and never again with it.
+    fn adapt(&self, request: &HttpRequest, error: &ExtError) -> bool {
+        if error.reason != Reason::BadConfig {
+            return false;
+        }
+        let body = request.body.as_deref().unwrap_or_default();
+        let carried = |field: &str| String::from_utf8_lossy(body).contains(&format!("\"{field}\""));
+        match error.refused_param {
+            Some(FORMAT_FIELD) if carried(FORMAT_FIELD) => {
+                !self.no_format.swap(true, Ordering::SeqCst)
+            }
+            Some(STYLE_FIELD) if carried(STYLE_FIELD) => {
+                !self.no_style.swap(true, Ordering::SeqCst)
+            }
+            _ => false,
+        }
+    }
+
+    /// The 30 prebuilt voices: no request, so no key and no quota spent.
+    fn voices(&self, _key: Option<&Secret>) -> VoiceSource {
+        VoiceSource::Fixed(GEMINI_VOICES.iter().map(|v| VoiceInfo::named(v)).collect())
+    }
+
+    fn parse_voices(&self, _body: &[u8]) -> Result<Vec<VoiceInfo>, ExtError> {
+        Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn adapter(extra: Value) -> Gemini {
+        let mut v = json!({"id": "ge", "kind": "gemini"});
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        Gemini::new(&Profile::from_json(&v).unwrap())
+    }
+
+    fn reply(status: u16, body: &str) -> HttpReply {
+        HttpReply {
+            status,
+            content_type: Some("application/json".into()),
+            retry_after: None,
+            body: body.as_bytes().to_vec(),
+        }
+    }
+
+    fn rpc_error(code: u16, status: &str, message: &str, details: Value) -> String {
+        json!({"error": {"code": code, "message": message, "status": status,
+            "details": details}})
+        .to_string()
+    }
+
+    fn audio_reply(parts: Value) -> String {
+        json!({"candidates": [{"content": {"role": "model", "parts": parts},
+            "finishReason": "STOP"}]})
+        .to_string()
+    }
+
+    fn b64(samples: &[i16]) -> String {
+        let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[test]
+    fn request_golden() {
+        let a = adapter(json!({}));
+        let r = a.synth_request("Hello.", "Kore", 200, Some(&Secret::new("AIza-k")));
+        assert_eq!(
+            r.url,
+            "https://generativelanguage.googleapis.com/v1beta/models/\
+             gemini-3.8-flash-lite-tts:generateContent"
+        );
+        assert!(!r.url.contains("key="), "the key never goes in the URL");
+        assert_eq!(r.header_value("x-goog-api-key"), Some("AIza-k"));
+        assert_eq!(r.header_value("authorization"), None);
+        let body: Value = serde_json::from_slice(r.body.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            body,
+            json!({"contents": [{"role": "user", "parts": [{"text": "Hello."}]}],
+                "generationConfig": {"responseModalities": ["AUDIO"],
+                    "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}},
+                    "responseFormat": {"audio": {"mimeType": "AUDIO_L16", "sampleRate": 24000}}}})
+        );
+        // The model, language, style and pace; a stored voice by id.
+        let g = adapter(json!({"model": "gemini-3.8-flash-tts",
+            "options": {"language_code": "de-DE", "style": "calm and warm"}}));
+        assert!(g
+            .url()
+            .ends_with("/models/gemini-3.8-flash-tts:generateContent"));
+        let body = g.body("Hallo.", "voice_abc123", 250);
+        assert_eq!(
+            body["contents"][0]["parts"][0],
+            json!({"text": "Hallo.", "speechMetadata": {"style": "calm and warm, speaking quickly"}})
+        );
+        assert_eq!(
+            body["generationConfig"]["speechConfig"],
+            json!({"voiceConfig": {"voice": "voice_abc123"}, "languageCode": "de-DE"})
+        );
+        assert_eq!(
+            g.body("x", "voicekey_9", 200)["generationConfig"]["speechConfig"]["voiceConfig"],
+            json!({"voice": "voicekey_9"})
+        );
+        assert_eq!(g.style_for(200).as_deref(), Some("calm and warm"));
+        assert_eq!(a.style_for(100).as_deref(), Some("speaking slowly"));
+        assert_eq!(a.style_for(200), None);
+        // No key: no header.
+        let r = a.synth_request("Hi.", "Puck", 200, None);
+        assert_eq!(r.header_value("x-goog-api-key"), None);
+        assert_eq!(a.input_limit(), Limit::Chars(4000));
+        assert_eq!(a.requested_rate(), Some(24_000));
+        assert!(a.raw_pcm());
+    }
+
+    #[test]
+    fn audio_is_base64_pcm_in_inline_data() {
+        let a = adapter(json!({}));
+        let ok = |parts: Value| a.audio(&reply(200, &audio_reply(parts)), "Gemini");
+        let got = ok(
+            json!([{"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+            "data": b64(&[100, -200, 300])}}]),
+        )
+        .unwrap();
+        assert_eq!(
+            (got.samples, got.sample_rate),
+            (vec![100, -200, 300], 24_000)
+        );
+        // A first sample of -1 (an MP3 frame sync) is still PCM.
+        let got = ok(
+            json!([{"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+            "data": b64(&[-1, 0x0090, 5])}}]),
+        )
+        .unwrap();
+        assert_eq!(got.samples, vec![-1, 0x0090, 5]);
+        // The rate the reply names wins; several parts are one chunk.
+        let got = ok(json!([
+            {"inlineData": {"mimeType": "audio/L16;rate=16000", "data": b64(&[1, 2])}},
+            {"text": "ignored"},
+            {"inlineData": {"mimeType": "audio/L16;rate=16000", "data": b64(&[3])}}]))
+        .unwrap();
+        assert_eq!((got.samples, got.sample_rate), (vec![1, 2, 3], 16_000));
+        // A 3.8 model's default WAV is read too.
+        let wav = crate::wav::encode(&PcmChunk {
+            samples: vec![7, 8],
+            sample_rate: 24_000,
+            channels: 1,
+        });
+        let got = ok(json!([{"inlineData": {"mimeType": "audio/wav",
+            "data": base64::engine::general_purpose::STANDARD.encode(&wav)}}]))
+        .unwrap();
+        assert_eq!(got.samples, vec![7, 8]);
+        // Compressed audio, bad base64 and not JSON are format errors.
+        for parts in [
+            json!([{"inlineData": {"mimeType": "audio/mp3", "data": b64(&[1, 2])}}]),
+            json!([{"inlineData": {"mimeType": "audio/L16", "data": "@@@"}}]),
+            json!([{"inlineData": {"mimeType": "audio/L16", "data": ""}}]),
+        ] {
+            assert_eq!(
+                ok(parts.clone()).unwrap_err().reason,
+                Reason::Format,
+                "{parts}"
+            );
+        }
+        assert_eq!(
+            a.audio(&reply(200, "RIFF"), "Gemini").unwrap_err().reason,
+            Reason::Format
+        );
+    }
+
+    #[test]
+    fn no_audio_is_a_server_failure_of_this_text_only() {
+        let a = adapter(json!({}));
+        for (body, why) in [
+            (
+                json!({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}),
+                "PROHIBITED_CONTENT",
+            ),
+            (json!({"candidates": [{"finishReason": "OTHER"}]}), "OTHER"),
+            (
+                json!({"candidates": [{"content": {"parts": [{"text": "Sure!"}]},
+                    "finishReason": "STOP"}]}),
+                "STOP",
+            ),
+        ] {
+            let e = a
+                .audio(&reply(200, &body.to_string()), "Gemini")
+                .unwrap_err();
+            assert_eq!(e.reason, Reason::Server, "{body}");
+            assert!(e.message.contains(why), "{}", e.message);
+            assert!(e.reason.is_transient(), "never blocks the engine");
+        }
+    }
+
+    #[test]
+    fn error_mapping_follows_the_table() {
+        let a = adapter(json!({}));
+        let map = |s: u16, b: String| a.map_error(&reply(s, &b), "Kore", None);
+        let err = |s: u16, b: String| map(s, b).reason;
+        let key_info = json!([{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+            "reason": "API_KEY_INVALID", "domain": "googleapis.com"}]);
+        assert_eq!(
+            err(
+                400,
+                rpc_error(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "API key not valid. Please pass a valid API key.",
+                    key_info
+                )
+            ),
+            Reason::Auth
+        );
+        assert_eq!(
+            err(
+                403,
+                rpc_error(
+                    403,
+                    "PERMISSION_DENIED",
+                    "Method doesn't allow unregistered callers.",
+                    json!([])
+                )
+            ),
+            Reason::Auth
+        );
+        assert_eq!(
+            err(401, rpc_error(401, "UNAUTHENTICATED", "x", json!([]))),
+            Reason::Auth
+        );
+        // A voice the model does not know.
+        assert_eq!(
+            err(
+                400,
+                rpc_error(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "Voice name Nobody is not found.",
+                    json!([])
+                )
+            ),
+            Reason::BadVoice
+        );
+        assert_eq!(
+            err(
+                400,
+                rpc_error(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "Invalid voice: Nobody does not exist",
+                    json!([])
+                )
+            ),
+            Reason::BadVoice
+        );
+        // Other 400s, a model that does not exist, a region or billing.
+        assert_eq!(
+            err(
+                400,
+                rpc_error(
+                    400,
+                    "INVALID_ARGUMENT",
+                    "Request contains an invalid argument.",
+                    json!([])
+                )
+            ),
+            Reason::BadConfig
+        );
+        assert_eq!(
+            err(
+                400,
+                rpc_error(
+                    400,
+                    "FAILED_PRECONDITION",
+                    "User location is not supported for the API use.",
+                    json!([])
+                )
+            ),
+            Reason::BadConfig
+        );
+        let e = map(
+            404,
+            rpc_error(
+                404,
+                "NOT_FOUND",
+                "models/gemini-9-tts is not found for API version v1beta.",
+                json!([]),
+            ),
+        );
+        assert_eq!(e.reason, Reason::BadConfig);
+        assert!(e.message.contains("Check the model"), "{}", e.message);
+        assert_eq!(
+            err(
+                402,
+                r#"{"error": {"code": "payment_required", "message": "x"}}"#.into()
+            ),
+            Reason::Quota
+        );
+        assert_eq!(
+            err(500, rpc_error(500, "INTERNAL", "x", json!([]))),
+            Reason::Server
+        );
+        assert_eq!(
+            err(
+                503,
+                rpc_error(503, "UNAVAILABLE", "The model is overloaded.", json!([]))
+            ),
+            Reason::Server
+        );
+        assert!(map(
+            403,
+            rpc_error(403, "PERMISSION_DENIED", "denied", json!([]))
+        )
+        .message
+        .starts_with("Gemini refused the key (403): denied"));
+    }
+
+    #[test]
+    fn a_429_keeps_its_retry_delay_and_tells_daily_from_per_minute() {
+        let a = adapter(json!({}));
+        let per_minute = rpc_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "You exceeded your current quota, please check your plan and billing details.",
+            json!([
+                {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                 "violations": [{"quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+                    "quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "39s"}]),
+        );
+        // "billing" in this message is Google's boilerplate: the quotaId
+        // says per minute.
+        let e = a.map_error(&reply(429, &per_minute), "Kore", None);
+        assert_eq!(e.status, Some(429));
+        assert_eq!(e.retry_after, Some(Duration::from_secs(39)));
+        let daily = rpc_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "You exceeded your current quota.",
+            json!([
+                {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                 "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "1.5s"}]),
+        );
+        let e = a.map_error(&reply(429, &daily), "Kore", None);
+        assert_eq!(e.reason, Reason::Quota);
+        assert_eq!(e.retry_after, Some(Duration::from_millis(1500)));
+        assert!(
+            e.message.starts_with("Gemini is out of credit (429)"),
+            "{}",
+            e.message
+        );
+        // A Retry-After header wins over the body.
+        let mut r = reply(429, &daily);
+        r.retry_after = Some(Duration::from_secs(5));
+        assert_eq!(
+            a.map_error(&r, "Kore", None).retry_after,
+            Some(Duration::from_secs(5))
+        );
+        // No delay given: none kept.
+        let bare = rpc_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Resource has been exhausted.",
+            json!([]),
+        );
+        let e = a.map_error(&reply(429, &bare), "Kore", None);
+        assert_eq!((e.reason, e.retry_after), (Reason::RateLimited, None));
+        assert_eq!(
+            retry_delay(&json!({"error": {"details": [
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "x"}]}})),
+            None
+        );
+        assert!(super::daily_or_spend("", "Quota exceeded per day"));
+        assert!(!super::daily_or_spend("", "Too many requests"));
+    }
+
+    #[test]
+    fn per_minute_billing_boilerplate_is_not_quota() {
+        // Google's per-minute 429 says "check your plan and billing
+        // details"; only the quota id or a daily/spend wording is quota.
+        let a = adapter(json!({}));
+        let body = rpc_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "You exceeded your current quota, please check your plan and billing details.",
+            json!([{"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                "violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]}]),
+        );
+        assert_eq!(
+            a.map_error(&reply(429, &body), "Kore", None).reason,
+            Reason::RateLimited
+        );
+    }
+
+    #[test]
+    fn a_refused_field_is_dropped_once_and_remembered() {
+        let a = adapter(json!({"options": {"style": "warm"}}));
+        let refused = |field: &str| {
+            rpc_error(400, "INVALID_ARGUMENT",
+                &format!("Invalid JSON payload received. Unknown name \"{field}\" at 'generation_config': Cannot find field."),
+                json!([]))
+        };
+        let req = a.synth_request("Hi.", "Kore", 200, None);
+        let e = a.map_error(&reply(400, &refused("responseFormat")), "Kore", None);
+        assert_eq!(
+            (e.reason, e.refused_param),
+            (Reason::BadConfig, Some("responseFormat"))
+        );
+        assert!(a.adapt(&req, &e), "dropped once");
+        assert!(!a.sends_format());
+        let again = a.synth_request("Hi.", "Kore", 200, None);
+        let body: Value = serde_json::from_slice(again.body.as_deref().unwrap()).unwrap();
+        assert!(body["generationConfig"].get("responseFormat").is_none());
+        assert!(!a.adapt(&again, &e), "never twice");
+        // The style the same way.
+        let e = a.map_error(&reply(400, &refused("speech_metadata")), "Kore", None);
+        assert_eq!(e.refused_param, Some("speechMetadata"));
+        assert!(a.adapt(&again, &e));
+        assert_eq!(a.style_for(400), None);
+        let body = a.body("Hi.", "Kore", 400);
+        assert_eq!(body["contents"][0]["parts"][0], json!({"text": "Hi."}));
+        // A 400 that names no field is never adapted.
+        let b = adapter(json!({}));
+        let other = b.map_error(
+            &reply(
+                400,
+                &rpc_error(400, "INVALID_ARGUMENT", "Bad text.", json!([])),
+            ),
+            "Kore",
+            None,
+        );
+        assert_eq!(other.refused_param, None);
+        assert!(!b.adapt(&b.synth_request("x", "Kore", 200, None), &other));
+    }
+
+    #[test]
+    fn voices_are_the_prebuilt_list_without_a_request() {
+        match adapter(json!({})).voices(Some(&Secret::new("k"))) {
+            VoiceSource::Fixed(v) => {
+                assert_eq!(v.len(), 30);
+                assert_eq!(v[3], VoiceInfo::named("Kore"));
+            }
+            VoiceSource::Fetch { .. } => panic!("no request for the voices"),
+        }
+    }
+}

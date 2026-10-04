@@ -30,6 +30,10 @@
 //!   play order (the rest of the current item, then the queued items' chunks)
 //!   are synthesized ahead; 1 by default, up to 4 (`set_lookahead`, for an
 //!   engine with a slow round trip).
+//! - Joined chunks (`set_chunk_chars`, #235): for an engine that asks for
+//!   longer chunks (one billed per request), the sentences of an item
+//!   spoken from then on are joined by `join_chunks`; the first chunk stays
+//!   one sentence. 0 (the default) keeps one sentence per chunk.
 //! - Every `PlayChunk` carries a new `gen`; an `AudioEvent` whose `gen` is not
 //!   the chunk loaded in the output is stale and ignored, so a superseded
 //!   play can never move the reader. A chunk that finishes while a pause is
@@ -42,7 +46,7 @@
 mod chunks;
 mod types;
 
-pub use chunks::split_chunks;
+pub use chunks::{join_chunks, split_chunks, JOIN_MIN};
 pub use types::*;
 
 use std::collections::{HashSet, VecDeque};
@@ -79,6 +83,8 @@ pub struct Reader {
     requested: HashSet<(ItemId, usize)>,
     /// Chunks synthesized ahead of the playing one (1..=4).
     lookahead: usize,
+    /// Join sentences into chunks of up to this many characters (0: no).
+    chunk_chars: usize,
     /// The last state emitted (or the initial one, seq 0).
     shown: State,
 }
@@ -107,6 +113,7 @@ impl Reader {
             voice: None,
             requested: HashSet::new(),
             lookahead: 1,
+            chunk_chars: 0,
             shown: State {
                 seq: 0,
                 now_playing: None,
@@ -133,7 +140,7 @@ impl Reader {
         let id = ItemId(self.next_id);
         self.next_id += 1;
         let mut fx = Vec::new();
-        let chunks = split_chunks(text);
+        let chunks = join_chunks(split_chunks(text), self.chunk_chars);
         if chunks.is_empty() {
             emit_item(&mut fx, id, ItemPhase::Skipped);
             return (id, fx);
@@ -293,6 +300,18 @@ impl Reader {
 
     pub fn lookahead(&self) -> usize {
         self.lookahead
+    }
+
+    /// Join the sentences of items spoken from now on into chunks of up to
+    /// `n` characters (`join_chunks`; 0: one sentence per chunk). Items
+    /// already queued keep their chunks.
+    pub fn set_chunk_chars(&mut self, n: usize) -> Vec<Effect> {
+        self.chunk_chars = n;
+        self.finish(Vec::new())
+    }
+
+    pub fn chunk_chars(&self) -> usize {
+        self.chunk_chars
     }
 
     /// The current state, with the `seq` of the last emitted state.

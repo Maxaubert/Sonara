@@ -21,8 +21,8 @@ pub const USAGE: &str = "usage: sonara engines <command>
   test <id> [TEXT]           speak one sentence with it, with no fallback
   remove <id> [--keep-key]   remove it (and its stored key)
 
-Kinds: openai-compatible (the default), elevenlabs, azure, google, cartesia,
-deepgram, command (a program of your own on this PC; written into
+Kinds: openai-compatible (the default), elevenlabs, azure, google, gemini,
+cartesia, deepgram, command (a program of your own on this PC; written into
 engines.json by this command, never sent over the protocol; the text goes
 on its stdin, or with --option input=file in a file at {in}).
 Presets of openai-compatible: openai, kokoro-fastapi, localai, speaches,
@@ -30,6 +30,7 @@ openedai-speech, chatterbox-api, chatterbox-server, generic.
 Examples: add el --kind elevenlabs --voice <voice_id>
           add az --kind azure --voice en-US-AvaMultilingualNeural --option region=westeurope
           add gg --kind google --voice en-US-Chirp3-HD-Kore
+          add gemini --kind gemini --voice Kore   (key from aistudio.google.com)
           add ca --kind cartesia --voice <voice_id>
           add dg --kind deepgram --voice aura-2-thalia-en
           add piper --kind command --option output=file --option
@@ -417,9 +418,15 @@ mod tests {
                 "key_ref": "env:AZURE_SPEECH_KEY", "options": {"region": "westeurope"}}}))
         );
         assert!(USAGE.contains(
-            "elevenlabs, azure, google, cartesia,
-deepgram, command"
+            "elevenlabs, azure, google, gemini,
+cartesia, deepgram, command"
         ));
+        // Gemini needs no voice (Kore by default).
+        assert_eq!(
+            p(&["add", "gemini", "--kind", "gemini"]).unwrap(),
+            Action::Request(json!({"type": "engine_add", "replace": false, "engine": {
+                "id": "gemini", "kind": "gemini"}}))
+        );
         // A command's argv is a JSON list in one --option; it is written
         // into engines.json locally, never sent as engine_add.
         let a = p(&[

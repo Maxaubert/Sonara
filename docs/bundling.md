@@ -133,7 +133,7 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 Protocol 1.2 lets the user add speech engines that are not part of Sonara (OpenAI, a local
 OpenAI-compatible server; since 0.16.0 also ElevenLabs, Azure AI Speech and Google Cloud
 Text-to-Speech; since 0.17.0 Cartesia, Deepgram and `command`, a speech program of the user's own
-that the runtime starts with no shell) as profiles; the clients expose them as `client.engines` (`list`,
+that the runtime starts with no shell; since 0.19.0 Gemini) as profiles; the clients expose them as `client.engines` (`list`,
 `add`, `remove`, `setKey`/`set_key`, `test`, `reload`) and `client.voices(engine, { refresh })`.
 A `command` engine is never added through a client: `add` of one is `E_FORBIDDEN` (protocol
 1.3); the user adds it with `sonara engines add <id> --kind command` or in `engines.json`. Text goes

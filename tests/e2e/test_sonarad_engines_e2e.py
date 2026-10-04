@@ -714,3 +714,57 @@ def test_the_speech_page_names_the_engine_on_its_voices(live, browser, provider)
     labels = [t for v, t in options(page, "#voice-select") if v == "am_echo"]
     assert labels and labels[0].endswith("(Test server)"), labels
     page.close()
+
+
+def test_gemini_is_a_provider_with_its_voices_and_a_required_key(live, browser):
+    # #235: Gemini in the provider list; its 30 prebuilt voices load with no
+    # key and no request; the key is required and its hint says where to
+    # get one and what the free tier means; a saved Gemini engine tests
+    # against the provider's shape with the key in x-goog-api-key.
+    cloud = FakeCloud("gemini", SECRET)
+    try:
+        lv = live()
+        page, _ = open_engines(browser, lv.url)
+        page.click("#engine-new")
+        assert ["gemini", "Gemini (Google AI Studio)"] in options(page, "#ef-kind")
+        page.select_option("#ef-kind", "gemini")
+        pw.expect(page.locator("#ef-label")).to_have_value("Gemini")
+        pw.expect(page.locator("#ef-id")).to_have_value("gemini")
+        pw.expect(page.locator("#ef-key-req")).to_be_visible()
+        pw.expect(page.locator("#ef-key")).to_have_attribute("aria-required", "true")
+        pw.expect(page.locator("#ef-voice-req")).to_be_hidden()
+        pw.expect(page.locator("#ef-key-hint")).to_contain_text("aistudio.google.com")
+        pw.expect(page.locator("#ef-key-hint")).to_contain_text("free tier")
+        pw.expect(page.locator("#ef-model")).to_have_attribute("placeholder", "Default: gemini-3.8-flash-lite-tts")
+        assert page.locator("#ef-opt-style").is_visible()
+        # The voices are there before any key.
+        page.wait_for_selector("#ef-voice option[value=Kore]", state="attached")
+        voices = options(page, "#ef-voice")
+        assert ["Kore", "Kore (Gemini)"] in voices and ["Puck", "Puck (Gemini)"] in voices
+        assert ["", "Default (Kore, Gemini)"] in voices
+        assert len([v for v in voices if v[0] not in ("", "__other")]) == 30
+        pw.expect(page.locator("#ef-voice-hint")).to_contain_text("30 voices from Gemini")
+        assert cloud.requests == [], "no request for the voice list"
+        # Save without a key: the key field says so.
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-key-err")).to_contain_text("Paste the API key")
+        assert lv.request({"type": "engine_list"})["engines"] == []
+        # With the key (and the fake's address), saved and tested.
+        page.fill("#ef-url", cloud.url)
+        page.fill("#ef-key", SECRET)
+        page.select_option("#ef-voice", "Puck")
+        page.click("#ef-save")
+        pw.expect(page.locator("#ef-save")).to_have_text("Saved")
+        view = lv.request({"type": "engine_list"})["engines"][0]
+        assert view["kind"] == "gemini" and view["voice"] == "Puck" and view["key_present"]
+        page.click("#ef-test")
+        pw.expect(page.locator("#ef-status")).to_contain_text("Test passed")
+        sent = cloud.speech()
+        assert sent and sent[-1]["headers"]["x-goog-api-key"] == SECRET
+        assert SECRET not in sent[-1]["path"]
+        assert json.loads(sent[-1]["body"])["generationConfig"]["speechConfig"] == {
+            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Puck"}}}
+        assert SECRET not in page.content()
+        page.close()
+    finally:
+        cloud.stop()

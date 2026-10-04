@@ -1,5 +1,5 @@
 """Cloud kinds of external engines (#225, #226, ``docs/protocol-v1.md``
-"External engines"): ``elevenlabs``, ``azure``, ``google``, ``cartesia`` and
+"External engines"): ``elevenlabs``, ``azure``, ``google``, ``gemini``, ``cartesia`` and
 ``deepgram``, each against a local fake of its provider (``fakes.py``). A sentence reaches the provider with
 the key in the provider's own header, and a refused key makes the runtime
 read with its built-in engine and report ``auth``."""
@@ -11,7 +11,7 @@ import pytest
 from fakes import FakeCloud
 
 SECRET = "cloud-conformance-secret-0123456789"
-KINDS = ["elevenlabs", "azure", "google", "cartesia", "deepgram"]
+KINDS = ["elevenlabs", "azure", "google", "gemini", "cartesia", "deepgram"]
 
 
 def ok(c, msg):
@@ -69,6 +69,20 @@ def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
         assert body["voice"] == {"id": "voice-c"}
         assert body["output_format"] == {"container": "raw", "encoding": "pcm_s16le",
                                          "sample_rate": 24000}
+    elif cloud.shape.kind == "gemini":
+        # The key only in x-goog-api-key, never in the URL; the prebuilt
+        # voice list needs no request.
+        assert req["path"] == "/v1beta/models/gemini-3.8-flash-lite-tts:generateContent"
+        assert all(r["method"] == "POST" for r in cloud.requests)
+        assert "Kore" in [v["id"] for v in voices] and len(voices) == 30
+        body = json.loads(req["body"])
+        # The product rate (250 wpm) is a style: Gemini has no speed.
+        assert body["contents"] == [{"role": "user", "parts": [
+            {"text": "Hello from the cloud.", "speechMetadata": {"style": "speaking quickly"}}]}]
+        gen = body["generationConfig"]
+        assert gen["responseModalities"] == ["AUDIO"]
+        assert gen["speechConfig"] == {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}}
+        assert gen["responseFormat"] == {"audio": {"mimeType": "AUDIO_L16", "sampleRate": 24000}}
     elif cloud.shape.kind == "deepgram":
         assert req["path"].startswith("/v1/speak?model=aura-2-thalia-en&encoding=linear16"
                                       "&container=none&sample_rate=24000")
