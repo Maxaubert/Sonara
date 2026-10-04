@@ -321,6 +321,8 @@ grows with the text. Kokoro and the Windows voices always read sentence by sente
 message per request by default (up to 2000 characters each; a longer one in as few parts as
 fit). When a per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
 daily limit is reached, Kokoro reads until Google's daily reset (midnight Pacific time).
+On the free tier Google may use the text it reads to improve its products; with billing on, it
+does not (see [PRIVACY.md](PRIVACY.md)).
 Gemini's audio is **streamed**: a sentence starts playing with its first audio, and when none
 has come after 12 seconds (`first_audio_ms`, on the settings page as *Wait for audio* under
 *More options*, with *Characters per request* for `chunk_chars`) Kokoro reads that part instead, so a slow free tier never holds a reply for a minute. Gemini

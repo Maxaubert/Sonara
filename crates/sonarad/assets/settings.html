@@ -107,6 +107,7 @@
     .status-line { display:flex; align-items:center; gap:8px; padding:9px 16px; border-top:1px solid var(--line); font-size:12.5px; color:var(--tx2); }
     .status-line .dot { width:6px; height:6px; }
     .status-line.busy .dot { background:var(--tx3); animation:none; }
+    .status-line.bad .dot { background:var(--bad); animation:none; }
     .sub-status { color:var(--tx2); font-size:12.5px; padding:0 16px 12px; margin-top:-4px; }
     .empty { padding:16px; color:var(--tx3); font-size:13px; }
 
@@ -310,7 +311,17 @@
     /* ---- narrow windows ------------------------------------------------- */
     @media (max-width: 1000px) {
       .window { grid-template-columns:60px minmax(0,1fr); }
-      .side-nav button span, .search, .now .k, .now .v span, .empty-search { display:none; }
+      .side-nav button span { display:none; }
+      .now .k, .now .v span { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+      .nav-pane { position:relative; }
+      .search { width:38px; margin:0 auto 12px; z-index:30; }
+      .search input { padding:0; text-indent:34px; cursor:pointer; }
+      .search input::placeholder { color:transparent; }
+      .search svg { left:12px; }
+      .search:focus-within, .search:has(input:not(:placeholder-shown)) { width:240px; margin:0 0 12px; }
+      .search:focus-within input, .search:has(input:not(:placeholder-shown)) input { cursor:text; box-shadow:0 0 0 1px var(--line); }
+      .search:focus-within input::placeholder { color:var(--tx3); }
+      .empty-search { position:absolute; left:10px; top:54px; width:240px; z-index:30; background:var(--s2); border:1px solid var(--line); border-radius:8px; }
       .side-nav button { justify-content:center; padding:0; }
       .now { padding:10px 0; display:grid; place-items:center; }
       .page { padding:22px 20px 56px; }
@@ -331,6 +342,9 @@
       .two, .pair.key { grid-template-columns:1fr; }
       .pair { grid-auto-flow:row; }
       .code { max-width:100%; }
+      .sess-row { grid-template-columns:minmax(0,1fr); gap:10px; }
+      .sess-acts { justify-content:flex-end; }
+      .sess-acts .session-forget { margin-right:auto; }
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation:none !important; transition:none !important; }
@@ -788,9 +802,12 @@ function render() {
   if (switching) {
     setText("engine-status", "Switching to " + pickerName(switching.id) + "…");
     $("engine-line").classList.add("busy");
+    $("engine-line").classList.remove("bad");
   } else if (!pickerPending) {
     setText("engine-status", engineText(st));
-    $("engine-line").classList.toggle("busy", !!st && !st.ready);
+    const bad = !!st && !st.ready && (st.status === "unavailable" || !!st.reason);
+    $("engine-line").classList.toggle("bad", bad);
+    $("engine-line").classList.toggle("busy", !!st && !st.ready && !bad);
   }
   renderNow(st);
   const vopts = voiceOptions(s.engine, true);
@@ -2304,7 +2321,7 @@ function pickerShowPending() {
   setText("engine-status", sel.value === ADD_ENGINE ? "Press Enter to add a new engine."
     : "Press Enter to switch to " + pickerName(sel.value) + ".");
   $("engine-status").classList.remove("busy");
-  $("engine-status").parentNode.classList.remove("busy");
+  $("engine-status").parentNode.classList.remove("busy", "bad");
 }
 function pickerCommit() {
   const sel = $("engine-select");

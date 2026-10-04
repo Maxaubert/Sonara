@@ -67,7 +67,7 @@ fn font_css() -> &'static str {
             .iter()
             .map(|(family, woff2)| {
                 format!(
-                    "@font-face{{font-family:\"{family}\";font-style:normal;font-weight:100 900;                     font-display:swap;src:url(data:font/woff2;base64,{}) format(\"woff2\")}}",
+                    "@font-face{{font-family:\"{family}\";font-style:normal;font-weight:100 900;font-display:swap;src:url(data:font/woff2;base64,{}) format(\"woff2\")}}",
                     base64(woff2)
                 )
             })
