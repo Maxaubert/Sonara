@@ -681,7 +681,7 @@ mod tests {
         std::fs::write(
             h.join(FILE),
             r#"{"format": 1, "engines": [
-                {"id": "el", "kind": "elevenlabs", "voice": "abc", "key_ref": "credman"},
+                {"id": "ca", "kind": "cartesia", "voice": "abc", "key_ref": "credman"},
                 {"id": "bad", "kind": "openai-compatible", "url": "ftp://x"},
                 {"id": "loc", "kind": "openai-compatible", "url": "http://127.0.0.1:9/v1",
                  "options": {"preset": "kokoro-fastapi"}}]}"#,
@@ -705,7 +705,10 @@ mod tests {
         assert_eq!(views[2]["model"], "kokoro", "the preset's default");
         assert_eq!(views[2]["local"], true);
         assert_eq!(views[2]["status"]["status"], "ready");
-        assert_eq!(list["kinds"], json!(["openai-compatible"]));
+        assert_eq!(
+            list["kinds"],
+            json!(["openai-compatible", "elevenlabs", "azure", "google"])
+        );
         // A new profile with a secret: the file keeps the others and no key.
         e.add(
             &json!({"id": "openai", "kind": "openai-compatible",
@@ -716,14 +719,14 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(h.join(FILE)).unwrap();
         assert!(!text.contains("sk-"), "{text}");
-        assert!(text.contains("elevenlabs") && text.contains("ftp://x"));
+        assert!(text.contains("cartesia") && text.contains("ftp://x"));
         assert_eq!(
             store.get("openai").unwrap().unwrap().expose(),
             "sk-secret-value-1234567890"
         );
         assert!(reg.get("openai").is_ok());
         let (again, _) = Engines::load(setup(&h, store));
-        assert_eq!(again.ids(), vec!["el", "bad", "loc", "openai"]);
+        assert_eq!(again.ids(), vec!["ca", "bad", "loc", "openai"]);
         let _ = std::fs::remove_dir_all(&h);
     }
 
@@ -763,7 +766,7 @@ mod tests {
             "'kokoro' is a built-in engine"
         );
         assert_eq!(
-            e.add(&json!({"id": "x", "kind": "azure"}), None, false)
+            e.add(&json!({"id": "x", "kind": "deepgram"}), None, false)
                 .unwrap_err()
                 .code,
             Code::Unsupported

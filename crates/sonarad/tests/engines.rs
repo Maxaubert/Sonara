@@ -218,7 +218,10 @@ fn the_capability_and_the_list() {
     assert_eq!(l["ok"], true);
     assert_eq!(l["engines"], json!([]));
     assert_eq!(l["builtin"], json!(["fake"]));
-    assert_eq!(l["kinds"], json!(["openai-compatible"]));
+    assert_eq!(
+        l["kinds"],
+        json!(["openai-compatible", "elevenlabs", "azure", "google"])
+    );
     assert!(l["presets"]
         .as_array()
         .unwrap()

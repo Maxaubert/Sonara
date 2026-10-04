@@ -1,7 +1,7 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-04 (0.15.0: external speech engines you add, their keys in Windows
-Credential Manager)_
+_Last updated: 2026-10-04 (0.16.0: ElevenLabs, Azure and Google as external speech engines;
+0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
 Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
@@ -24,8 +24,9 @@ your computer and what, if anything, leaves it.
   stay under 10 MB (the oldest lines are deleted first), and turning the setting off stops
   recording text. No other file holds session text.
 - With an **external speech engine** you added and selected (opt-in; none by default), the text
-  Sonara reads aloud is sent to that engine: to the cloud service you chose (for example
-  OpenAI), or to a speech server on your own PC, which keeps it local. Nothing is sent before
+  Sonara reads aloud is sent to that engine: to the cloud service you chose (OpenAI,
+  ElevenLabs, Azure AI Speech or Google Cloud Text-to-Speech), or to a speech server on your own
+  PC, which keeps it local. Nothing is sent before
   you add an engine **and** select it. Its key stays in Windows Credential Manager.
 - It downloads software, never your data: its runtime from Sonara's GitHub releases and the
   Kokoro voice model, once each (see Downloads).
@@ -62,17 +63,29 @@ and receives nothing.
 
 ## External voices (opt-in)
 
-You can add speech engines that are not part of Sonara: a cloud service such as OpenAI, or a
-local OpenAI-compatible server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server). Adding
+You can add speech engines that are not part of Sonara: a cloud service (OpenAI, ElevenLabs,
+Azure AI Speech, Google Cloud Text-to-Speech), or a local OpenAI-compatible server (Kokoro-FastAPI, LocalAI, Speaches, a Chatterbox server). Adding
 one sends nothing; it is used only once you select it (`sonara engines use <id>`, or `set
 engine` from a client).
 
 - **What is sent.** While an external engine is selected, the text Sonara reads aloud (the same
   sentences it would speak, after its own text rules) goes to that engine, one sentence at a
   time, together with the voice, the speed and the model you set. It goes to the address you
-  gave: under the provider's own terms for a cloud service (for OpenAI, `api.openai.com`), or to
-  a program on your own PC for a local server (`127.0.0.1`, `localhost`), where it stays on your
-  computer. A voice list (`voices` with `refresh`, or the voice picker) asks the same address.
+  gave: under the provider's own terms for a cloud service, or to a program on your own PC for a
+  local server (`127.0.0.1`, `localhost`), where it stays on your computer. A voice list
+  (`voices` with `refresh`, or the voice picker) asks the same address. The cloud addresses:
+
+  | Engine kind | Text goes to | Key sent as |
+  |---|---|---|
+  | OpenAI (`openai-compatible`, preset `openai`) | `api.openai.com` | `Authorization` header |
+  | ElevenLabs (`elevenlabs`) | `api.elevenlabs.io` | `xi-api-key` header |
+  | Azure AI Speech (`azure`) | `<region>.tts.speech.microsoft.com`, or the endpoint you gave | `Ocp-Apim-Subscription-Key` header |
+  | Google Cloud Text-to-Speech (`google`) | `texttospeech.googleapis.com` | `X-goog-api-key` header (with `x-goog-user-project` when you set a project) |
+
+  Providers may keep what they receive under their terms: ElevenLabs, for example, keeps a
+  history of generated speech on your account unless your plan offers zero retention (the
+  engine's `enable_logging: false` option asks for it). Azure also receives Sonara's version in
+  the `User-Agent` header.
 - **What is not sent.** No other text, file, setting or identifier. Short repeated phrases may be
   answered from memory instead of asked again; that memory is gone when the runtime stops.
 - **Keys.** An engine's API key is stored in **Windows Credential Manager** (a generic

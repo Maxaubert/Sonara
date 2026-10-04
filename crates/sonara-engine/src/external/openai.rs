@@ -3,7 +3,7 @@
 //! LocalAI, Speaches, openedai-speech, the two Chatterbox servers). WAV is
 //! asked for by default (D8); the body is sniffed anyway.
 use super::adapter::{
-    key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo, VoiceSource,
+    encode, key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo, VoiceSource,
 };
 use super::error::{clean, headline, ExtError};
 use super::keys::Secret;
@@ -43,18 +43,6 @@ pub struct OpenAi {
     extra: Map<String, Value>,
     voices_path: Option<String>,
     label: String,
-}
-
-/// Percent-encode a query value.
-fn encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            _ => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 impl OpenAi {
@@ -177,7 +165,7 @@ impl Adapter for OpenAi {
         Some(self.sample_rate.unwrap_or(24_000))
     }
 
-    fn map_error(&self, reply: &HttpReply, _voice: &str) -> ExtError {
+    fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
         let s = reply.status;
         let eb = ErrorBody::parse(&reply.body);
         let code = eb.code.clone().or(eb.kind.clone()).unwrap_or_default();
@@ -348,7 +336,7 @@ mod tests {
     #[test]
     fn error_mapping_follows_the_table() {
         let a = preset("generic", json!({}));
-        let err = |s, b: &str| a.map_error(&reply(s, b), "v").reason;
+        let err = |s, b: &str| a.map_error(&reply(s, b), "v", None).reason;
         let openai = |code: &str| {
             format!(r#"{{"error": {{"message": "m", "type": "t", "code": "{code}"}}}}"#)
         };
@@ -419,6 +407,7 @@ mod tests {
                 r#"{"error": {"message": "Incorrect API key provided: sk-proj-abcdefghijklmnopqrst"}}"#,
             ),
             "marin",
+            None,
         );
         assert_eq!(e.status, Some(401));
         assert_eq!(
@@ -428,7 +417,7 @@ mod tests {
         let mut r = reply(429, r#"{"error": {"code": "slow_down"}}"#);
         r.retry_after = Some(std::time::Duration::from_secs(1));
         assert_eq!(
-            a.map_error(&r, "v").retry_after,
+            a.map_error(&r, "v", None).retry_after,
             Some(std::time::Duration::from_secs(1))
         );
     }

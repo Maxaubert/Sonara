@@ -7,7 +7,7 @@ Four PRs, stacked, each a feature with its own version bump:
 | PR | Issue | Branch | Version | Content |
 |---|---|---|---|---|
 | PR1 | #224 | `feat/224-http-engine` | 0.15.0 | Core: profiles, `engines.json`, keys, Registry changes, `External` engine with fallback, cue, breaker, prefetch depth, cue cache, the `openai-compatible` kind (OpenAI and local servers), protocol `engine_*` messages, CLI, SDK helpers, conformance |
-| PR2 | #225 | `feat/225-cloud-engines` | 0.16.0 | Kinds `elevenlabs`, `azure`, `google` |
+| PR2 | #225 | `feat/225-cloud-adapters` | 0.16.0 | Kinds `elevenlabs`, `azure`, `google` |
 | PR3 | #226 | `feat/226-more-engines` | 0.17.0 | Kinds `cartesia`, `deepgram`, `command` |
 | PR4 | #227 | `feat/227-engines-page` | 0.18.0 | Settings page Engines section; README engines section |
 
@@ -705,7 +705,7 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 
 ### 13.3 Uncertain facts (to verify with the live tests before each PR's "merge?")
 
-1. Google API-key auth (`X-goog-api-key`) for `text:synthesize` is not on the official TTS auth page.
+1. Google API-key auth (`X-goog-api-key`) for `text:synthesize` is not on the official TTS auth page. Still open after PR2 (2026-10-04): `google_live` exists but was not run (no key on the build machine); it decides this at the PR's hands-on step.
 2. Deepgram `speed` range and model support; Deepgram 402 for exhausted credit.
 3. Cartesia: whether `/tts/bytes` starts sending before synthesis ends (no effect on this design, which collects the body).
 4. Chatterbox API non-streaming WAV sample format (float32 expected; `wav::decode` handles both).
@@ -767,6 +767,20 @@ Every adapter first checks the status; a 2xx body is audio, anything else is nev
 - [ ] 5. Kinds registered in `engine_list.kinds`; conformance: one fake server per shape (ElevenLabs, Azure, Google) in `conformance/engines/fakes.py` with a speak and an auth-failure case each.
 - [ ] 6. Live tests: `elevenlabs_live` (`ELEVENLABS_API_KEY`, optional `SONARA_LIVE_ELEVENLABS_VOICE`), `azure_live` (`AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`), `google_live` (`GOOGLE_TTS_API_KEY`): each speaks one sentence and lists voices. The Google live test decides uncertain fact 1; its result goes into this spec's 13.3 with the date.
 - [ ] 7. Docs (`protocol-v1.md` kinds, `PRIVACY.md` providers), version 0.16.0, hands-on with at least one cloud provider the user has a key for, "merge?".
+
+**Deviations found while building PR2** (the sections above are updated where they apply):
+
+- Branch `feat/225-cloud-adapters` (the table said `feat/225-cloud-engines`).
+- `adapter::key_allowed` stripped nothing, so a request URL with a query (ElevenLabs' `?output_format=`) never got its key (`Url::parse` refuses a query). It now judges the URL without its query; test in `adapter.rs`.
+- `Profile::default_key_ref` follows 5.2 literally: `none` only for an `openai-compatible` profile with a loopback url (PR1 gave `none` to any kind with a loopback url, so a cloud kind behind a local proxy would have sent no key).
+- The `Adapter` trait grew three things: `map_error(reply, voice, listed)` (`listed`: whether the voice is in the last fetched list, `None` before one; Azure's 400 needs it), `audio(reply, label)` (default: the body is WAV or raw PCM; Google decodes base64 JSON), and `next_voices_page(body, key)` (default none; ElevenLabs' `next_page_token`, at most 50 pages). `External::refresh_voices` follows the pages and drops duplicate ids.
+- Mapping rows the tables of 13.2 leave open: ElevenLabs 403 with another code is `auth`, a 404 whose message names the voice is `bad_voice`; Azure 403 is `auth`, a 400 before any voice list is fetched is `bad_config` (the message says to check the voice and language), and a 401 without a body says to check that the key belongs to the region; Google 429 is `quota` only when the message mentions "per day" or "billing".
+- Kind options are validated like `openai-compatible`'s: ElevenLabs `output_format` one of `pcm_16000`, `pcm_22050`, `pcm_24000`, `pcm_44100`, `stability`/`similarity_boost`/`style` numbers 0..=1; Azure `region` a-z and 0-9, `output_format` one of the six `raw-{8khz,16khz,22050hz,24khz,44100hz,48khz}-16bit-mono-pcm` (13 listed none); Google `sample_rate` 8000..=48000, `user_project` a project id. `azure` and `google` refuse a `model` (Google's message points at `options.model_name`). Each of the three needs a `voice`.
+- Labels when the profile has none: `ElevenLabs`, `Azure Speech`, `Google Text-to-Speech` (spoken in cues).
+- Google: `languageCode` is the option, else the voice name's locale, else `en-US` (a Gemini voice such as `Kore` has no locale); the voice list asks `?languageCode=` only when the option is set; `model_name` is sent as `voice.modelName` and is not verified live.
+- Azure: `xml:lang` from `options.lang`, else the voice's locale, else `en-US`; the voice name is XML-escaped too (an attribute); control characters other than tab and newlines become spaces (XML 1.0 forbids them).
+- Conformance: `conformance/engines/fakes.py` (one fake per shape, checking the key header) and `test_cloud_engines.py` (speak with the key in the provider's header, voices, `engine_test`; a refused key reports `auth` and the fallback reads).
+- Live tests were written but not run (no provider keys on the build machine); step 7's hands-on decides them.
 
 ### PR3 (#226, 0.17.0): cartesia, deepgram, command
 

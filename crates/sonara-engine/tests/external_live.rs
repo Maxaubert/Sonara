@@ -8,6 +8,11 @@
 //!   `http://127.0.0.1:8880/v1`)
 //! - `localai_live`: `SONARA_LIVE_LOCALAI_URL`, `SONARA_LIVE_LOCALAI_MODEL`
 //! - `speaches_live`: `SONARA_LIVE_SPEACHES_URL`, `SONARA_LIVE_SPEACHES_MODEL`
+//! - `elevenlabs_live`: `ELEVENLABS_API_KEY`, optional
+//!   `SONARA_LIVE_ELEVENLABS_VOICE` (default: the premade voice George)
+//! - `azure_live`: `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`
+//! - `google_live`: `GOOGLE_TTS_API_KEY` (also the acceptance check of API-key
+//!   auth through `X-goog-api-key`, spec 13.3 item 1)
 use serde_json::{json, Value};
 use sonara_engine::external::keys::{KeyResolver, MemoryStore};
 use sonara_engine::external::profile::Profile;
@@ -27,7 +32,7 @@ fn check(profile: Value) {
     ))
     .unwrap();
     let voices = e.refresh_voices().expect("the voice list");
-    println!("{} voices: {}", voices.len(), voices.len());
+    println!("{} voices", voices.len());
     let t = e
         .test("Hello. This is a live check of Sonara.", "", 250)
         .expect("one synthesis");
@@ -97,5 +102,46 @@ fn speaches_live() {
     check(
         json!({"id": "speaches-live", "kind": "openai-compatible", "url": url,
         "model": model, "key_ref": "none", "options": {"preset": "speaches"}}),
+    );
+}
+
+#[test]
+#[ignore]
+fn elevenlabs_live() {
+    if var("ELEVENLABS_API_KEY").is_none() {
+        println!("skipped: set ELEVENLABS_API_KEY");
+        return;
+    }
+    let voice =
+        var("SONARA_LIVE_ELEVENLABS_VOICE").unwrap_or_else(|| "JBFqnCBsd6RMkjVDRZzb".into());
+    check(
+        json!({"id": "elevenlabs-live", "kind": "elevenlabs", "voice": voice,
+        "key_ref": "env:ELEVENLABS_API_KEY"}),
+    );
+}
+
+#[test]
+#[ignore]
+fn azure_live() {
+    let (Some(_), Some(region)) = (var("AZURE_SPEECH_KEY"), var("AZURE_SPEECH_REGION")) else {
+        println!("skipped: set AZURE_SPEECH_KEY and AZURE_SPEECH_REGION");
+        return;
+    };
+    check(
+        json!({"id": "azure-live", "kind": "azure", "voice": "en-US-AvaMultilingualNeural",
+        "key_ref": "env:AZURE_SPEECH_KEY", "options": {"region": region}}),
+    );
+}
+
+#[test]
+#[ignore]
+fn google_live() {
+    if var("GOOGLE_TTS_API_KEY").is_none() {
+        println!("skipped: set GOOGLE_TTS_API_KEY");
+        return;
+    }
+    check(
+        json!({"id": "google-live", "kind": "google", "voice": "en-US-Chirp3-HD-Kore",
+        "key_ref": "env:GOOGLE_TTS_API_KEY"}),
     );
 }

@@ -131,7 +131,8 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 ## External engines
 
 Protocol 1.2 lets the user add speech engines that are not part of Sonara (OpenAI, a local
-OpenAI-compatible server) as profiles; the clients expose them as `client.engines` (`list`,
+OpenAI-compatible server; since 0.16.0 also ElevenLabs, Azure AI Speech and Google Cloud
+Text-to-Speech) as profiles; the clients expose them as `client.engines` (`list`,
 `add`, `remove`, `setKey`/`set_key`, `test`) and `client.voices(engine, { refresh })`. Text goes
 to such an engine only once a client selects it with `set engine`; keys live in Windows Credential
 Manager. A host that must not send text off the PC, or does not want the feature, starts the

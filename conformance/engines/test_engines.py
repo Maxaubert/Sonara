@@ -43,7 +43,7 @@ def test_capability_engines_listed(rt, client):
     lst = ok(client, {"type": "engine_list"})
     assert lst["engines"] == []
     assert lst["builtin"] == ["fake"]
-    assert lst["kinds"] == ["openai-compatible"]
+    assert lst["kinds"] == ["openai-compatible", "elevenlabs", "azure", "google"]
     assert "openai" in lst["presets"] and "generic" in lst["presets"]
 
 
