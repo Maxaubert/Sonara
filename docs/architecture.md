@@ -38,7 +38,8 @@ runs), next to Kokoro and OneCore; the reader and the higher layers only see eng
 - `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
   chunks ahead of the playing one. `Reader::set_chunk_chars` and `Engine::chunk_chars` (#235): an
   engine billed per request (Gemini) gets joined sentences (`reader::join_chunks`: the first chunk
-  alone, then growing to the engine's limit); the worker sets both at start and on `set engine`. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
+  alone, then growing to the engine's limit; `Engine::quick_start` false joins from the first
+  sentence, `reader::join_whole`); the worker sets them at start and on `set engine`. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
 - `sonara-cli` `engines.rs`: `sonara engines ...` (`engines_file.rs` writes a `command` profile
   into `engines.json` locally, then `engine_reload`); `uninstall` deletes the `sonara:*`
   credentials unless settings are kept.

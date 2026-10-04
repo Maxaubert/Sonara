@@ -131,8 +131,9 @@ fn gemini_speaks_base64_pcm_with_the_key_only_in_its_header() {
                 "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}},
                 "responseFormat": {"audio": {"mimeType": "AUDIO_L16", "sampleRate": 24000}}}})
     );
-    // Another voice and a fast rate: the voice name and a style.
-    samples(&r.engine, "Again.", "Puck", 250);
+    // Another voice and a fast rate: the voice name and a style (the
+    // default 250 wpm sends none).
+    samples(&r.engine, "Again.", "Puck", 320);
     let body = r.server.requests()[1].json();
     assert_eq!(
         body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"],
@@ -376,4 +377,60 @@ fn a_redirect_is_never_followed() {
     }
     assert!(other.requests().is_empty(), "{:?}", other.requests());
     assert_eq!(r.server.count(SPEAK), 3);
+}
+
+#[test]
+fn a_model_that_refuses_both_fields_loses_each_once_and_still_reads() {
+    // Review of #235: a model that knows neither `responseFormat` nor
+    // `speechMetadata` costs one request per field, then reads; the
+    // engine is never blocked as "settings do not work".
+    let r = rig();
+    let refuse = |field: &str| {
+        rpc_error(
+            400,
+            "INVALID_ARGUMENT",
+            &format!("Invalid JSON payload received. Unknown name \"{field}\": Cannot find field."),
+            json!([]),
+        )
+    };
+    r.server.queue(SPEAK, refuse("responseFormat"));
+    r.server.queue(SPEAK, refuse("speechMetadata"));
+    r.server.on(SPEAK, audio(&[3, 4]));
+    // A slow rate carries a style, so both fields are in the first request.
+    assert_eq!(samples(&r.engine, "One.", "", 100), vec![3, 4]);
+    let reqs = r.server.requests();
+    assert_eq!(reqs.len(), 3, "one more request per refused field");
+    let third = reqs[2].json();
+    assert!(third["generationConfig"].get("responseFormat").is_none());
+    assert!(third["contents"][0]["parts"][0]
+        .get("speechMetadata")
+        .is_none());
+    assert_eq!(r.engine.status().reason, None, "not blocked");
+    assert_eq!(samples(&r.engine, "Two.", "", 100), vec![3, 4]);
+    assert_eq!(r.server.count(SPEAK), 4, "remembered: one request");
+}
+
+#[test]
+fn a_daily_quota_is_not_retried_at_once_and_waits_past_the_reset() {
+    // Review of #235: a per-day 429 with a short retryDelay is neither
+    // retried at once nor probed every ten minutes.
+    let r = rig();
+    r.server.on(
+        SPEAK,
+        rpc_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "You exceeded your current quota.",
+            json!([
+                {"@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                 "violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "1s"}]),
+        ),
+    );
+    assert_eq!(
+        samples(&r.engine, "One.", "", 200),
+        with_cue(Reason::Quota, "One.")
+    );
+    assert_eq!(r.server.count(SPEAK), 1, "a quota is not retried at once");
+    assert_eq!(r.engine.status().reason, Some(Reason::Quota));
 }

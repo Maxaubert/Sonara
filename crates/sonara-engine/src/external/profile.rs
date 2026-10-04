@@ -589,7 +589,7 @@ const AZURE_OPTIONS: &[&str] = &["region", "output_format", "lang"];
 /// Options of `google`.
 const GOOGLE_OPTIONS: &[&str] = &["language_code", "sample_rate", "user_project", "model_name"];
 /// Options of `gemini`.
-const GEMINI_OPTIONS: &[&str] = &["language_code", "style", "chunk_chars"];
+const GEMINI_OPTIONS: &[&str] = &["language_code", "style", "chunk_chars", "quick_start"];
 /// Options of `cartesia`.
 const CARTESIA_OPTIONS: &[&str] = &["api_version", "language", "sample_rate"];
 /// Options of `deepgram`.
@@ -1039,6 +1039,9 @@ impl Profile {
             v.as_u64()
                 .is_some_and(|n| n == 0 || (200..=GEMINI_CHUNK_MAX).contains(&n))
         };
+        if o.get("quick_start").is_some_and(|v| !v.is_boolean()) {
+            return Err(invalid("option 'quick_start' must be true or false"));
+        }
         if o.get("chunk_chars").is_some_and(|v| !chunk_ok(v)) {
             return Err(invalid(format!(
                 "option 'chunk_chars' must be 0 (one sentence per request) or a whole \
@@ -1342,9 +1345,10 @@ impl Profile {
     pub fn timeout_ms(&self) -> u64 {
         self.option_u64("timeout_ms").unwrap_or(match self.kind {
             Kind::Command => 30_000,
-            // A joined chunk of up to 1000 characters is a minute of
-            // speech, made before the reply starts (#235).
-            Kind::Gemini => 60_000,
+            // A joined chunk is made whole before it plays: a minute per
+            // 1000 characters (about a minute of speech), at least one and
+            // at most two (#235).
+            Kind::Gemini => (self.chunk_chars() as u64 * 60).clamp(60_000, 120_000),
             _ if self.is_local() => 60_000,
             _ => 15_000,
         })
@@ -1354,7 +1358,13 @@ impl Profile {
     pub fn prefetch(&self) -> usize {
         self.option_u64("prefetch")
             .map(|n| n.clamp(1, 4) as usize)
-            .unwrap_or(if self.is_local() { 1 } else { 2 })
+            .unwrap_or(if self.is_local() || self.kind == Kind::Gemini {
+                // Gemini: one ahead, so the start of a reply is not a burst
+                // against the free tier's per-minute limit (#235).
+                1
+            } else {
+                2
+            })
     }
 
     /// `Engine::chunk_chars` (#235): `gemini` joins sentences up to
@@ -1364,6 +1374,16 @@ impl Profile {
             Kind::Gemini => self.option_u64("chunk_chars").unwrap_or(GEMINI_CHUNK_CHARS) as usize,
             _ => 0,
         }
+    }
+
+    /// `Engine::quick_start` (#235): `options.quick_start`, default true
+    /// (the first chunk of a reply is one sentence). False sends a reply
+    /// under `chunk_chars` in one request.
+    pub fn quick_start(&self) -> bool {
+        self.options
+            .get("quick_start")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
     }
 
     /// Whether the kind needs a key to work at all (a key_ref other than
@@ -1679,8 +1699,11 @@ mod tests {
         assert_eq!(p.key_ref, KeyRef::CredMan);
         assert_eq!(p.display_label(), "Gemini");
         assert_eq!(p.sends_text_to(), "generativelanguage.googleapis.com");
-        assert_eq!((p.timeout_ms(), p.prefetch()), (60_000, 2));
+        // One chunk ahead: the free tier's per-minute limit counts the
+        // burst at the start of a reply (review of #235).
+        assert_eq!((p.timeout_ms(), p.prefetch()), (60_000, 1));
         assert_eq!(p.chunk_chars(), 1000);
+        assert!(p.quick_start(), "the first sentence alone by default");
         assert_eq!(GEMINI_VOICES.len(), 30);
         assert!(GEMINI_VOICES.contains(&"Kore"));
         let set = parse(ge(json!({"model": "gemini-3.8-flash-tts", "voice": "Puck",
@@ -1690,6 +1713,19 @@ mod tests {
         assert_eq!(set.chunk_chars(), 0);
         let max = parse(ge(json!({"options": {"chunk_chars": 4000}}))).unwrap();
         assert_eq!(max.chunk_chars(), 4000);
+        // The default timeout grows with the chunk: a minute per 1000
+        // characters, at most two (review of #235); a set one stays.
+        assert_eq!(max.timeout_ms(), 120_000);
+        let mid = parse(ge(json!({"options": {"chunk_chars": 1500}}))).unwrap();
+        assert_eq!(mid.timeout_ms(), 90_000);
+        assert_eq!(set.timeout_ms(), 60_000, "one sentence: a minute");
+        let own = parse(ge(
+            json!({"options": {"chunk_chars": 4000, "timeout_ms": 20000}}),
+        ))
+        .unwrap();
+        assert_eq!(own.timeout_ms(), 20_000);
+        let whole = parse(ge(json!({"options": {"quick_start": false}}))).unwrap();
+        assert!(!whole.quick_start());
         for (extra, msg) in [
             (
                 json!({"model": "models/x"}),
@@ -1699,6 +1735,7 @@ mod tests {
             (json!({"options": {"chunk_chars": 100}}), "chunk_chars"),
             (json!({"options": {"chunk_chars": 4001}}), "chunk_chars"),
             (json!({"options": {"chunk_chars": "big"}}), "chunk_chars"),
+            (json!({"options": {"quick_start": "no"}}), "quick_start"),
             (json!({"options": {"style": "a\nb"}}), "style"),
             (json!({"options": {"style": 5}}), "style"),
             (json!({"options": {"style": "x".repeat(501)}}), "style"),
@@ -1717,6 +1754,7 @@ mod tests {
         let g =
             parse(json!({"id": "g", "kind": "google", "voice": "en-US-Chirp3-HD-Kore"})).unwrap();
         assert_eq!(g.chunk_chars(), 0);
+        assert!(g.quick_start());
     }
 
     #[test]

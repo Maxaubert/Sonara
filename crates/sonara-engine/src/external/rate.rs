@@ -38,12 +38,13 @@ pub fn speed(kind: Kind, wpm: u32) -> Option<f64> {
 /// Gemini has no speed parameter (#235): its documented style control
 /// (`speechMetadata.style`, examples such as "speaking slowly") carries
 /// the rate in four bands, sent as metadata and never spoken. Approximate:
-/// the model chooses the pace. Around the normal rate nothing is sent.
+/// the model chooses the pace. Around the product's default rate (250 wpm)
+/// nothing is sent, so Gemini reads at its own pace out of the box.
 pub fn gemini_pace(wpm: u32) -> Option<&'static str> {
     match wpm {
-        0..=150 => Some("speaking slowly"),
-        151..=230 => None,
-        231..=320 => Some("speaking quickly"),
+        0..=160 => Some("speaking slowly"),
+        161..=280 => None,
+        281..=350 => Some("speaking quickly"),
         _ => Some("speaking very quickly"),
     }
 }
@@ -84,7 +85,9 @@ mod tests {
 
     #[test]
     fn gemini_rate_is_a_style_in_four_bands() {
-        let got: Vec<Option<&str>> = [100, 150, 151, 200, 230, 231, 250, 320, 321, 400]
+        // Nothing around the product's default rate (250 wpm, review of
+        // #235): Gemini's own pace, and no field an older model may refuse.
+        let got: Vec<Option<&str>> = [100, 160, 161, 200, 250, 280, 281, 350, 351, 400]
             .map(gemini_pace)
             .to_vec();
         assert_eq!(
@@ -95,7 +98,7 @@ mod tests {
                 None,
                 None,
                 None,
-                Some("speaking quickly"),
+                None,
                 Some("speaking quickly"),
                 Some("speaking quickly"),
                 Some("speaking very quickly"),

@@ -122,3 +122,22 @@ fn the_worker_joins_sentences_for_an_engine_that_asks() {
     wait_for("one sentence each", || plain.inner.syntheses() == 2);
     assert_eq!(plain.inner.texts(), vec!["Four.", "Five."]);
 }
+
+#[test]
+fn the_worker_sends_a_whole_reply_for_an_engine_without_quick_start() {
+    // Review of #235: an engine that trades the fast start for fewer
+    // requests reads a reply under its limit in one synthesis.
+    let whole = Arc::new(OpenEngine {
+        chunk_chars: 4000,
+        quick_start: false,
+        ..OpenEngine::new("whole", 1)
+    });
+    let registry = Registry::default();
+    registry.register(whole.clone()).unwrap();
+    let r = Rig::config(Config::new(registry));
+    r.h.set(Key::Engine, Value::Text("whole".into())).unwrap();
+    r.h.speak("One. Two. Three.", QueueMode::Append, false, None)
+        .unwrap();
+    wait_for("one synthesis", || whole.inner.syntheses() == 1);
+    assert_eq!(whole.inner.texts(), vec!["One. Two. Three."]);
+}

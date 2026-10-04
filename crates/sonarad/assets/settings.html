@@ -1136,6 +1136,8 @@ const KIND_FIELDS = {
   "gemini": [
     {key: "language_code", label: "Language", hint: "Empty lets Gemini tell from the text. A locale such as en-US."},
     {key: "style", label: "Style", hint: "How to speak, such as calm and warm. Sent as a direction, never read aloud. Sonara adds the pace from your rate."},
+    {key: "chunk_chars", label: "Characters per request", type: "number", min: 0, max: 4000, step: 100, placeholder: "1000", hint: "The free tier counts requests: Sonara joins sentences up to this many characters. 0 sends one sentence per request; 200 to 4000. Empty is 1000."},
+    {key: "quick_start", label: "Quick start", type: "select", bool: true, choices: [["", "On: the first sentence alone, reading starts at once (default)"], ["false", "Off: a reply that fits is one request, reading starts once it is made"]], hint: "Off saves requests on the free tier: a reply under the characters per request is one request."},
   ],
   "cartesia": [
     {key: "language", label: "Language", hint: "A language code; empty is en."},
@@ -1405,6 +1407,10 @@ function buildKindFields(kind, options) {
     } else {
       input = el("input", "field");
       input.type = f.type === "number" ? "number" : "text";
+      if (f.type === "number") {
+        input.inputMode = "numeric";
+        for (const k of ["min", "max", "step", "placeholder"]) if (f[k] != null) input[k] = f[k];
+      }
       input.autocomplete = "off";
       input.spellcheck = false;
     }
@@ -1831,6 +1837,7 @@ function collectProfile() {
     const val = n.value.trim();
     if (!val) continue;
     if (f.type === "number") options[f.key] = Number(val);
+    else if (f.bool) options[f.key] = val === "true";
     else if (f.type === "lines") options[f.key] = n.value.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
     else options[f.key] = val;
   }

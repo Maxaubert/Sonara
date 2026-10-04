@@ -70,6 +70,13 @@ pub trait Engine: Send + Sync {
     fn chunk_chars(&self) -> usize {
         0
     }
+    /// With `chunk_chars`: true (the default) keeps the first chunk of an
+    /// item one sentence, so reading starts at once; false joins every
+    /// chunk up to `chunk_chars`, so a reply under it is one request and
+    /// reading starts once all of it is made (review of #235).
+    fn quick_start(&self) -> bool {
+        true
+    }
     /// True when `synthesize` accepts voice ids that `voices()` does not
     /// list (cloud voice ids, cloned voices, file names of a local server).
     fn accepts_unlisted_voices(&self) -> bool {

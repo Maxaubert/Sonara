@@ -76,9 +76,10 @@ def test_speak_reaches_the_provider_with_its_key_header(client, cloud):
         assert all(r["method"] == "POST" for r in cloud.requests)
         assert "Kore" in [v["id"] for v in voices] and len(voices) == 30
         body = json.loads(req["body"])
-        # The product rate (250 wpm) is a style: Gemini has no speed.
+        # Gemini has no speed; at the product rate (250 wpm) no style is
+        # sent, so the model reads at its own pace.
         assert body["contents"] == [{"role": "user", "parts": [
-            {"text": "Hello from the cloud.", "speechMetadata": {"style": "speaking quickly"}}]}]
+            {"text": "Hello from the cloud."}]}]
         gen = body["generationConfig"]
         assert gen["responseModalities"] == ["AUDIO"]
         assert gen["speechConfig"] == {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Kore"}}}

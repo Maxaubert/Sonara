@@ -737,6 +737,13 @@ def test_gemini_is_a_provider_with_its_voices_and_a_required_key(live, browser):
         pw.expect(page.locator("#ef-key-hint")).to_contain_text("free tier")
         pw.expect(page.locator("#ef-model")).to_have_attribute("placeholder", "Default: gemini-3.8-flash-lite-tts")
         assert page.locator("#ef-opt-style").is_visible()
+        # The free-tier settings (review of #235): characters per request
+        # and quick start.
+        pw.expect(page.locator("#ef-opt-chunk_chars")).to_have_attribute("placeholder", "1000")
+        pw.expect(page.locator("#ef-opt-chunk_chars")).to_have_attribute("type", "number")
+        pw.expect(page.locator("#ef-opt-chunk_chars-hint")).to_contain_text("free tier counts requests")
+        quick = options(page, "#ef-opt-quick_start")
+        assert ["false", "Off: a reply that fits is one request, reading starts once it is made"] in quick
         # The voices are there before any key.
         page.wait_for_selector("#ef-voice option[value=Kore]", state="attached")
         voices = options(page, "#ef-voice")
@@ -753,10 +760,14 @@ def test_gemini_is_a_provider_with_its_voices_and_a_required_key(live, browser):
         page.fill("#ef-url", cloud.url)
         page.fill("#ef-key", SECRET)
         page.select_option("#ef-voice", "Puck")
+        page.fill("#ef-opt-chunk_chars", "4000")
+        page.select_option("#ef-opt-quick_start", "false")
         page.click("#ef-save")
         pw.expect(page.locator("#ef-save")).to_have_text("Saved")
         view = lv.request({"type": "engine_list"})["engines"][0]
         assert view["kind"] == "gemini" and view["voice"] == "Puck" and view["key_present"]
+        assert view["options"]["chunk_chars"] == 4000
+        assert view["options"]["quick_start"] is False
         page.click("#ef-test")
         pw.expect(page.locator("#ef-status")).to_contain_text("Test passed")
         sent = cloud.speech()

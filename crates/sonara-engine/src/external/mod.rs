@@ -58,6 +58,11 @@ use worker::CancelToken;
 
 /// A `Retry-After` up to this long is waited for once.
 pub const RETRY_AFTER_MAX: Duration = Duration::from_millis(1500);
+/// A request is sent again at most this many times after the adapter
+/// adapted to a refusal: one per field a model may refuse (Gemini's
+/// `responseFormat` and `speechMetadata`; the adapter itself drops each
+/// field only once).
+pub const MAX_ADAPTS: usize = 2;
 /// The voice list is fetched again after this long.
 pub const VOICES_TTL: Duration = Duration::from_secs(600);
 /// After a failed voice-list fetch the list is not stale for this long, so
@@ -370,8 +375,10 @@ impl External {
         }
     }
 
-    /// One provider request, with the one `Retry-After` retry and the one
-    /// retry after the adapter adapted to a refusal (Deepgram's `speed`).
+    /// One provider request, with the one `Retry-After` retry (never for a
+    /// quota, which a few seconds do not end) and one retry per refusal the
+    /// adapter adapted to (Deepgram's `speed`; Gemini's `responseFormat`
+    /// and `speechMetadata`), up to `MAX_ADAPTS`.
     fn http_request(
         &self,
         adapter: &Arc<dyn Adapter>,
@@ -382,7 +389,7 @@ impl External {
         key: Option<&Secret>,
     ) -> Result<std::result::Result<PcmChunk, ExtError>> {
         let mut req = adapter.synth_request(text, voice, rate, key);
-        let (mut retried, mut adapted) = (false, false);
+        let (mut retried, mut adapted) = (false, 0);
         loop {
             let (agent, r, host) = (self.agent.clone(), req.clone(), self.host.clone());
             let reply = self
@@ -397,6 +404,7 @@ impl External {
             match outcome {
                 Err(e)
                     if !retried
+                        && e.reason != Reason::Quota
                         && matches!(e.status, Some(429) | Some(503))
                         && e.retry_after.is_some_and(|d| d <= RETRY_AFTER_MAX) =>
                 {
@@ -405,8 +413,8 @@ impl External {
                         .sleep(gen, e.retry_after.unwrap_or_default())
                         .map_err(|_| Error::Cancelled)?;
                 }
-                Err(e) if !adapted && adapter.adapt(&req, &e) => {
-                    adapted = true;
+                Err(e) if adapted < MAX_ADAPTS && adapter.adapt(&req, &e) => {
+                    adapted += 1;
                     req = adapter.synth_request(text, voice, rate, key);
                 }
                 other => return Ok(other),
@@ -627,6 +635,10 @@ impl Engine for External {
 
     fn chunk_chars(&self) -> usize {
         self.profile.chunk_chars()
+    }
+
+    fn quick_start(&self) -> bool {
+        self.profile.quick_start()
     }
 
     /// No network call (a cold profile must not send text or spend quota):

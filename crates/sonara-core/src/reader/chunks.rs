@@ -53,3 +53,30 @@ pub fn join_chunks(chunks: Vec<String>, max: usize) -> Vec<String> {
     }
     out
 }
+
+/// Join sentence chunks up to `max` characters from the first one on, for
+/// an engine that trades the fast start for fewer requests (no quick start,
+/// review of #235): a text under `max` is one chunk. A sentence longer
+/// than `max` stays whole. `max` 0 leaves the chunks as they are.
+pub fn join_whole(chunks: Vec<String>, max: usize) -> Vec<String> {
+    if max == 0 {
+        return chunks;
+    }
+    let len = |s: &str| s.chars().count();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for c in chunks {
+        if cur.is_empty() {
+            cur = c;
+        } else if len(&cur) + 1 + len(&c) <= max {
+            cur.push(' ');
+            cur.push_str(&c);
+        } else {
+            out.push(std::mem::replace(&mut cur, c));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}

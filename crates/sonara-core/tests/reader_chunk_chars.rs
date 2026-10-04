@@ -7,7 +7,7 @@
 mod common;
 
 use common::Host;
-use sonara_core::reader::{join_chunks, split_chunks, JOIN_MIN};
+use sonara_core::reader::{join_chunks, join_whole, split_chunks, JOIN_MIN};
 
 fn chunks_of(h: &Host) -> Vec<String> {
     h.reader.current().unwrap().chunks.clone()
@@ -83,4 +83,32 @@ fn the_setting_applies_to_items_spoken_after_it() {
     h.ctl(sonara_core::reader::Control::Stop);
     h.speak("One. Two. Three.");
     assert_eq!(chunks_of(&h), vec!["One.", "Two. Three."]);
+}
+
+#[test]
+fn without_quick_start_a_reply_under_the_limit_is_one_chunk() {
+    // Review of #235: fewer requests over a fast start. Every chunk joins
+    // sentences up to the limit from the first one, so a 3000-character
+    // reply is one request at 4000 and four at 1000.
+    let text = sentences(60, 50);
+    let plain = split_chunks(&text);
+    let one = join_whole(plain.clone(), 4000);
+    assert_eq!(one.len(), 1);
+    assert_eq!(one[0], plain.join(" "));
+    let four = join_whole(plain.clone(), 1000);
+    assert_eq!(
+        four.len(),
+        4,
+        "1000 holds 19 sentences of 50 and their spaces"
+    );
+    assert!(four.iter().all(|c| c.chars().count() <= 1000));
+    assert_eq!(four.join(" "), plain.join(" "));
+    assert_eq!(join_whole(plain.clone(), 0), plain, "0 leaves them");
+    // The reader uses it once quick start is off.
+    let mut h = Host::new();
+    let _ = h.reader.set_chunk_chars(4000);
+    let _ = h.reader.set_quick_start(false);
+    assert!(!h.reader.quick_start());
+    h.speak("One. Two. Three.");
+    assert_eq!(chunks_of(&h), vec!["One. Two. Three."]);
 }

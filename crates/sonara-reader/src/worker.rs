@@ -187,6 +187,8 @@ impl Loop {
         self.run(fx);
         let fx = self.reader.set_chunk_chars(self.engine.chunk_chars());
         self.run(fx);
+        let fx = self.reader.set_quick_start(self.engine.quick_start());
+        self.run(fx);
         self.synth.warm(self.engine.clone());
     }
 
@@ -322,6 +324,7 @@ impl Loop {
                 self.not_ready = None;
                 let mut fx = self.reader.set_lookahead(self.engine.lookahead());
                 fx.extend(self.reader.set_chunk_chars(self.engine.chunk_chars()));
+                fx.extend(self.reader.set_quick_start(self.engine.quick_start()));
                 self.synth.warm(self.engine.clone());
                 // A voice of the old engine means nothing to the new one.
                 match self.reader.state().voice {

@@ -282,10 +282,16 @@ $S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--mo
 
 **Gemini** counts requests on its free tier (per minute and per day), so Sonara sends it
 several sentences at once: the first sentence of a reply alone (reading starts quickly), then
-growing chunks of up to 1000 characters (`--option chunk_chars=0` for one request per
-sentence). A 3000-character reply is about 6 requests. When the free tier's limit is reached,
-Kokoro reads and Sonara waits as long as Google asks before trying again. On the free tier
-Google may use the text to improve its products; with billing on it does not.
+growing chunks of up to 1000 characters, one request at a time. A 3000-character reply is about
+6 requests. To spend fewer, turn **Quick start** off (`--option quick_start=false`): a reply
+under the characters per request (`chunk_chars`, up to 4000) is then one request, and reading
+starts once all of it is made (a 3000-character reply: 1 request at 4000, 3 or 4 at 1000).
+`chunk_chars=0` sends one request per sentence. Both are on the settings page. When a
+per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
+daily limit is reached, Kokoro reads until Google's daily reset (midnight Pacific time). Gemini
+has no speed setting: away from the default rate Sonara asks it to speak slowly or quickly, an
+approximate direction. On the free tier Google may use the text to improve its products; with
+billing on it does not.
 
 **Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment
 variable you name (one ending in `_API_KEY` or `_SPEECH_KEY`). They are never written to a file,

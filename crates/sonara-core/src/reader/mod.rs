@@ -33,7 +33,9 @@
 //! - Joined chunks (`set_chunk_chars`, #235): for an engine that asks for
 //!   longer chunks (one billed per request), the sentences of an item
 //!   spoken from then on are joined by `join_chunks`; the first chunk stays
-//!   one sentence. 0 (the default) keeps one sentence per chunk.
+//!   one sentence. 0 (the default) keeps one sentence per chunk. Without
+//!   quick start (`set_quick_start(false)`) every chunk joins up to the
+//!   limit (`join_whole`), so a reply under it is one chunk.
 //! - Every `PlayChunk` carries a new `gen`; an `AudioEvent` whose `gen` is not
 //!   the chunk loaded in the output is stale and ignored, so a superseded
 //!   play can never move the reader. A chunk that finishes while a pause is
@@ -46,7 +48,7 @@
 mod chunks;
 mod types;
 
-pub use chunks::{join_chunks, split_chunks, JOIN_MIN};
+pub use chunks::{join_chunks, join_whole, split_chunks, JOIN_MIN};
 pub use types::*;
 
 use std::collections::{HashSet, VecDeque};
@@ -85,6 +87,9 @@ pub struct Reader {
     lookahead: usize,
     /// Join sentences into chunks of up to this many characters (0: no).
     chunk_chars: usize,
+    /// The first joined chunk is one sentence (`join_chunks`); false joins
+    /// every chunk up to `chunk_chars` (`join_whole`).
+    quick_start: bool,
     /// The last state emitted (or the initial one, seq 0).
     shown: State,
 }
@@ -114,6 +119,7 @@ impl Reader {
             requested: HashSet::new(),
             lookahead: 1,
             chunk_chars: 0,
+            quick_start: true,
             shown: State {
                 seq: 0,
                 now_playing: None,
@@ -140,7 +146,11 @@ impl Reader {
         let id = ItemId(self.next_id);
         self.next_id += 1;
         let mut fx = Vec::new();
-        let chunks = join_chunks(split_chunks(text), self.chunk_chars);
+        let chunks = if self.quick_start {
+            join_chunks(split_chunks(text), self.chunk_chars)
+        } else {
+            join_whole(split_chunks(text), self.chunk_chars)
+        };
         if chunks.is_empty() {
             emit_item(&mut fx, id, ItemPhase::Skipped);
             return (id, fx);
@@ -312,6 +322,18 @@ impl Reader {
 
     pub fn chunk_chars(&self) -> usize {
         self.chunk_chars
+    }
+
+    /// Whether the first joined chunk of an item is one sentence (true, the
+    /// default) or joins up to `chunk_chars` like the rest. Items already
+    /// queued keep their chunks.
+    pub fn set_quick_start(&mut self, on: bool) -> Vec<Effect> {
+        self.quick_start = on;
+        self.finish(Vec::new())
+    }
+
+    pub fn quick_start(&self) -> bool {
+        self.quick_start
     }
 
     /// The current state, with the `seq` of the last emitted state.

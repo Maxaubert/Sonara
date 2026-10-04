@@ -14,13 +14,15 @@
 //! - **Older models**: a model that refuses `responseFormat` or
 //!   `speechMetadata` (an unknown field is a 400 naming it) gets the same
 //!   part once more without it, and never again (`adapt`, as Deepgram's
-//!   `speed`).
+//!   `speed`); a model that refuses both costs two extra requests once.
 //! - **Requests**: the free tier counts requests, so the reader joins
-//!   sentences (`Profile::chunk_chars`, default 1000 characters); the input
+//!   sentences (`Profile::chunk_chars`, default 1000 characters; with
+//!   `quick_start: false` a reply under it is one request); the input
 //!   limit here is 4000 characters (the models take 8192 tokens).
 //! - **429**: `quota` when Google names a daily or spend limit, else
 //!   `rate_limited`; either way its `RetryInfo.retryDelay` (or
 //!   `Retry-After`) is kept, so nothing is sent before it ends (`health`).
+//!   A per-day limit waits for the daily reset (`daily_wait`).
 use super::adapter::{encode, VoiceSource};
 use super::adapter::{key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo};
 use super::audio::decode_body;
@@ -33,7 +35,7 @@ use crate::{PcmChunk, Reason};
 use base64::Engine as _;
 use serde_json::{json, Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The rate Sonara asks Gemini for (24 kHz is its native rate).
 pub const GEMINI_RATE: u32 = 24_000;
@@ -157,6 +159,22 @@ pub fn retry_delay(body: &Value) -> Option<Duration> {
                 .filter(|x| x.is_finite() && *x >= 0.0)
                 .map(Duration::from_secs_f64)
         })
+}
+
+/// How long a per-day 429 waits at `unix` (seconds): until the next
+/// 08:00 UTC, which is midnight Pacific standard time, when Google resets
+/// requests per day (an hour after the reset in summer time, never
+/// before it); at least an hour, or Google's own wait when that is longer.
+pub fn daily_wait(given: Option<Duration>, unix: u64) -> Duration {
+    const DAY: u64 = 86_400;
+    const RESET: u64 = 8 * 3600;
+    let into = unix % DAY;
+    let mut wait = (RESET + DAY - into) % DAY;
+    if wait == 0 {
+        wait = DAY;
+    }
+    let reset = Duration::from_secs(wait.max(3600));
+    given.map_or(reset, |g| g.max(reset))
 }
 
 /// Which field a 400 refuses, from Google's unknown-field message
@@ -311,6 +329,14 @@ impl Adapter for Gemini {
         if matches!(s, 429 | 503) {
             let body: Value = serde_json::from_slice(&reply.body).unwrap_or(Value::Null);
             e.retry_after = reply.retry_after.or_else(|| retry_delay(&body));
+            // A per-day limit ends at Google's daily reset, whatever short
+            // retryDelay it carries: no probe every ten minutes all day.
+            if s == 429 && raw.contains("PerDay") {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                e.retry_after = Some(daily_wait(e.retry_after, now));
+            }
         }
         e.refused_param = refused;
         e
@@ -409,7 +435,7 @@ mod tests {
         assert!(g
             .url()
             .ends_with("/models/gemini-3.8-flash-tts:generateContent"));
-        let body = g.body("Hallo.", "voice_abc123", 250);
+        let body = g.body("Hallo.", "voice_abc123", 320);
         assert_eq!(
             body["contents"][0]["parts"][0],
             json!({"text": "Hallo.", "speechMetadata": {"style": "calm and warm, speaking quickly"}})
@@ -663,14 +689,21 @@ mod tests {
         );
         let e = a.map_error(&reply(429, &daily), "Kore", None);
         assert_eq!(e.reason, Reason::Quota);
-        assert_eq!(e.retry_after, Some(Duration::from_millis(1500)));
+        // A per-day limit waits for the daily reset, never its short
+        // retryDelay (review of #235).
+        assert!(
+            e.retry_after
+                .is_some_and(|d| d >= Duration::from_secs(3600)),
+            "{:?}",
+            e.retry_after
+        );
         assert!(
             e.message.starts_with("Gemini is out of credit (429)"),
             "{}",
             e.message
         );
         // A Retry-After header wins over the body.
-        let mut r = reply(429, &daily);
+        let mut r = reply(429, &per_minute);
         r.retry_after = Some(Duration::from_secs(5));
         assert_eq!(
             a.map_error(&r, "Kore", None).retry_after,
@@ -692,6 +725,25 @@ mod tests {
         );
         assert!(super::daily_or_spend("", "Quota exceeded per day"));
         assert!(!super::daily_or_spend("", "Too many requests"));
+    }
+
+    #[test]
+    fn a_daily_limit_waits_until_the_pacific_midnight_reset() {
+        // RPD resets at midnight Pacific; 08:00 UTC is that midnight in
+        // winter and an hour after it in summer, so never too early. At
+        // least an hour, and a longer wait Google gives is kept.
+        let h = |x: u64| Duration::from_secs(x * 3600);
+        let day = 20_000 * 86_400; // a midnight UTC
+        assert_eq!(daily_wait(None, day), h(8));
+        assert_eq!(daily_wait(None, day + 7 * 3600), h(1));
+        assert_eq!(
+            daily_wait(None, day + 7 * 3600 + 1800),
+            h(1),
+            "an hour at least"
+        );
+        assert_eq!(daily_wait(None, day + 8 * 3600), h(24));
+        assert_eq!(daily_wait(None, day + 9 * 3600), h(23));
+        assert_eq!(daily_wait(Some(h(30)), day + 9 * 3600), h(30));
     }
 
     #[test]
