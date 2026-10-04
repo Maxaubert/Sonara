@@ -41,7 +41,10 @@ fn main() {
         std::fs::write(path, record.to_string()).unwrap();
     }
     if let Some(path) = value("--sleeper") {
-        std::process::Command::new(std::env::current_exe().unwrap())
+        // Left running on purpose: the test is what a program does that
+        // does not wait for its child.
+        #[allow(clippy::zombie_processes)]
+        let _child = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--text",
                 "x",
