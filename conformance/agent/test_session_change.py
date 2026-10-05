@@ -168,3 +168,13 @@ def test_the_start_is_logged(rt):
     log = (rt.home / "logs" / "sonarad.log").read_text(encoding="utf-8")
     assert "started (pid" in log and "engine fake ready" in log, log
     assert rt.read_runtime()["version"] in log
+
+
+def test_label_is_checked_only_on_messages_that_name_a_channel(rt):
+    """#241: ``label`` names the message's channel. ``earcon`` names none, so
+    a label there is ignored as before; on a channel message it must be a
+    string."""
+    c = agent_client(rt, announce=True, policy="all")
+    ok(c, {"type": "earcon", "kind": "nav", "label": 5})
+    r = c.request({"type": "stream", "channel": "a", "delta": "x", "label": 5})
+    assert r["error"]["code"] == "E_BAD_REQUEST"

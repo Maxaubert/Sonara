@@ -35,7 +35,9 @@
 //!   channel that read last is remembered also after it closed (#241: a
 //!   session that ends right after its reply, then a question in another
 //!   one), so every path to the floor (the auto pick with or without
-//!   `prioritize`, `take_floor`, `replay`) announces a switch. A channel
+//!   `prioritize`, `take_floor`, `replay`) announces a switch, except for
+//!   a channel in the closed last reader's host tab (a `/clear` or a
+//!   relaunch in the same tab replaces the session). A channel
 //!   without a label is announced without one (`Feed::Announce` with
 //!   `label: None`; the driver words it or skips it). `label_if_missing`
 //!   names a channel that has no label yet.
@@ -219,6 +221,9 @@ pub struct Router {
     /// taking the floor is a switch (#241). `last_active` is cleared on
     /// close because `next_channel` and `engaged` mean an open channel.
     last_reader: Option<String>,
+    /// The host tab of `last_reader` once it closed: a new session in that
+    /// tab (a `/clear`, a relaunch) replaces it rather than switching.
+    closed_reader_tab: Option<String>,
     focus: Option<String>,
     /// An armed switch announcement, fed before the next entry.
     announce: Option<Switch>,
@@ -322,8 +327,14 @@ impl Router {
 
     /// Whether `id` taking the floor is a switch from the channel that read
     /// last (also when that one has closed since).
+    /// A channel in the host tab of a closed last reader replaces it: no
+    /// switch.
     fn is_handoff(&self, id: &str) -> bool {
-        self.last_reader.as_deref().is_some_and(|last| last != id)
+        if !self.last_reader.as_deref().is_some_and(|last| last != id) {
+            return false;
+        }
+        let tab = self.channel(id).and_then(|c| c.host_tab.as_deref());
+        !(tab.is_some() && tab == self.closed_reader_tab.as_deref())
     }
 
     /// `id` reads now.
@@ -331,6 +342,7 @@ impl Router {
         self.active = Some(id.to_string());
         self.last_active = Some(id.to_string());
         self.last_reader = Some(id.to_string());
+        self.closed_reader_tab = None;
     }
 
     /// Forget `id` and everything about it. Returns false if it was not open.
@@ -338,7 +350,10 @@ impl Router {
         let Some(i) = self.index(id) else {
             return false;
         };
-        self.channels.remove(i);
+        let closed = self.channels.remove(i);
+        if self.last_reader.as_deref() == Some(id) {
+            self.closed_reader_tab = closed.host_tab.filter(|t| !t.is_empty());
+        }
         let is = |o: &Option<String>| o.as_deref() == Some(id);
         if is(&self.active) {
             self.active = None;

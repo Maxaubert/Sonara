@@ -146,6 +146,61 @@ fn a_switch_after_the_last_reader_closed_is_announced() {
 }
 
 #[test]
+fn a_new_session_in_the_closed_readers_host_tab_is_not_announced() {
+    // A /clear (or exit and relaunch) in the same host tab replaces the
+    // session that read last: the same place, not a switch.
+    let mut r = Router::new();
+    r.open(
+        "old",
+        Some("repo".into()),
+        Some("3".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "old", &["bye"]);
+    assert_eq!(drain(&mut r), ["bye"]);
+    r.close("old");
+    r.open(
+        "new",
+        Some("repo".into()),
+        Some("3".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "new", &["hello"]);
+    assert_eq!(drain(&mut r), ["hello"]);
+    // Another tab after that is a switch again.
+    r.open(
+        "other",
+        Some("work".into()),
+        Some("4".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "other", &["hi"]);
+    assert_eq!(drain(&mut r), ["[work]", "hi"]);
+}
+
+#[test]
+fn a_new_session_in_another_host_tab_after_a_close_is_announced() {
+    let mut r = Router::new();
+    r.open(
+        "old",
+        Some("repo".into()),
+        Some("3".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "old", &["bye"]);
+    assert_eq!(drain(&mut r), ["bye"]);
+    r.close("old");
+    r.open(
+        "new",
+        Some("repo".into()),
+        Some("5".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "new", &["hello"]);
+    assert_eq!(drain(&mut r), ["[repo]", "hello"]);
+}
+
+#[test]
 fn a_prioritized_question_in_another_channel_is_announced_once() {
     let mut r = router(&["A", "B"]);
     push(&mut r, "A", &["a1"]);

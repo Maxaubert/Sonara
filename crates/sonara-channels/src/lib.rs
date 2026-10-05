@@ -17,10 +17,11 @@
 //!   `set_announce_texts` changes the texts (L3 says "Session changed:
 //!   <label>."). A channel without a label is announced by the unnamed
 //!   texts (`set_unnamed_announce_texts`; L3 says "Session changed.",
-//!   #241) and, when none are set (the default), not at all. `on_announce` runs a hook right before an announcement
-//!   is handed to the reader (L3 plays its session-change earcon there,
-//!   so the chime comes first); it runs under the driver's lock and must
-//!   not call back into `Channels`.
+//!   #241) and, when none are set (the default), not at all.
+//!   `on_announce` runs a hook right before an announcement is handed to
+//!   the reader (L3 plays its session-change earcon there, so the chime
+//!   comes first); it runs under the driver's lock and must not call back
+//!   into `Channels`.
 //! - `next_channel` and `speak` with `interrupt` cut the current item (the
 //!   reader's `interrupt`); another channel's message cut that way is read
 //!   again later. The cut only replaces the current item: text already

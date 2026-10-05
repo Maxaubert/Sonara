@@ -663,8 +663,9 @@ impl Server {
             k if agent_ext::TYPES.contains(&k) && self.agent.get().is_some() => {
                 let a = self.agent.get().expect("checked");
                 let _admitted = self.admit()?;
-                let label = opt_str(m, "label")?;
+                // `label` names the message's channel; `earcon` has none.
                 if let Some(id) = m.get("channel").and_then(Value::as_str) {
+                    let label = opt_str(m, "label")?;
                     channels_ext::apply_label(a.channels(), &self.store, id, label);
                 }
                 match k {
