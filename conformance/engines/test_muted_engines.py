@@ -80,3 +80,28 @@ def test_the_test_button_still_reaches_the_provider(client, profile, provider):
     ok(client, {"type": "control", "action": "mute"})
     ok(client, {"type": "engine_test", "engine": "local", "play": False})
     assert len(provider.speech()) == 1
+
+
+def test_a_turn_stored_while_muted_sends_nothing_until_a_switch_reads_it(rt, profile, provider):
+    # #243: muted, the turn is stored as the session's latest message (no
+    # request, no synthesis); the unmute reads nothing; next_channel reads
+    # it through the provider.
+    c = rt.tcp(extensions=["agent"])
+    use_profile(c, profile)
+    ok(c, {"type": "set", "key": "channel_announce", "value": "off"})
+    ok(c, {"type": "channel_open", "channel": "a", "label": "Alpha"})
+    for level in (1, 2):
+        ok(c, {"type": "set", "key": "mute_level", "value": level})
+        ok(c, {"type": "turn_start", "channel": "a"})
+        ok(c, {"type": "stream", "channel": "a", "delta": "Stored while muted.", "index": 0,
+               "final": True})
+        ok(c, {"type": "turn_end", "channel": "a"})
+        ok(c, {"type": "set", "key": "mute_level", "value": 0})
+        time.sleep(0.5)
+        assert provider.requests == [], f"level {level}: nothing reached the provider"
+    ok(c, {"type": "control", "action": "next_channel"})
+    deadline = time.time() + 5
+    while not provider.speech():
+        assert time.time() < deadline, "the switch never read the stored message"
+        time.sleep(0.01)
+    assert b"Stored while muted." in provider.speech()[0]["body"]

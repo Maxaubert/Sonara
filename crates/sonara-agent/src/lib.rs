@@ -34,6 +34,26 @@
 //!   (`Channels::engaged`); a paused reader stays paused when another
 //!   channel gets a new turn.
 //! - `Silence` (muting) is `control(Stop)` over every channel.
+//! - `Store` (muted, #243) is `Channels::store`: the text joins the
+//!   channel's batch as its latest message, read only by a switch to the
+//!   session or Up. Nothing reaches the reader, so no engine request goes
+//!   out, and unmuting reads nothing.
+//! - **Answered decisions** (#243): the driver takes a session's answered
+//!   (a question) or decided (a permission, a plan) decisions out of its
+//!   channel's batch (`Channels::drop_decisions`) before carrying out the
+//!   message, so a replay never reads them: `answered` and `turn_start`
+//!   take every one; a `tool` only those read aloud (a parallel tool or a
+//!   subagent's tool shares the session id, so an unread decision or one
+//!   stored while muted may still be waiting: it stays); `turn_end` every
+//!   one read or stored (the turn could not end with one pending), never
+//!   an unread one. Until then a decided permission that was stored while
+//!   muted is still in the batch.
+//! - **New turn without `turn_start`** (#243): the first `tool` or `ask`
+//!   after a `turn_end` (a background task or subagent woke the agent)
+//!   ends the batch (`Channels::end_batch`), so that turn's text is a new
+//!   latest message. Prose streamed before that first tool or decision
+//!   still joins the previous batch (L3 cannot tell it from late prose of
+//!   the ended turn).
 //! - `flush` (the flush hotkey, #228) stops the session being read and
 //!   skips the rest of its reply: L2 `flush_with`, then `Rules::flush` on
 //!   that channel. With `flush_scope` `all` every other session whose
@@ -87,6 +107,7 @@ pub use settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
     Verbosity,
 };
+use sonara_channels::Resolved;
 pub use sonara_channels::{Channels, Control, FlushReport, Flushed, QueueMode};
 pub use summarizer::Summarizer;
 
@@ -114,6 +135,21 @@ pub const SESSION_CHANGED_UNNAMED_AGAIN: &str = "Session changed, reading again.
 
 /// The most earcons waiting or playing at one time (#238).
 pub const EARCON_QUEUE: usize = sequencer::MAX;
+
+/// Which of a session's decisions so far a message answers (module docs,
+/// #243): `answered` and `turn_start` all of them; a `tool` only those
+/// read aloud (a parallel tool or a subagent's tool shares the session, so
+/// a decision still unread or stored while muted may be waiting); the
+/// `turn_end` every one read or stored (the turn could not end with one
+/// pending).
+fn resolves(source: &str) -> Option<Resolved> {
+    match source {
+        "answered" | "turn_start" => Some(Resolved::All),
+        "tool" => Some(Resolved::Heard),
+        "turn_end" => Some(Resolved::Settled),
+        _ => None,
+    }
+}
 
 /// How often the dead-session sweep runs at most.
 const SWEEP_EVERY: Duration = Duration::from_secs(60);
@@ -173,6 +209,15 @@ pub enum Traced {
         text: String,
         decision: bool,
         waits: Option<&'static str>,
+    },
+    /// `text` was stored in the channel as L2 entry `entry`, not read
+    /// (muted at `level`, #243).
+    Stored {
+        kind: &'static str,
+        entry: u64,
+        text: String,
+        decision: bool,
+        level: u8,
     },
     /// Something the rules did not speak now, and why.
     Note(Note),
@@ -373,8 +418,18 @@ impl Agent {
         let mut rules = self.lock();
         self.inner.seen(&mut rules, channel);
         self.inner.sync_whole(&mut rules);
+        if let Some(c) = channel {
+            if (source == "tool" || source.starts_with("ask ")) && rules.take_new_turn(c) {
+                // A new turn without a turn_start: a new latest message.
+                self.inner.channels.end_batch(c);
+            }
+        }
         match f(&mut rules) {
             Ok(actions) => {
+                if let (Some(c), Some(which)) = (channel, resolves(source)) {
+                    // Its decisions were answered: a replay skips them.
+                    self.inner.channels.drop_decisions(c, which);
+                }
                 self.inner.execute(&rules, source, channel, actions)?;
                 Ok(true)
             }
@@ -852,7 +907,7 @@ impl Inner {
                 release,
                 kind,
             } => {
-                let spoken = ch.add(&channel, &text)?;
+                let spoken = ch.add_with(&channel, &text, decision)?;
                 if decision {
                     ch.prioritize(&channel)?;
                 }
@@ -869,6 +924,25 @@ impl Inner {
                         text,
                         decision,
                         waits,
+                    },
+                );
+            }
+            Action::Store {
+                channel,
+                text,
+                decision,
+                kind,
+            } => {
+                let stored = ch.store(&channel, &text, decision)?;
+                self.trace(
+                    source,
+                    Some(&channel),
+                    Traced::Stored {
+                        kind,
+                        entry: stored.entry,
+                        text,
+                        decision,
+                        level: rules.settings.mute_level,
                     },
                 );
             }

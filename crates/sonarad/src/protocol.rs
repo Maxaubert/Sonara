@@ -469,8 +469,12 @@ impl Server {
             if let Some(log) = self.log.clone() {
                 let origins = self.origins.clone();
                 agent.on_trace(Some(Arc::new(move |t: &sonara_agent::Trace| {
-                    if let sonara_agent::Traced::Spoken { kind, entry, .. } = &t.what {
-                        origins.record(*entry, kind, &t.source);
+                    match &t.what {
+                        sonara_agent::Traced::Spoken { kind, entry, .. }
+                        | sonara_agent::Traced::Stored { kind, entry, .. } => {
+                            origins.record(*entry, kind, &t.source);
+                        }
+                        _ => {}
                     }
                     log(&trace_log::agent_line(t, trace_log::debug()));
                 })));

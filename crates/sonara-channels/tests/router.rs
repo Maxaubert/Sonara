@@ -1,7 +1,7 @@
 //! The pure router, ported from the Python plugin's `tests/test_router.py`
 //! and `tests/test_channel.py` (the parts that are not agent features), plus
 //! the L2 policies. Issue numbers name the Python regressions they guard.
-use sonara_channels::{Feed, Policy, Router};
+use sonara_channels::{Feed, Policy, Resolved, Router};
 
 /// One feed in compact notation: an entry's text, or `[label]` for an
 /// announcement (`[]` for a channel without a label, `again` for a replay,
@@ -767,4 +767,137 @@ fn a_replay_and_next_channel_read_a_background_channel() {
     assert_eq!(drain(&mut r), ["[b manual]", "b1"]);
     assert!(r.replay("B"));
     assert_eq!(drain(&mut r), ["b1"]);
+}
+
+// -- agent batches (#243) ------------------------------------------------------
+
+fn texts(r: &Router, id: &str) -> Vec<String> {
+    r.channel(id)
+        .unwrap()
+        .entries()
+        .iter()
+        .map(|e| e.text.clone())
+        .collect()
+}
+
+#[test]
+fn an_agent_batch_grows_until_the_channel_is_flushed() {
+    let mut r = router(&["A"]);
+    r.append("A", "one", false, false).unwrap();
+    assert_eq!(drain(&mut r), ["one"]);
+    r.done();
+    // Caught up: L3's next text joins the batch, it does not replace it.
+    r.append("A", "two", false, false).unwrap();
+    assert_eq!(drain(&mut r), ["two"]);
+    assert_eq!(texts(&r, "A"), ["one", "two"]);
+    // A flush of the channel (a new turn) starts a new batch.
+    r.flush(Some("A"));
+    r.append("A", "three", false, false).unwrap();
+    assert_eq!(texts(&r, "A"), ["three"]);
+}
+
+#[test]
+fn stored_text_is_never_fed_and_a_manual_return_reads_it() {
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(drain(&mut r), ["b1"], "the first reader is not announced");
+    r.done();
+    r.append("A", "stored one", false, true).unwrap();
+    r.append("A", "stored two", false, true).unwrap();
+    assert_eq!(drain(&mut r), Vec::<String>::new(), "never fed");
+    assert_eq!(cursor(&r, "A"), 2);
+    assert_eq!(r.next_channel(), Some(("A".to_string(), true)));
+    assert_eq!(
+        drain(&mut r),
+        ["[a again manual]", "stored one", "stored two"]
+    );
+}
+
+#[test]
+fn stored_text_during_a_replay_is_read_with_it() {
+    let mut r = router(&["A"]);
+    r.append("A", "one", false, false).unwrap();
+    assert_eq!(drain(&mut r), ["one"]);
+    r.done();
+    assert!(r.replay("A"));
+    r.append("A", "two", false, true).unwrap();
+    assert_eq!(drain(&mut r), ["one", "two"]);
+}
+
+#[test]
+fn drop_decisions_takes_answered_decisions_out_of_the_batch() {
+    let mut r = router(&["A"]);
+    r.append("A", "lead in", false, false).unwrap();
+    r.append("A", "question", true, false).unwrap();
+    assert_eq!(next(&mut r).unwrap(), "lead in");
+    r.append("A", "after", false, false).unwrap();
+    // The question is unread: it is returned (reported dropped).
+    let unread: Vec<String> = r
+        .drop_decisions("A", Resolved::All)
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert_eq!(unread, ["question"]);
+    assert_eq!(texts(&r, "A"), ["lead in", "after"]);
+    assert_eq!(cursor(&r, "A"), 1, "the cursor stays on the next entry");
+    assert_eq!(drain(&mut r), ["after"]);
+    r.done();
+    assert!(r.replay("A"));
+    assert_eq!(drain(&mut r), ["lead in", "after"]);
+    assert!(r.drop_decisions("A", Resolved::All).is_empty());
+}
+
+#[test]
+fn restart_target_before_any_read_is_the_channel_written_last() {
+    let mut r = router(&["A", "B"]);
+    assert_eq!(r.written_last(), None);
+    r.append("B", "b", false, true).unwrap();
+    r.append("A", "a", false, true).unwrap();
+    assert_eq!(r.written_last().as_deref(), Some("A"));
+}
+
+#[test]
+fn stored_text_while_a_replay_reads_its_last_entry_is_read_with_it() {
+    let mut r = router(&["A"]);
+    r.append("A", "one", false, false).unwrap();
+    assert_eq!(drain(&mut r), ["one"]);
+    r.done();
+    assert!(r.replay("A"));
+    // The replay is reading its last entry (nothing unread is left).
+    assert_eq!(next(&mut r).unwrap(), "one");
+    r.append("A", "two", false, true).unwrap();
+    assert_eq!(drain(&mut r), ["two"]);
+}
+
+#[test]
+fn a_tool_takes_out_only_the_decisions_read_aloud() {
+    let mut r = router(&["A"]);
+    r.append("A", "heard permission", true, false).unwrap();
+    assert_eq!(next(&mut r).unwrap(), "heard permission");
+    r.done();
+    r.append("A", "stored question", true, true).unwrap();
+    r.append("A", "unread permission", true, false).unwrap();
+    let unread = r.drop_decisions("A", Resolved::Heard);
+    assert!(unread.is_empty(), "{unread:?}");
+    assert_eq!(texts(&r, "A"), ["stored question", "unread permission"]);
+    assert_eq!(drain(&mut r), ["unread permission"]);
+    r.done();
+    // The turn ended: what was read or stored is settled.
+    r.append("A", "late unread permission", true, false)
+        .unwrap();
+    assert!(r.drop_decisions("A", Resolved::Settled).is_empty());
+    assert_eq!(texts(&r, "A"), ["late unread permission"]);
+}
+
+#[test]
+fn ending_a_batch_makes_the_next_agent_text_start_a_new_one() {
+    let mut r = router(&["A"]);
+    assert!(!r.is_agent("A"));
+    r.append("A", "old turn", false, false).unwrap();
+    assert!(r.is_agent("A"));
+    assert_eq!(drain(&mut r), ["old turn"]);
+    r.done();
+    r.end_batch("A");
+    r.append("A", "new turn", false, false).unwrap();
+    assert_eq!(texts(&r, "A"), ["new turn"]);
 }

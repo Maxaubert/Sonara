@@ -1174,15 +1174,16 @@ fn what_is_not_spoken_leaves_a_note_with_the_reason() {
     assert_eq!(n.len(), 1, "{n:?}");
     assert_eq!(n[0].0, "permission");
     assert!(n[0].1.contains("awaiting its answer"), "{n:?}");
-    // Muted.
+    // Muted: stored, not spoken (#243; the driver logs the store).
     r.set_mute_level(1);
-    assert!(prose(&mut r, "fg", "Quiet please.", 1, true).is_empty());
-    let n = notes(&r);
-    assert!(
-        n.iter().any(|(k, w, t)| *k == "prose"
-            && w == "not spoken: mute level 1"
-            && t.as_deref() == Some("Quiet please.")),
-        "{n:?}"
+    assert_eq!(
+        prose(&mut r, "fg", "Quiet please.", 1, true),
+        [Action::Store {
+            channel: "fg".into(),
+            text: "Quiet please.".into(),
+            decision: false,
+            kind: "prose",
+        }]
     );
     r.set_mute_level(2);
     assert!(r.turn_end("fg", None, None).unwrap().is_empty());
