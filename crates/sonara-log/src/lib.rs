@@ -24,9 +24,11 @@
 //!   than `MAX_LINE_BYTES` is clipped with a `...[+N bytes]` marker.
 //!
 //! Best effort by design: every failure is an `Err` the caller may ignore.
-//! No dependencies, so the hook adapter (L5) links it without any runtime
-//! crate.
+//! No workspace dependencies (only `serde_json`, for `scrub`), so the hook
+//! adapter (L5) links it without any runtime crate.
+pub mod json;
 pub mod secrets;
+pub use json::{scrub, FIELD_MAX};
 pub use secrets::{mask, secret_key, MASK};
 
 use std::borrow::Cow;

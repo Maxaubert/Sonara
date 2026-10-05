@@ -6,7 +6,7 @@ license.workspace = true
 description = "Sonara L4 (Windows): duck or pause other apps' audio with crash restore, global hotkeys and the keymap"
 
 [dependencies]
-# L4 builds only on the L1 facade (R7, checked by tests/layering.rs); the
+# L4 builds only on the L1 facade (R7, checked by sonara-core/tests/layering.rs); the
 # host maps hotkey actions to L1 to L3 controls.
 sonara-reader.workspace = true
 serde.workspace = true

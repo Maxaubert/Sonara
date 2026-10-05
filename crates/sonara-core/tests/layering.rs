@@ -1,52 +1,104 @@
-//! R7 layering guard: no L1 crate may depend, directly or through another
-//! workspace crate, on an L2+ crate or a host. Reads `cargo metadata`, so it
-//! covers every workspace member, including crates added later.
+//! R7 layering guard for the whole workspace: one table of the workspace
+//! crates each crate may depend on (any kind: normal, dev and build). Reads
+//! `cargo metadata`, so a new upward dependency fails here, and so does a
+//! new workspace crate until it gets a row.
+//!
+//! Layers (CLAUDE.md, docs/architecture.md): L1 `sonara-core`, `-engine`,
+//! `-audio`, `-reader` and the leaves `misaki` and `sonara-log`; L2
+//! `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system` (L1 only: the
+//! host maps hotkey actions to L2 and L3); L5 `sonara-hook` (an adapter
+//! that speaks protocol v1, so no runtime crate) and `sonara-cli`;
+//! `sonarad` hosts them. Every allowed edge points down, so following
+//! allowed edges never climbs either.
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 
-const L1: [&str; 4] = [
+const L1: &[&str] = &[
+    "misaki",
+    "sonara-log",
     "sonara-core",
     "sonara-engine",
     "sonara-audio",
     "sonara-reader",
 ];
-const ABOVE_L1: [&str; 5] = [
+const L1_L2: &[&str] = &[
+    "misaki",
+    "sonara-log",
+    "sonara-core",
+    "sonara-engine",
+    "sonara-audio",
+    "sonara-reader",
+    "sonara-channels",
+];
+const RUNTIME: &[&str] = &[
+    "misaki",
+    "sonara-log",
+    "sonara-core",
+    "sonara-engine",
+    "sonara-audio",
+    "sonara-reader",
     "sonara-channels",
     "sonara-agent",
     "sonara-system",
-    "sonarad",
-    "sonara-hook",
 ];
 
-/// Every (L1 crate, forbidden crate) pair reachable through declared
-/// dependencies of workspace members (all kinds, dev and build included).
+/// Each workspace crate and the workspace crates it may depend on.
+const ALLOWED: &[(&str, &[&str])] = &[
+    ("misaki", &[]),
+    ("sonara-log", &[]),
+    ("sonara-core", L1),
+    ("sonara-engine", L1),
+    ("sonara-audio", L1),
+    ("sonara-reader", L1),
+    ("sonara-channels", L1),
+    ("sonara-agent", L1_L2),
+    ("sonara-system", L1),
+    ("sonara-hook", &["sonara-log"]),
+    ("sonara-cli", &["sonara-hook", "sonara-log"]),
+    ("sonarad", RUNTIME),
+];
+
+/// The only outside crate the leaf `sonara-log` may use (for `scrub`), so
+/// the hook links no more than it already does.
+const LOG_EXTERNAL: &[&str] = &["serde_json"];
+
+/// Every package's dependency names, from `cargo metadata --no-deps`.
+fn dependencies(metadata: &Value) -> BTreeMap<String, Vec<String>> {
+    metadata["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .map(|p| {
+            let deps = p["dependencies"]
+                .as_array()
+                .expect("dependencies")
+                .iter()
+                .map(|d| d["name"].as_str().expect("dep name").to_string())
+                .collect();
+            (p["name"].as_str().expect("name").to_string(), deps)
+        })
+        .collect()
+}
+
+/// Every (crate, workspace dependency) edge the table does not allow, and
+/// every workspace crate without a row (as `(crate, "no row")`).
 fn violations(metadata: &Value) -> Vec<(String, String)> {
-    let mut deps: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for pkg in metadata["packages"].as_array().expect("packages") {
-        let name = pkg["name"].as_str().expect("name").to_string();
-        let list = pkg["dependencies"]
-            .as_array()
-            .expect("dependencies")
-            .iter()
-            .map(|d| d["name"].as_str().expect("dep name").to_string())
-            .collect();
-        deps.insert(name, list);
-    }
+    let deps = dependencies(metadata);
     let mut out = Vec::new();
-    for root in L1.iter().filter(|n| deps.contains_key(**n)) {
-        let mut seen = BTreeSet::new();
-        let mut stack = vec![root.to_string()];
-        while let Some(n) = stack.pop() {
-            if !seen.insert(n.clone()) {
-                continue;
-            }
-            if ABOVE_L1.contains(&n.as_str()) {
-                out.push((root.to_string(), n.clone()));
-            }
-            if let Some(next) = deps.get(&n) {
-                stack.extend(next.iter().cloned());
+    for (name, list) in &deps {
+        let Some((_, allowed)) = ALLOWED.iter().find(|(n, _)| n == name) else {
+            out.push((name.clone(), "no row".to_string()));
+            continue;
+        };
+        for d in list {
+            let internal = deps.contains_key(d) && d != name;
+            if internal
+                && !allowed.contains(&d.as_str())
+                && !out.contains(&(name.clone(), d.clone()))
+            {
+                out.push((name.clone(), d.clone()));
             }
         }
     }
@@ -76,33 +128,45 @@ fn workspace_metadata() -> Value {
 }
 
 #[test]
-fn l1_crates_do_not_depend_on_higher_layers() {
+fn every_workspace_crate_depends_only_on_its_allowed_layers() {
     let meta = workspace_metadata();
-    let names: Vec<&str> = meta["packages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|p| p["name"].as_str().unwrap())
-        .collect();
-    assert!(names.contains(&"sonara-core"), "{:?}", names);
+    let deps = dependencies(&meta);
+    for (name, _) in ALLOWED {
+        assert!(deps.contains_key(*name), "{name} is a workspace member");
+    }
     assert_eq!(violations(&meta), Vec::<(String, String)>::new());
 }
 
 #[test]
-fn the_guard_catches_direct_and_transitive_violations() {
+fn sonara_log_stays_a_leaf() {
+    let deps = dependencies(&workspace_metadata());
+    let log = &deps["sonara-log"];
+    let extra: Vec<&String> = log
+        .iter()
+        .filter(|d| !LOG_EXTERNAL.contains(&d.as_str()))
+        .collect();
+    assert!(extra.is_empty(), "sonara-log links {extra:?}");
+}
+
+#[test]
+fn the_guard_catches_upward_edges_and_unlisted_crates() {
     let fake = serde_json::json!({ "packages": [
         { "name": "sonara-core", "dependencies": [{ "name": "regex" }] },
         { "name": "sonara-engine", "dependencies": [{ "name": "sonara-channels" }] },
-        { "name": "sonara-reader", "dependencies": [{ "name": "helper" }] },
-        { "name": "helper", "dependencies": [{ "name": "sonarad" }] },
+        { "name": "sonara-reader", "dependencies": [{ "name": "sonara-reader" }] },
         { "name": "sonara-channels", "dependencies": [{ "name": "sonara-core" }] },
-        { "name": "sonarad", "dependencies": [] }
+        { "name": "sonara-system", "dependencies": [{ "name": "sonara-agent" }] },
+        { "name": "sonara-agent", "dependencies": [{ "name": "sonara-channels" }] },
+        { "name": "sonara-hook", "dependencies": [{ "name": "sonara-reader" }] },
+        { "name": "helper", "dependencies": [] }
     ]});
     assert_eq!(
         violations(&fake),
         vec![
+            ("helper".to_string(), "no row".to_string()),
             ("sonara-engine".to_string(), "sonara-channels".to_string()),
-            ("sonara-reader".to_string(), "sonarad".to_string()),
+            ("sonara-hook".to_string(), "sonara-reader".to_string()),
+            ("sonara-system".to_string(), "sonara-agent".to_string()),
         ]
     );
 }

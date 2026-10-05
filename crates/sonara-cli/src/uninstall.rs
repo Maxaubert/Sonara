@@ -148,6 +148,10 @@ pub fn remove_all(home: &Path, runtime_root: Option<&Path>, exe: &Path, keep: &[
     report
 }
 
+/// The target prefix of Sonara's credentials. The CLI links no engine
+/// crate, so a test pins it to `sonara_engine::external::keys::TARGET_PREFIX`.
+pub const CREDENTIAL_PREFIX: &str = "sonara:";
+
 /// Where external engine keys are kept: Windows Credential Manager,
 /// generic credentials `sonara:<profile id>` (spec 6.2).
 pub trait Credentials {
@@ -167,7 +171,7 @@ pub fn remove_credentials(
     }
     let ids = match creds.list() {
         Ok(ids) => ids,
-        Err(e) => return (Vec::new(), vec![("sonara:*".into(), e)]),
+        Err(e) => return (Vec::new(), vec![(format!("{CREDENTIAL_PREFIX}*"), e)]),
     };
     let mut removed = Vec::new();
     let mut failed = Vec::new();
@@ -190,7 +194,7 @@ impl Credentials for WindowsCredentials {
         use windows::Win32::Security::Credentials::{
             CredEnumerateW, CredFree, CREDENTIALW, CRED_TYPE_GENERIC,
         };
-        let filter = HSTRING::from("sonara:*");
+        let filter = HSTRING::from(format!("{CREDENTIAL_PREFIX}*"));
         let mut count = 0u32;
         let mut creds: *mut *mut CREDENTIALW = std::ptr::null_mut();
         // SAFETY: valid out pointers; freed below.
@@ -213,7 +217,7 @@ impl Credentials for WindowsCredentials {
                     .TargetName
                     .to_string()
                     .ok()
-                    .and_then(|n| n.strip_prefix("sonara:").map(str::to_string))
+                    .and_then(|n| n.strip_prefix(CREDENTIAL_PREFIX).map(str::to_string))
                 {
                     out.push(id);
                 }
@@ -226,7 +230,7 @@ impl Credentials for WindowsCredentials {
     fn delete(&self, id: &str) -> Result<(), String> {
         use windows::core::HSTRING;
         use windows::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
-        let target = HSTRING::from(format!("sonara:{id}"));
+        let target = HSTRING::from(format!("{CREDENTIAL_PREFIX}{id}"));
         // SAFETY: a valid target string.
         match unsafe { CredDeleteW(&target, CRED_TYPE_GENERIC, None) } {
             Ok(()) => Ok(()),
@@ -263,6 +267,14 @@ mod tests {
         d
     }
 
+    #[test]
+    fn the_credential_prefix_is_the_engines_target_prefix() {
+        let keys = include_str!("../../sonara-engine/src/external/keys.rs");
+        let decl = "pub const TARGET_PREFIX: &str = \"";
+        let at = keys.find(decl).expect("keys.rs declares TARGET_PREFIX") + decl.len();
+        let engine = &keys[at..at + keys[at..].find('"').unwrap()];
+        assert_eq!(CREDENTIAL_PREFIX, engine);
+    }
     #[test]
     fn the_keep_list_parses() {
         assert_eq!(

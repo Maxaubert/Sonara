@@ -1161,7 +1161,6 @@ dependencies = [
 name = "sonara-agent"
 version = "0.20.8"
 dependencies = [
- "serde_json",
  "sonara-audio",
  "sonara-channels",
  "sonara-core",
@@ -1184,7 +1183,6 @@ dependencies = [
 name = "sonara-channels"
 version = "0.20.8"
 dependencies = [
- "serde_json",
  "sonara-audio",
  "sonara-engine",
  "sonara-reader",
@@ -1239,6 +1237,9 @@ dependencies = [
 [[package]]
 name = "sonara-log"
 version = "0.20.8"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "sonara-reader"

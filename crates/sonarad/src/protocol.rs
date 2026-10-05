@@ -64,23 +64,10 @@ pub const ENGINE_TYPES: &[&str] = &[
 /// built `with_system` (see `Server::offered`).
 pub const EXTENSIONS: &[&str] = &[channels_ext::NAME, agent_ext::NAME, system_ext::NAME];
 
-/// Message types of the extensions (spec 4.2 to 4.4). They are known, so a
-/// client gets `E_UNSUPPORTED` (extension not enabled) rather than
-/// `E_UNKNOWN_TYPE`.
-const EXTENSION_TYPES: &[&str] = &[
-    "channel_open",
-    "channel_close",
-    "focus",
-    "stream",
-    "turn_start",
-    "turn_end",
-    "ask",
-    "earcon",
-    "tool",
-    "answered",
-    "preview",
-    "shutdown",
-];
+/// Message types of the extensions (spec 4.2 to 4.4), from each
+/// extension module. They are known, so a client gets `E_UNSUPPORTED`
+/// (extension not enabled) rather than `E_UNKNOWN_TYPE`.
+const EXTENSION_TYPES: &[&[&str]] = &[channels_ext::TYPES, agent_ext::TYPES, system_ext::TYPES];
 
 /// Extension keys of `set`/`get` and actions of `control`.
 const EXTENSION_KEYS: &[&str] = &[
@@ -654,7 +641,7 @@ impl Server {
             "voices" => self.voices(m),
             "subscribe" => self.subscribe(session, m),
             k if ENGINE_TYPES.contains(&k) => self.engine_message(k, m),
-            "channel_open" | "channel_close" | "focus" if self.channels.get().is_some() => {
+            k if channels_ext::TYPES.contains(&k) && self.channels.get().is_some() => {
                 let ch = self.channels.get().expect("checked");
                 let _admitted = self.admit()?;
                 match (kind, self.agent.get()) {
@@ -697,7 +684,7 @@ impl Server {
                     _ => s.preview(&self.reader, m),
                 }
             }
-            k if EXTENSION_TYPES.contains(&k) => Err(Failure::new(
+            k if EXTENSION_TYPES.iter().any(|t| t.contains(&k)) => Err(Failure::new(
                 Code::Unsupported,
                 format!("'{k}' belongs to an extension this host does not offer"),
             )),
@@ -1293,6 +1280,37 @@ mod tests {
 
     fn code(o: &Outcome) -> &str {
         o.reply["error"]["code"].as_str().unwrap_or("")
+    }
+
+    #[test]
+    fn every_extension_type_is_unsupported_until_its_extension_is_enabled() {
+        let (s, _) = server();
+        let mut session = authed(&s);
+        let all = [
+            "channel_open",
+            "channel_close",
+            "focus",
+            "stream",
+            "turn_start",
+            "turn_end",
+            "ask",
+            "earcon",
+            "tool",
+            "answered",
+            "preview",
+            "shutdown",
+        ];
+        for kind in all {
+            let o = call(&s, &mut session, json!({"type": kind}));
+            assert_eq!(code(&o), "E_UNSUPPORTED", "{kind}");
+        }
+        let known: Vec<&str> = EXTENSION_TYPES
+            .iter()
+            .flat_map(|t| t.iter().copied())
+            .collect();
+        assert_eq!(known, all);
+        let o = call(&s, &mut session, json!({"type": "no_such_type"}));
+        assert_eq!(code(&o), "E_UNKNOWN_TYPE");
     }
 
     #[test]
