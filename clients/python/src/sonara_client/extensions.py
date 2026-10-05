@@ -24,10 +24,13 @@ class Channels:
         self._send = send
 
     def open(self, channel: str, label: Optional[str] = None, host_tab: Optional[str] = None,
-             policy: Optional[str] = None, **extra: Any) -> dict:
-        """``channel_open`` (policy ``latest`` or ``queue``)."""
+             policy: Optional[str] = None, keep_label: Optional[bool] = None,
+             **extra: Any) -> dict:
+        """``channel_open`` (policy ``latest`` or ``queue``; ``keep_label``: an
+        open channel keeps the label it has, runtime 0.20.3)."""
         return self._send("channel_open", _defined(
-            {**extra, "channel": channel, "label": label, "host_tab": host_tab, "policy": policy}))
+            {**extra, "channel": channel, "label": label, "host_tab": host_tab, "policy": policy,
+             "keep_label": keep_label}))
 
     def close(self, channel: str, **extra: Any) -> dict:
         """``channel_close``."""

@@ -1,0 +1,24 @@
+{
+  "event": "UserPromptSubmit",
+  "payload": {
+    "session_id": "s245",
+    "cwd": "C:\\nowhere-245\\Filesmith\\.claude\\worktrees\\statusbar"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "channel_open",
+      "channel": "s245",
+      "label": "Filesmith",
+      "keep_label": true
+    },
+    {
+      "type": "focus",
+      "channel": "s245"
+    },
+    {
+      "type": "turn_start",
+      "channel": "s245"
+    }
+  ]
+}

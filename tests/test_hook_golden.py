@@ -13,14 +13,20 @@ The adaptation (Python message -> protocol v1):
 - PLAN -> ask "plan"; EARCON permission + PERMISSION -> ask "permission"
   (text: the action, else the message), both with the selection hints.
 - TOOL -> tool; CHOICE_ANSWERED -> answered.
-- SET_FOREGROUND -> channel_open (label: the cwd's folder; host_tab) + focus;
+- SET_FOREGROUND -> channel_open (label: the session's project, with
+  keep_label, #245; host_tab) + focus;
   FLUSH -> turn_start; SESSION_START adds nothing more (its plugin_version
   and plugin_root fed the Python setup guide, which is not part of L5);
   SESSION_END -> channel_close.
 - A missing session id is the channel "default" (protocol v1 needs one).
 - Every agent message that names the session (stream, tool, ask, answered,
-  turn_end) carries the payload's cwd folder as "label" (#241; the Python
+  turn_end) carries the session's project as "label" (#241; the Python
   plugin sent it only with SET_FOREGROUND).
+- The project (#245, crates/sonara-hook/src/project.rs, `_project` here):
+  in <repo>/.claude/worktrees/<name> (the first such part) it is <repo>;
+  else (not on a UNC path) the repository the
+  nearest .git at or above cwd belongs to (a linked worktree's main one),
+  never the user's home (USERPROFILE) or above; else the cwd's folder. The Python plugin named the cwd's folder.
 
 Set SONARA_REGEN_GOLDEN=1 to rewrite the expected messages from the Python
 mapping (then review the diff)."""
@@ -101,14 +107,83 @@ def _questions(m):
 LABELLED = ("stream", "tool", "ask", "answered", "turn_end")
 
 
-def _folder(cwd):
-    return ntpath.basename((cwd or "").rstrip("/"))
+def _same_folder(p, home):
+    def norm(s):
+        return str(s).replace("/", "\\").rstrip("\\").lower()
+    return bool(home and home.strip()) and norm(p) == norm(home)
 
 
-def translate(msgs, payload=None):
+def _small(p):
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            return f.read(4096)
+    except OSError:
+        return None
+
+
+def _common_repo(common):
+    """project.rs common_repo_name: the folder above .git, or bare x.git's x."""
+    name = ntpath.basename(ntpath.normpath(str(common)).rstrip("\\"))
+    if name.lower() == ".git":
+        return ntpath.basename(ntpath.dirname(ntpath.normpath(str(common)))) or None
+    return (name[:-4] if name.endswith(".git") else name) or None
+
+
+def _linked_repo(worktree, git_file):
+    """project.rs linked_repo: follow a .git file to the main repository."""
+    text = _small(git_file)
+    gitdir = next((ln.strip()[len("gitdir:"):].strip() for ln in (text or "").splitlines()
+                   if ln.strip().startswith("gitdir:")), None)
+    if gitdir is None:
+        return None
+    gitdir = Path(worktree) / gitdir
+    common = (_small(gitdir / "commondir") or "").strip()
+    if common:
+        return _common_repo(gitdir / common.splitlines()[0])
+    if gitdir.parent.name.lower() != "worktrees":
+        return None  # a submodule: its own name
+    return _common_repo(gitdir.parent.parent)
+
+
+def _git_repo(cwd, home=None):
+    """The repository of the nearest .git at or above ``cwd``, below
+    ``home`` (project.rs repo_name; a UNC path is not walked)."""
+    if len(cwd) >= 2 and cwd[0] in "\\/" and cwd[1] in "\\/":
+        return None
+    d = Path(cwd)
+    for p in [d, *d.parents][:40]:
+        if _same_folder(p, home):
+            break
+        git = p / ".git"
+        if git.is_dir():
+            if (git / "HEAD").is_file():
+                return p.name or None
+        elif git.is_file():
+            return _linked_repo(p, git) or p.name or None
+    return None
+
+
+def _project(cwd, home=None):
+    cwd = cwd or ""
+    if not cwd.strip():
+        return ""
+    parts = cwd.replace("/", "\\").split("\\")
+    # The first .claude/worktrees: a worktree made inside another names the
+    # outer repository.
+    for i in range(len(parts) - 2):
+        if (parts[i].lower(), parts[i + 1].lower()) == (".claude", "worktrees") and parts[i + 2]:
+            repo = parts[i - 1] if i else ""
+            if repo and not repo.endswith(":"):
+                return repo
+            break
+    return _git_repo(cwd, home) or ntpath.basename(cwd.rstrip("/\\"))
+
+
+def translate(msgs, payload=None, env=None):
     """Python hook messages -> protocol v1 messages (module docs)."""
-    out = _translate(msgs)
-    label = _folder((payload or {}).get("cwd"))
+    home = (env or {}).get("USERPROFILE")
+    out = _translate(msgs, home)
+    label = _project((payload or {}).get("cwd"), home)
     if label:
         for d in out:
             if d["type"] in LABELLED:
@@ -116,7 +191,7 @@ def translate(msgs, payload=None):
     return out
 
 
-def _translate(msgs):
+def _translate(msgs, home=None):
     out = []
     for m in msgs:
         t = m["type"]
@@ -139,9 +214,10 @@ def _translate(msgs):
             out.append(_base("answered", m))
         elif t == MsgType.SET_FOREGROUND:
             op = _base("channel_open", m)
-            folder = _folder(m.get("cwd"))
-            if folder:
-                op["label"] = folder
+            project = _project(m.get("cwd"), home)
+            if project:
+                op["label"] = project
+                op["keep_label"] = True
             if m.get("host_tab"):
                 op["host_tab"] = m["host_tab"]
             out.extend([op, _base("focus", m)])
@@ -175,8 +251,38 @@ def test_golden_messages_are_the_python_mapping(path):
     case = json.loads(path.read_text(encoding="utf-8"))
     payload = _payload(case)
     msgs = handle_event(case["event"], payload, env=case.get("env", {}))
-    got = translate(msgs, payload)
+    got = translate(msgs, payload, case.get("env", {}))
     if os.environ.get("SONARA_REGEN_GOLDEN"):
         case["messages"] = got
         path.write_text(json.dumps(case, indent=2) + "\n", encoding="utf-8")
     assert got == case["messages"]
+
+
+def test_the_project_mirror_follows_the_rust_rules(tmp_path):
+    """_project is project.rs: nested Claude worktrees, a linked worktree's
+    main repository, a bare common folder, a submodule (#245)."""
+    nested = r"C:\nowhere-245\Filesmith\.claude\worktrees\a\.claude\worktrees\b"
+    assert _project(nested) == "Filesmith"
+    assert _project(r"\server-245\share\proj\src") == "src"
+    main = tmp_path / "PrismTerminal"
+    admin = main / ".git" / "worktrees" / "agent-hooks"
+    admin.mkdir(parents=True)
+    (admin / "commondir").write_text("../..\n")
+    wt = tmp_path / "elsewhere" / "agent-hooks"
+    (wt / "src").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {admin}\n")
+    assert _project(str(wt / "src")) == "PrismTerminal"
+    (admin / "commondir").unlink()
+    assert _project(str(wt)) == "PrismTerminal"
+    bare = tmp_path / "tool.git" / "worktrees" / "w"
+    bare.mkdir(parents=True)
+    (bare / "commondir").write_text("../..")
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / ".git").write_text(f"gitdir: {bare}")
+    assert _project(str(w)) == "tool"
+    sub = tmp_path / "super" / "lib"
+    (tmp_path / "super" / ".git" / "modules" / "lib").mkdir(parents=True)
+    sub.mkdir()
+    (sub / ".git").write_text("gitdir: ../.git/modules/lib")
+    assert _project(str(sub)) == "lib"

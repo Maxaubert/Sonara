@@ -22,8 +22,10 @@
 //! One Claude session is one channel (its `session_id`). Each message is
 //! stamped with `t`, the hook process's start time, so text of a turn that
 //! arrives after the next prompt is dropped by the runtime (#174). The
-//! session's folder (the basename of `cwd`) is the channel's label: on
-//! `channel_open`, and as `label` on every `agent` message that names the
+//! session's project (`project_label`, #245: the repository `cwd` is in,
+//! a worktree's main repository, else `cwd`'s folder) is the channel's
+//! label: on `channel_open` (with `keep_label`, so the runtime keeps the
+//! first one a session got), and as `label` on every `agent` message that names the
 //! session (`stream`, `tool`, `ask`, `answered`, `turn_end`; `LABELLED`),
 //! so a session whose first message after a runtime restart is not its
 //! prompt is still named when Sonara switches to it (#241).
@@ -57,6 +59,9 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
+
+mod project;
+pub use project::{basename, project_label};
 
 /// How long a hook may spend starting the runtime and waiting for it.
 pub const START_BUDGET: Duration = Duration::from_secs(1);
@@ -105,13 +110,6 @@ fn msg(kind: &str, channel: &str) -> Map<String, Value> {
     m
 }
 
-/// The last path component (either separator), as `os.path.basename` on
-/// Windows.
-fn basename(path: &str) -> &str {
-    let trimmed = path.trim_end_matches('/');
-    trimmed.rsplit(['/', '\\']).next().unwrap_or("")
-}
-
 /// A short, speakable description of a pending tool call.
 pub fn tool_summary(tool: &str, input: &Value) -> String {
     match tool {
@@ -146,9 +144,10 @@ fn host_tab(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
         .find(|v| !v.is_empty())
 }
 
-/// The session's label: the folder it runs in (`cwd`'s last component).
-fn label(payload: &Value) -> Option<&str> {
-    Some(basename(text(payload, "cwd"))).filter(|f| !f.is_empty())
+/// The session's label: the project it works in (`project_label`, #245;
+/// the walk to `.git` ends at the user's home, `USERPROFILE`).
+fn label(payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    project_label(text(payload, "cwd"), env("USERPROFILE").as_deref())
 }
 
 /// The `agent` messages that carry the session's label (#241).
@@ -156,8 +155,8 @@ fn label(payload: &Value) -> Option<&str> {
 pub const LABELLED: &[&str] = &["stream", "tool", "ask", "answered", "turn_end"];
 
 /// Add the session's label to each message in `LABELLED`.
-fn with_label(mut msgs: Vec<Value>, payload: &Value) -> Vec<Value> {
-    if let Some(l) = label(payload) {
+fn with_label(mut msgs: Vec<Value>, label: Option<&str>) -> Vec<Value> {
+    if let Some(l) = label {
         for m in &mut msgs {
             if let Value::Object(o) = m {
                 if o.get("type")
@@ -172,11 +171,13 @@ fn with_label(mut msgs: Vec<Value>, payload: &Value) -> Vec<Value> {
     msgs
 }
 
-/// `channel_open` with the session's folder as its label.
-fn open(channel: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Value {
+/// `channel_open` with the session's project as its label, kept when the
+/// channel already has one (`keep_label`, #245: a session keeps its name).
+fn open(channel: &str, label: Option<&str>, env: &dyn Fn(&str) -> Option<String>) -> Value {
     let mut m = msg("channel_open", channel);
-    if let Some(folder) = label(payload) {
-        m.insert("label".into(), json!(folder));
+    if let Some(project) = label {
+        m.insert("label".into(), json!(project));
+        m.insert("keep_label".into(), json!(true));
     }
     if let Some(tab) = host_tab(env) {
         m.insert("host_tab".into(), json!(tab));
@@ -259,13 +260,22 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 
 /// Map one hook event to protocol messages (no `t` yet). Pure: the
 /// environment is read through `env`. Unknown events map to nothing.
+/// The label is looked up only for an event that sends something: the walk
+/// to `.git` touches the file system, and most tool events send nothing.
 pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Vec<Value> {
-    with_label(map_unlabelled(event, payload, env), payload)
+    let cell = std::cell::OnceCell::new();
+    let lazy = || cell.get_or_init(|| label(payload, env)).clone();
+    let msgs = map_unlabelled(event, payload, &lazy, env);
+    if msgs.is_empty() {
+        return msgs;
+    }
+    with_label(msgs, lazy().as_deref())
 }
 
 fn map_unlabelled(
     event: &str,
     payload: &Value,
+    label: &dyn Fn() -> Option<String>,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<Value> {
     let channel = match text(payload, "session_id") {
@@ -329,12 +339,12 @@ fn map_unlabelled(
         }
         "Stop" => vec![Value::Object(msg("turn_end", channel))],
         "UserPromptSubmit" => vec![
-            open(channel, payload, env),
+            open(channel, label().as_deref(), env),
             Value::Object(msg("focus", channel)),
             Value::Object(msg("turn_start", channel)),
         ],
         "SessionStart" => vec![
-            open(channel, payload, env),
+            open(channel, label().as_deref(), env),
             Value::Object(msg("focus", channel)),
         ],
         "SessionEnd" => vec![Value::Object(msg("channel_close", channel))],
@@ -728,6 +738,28 @@ pub fn deliver(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_event_that_sends_nothing_never_looks_for_the_project() {
+        // The walk to `.git` reads USERPROFILE first: an ignored event
+        // (most PostToolUse and Notification events) must not walk at all.
+        let asked = std::cell::Cell::new(false);
+        let env = |k: &str| {
+            if k == "USERPROFILE" {
+                asked.set(true);
+            }
+            None
+        };
+        let p = json!({"session_id": "s", "cwd": r"C:\x\proj", "tool_name": "Bash"});
+        assert!(map_event("PostToolUse", &p, &env).is_empty());
+        let n = json!({"session_id": "s", "cwd": r"C:\x\proj", "notification_type": "idle"});
+        assert!(map_event("Notification", &n, &env).is_empty());
+        assert!(!asked.get());
+        // An event that sends something still gets the label.
+        let out = map_event("Stop", &p, &env);
+        assert_eq!(out[0]["label"], json!("proj"));
+        assert!(asked.get());
+    }
 
     #[test]
     fn tool_summaries() {
