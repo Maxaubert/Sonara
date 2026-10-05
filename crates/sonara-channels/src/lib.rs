@@ -216,6 +216,12 @@ impl Drop for Locked<'_> {
         let dropped = st.dropped.take();
         let hook = st.on_drop.clone();
         drop(self.guard.take());
+        // While a panic unwinds through the lock, a hook that panicked too
+        // would abort the process: skip the reports and leave the lock
+        // poisoned (`Inner::lock` recovers from that).
+        if std::thread::panicking() {
+            return;
+        }
         if let Some(hook) = hook {
             for d in &dropped {
                 hook(d);

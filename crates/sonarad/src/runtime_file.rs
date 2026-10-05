@@ -69,7 +69,9 @@ fn temp_path(path: &Path, pid: u32) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// The `pid` in the file, if it parses.
+/// The `pid` in the file, if it parses. Clients read the same file through
+/// `sonara_client::read_runtime` (#255), which needs a valid port and
+/// token; here only the pid matters (is the file still this process's).
 pub fn read_pid(path: &Path) -> Option<u32> {
     let text = std::fs::read_to_string(path).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;

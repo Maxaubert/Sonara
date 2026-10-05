@@ -950,3 +950,31 @@ fn the_drop_hook_runs_off_the_lock_so_it_and_other_threads_can_use_channels() {
     // The hook holds a clone: let it go, so the rig can end.
     r.ch.on_drop(None);
 }
+
+#[test]
+fn a_panic_under_the_lock_skips_the_drop_hook_and_the_channels_keep_serving() {
+    // #255 review: the drops are reported when the lock is released. While
+    // a panic unwinds through it, a hook that panics too would abort the
+    // process, so the hook is skipped and the lock just stays poisoned.
+    let r = Rig::two();
+    r.ch.set_muted("a", true).unwrap();
+    r.ch.set_muted("b", true).unwrap();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.stays_idle();
+    let calls = Arc::new(Mutex::new(0));
+    let seen = calls.clone();
+    r.ch.on_drop(Some(Arc::new(move |_: &sonara_channels::Dropped| {
+        *seen.lock().unwrap() += 1;
+        panic!("a hook that panics");
+    })));
+    let ch = r.ch.clone();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        // `a` is flushed and its drop collected before `also` panics on `b`.
+        let _ = ch.flush_with("flush", |_| {}, |id| id != "b" || panic!("under the lock"));
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(*calls.lock().unwrap(), 0, "the hook was skipped");
+    r.ch.on_drop(None);
+    assert_eq!(r.ch.channel_ids(), vec!["a".to_string(), "b".to_string()]);
+}
