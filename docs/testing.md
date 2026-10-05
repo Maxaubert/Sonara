@@ -24,7 +24,7 @@ safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 
 | Provider | Variables |
 |---|---|
-| OpenAI | `OPENAI_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` + `SONARA_LIVE_OPENAI_VOICE` (it has no voice list) |
 | Kokoro-FastAPI | `SONARA_LIVE_KOKORO_FASTAPI_URL` |
 | LocalAI | `SONARA_LIVE_LOCALAI_URL` + `SONARA_LIVE_LOCALAI_MODEL` |
 | Speaches | `SONARA_LIVE_SPEACHES_URL` + `SONARA_LIVE_SPEACHES_MODEL` |
@@ -34,10 +34,11 @@ safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 | Gemini | `GEMINI_API_KEY` |
 | Cartesia | `CARTESIA_API_KEY` + `SONARA_LIVE_CARTESIA_MODEL` |
 | Deepgram | `DEEPGRAM_API_KEY` |
-| Your own program | `SONARA_LIVE_COMMAND` (JSON argv) |
+| Your own program | `SONARA_LIVE_COMMAND` (JSON argv), optional `SONARA_LIVE_COMMAND_OPTIONS` (JSON object) |
 
 Any check also takes `SONARA_LIVE_<NAME>_MODEL` and `SONARA_LIVE_<NAME>_VOICE`; without them it
-uses the provider's first listed model or voice. No model ids or voice names in code (#235).
+uses the provider's first listed model or voice; a provider without a voice list (OpenAI) needs the
+voice variable. No model ids or voice names in code (#235).
 
 ## Kokoro engine and G2P
 

@@ -4,7 +4,7 @@ Start here. `CLAUDE.md` holds the rules and gates; this index says where everyth
 
 | Doc | Purpose | Status |
 |---|---|---|
-| [architecture.md](architecture.md) | Process chain, threads and locks, how the code fits together. The Rust crate map and recipes are being rewritten (#248 cleanup); the Python sections are legacy | partly legacy |
+| [architecture.md](architecture.md) | Process chain, threads and locks, how the code fits together. The Rust crate map and recipes are being rewritten (#253); the Python sections are legacy | partly legacy |
 | [protocol-v1.md](protocol-v1.md) | Wire contract for embedding hosts (TCP and HTTP, extensions, external engines). Changes stay additive | current |
 | [bundling.md](bundling.md) | Embedding the runtime in npm and PyPI hosts | current |
 | [testing.md](testing.md) | Live tests and their env vars, Kokoro and G2P, conformance, SDK steps, earcons, notices, version files, safe redeploy | current |

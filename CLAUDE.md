@@ -27,7 +27,7 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - Layers: L1 `sonara-core`, `-engine`, `-audio`, `-reader`, `misaki`, `sonara-log`; L2 `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system`; L5 `sonara-hook`, `sonara-cli`; `sonarad` hosts them. No crate depends upward (`crates/*/tests/layering.rs`).
 - Add a setting: `sonarad::config::SCHEMA` (`crates/sonarad/src/config.rs`), then `settings.html`, then e2e.
 - Add a message: dispatch in `crates/sonarad/src/protocol.rs` plus the `*_ext.rs` `TYPES` and `EXTENSION_TYPES`; document it in `docs/protocol-v1.md` (the contract, changes additive only), add conformance tests, update both SDKs (`clients/ts`, `clients/python`).
-- Lock order across crates: agent rules > channels state > schedule > player > reader. Never call back into a crate whose lock you hold.
+- Lock order across crates: agent rules > channels state > schedule > player > reader. New code must not call back into a crate whose lock it holds (trace hooks under the agent lock are a known exception, #255).
 - PRIVACY.md lists every file in `%LOCALAPPDATA%\Sonara`: update it when adding one.
 
 ## Product rules
