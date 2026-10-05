@@ -15,6 +15,7 @@
       "type": "channel_open",
       "channel": "sess-9",
       "label": "proj",
+      "keep_label": true,
       "host_tab": "p-2"
     },
     {

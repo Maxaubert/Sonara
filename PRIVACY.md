@@ -41,6 +41,12 @@ selected one, with an external speech engine: see External voices). Its parts ta
 other over a loopback connection (`127.0.0.1`) protected by a token stored in your profile. The
 settings page is served on the same loopback address and needs that token too.
 
+To name a session after its project, the hook looks for a `.git` entry in the session's working
+folder and the folders above it (up to, not including, your home folder), checks for git's
+`HEAD` there, and reads two small files of git's own: a worktree's `.git` file
+and the `commondir` file it points to (only the paths in them, to find the main repository's
+folder name). It reads nothing else of your project, starts no program and stores nothing.
+
 The reading history Sonara uses for restart, summaries waiting to be read and each session's
 turn state are held in memory and are gone when the runtime stops.
 

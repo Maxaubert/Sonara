@@ -13,14 +13,19 @@ The adaptation (Python message -> protocol v1):
 - PLAN -> ask "plan"; EARCON permission + PERMISSION -> ask "permission"
   (text: the action, else the message), both with the selection hints.
 - TOOL -> tool; CHOICE_ANSWERED -> answered.
-- SET_FOREGROUND -> channel_open (label: the cwd's folder; host_tab) + focus;
+- SET_FOREGROUND -> channel_open (label: the session's project, with
+  keep_label, #245; host_tab) + focus;
   FLUSH -> turn_start; SESSION_START adds nothing more (its plugin_version
   and plugin_root fed the Python setup guide, which is not part of L5);
   SESSION_END -> channel_close.
 - A missing session id is the channel "default" (protocol v1 needs one).
 - Every agent message that names the session (stream, tool, ask, answered,
-  turn_end) carries the payload's cwd folder as "label" (#241; the Python
+  turn_end) carries the session's project as "label" (#241; the Python
   plugin sent it only with SET_FOREGROUND).
+- The project (#245, crates/sonara-hook/src/project.rs, `_project` here):
+  in <repo>/.claude/worktrees/<name> it is <repo>; else the repository the
+  nearest .git at or above cwd belongs to (a linked worktree's main one),
+  never the user's home (USERPROFILE) or above; else the cwd's folder. The Python plugin named the cwd's folder.
 
 Set SONARA_REGEN_GOLDEN=1 to rewrite the expected messages from the Python
 mapping (then review the diff)."""
@@ -101,14 +106,46 @@ def _questions(m):
 LABELLED = ("stream", "tool", "ask", "answered", "turn_end")
 
 
-def _folder(cwd):
-    return ntpath.basename((cwd or "").rstrip("/"))
+def _same_folder(p, home):
+    def norm(s):
+        return str(s).replace("/", "\\").rstrip("\\").lower()
+    return bool(home and home.strip()) and norm(p) == norm(home)
 
 
-def translate(msgs, payload=None):
+def _git_repo(cwd, home=None):
+    """The repository of the nearest .git at or above ``cwd``, below
+    ``home`` (the Rust walk, without following a worktree's .git file,
+    which project.rs's own tests cover; the golden cases' paths do not
+    exist, so this finds none)."""
+    d = Path(cwd)
+    for p in [d, *d.parents][:40]:
+        if _same_folder(p, home):
+            break
+        git = p / ".git"
+        if git.is_file() or (git / "HEAD").is_file():
+            return p.name or None
+    return None
+
+
+def _project(cwd, home=None):
+    cwd = cwd or ""
+    if not cwd.strip():
+        return ""
+    parts = cwd.replace("/", "\\").split("\\")
+    for i in range(len(parts) - 3, -1, -1):
+        if (parts[i].lower(), parts[i + 1].lower()) == (".claude", "worktrees") and parts[i + 2]:
+            repo = parts[i - 1] if i else ""
+            if repo and not repo.endswith(":"):
+                return repo
+            break
+    return _git_repo(cwd, home) or ntpath.basename(cwd.rstrip("/\\"))
+
+
+def translate(msgs, payload=None, env=None):
     """Python hook messages -> protocol v1 messages (module docs)."""
-    out = _translate(msgs)
-    label = _folder((payload or {}).get("cwd"))
+    home = (env or {}).get("USERPROFILE")
+    out = _translate(msgs, home)
+    label = _project((payload or {}).get("cwd"), home)
     if label:
         for d in out:
             if d["type"] in LABELLED:
@@ -116,7 +153,7 @@ def translate(msgs, payload=None):
     return out
 
 
-def _translate(msgs):
+def _translate(msgs, home=None):
     out = []
     for m in msgs:
         t = m["type"]
@@ -139,9 +176,10 @@ def _translate(msgs):
             out.append(_base("answered", m))
         elif t == MsgType.SET_FOREGROUND:
             op = _base("channel_open", m)
-            folder = _folder(m.get("cwd"))
-            if folder:
-                op["label"] = folder
+            project = _project(m.get("cwd"), home)
+            if project:
+                op["label"] = project
+                op["keep_label"] = True
             if m.get("host_tab"):
                 op["host_tab"] = m["host_tab"]
             out.extend([op, _base("focus", m)])
@@ -175,7 +213,7 @@ def test_golden_messages_are_the_python_mapping(path):
     case = json.loads(path.read_text(encoding="utf-8"))
     payload = _payload(case)
     msgs = handle_event(case["event"], payload, env=case.get("env", {}))
-    got = translate(msgs, payload)
+    got = translate(msgs, payload, case.get("env", {}))
     if os.environ.get("SONARA_REGEN_GOLDEN"):
         case["messages"] = got
         path.write_text(json.dumps(case, indent=2) + "\n", encoding="utf-8")

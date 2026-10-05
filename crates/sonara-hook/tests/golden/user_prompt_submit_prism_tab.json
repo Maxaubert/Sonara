@@ -12,6 +12,7 @@
       "type": "channel_open",
       "channel": "s1",
       "label": "proj",
+      "keep_label": true,
       "host_tab": "p-1"
     },
     {

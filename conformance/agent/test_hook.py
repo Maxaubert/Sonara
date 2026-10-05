@@ -138,3 +138,45 @@ def test_a_session_end_closes_the_channel(hook_exe, rt):
     hook(hook_exe, rt, "SessionEnd", {"session_id": SESSION})
     r = c.request({"type": "focus", "channel": SESSION})
     assert r["error"]["code"] == "E_NOT_FOUND"
+
+
+def test_a_session_keeps_its_project_name_when_it_moves_between_worktrees(hook_exe, rt, tmp_path):
+    """#245, the hook logs of 2026-10-05: a Filesmith session's cwd flipped
+    between the repository and its .claude\worktrees\statusbar, and between
+    subfolders, and the session's name followed. It stays "Filesmith"."""
+    repo = tmp_path / "Filesmith"
+    (repo / ".git" / "worktrees" / "statusbar").mkdir(parents=True)
+    wt = repo / ".claude" / "worktrees" / "statusbar"
+    (wt / "src").mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: ../../../.git/worktrees/statusbar\n", encoding="utf-8")
+    (repo / "app" / "dist").mkdir(parents=True)
+    c = listener(rt)
+    sid = "245f-0000"
+    hook(hook_exe, rt, "SessionStart", {"session_id": sid, "cwd": str(repo)})
+    for cwd in (wt, repo, wt / "src", repo / "app" / "dist", wt):
+        hook(hook_exe, rt, "UserPromptSubmit", {"session_id": sid, "cwd": str(cwd)})
+    hook(hook_exe, rt, "MessageDisplay",
+         {"session_id": sid, "cwd": str(wt / "src"), "delta": "Still Filesmith.", "index": 0,
+          "final": True})
+    s = started(c, "Still Filesmith.")
+    assert s["now_playing"]["channel"] == sid
+    assert s["now_playing"]["label"] == "Filesmith"
+    prefs = c.request({"type": "get", "key": "channel_prefs"})
+    row = next(r for r in prefs["value"] if r["channel"] == sid)
+    assert row["client_label"] == "Filesmith"
+
+
+def test_a_session_started_outside_a_repo_keeps_its_first_folder(hook_exe, rt, tmp_path):
+    """Outside any repository the folder the session started in names it,
+    also after a cd into a subfolder."""
+    start = tmp_path / "notes"
+    (start / "drafts").mkdir(parents=True)
+    c = listener(rt)
+    sid = "245n-0000"
+    hook(hook_exe, rt, "SessionStart", {"session_id": sid, "cwd": str(start)})
+    hook(hook_exe, rt, "UserPromptSubmit", {"session_id": sid, "cwd": str(start / "drafts")})
+    hook(hook_exe, rt, "MessageDisplay",
+         {"session_id": sid, "cwd": str(start / "drafts"), "delta": "Notes here.", "index": 0,
+          "final": True})
+    s = started(c, "Notes here.")
+    assert s["now_playing"]["label"] == "notes"

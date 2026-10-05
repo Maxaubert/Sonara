@@ -1,0 +1,21 @@
+{
+  "event": "MessageDisplay",
+  "payload": {
+    "session_id": "s245",
+    "cwd": "C:\\nowhere-245\\Sonara\\.claude\\worktrees\\settings-redesign\\crates\\sonarad",
+    "delta": "Hi.",
+    "index": 0,
+    "final": true
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "stream",
+      "channel": "s245",
+      "delta": "Hi.",
+      "index": 0,
+      "final": true,
+      "label": "Sonara"
+    }
+  ]
+}

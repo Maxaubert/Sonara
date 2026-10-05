@@ -23,6 +23,8 @@ export interface ChannelOpenOptions {
   label?: string;
   host_tab?: string;
   policy?: ChannelPolicy;
+  /** Keep the label an open channel already has (runtime 0.20.3). */
+  keep_label?: boolean;
 }
 
 /** `channels`: named sources, each with its own queue and policy. */

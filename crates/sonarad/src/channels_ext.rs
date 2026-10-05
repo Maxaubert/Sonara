@@ -43,15 +43,34 @@ fn channel(m: &Map<String, Value>) -> Result<&str, Failure> {
 }
 
 /// `channel_open`. A label the user gave the channel (`channel_prefs`)
-/// replaces the client's; the client's is remembered for the page.
+/// replaces the client's; the client's is remembered for the page. With
+/// `keep_label: true` (#245, the Claude hook) a channel that already has a
+/// label keeps it, and so does the remembered client label: a session
+/// keeps the name it got first.
 pub fn open(ch: &Channels, store: &Store, m: &Map<String, Value>) -> Handled {
     let id = channel(m)?;
-    let client_label = opt_str(m, "label")?;
-    store.note_client_label(id, client_label);
-    let label = store
-        .prefs(id)
-        .label
-        .or_else(|| client_label.map(str::to_string));
+    let mut client_label = opt_str(m, "label")?.map(str::to_string);
+    let keep = match m.get("keep_label") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("'keep_label' must be true or false")),
+    };
+    if keep {
+        let had = ch
+            .channel(id)
+            .and_then(|c| c.label)
+            .filter(|l| !l.is_empty());
+        if let Some(had) = had {
+            client_label = match store.client_label(id) {
+                Some(first) => Some(first),
+                // The label it has is the user's: this one is the first.
+                None if store.prefs(id).label.is_some() => client_label,
+                None => Some(had),
+            };
+        }
+    }
+    store.note_client_label(id, client_label.as_deref());
+    let label = store.prefs(id).label.or(client_label);
     let host_tab = opt_str(m, "host_tab")?.map(str::to_string);
     let policy = match opt_str(m, "policy")? {
         None => None,
@@ -447,6 +466,102 @@ mod tests {
             let r = call(&s, &mut a, req.clone());
             assert_eq!(code(&r), want, "request {req}");
         }
+    }
+
+    fn label_of(s: &Server, id: &str) -> Option<String> {
+        s.channels().unwrap().channel(id).and_then(|c| c.label)
+    }
+
+    #[test]
+    fn a_channel_keeps_its_first_label_when_a_prompt_sends_another() {
+        // #245: the hook names a session after its project on every prompt;
+        // a channel that has a label keeps it (`keep_label`).
+        let (s, mut a) = enabled();
+        let open = |a: &mut Session, label: &str, tab: &str| {
+            let r = call(
+                &s,
+                a,
+                json!({"type": "channel_open", "channel": "f", "label": label,
+                       "keep_label": true, "host_tab": tab}),
+            );
+            assert_eq!(r["ok"], true, "{r}");
+        };
+        open(&mut a, "Filesmith", "t1");
+        assert_eq!(label_of(&s, "f").as_deref(), Some("Filesmith"));
+        open(&mut a, "statusbar", "t2");
+        assert_eq!(label_of(&s, "f").as_deref(), Some("Filesmith"));
+        assert_eq!(s.store().client_label("f").as_deref(), Some("Filesmith"));
+        let c = s.channels().unwrap().channel("f").unwrap();
+        assert_eq!(c.host_tab.as_deref(), Some("t2"), "the rest still updates");
+        // A channel without a label yet takes it.
+        call(&s, &mut a, json!({"type": "channel_open", "channel": "g"}));
+        call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "g", "label": "Prism",
+                   "keep_label": true}),
+        );
+        assert_eq!(label_of(&s, "g").as_deref(), Some("Prism"));
+        // Without keep_label a host still renames its channel (additive).
+        call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "f", "label": "Renamed"}),
+        );
+        assert_eq!(label_of(&s, "f").as_deref(), Some("Renamed"));
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "f", "keep_label": "yes"}),
+        );
+        assert_eq!(code(&r), "E_BAD_REQUEST");
+    }
+
+    #[test]
+    fn the_users_own_label_still_wins() {
+        let (s, mut a) = enabled();
+        let open = |a: &mut Session, label: &str| {
+            call(
+                &s,
+                a,
+                json!({"type": "channel_open", "channel": "f", "label": label,
+                       "keep_label": true}),
+            );
+        };
+        open(&mut a, "Filesmith");
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "channel_prefs",
+                   "value": {"channel": "f", "label": "Mine"}}),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(label_of(&s, "f").as_deref(), Some("Mine"));
+        open(&mut a, "statusbar");
+        assert_eq!(label_of(&s, "f").as_deref(), Some("Mine"));
+        // Cleared, the session's first label comes back, not the later one.
+        call(
+            &s,
+            &mut a,
+            json!({"type": "set", "key": "channel_prefs",
+                   "value": {"channel": "f", "label": null}}),
+        );
+        assert_eq!(label_of(&s, "f").as_deref(), Some("Filesmith"));
+        // A channel the user named before it opened opens with that name.
+        s.store().set_prefs(
+            "n",
+            crate::config::PrefsUpdate {
+                label: Some(Some("Named".into())),
+                ..Default::default()
+            },
+        );
+        call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "n", "label": "repo",
+                   "keep_label": true}),
+        );
+        assert_eq!(label_of(&s, "n").as_deref(), Some("Named"));
     }
 
     #[test]

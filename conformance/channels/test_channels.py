@@ -311,3 +311,21 @@ def test_channels_over_http(rt):
     assert status == 200 and r["channel"] == "h"
     status, r = rt.post("focus", {"channel": "missing"})
     assert status == 404 and r["error"]["code"] == "E_NOT_FOUND"
+
+
+def test_keep_label_keeps_the_label_an_open_channel_has(rt):
+    """#245: ``keep_label`` (the Claude hook's) never renames a channel that
+    has a label; without it a host still renames its channel."""
+    c = channels_client(rt)
+    for label in ("Filesmith", "statusbar", "Filesmith", "statusbar"):
+        ok(c, {"type": "channel_open", "channel": "f", "label": label, "keep_label": True})
+    ok(c, {"type": "speak", "channel": "f", "text": SHORT_SENTENCE})
+    s = c.state(lambda s: s["now_playing"] is not None)
+    assert s["now_playing"]["label"] == "Filesmith"
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "channel_open", "channel": "f", "label": "Renamed"})
+    ok(c, {"type": "speak", "channel": "f", "text": SHORT_SENTENCE})
+    s = c.state(lambda s: s["now_playing"] is not None)
+    assert s["now_playing"]["label"] == "Renamed"
+    r = c.request({"type": "channel_open", "channel": "f", "keep_label": "yes"})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
