@@ -260,16 +260,22 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 
 /// Map one hook event to protocol messages (no `t` yet). Pure: the
 /// environment is read through `env`. Unknown events map to nothing.
+/// The label is looked up only for an event that sends something: the walk
+/// to `.git` touches the file system, and most tool events send nothing.
 pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Vec<Value> {
-    let label = label(payload, env);
-    let label = label.as_deref();
-    with_label(map_unlabelled(event, payload, label, env), label)
+    let cell = std::cell::OnceCell::new();
+    let lazy = || cell.get_or_init(|| label(payload, env)).clone();
+    let msgs = map_unlabelled(event, payload, &lazy, env);
+    if msgs.is_empty() {
+        return msgs;
+    }
+    with_label(msgs, lazy().as_deref())
 }
 
 fn map_unlabelled(
     event: &str,
     payload: &Value,
-    label: Option<&str>,
+    label: &dyn Fn() -> Option<String>,
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<Value> {
     let channel = match text(payload, "session_id") {
@@ -333,12 +339,12 @@ fn map_unlabelled(
         }
         "Stop" => vec![Value::Object(msg("turn_end", channel))],
         "UserPromptSubmit" => vec![
-            open(channel, label, env),
+            open(channel, label().as_deref(), env),
             Value::Object(msg("focus", channel)),
             Value::Object(msg("turn_start", channel)),
         ],
         "SessionStart" => vec![
-            open(channel, label, env),
+            open(channel, label().as_deref(), env),
             Value::Object(msg("focus", channel)),
         ],
         "SessionEnd" => vec![Value::Object(msg("channel_close", channel))],
@@ -732,6 +738,28 @@ pub fn deliver(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_event_that_sends_nothing_never_looks_for_the_project() {
+        // The walk to `.git` reads USERPROFILE first: an ignored event
+        // (most PostToolUse and Notification events) must not walk at all.
+        let asked = std::cell::Cell::new(false);
+        let env = |k: &str| {
+            if k == "USERPROFILE" {
+                asked.set(true);
+            }
+            None
+        };
+        let p = json!({"session_id": "s", "cwd": r"C:\x\proj", "tool_name": "Bash"});
+        assert!(map_event("PostToolUse", &p, &env).is_empty());
+        let n = json!({"session_id": "s", "cwd": r"C:\x\proj", "notification_type": "idle"});
+        assert!(map_event("Notification", &n, &env).is_empty());
+        assert!(!asked.get());
+        // An event that sends something still gets the label.
+        let out = map_event("Stop", &p, &env);
+        assert_eq!(out[0]["label"], json!("proj"));
+        assert!(asked.get());
+    }
 
     #[test]
     fn tool_summaries() {

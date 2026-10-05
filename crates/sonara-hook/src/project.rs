@@ -19,7 +19,9 @@
 //!    first label a session got, so the folder it started in stays.)
 //!
 //! Only file system metadata and two small files are read; no process is
-//! started, every error falls back to the next step.
+//! started, every error falls back to the next step. A UNC path is not
+//! walked (an offline share could block the hook), and the hook looks the
+//! label up only for an event that sends a message.
 use std::path::{Path, PathBuf};
 
 /// How many folders the walk to `.git` looks at, `cwd` included.
@@ -47,10 +49,12 @@ pub fn project_label(cwd: &str, home: Option<&str>) -> Option<String> {
     Some(name).filter(|n| !n.is_empty())
 }
 
-/// Rule 1: the folder above `.claude` in `...\<repo>\.claude\worktrees\<name>`.
+/// Rule 1: the folder above `.claude` in `...\<repo>\.claude\worktrees\<name>`,
+/// the first such part: a worktree made inside another one names the outer
+/// repository.
 fn claude_worktree_repo(cwd: &str) -> Option<&str> {
     let parts: Vec<&str> = cwd.split(['/', '\\']).collect();
-    let i = parts.windows(3).rposition(|w| {
+    let i = parts.windows(3).position(|w| {
         w[0].eq_ignore_ascii_case(".claude")
             && w[1].eq_ignore_ascii_case("worktrees")
             && !w[2].is_empty()
@@ -70,6 +74,9 @@ fn same_folder(a: &Path, b: &str) -> bool {
 /// Rule 2: the repository the nearest `.git` at or above `dir` (below
 /// `home`) belongs to.
 fn repo_name(dir: &Path, home: Option<&str>) -> Option<String> {
+    if is_network(dir) {
+        return None;
+    }
     for d in dir.ancestors().take(MAX_DEPTH) {
         if home.is_some_and(|h| same_folder(d, h)) {
             break;
@@ -91,6 +98,16 @@ fn repo_name(dir: &Path, home: Option<&str>) -> Option<String> {
         }
     }
     None
+}
+
+/// A UNC path (`\\server\share`, `//server/share`): no walk there, since
+/// each lookup on an unreachable share can wait for the network timeout and
+/// hold up the hook past its time budget. (A mapped drive letter is not
+/// detected: that needs a Win32 call this crate does not make.)
+fn is_network(dir: &Path) -> bool {
+    let s = dir.to_string_lossy();
+    let b = s.as_bytes();
+    b.len() >= 2 && matches!(b[0], b'\\' | b'/') && matches!(b[1], b'\\' | b'/')
 }
 
 /// A folder's own name (`None` for a root).
@@ -281,6 +298,8 @@ mod tests {
             r"C:\nowhere-245\Sonara\.claude\worktrees\settings-redesign\crates\sonarad",
             "/nowhere-245/Filesmith/.claude/worktrees/app-icon/",
             r"\\server\share\Filesmith\.Claude\Worktrees\x",
+            // A worktree made from inside another one: the outermost repo.
+            r"C:\nowhere-245\Filesmith\.claude\worktrees\a\.claude\worktrees\b\src",
         ] {
             let want = if cwd.contains("Sonara") {
                 "Sonara"
@@ -313,6 +332,12 @@ mod tests {
             Some("proj")
         );
         assert_eq!(pl("/x/proj/").as_deref(), Some("proj"));
+        // A network share is not walked (an offline one would block).
+        assert!(is_network(Path::new(r"\\server\share\proj")));
+        assert!(is_network(Path::new("//server/share/proj")));
+        assert!(!is_network(Path::new(r"C:\proj")));
+        assert!(!is_network(Path::new("/x/proj")));
+        assert_eq!(pl(r"\\server-245\share\proj\src").as_deref(), Some("src"));
         // A stray `.git` folder without a HEAD is no repository.
         let stray = t.0.join("stray");
         fs::create_dir_all(stray.join(".git").join("info")).unwrap();

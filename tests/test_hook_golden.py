@@ -23,7 +23,8 @@ The adaptation (Python message -> protocol v1):
   turn_end) carries the session's project as "label" (#241; the Python
   plugin sent it only with SET_FOREGROUND).
 - The project (#245, crates/sonara-hook/src/project.rs, `_project` here):
-  in <repo>/.claude/worktrees/<name> it is <repo>; else the repository the
+  in <repo>/.claude/worktrees/<name> (the first such part) it is <repo>;
+  else (not on a UNC path) the repository the
   nearest .git at or above cwd belongs to (a linked worktree's main one),
   never the user's home (USERPROFILE) or above; else the cwd's folder. The Python plugin named the cwd's folder.
 
@@ -112,18 +113,53 @@ def _same_folder(p, home):
     return bool(home and home.strip()) and norm(p) == norm(home)
 
 
+def _small(p):
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            return f.read(4096)
+    except OSError:
+        return None
+
+
+def _common_repo(common):
+    """project.rs common_repo_name: the folder above .git, or bare x.git's x."""
+    name = ntpath.basename(ntpath.normpath(str(common)).rstrip("\\"))
+    if name.lower() == ".git":
+        return ntpath.basename(ntpath.dirname(ntpath.normpath(str(common)))) or None
+    return (name[:-4] if name.endswith(".git") else name) or None
+
+
+def _linked_repo(worktree, git_file):
+    """project.rs linked_repo: follow a .git file to the main repository."""
+    text = _small(git_file)
+    gitdir = next((ln.strip()[len("gitdir:"):].strip() for ln in (text or "").splitlines()
+                   if ln.strip().startswith("gitdir:")), None)
+    if gitdir is None:
+        return None
+    gitdir = Path(worktree) / gitdir
+    common = (_small(gitdir / "commondir") or "").strip()
+    if common:
+        return _common_repo(gitdir / common.splitlines()[0])
+    if gitdir.parent.name.lower() != "worktrees":
+        return None  # a submodule: its own name
+    return _common_repo(gitdir.parent.parent)
+
+
 def _git_repo(cwd, home=None):
     """The repository of the nearest .git at or above ``cwd``, below
-    ``home`` (the Rust walk, without following a worktree's .git file,
-    which project.rs's own tests cover; the golden cases' paths do not
-    exist, so this finds none)."""
+    ``home`` (project.rs repo_name; a UNC path is not walked)."""
+    if len(cwd) >= 2 and cwd[0] in "\\/" and cwd[1] in "\\/":
+        return None
     d = Path(cwd)
     for p in [d, *d.parents][:40]:
         if _same_folder(p, home):
             break
         git = p / ".git"
-        if git.is_file() or (git / "HEAD").is_file():
-            return p.name or None
+        if git.is_dir():
+            if (git / "HEAD").is_file():
+                return p.name or None
+        elif git.is_file():
+            return _linked_repo(p, git) or p.name or None
     return None
 
 
@@ -132,7 +168,9 @@ def _project(cwd, home=None):
     if not cwd.strip():
         return ""
     parts = cwd.replace("/", "\\").split("\\")
-    for i in range(len(parts) - 3, -1, -1):
+    # The first .claude/worktrees: a worktree made inside another names the
+    # outer repository.
+    for i in range(len(parts) - 2):
         if (parts[i].lower(), parts[i + 1].lower()) == (".claude", "worktrees") and parts[i + 2]:
             repo = parts[i - 1] if i else ""
             if repo and not repo.endswith(":"):
@@ -218,3 +256,33 @@ def test_golden_messages_are_the_python_mapping(path):
         case["messages"] = got
         path.write_text(json.dumps(case, indent=2) + "\n", encoding="utf-8")
     assert got == case["messages"]
+
+
+def test_the_project_mirror_follows_the_rust_rules(tmp_path):
+    """_project is project.rs: nested Claude worktrees, a linked worktree's
+    main repository, a bare common folder, a submodule (#245)."""
+    nested = r"C:\nowhere-245\Filesmith\.claude\worktrees\a\.claude\worktrees\b"
+    assert _project(nested) == "Filesmith"
+    assert _project(r"\server-245\share\proj\src") == "src"
+    main = tmp_path / "PrismTerminal"
+    admin = main / ".git" / "worktrees" / "agent-hooks"
+    admin.mkdir(parents=True)
+    (admin / "commondir").write_text("../..\n")
+    wt = tmp_path / "elsewhere" / "agent-hooks"
+    (wt / "src").mkdir(parents=True)
+    (wt / ".git").write_text(f"gitdir: {admin}\n")
+    assert _project(str(wt / "src")) == "PrismTerminal"
+    (admin / "commondir").unlink()
+    assert _project(str(wt)) == "PrismTerminal"
+    bare = tmp_path / "tool.git" / "worktrees" / "w"
+    bare.mkdir(parents=True)
+    (bare / "commondir").write_text("../..")
+    w = tmp_path / "w"
+    w.mkdir()
+    (w / ".git").write_text(f"gitdir: {bare}")
+    assert _project(str(w)) == "tool"
+    sub = tmp_path / "super" / "lib"
+    (tmp_path / "super" / ".git" / "modules" / "lib").mkdir(parents=True)
+    sub.mkdir()
+    (sub / ".git").write_text("gitdir: ../.git/modules/lib")
+    assert _project(str(sub)) == "lib"
