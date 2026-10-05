@@ -32,7 +32,8 @@
 //!   with a channel only that one; `stop_reading` (the flush hotkey, #228)
 //!   flushes only the channel being read, `flush_with` also the other
 //!   channels its caller names (L3's flush scope `all`). `Restart` while idle replays the engaged
-//!   channel's batch (the Python plugin's Up key).
+//!   channel's batch (the Python plugin's Up key); before any channel was
+//!   read, the focused one's, else the one written last (#243).
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
 //!   uses it so a decision preempts (the Python router's decision rule).
@@ -42,6 +43,11 @@
 //!   background speech policy (router docs). Text a host speaks into a
 //!   channel (`speak`) is always read (it authorizes the channel); L3's
 //!   own text goes through `add`, which the gates apply to.
+//! - `add` and `store` write L3's text into an agent batch (router docs,
+//!   #243): the batch grows over the whole message; `store` (Sonara is
+//!   muted) keeps the text as read, so it is never fed automatically (no
+//!   synthesis, no request) and a manual return reads it. `drop_decisions`
+//!   takes the answered decisions out of a batch.
 //! - A thread drains the reader's events; it holds the driver weakly and
 //!   ends with the reader.
 //! - `on_drop` (#219) reports every entry dropped unread (and an item cut
@@ -212,6 +218,13 @@ pub struct Spoken {
     pub entry: u64,
 }
 
+/// How L3's text is pushed (`add_with`, `store`).
+#[derive(Debug, Clone, Copy)]
+struct Agent {
+    decision: bool,
+    heard: bool,
+}
+
 fn check(channel: &str) -> Result<()> {
     if channel.is_empty() {
         Err(Error::EmptyChannel)
@@ -342,14 +355,65 @@ impl Channels {
         interrupt: bool,
         label: Option<String>,
     ) -> Result<Spoken> {
-        self.push(channel, text, mode, interrupt, label, true)
+        self.push(channel, text, mode, interrupt, label, None)
     }
 
     /// Append `text` to `channel` (opened with the defaults if needed)
     /// under the gates: L3's prose and decisions. A channel the focus-only
-    /// gate holds back keeps it until it is focused or authorized.
+    /// gate holds back keeps it until it is focused or authorized. The
+    /// text joins the channel's agent batch (router docs, #243).
     pub fn add(&self, channel: &str, text: &str) -> Result<Spoken> {
-        self.push(channel, text, Some(QueueMode::Append), false, None, false)
+        self.add_with(channel, text, false)
+    }
+
+    /// `add`, with `decision` marking the entry as a decision (it leaves
+    /// the batch with `drop_decisions`).
+    pub fn add_with(&self, channel: &str, text: &str, decision: bool) -> Result<Spoken> {
+        let agent = Agent {
+            decision,
+            heard: false,
+        };
+        self.push(
+            channel,
+            text,
+            Some(QueueMode::Append),
+            false,
+            None,
+            Some(agent),
+        )
+    }
+
+    /// Store L3's `text` in `channel`'s agent batch without reading it
+    /// (Sonara is muted, #243): the entry counts as read, so nothing is fed
+    /// and nothing is synthesized, now or on unmute; `next_channel` or a
+    /// restart reads the batch with it. When the channel has unread
+    /// entries (a replay in progress) it is appended unread instead.
+    pub fn store(&self, channel: &str, text: &str, decision: bool) -> Result<Spoken> {
+        let agent = Agent {
+            decision,
+            heard: true,
+        };
+        self.push(
+            channel,
+            text,
+            Some(QueueMode::Append),
+            false,
+            None,
+            Some(agent),
+        )
+    }
+
+    /// Take the decision entries out of `channel`'s batch: they were
+    /// answered, so a replay does not read them (#243). Unread ones are
+    /// reported to `on_drop` with reason `answered`. Returns how many
+    /// were removed; an unknown channel removes none.
+    pub fn drop_decisions(&self, channel: &str) -> usize {
+        let mut st = self.lock();
+        let before = st.router.channel(channel).map_or(0, |c| c.entries().len());
+        let unread = st.router.drop_decisions(channel);
+        let after = st.router.channel(channel).map_or(0, |c| c.entries().len());
+        report(&st, channel, unread, "answered", None);
+        before - after
     }
 
     fn push(
@@ -359,8 +423,10 @@ impl Channels {
         mode: Option<QueueMode>,
         interrupt: bool,
         label: Option<String>,
-        authorize: bool,
+        agent: Option<Agent>,
     ) -> Result<Spoken> {
+        // A host's text is read whatever the focus-only gate.
+        let authorize = agent.is_none();
         check(channel)?;
         let mut st = self.lock();
         if st.router.channel(channel).is_none() {
@@ -380,10 +446,13 @@ impl Channels {
             };
             report(&st, channel, unread(&st, channel), why, None);
         }
-        let entry = st
-            .router
-            .push_with(channel, text, label, replace, interrupt)
-            .ok_or_else(|| Error::UnknownChannel(channel.to_string()))?;
+        let entry = match agent {
+            Some(a) => st.router.append(channel, text, a.decision, a.heard),
+            None => st
+                .router
+                .push_with(channel, text, label, replace, interrupt),
+        }
+        .ok_or_else(|| Error::UnknownChannel(channel.to_string()))?;
         if authorize {
             st.router.authorize(channel);
         }
@@ -480,7 +549,14 @@ impl Channels {
                     Ok(reader.control(Control::Stop)?)
                 }
                 Control::Restart if reader.state()?.now_playing.is_none() => {
-                    let engaged = st.router.engaged().map(str::to_string);
+                    // No channel read yet (everything came while muted,
+                    // #243): the focused one, else the one written last.
+                    let engaged = st
+                        .router
+                        .engaged()
+                        .or(st.router.focused())
+                        .map(str::to_string)
+                        .or_else(|| st.router.written_last());
                     match engaged {
                         Some(e) if st.router.replay(&e) => self.inner.pump(&mut st),
                         _ => Ok(reader.control(Control::Restart)?),

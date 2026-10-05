@@ -265,6 +265,47 @@ def test_mute_levels(rt):
     assert heard(c, 1) == [("Heard again.", "a")]
 
 
+def test_the_log_of_2026_10_05_muted_turns_are_stored_and_read_on_a_switch(rt):
+    # #243: a turn ended while super muted was never stored, and after the
+    # unmute next_channel replayed an older batch with a question that had
+    # already been answered. Now: what comes while muted is stored as each
+    # session's latest message, the unmute reads nothing, a switch or Up
+    # reads the stored message, an answered question is never replayed.
+    c = agent_client(rt)
+    ok(c, {"type": "set", "key": "read_mode", "value": "done"})
+    for ch, label in (("filesmith", "Filesmith"), ("web", "web-application-project"),
+                      ("app", "app")):
+        ok(c, {"type": "channel_open", "channel": ch, "label": label})
+    ok(c, {"type": "turn_start", "channel": "web"})
+    ok(c, {"type": "ask", "channel": "web", "kind": "question", "text": "Question 9b?"})
+    assert heard(c, 1) == [("Question 9b?", "web")]
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "turn_start", "channel": "filesmith"})
+    stream(c, "filesmith", "Filesmith old.")
+    ok(c, {"type": "turn_end", "channel": "filesmith"})
+    assert heard(c, 1) == [("Filesmith old.", "filesmith")]
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "answered", "channel": "web"})
+    ok(c, {"type": "set", "key": "mute_level", "value": 2})
+    stream(c, "web", "Done with 9b.")
+    ok(c, {"type": "turn_end", "channel": "web"})
+    ok(c, {"type": "turn_start", "channel": "app"})
+    stream(c, "app", "App reply.")
+    ok(c, {"type": "turn_end", "channel": "app"})
+    quiet(c)
+    ok(c, {"type": "set", "key": "mute_level", "value": 0})
+    quiet(c, 1.0)
+    assert ok(c, {"type": "control", "action": "next_channel"})["channel"] == "web"
+    assert heard(c, 1) == [("Done with 9b.", "web")], "the latest message, not the question"
+    c.state(lambda s: s["now_playing"] is None)
+    quiet(c)
+    assert ok(c, {"type": "control", "action": "next_channel"})["channel"] == "app"
+    assert heard(c, 1) == [("App reply.", "app")]
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "control", "action": "restart"})
+    assert heard(c, 1) == [("App reply.", "app")]
+
+
 def test_tools_are_announced_and_an_answer_catches_up(rt):
     c = agent_client(rt)
     ok(c, {"type": "tool", "channel": "a", "name": "Bash", "summary": "git status"})

@@ -56,8 +56,17 @@
 //!   on every other session whose turn ended (the late prose of a reply it
 //!   flushed is skipped the same way); a session still writing its reply
 //!   (no `turn_end` yet) is untouched in both scopes.
-//! - **Mute levels.** 1 drops agent speech (the driver also silences what
-//!   is queued and playing), 2 also drops earcons.
+//! - **Mute levels.** 1 silences agent speech (the driver also silences
+//!   what is queued and playing), 2 also drops earcons. Muting never loses
+//!   the session's latest message (#243): what would be spoken is
+//!   `Action::Store`d instead, kept in the channel as its latest message
+//!   but not read, so nothing is synthesized and no engine request goes
+//!   out; unmuting reads nothing, and a switch to the session or Up reads
+//!   it. Every rule above runs as usual while muted (read modes, whole
+//!   messages, turn_start, flush), only the outcome is stored. Summaries
+//!   are not made while muted: the prose kept for one is stored as it is
+//!   (no summarizer run for text nobody hears now); a summary that lands
+//!   while muted is stored.
 //! - **Summaries** (opt in): see `Pipeline` below; the rules are the Python
 //!   ones: settle window, lead-in digests before decisions, the decision
 //!   hold with its cap, the hung-worker watchdog and the reorder buffer.
@@ -108,6 +117,14 @@ pub enum Action {
     /// the one the user is engaged with (and only then: the pause stays on
     /// when another channel gets a new turn, upstream #69).
     Wipe { channel: String, resume: bool },
+    /// Muted (#243): keep `text` in `channel` as its latest message
+    /// without reading it (`Channels::store`). Fields as `Speak`.
+    Store {
+        channel: String,
+        text: String,
+        decision: bool,
+        kind: &'static str,
+    },
     /// Mute: drop everything unread and cut the item playing.
     Silence,
     /// Run the summarizer on a job; answer with `Rules::digest_done`.
@@ -422,12 +439,13 @@ impl Rules {
                 kind,
             });
         } else {
-            self.note(
-                Some(channel),
+            // Kept as the session's latest message, not read (#243).
+            out.push(Action::Store {
+                channel: channel.to_string(),
+                text,
+                decision,
                 kind,
-                format!("not spoken: mute level {}", self.settings.mute_level),
-                Some(text),
-            );
+            });
         }
     }
 
@@ -1103,6 +1121,27 @@ impl Rules {
         }
         c.voiced = c.prose.len();
         let gen = c.gen;
+        if self.settings.mute_level > 0 {
+            // Muted (#243): no summarizer run for text nobody hears now;
+            // the prose is stored as it is.
+            self.note(
+                Some(channel),
+                "summary",
+                format!(
+                    "not made: mute level {}, the prose is stored as it is",
+                    self.settings.mute_level
+                ),
+                None,
+            );
+            if self.whole {
+                self.speak(out, channel, chunks.join(" "), false, "prose");
+            } else {
+                for chunk in chunks {
+                    self.speak(out, channel, chunk, false, "prose");
+                }
+            }
+            return false;
+        }
         if text.chars().count() < SUMMARY_MIN_CHARS && !leadin {
             if focused == Some(channel) {
                 if self.whole {

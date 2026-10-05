@@ -41,6 +41,18 @@
 //!   without a label is announced without one (`Feed::Announce` with
 //!   `label: None`; the driver words it or skips it). `label_if_missing`
 //!   names a channel that has no label yet.
+//! - **Agent batches** (#243, `append`, L3's text): a batch L3 writes is
+//!   the whole message. It **grows**: a push into it while it is caught up
+//!   appends instead of starting a new batch, until the channel is flushed
+//!   by its id (`flush(Some)`: L3's new turn, an answer, the flush hotkey).
+//!   Text L3 **stores** (`append` with `heard`: written while Sonara is
+//!   muted) joins the batch already read: it is never fed automatically,
+//!   also not on unmute, and a manual return (`next_channel`, `replay`)
+//!   reads it, from the top of the batch. When the channel still has
+//!   unread entries (a replay in progress) stored text is appended unread.
+//!   Entries marked as **decisions** leave the batch with
+//!   `drop_decisions` (L3: the decision was answered), so a replay never
+//!   reads an answered question or a decided permission.
 //! - `next_channel` is a round robin over the channels in opening order,
 //!   skipping channels with nothing to hear (unless all are empty), from the
 //!   channel reading or, after an idle gap, the one that read last. A fully
@@ -100,6 +112,11 @@ pub struct Channel {
     replaying: bool,
     /// Never picked (`Router::set_muted`).
     muted: bool,
+    /// An agent batch (module docs, #243): a push while caught up appends
+    /// to it. Cleared by a flush of this channel.
+    growing: bool,
+    /// Entry ids of the batch that are decisions (`drop_decisions`).
+    decisions: HashSet<u64>,
 }
 
 impl Channel {
@@ -114,6 +131,8 @@ impl Channel {
             gen: 0,
             replaying: false,
             muted: false,
+            growing: false,
+            decisions: HashSet::new(),
         }
     }
 
@@ -146,8 +165,9 @@ impl Channel {
     /// entries first; `front` puts the entry before the unread ones (it is
     /// read next).
     fn push(&mut self, entry: Entry, replace: bool, front: bool, reading: bool) {
-        if replace || (self.caught_up() && !reading) {
+        if replace || (self.caught_up() && !reading && !self.growing) {
             self.entries.clear();
+            self.decisions.clear();
             self.cursor = 0;
         }
         let at = if front {
@@ -171,6 +191,30 @@ impl Channel {
         let n = self.pending();
         self.cursor = self.entries.len();
         n
+    }
+
+    /// Remove the decision entries from the batch (module docs). Returns
+    /// the ones that were unread.
+    fn drop_decisions(&mut self) -> Vec<Entry> {
+        if self.decisions.is_empty() {
+            return Vec::new();
+        }
+        let mut unread = Vec::new();
+        let mut i = 0;
+        while i < self.entries.len() {
+            if self.decisions.contains(&self.entries[i].id) {
+                let e = self.entries.remove(i);
+                if i < self.cursor {
+                    self.cursor -= 1;
+                } else {
+                    unread.push(e);
+                }
+            } else {
+                i += 1;
+            }
+        }
+        self.decisions.clear();
+        unread
     }
 
     /// Step back over `entry` if it is the one just taken (it was cut off).
@@ -283,6 +327,16 @@ impl Router {
     /// that read last.
     pub fn engaged(&self) -> Option<&str> {
         self.active().or(self.last_active())
+    }
+
+    /// The channel whose batch got the newest entry (`Restart` before any
+    /// channel was read, #243).
+    pub fn written_last(&self) -> Option<String> {
+        self.channels
+            .iter()
+            .filter_map(|c| c.entries.last().map(|e| (e.id, &c.id)))
+            .max_by_key(|(e, _)| *e)
+            .map(|(_, id)| id.clone())
     }
 
     /// Open `id`, or update an open channel's label, host tab and (when
@@ -472,6 +526,33 @@ impl Router {
         );
         self.next_entry = next;
         Some(next)
+    }
+
+    /// Push L3's `text` into an open channel (module docs, #243): appended
+    /// to its agent batch, which grows. `decision` marks it for
+    /// `drop_decisions`; `heard` stores it read (never fed automatically)
+    /// unless the channel has unread entries. Returns the entry id, or
+    /// `None` if the channel is not open.
+    pub fn append(&mut self, id: &str, text: &str, decision: bool, heard: bool) -> Option<u64> {
+        let unread = self.channel(id)?.pending() > 0;
+        let entry = self.push_with(id, text, None, false, false)?;
+        let c = self.channel_mut(id)?;
+        c.growing = true;
+        if decision {
+            c.decisions.insert(entry);
+        }
+        if heard && !unread {
+            c.cursor = c.entries.len();
+        }
+        Some(entry)
+    }
+
+    /// Remove `id`'s decision entries from its batch (module docs): they
+    /// were answered. Returns the ones that were unread.
+    pub fn drop_decisions(&mut self, id: &str) -> Vec<Entry> {
+        self.channel_mut(id)
+            .map(Channel::drop_decisions)
+            .unwrap_or_default()
     }
 
     /// True if `id` was switched away from and has not changed since. New
@@ -735,7 +816,11 @@ impl Router {
                 if self.announce.as_ref().map(|s| s.channel.as_str()) == Some(id) {
                     self.announce = None;
                 }
-                self.channel_mut(id).map_or(0, Channel::skip_to_end)
+                self.channel_mut(id).map_or(0, |c| {
+                    // The next agent text starts a new batch (#243).
+                    c.growing = false;
+                    c.skip_to_end()
+                })
             }
             None => {
                 self.announce = None;

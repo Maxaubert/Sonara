@@ -185,17 +185,25 @@ fn a_new_turn_or_a_flush_drops_the_held_message() {
 }
 
 #[test]
-fn muted_the_joined_message_is_noted_not_spoken() {
+fn muted_the_joined_message_is_stored_not_spoken() {
+    // #243: kept whole as the session's latest message, not read.
     let mut r = rules(ReadMode::Done, true);
     r.set_mute_level(1);
     prose(&mut r, "One. Two.", 0, true);
-    assert!(spoken(&r.turn_end("fg", None, None).unwrap()).is_empty());
-    let notes = r.take_notes();
-    assert!(
-        notes
-            .iter()
-            .any(|n| n.text.as_deref() == Some("One. Two.") && n.what.contains("mute level 1")),
-        "{notes:?}"
+    let a = r.turn_end("fg", None, None).unwrap();
+    assert!(spoken(&a).is_empty());
+    let stored: Vec<&Action> = a
+        .iter()
+        .filter(|a| matches!(a, Action::Store { .. }))
+        .collect();
+    assert_eq!(
+        stored,
+        [&Action::Store {
+            channel: "fg".into(),
+            text: "One. Two.".into(),
+            decision: false,
+            kind: "prose",
+        }]
     );
 }
 

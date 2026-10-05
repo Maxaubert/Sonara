@@ -10,7 +10,9 @@
 //! - `agent <source> channel=<id> ...`: what the agent did with it
 //!   (`sonara_agent::Trace`): `speak kind=<k> entry=<n>` with the text
 //!   added to the channel (and `waits=` when a muted session or the
-//!   background policy holds it), a note when the rules spoke nothing and
+//!   background policy holds it), `store kind=<k> entry=<n> muted=<level>`
+//!   for text kept as the session's latest message while muted (#243: read
+//!   by a switch to it or Up, never on its own), a note when the rules spoke nothing and
 //!   why, `dropped: late text ...`, `earcon <name>` (`agent announce
 //!   channel=<id> earcon session_change` for a switch's chime, #238),
 //!   `earcon <name> dropped: <why>` (a burst, #238), `wipe reason=<r>`.
@@ -123,6 +125,17 @@ pub fn agent_line(t: &Trace, debug: bool) -> String {
             waits
                 .map(|w| format!(" waits={}", value(w)))
                 .unwrap_or_default(),
+            text_field(text, debug)
+        ),
+        Traced::Stored {
+            kind,
+            entry,
+            text,
+            decision,
+            level,
+        } => format!(
+            "{head} store kind={kind} entry={entry}{} muted={level}{}",
+            if *decision { " decision" } else { "" },
             text_field(text, debug)
         ),
         Traced::Note(n) => format!(
@@ -460,6 +473,21 @@ mod tests {
         assert_eq!(
             agent_line(&spoken, true),
             "agent stream channel=c1 speak kind=prose entry=3 text=\"Secret prose\""
+        );
+        let stored = Trace {
+            source: "turn_end".into(),
+            channel: Some("c1".into()),
+            what: Traced::Stored {
+                kind: "prose",
+                entry: 4,
+                text: "Secret prose".into(),
+                decision: false,
+                level: 2,
+            },
+        };
+        assert_eq!(
+            agent_line(&stored, false),
+            "agent turn_end channel=c1 store kind=prose entry=4 muted=2"
         );
         let d = Dropped {
             channel: "c1".into(),
