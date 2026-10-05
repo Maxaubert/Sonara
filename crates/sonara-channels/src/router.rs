@@ -31,8 +31,14 @@
 //!   channel has nothing unread.
 //! - Switching from one channel to another is announced before the new
 //!   channel's first entry: automatically when the channel that read last
-//!   differs (never for the first reader), always on `next_channel`. A
-//!   channel without a label is not announced.
+//!   differs (never for the first reader), always on `next_channel`. The
+//!   channel that read last is remembered also after it closed (#241: a
+//!   session that ends right after its reply, then a question in another
+//!   one), so every path to the floor (the auto pick with or without
+//!   `prioritize`, `take_floor`, `replay`) announces a switch. A channel
+//!   without a label is announced without one (`Feed::Announce` with
+//!   `label: None`; the driver words it or skips it). `label_if_missing`
+//!   names a channel that has no label yet.
 //! - `next_channel` is a round robin over the channels in opening order,
 //!   skipping channels with nothing to hear (unless all are empty), from the
 //!   channel reading or, after an idle gap, the one that read last. A fully
@@ -178,10 +184,11 @@ impl Channel {
 /// What to feed the reader next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Feed {
-    /// Announce a switch to `channel` (its label is set).
+    /// Announce a switch to `channel` (`label` is `None` when the channel
+    /// has none).
     Announce {
         channel: String,
-        label: String,
+        label: Option<String>,
         /// The batch is read again from the top.
         replay: bool,
         /// Armed by `next_channel` (a key press), not by an auto hand-off.
@@ -208,6 +215,10 @@ pub struct Router {
     active: Option<String>,
     /// The channel that read last; survives idle gaps.
     last_active: Option<String>,
+    /// The channel that read last, kept after it closed: whether a channel
+    /// taking the floor is a switch (#241). `last_active` is cleared on
+    /// close because `next_channel` and `engaged` mean an open channel.
+    last_reader: Option<String>,
     focus: Option<String>,
     /// An armed switch announcement, fed before the next entry.
     announce: Option<Switch>,
@@ -291,6 +302,35 @@ impl Router {
         c.muted = self.muted.contains(id);
         self.channels.push(c);
         true
+    }
+
+    /// Give `id` the label `label` if it has none (a channel a message
+    /// opened before the client named it). Returns true when it was set;
+    /// false if it is not open, already has a label or `label` is empty.
+    pub fn label_if_missing(&mut self, id: &str, label: &str) -> bool {
+        if label.is_empty() {
+            return false;
+        }
+        match self.channel_mut(id) {
+            Some(c) if c.label.as_deref().is_none_or(str::is_empty) => {
+                c.label = Some(label.to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `id` taking the floor is a switch from the channel that read
+    /// last (also when that one has closed since).
+    fn is_handoff(&self, id: &str) -> bool {
+        self.last_reader.as_deref().is_some_and(|last| last != id)
+    }
+
+    /// `id` reads now.
+    fn set_reader(&mut self, id: &str) {
+        self.active = Some(id.to_string());
+        self.last_active = Some(id.to_string());
+        self.last_reader = Some(id.to_string());
     }
 
     /// Forget `id` and everything about it. Returns false if it was not open.
@@ -529,8 +569,8 @@ impl Router {
     pub fn next_feed(&mut self) -> Option<Feed> {
         self.reading = None;
         if let Some(sw) = self.announce.take() {
-            let label = self.channel(&sw.channel).and_then(|c| c.label.clone());
-            if let Some(label) = label {
+            if let Some(c) = self.channel(&sw.channel) {
+                let label = c.label.clone().filter(|l| !l.is_empty());
                 return Some(Feed::Announce {
                     channel: sw.channel,
                     label,
@@ -544,12 +584,8 @@ impl Router {
             return None;
         };
         if self.active.as_deref() != Some(target.as_str()) {
-            self.active = Some(target.clone());
-            let handoff = self
-                .last_active
-                .as_ref()
-                .is_some_and(|last| *last != target);
-            self.last_active = Some(target.clone());
+            let handoff = self.is_handoff(&target);
+            self.set_reader(&target);
             if handoff {
                 self.arm(&target, false, false);
                 return self.next_feed();
@@ -630,8 +666,7 @@ impl Router {
             c.cursor = 0;
             c.replaying = true;
         }
-        self.active = Some(target.clone());
-        self.last_active = Some(target.clone());
+        self.set_reader(&target);
         self.arm(&target, replay, true);
         Some((target, replay))
     }
@@ -642,9 +677,8 @@ impl Router {
         if self.index(id).is_none() {
             return false;
         }
-        let handoff = self.last_active.as_ref().is_some_and(|last| last != id);
-        self.active = Some(id.to_string());
-        self.last_active = Some(id.to_string());
+        let handoff = self.is_handoff(id);
+        self.set_reader(id);
         self.suppressed.remove(id);
         if handoff {
             self.arm(id, false, false);
@@ -666,9 +700,8 @@ impl Router {
         }
         c.cursor = 0;
         c.replaying = true;
-        let handoff = self.last_active.as_ref().is_some_and(|last| last != id);
-        self.active = Some(id.to_string());
-        self.last_active = Some(id.to_string());
+        let handoff = self.is_handoff(id);
+        self.set_reader(id);
         self.suppressed.remove(id);
         // A replay is read whatever the focus (Python authorize_replay).
         self.authorized.insert(id.to_string());

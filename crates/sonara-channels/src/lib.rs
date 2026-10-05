@@ -15,7 +15,9 @@
 //!   or `"<label>, reading again."` for a replay) fed before the new
 //!   channel's first entry. `Config::announce` turns it off;
 //!   `set_announce_texts` changes the texts (L3 says "Session changed:
-//!   <label>."). `on_announce` runs a hook right before an announcement
+//!   <label>."). A channel without a label is announced by the unnamed
+//!   texts (`set_unnamed_announce_texts`; L3 says "Session changed.",
+//!   #241) and, when none are set (the default), not at all. `on_announce` runs a hook right before an announcement
 //!   is handed to the reader (L3 plays its session-change earcon there,
 //!   so the chime comes first); it runs under the driver's lock and must
 //!   not call back into `Channels`.
@@ -80,6 +82,10 @@ pub struct Config {
     pub announce_text: String,
     /// The announcement when the batch is read again from the top.
     pub replay_text: String,
+    /// The announcement for a channel without a label; `None` skips it.
+    pub unnamed_text: Option<String>,
+    /// The replay announcement for a channel without a label.
+    pub unnamed_replay_text: Option<String>,
 }
 
 impl Default for Config {
@@ -88,6 +94,8 @@ impl Default for Config {
             announce: true,
             announce_text: "{label}.".into(),
             replay_text: "{label}, reading again.".into(),
+            unnamed_text: None,
+            unnamed_replay_text: None,
         }
     }
 }
@@ -96,7 +104,8 @@ impl Default for Config {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Announced {
     pub channel: String,
-    pub label: String,
+    /// `None` for a channel without a label.
+    pub label: Option<String>,
     /// The batch is read again from the top.
     pub replay: bool,
     /// A manual switch (`next_channel`, `restart` with a channel).
@@ -284,6 +293,17 @@ impl Channels {
         }
         self.inner.cut_if(&mut st, channel, None)?;
         self.inner.pump(&mut st)
+    }
+
+    /// Give a channel the label `label` if it has none yet (a channel its
+    /// first text opened, #241). Returns true when it was set.
+    pub fn label_if_missing(&self, channel: &str, label: &str) -> Result<bool> {
+        check(channel)?;
+        let mut st = self.lock();
+        if st.router.channel(channel).is_none() {
+            return Err(Error::UnknownChannel(channel.to_string()));
+        }
+        Ok(st.router.label_if_missing(channel, label))
     }
 
     /// Put a channel in front: it is read next once the channel reading now
@@ -621,6 +641,25 @@ impl Channels {
         st.config.replay_text = replay.to_string();
     }
 
+    /// Whether a switch to `channel` is announced (announcements on, and a
+    /// label or an unnamed text, #241).
+    pub fn announces(&self, channel: &str) -> bool {
+        let st = self.lock();
+        let named = st
+            .router
+            .channel(channel)
+            .is_some_and(|c| c.label.as_deref().is_some_and(|l| !l.is_empty()));
+        st.config.announce && (named || st.config.unnamed_text.is_some())
+    }
+
+    /// The announcement texts for a channel without a label; `None` (the
+    /// default) does not announce such a channel.
+    pub fn set_unnamed_announce_texts(&self, text: Option<&str>, replay: Option<&str>) {
+        let mut st = self.lock();
+        st.config.unnamed_text = text.map(str::to_string);
+        st.config.unnamed_replay_text = replay.map(str::to_string);
+    }
+
     /// Run `hook` right before each spoken switch announcement is handed
     /// to the reader (`None` removes it). It runs under the driver's lock:
     /// it must not call back into `Channels`.
@@ -765,12 +804,18 @@ impl Inner {
                     if !st.config.announce {
                         continue;
                     }
-                    let template = if replay {
-                        &st.config.replay_text
-                    } else {
-                        &st.config.announce_text
+                    let text = match (&label, replay) {
+                        (Some(l), false) => st.config.announce_text.replace("{label}", l),
+                        (Some(l), true) => st.config.replay_text.replace("{label}", l),
+                        (None, false) => match &st.config.unnamed_text {
+                            Some(t) => t.clone(),
+                            None => continue,
+                        },
+                        (None, true) => match &st.config.unnamed_replay_text {
+                            Some(t) => t.clone(),
+                            None => continue,
+                        },
                     };
-                    let text = template.replace("{label}", &label);
                     if let Some(hook) = &st.on_announce {
                         hook(&Announced {
                             channel: channel.clone(),
@@ -779,7 +824,7 @@ impl Inner {
                             manual,
                         });
                     }
-                    (channel, None, text, Some(label))
+                    (channel, None, text, label)
                 }
                 Feed::Entry { channel, entry } => {
                     let label = entry

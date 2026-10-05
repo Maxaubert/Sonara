@@ -18,6 +18,9 @@ The adaptation (Python message -> protocol v1):
   and plugin_root fed the Python setup guide, which is not part of L5);
   SESSION_END -> channel_close.
 - A missing session id is the channel "default" (protocol v1 needs one).
+- Every agent message that names the session (stream, tool, ask, answered,
+  turn_end) carries the payload's cwd folder as "label" (#241; the Python
+  plugin sent it only with SET_FOREGROUND).
 
 Set SONARA_REGEN_GOLDEN=1 to rewrite the expected messages from the Python
 mapping (then review the diff)."""
@@ -95,8 +98,25 @@ def _questions(m):
     return asks
 
 
-def translate(msgs):
+LABELLED = ("stream", "tool", "ask", "answered", "turn_end")
+
+
+def _folder(cwd):
+    return ntpath.basename((cwd or "").rstrip("/"))
+
+
+def translate(msgs, payload=None):
     """Python hook messages -> protocol v1 messages (module docs)."""
+    out = _translate(msgs)
+    label = _folder((payload or {}).get("cwd"))
+    if label:
+        for d in out:
+            if d["type"] in LABELLED:
+                d["label"] = label
+    return out
+
+
+def _translate(msgs):
     out = []
     for m in msgs:
         t = m["type"]
@@ -119,7 +139,7 @@ def translate(msgs):
             out.append(_base("answered", m))
         elif t == MsgType.SET_FOREGROUND:
             op = _base("channel_open", m)
-            folder = ntpath.basename((m.get("cwd") or "").rstrip("/"))
+            folder = _folder(m.get("cwd"))
             if folder:
                 op["label"] = folder
             if m.get("host_tab"):
@@ -153,8 +173,9 @@ def test_the_hints_are_the_python_daemons_selection_cue():
 @pytest.mark.parametrize("path", _cases(), ids=lambda p: p.stem)
 def test_golden_messages_are_the_python_mapping(path):
     case = json.loads(path.read_text(encoding="utf-8"))
-    msgs = handle_event(case["event"], _payload(case), env=case.get("env", {}))
-    got = translate(msgs)
+    payload = _payload(case)
+    msgs = handle_event(case["event"], payload, env=case.get("env", {}))
+    got = translate(msgs, payload)
     if os.environ.get("SONARA_REGEN_GOLDEN"):
         case["messages"] = got
         path.write_text(json.dumps(case, indent=2) + "\n", encoding="utf-8")

@@ -1,0 +1,16 @@
+{
+  "event": "PostToolUse",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work",
+    "tool_name": "AskUserQuestion"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "answered",
+      "channel": "s1",
+      "label": "work"
+    }
+  ]
+}

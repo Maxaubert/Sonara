@@ -1,0 +1,43 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work",
+    "tool_name": "AskUserQuestion",
+    "tool_input": {
+      "questions": [
+        {
+          "question": "Red or blue?",
+          "options": [
+            {
+              "label": "Red"
+            },
+            {
+              "label": "Blue"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "s1",
+      "kind": "question",
+      "text": "Red or blue?",
+      "options": [
+        {
+          "label": "Red"
+        },
+        {
+          "label": "Blue"
+        }
+      ],
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate.",
+      "label": "work"
+    }
+  ]
+}

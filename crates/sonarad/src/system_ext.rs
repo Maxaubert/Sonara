@@ -278,11 +278,10 @@ impl HotkeyTarget {
                     // An announced switch chimes as its "Session changed"
                     // announcement is fed (the agent's L2 hook: earcon
                     // first); a switch that is not announced (announcements
-                    // off, a channel without a label) still chimes here.
+                    // off, or a channel without a label and no unnamed
+                    // text) still chimes here.
                     Some(t) => {
-                        let announced =
-                            ch.announce() && ch.channel(&t).is_some_and(|c| c.label.is_some());
-                        if !announced {
+                        if !ch.announces(&t) {
                             self.earcon(Earcon::SessionChange);
                         }
                     }

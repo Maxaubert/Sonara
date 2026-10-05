@@ -1,0 +1,21 @@
+{
+  "event": "Notification",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work",
+    "notification_type": "permission_prompt",
+    "message": "Claude needs your permission"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "s1",
+      "kind": "permission",
+      "text": "Claude needs your permission",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate.",
+      "label": "work"
+    }
+  ]
+}

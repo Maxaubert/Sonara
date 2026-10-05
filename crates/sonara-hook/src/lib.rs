@@ -21,7 +21,12 @@
 //!
 //! One Claude session is one channel (its `session_id`). Each message is
 //! stamped with `t`, the hook process's start time, so text of a turn that
-//! arrives after the next prompt is dropped by the runtime (#174).
+//! arrives after the next prompt is dropped by the runtime (#174). The
+//! session's folder (the basename of `cwd`) is the channel's label: on
+//! `channel_open`, and as `label` on every `agent` message that names the
+//! session (`stream`, `tool`, `ask`, `answered`, `turn_end`; `LABELLED`),
+//! so a session whose first message after a runtime restart is not its
+//! prompt is still named when Sonara switches to it (#241).
 //!
 //! Mapping (Python message names in brackets):
 //! - `MessageDisplay` -> `stream` (PROSE).
@@ -141,11 +146,36 @@ fn host_tab(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
         .find(|v| !v.is_empty())
 }
 
+/// The session's label: the folder it runs in (`cwd`'s last component).
+fn label(payload: &Value) -> Option<&str> {
+    Some(basename(text(payload, "cwd"))).filter(|f| !f.is_empty())
+}
+
+/// The `agent` messages that carry the session's label (#241).
+/// `turn_start` comes right after a `channel_open` with it.
+pub const LABELLED: &[&str] = &["stream", "tool", "ask", "answered", "turn_end"];
+
+/// Add the session's label to each message in `LABELLED`.
+fn with_label(mut msgs: Vec<Value>, payload: &Value) -> Vec<Value> {
+    if let Some(l) = label(payload) {
+        for m in &mut msgs {
+            if let Value::Object(o) = m {
+                if o.get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| LABELLED.contains(&t))
+                {
+                    o.insert("label".into(), json!(l));
+                }
+            }
+        }
+    }
+    msgs
+}
+
 /// `channel_open` with the session's folder as its label.
 fn open(channel: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Value {
     let mut m = msg("channel_open", channel);
-    let folder = basename(text(payload, "cwd"));
-    if !folder.is_empty() {
+    if let Some(folder) = label(payload) {
         m.insert("label".into(), json!(folder));
     }
     if let Some(tab) = host_tab(env) {
@@ -230,6 +260,14 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 /// Map one hook event to protocol messages (no `t` yet). Pure: the
 /// environment is read through `env`. Unknown events map to nothing.
 pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Vec<Value> {
+    with_label(map_unlabelled(event, payload, env), payload)
+}
+
+fn map_unlabelled(
+    event: &str,
+    payload: &Value,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Value> {
     let channel = match text(payload, "session_id") {
         "" => DEFAULT_CHANNEL,
         s => s,

@@ -389,6 +389,57 @@ fn an_automatic_session_switch_chimes_then_says_session_changed() {
 }
 
 #[test]
+fn a_question_in_another_session_after_the_last_reader_closed_is_announced() {
+    // #241, the log of 2026-10-04 23:29:55: a session read, ended
+    // (channel_close), and a question in another session was read without
+    // "Session changed".
+    let r = Rig::announcing(None);
+    let heard = r.agent.subscribe();
+    r.stream("a", "ok", 0, None);
+    r.read("ok");
+    r.stays_idle();
+    r.agent.close("a").unwrap();
+    r.agent
+        .ask("b", &Ask::new(AskKind::Question, "Red or blue?"))
+        .unwrap();
+    r.wait_for("Session changed: Beta.");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::Choice);
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    r.out.start();
+    r.out.finish();
+    r.read("Red or blue?");
+    r.stays_idle();
+    assert!(heard.try_recv().is_err(), "one chime per switch");
+}
+
+#[test]
+fn a_session_without_a_name_is_announced_as_session_changed() {
+    // #241: a channel with no label yet is still announced, without a name.
+    let r = Rig::announcing(None);
+    let heard = r.agent.subscribe();
+    r.stream("a", "From alpha.", 0, None);
+    r.read("From alpha.");
+    r.stream("c", "From a new session.", 0, None);
+    r.wait_for("Session changed.");
+    assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    r.out.start();
+    r.out.finish();
+    r.read("From a new session.");
+    r.stays_idle();
+    assert_eq!(
+        r.agent.channels().next_channel().unwrap().as_deref(),
+        Some("a")
+    );
+    r.read("Session changed: Alpha, reading again.");
+    r.read("From alpha.");
+    assert_eq!(
+        r.agent.channels().next_channel().unwrap().as_deref(),
+        Some("c")
+    );
+    r.read("Session changed, reading again.");
+}
+
+#[test]
 fn a_manual_session_switch_chimes_then_says_session_changed_reading_again() {
     let r = Rig::announcing(None);
     let heard = r.agent.subscribe();

@@ -1,6 +1,6 @@
 {
   "name": "@sonara/client",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "description": "Client for the Sonara text-to-speech runtime (protocol v1): connect, speak, control, live state. Zero dependencies.",
   "license": "MIT",
   "repository": {

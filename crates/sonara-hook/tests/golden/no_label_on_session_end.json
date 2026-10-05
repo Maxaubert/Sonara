@@ -1,0 +1,14 @@
+{
+  "event": "SessionEnd",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "channel_close",
+      "channel": "s1"
+    }
+  ]
+}
