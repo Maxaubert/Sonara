@@ -49,10 +49,12 @@
 //!   muted) joins the batch already read: it is never fed automatically,
 //!   also not on unmute, and a manual return (`next_channel`, `replay`)
 //!   reads it, from the top of the batch. When the channel still has
-//!   unread entries (a replay in progress) stored text is appended unread.
-//!   Entries marked as **decisions** leave the batch with
-//!   `drop_decisions` (L3: the decision was answered), so a replay never
-//!   reads an answered question or a decided permission.
+//!   unread entries or is being read (a replay in progress, also on its
+//!   last entry) stored text is appended unread. Entries marked as
+//!   **decisions** leave the batch with `drop_decisions` (L3: the decision
+//!   was answered; `Resolved` says which ones), so a replay never reads an
+//!   answered question or a decided permission. `end_batch` stops the
+//!   growth without a flush (L3: a new turn without `turn_start`).
 //! - `next_channel` is a round robin over the channels in opening order,
 //!   skipping channels with nothing to hear (unless all are empty), from the
 //!   channel reading or, after an idle gap, the one that read last. A fully
@@ -95,6 +97,21 @@ pub struct Entry {
     pub label: Option<String>,
 }
 
+/// Which decision entries `drop_decisions` takes out (module docs, #243).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolved {
+    /// Every one: the session's decisions were answered (`answered`, a new
+    /// turn).
+    All,
+    /// The ones read aloud, not stored ones and never unread ones: a tool
+    /// ran, which decides the permission heard before it, but a parallel
+    /// tool or a subagent's tool may come while another decision waits.
+    Heard,
+    /// The ones read or stored, never unread ones: the turn ended, so
+    /// everything it asked was decided.
+    Settled,
+}
+
 /// One named source and its current batch.
 #[derive(Debug, Clone)]
 pub struct Channel {
@@ -115,8 +132,12 @@ pub struct Channel {
     /// An agent batch (module docs, #243): a push while caught up appends
     /// to it. Cleared by a flush of this channel.
     growing: bool,
-    /// Entry ids of the batch that are decisions (`drop_decisions`).
-    decisions: HashSet<u64>,
+    /// Entry ids of the batch that are decisions (`drop_decisions`), each
+    /// with whether it was stored (written while muted) rather than fed.
+    decisions: HashMap<u64, bool>,
+    /// L3 wrote into this channel (`append`): an empty batch is its latest
+    /// message, so `Restart` reads nothing rather than the core's last item.
+    agent: bool,
 }
 
 impl Channel {
@@ -132,7 +153,8 @@ impl Channel {
             replaying: false,
             muted: false,
             growing: false,
-            decisions: HashSet::new(),
+            decisions: HashMap::new(),
+            agent: false,
         }
     }
 
@@ -193,18 +215,23 @@ impl Channel {
         n
     }
 
-    /// Remove the decision entries from the batch (module docs). Returns
-    /// the ones that were unread.
-    fn drop_decisions(&mut self) -> Vec<Entry> {
-        if self.decisions.is_empty() {
-            return Vec::new();
-        }
+    /// Remove the decision entries `which` names from the batch (module
+    /// docs). Returns the ones that were unread.
+    fn drop_decisions(&mut self, which: Resolved) -> Vec<Entry> {
         let mut unread = Vec::new();
         let mut i = 0;
         while i < self.entries.len() {
-            if self.decisions.contains(&self.entries[i].id) {
+            let id = self.entries[i].id;
+            let before = i < self.cursor;
+            let goes = self.decisions.get(&id).is_some_and(|stored| match which {
+                Resolved::All => true,
+                Resolved::Heard => before && !stored,
+                Resolved::Settled => before,
+            });
+            if goes {
+                self.decisions.remove(&id);
                 let e = self.entries.remove(i);
-                if i < self.cursor {
+                if before {
                     self.cursor -= 1;
                 } else {
                     unread.push(e);
@@ -213,7 +240,6 @@ impl Channel {
                 i += 1;
             }
         }
-        self.decisions.clear();
         unread
     }
 
@@ -534,12 +560,16 @@ impl Router {
     /// unless the channel has unread entries. Returns the entry id, or
     /// `None` if the channel is not open.
     pub fn append(&mut self, id: &str, text: &str, decision: bool, heard: bool) -> Option<u64> {
-        let unread = self.channel(id)?.pending() > 0;
+        // Being read (a replay on its last entry) counts as unread: the
+        // replay goes on into the new text.
+        let unread =
+            self.channel(id)?.pending() > 0 || self.reading.as_ref().is_some_and(|(c, _)| c == id);
         let entry = self.push_with(id, text, None, false, false)?;
         let c = self.channel_mut(id)?;
         c.growing = true;
+        c.agent = true;
         if decision {
-            c.decisions.insert(entry);
+            c.decisions.insert(entry, heard);
         }
         if heard && !unread {
             c.cursor = c.entries.len();
@@ -547,12 +577,26 @@ impl Router {
         Some(entry)
     }
 
-    /// Remove `id`'s decision entries from its batch (module docs): they
-    /// were answered. Returns the ones that were unread.
-    pub fn drop_decisions(&mut self, id: &str) -> Vec<Entry> {
+    /// Remove `id`'s decision entries `which` names from its batch (module
+    /// docs): they were answered. Returns the ones that were unread.
+    pub fn drop_decisions(&mut self, id: &str, which: Resolved) -> Vec<Entry> {
         self.channel_mut(id)
-            .map(Channel::drop_decisions)
+            .map(|c| c.drop_decisions(which))
             .unwrap_or_default()
+    }
+
+    /// End `id`'s agent batch: its entries stay (replayable), and L3's next
+    /// text starts a new batch once the channel is caught up (a new turn
+    /// without a `turn_start`, #243).
+    pub fn end_batch(&mut self, id: &str) {
+        if let Some(c) = self.channel_mut(id) {
+            c.growing = false;
+        }
+    }
+
+    /// True if L3 wrote into `id` (`append`).
+    pub fn is_agent(&self, id: &str) -> bool {
+        self.channel(id).is_some_and(|c| c.agent)
     }
 
     /// True if `id` was switched away from and has not changed since. New

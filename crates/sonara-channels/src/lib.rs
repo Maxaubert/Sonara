@@ -33,7 +33,9 @@
 //!   flushes only the channel being read, `flush_with` also the other
 //!   channels its caller names (L3's flush scope `all`). `Restart` while idle replays the engaged
 //!   channel's batch (the Python plugin's Up key); before any channel was
-//!   read, the focused one's, else the one written last (#243).
+//!   read, the focused one's, else the one written last (#243). An agent
+//!   channel whose batch is empty (its only item was an answered decision)
+//!   reads nothing: never the core's older last item.
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
 //!   uses it so a decision preempts (the Python router's decision rule).
@@ -57,7 +59,7 @@
 //!   under the driver's lock and must not call back into `Channels`.
 pub mod router;
 
-pub use router::{Channel, Entry, Feed, Policy, Router};
+pub use router::{Channel, Entry, Feed, Policy, Resolved, Router};
 pub use sonara_reader::{Control, ItemId, QueueMode, ReaderHandle};
 
 use sonara_reader::{Event, ItemPhase};
@@ -403,14 +405,21 @@ impl Channels {
         )
     }
 
-    /// Take the decision entries out of `channel`'s batch: they were
-    /// answered, so a replay does not read them (#243). Unread ones are
-    /// reported to `on_drop` with reason `answered`. Returns how many
-    /// were removed; an unknown channel removes none.
-    pub fn drop_decisions(&self, channel: &str) -> usize {
+    /// End `channel`'s agent batch (`Router::end_batch`): L3's next text
+    /// starts a new one. An unknown channel is a no-op.
+    pub fn end_batch(&self, channel: &str) {
+        self.lock().router.end_batch(channel);
+    }
+
+    /// Take the decision entries `which` names out of `channel`'s batch:
+    /// they were answered, so a replay does not read them (#243). Unread
+    /// ones (only `Resolved::All` takes them) are reported to `on_drop`
+    /// with reason `answered`. Returns how many were removed; an unknown
+    /// channel removes none.
+    pub fn drop_decisions(&self, channel: &str, which: Resolved) -> usize {
         let mut st = self.lock();
         let before = st.router.channel(channel).map_or(0, |c| c.entries().len());
-        let unread = st.router.drop_decisions(channel);
+        let unread = st.router.drop_decisions(channel, which);
         let after = st.router.channel(channel).map_or(0, |c| c.entries().len());
         report(&st, channel, unread, "answered", None);
         before - after
@@ -559,6 +568,10 @@ impl Channels {
                         .or_else(|| st.router.written_last());
                     match engaged {
                         Some(e) if st.router.replay(&e) => self.inner.pump(&mut st),
+                        // An agent session whose latest message is empty
+                        // (its only item was an answered decision): Up
+                        // reads nothing, never the core's older item.
+                        Some(e) if st.router.is_agent(&e) => Ok(()),
                         _ => Ok(reader.control(Control::Restart)?),
                     }
                 }

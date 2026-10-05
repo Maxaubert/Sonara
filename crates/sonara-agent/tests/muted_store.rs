@@ -415,3 +415,110 @@ fn summaries_are_not_made_while_muted_the_raw_prose_is_stored() {
     }
     r.stays_idle();
 }
+
+#[test]
+fn a_question_stored_while_muted_survives_a_tool_and_is_read_by_a_switch() {
+    // Review of #243: a parallel tool or a subagent shares the session's
+    // id; its PreToolUse must not take an unanswered question out.
+    let r = Rig::new();
+    r.turn("b", 1.0, "B old.");
+    r.read("B old.");
+    r.stays_idle();
+    r.agent.set_mute_level(1).unwrap();
+    r.agent.turn_start("a", None, Some(2.0)).unwrap();
+    r.agent.ask("a", &question("Pick one?")).unwrap();
+    r.agent.tool("a", "Bash", "ls").unwrap();
+    r.agent.set_mute_level(0).unwrap();
+    r.stays_idle();
+    assert_eq!(
+        r.agent.channels().next_channel().unwrap().as_deref(),
+        Some("a")
+    );
+    assert!(r.read_next().contains("Pick one"));
+}
+
+#[test]
+fn an_unread_permission_is_still_read_after_a_tool_arrives() {
+    let r = Rig::new();
+    r.turn("b", 1.0, "B speaks.");
+    // B is being read; A's permission waits behind it.
+    r.agent.turn_start("a", None, Some(1.0)).unwrap();
+    r.agent
+        .ask("a", &Ask::new(AskKind::Permission, "Run the tests"))
+        .unwrap();
+    r.agent.tool("a", "Read", "notes.md").unwrap();
+    r.read("B speaks.");
+    assert!(r.read_next().contains("Run the tests"));
+}
+
+#[test]
+fn restart_after_an_answered_question_only_turn_reads_nothing() {
+    let r = Rig::new();
+    r.turn("a", 1.0, "Old reply.");
+    r.read("Old reply.");
+    r.stays_idle();
+    r.agent.turn_start("a", None, Some(2.0)).unwrap();
+    r.agent.ask("a", &question("Question 9b?")).unwrap();
+    assert!(r.read_next().contains("Question 9b"));
+    r.stays_idle();
+    r.agent.answered("a").unwrap();
+    r.stays_idle();
+    r.restart();
+    r.stays_idle();
+    assert_eq!(
+        r.engine.texts().iter().filter(|t| t.contains("9b")).count(),
+        1
+    );
+    assert_eq!(
+        r.engine
+            .texts()
+            .iter()
+            .filter(|t| t.contains("Old reply"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn a_permission_stored_while_muted_is_not_replayed_after_the_turn_ended() {
+    let r = Rig::new();
+    r.agent.set_mute_level(1).unwrap();
+    r.agent.turn_start("a", None, Some(1.0)).unwrap();
+    r.agent
+        .stream("a", None, "Lead in.", 0, true, Some(1.0))
+        .unwrap();
+    r.agent
+        .ask("a", &Ask::new(AskKind::Permission, "Run the tests"))
+        .unwrap();
+    r.agent
+        .stream("a", None, "All green.", 1, true, Some(1.0))
+        .unwrap();
+    r.agent.turn_end("a", None, Some(1.0)).unwrap();
+    r.agent.set_mute_level(0).unwrap();
+    r.stays_idle();
+    r.restart();
+    r.read("Lead in.");
+    r.read("All green.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_tool_after_the_turn_ended_starts_a_new_latest_message() {
+    // A turn with no turn_start (a background task woke the agent).
+    let r = Rig::new();
+    r.turn("a", 1.0, "Old turn.");
+    r.read("Old turn.");
+    r.stays_idle();
+    r.agent.tool("a", "Bash", "ls").unwrap();
+    r.read("ls");
+    r.agent
+        .stream("a", None, "New turn.", 0, true, Some(1.0))
+        .unwrap();
+    r.agent.turn_end("a", None, Some(1.0)).unwrap();
+    r.read("New turn.");
+    r.stays_idle();
+    r.restart();
+    r.read("ls");
+    r.read("New turn.");
+    r.stays_idle();
+}

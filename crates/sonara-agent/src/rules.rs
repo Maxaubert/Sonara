@@ -66,7 +66,11 @@
 //!   messages, turn_start, flush), only the outcome is stored. Summaries
 //!   are not made while muted: the prose kept for one is stored as it is
 //!   (no summarizer run for text nobody hears now); a summary that lands
-//!   while muted is stored.
+//!   while muted is stored. Two things started before a mute are read
+//!   after an unmute: a summary already in flight (or a settle window
+//!   armed) when muting that lands after unmuting is spoken, and in
+//!   `read_mode` `done` prose held while muted is spoken by a `turn_end`
+//!   that comes after the unmute (that turn ended unmuted).
 //! - **Summaries** (opt in): see `Pipeline` below; the rules are the Python
 //!   ones: settle window, lead-in digests before decisions, the decision
 //!   hold with its cap, the hung-worker watchdog and the reorder buffer.
@@ -247,6 +251,9 @@ struct Turn {
     /// whose turn_end has not come is still writing (flush scope `all`
     /// keeps it, #228).
     ended: bool,
+    /// The driver already ended the channel's batch for a new turn that
+    /// came without a `turn_start` (`take_new_turn`, #243).
+    batch_cut: bool,
     /// The user flushed this reply (#228): the rest of it is skipped until
     /// the next `turn_start`, except its decisions.
     skip_reply: bool,
@@ -281,6 +288,7 @@ impl Turn {
             last_index: None,
             released: false,
             ended: false,
+            batch_cut: false,
             skip_reply: false,
             prose: Vec::new(),
             voiced: 0,
@@ -710,6 +718,7 @@ impl Rules {
         let c = self.turn(channel);
         c.released = true;
         c.ended = true;
+        c.batch_cut = false;
         self.flush_prose(&mut out, channel);
         if self.summaries() {
             // Not yet: the turn's last prose can arrive after this (#14).
@@ -998,6 +1007,20 @@ impl Rules {
     /// `all` keeps it, #228).
     pub fn writing(&self, channel: &str) -> bool {
         self.turns.get(channel).is_some_and(|c| !c.ended)
+    }
+
+    /// A tool or a decision came after the channel's turn ended, with no
+    /// `turn_start` (a background task or a subagent woke the agent): a
+    /// new turn, so the driver starts a new batch (#243). True once per
+    /// `turn_end`.
+    pub fn take_new_turn(&mut self, channel: &str) -> bool {
+        match self.turns.get_mut(channel) {
+            Some(c) if c.ended && !c.batch_cut => {
+                c.batch_cut = true;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The channel closed (or was forgotten): free its turn state. Summary
