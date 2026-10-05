@@ -1,16 +1,67 @@
 # Sonara protocol v1
 
-The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara, SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the **core** (protocol 1.5), which every runtime offers, [external engines](#external-engines) (capability `engines`), and the [`channels`](#extension-channels), [`agent`](#extension-agent) and [`system`](#extension-system) extensions.
+The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara,
+SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the
+**core** (protocol 1.5), which every runtime offers, [external engines](#external-engines)
+(capability `engines`), and the [`channels`](#extension-channels), [`agent`](#extension-agent) and
+[`system`](#extension-system) extensions.
 
-Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it), `crates/sonara-channels` (the `channels` extension), `crates/sonara-agent` (`agent`), `crates/sonara-system` (`system`). Black-box tests: `conformance/` (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec: `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
+Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it),
+`crates/sonara-channels` (the `channels` extension), `crates/sonara-agent` (`agent`),
+`crates/sonara-system` (`system`). Black-box tests: `conformance/`
+(`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec:
+`docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
-The Python daemon of the Claude Code plugin still speaks the older protocol in `docs/protocol.md` until the cutover (M11).
+The Python daemon of the Claude Code plugin still speaks the older protocol in `docs/protocol.md`
+until the cutover (M11).
+
+## Contents
+
+- [Discovery](#discovery)
+- [Transport](#transport)
+  - [TCP JSON lines (`port`)](#tcp-json-lines-port)
+  - [HTTP (`http_port`)](#http-http_port)
+- [Requests and replies](#requests-and-replies)
+  - [`hello`](#hello)
+  - [`speak`](#speak)
+  - [`control`](#control)
+  - [`set` / `get`](#set--get)
+  - [`voices`](#voices)
+  - [`subscribe` (TCP)](#subscribe-tcp)
+- [Events](#events)
+- [Errors](#errors)
+- [Lifetime](#lifetime)
+- [Takeover](#takeover)
+- [Versioning](#versioning)
+- [Saved settings](#saved-settings)
+- [Testing aids](#testing-aids)
+- [Examples](#examples)
+- [External engines](#external-engines)
+  - Full contract: [protocol-v1-engines.md](protocol-v1-engines.md)
+- [Extension `channels`](#extension-channels)
+  - [Messages](#messages)
+  - [Setting](#setting)
+  - [State](#state)
+- [Extension `agent`](#extension-agent)
+  - [Messages](#messages-1)
+  - [Settings](#settings)
+  - [Events](#events-1)
+- [Extension `system`](#extension-system)
+  - [Settings](#settings-1)
+  - [Shutdown](#shutdown)
+  - [Voice previews](#voice-previews)
+  - [Spoken cues](#spoken-cues)
+  - [Hotkeys](#hotkeys)
+  - [Settings page](#settings-page)
 
 ## Discovery
 
-**Home folder:** `%LOCALAPPDATA%\Sonara`, or `SONARA_HOME` if set, or `sonarad --home <dir>` (the flag wins).
+**Home folder:** `%LOCALAPPDATA%\Sonara`, or `SONARA_HOME` if set, or `sonarad --home <dir>` (the
+flag wins).
 
-**`runtime.json`** in the home describes the running instance. It is written atomically (a temp file, then a rename) with an ACL that lets only the current user in, and removed when the runtime exits cleanly.
+**`runtime.json`** in the home describes the running instance. It is written atomically (a temp
+file, then a rename) with an ACL that lets only the current user in, and removed when the runtime
+exits cleanly.
 
 ```json
 {
@@ -28,36 +79,60 @@ The Python daemon of the Claude Code plugin still speaks the older protocol in `
 
 **Connecting** (what every SDK's `connect()` does):
 
-1. Read `runtime.json`. If the file exists and its `pid` is alive, connect to `port` and send `hello`.
-2. Use the instance if `protocol.major` is 1 and its `capabilities` (and `extensions`) cover everything the client requires.
-3. Otherwise start the bundled runtime: `sonarad.exe --home <home>` (no console window: `CREATE_NO_WINDOW`), wait up to 5 s for a `runtime.json` whose `pid` is the new process, then `hello`.
-4. If the running instance is incompatible (another major, a missing capability), send `hello` with `takeover: true`. See [Takeover](#takeover).
+1. Read `runtime.json`. If the file exists and its `pid` is alive, connect to `port` and send
+   `hello`.
+2. Use the instance if `protocol.major` is 1 and its `capabilities` (and `extensions`) cover
+   everything the client requires.
+3. Otherwise start the bundled runtime: `sonarad.exe --home <home>` (no console window:
+   `CREATE_NO_WINDOW`), wait up to 5 s for a `runtime.json` whose `pid` is the new process, then
+   `hello`.
+4. If the running instance is incompatible (another major, a missing capability), send `hello` with
+   `takeover: true`. See [Takeover](#takeover).
 
 A stale `runtime.json` (the pid is gone after a crash) is overwritten by the next runtime.
 
-**One instance** per user: the runtime holds the named mutex `Local\Sonara-Runtime-<hash>`, where `<hash>` is the FNV-1a 64-bit hash (16 hex digits) of the user's SID string. For a home other than the default `%LOCALAPPDATA%\Sonara`, the hash covers the SID, a newline and the home's canonical path in lower case, so separate homes (tests, a portable bundle) are separate instances. A second `sonarad` for the same user and home prints `another instance is already running ...` and exits with code 3.
+**One instance** per user: the runtime holds the named mutex `Local\Sonara-Runtime-<hash>`, where
+`<hash>` is the FNV-1a 64-bit hash (16 hex digits) of the user's SID string. For a home other than
+the default `%LOCALAPPDATA%\Sonara`, the hash covers the SID, a newline and the home's canonical
+path in lower case, so separate homes (tests, a portable bundle) are separate instances. A second
+`sonarad` for the same user and home prints `another instance is already running ...` and exits with
+code 3.
 
 ## Transport
 
-Both transports bind `127.0.0.1` on ephemeral ports and never another address. Every request is a JSON object with a `type`; requests are applied in the order they arrive on a connection.
+Both transports bind `127.0.0.1` on ephemeral ports and never another address. Every request is a
+JSON object with a `type`; requests are applied in the order they arrive on a connection.
 
 ### TCP JSON lines (`port`)
 
 - One UTF-8 JSON object per line (`\n`), both ways; at most 1 MiB per line.
-- The **first message must be `hello` with the token**. Anything else (another type, a wrong token, invalid JSON) is answered with `E_AUTH` and the connection closes. So is a connection that sends no successful `hello` within 5 s. A `hello` that fails for another reason (`E_UNSUPPORTED`, `E_INCOMPATIBLE`, `E_BUSY`) leaves the connection open and unauthenticated, so the client may send `hello` again.
-- Replies and events share the connection: a reply has `ok`, an event has `event`. Replies come in request order.
+- The **first message must be `hello` with the token**. Anything else (another type, a wrong token,
+  invalid JSON) is answered with `E_AUTH` and the connection closes. So is a connection that sends
+  no successful `hello` within 5 s. A `hello` that fails for another reason (`E_UNSUPPORTED`,
+  `E_INCOMPATIBLE`, `E_BUSY`) leaves the connection open and unauthenticated, so the client may send
+  `hello` again.
+- Replies and events share the connection: a reply has `ok`, an event has `event`. Replies come in
+  request order.
 - Invalid JSON after `hello` is `E_BAD_REQUEST`; the connection stays open.
 
 ### HTTP (`http_port`)
 
-- `POST /v1/<type>` with header `Authorization: Bearer <token>`. The body is the request without `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB.
-- No `hello` is needed (the bearer token authenticates each request), but `POST /v1/hello` works, including `keep_alive` and `takeover`.
-- The reply body is the same JSON as on TCP. Status: 200 for `ok: true`; for errors `E_AUTH` 401, `E_UNKNOWN_TYPE` and `E_NOT_FOUND` 404, `E_BUSY` and `E_INCOMPATIBLE` 409, `E_ENGINE` 500, `E_FORBIDDEN` 403, anything else 400.
-- `GET /v1/events?events=state,items,log` (default: all three) is a Server-Sent Events stream. Each event is `event: <name>` plus `data: <the same JSON as on TCP>`; a `: ping` comment comes every 15 s. `subscribe` over POST is `E_BAD_REQUEST`.
+- `POST /v1/<type>` with header `Authorization: Bearer <token>`. The body is the request without
+  `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB.
+- No `hello` is needed (the bearer token authenticates each request), but `POST /v1/hello` works,
+  including `keep_alive` and `takeover`.
+- The reply body is the same JSON as on TCP. Status: 200 for `ok: true`; for errors `E_AUTH` 401,
+  `E_UNKNOWN_TYPE` and `E_NOT_FOUND` 404, `E_BUSY` and `E_INCOMPATIBLE` 409, `E_ENGINE` 500,
+  `E_FORBIDDEN` 403, anything else 400.
+- `GET /v1/events?events=state,items,log` (default: all three) is a Server-Sent Events stream. Each
+  event is `event: <name>` plus `data: <the same JSON as on TCP>`; a `: ping` comment comes every 15
+  s. `subscribe` over POST is `E_BAD_REQUEST`.
 
 ## Requests and replies
 
-Every request may carry `id` (any JSON value); the reply echoes it. Replies are `{id?, ok: true, ...}` or `{id?, ok: false, error: {code, message}}`. **Unknown fields are ignored** in every request, and clients must ignore fields they do not know in replies and events.
+Every request may carry `id` (any JSON value); the reply echoes it. Replies are
+`{id?, ok: true, ...}` or `{id?, ok: false, error: {code, message}}`. **Unknown fields are ignored**
+in every request, and clients must ignore fields they do not know in replies and events.
 
 ### `hello`
 
@@ -76,9 +151,15 @@ Every request may carry `id` (any JSON value); the reply echoes it. Replies are 
 < {"id": 1, "ok": true, "version": "0.10.0", "protocol": {"major": 1, "minor": 1}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
 
-The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`. `runtime.json` lists in `extensions` the ones this runtime offers.
+The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled
+for the whole runtime as soon as any client asks for it (in `extensions` or `require`) and stays
+enabled until the runtime exits; until then its messages, actions and keys are `E_UNSUPPORTED`.
+`runtime.json` lists in `extensions` the ones this runtime offers.
 
-**Capabilities** of protocol 1.0: `core`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`, `events.state`, `events.items`, `events.log`. Protocol 1.1 adds `engine_status` (readiness and model download progress in `state.engine_status`). A later minor adds capability strings for what it adds, so a client can `require` them.
+**Capabilities** of protocol 1.0: `core`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`,
+`events.state`, `events.items`, `events.log`. Protocol 1.1 adds `engine_status` (readiness and model
+download progress in `state.engine_status`). A later minor adds capability strings for what it adds,
+so a client can `require` them.
 
 ### `speak`
 
@@ -113,7 +194,8 @@ Item ids start at 1 and never repeat within one runtime.
 
 ### `set` / `get`
 
-`{"type": "set", "key": "<key>", "value": <value>}` and `{"type": "get", "key": "<key>"}`; both reply `{ok: true, key, value}` with the value now in force.
+`{"type": "set", "key": "<key>", "value": <value>}` and `{"type": "get", "key": "<key>"}`; both
+reply `{ok: true, key, value}` with the value now in force.
 
 | key | value |
 |---|---|
@@ -123,29 +205,73 @@ Item ids start at 1 and never repeat within one runtime.
 | `engine` | an engine id: `kokoro` or `onecore` (`fake` in test runs), or the id of an [external engine](#external-engines) the user added. Switching resets a voice the new engine lacks |
 | `debug_log` | `true` or `false` (default `true`, runtime 0.13.2, #219): the troubleshooting log records text (what was read, the messages received, the hooks' raw input); `false` keeps every text out of `logs\` (see [Saved settings](#saved-settings)). A host key: it needs no extension |
 
-A rate, voice or engine change applies to chunks synthesized from then on. Out-of-range or wrongly typed values are `E_BAD_REQUEST`; an unknown voice or engine is `E_NOT_FOUND`; an unknown key is `E_BAD_REQUEST` (an extension's key, such as `audio_mode`, is `E_UNSUPPORTED`).
+A rate, voice or engine change applies to chunks synthesized from then on. Out-of-range or wrongly
+typed values are `E_BAD_REQUEST`; an unknown voice or engine is `E_NOT_FOUND`; an unknown key is
+`E_BAD_REQUEST` (an extension's key, such as `audio_mode`, is `E_UNSUPPORTED`).
 
 ### `voices`
 
-`{"type": "voices", "engine?": "<id>", "refresh?": false}` replies `{ok: true, voices: [...]}` for one engine or all:
+`{"type": "voices", "engine?": "<id>", "refresh?": false}` replies `{ok: true, voices: [...]}` for
+one engine or all:
 
 ```json
 {"id": "...", "name": "Microsoft Zira", "language": "en-US", "engine": "onecore", "license_class": "os", "installed": true}
 ```
 
-`license_class` is `permissive`, `os` or `external` (protocol 1.2, the voices of an [external engine](#external-engines)). `installed: false` means listed but not yet able to speak (voice data missing, a model still to download). An unknown engine is `E_NOT_FOUND`.
+`license_class` is `permissive`, `os` or `external` (protocol 1.2, the voices of an [external
+engine](#external-engines)). `installed: false` means listed but not yet able to speak (voice data
+missing, a model still to download). An unknown engine is `E_NOT_FOUND`.
 
-**An unsaved profile** (protocol 1.4, runtime 0.18.0, #227, capability `engines`): `{"type": "voices", "profile": {...}, "secret?": "<key>"}` lists the voices of a profile that is not saved, so a client (the settings page) can offer the voices before the user picks one. `profile` is a [profile](#profile) whose `id` and `voice` may be missing (any `id` sent is ignored); it is built for this request only, with `secret` as its only key (bound to the profile's origin, as in `engine_add`; `key_ref` `env:NAME` reads the variable under the same rules), never with another profile's stored key. Nothing is saved, stored, registered or logged (`voices` gets no `in` line, and `secret` is never written). The reply is as for a saved engine: the fetched voices, or none plus `error: {reason, message}` when the fetch fails. A `command` profile is `E_FORBIDDEN` (a request never names a program to run), a profile that is not an object or fails validation is `E_BAD_REQUEST`, and a runtime without external engines answers `E_UNSUPPORTED`.
+**An unsaved profile** (protocol 1.4, runtime 0.18.0, #227, capability `engines`):
+`{"type": "voices", "profile": {...}, "secret?": "<key>"}` lists the voices of a profile that is not
+saved, so a client (the settings page) can offer the voices before the user picks one. `profile` is
+a [profile](protocol-v1-engines.md#profile) whose `id` and `voice` may be missing (any `id` sent is
+ignored); it is built for this request only, with `secret` as its only key (bound to the profile's
+origin, as in `engine_add`; `key_ref` `env:NAME` reads the variable under the same rules), never
+with another profile's stored key. Nothing is saved, stored, registered or logged (`voices` gets no
+`in` line, and `secret` is never written). The reply is as for a saved engine: the fetched voices,
+or none plus `error: {reason, message}` when the fetch fails. A `command` profile is `E_FORBIDDEN`
+(a request never names a program to run), a profile that is not an object or fails validation is
+`E_BAD_REQUEST`, and a runtime without external engines answers `E_UNSUPPORTED`.
 
-For an external engine (`engine` naming one), the runtime asks its provider for the list when its copy is older than 10 minutes or `refresh` is `true` (the request waits up to 10 s). A failed fetch still answers `ok` with the voices known (at least the engine's own voice) and an additive `error: {reason, message}`. Without `engine`, external engines contribute the lists they already have, never a network request. While Sonara is [muted](#external-engines) no list is fetched: the voices known, with `error: {reason: "muted", message}` when a fetch was due (`refresh`, an old copy, or an unsaved `profile`, which then lists only its own voice). An external engine also speaks voice ids it does not list (a cloned voice, a provider's voice id), so `set voice` accepts any id while one is current.
+For an external engine (`engine` naming one), the runtime asks its provider for the list when its
+copy is older than 10 minutes or `refresh` is `true` (the request waits up to 10 s). A failed fetch
+still answers `ok` with the voices known (at least the engine's own voice) and an additive
+`error: {reason, message}`. Without `engine`, external engines contribute the lists they already
+have, never a network request. While Sonara is [muted](#external-engines) no list is fetched: the
+voices known, with `error: {reason: "muted", message}` when a fetch was due (`refresh`, an old copy,
+or an unsaved `profile`, which then lists only its own voice). An external engine also speaks voice
+ids it does not list (a cloned voice, a provider's voice id), so `set voice` accepts any id while
+one is current.
 
-**Engines.** `onecore` is Windows' own speech: zero download, licence class `os`. `kokoro` is Kokoro-82M v1.0 (Apache-2.0 weights) on Microsoft's ONNX Runtime with GPL-free phonemes, licence class `permissive`, 28 English voices (`af_heart`, the default, `af_sarah`, `bm_george`, ...; ids also accept the `kokoro:` prefix and display names such as `Heart (Kokoro)`). Its model (about 354 MB) is downloaded on first use into `<home>\models\kokoro\v1.0\` from pinned URLs with pinned SHA-256 values, resumed after an interruption (a download in progress is `<file>.part`), and checked before use (`verified.json` there remembers checked files by size and time); a host may pre-seed that folder with the two files (`kokoro-v1.0.onnx`, `voices-v1.0.bin`). Until Kokoro is ready (downloading, a failed download waiting to retry, no ONNX Runtime) it speaks with `onecore` at once, and `state.engine_status` says so. Where `onecore` cannot speak (its warm-up fails or it lists no voices), there is no fallback: `engine_status` names none, and each item waits for Kokoro while the model downloads or loads (up to 5 minutes), so no speech is dropped. The runtime does not idle out while the model downloads or loads. A failed download is retried after 30 s, then after twice as long each time up to 30 minutes, never on every sentence. The rate maps to Kokoro's speed as `rate / 200`, from 0.5 to 2.0.
+**Engines.** `onecore` is Windows' own speech: zero download, licence class `os`. `kokoro` is
+Kokoro-82M v1.0 (Apache-2.0 weights) on Microsoft's ONNX Runtime with GPL-free phonemes, licence
+class `permissive`, 28 English voices (`af_heart`, the default, `af_sarah`, `bm_george`, ...; ids
+also accept the `kokoro:` prefix and display names such as `Heart (Kokoro)`). Its model (about 354
+MB) is downloaded on first use into `<home>\models\kokoro\v1.0\` from pinned URLs with pinned
+SHA-256 values, resumed after an interruption (a download in progress is `<file>.part`), and checked
+before use (`verified.json` there remembers checked files by size and time); a host may pre-seed
+that folder with the two files (`kokoro-v1.0.onnx`, `voices-v1.0.bin`). Until Kokoro is ready
+(downloading, a failed download waiting to retry, no ONNX Runtime) it speaks with `onecore` at once,
+and `state.engine_status` says so. Where `onecore` cannot speak (its warm-up fails or it lists no
+voices), there is no fallback: `engine_status` names none, and each item waits for Kokoro while the
+model downloads or loads (up to 5 minutes), so no speech is dropped. The runtime does not idle out
+while the model downloads or loads. A failed download is retried after 30 s, then after twice as
+long each time up to 30 minutes, never on every sentence. The rate maps to Kokoro's speed as
+`rate / 200`, from 0.5 to 2.0.
 
 ### `subscribe` (TCP)
 
-`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies `{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an extension's stream (`earcons` of `agent`, `cues` of `system`) is asked for by name and is `E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current state.
+`{"type": "subscribe", "events": ["state", "items", "log"]}` (omitted: all three) replies
+`{ok: true, events: [...]}` and from then on sends those events on this connection. Subscribing
+again replaces the set (`[]` stops events). An unknown stream name is `E_UNSUPPORTED`; an
+extension's stream (`earcons` of `agent`, `cues` of `system`) is asked for by name and is
+`E_UNSUPPORTED` while the extension is off. When `state` is included, the first event is the current
+state.
 
-A client that does not read its events never slows the reader: past 256 unread events, events are dropped for that client. Each `state` event is a full snapshot, so the next one brings a player up to date.
+A client that does not read its events never slows the reader: past 256 unread events, events are
+dropped for that client. Each `state` event is a full snapshot, so the next one brings a player up
+to date.
 
 ## Events
 
@@ -155,9 +281,15 @@ A client that does not read its events never slows the reader: past 256 unread e
 {"event": "log", "message": "synthesis failed: ..."}
 ```
 
-- `state` (stream `state`): sent on change only, `seq` strictly increasing. `now_playing` is `null` when idle; its `text` is the chunk being read. `queued` counts items after the current one. `engine_status` (below) says whether the current engine speaks with its own voice yet.
-- `item` (stream `items`): `phase` is `started`, `finished`, `skipped` or `failed`. An item ends `failed` only when none of its chunks could be played; a failed chunk is skipped and logged.
-- `log` (stream `log`): a line worth showing in a log, such as a failed synthesis or an engine that is not ready. A change of the engine's readiness is logged too (`engine 'kokoro' is downloading its model; speaking with onecore meanwhile`, `engine 'kokoro' is ready`), not each bit of download progress.
+- `state` (stream `state`): sent on change only, `seq` strictly increasing. `now_playing` is `null`
+  when idle; its `text` is the chunk being read. `queued` counts items after the current one.
+  `engine_status` (below) says whether the current engine speaks with its own voice yet.
+- `item` (stream `items`): `phase` is `started`, `finished`, `skipped` or `failed`. An item ends
+  `failed` only when none of its chunks could be played; a failed chunk is skipped and logged.
+- `log` (stream `log`): a line worth showing in a log, such as a failed synthesis or an engine that
+  is not ready. A change of the engine's readiness is logged too
+  (`engine 'kokoro' is downloading its model; speaking with onecore meanwhile`,
+  `engine 'kokoro' is ready`), not each bit of download progress.
 
 **`engine_status`** (protocol 1.1; a 1.0 runtime sends only `engine`):
 
@@ -175,7 +307,9 @@ A client that does not read its events never slows the reader: past 256 unread e
 "engine_status": {"engine": "kokoro", "ready": false, "status": "downloading", "progress": {"done": 104873984, "total": 353746785}, "fallback": "onecore"}
 ```
 
-A change of `engine_status` alone (download progress, about four times a second at most) is a new `state` event with a new `seq`. The runtime counts these changes once, so every client sees the same `seq` for the same state, however long it has been subscribed.
+A change of `engine_status` alone (download progress, about four times a second at most) is a new
+`state` event with a new `seq`. The runtime counts these changes once, so every client sees the same
+`seq` for the same state, however long it has been subscribed.
 
 ## Errors
 
@@ -191,29 +325,76 @@ A change of `engine_status` alone (download progress, about four times a second 
 | `E_NOT_FOUND` | an unknown voice, engine or external engine profile |
 | `E_FORBIDDEN` | protocol 1.3: a request no client may make over the protocol, from any transport or SDK: `engine_add` of a `command` engine, or one that would replace a `command` engine (see [External engines](#external-engines)) |
 
-An error of an external engine (`engine_test`) carries an additive `reason` (protocol 1.2), the same values as `engine_status.reason`: `{"ok": false, "error": {"code": "E_ENGINE", "message": "OpenAI refused the key (401): Incorrect API key provided", "reason": "auth"}}`.
+An error of an external engine (`engine_test`) carries an additive `reason` (protocol 1.2), the same
+values as `engine_status.reason`:
+`{"ok": false, "error": {"code": "E_ENGINE", "message": "OpenAI refused the key (401): Incorrect API key provided", "reason": "auth"}}`.
 
 ## Lifetime
 
-A client is a TCP connection that completed `hello`, or an open SSE stream; a plain HTTP request only counts as activity. The runtime exits 30 s (`--idle-exit <seconds>`) after the last client left and nothing is being read (a paused item does not count), unless a client sent `keep_alive: true` or it runs with `--standalone`. The countdown starts when `runtime.json` is written, so a slow start never uses it up before the first client can connect. The exit is decided atomically with the requests that start speech: a `speak` or `control` either comes first (and keeps the runtime while it is read) or is answered `E_BUSY`, never accepted and then lost; any request that reaches the runtime while it exits is `E_BUSY` (#194), also an HTTP request whose connection was still waiting to be accepted when the exit was decided: the runtime answers it before the process ends (runtime 0.20.4, #247). Ctrl+C and a [`shutdown`](#shutdown) (extension `system`) end it cleanly. On every clean exit it stops speech and removes `runtime.json`.
+A client is a TCP connection that completed `hello`, or an open SSE stream; a plain HTTP request
+only counts as activity. The runtime exits 30 s (`--idle-exit <seconds>`) after the last client left
+and nothing is being read (a paused item does not count), unless a client sent `keep_alive: true` or
+it runs with `--standalone`. The countdown starts when `runtime.json` is written, so a slow start
+never uses it up before the first client can connect. The exit is decided atomically with the
+requests that start speech: a `speak` or `control` either comes first (and keeps the runtime while
+it is read) or is answered `E_BUSY`, never accepted and then lost; any request that reaches the
+runtime while it exits is `E_BUSY` (#194), also an HTTP request whose connection was still waiting
+to be accepted when the exit was decided: the runtime answers it before the process ends (runtime
+0.20.4, #247). Ctrl+C and a [`shutdown`](#shutdown) (extension `system`) end it cleanly. On every
+clean exit it stops speech and removes `runtime.json`.
 
 ## Takeover
 
 When a client finds an instance it cannot use (another protocol major, a missing capability):
 
 1. It sends `hello` with the token and `takeover: true`.
-2. If nothing is playing or queued (a paused item counts as busy), the runtime replies `{ok: true, takeover: true, ...}` and from then on answers `speak` and `control` from any client with `E_BUSY`, so nothing is accepted and then dropped. It closes the connection, stops audio, releases the single-instance lock, removes `runtime.json` and exits with code 0. The client waits for the process to end (or, at the least, for `runtime.json` to go), then starts its bundled runtime.
-3. Otherwise the reply is `E_BUSY`; the client retries after the current item (bounded, 30 s in total), then gives up with `E_INCOMPATIBLE`.
+2. If nothing is playing or queued (a paused item counts as busy), the runtime replies
+   `{ok: true, takeover: true, ...}` and from then on answers `speak` and `control` from any client
+   with `E_BUSY`, so nothing is accepted and then dropped. It closes the connection, stops audio,
+   releases the single-instance lock, removes `runtime.json` and exits with code 0. The client waits
+   for the process to end (or, at the least, for `runtime.json` to go), then starts its bundled
+   runtime.
+3. Otherwise the reply is `E_BUSY`; the client retries after the current item (bounded, 30 s in
+   total), then gives up with `E_INCOMPATIBLE`.
 
 ## Versioning
 
-Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types, capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the readiness fields of `engine_status` and the `engine_status` capability. 1.2 (runtime 0.15.0, #224) added [external engines](#external-engines): the capability `engines` and its five core messages, `engine_status.reason`, `error.reason`, `voices.refresh` and the licence class `external`. Runtime 0.16.0 (#225) added the kinds `elevenlabs`, `azure` and `google`, runtime 0.17.0 (#226) `cartesia`, `deepgram` and `command` (new values of `engine_list.kinds`). 1.3 (runtime 0.17.0, #226) added the message `engine_reload` and the error code `E_FORBIDDEN`: a `command` engine runs a program on the user's PC, so it is never added or changed over the protocol (the kind is new in the same release, so no client depended on adding one). 1.4 (runtime 0.18.0, #227) added `voices` with `profile` and `secret` (the voices of an unsaved profile). 1.5 (runtime 0.19.0, #235) added `engine_models` (a provider's models, live), the profile's `send_mode` ("Send to the engine") and the profile view's `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped filling in a default model or voice for any external engine (a profile without one it needs is kept and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice` are only what the profile sets. Runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and `skip_code` (old values are accepted as aliases: `all` is `everything`, `medium` and `quiet` are `skip_code`, so `get` returns the new names) and added `engine_status` to `runtime`; no shipped client depended on the old verbosity values, so the protocol minor was not bumped for it. Clients ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes over an idle older runtime.
+Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types,
+capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the
+readiness fields of `engine_status` and the `engine_status` capability. 1.2 (runtime 0.15.0, #224)
+added [external engines](#external-engines): the capability `engines` and its five core messages,
+`engine_status.reason`, `error.reason`, `voices.refresh` and the licence class `external`. Runtime
+0.16.0 (#225) added the kinds `elevenlabs`, `azure` and `google`, runtime 0.17.0 (#226) `cartesia`,
+`deepgram` and `command` (new values of `engine_list.kinds`). 1.3 (runtime 0.17.0, #226) added the
+message `engine_reload` and the error code `E_FORBIDDEN`: a `command` engine runs a program on the
+user's PC, so it is never added or changed over the protocol (the kind is new in the same release,
+so no client depended on adding one). 1.4 (runtime 0.18.0, #227) added `voices` with `profile` and
+`secret` (the voices of an unsaved profile). 1.5 (runtime 0.19.0, #235) added `engine_models` (a
+provider's models, live), the profile's `send_mode` ("Send to the engine") and the profile view's
+`takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
+filling in a default model or voice for any external engine (a profile without one it needs is kept
+and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
+are only what the profile sets. Runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and
+`skip_code` (old values are accepted as aliases: `all` is `everything`, `medium` and `quiet` are
+`skip_code`, so `get` returns the new names) and added `engine_status` to `runtime`; no shipped
+client depended on the old verbosity values, so the protocol minor was not bumped for it. Clients
+ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes
+over an idle older runtime.
 
 ## Saved settings
 
-Every setting a client changes with `set` is saved in the home and applies again when the next runtime starts (#201): the core keys before the runtime accepts its first client (so before the first speech), an extension's keys when a client enables that extension. Hotkeys that change a setting (the mute cycle, faster, slower) save it too.
+Every setting a client changes with `set` is saved in the home and applies again when the next
+runtime starts (#201): the core keys before the runtime accepts its first client (so before the
+first speech), an extension's keys when a client enables that extension. Hotkeys that change a
+setting (the mute cycle, faster, slower) save it too.
 
-**Defaults** (#202). A setting nobody set has the runtime's default, the Claude plugin's product settings: `voice` `af_sarah` (with an engine that has it; otherwise the engine's default voice), `rate` 250, `volume` 100, `channel_announce` `"on"`, `mute_level` 0, `verbosity` `"skip_code"`, `read_mode` `"done"` (#222), `flush_scope` `"session"` (#228), `minqueue` 5, `background_policy` `"all"`, summaries off, `audio_mode` `"pause"`, `duck_level` 30, `debug_log` true. The tables below give the same defaults. `sonarad` applies them to the layers itself; the library crates keep their own (rate 200, `"everything"`, `"queue"` with 1, `"earcon_only"`, `"off"`).
+**Defaults** (#202). A setting nobody set has the runtime's default, the Claude plugin's product
+settings: `voice` `af_sarah` (with an engine that has it; otherwise the engine's default voice),
+`rate` 250, `volume` 100, `channel_announce` `"on"`, `mute_level` 0, `verbosity` `"skip_code"`,
+`read_mode` `"done"` (#222), `flush_scope` `"session"` (#228), `minqueue` 5, `background_policy`
+`"all"`, summaries off, `audio_mode` `"pause"`, `duck_level` 30, `debug_log` true. The tables below
+give the same defaults. `sonarad` applies them to the layers itself; the library crates keep their
+own (rate 200, `"everything"`, `"queue"` with 1, `"earcon_only"`, `"off"`).
 
 | file in the home | holds |
 |---|---|
@@ -226,15 +407,60 @@ Every setting a client changes with `set` is saved in the home and applies again
 | `logs\sonarad.log` | each line starts with a UTC time with milliseconds (`2026-10-03T10:59:14.123Z`). One line per start (`sonarad <version> started (pid <pid>): engine <id> <status>; home <dir>`), the engine's readiness changes (model downloaded, loaded or failed; not the progress), external engines (`engine add id=<id> kind=<kind> host=<host>[ key=set]`, `engine remove id=<id>`, `engine key id=<id> set\|cleared`, never the key; `engine <id> fallback reason=<reason>[ status=<http>] -> <fallback>: <message>` when the built-in voice read instead, at most one per engine and reason per minute, and `engine <id> recovered`, never the text), the migration, saved values that could not be applied, custom earcons used or refused. Activity (#217), lines that never carry text: `read start item=<id> session=<label, else channel id, else direct> chunks=<n>` (` kind=announce` for a session switch announcement), `read end item=<id> finished\|skipped\|failed`, `reader paused` / `reader resumed` (any source: hotkey, CLI, settings page, SDK), `ask kind=<kind> session=<label or channel>`, `hotkey <action>[ <detail>]` (`hotkey mute level=2`, `hotkey flush session=<label>\|announcement session=<label>\|direct\|idle[ scope=session\|all][ others=<labels>]` (`scope` with `agent`; `others`: the sessions whose ready messages scope `all` dropped, comma separated), `hotkey next_channel session=<label>`, `hotkey faster rate=275`, `... failed: <error>`), and from the `system` extension `media pause apps=<names> (reason: reading item=<id>[ session=<label>])`, `media resume apps=<names> (reason: idle\|paused or muted\|disarmed\|mode <mode>\|shutdown)`, `duck apps=<names> level=<n> (reason: ...)`, `restore apps=<names> (reason: ...)`, failures (`media pause failed ...`, `restore failed apps=...`) and `startup sweep: restore\|media resume[ failed] apps=<names>`. Only engages and restores that touched an app are logged. A value with a space is quoted. Troubleshooting (#219), lines that carry text only while `debug_log` is on: `in {json}` for every message received from an authenticated connection (nothing a connection sends before its `hello` is logged, and its refusals at most one line per 10 s) but `get`, `voices` and HTTP `hello` (compact, without the token, credential-looking values `[redacted]`, `options` as their labels, a string over 4 KB clipped; `in failed type=<t> E_<CODE>: <message>` when refused); `agent <message> channel=<id> speak kind=<prose\|question\|permission\|plan\|tool\|summary> entry=<n>[ decision][ waits=<why>] text=...` for text the agent added, `agent <message> channel=<id> store kind=<k> entry=<n>[ decision] muted=<1\|2> text=...` for text stored while muted (#243: read by a switch or Up, never on its own), `agent <message> channel=<id> <kind>: <why it was not spoken>` (`summary: not made: mute level <n>, the prose is stored as it is`, `skip_code`, held by `read_mode` (`held: <n> chunk(s) wait for minqueue <m> or the turn end`, `held: waits for the turn end (read_mode done), <n> chunk(s)`, `held: <n> chunk(s) wait for the end of the paragraph (send mode message)`; `dropped: <n> held chunk(s) (answered\|turn_start\|stop\|flush, read_mode <mode>)` when an answer, a new turn, a stop or a flush drops what was still held; with summaries on, `prose: dropped: <n> chunk(s) kept for the summary (<reason>)`, `summary: cancelled (<reason>): <n> summary in flight, <n> summary waiting for the earlier ones, the settle window` and `<question\|permission\|plan>: dropped: waited for the summary (<reason>)` when an answer or a stop drops them, `<question\|permission\|plan>: spoken now: the summary it waited for was flushed` when a flush releases them, `<prose\|code>: dropped: flushed reply` and `tool: not announced: flushed reply` for the rest of a flushed reply (#228)), the permission prompt of an unanswered question, summaries), `agent <message> channel=<id> dropped: late text ...` (stamped before the last `turn_start`), `agent <message> earcon <kind>`, `agent <message>[ channel=<id>] wipe reason=<turn_start\|answered\|mute\|stop\|flush>`; `drop channel=<id> entry=<n>[ item=<id> (cut while read)][ kind=<k> from=<message>] reason=<why> text=...` for text dropped before it was heard (`replaced by newer text (policy latest)`, `turn_start`, `answered`, `mute`, `stop`, `flush`, `closed`, `muted`); `read text item=<id> session=<s> kind=<k> from=<message> chunks=<read>/<all> text=...` before each `read end`, the exact cleaned text that went to the voice (`kind` also `announce` or `speak`); `read drop item=<id> session=<s> kind=<k> from=<message> unread` for an item the reader dropped unread; `cue text=...` for a spoken cue. Text fields are JSON strings; with `debug_log` false they are left out (and an `in` line keeps only the fixed fields: type, channel, kind, t, index, final, key, a `set` value that is a number, a switch or one of the runtime's own choice settings, ...), so no session text is written |
 | `logs\hook.log` | one line per `sonara-hook.exe` call: `hook <Event> pid=<pid> <sent\|started the runtime, sent\|dropped (no runtime answered)\|nothing to send> ms=<n>[ session=<id>][ tool=<name>][ notification=<type>] sent=[messages] payload={raw stdin}` (a string field over 4 KB clipped, credential-looking values `[redacted]`, the `tool_input` of a tool other than `AskUserQuestion` reduced to `{"fields":[names]}` and any `tool_response` omitted, `raw="..."` when stdin is not JSON). With `debug_log` false in `config.json`: `sent=[types]` and no payload |
 
-Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it. A value out of range is not applied (and logged), the others still apply; it stays in the file, like a key this runtime does not know (from a newer release), until a client sets that key. A saved value the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies once it is available; the default is used meanwhile. `--engine` on the command line wins over a saved `engine` (except that `--engine fake` keeps a saved external engine, with the fake engine as its fallback), which wins over the default choice below; a saved `engine` may name an external engine; a saved engine that cannot start is logged and the default choice is used. Setting `engine` to another engine replaces a saved voice that engine lacks with the voice in force; setting the same engine again keeps it.
+Files are written atomically (a temp file, then a rename). A `config.json` that is not a JSON object
+gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it.
+A value out of range is not applied (and logged), the others still apply; it stays in the file, like
+a key this runtime does not know (from a newer release), until a client sets that key. A saved value
+the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the
+Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies
+once it is available; the default is used meanwhile. `--engine` on the command line wins over a
+saved `engine` (except that `--engine fake` keeps a saved external engine, with the fake engine as
+its fallback), which wins over the default choice below; a saved `engine` may name an external
+engine; a saved engine that cannot start is logged and the default choice is used. Setting `engine`
+to another engine replaces a saved voice that engine lacks with the voice in force; setting the same
+engine again keeps it.
 
-**Migration from the Python plugin.** The first runtime on the default home (`%LOCALAPPDATA%\Sonara`) that has no `config.json` imports the plugin's settings from `%USERPROFILE%\.sonara` (another folder, or another home: `--migrate-from <dir>`): its `config.json` (voice, rate, speech volume, audio mode, duck level, mute level, verbosity, minimum queue, background policy (`earcon_only`, or any other value as `all`), summary mode, command, model, timeout, settle time, style and custom prompts), `keymap.json` (`nav_start` becomes `restart`, `next_session` becomes `next_channel`; only when the home has no `keymap.json`) and `session_prefs.json` (the session `name` becomes `label`; only when the home has none), and the user's own earcons (`config.json` `earcons: {kind: path}`; each file that exists is copied to `earcons\<kind>.wav`, unless one is there; paths to the plugin's bundled WAVs are skipped). Every value of a format 2 file (the plugin saved only what the user set) is saved, also one equal to the runtime's default, so a user who chose the plugin's old default keeps it; in a file from before format 2 (every key written) a value equal to the plugin's old default (rate 200, volume 100, `audio_mode` `"off"`, `mute_level` 0, `verbosity` `"everything"`, `minqueue` 1, `background_policy` `"earcon_only"`) counts as unset. Summary fields equal to the runtime's default are not saved; a Chatterbox voice speaks as `af_heart`, `audio_control: true` is `audio_mode: duck`, a speech volume above 100 is 100, and in a file from before the plugin's format 2 the old defaults `duck_level: 20` and `summary_timeout: 20` count as unset. The cue voice and fast cues are not imported (the runtime speaks its control cues in the voice in force). The plugin's folder is only read. The migration writes `config.json` with the `_migrated` marker, so it runs once; what it did is in `logs\sonarad.log`.
+**Migration from the Python plugin.** The first runtime on the default home
+(`%LOCALAPPDATA%\Sonara`) that has no `config.json` imports the plugin's settings from
+`%USERPROFILE%\.sonara` (another folder, or another home: `--migrate-from <dir>`): its `config.json`
+(voice, rate, speech volume, audio mode, duck level, mute level, verbosity, minimum queue,
+background policy (`earcon_only`, or any other value as `all`), summary mode, command, model,
+timeout, settle time, style and custom prompts), `keymap.json` (`nav_start` becomes `restart`,
+`next_session` becomes `next_channel`; only when the home has no `keymap.json`) and
+`session_prefs.json` (the session `name` becomes `label`; only when the home has none), and the
+user's own earcons (`config.json` `earcons: {kind: path}`; each file that exists is copied to
+`earcons\<kind>.wav`, unless one is there; paths to the plugin's bundled WAVs are skipped). Every
+value of a format 2 file (the plugin saved only what the user set) is saved, also one equal to the
+runtime's default, so a user who chose the plugin's old default keeps it; in a file from before
+format 2 (every key written) a value equal to the plugin's old default (rate 200, volume 100,
+`audio_mode` `"off"`, `mute_level` 0, `verbosity` `"everything"`, `minqueue` 1, `background_policy`
+`"earcon_only"`) counts as unset. Summary fields equal to the runtime's default are not saved; a
+Chatterbox voice speaks as `af_heart`, `audio_control: true` is `audio_mode: duck`, a speech volume
+above 100 is 100, and in a file from before the plugin's format 2 the old defaults `duck_level: 20`
+and `summary_timeout: 20` count as unset. The cue voice and fast cues are not imported (the runtime
+speaks its control cues in the voice in force). The plugin's folder is only read. The migration
+writes `config.json` with the `_migrated` marker, so it runs once; what it did is in
+`logs\sonarad.log`.
 
 ## Testing aids
 
-`sonarad --engine kokoro|onecore` picks the engine to start with; without it, the saved `engine`, else `kokoro` when `onnxruntime.dll` is next to `sonarad.exe` (`SONARA_ORT_DYLIB` names another copy, a development aid), else `onecore`. A Kokoro start verifies or downloads and loads the model in the background right away. `sonarad --engine fake` uses a deterministic tone engine (10 ms of audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless `--output device` is given, `--output null`: a silent output that keeps real time. `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read and written on every operation), so a test can set up the "apps", kill the runtime and check what the next one restores. `sonarad --keys fake` keeps external engine keys in `<home>\fake-keys.json` instead of Windows Credential Manager (`--keys windows`, the default), so tests never touch the user's credentials. They are meant for tests and the conformance suite, not for apps. With `--engine fake` there is no Kokoro engine, so nothing is ever downloaded.
+`sonarad --engine kokoro|onecore` picks the engine to start with; without it, the saved `engine`,
+else `kokoro` when `onnxruntime.dll` is next to `sonarad.exe` (`SONARA_ORT_DYLIB` names another
+copy, a development aid), else `onecore`. A Kokoro start verifies or downloads and loads the model
+in the background right away. `sonarad --engine fake` uses a deterministic tone engine (10 ms of
+audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless
+`--output device` is given, `--output null`: a silent output that keeps real time.
+`sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension
+with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read
+and written on every operation), so a test can set up the "apps", kill the runtime and check what
+the next one restores. `sonarad --keys fake` keeps external engine keys in `<home>\fake-keys.json`
+instead of Windows Credential Manager (`--keys windows`, the default), so tests never touch the
+user's credentials. They are meant for tests and the conformance suite, not for apps. With
+`--engine fake` there is no Kokoro engine, so nothing is ever downloaded.
 
-`sonarad --no-external-engines` refuses [external engines](#external-engines): no `engines` capability, every `engine_*` message is `E_UNSUPPORTED`, and `engines.json` is not read. A host that bundles Sonara and must not send text off the PC starts it this way.
+`sonarad --no-external-engines` refuses [external engines](#external-engines): no `engines`
+capability, every `engine_*` message is `E_UNSUPPORTED`, and `engines.json` is not read. A host that
+bundles Sonara and must not send text off the PC starts it this way.
 
 ## Examples
 
@@ -271,119 +497,61 @@ for line in f:
 
 ## External engines
 
-Protocol 1.2, capability `engines` (runtime 0.15.0, #224; the kinds `elevenlabs`, `azure` and `google` since 0.16.0, #225; `cartesia`, `deepgram` and `command`, `engine_reload` and `E_FORBIDDEN` (protocol 1.3) since 0.17.0, #226; `gemini` since 0.19.0, #235; design `docs/plans/2026-10-04-external-engines-spec.md`). The user adds speech engines that are not part of Sonara: a cloud API (OpenAI, ElevenLabs, Azure AI Speech, Google Cloud Text-to-Speech, Gemini, Cartesia, Deepgram), a local server that speaks OpenAI's speech API, or a program of the user's own on this PC (`command`). Each is a **profile** that becomes an engine next to `kokoro` and `onecore` (licence class `external`), chosen with `set engine` like any other. Adding one sends nothing anywhere: text goes to it only while it is the current engine (or in `engine_test`, a voice list). The messages are core (no extension to enable) and work over TCP and HTTP (`POST /v1/engine_add`); a runtime started with `--no-external-engines` answers each with `E_UNSUPPORTED` (`this runtime does not allow external engines`).
-
-**Never silent.** When the provider cannot speak a sentence (no key, a refused key, no credit, rate limited, unreachable, a timeout, a server error, an unknown voice, bad settings, audio that is not WAV or PCM), the runtime speaks that sentence with its built-in engine (Kokoro, which itself falls back to OneCore) and, once per episode, prepends a short cue: `<label> cannot be reached. Reading with the built-in voice.` (`has no key`, `refused the key`, `is out of credit`, `is busy`, `has a server problem`, `does not know this voice`, `settings do not work`). An episode ends with a success or a change of the profile or key. `state.engine_status` of the engine shows the `reason` and the `fallback`: `waiting` while it will try again by itself (the breaker after two transient failures in a row: 30 s, doubling to 300 s, with no network wait meanwhile; `quota`: 10 minutes), `unavailable` while the user must change something (`no_key`, `auth`, `bad_voice` for that voice, `bad_config`, `format`). A sentence goes to the provider once (a 429 or 503 with a `Retry-After` of at most 1.5 s is tried once more); a longer wait the provider asks for (`Retry-After`, Gemini's `retryDelay`) is kept from the first failure on: nothing is sent before it ends (a rate limit up to 300 s; `quota` at least 10 minutes, up to 24 hours) (since 0.19.0, #235). A `quota` failure is never tried again at once. For an engine with a slow round trip the reader synthesizes more sentences ahead (`options.prefetch`: 2 for a cloud engine, 1 for a local one), and short repeated texts (spoken cues) are kept in memory.
-
-**Muted: nothing is sent** (runtime 0.18.0, #227). While the reader is muted (`control mute`, the mute hotkey without `agent`) or the agent's `mute_level` is 1 or 2 (also a saved level, from the moment `agent` is enabled), no request of any kind goes to an external engine: every sentence (the one playing, the ones synthesized ahead, a core `speak`, a "Session changed" announcement) and every [spoken cue](#spoken-cues) is read with the built-in engine (Kokoro, else OneCore), which is not a failure (no cue, no `reason`, no breaker), and voice lists are not fetched (`voices` above). Muting cuts a request in flight at once, and that sentence is read with the built-in engine too, so nothing more is sent or billed. The cues of a mute change (`"Muted."`, `"Super muted."`, `"Unmuted."`) are always spoken with the built-in engine, the unmute's included. Two requests the user makes on purpose still reach the engine while muted: `engine_test` (the Test button) and [`preview`](#voice-previews); while the reader itself is muted (core `mute`) they are still sent and billed but play silently, as every clip does. Mute changes apply one at a time, so concurrent ones (a hotkey and another client) leave the engines held exactly while Sonara is muted, and a sentence whose request was cut by a mute that lifted again at once is read with the built-in engine, never dropped. Unmuted, the next sentence goes to the engine again.
-
-**Keys.** A key goes in only through `engine_add` (`secret`) or `engine_key` and is kept in Windows Credential Manager (generic credential `sonara:<id>`, this user on this PC), or read from an environment variable of the runtime's process (`key_ref` `env:NAME`). It is never in a file of the home, a log line or a reply, and goes only in the provider's authentication header, over HTTPS or to a loopback host. The `in` lines of the troubleshooting log drop the `secret` field entirely.
-
-**A key is bound to its address** (runtime 0.15, #224). A stored key is kept with the origin (`scheme://host:port`, the port always written) of the profile it was entered for: the `url`, else the kind's default (`https://api.openai.com:443` for the `openai` preset; for later kinds the provider's address, Azure's from `options.region`). A key is sent only to that origin: when the profile now points elsewhere it is not sent, `key_present` is `false`, and the engine reports `no_key` (`the key of 'x' was entered for <origin>, not <origin>: enter the key again`) and falls back as usual. An `engine_add` replace that changes the origin deletes the stored key unless a `secret` comes in the same request; changes that keep it (voice, model, label, options, another path on the same host) keep the key. A key stored before 0.15 is bound to its profile's address in `engines.json` at the first start of 0.15 (the file is local); one with no recorded address after that (stored by an older runtime) is never sent: enter it again. An `env:` key is sent only to the provider's default origin (the kind's or preset's address) or to the origin the user confirmed in `engines.json` as `"key_origin": "https://host:443"` in that entry (restart the runtime after editing): a `url` that arrives over the protocol, in a new profile or a replace, is never confirmed by it (a `key_origin` in `engine_add` is ignored), and a replace to another origin drops the confirmation. Entries of a format 1 file get `key_origin` set to their address when migrated. A `command` key is bound to the program (`argv[0]`, case ignored) it was entered for, and is deleted when `engines.json` names another program; an `env:` key may go to the program the file names. Requests of an external engine follow no redirect (a `3xx` is an error and the engine falls back), and a loopback engine never goes through a proxy. A key bound to a loopback address goes to whatever program listens on that port, so do not store one for a local server you do not keep running; the origin has no path, so a replace that changes only the path on the same host keeps the key.
-
-### Profile
-
-| field | rule |
-|---|---|
-| `id` | 1 to 32 of `a-z`, `0-9`, `-`, `_`, starting with a letter or digit; not `kokoro`, `onecore`, `fake`, nor starting with `sonara` |
-| `kind` | `openai-compatible`, `elevenlabs`, `azure`, `google`, `gemini`, `cartesia`, `deepgram` or `command` in this runtime (`engine_list.kinds`); a profile of another kind (from a newer release) is kept and listed with `supported: false` |
-| `label` | 1 to 40 characters; spoken in cues. Default: the preset's name (`openai-compatible`), else `ElevenLabs`, `Azure Speech`, `Google Text-to-Speech`, `Gemini`, `Cartesia`, `Deepgram` or `The speech program` |
-| `url` | `openai-compatible`: the base URL with the API version, e.g. `https://api.openai.com/v1`, `http://127.0.0.1:8880/v1`; the cloud kinds: optional, below; `command`: none. HTTPS, or plain HTTP to a loopback host (`localhost`, `127.0.0.0/8`, `::1`), or with `options.allow_http` to a server on the network (then never with a key); no user, query or fragment |
-| `model`, `voice` | up to 200 characters. **Sonara names no model or voice of its own** (since 0.19.0, #235): models and voices change at the provider, so they come from the provider's live lists (`engine_models`, `voices`) or are typed in. The model is required where the provider needs one in every request (`gemini`, `cartesia`, and the `openai`, `localai` and `speaches` presets) and optional where the provider picks its own when none is sent (`elevenlabs`, the other presets: then none is sent); `azure`, `google`, `deepgram` and `command` take none. Every kind but `command` needs a voice: [the voice rule](#the-voice-rule) says which one is used. A profile without a model or voice it needs is still valid (one stored by an older runtime keeps working): it reads with the built-in engine and its status is `bad_config`, "Choose a model for <label> in Sonara's settings (Engines)." or "Choose a voice for <label> in Sonara's settings.", until one is set |
-| `key_ref` | `"none"`, `"credman"` or `"env:NAME"`, where `NAME` ends in `_API_KEY` or `_SPEECH_KEY`, is `SPEECH_KEY`, or starts with `SONARA_` (case-insensitive; any other variable is `E_BAD_REQUEST`, so a client cannot send the runtime's other secrets to a server it chose). Default: `none` for an `openai-compatible` loopback server and for `command`, `credman` otherwise (a cloud kind needs a key even behind a loopback URL) |
-| `send_mode` | "Send to the engine" (since 0.19.0, #235): `"message"` or `"sentence"`, below. Optional: unset (or `null`) is the kind's default, `"sentence"` for `command` and an `openai-compatible` server at a loopback address, `"message"` for every other kind (a cloud kind also behind a local proxy, as for its key). Only a value the profile sets is stored; the view's `send_mode` is the mode in force and `explicit.send_mode` the stored one |
-| `options` | per kind, below; an unknown option is `E_BAD_REQUEST` |
-
-**Send to the engine** (`send_mode`, since 0.19.0, #235). `sentence`: every sentence is its own request, sent as soon as the agent releases it (Kokoro and the Windows voices always read this way; they are not profiles). `message`: what the agent releases for speech at once is one entry, one item and **one request**: the reply at its end in read mode `done`, a batch in `queue`, a finished paragraph in `immediate` (its blank line or the end of its block is the release point, so reading starts after the first paragraph and each paragraph is one request), the prose held when a tool runs (in `immediate` and `queue`; the paragraph and batch rules keep holding for the rest of the turn), the prose held before a question, permission or plan (the decision itself stays its own short request, read with priority), a summary, and core `speak` text. Sentences are joined with a space and paragraphs with a blank line. The text is split only past the provider's input limit (or `options.chunk_chars` when lower): at paragraph boundaries first, then between sentences, into as few requests as possible; Previous and Next move by these parts, and Restart (Up) replays the whole message. The audio plays as it arrives: Gemini's events, and a raw PCM answer read as it comes (ElevenLabs' `/stream` endpoint with a `pcm_*` format, OpenAI-compatible `response_format: "pcm"`, Cartesia); Azure, Google, Deepgram and a WAV answer are read whole before they play. No audio within `first_audio_ms` (a streamed answer) or the request's time limit (a whole answer) is a failure of that request: the built-in engine reads the whole text (the cue first, once per episode; one `fallback` log line per request), playing as it is made. A request's time limit is `timeout_ms` plus 70 ms per character of its text (about the time the text takes to speak), so a long message is never cut for its length; a streamed answer is cut only when it stalls (no audio for `first_audio_ms`) or past that limit. An answer cut after audio came (a stall, a broken connection) keeps the audio played, and the rest of the text is read with the built-in engine (the cue first, once per episode; one `fallback` log line) from the start of the sentence the audio had reached: the place is estimated from the seconds played at 12 characters a second, slower than most voices, so a sentence may be read twice but none is dropped. A mute during a message reads the rest locally the same way (no cue, no log line: a mute is no failure). The following requests of the message go on. A skip, a flush, a new turn or a stop ends the item: its request is cancelled, a streamed answer's connection is closed at the next data that arrives, and nothing more is sent for it. **Costs of a cancelled request**: a whole answer already asked for is abandoned, and the provider may still finish and bill it; a streamed answer whose first audio did not come within `first_audio_ms` is read by the built-in engine, and its connection is dropped when the headers have not come by then, else at the next data, so a provider that already started may still bill that request. The last four complete whole messages are kept in memory (at most 15 million samples, about ten minutes of 24 kHz speech), so a replay (Up after the item ended reads it again as a new item) sends no request; an answer cut off is not kept. The `agent` and `read text` log lines show the joined text once.
-
-At most 16 profiles. Options of every kind: `timeout_ms` (1000 to 120000; 15000 for a cloud engine, 60000 for a local server and for `gemini`, 30000 for a program; in send mode `message` a request gets 70 ms more per character of its text), `prefetch` (1 to 4; 2 for a cloud engine, 1 for a local one and for `gemini`), `allow_http` (boolean), `chunk_chars` (200 to 5000: the most characters one request takes in send mode `message`, when lower than the provider's input limit; `gemini` 2000 by default, about two minutes of speech), `first_audio_ms` (1000 to 60000, default 12000, never more than `timeout_ms`: the longest a streamed answer may go without audio, before its first audio and between two pieces). Options of `openai-compatible`: `preset` (below, default `generic`), `response_format` (`wav`, the default, or `pcm`), `sample_rate` (8000 to 48000; raw PCM, and sent to Speaches), `instructions` (never sent to `kokoro-fastapi` or the Chatterbox presets; sent as set to any other server, such as LocalAI's expressive backends; a model that refuses it, a 400 naming `instructions`, gets the sentence once more without it and none from then on), `extra` (an object merged into the request body last, for a server's own fields), `voices_path` (the voice list path of a `generic` server).
-
-| preset | model | voice list |
-|---|---|---|
-| `openai` | required | none (OpenAI has no voice list API: the voice is typed, from OpenAI's text-to-speech guide); default URL `https://api.openai.com/v1` |
-| `kokoro-fastapi` | optional | `GET {url}/audio/voices`; sends `stream: false` |
-| `localai` | required | `GET {url}/audio/voices?model=<model>` |
-| `speaches` | required | `GET {url}/audio/voices`; sends `sample_rate` |
-| `openedai-speech` | optional | none (typed) |
-| `chatterbox-api` | optional | `GET {root}/voices` (`{root}`: the URL without `/v1`) |
-| `chatterbox-server` | optional | `GET {root}/get_predefined_voices` (file names); always WAV |
-| `generic` | optional | `GET {url}/audio/voices` (or `voices_path`); a failure is an empty list |
-
-The model list of every preset is `GET {url}/models` (`{data: [{id}]}`): for `openai` the ids that name `tts`; for a server, the models it marks as text-to-speech (`task`/`type`), else all it lists; a server without the list gives an empty one (the model is typed). An unknown or retired model (a 404 `model_not_found`, a message naming the model) is `bad_config` whose message names it: "<label> does not know the model '<model>' (404): ... Choose another model in Sonara's settings (Engines)."
-
-A sentence is `POST {url}/audio/speech` with `{model?, input, voice, response_format, speed}` (`model` only when the profile names one) (`speed` is the rate / 200, from 0.25 to 4.0) and `Authorization: Bearer <key>` when there is a key. The answer is WAV (any rate, 16-bit or float) or raw 16-bit mono PCM (rate from the `Content-Type` `rate=`, else `sample_rate`, else 24000); MP3, Ogg, FLAC, JSON or HTML with a 200 status is `format`. With `response_format: "pcm"` (and for the ElevenLabs, Azure, Google, Gemini, Cartesia and Deepgram kinds, which always ask for raw PCM) only the `Content-Type` can name MP3, Ogg or FLAC: samples are never taken for a magic number.
-
-**ElevenLabs** (`kind: "elevenlabs"`). `url` default `https://api.elevenlabs.io`; `model` optional (none sent: ElevenLabs uses its own default; the list is `GET {url}/v1/models`, those with `can_do_text_to_speech`, an empty list when the key may not read it); `voice` (required) a voice id from the voice list, a cloned voice's id included. Options: `output_format` (`pcm_24000`, the default, `pcm_16000`, `pcm_22050`, `pcm_44100` on the Pro tier), `stability`, `similarity_boost`, `style` (0 to 1), `language_code`, `enable_logging` (default `true`; `false` only matters on enterprise accounts). A sentence is `POST {url}/v1/text-to-speech/{voice}?output_format=pcm_24000` with `{text, model_id?, voice_settings?: {speed, ...}, language_code?}` (`voice_settings` is left out when no `stability`, `similarity_boost` or `style` is set and the speed is 1.0, so the voice's stored settings apply) and `xi-api-key: <key>`; the answer is raw 16-bit mono PCM at the named rate. `speed` is the rate / 200 clamped to 0.7 to 1.2 (ElevenLabs' range: 140 to 240 words per minute map exactly, faster rates stay at 1.2). Voice list: `GET {url}/v2/voices`, all pages.
-
-**Azure AI Speech** (`kind: "azure"`). `options.region` (e.g. `westeurope`) gives `https://{region}.tts.speech.microsoft.com`; or `url` names the endpoint (a custom domain). `voice` (required) a voice's short name from the voice list (the name starts with its locale, for example `en-US-...`; names change at Microsoft, so Sonara names none). Options: `region`, `output_format` (`raw-24khz-16bit-mono-pcm`, the default, or `raw-8khz-`, `raw-16khz-`, `raw-22050hz-`, `raw-44100hz-`, `raw-48khz-16bit-mono-pcm`), `lang` (the SSML `xml:lang`; default the voice name's locale). A sentence is `POST {base}/cognitiveservices/v1` with SSML (the text XML-escaped, `<prosody rate>` the rate / 200 from 0.5 to 2.0), `Ocp-Apim-Subscription-Key: <key>`, `X-Microsoft-OutputFormat` and `User-Agent: Sonara/<version>`. A 401 is often a key of another region. A 400 for a voice that is not in the fetched voice list is `bad_voice`. Voice list: `GET {base}/cognitiveservices/voices/list`, or `GET {base}/tts/cognitiveservices/voices/list` when the url is a resource host (`<resource>.cognitiveservices.azure.com`; not verified live).
-
-**Google Cloud Text-to-Speech** (`kind: "google"`). `url` default `https://texttospeech.googleapis.com`; `voice` (required) a voice name from the voice list (it starts with its locale). Options: `language_code` (default the voice name's locale, else `en-US`), `sample_rate` (8000 to 48000, default 24000), `user_project` (sent as `x-goog-user-project`), `model_name` (`voice.modelName`, for Gemini TTS voices; not verified live). A sentence is `POST {url}/v1/text:synthesize` with `{input: {text}, voice: {languageCode, name}, audioConfig: {audioEncoding: "PCM", sampleRateHertz, speakingRate}}` (`speakingRate` the rate / 200 from 0.25 to 2.0) and `X-goog-api-key: <key>` (an API key of a project with the Text-to-Speech API on; never in the URL); the answer's `audioContent` is base64 PCM. A sentence over 5000 UTF-8 bytes is sent in parts. Voice list: `GET {url}/v1/voices`.
-
-**Gemini** (`kind: "gemini"`, since 0.19.0, #235). The Gemini API's speech models (a key from Google AI Studio, aistudio.google.com, Get API key). `url` default `https://generativelanguage.googleapis.com`; `model` (required: it is in the URL) a Gemini speech model id, from the list `GET {url}/v1beta/models` (the models whose id names `tts` and that take `generateContent`; paged, `pageToken`); `voice` (required) from the list `GET {url}/v1beta/voices` (the caller's stored voices, then Google's prebuilt catalog; paged, `page_token`), or a stored voice's id (`voice_...`). Both lists are fetched with the key. Options: `language_code` (a BCP-47 locale, sent as `speechConfig.languageCode`; default none, Gemini tells from the text), `style` (at most 500 characters, a direction such as `calm and warm`); `chunk_chars` and `first_audio_ms` as for every kind (below). **Streamed** (since 0.19.0, #235): a sentence is `POST {url}/v1beta/models/{model}:streamGenerateContent?alt=sse`; each server-sent event is a `GenerateContentResponse` with the next audio, which plays as it comes (the reader starts a chunk at its first audio). When no audio has come after `first_audio_ms` (never more than `timeout_ms`), the sentence is a `timeout` and reads with the built-in engine, with the cue once per episode (a slow free tier no longer holds a sentence for a minute); an answer that stalls after audio came (no audio for `first_audio_ms`) or breaks off keeps that audio, and in send mode `message` the rest is read with the built-in engine from the sentence reached (above); in `sentence` the sentence ends with what came (the log says why). A model that refuses the stream (a 400 or 404 naming `streamGenerateContent`) is asked with `:generateContent` (the whole answer at once) from then on until the runtime restarts. The body is `{contents: [{role: "user", parts: [{text, speechMetadata?: {style}}]}], generationConfig: {responseModalities: ["AUDIO"], speechConfig: {voiceConfig: {prebuiltVoiceConfig: {voiceName}}, languageCode?}, responseFormat: {audio: {mimeType: "AUDIO_L16", sampleRate: 24000}}}}` (a stored voice id, `voice_...` or `voicekey_...`, goes as `voiceConfig: {voice}`) and `x-goog-api-key: <key>` (never in the URL); the answer's `candidates[0].content.parts[].inlineData.data` is base64 PCM (a WAV is read too). Gemini has **no speed**: the rate goes in `speechMetadata.style` after the profile's `style`, as `speaking slowly` (at most 160 words per minute), nothing (161 to 280, around the default rate of 250), `speaking quickly` (281 to 350) or `speaking very quickly`; it is a direction, not a measure, and never read aloud. A model that refuses `responseFormat` or `speechMetadata` (a 400 naming the field) gets the sentence once more without it, and the engine stops sending it until the runtime restarts; a model that refuses both costs two extra requests once. **Requests**: the free tier limits requests per minute and per day, so Gemini sends whole messages by default (send mode `message`, above): a reply of 18 sentences read when done is one request (it was 18), streamed so it plays from its first audio; a message over `chunk_chars` (default 2000) is sent in as few parts as fit. The 0.19 pre-release options `quick_start` (dropped when read) and `chunk_chars: 0` (read as `send_mode: "sentence"`) are folded into `send_mode`. Errors: 401, 403, and a 400 `API_KEY_INVALID` are `auth`; a 400 naming an unknown voice is `bad_voice`; a 404 or a 400 about the model (unknown, retired, not supported) is `bad_config` naming the model ("Gemini does not know the model '<model>' ... Choose another model"); other 400s (`FAILED_PRECONDITION`, a region the API does not serve) are `bad_config`; 429 is `quota` when Google names a daily or spend limit, else `rate_limited`, both waiting for the `retryDelay`; a `...PerDay...` quota id waits at least until the next 08:00 UTC (midnight Pacific standard time, when Google resets requests per day; an hour after the reset in summer) and at least an hour; 5xx is `server`; a 200 with no audio (a blocked text) is `server` for that sentence only. On the free tier Google may use the text to improve its products; with billing on, it does not.
-
-**Cartesia** (`kind: "cartesia"`). `url` default `https://api.cartesia.ai`; `model` (required) a model id from Cartesia's documentation (Cartesia has no model list Sonara uses; a `model_not_found` names it); `voice` (required) a voice id from the voice list (a uuid; a cloned voice's id included). Options: `api_version` (the `Cartesia-Version` date, default `2026-08-14`; a version Cartesia retires answers 400, and the message names this option), `language` (default `en`), `sample_rate` (8000, 16000, 22050, 24000 (the default), 44100 or 48000). A sentence is `POST {url}/tts/bytes` with `{model_id, transcript, voice: {id}, output_format: {container: "raw", encoding: "pcm_s16le", sample_rate}, language, generation_config?: {speed}}` (`generation_config` left out at speed 1.0; `speed` the rate / 200 from 0.6 to 1.5), `Authorization: Bearer <key>` and `Cartesia-Version`; the answer is raw 16-bit mono PCM. Voice list: `GET {url}/voices?limit=100`, all pages (`starting_after`).
-
-**Deepgram** (`kind: "deepgram"`). `url` default `https://api.deepgram.com` (EU: `https://api.eu.deepgram.com`); `voice` (required) is the speech model, one of the `tts` models of the voice list; no `model`. Option: `sample_rate` (8000, 16000, 24000 (the default), 32000 or 48000). A sentence is `POST {url}/v1/speak?model={voice}&encoding=linear16&container=none&sample_rate=24000[&speed=]` with `{text}` and `Authorization: Token <key>`; the answer is raw 16-bit mono PCM. `speed` (the rate / 200 from 0.7 to 1.5) is left out at 1.0; Deepgram's support for it is not confirmed, so when Deepgram refuses it (a 400 whose error body names `speed`, for a sentence that sent it) the sentence is sent once more without it and the engine stops sending it until the runtime restarts. Voice list: the `tts` models of `GET {url}/v1/models`.
-
-**A program** (`kind: "command"`). A program of the user's own on this PC speaks, for example a Piper install; nothing is bundled, and the text stays on the PC. **It is configured only locally, never over the protocol**: `engine_add` with `kind: "command"`, or one that would replace an existing `command` profile (with any kind), is `E_FORBIDDEN` over TCP and HTTP, from any client or SDK, before any other check (so a reply never says whether a path exists); the message is `a command engine runs a program on this PC, so it is never added or changed over the protocol: add it with `sonara engines add <id> --kind command`, or in engines.json`. The user adds one by editing `engines.json` in the home, or with `sonara engines add <id> --kind command --option 'argv=[...]'`, which writes `engines.json` as the user and then sends `engine_reload` (which takes no profile); listing, `engine_test`, selecting it with `set engine`, `engine_key` and `engine_remove` work over the protocol as for any profile. The reason: the token is shared with the settings page in the browser and with every client, so a protocol message that names a program to run would turn any exposure of the token into running code. `options.argv` (required) is the program's full path (an `.exe` that exists: checked by `sonara engines add` and again before every start; a `.bat` or `.cmd` is refused, as the command shell would read its arguments as commands) and its arguments, at most 64. It is started directly, never through a shell (`cmd /c`) or a command line built from text: each `argv` entry is passed as one argument (quoted for Windows by the runtime), so characters such as `&`, `|`, `>`, `^`, `%` or `"` in an argument reach the program as they are. **The text read is never an argument**: `{text}` in `argv` is refused (the entry is listed with `error`). Placeholders inside any argument, filled in one pass (a filled-in value is not scanned again): `{voice}`, `{rate}` (words per minute), `{speed}` (the rate / 200, two decimals), `{out}` (a temporary `.wav` path, deleted afterwards), `{in}` (a temporary UTF-8 `.txt` file holding the text, deleted afterwards). A voice that goes into `{voice}` must be one of `options.voices` when that list is set, and may not start with `-` (it could read as an option) or hold control characters; without that list it must also be a plain name (letters, digits, `_`, `-` and `.`, no `..`), never a path such as `\host\share\m.onnx` or `C:\x.onnx`, so a client cannot change what the program loads (a model path belongs in `options.voices`, which only the user writes); otherwise the program is not started (`bad_config`). Options: `input` (`stdin`, the default: the text in UTF-8, then closed; or `file`: the text in the file at `{in}`, which must be in `argv`), `output` (`stdout-wav`, the default; `stdout-pcm`: raw 16-bit mono at `sample_rate`, which it then needs; `file`: a WAV at `{out}`, which must be in `argv`), `sample_rate` (8000 to 48000), `voices` (the names offered as its voice list). A key, when `key_ref` names one, is passed in the environment variable `SONARA_ENGINE_KEY`, never as an argument. Outcomes: a program that cannot start (or no longer exists) is `bad_config`, an exit code other than 0 is `server` (with the last line of its error output, with the key cut out and masked), no output or output that is not WAV/PCM is `format`, and over `timeout_ms` (default 30 s) or on a cancel the process is killed (`timeout`), with every process it started (a Job Object); a process it leaves running when it exits is ended too, so a program must not hand its work to a child that outlives it. A stored profile whose program went away stays and reads with the fallback until it is back.
-
-**The profile view** (in replies; never a key): the profile with the address in force (the preset's or kind's default `url` filled in; the `model` and `voice` only as the profile sets them, never a default), plus `explicit` (since 0.18.0, #227: the `url`, `model`, `voice` and, since 0.19.0, `send_mode` the profile sets itself; an edit form starts from these so a default, such as an Azure region's endpoint, stays a default), `takes_model`, `model_required` and `model_list` (since 0.19.0, #235: whether the kind has a model, needs one, and whether the provider lists its models), `missing` (since 0.19.0: what the user must still pick, `"model"` and/or `"voice"`; the voice is not missing for the current engine while the voice setting names one), `key_present` (a key resolves now, also for `env:`), `sends_text_to` (the URL's host; for `command` `program <file name>`), `local` (a loopback host or a program), `send_mode` (since 0.19.0, #235: the send mode in force, the profile's or the kind's default), `license_class: "external"`, `supported`, `current` (it is the reader's engine) and `status` (its `engine_status` without `engine`; `null` when not usable). An entry that cannot be used has `error`.
-
-```json
-{"id": "openai", "kind": "openai-compatible", "label": "OpenAI", "url": "https://api.openai.com/v1", "model": "<model>", "voice": "<voice>", "key_ref": "credman", "options": {"preset": "openai"}, "explicit": {"model": "<model>", "voice": "<voice>"}, "takes_model": true, "model_required": true, "model_list": true, "missing": [], "key_present": true, "sends_text_to": "api.openai.com", "local": false, "send_mode": "message", "license_class": "external", "supported": true, "current": false, "status": {"ready": true, "status": "ready"}}
-```
-
-### Messages
-
-A request's `id` is its correlation id (echoed in the reply), so these messages name a profile with `engine`.
-
-| message | fields | reply |
-|---|---|---|
-| `engine_list` | none | `{engines: [view...], builtin: ["kokoro", "onecore"], kinds: ["openai-compatible", "elevenlabs", "azure", "google", "gemini", "cartesia", "deepgram", "command"], presets: [...]}` |
-| `engine_add` | `engine` (the profile), `secret?` (stored as its key; sets `key_ref` `credman` when absent, `E_BAD_REQUEST` with `env:` or `none`), `replace?` (default `false`) | `{engine: view}`. Validates, saves `engines.json`, stores the key, registers the engine; it does not select it. Kind `command`, or an id that is a `command` profile, is `E_FORBIDDEN` (protocol 1.3; above). An existing id without `replace: true` is `E_BAD_REQUEST`; a replace keeps the stored key unless `secret` is given or the origin changes (then the key is deleted, see Keys), forgets the engine's failures and cached audio, and applies to the next sentence when it is the current engine |
-| `engine_remove` | `engine`, `forget_key?` (default `true`) | `{removed: "<id>", engine: "<engine now in force>"}`. The current engine is first switched to the default choice (Kokoro when installed, else OneCore; saved like any `set`); then the engine is unregistered, removed from `engines.json` and its stored key deleted |
-| `engine_key` | `engine`, `secret` (a string, or `null` to delete) | `{engine, key_present}`; the key is bound to the profile's origin now; clears a `no_key` or `auth` block. `E_BAD_REQUEST` for a profile whose `key_ref` is `env:` or `none` |
-| `engine_reload` | none (protocol 1.3; any other field is ignored: it never takes a profile) | `engine_list`'s fields plus `problems` (the lines also logged). Reads `engines.json` again after the user or `sonara engines add --kind command` changed it: an unchanged profile keeps its engine, a changed one is replaced (applies to the next sentence when current), one that is gone or now unusable is unregistered, and a current engine that went away is switched to the default choice (saved like any `set`). A stored key whose address (or, for a `command`, program) is no longer its entry's is deleted (see Keys); other keys are untouched. A file that is not JSON is `E_BAD_REQUEST` and changes nothing. `engine_add` and `engine_remove` first read `engines.json` again when it changed on disk since the runtime last read or saved it, so a save never writes an older list over the user's edit (a file that is not JSON fails them the same way and is not overwritten) |
-| `engine_test` | `engine`, `text?` (default "Hello. This is how Sonara sounds with this voice.", at most 300 characters), `voice?`, `play?` (default `true`) | `{engine, voice, ms, sample_rate, duration_ms}`. One synthesis at the current rate with no fallback and no cache, with the voice of [the voice rule](#the-voice-rule), played as a clip over whatever is read (as `preview`) when `play`; it is sent even while Sonara is muted (the user asked for it). A success clears the engine's blocks and breaker; a failure is `E_ENGINE` with `reason` |
-| `engine_models` | `engine` and `refresh?`, or `profile` (an unsaved profile, as for `voices`) and `secret?` (protocol 1.5, #235) | `{models: [{id, name}], list, takes_model, required, error?}`: the provider's models now (`list`: it has a model list API; else the model is typed, and `models` holds only the profile's own). A saved engine's list is cached as its voices are (fetched again after 10 minutes or with `refresh`; a failure is not retried for a minute); a failed fetch keeps the known models and adds `error: {reason, message}`. Nothing is fetched while Sonara is muted (`error.reason` `muted`). A draft is built for this request only, with `secret` as its only key, as for `voices`; never logged |
-
-```json
-> {"type": "engine_add", "engine": {"id": "openai", "kind": "openai-compatible", "options": {"preset": "openai"}}, "secret": "sk-...", "id": 1}
-< {"id": 1, "ok": true, "engine": {"id": "openai", "kind": "openai-compatible", "url": "https://api.openai.com/v1", "key_ref": "credman", "key_present": true, "missing": ["model", "voice"], "sends_text_to": "api.openai.com", "current": false, ...}}
-> {"type": "engine_models", "engine": "openai", "id": 4}
-< {"id": 4, "ok": true, "models": [{"id": "<model>", "name": "<model>"}], "list": true, "takes_model": true, "required": true}
-> {"type": "engine_add", "engine": {"id": "openai", "kind": "openai-compatible", "model": "<model>", "voice": "<voice>", "options": {"preset": "openai"}}, "replace": true, "id": 5}
-> {"type": "set", "key": "engine", "value": "openai", "id": 2}
-< {"id": 2, "ok": true, "key": "engine", "value": "openai"}
-> {"type": "engine_test", "engine": "openai", "play": false, "id": 3}
-< {"id": 3, "ok": false, "error": {"code": "E_ENGINE", "message": "OpenAI refused the key (401): Incorrect API key provided", "reason": "auth"}}
-```
-
-| error | code |
-|---|---|
-| a profile or message field breaks a rule | `E_BAD_REQUEST` |
-| an unknown profile id | `E_NOT_FOUND` |
-| `engine_add` of a `command` engine, or replacing one | `E_FORBIDDEN` |
-| the runtime refuses external engines; a kind this runtime lacks | `E_UNSUPPORTED` |
-| Credential Manager failed; `engine_test` failed | `E_ENGINE` |
-
-### The voice rule
-
-One rule decides the voice of an external engine everywhere (#235): the voice a request names (`engine_test` `voice`, `preview` `voice`), else the user's voice setting (`set voice`) while that engine is the current one, else the profile's `voice`. Reading, the [preview](#voice-previews) and `engine_test` (the settings page's Test button, `sonara engines test`) all follow it, so the voice picked in Sonara is the one heard. With none of them the sentence reads with the built-in engine and the status says "choose a voice". Model ids and voice names in this document are placeholders such as `<model>` and `<voice>`: the provider's own lists name the current ones.
-
-The command line: `sonara engines list|add|key|use|test|models|voices|remove` (`sonara engines help`; `models <id>` and `voices <id>` print the provider's lists, since 0.19.0); a key is read from stdin or a prompt without echo, never from an argument. `sonara engines add <id> --kind command` writes `engines.json` itself and sends `engine_reload`; an entry the runtime then lists with `error` is taken out of the file again. The SDKs: `client.engines` (`@sonara/client` `EnginesApi`, `sonara-client` `Engines`, with `reload()` and, since 0.19.0, `models()`); their `add` of a `command` engine is `E_FORBIDDEN` like any client's.
+Protocol 1.2, capability `engines`: speech engines the user adds at run time (cloud APIs, local
+servers, a program on this PC), the `engine_*` messages and the voice rule. The full contract is
+[protocol-v1-engines.md](protocol-v1-engines.md).
 
 ## Extension `channels`
 
-Spec section 4.2, L2 (`crates/sonara-channels`). Several named sources (terminal tabs, chats) share the one reader: each **channel** keeps its own messages and policy, and one channel is read at a time. Enable it with `hello` `extensions: ["channels"]`. Black-box tests: `conformance/channels/`.
+Spec section 4.2, L2 (`crates/sonara-channels`). Several named sources (terminal tabs, chats) share
+the one reader: each **channel** keeps its own messages and policy, and one channel is read at a
+time. Enable it with `hello` `extensions: ["channels"]`. Black-box tests: `conformance/channels/`.
 
-**Model.** A channel holds its current **batch**: the messages sent to it since it was last caught up, with a read position. Messages wait in their channel and go to the reader one at a time, only when the reader is idle, so text spoken without a `channel` (core `speak`) is read first. Heard messages stay, so a manual return can replay the batch; a message sent to a channel that is caught up (and not still reading its last message) starts a new batch.
+**Model.** A channel holds its current **batch**: the messages sent to it since it was last caught
+up, with a read position. Messages wait in their channel and go to the reader one at a time, only
+when the reader is idle, so text spoken without a `channel` (core `speak`) is read first. Heard
+messages stay, so a manual return can replay the batch; a message sent to a channel that is caught
+up (and not still reading its last message) starts a new batch.
 
-- **Policy** `latest` (the default): a new message replaces the channel's unread messages, so the newest one is always read and never dropped ("one message, always the last"). `queue`: every message is read, in order.
-- **Who reads next:** the channel being read keeps the floor until its batch is read; then the focused channel; then the first channel (in opening order) with something unread. A channel you left with `next_channel` is not resumed on its own until it gets a new message.
-- **Muted channels** (`channel_prefs` `muted`): a muted channel's messages wait, unread, and it never takes the floor (muting the channel being read cuts its item); `next_channel` skips it unless every channel is muted. Unmuted, its waiting messages are read.
-- **Agent batches** (with `agent`, runtime 0.20.2, #243): the batch the agent writes into a session's channel is the session's latest message. It grows while the message goes on, also after the channel caught up, until the session starts a new turn, an answer comes or the session is flushed (`control stop` or `flush` with that channel); `control stop` without a channel and muting keep it. Text the agent stores while muted (`mute_level`) joins it as heard (unread when a replay of the channel is in progress, so the replay reads it). An answered decision leaves the batch, so a replay reads the latest message without it: `answered` and `turn_start` of the session take out every question, permission and plan item (unread ones are logged `drop ... reason=answered`); a `tool` only those already read aloud (a parallel tool or a subagent's tool shares the session, so an unread decision or one stored while muted stays); `turn_end` every one read or stored, never an unread one. A decision not answered yet stays and is read by a replay. A turn that comes without `turn_start` (a background task or a subagent woke the agent) starts a new batch at its first `tool` or `ask` after the `turn_end`; prose streamed before that still joins the previous batch.
-- **Announcements:** a switch to another channel is announced by a short item before its first message: `"<label>."`, or `"<label>, reading again."` when the batch is replayed from the top. An automatic hand-off is announced when the channel differs from the one that read last (never for the first channel to read), also when that channel has closed since and when the new channel takes the floor with priority (a decision) or with `interrupt` (runtime 0.20.1, #241), but not for a channel with the same `host_tab` as the closed one that read last (a new session in the same host tab, after `/clear` or a relaunch, replaces it; without a `host_tab` such a new session is announced); `next_channel` is always announced. Without `agent`, a channel without a `label` is not announced. `set channel_announce "off"` turns announcements off. With the `agent` extension on (an agent host such as the Claude plugin) the texts are the Python plugin's, `"Session changed: <label>."` and `"Session changed: <label>, reading again."` (a channel without a label: `"Session changed."` and `"Session changed, reading again."`, so no switch is silent, #241), and every announcement is preceded by the `session_change` earcon, for automatic hand-offs and manual switches alike (#209); not at `mute_level` 2. The chime waits for any earcon playing, and the announcement waits until the chime ended, so the user hears the earcons, then the label (#238). The announcement waits for every earcon queued, also when its own chime was dropped as a duplicate or because the queue was full. Without `agent` the texts stay generic.
+- **Policy** `latest` (the default): a new message replaces the channel's unread messages, so the
+  newest one is always read and never dropped ("one message, always the last"). `queue`: every
+  message is read, in order.
+- **Who reads next:** the channel being read keeps the floor until its batch is read; then the
+  focused channel; then the first channel (in opening order) with something unread. A channel you
+  left with `next_channel` is not resumed on its own until it gets a new message.
+- **Muted channels** (`channel_prefs` `muted`): a muted channel's messages wait, unread, and it
+  never takes the floor (muting the channel being read cuts its item); `next_channel` skips it
+  unless every channel is muted. Unmuted, its waiting messages are read.
+- **Agent batches** (with `agent`, runtime 0.20.2, #243): the batch the agent writes into a
+  session's channel is the session's latest message. It grows while the message goes on, also after
+  the channel caught up, until the session starts a new turn, an answer comes or the session is
+  flushed (`control stop` or `flush` with that channel); `control stop` without a channel and muting
+  keep it. Text the agent stores while muted (`mute_level`) joins it as heard (unread when a replay
+  of the channel is in progress, so the replay reads it). An answered decision leaves the batch, so
+  a replay reads the latest message without it: `answered` and `turn_start` of the session take out
+  every question, permission and plan item (unread ones are logged `drop ... reason=answered`); a
+  `tool` only those already read aloud (a parallel tool or a subagent's tool shares the session, so
+  an unread decision or one stored while muted stays); `turn_end` every one read or stored, never an
+  unread one. A decision not answered yet stays and is read by a replay. A turn that comes without
+  `turn_start` (a background task or a subagent woke the agent) starts a new batch at its first
+  `tool` or `ask` after the `turn_end`; prose streamed before that still joins the previous batch.
+- **Announcements:** a switch to another channel is announced by a short item before its first
+  message: `"<label>."`, or `"<label>, reading again."` when the batch is replayed from the top. An
+  automatic hand-off is announced when the channel differs from the one that read last (never for
+  the first channel to read), also when that channel has closed since and when the new channel takes
+  the floor with priority (a decision) or with `interrupt` (runtime 0.20.1, #241), but not for a
+  channel with the same `host_tab` as the closed one that read last (a new session in the same host
+  tab, after `/clear` or a relaunch, replaces it; without a `host_tab` such a new session is
+  announced); `next_channel` is always announced. Without `agent`, a channel without a `label` is
+  not announced. `set channel_announce "off"` turns announcements off. With the `agent` extension on
+  (an agent host such as the Claude plugin) the texts are the Python plugin's,
+  `"Session changed: <label>."` and `"Session changed: <label>, reading again."` (a channel without
+  a label: `"Session changed."` and `"Session changed, reading again."`, so no switch is silent,
+  #241), and every announcement is preceded by the `session_change` earcon, for automatic hand-offs
+  and manual switches alike (#209); not at `mute_level` 2. The chime waits for any earcon playing,
+  and the announcement waits until the chime ended, so the user hears the earcons, then the label
+  (#238). The announcement waits for every earcon queued, also when its own chime was dropped as a
+  duplicate or because the queue was full. Without `agent` the texts stay generic.
 
 ### Messages
 
@@ -395,20 +563,53 @@ Spec section 4.2, L2 (`crates/sonara-channels`). Several named sources (terminal
 | `speak` | `channel?` plus the core fields | with `channel`: add a message to it (opened with the defaults if needed). `mode` overrides the policy for this message (`replace` drops the channel's unread messages, `append` keeps them). `interrupt: true` reads it now: it goes before the channel's unread messages, the current item is cut and the switch is announced; another channel's message cut this way is read again once this channel's batch is read. Reply `{item_id, channel, dropped}`: `item_id` is the reader item when the message went to the reader at once, `null` while it waits in its channel (behind other messages or an announcement); `dropped` counts the unread messages it replaced |
 | `control` | `channel?` plus the core `action`, or `action: next_channel` or `flush` | see below |
 
-`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); an unknown channel in `channel_close`, `focus` or `control` is `E_NOT_FOUND`.
+`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); an unknown channel in `channel_close`,
+`focus` or `control` is `E_NOT_FOUND`.
 
 **`control` once `channels` is enabled.** Without `channel` the actions are the core ones, except:
 
-- `stop` also skips every channel to its end (nothing more is read until a new message; heard messages stay replayable).
-- `restart` while nothing is playing replays the batch of the channel being read or read last (the Claude plugin's Up key), not only its last item; before any channel was read (everything came while muted), the focused channel's, else the one written to last (runtime 0.20.2, #243). When that channel is the agent's and its batch is empty (its only item was an answered decision), `restart` reads nothing.
+- `stop` also skips every channel to its end (nothing more is read until a new message; heard
+  messages stay replayable).
+- `restart` while nothing is playing replays the batch of the channel being read or read last (the
+  Claude plugin's Up key), not only its last item; before any channel was read (everything came
+  while muted), the focused channel's, else the one written to last (runtime 0.20.2, #243). When
+  that channel is the agent's and its batch is empty (its only item was an answered decision),
+  `restart` reads nothing.
 
-With `channel`: `stop` skips that channel to its end and cuts its item if it is being read; `restart` goes back to the start of its item if that channel is being read, else replays the channel's batch from the top and switches to it (cutting the current item, announced); any other action applies only while that channel is being read, and is a no-op otherwise.
+With `channel`: `stop` skips that channel to its end and cuts its item if it is being read;
+`restart` goes back to the start of its item if that channel is being read, else replays the
+channel's batch from the top and switches to it (cutting the current item, announced); any other
+action applies only while that channel is being read, and is a no-op otherwise.
 
-`next_channel` (reply `{channel}`, `null` when no channel is open) switches now: it moves around the channels in opening order, skipping channels with nothing to hear (unless all are empty), starting from the channel being read or the one that read last. It cuts the current item and announces the target. A fully heard target, landing on the same channel, or returning to a replay in progress replays the batch from the top; unread messages resume where they stopped (a message cut by the switch is read again).
+`next_channel` (reply `{channel}`, `null` when no channel is open) switches now: it moves around the
+channels in opening order, skipping channels with nothing to hear (unless all are empty), starting
+from the channel being read or the one that read last. It cuts the current item and announces the
+target. A fully heard target, landing on the same channel, or returning to a replay in progress
+replays the batch from the top; unread messages resume where they stopped (a message cut by the
+switch is read again).
 
-`flush` (#228, the flush hotkey; reply `{flushed, channel, scope, others}`) stops what is being read now. When a channel's item is playing or paused, that channel is skipped to its end and its item cut, as `stop` with that `channel` (`flushed: "channel"`, `channel` its id); a paused reader is un-paused. In scope `session` the other channels keep everything and are read next as usual. When a switch announcement is playing, only the announcement is skipped and the channel it names is read at once with all its messages (`flushed: "announcement"`, `channel` the announced one): the press was aimed at the channel that had just ended. Once that channel's first item has started, a flush flushes it. When the reader is reading text spoken without a `channel`, only that item is skipped (`flushed: "direct"`). When nothing is being read, `flushed` is `"nothing"`: in scope `session` nothing changes; with `agent` and scope `all` the other sessions' ready text is still dropped and listed in `others`. It takes no `channel` (`E_BAD_REQUEST`; use `stop` with the channel). Without the extension it is `E_UNSUPPORTED`. `scope` is the `flush_scope` in force (`"session"` without `agent`) and `others` the channels whose ready messages scope `all` dropped too (`[]` in scope `session`). With `agent` it also drops that session's agent state and skips the rest of its reply, and scope `all` drops the other sessions' ready messages, see below.
+`flush` (#228, the flush hotkey; reply `{flushed, channel, scope, others}`) stops what is being read
+now. When a channel's item is playing or paused, that channel is skipped to its end and its item
+cut, as `stop` with that `channel` (`flushed: "channel"`, `channel` its id); a paused reader is
+un-paused. In scope `session` the other channels keep everything and are read next as usual. When a
+switch announcement is playing, only the announcement is skipped and the channel it names is read at
+once with all its messages (`flushed: "announcement"`, `channel` the announced one): the press was
+aimed at the channel that had just ended. Once that channel's first item has started, a flush
+flushes it. When the reader is reading text spoken without a `channel`, only that item is skipped
+(`flushed: "direct"`). When nothing is being read, `flushed` is `"nothing"`: in scope `session`
+nothing changes; with `agent` and scope `all` the other sessions' ready text is still dropped and
+listed in `others`. It takes no `channel` (`E_BAD_REQUEST`; use `stop` with the channel). Without
+the extension it is `E_UNSUPPORTED`. `scope` is the `flush_scope` in force (`"session"` without
+`agent`) and `others` the channels whose ready messages scope `all` dropped too (`[]` in scope
+`session`). With `agent` it also drops that session's agent state and skips the rest of its reply,
+and scope `all` drops the other sessions' ready messages, see below.
 
-A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) only cuts the current item: text spoken without a `channel` that is already waiting in the reader still plays first, so it comes between the announcement and the channel's message. A channel item ended from outside the extension (a core `speak` with `interrupt`, or `skip`) counts as heard: the extension cannot tell it apart from a user skip, so that message is not read again on its own (`restart` with the channel replays it).
+A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) only cuts the current
+item: text spoken without a `channel` that is already waiting in the reader still plays first, so it
+comes between the announcement and the channel's message. A channel item ended from outside the
+extension (a core `speak` with `interrupt`, or `skip`) counts as heard: the extension cannot tell it
+apart from a user skip, so that message is not read again on its own (`restart` with the channel
+replays it).
 
 ### Setting
 
@@ -419,7 +620,10 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 
 ### State
 
-`state.now_playing` gains `channel` and `host_tab` (both `null` for text spoken without a channel; an announcement belongs to the channel it announces), and `queued` also counts the channels' unread messages. A `state` event is sent when the reader's state changes, so `queued` catches up with a new channel message at the next change.
+`state.now_playing` gains `channel` and `host_tab` (both `null` for text spoken without a channel;
+an announcement belongs to the channel it announces), and `queued` also counts the channels' unread
+messages. A `state` event is sent when the reader's state changes, so `queued` catches up with a new
+channel message at the next change.
 
 ```json
 {"event": "state", "seq": 31, "now_playing": {"item_id": 12, "label": "Build tab", "text": "Build finished.", "chunk": 0, "chunks": 1, "channel": "tab-3", "host_tab": "3"}, "queued": 1, "paused": false, "muted": false, "volume": 100, "rate": 200, "voice": null, "engine_status": {"engine": "onecore", "ready": true, "status": "ready"}}
@@ -427,15 +631,39 @@ A switch (`next_channel`, `restart` with a channel, `speak` with `interrupt`) on
 
 ## Extension `agent`
 
-Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat assistants on top of [`channels`](#extension-channels): one channel per agent session, with streamed text, turns, decisions spoken with priority, earcons, three mute levels and optional summaries. Enable it with `hello` `extensions: ["agent"]`; it needs `channels`, which is enabled with it (the reply lists both). Black-box tests: `conformance/agent/`.
+Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat assistants on top of
+[`channels`](#extension-channels): one channel per agent session, with streamed text, turns,
+decisions spoken with priority, earcons, three mute levels and optional summaries. Enable it with
+`hello` `extensions: ["agent"]`; it needs `channels`, which is enabled with it (the reply lists
+both). Black-box tests: `conformance/agent/`.
 
-**Model.** Each channel has a current **turn**. The agent's text is streamed into it (`stream`), split into sentences and added to the channel's batch as it completes, whatever the channel's policy (a turn is many messages). A new turn (`turn_start`) drops what is left of the previous one: its unread sentences, and its item if it is being read ("one message, always the last"). Text that arrives late from an earlier turn is dropped (see `t`). Decisions (`ask`) are read before the other channels as soon as the item playing ends (the batch reading now waits), and play an earcon.
+**Model.** Each channel has a current **turn**. The agent's text is streamed into it (`stream`),
+split into sentences and added to the channel's batch as it completes, whatever the channel's policy
+(a turn is many messages). A new turn (`turn_start`) drops what is left of the previous one: its
+unread sentences, and its item if it is being read ("one message, always the last"). Text that
+arrives late from an earlier turn is dropped (see `t`). Decisions (`ask`) are read before the other
+channels as soon as the item playing ends (the batch reading now waits), and play an earcon.
 
-**Background sessions (`background_policy`, #195).** With `"earcon_only"` (the Python plugin's default; the runtime's is `"all"` since #202) only the focused channel (the session the user prompted last: the Claude hooks `focus` on every prompt) is read automatically; the other channels play their earcons, and their text and decisions wait until the user prompts that session (`focus`), switches to it (`next_channel`) or replays it (`restart`). Exceptions, as in the Python plugin: the channel focused before keeps the right to finish what it had unread when the focus moved, a summary (or the raw text standing in for one) is read whatever the focus, and text a host speaks into a channel (`speak` with `channel`) is always read. With no channel focused nothing is held back. `"all"` reads every channel in turn.
+**Background sessions (`background_policy`, #195).** With `"earcon_only"` (the Python plugin's
+default; the runtime's is `"all"` since #202) only the focused channel (the session the user
+prompted last: the Claude hooks `focus` on every prompt) is read automatically; the other channels
+play their earcons, and their text and decisions wait until the user prompts that session (`focus`),
+switches to it (`next_channel`) or replays it (`restart`). Exceptions, as in the Python plugin: the
+channel focused before keeps the right to finish what it had unread when the focus moved, a summary
+(or the raw text standing in for one) is read whatever the focus, and text a host speaks into a
+channel (`speak` with `channel`) is always read. With no channel focused nothing is held back.
+`"all"` reads every channel in turn.
 
-**Dead sessions.** A channel with no agent message for 6 hours has its turn state freed (as `channel_close` does for the turn); its channel is closed too when it is neither focused nor being read and has nothing unread. `channel_prefs` `forget` does it at once.
+**Dead sessions.** A channel with no agent message for 6 hours has its turn state freed (as
+`channel_close` does for the turn); its channel is closed too when it is neither focused nor being
+read and has nothing unread. `channel_prefs` `forget` does it at once.
 
-**Late text (`t` and `turn`).** Senders that run as separate processes (hooks) can deliver the old turn's last text after the new prompt. Every agent message may carry `t`, the sender's start time in seconds (any clock, the same one for all senders of a channel, such as Unix time). A `stream`, `turn_start` or `turn_end` whose `t` is older than the channel's last accepted `turn_start` is dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id that a later `turn_start` replaced. Messages without `t` and `turn` are never stale.
+**Late text (`t` and `turn`).** Senders that run as separate processes (hooks) can deliver the old
+turn's last text after the new prompt. Every agent message may carry `t`, the sender's start time in
+seconds (any clock, the same one for all senders of a channel, such as Unix time). A `stream`,
+`turn_start` or `turn_end` whose `t` is older than the channel's last accepted `turn_start` is
+dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id that a later
+`turn_start` replaced. Messages without `t` and `turn` are never stale.
 
 ### Messages
 
@@ -449,15 +677,64 @@ Spec section 4.3, L3 (`crates/sonara-agent`). Speech for coding agents and chat 
 | `answered` | `channel`, `label?` | the user answered the question: everything queued for the channel is stale, so its unread text is dropped and its item cut, summary work and held decisions are dropped; the turn goes on |
 | `earcon` | `kind` | play an earcon: `choice`, `permission`, `error`, `turn_done`, `nav`, `nav_edge`, `session_change`, `summary_failed` |
 
-`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); a channel is opened with the defaults when it gets its first text (open it with `channel_open` to give it a label for announcements). `label` (a string, optional, `E_BAD_REQUEST` when not a string on a message that names a channel, ignored on `earcon`; runtime 0.20.1, #241) is the channel's label for a channel that has none yet: a channel the message opens gets it (the user's `channel_prefs` label wins), and an open channel without a label gets it; a label the channel has is never replaced (use `channel_open` to rename). The Claude plugin's hook sends the session's project with every message that names the session, so a session whose first message after a runtime restart is not its prompt is still announced by name. The project (runtime 0.20.3, #245; before, the last folder of `cwd`, which changed with every `cd`): in `<repo>\.claude\worktrees\<name>` it is `<repo>`; else the repository of the nearest `.git` at or above `cwd`, below the user's home folder (`USERPROFILE`; a `.git` folder needs a `HEAD`) (a linked worktree's `.git` file is followed to its main repository's folder name; a submodule keeps its own); else `cwd`'s last folder. Its `channel_open` sends `keep_label: true`, so a session keeps the first name it got. With the extension on, `channel_close` also forgets the channel's turn, and `control stop` without a channel also drops every channel's summary work and held decisions. `control flush` (#228) does that for the session being read: its prose held by `read_mode`, the prose kept for its summary, its summaries in flight, waiting or settling and the decisions waiting for them are dropped, and the rest of that reply is skipped: until the session's next `turn_start`, its prose (also late prose after its `turn_end`) is dropped and its tool runs are not announced (logged `dropped: flushed reply`), and it makes no summary. Its decisions (question, permission, plan) asked later in that reply are still read, since they need an answer; `turn_done` still plays when it ends. A flush answers nothing: a question of that session keeps its awaiting mark (its permission prompt stays silent), and the decisions that waited for the cancelled summary are read now instead of being dropped (decisions already queued in the channel are dropped with its other unread text). With `flush_scope` `"session"` every other session keeps its held prose, its summary work and its queued text, and is read next. With `"all"` every other session whose turn has ended (its `turn_end` came since its last `turn_start`) also loses its ready messages: its unread text, its summaries in flight, waiting or settling (the decisions that waited for them are read now), and a channel without agent turn state (text a host spoke into it) loses its unread text too, also when nothing was being read (text the background policy or a session mute holds). When anything of such a session was dropped, the late prose of that reply (after its `turn_end`) is skipped too, as for the session being read; its next reply is read as usual. In both scopes a session still writing its reply (no `turn_end` yet) keeps everything: its queued and held text and its summary work, read when done. A reply counts as still being written until its `turn_end`: a turn the user interrupted (Claude Code fires no `Stop` for it) keeps its text in scope `all` until that session's next `turn_start`. Mute (`mute_level`) is the way to silence every session.
+`channel` is a non-empty string (`E_BAD_REQUEST` otherwise); a channel is opened with the defaults
+when it gets its first text (open it with `channel_open` to give it a label for announcements).
+`label` (a string, optional, `E_BAD_REQUEST` when not a string on a message that names a channel,
+ignored on `earcon`; runtime 0.20.1, #241) is the channel's label for a channel that has none yet: a
+channel the message opens gets it (the user's `channel_prefs` label wins), and an open channel
+without a label gets it; a label the channel has is never replaced (use `channel_open` to rename).
+The Claude plugin's hook sends the session's project with every message that names the session, so a
+session whose first message after a runtime restart is not its prompt is still announced by name.
+The project (runtime 0.20.3, #245; before, the last folder of `cwd`, which changed with every `cd`):
+in `<repo>\.claude\worktrees\<name>` it is `<repo>`; else the repository of the nearest `.git` at or
+above `cwd`, below the user's home folder (`USERPROFILE`; a `.git` folder needs a `HEAD`) (a linked
+worktree's `.git` file is followed to its main repository's folder name; a submodule keeps its own);
+else `cwd`'s last folder. Its `channel_open` sends `keep_label: true`, so a session keeps the first
+name it got. With the extension on, `channel_close` also forgets the channel's turn, and
+`control stop` without a channel also drops every channel's summary work and held decisions.
+`control flush` (#228) does that for the session being read: its prose held by `read_mode`, the
+prose kept for its summary, its summaries in flight, waiting or settling and the decisions waiting
+for them are dropped, and the rest of that reply is skipped: until the session's next `turn_start`,
+its prose (also late prose after its `turn_end`) is dropped and its tool runs are not announced
+(logged `dropped: flushed reply`), and it makes no summary. Its decisions (question, permission,
+plan) asked later in that reply are still read, since they need an answer; `turn_done` still plays
+when it ends. A flush answers nothing: a question of that session keeps its awaiting mark (its
+permission prompt stays silent), and the decisions that waited for the cancelled summary are read
+now instead of being dropped (decisions already queued in the channel are dropped with its other
+unread text). With `flush_scope` `"session"` every other session keeps its held prose, its summary
+work and its queued text, and is read next. With `"all"` every other session whose turn has ended
+(its `turn_end` came since its last `turn_start`) also loses its ready messages: its unread text,
+its summaries in flight, waiting or settling (the decisions that waited for them are read now), and
+a channel without agent turn state (text a host spoke into it) loses its unread text too, also when
+nothing was being read (text the background policy or a session mute holds). When anything of such a
+session was dropped, the late prose of that reply (after its `turn_end`) is skipped too, as for the
+session being read; its next reply is read as usual. In both scopes a session still writing its
+reply (no `turn_end` yet) keeps everything: its queued and held text and its summary work, read when
+done. A reply counts as still being written until its `turn_end`: a turn the user interrupted
+(Claude Code fires no `Stop` for it) keeps its text in scope `all` until that session's next
+`turn_start`. Mute (`mute_level`) is the way to silence every session.
 
 Earcons are mixed over the speech (they never pause or cut it) and follow the output volume.
 
-**One earcon at a time** (#238). Earcons are mixed over speech but never over each other: an earcon triggered while another plays starts 60 ms after it ended, in the order they were triggered. A burst is capped: an earcon equal to the one queued right before it is dropped, and at most 3 wait or play at a time (the rest are dropped, with a line in `logs\sonarad.log`). An earcon still waiting when `mute_level` becomes 2 is not played (a "dropped: mute level 2" line in the log) and the earcons after an unmute do not wait for it; `stop` and `flush` leave waiting earcons alone. The `earcon` event is sent when the earcon plays.
+**One earcon at a time** (#238). Earcons are mixed over speech but never over each other: an earcon
+triggered while another plays starts 60 ms after it ended, in the order they were triggered. A burst
+is capped: an earcon equal to the one queued right before it is dropped, and at most 3 wait or play
+at a time (the rest are dropped, with a line in `logs\sonarad.log`). An earcon still waiting when
+`mute_level` becomes 2 is not played (a "dropped: mute level 2" line in the log) and the earcons
+after an unmute do not wait for it; `stop` and `flush` leave waiting earcons alone. The `earcon`
+event is sent when the earcon plays.
 
 #### Custom earcons
 
-`sonarad` plays `<home>\earcons\<kind>.wav` (for example `session_change.wav`, `turn_done.wav`) instead of the bundled clip of that kind (#209). Any RIFF/WAVE file works: 8-, 16-, 24- or 32-bit integer PCM or 32- or 64-bit float, plain or `WAVE_FORMAT_EXTENSIBLE`, mono or stereo (mixed down), any sample rate (the output resamples), up to 10 seconds and 16 MB. A file is checked again (size and modification time) each time its kind plays and on `get earcons`, so adding, replacing or deleting one applies at the next play, without a restart or a reload command. A file that cannot be used (not a WAV, an unsupported format, silent, too long or too big, unreadable) plays the bundled clip instead, and one line in `logs\sonarad.log` says why (once per version of the file). The `earcon` event names the kind either way.
+`sonarad` plays `<home>\earcons\<kind>.wav` (for example `session_change.wav`, `turn_done.wav`)
+instead of the bundled clip of that kind (#209). Any RIFF/WAVE file works: 8-, 16-, 24- or 32-bit
+integer PCM or 32- or 64-bit float, plain or `WAVE_FORMAT_EXTENSIBLE`, mono or stereo (mixed down),
+any sample rate (the output resamples), up to 10 seconds and 16 MB. A file is checked again (size
+and modification time) each time its kind plays and on `get earcons`, so adding, replacing or
+deleting one applies at the next play, without a restart or a reload command. A file that cannot be
+used (not a WAV, an unsupported format, silent, too long or too big, unreadable) plays the bundled
+clip instead, and one line in `logs\sonarad.log` says why (once per version of the file). The
+`earcon` event names the kind either way.
 
 ### Settings
 
@@ -472,13 +749,30 @@ Earcons are mixed over the speech (they never pause or cut it) and follow the ou
 | `summaries` | `{enabled, command, model, timeout, settle_ms, style, prompt, prompts, default_prompts}`: see below. `set` merges the fields given; `get` returns them all |
 | `earcons` | read-only (`set` is `E_BAD_REQUEST`): `{folder, kinds, custom}`: `folder` is the custom earcons folder (`null` when the runtime has none), `kinds` every earcon kind, `custom` the kinds a usable file there replaces now. See Custom earcons |
 
-**Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it: `command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only), `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window; past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter than 280 characters is read as it is. A summary that fails or comes back empty falls back to the turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` + 5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read as plain text. A new turn, an answer, `stop` or a `flush` of that session drops the recaps of the channel still out. A runtime built without the summarizer answers `enabled: true` with `E_UNSUPPORTED`.
+**Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and
+no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it:
+`command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only),
+`model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom
+`prompt`. The command is found on `PATH` only and runs in the user's home folder with no window;
+past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter
+than 280 characters is read as it is. A summary that fails or comes back empty falls back to the
+turn's text. A decision waits for the recap of the text before it (read first), at most `timeout` +
+5 s. Recaps are read in the order the turns ended, and one still out after twice `timeout` is read
+as plain text. A new turn, an answer, `stop` or a `flush` of that session drops the recaps of the
+channel still out. A runtime built without the summarizer answers `enabled: true` with
+`E_UNSUPPORTED`.
 
-**Custom prompts.** Each style can have its own instruction: `prompts` is `{style: text}` (`set` changes the styles given; `null` or a blank text goes back to the built-in one), and `prompt` is the custom instruction of the style in force (`set` with `prompt` changes that style's). Before #201 `prompt` was one instruction for every style; no runtime with that meaning shipped, so the protocol minor was not bumped for it. `get` also returns `default_prompts`, the built-in instruction of each style (read-only), so a page can show and edit it.
+**Custom prompts.** Each style can have its own instruction: `prompts` is `{style: text}` (`set`
+changes the styles given; `null` or a blank text goes back to the built-in one), and `prompt` is the
+custom instruction of the style in force (`set` with `prompt` changes that style's). Before #201
+`prompt` was one instruction for every style; no runtime with that meaning shipped, so the protocol
+minor was not bumped for it. `get` also returns `default_prompts`, the built-in instruction of each
+style (read-only), so a page can show and edit it.
 
 ### Events
 
-Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the extension is off): `{"event": "earcon", "kind": "turn_done"}` for every earcon played.
+Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the extension is off):
+`{"event": "earcon", "kind": "turn_done"}` for every earcon played.
 
 ```json
 > {"type": "hello", "token": "...", "extensions": ["agent"]}
@@ -493,13 +787,31 @@ Stream `earcons` (ask for it by name in `subscribe`; `E_UNSUPPORTED` while the e
 
 ## Extension `system`
 
-Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other apps' audio while Sonara speaks, global hotkeys, spoken control cues and the settings page. Enable it with `hello` `extensions: ["system"]`. Black-box tests: `conformance/system/` (with `--system fake`).
+Spec section 4.4, L4 (`crates/sonara-system`, Windows). What happens to other apps' audio while
+Sonara speaks, global hotkeys, spoken control cues and the settings page. Enable it with `hello`
+`extensions: ["system"]`. Black-box tests: `conformance/system/` (with `--system fake`).
 
-**Armed while needed.** Like every extension, `system` is enabled for the whole runtime once a client asks for it, and its keys and the settings page work from then on. It acts on the PC (ducks or pauses other apps, holds the hotkeys) only while it is **armed**: while a TCP client whose `hello` asked for it is connected, or for good once a client asked for it with `keep_alive: true` (over TCP or HTTP). When the last client that needed it disconnects, other apps are restored at once and the hotkeys are released, even if the reader goes on reading. A plain HTTP request (the settings page) never arms it.
+**Armed while needed.** Like every extension, `system` is enabled for the whole runtime once a
+client asks for it, and its keys and the settings page work from then on. It acts on the PC (ducks
+or pauses other apps, holds the hotkeys) only while it is **armed**: while a TCP client whose
+`hello` asked for it is connected, or for good once a client asked for it with `keep_alive: true`
+(over TCP or HTTP). When the last client that needed it disconnects, other apps are restored at once
+and the hotkeys are released, even if the reader goes on reading. A plain HTTP request (the settings
+page) never arms it.
 
-**Other apps' audio.** With `audio_mode` `duck`, every other app's audio session on every active output device is lowered to `duck_level` percent while an item is being read (playing, not paused, not muted); with `pause`, media apps that are playing (Windows media transport controls) are paused and later resumed. Never touched: the runtime's own process, the Windows audio engine (`audiodg.exe`) and virtual mixers whose session is the whole mix (SteelSeries Sonar, VoiceMeeter); an app already at or below the level is left alone. Other apps come back at once on `pause`, `mute`, a mode change and when the extension is disarmed, about 0.4 s after the reader goes idle (so the gap between two messages does not bring them up and down), and when the runtime exits.
+**Other apps' audio.** With `audio_mode` `duck`, every other app's audio session on every active
+output device is lowered to `duck_level` percent while an item is being read (playing, not paused,
+not muted); with `pause`, media apps that are playing (Windows media transport controls) are paused
+and later resumed. Never touched: the runtime's own process, the Windows audio engine
+(`audiodg.exe`) and virtual mixers whose session is the whole mix (SteelSeries Sonar, VoiceMeeter);
+an app already at or below the level is left alone. Other apps come back at once on `pause`, `mute`,
+a mode change and when the extension is disarmed, about 0.4 s after the reader goes idle (so the gap
+between two messages does not bring them up and down), and when the runtime exits.
 
-**Crash restore.** Before an app is lowered or paused it is recorded in `state\duck_state.json` or `state\pause_state.json` in the home, and the files are removed once everything is back. A runtime that starts finds these files and restores the apps before it accepts clients; what still fails stays recorded and is retried by the next restore.
+**Crash restore.** Before an app is lowered or paused it is recorded in `state\duck_state.json` or
+`state\pause_state.json` in the home, and the files are removed once everything is back. A runtime
+that starts finds these files and restores the apps before it accepts clients; what still fails
+stays recorded and is retried by the next restore.
 
 ### Settings
 
@@ -515,15 +827,44 @@ These settings are saved like the others (see [Saved settings](#saved-settings))
 
 ### Shutdown
 
-`{"type": "shutdown"}` (#202) ends the runtime: what is reading or queued stops, later requests are `E_BUSY`, and once the reply `{ok: true}` went out the process restores other apps' audio, releases the hotkeys and exits, like an accepted takeover. It is how `sonara stop`, `sonara uninstall` and an upgrade (`sonara start` of a newer release) end the Claude plugin's runtime. Before a client enabled `system` it is `E_UNSUPPORTED`.
+`{"type": "shutdown"}` (#202) ends the runtime: what is reading or queued stops, later requests are
+`E_BUSY`, and once the reply `{ok: true}` went out the process restores other apps' audio, releases
+the hotkeys and exits, like an accepted takeover. It is how `sonara stop`, `sonara uninstall` and an
+upgrade (`sonara start` of a newer release) end the Claude plugin's runtime. Before a client enabled
+`system` it is `E_UNSUPPORTED`.
 
 ### Voice previews
 
-`{"type": "preview", "voice"?: "<id or name>", "text"?: "<text>"}` says a short sample (default: `"Hello. This is how Sonara sounds with this voice."`, at most 300 characters) with a voice of the current engine (default: the voice in force) at the current rate, and replies `{engine, voice}` once it is playing. The sample is synthesized on engines of its own (its own `onecore`; Kokoro's loaded model is shared with the reader, so a Kokoro sample waits at most for the sentence being synthesized, and a skip on the reader cancels it) and played as a clip mixed over whatever is being read, like an earcon: nothing is paused, cut or queued again, and the output volume applies (a muted reader plays it silently). An unknown voice is `E_NOT_FOUND`; before a client enabled `system` it is `E_UNSUPPORTED`. With an [external engine](#external-engines) current, a preview is sent to it even while Sonara is muted: the user asked for it.
+`{"type": "preview", "voice"?: "<id or name>", "text"?: "<text>"}` says a short sample (default:
+`"Hello. This is how Sonara sounds with this voice."`, at most 300 characters) with a voice of the
+current engine (default: the voice in force) at the current rate, and replies `{engine, voice}` once
+it is playing. The sample is synthesized on engines of its own (its own `onecore`; Kokoro's loaded
+model is shared with the reader, so a Kokoro sample waits at most for the sentence being
+synthesized, and a skip on the reader cancels it) and played as a clip mixed over whatever is being
+read, like an earcon: nothing is paused, cut or queued again, and the output volume applies (a muted
+reader plays it silently). An unknown voice is `E_NOT_FOUND`; before a client enabled `system` it is
+`E_UNSUPPORTED`. With an [external engine](#external-engines) current, a preview is sent to it even
+while Sonara is muted: the user asked for it.
 
 ### Spoken cues
 
-Short confirmations, as the Python plugin spoke them (#197): the hotkeys say `"Paused."` / `"Resumed."` (pause, only while an item is loaded), `"Muted."`, `"Super muted."`, `"Unmuted."` (mute cycle; without `agent`, `"Muted."` / `"Unmuted."`), `"Rate 225."` (faster, slower) and `"No session."` (`next_channel` with no channel open); a `set` of `mute_level` that changes it, of `audio_mode` (`"Audio off."`, `"Audio ducking."`, `"Media pause."`) and of `duck_level` (`"Duck level 40 percent."`) say theirs whoever sent it. A `rate` set from a page is not announced. A cue is synthesized on the extension's own engines in the voice and at the rate in force and played as a clip mixed over whatever is read, like a voice preview: it is heard while the reader is paused and at every `mute_level`, never touches the queue, and a muted reader (core `mute`) plays it silently. With an [external engine](#external-engines) current, the cues of a mute change (`"Muted."`, `"Super muted."`, `"Unmuted."`) and every cue said while Sonara is muted are spoken with the built-in engine, never sent to it (#227). Cues are spoken in order; a rate, duck-level or audio-mode cue still waiting when a newer one of the same kind comes is skipped. Stream `cues` (ask for it by name in `subscribe`, or `GET /v1/events?events=cues`; `E_UNSUPPORTED` over TCP while the extension is off): `{"event": "cue", "text": "Muted."}` for every cue spoken. The Python plugin's setup-guide cue ("run slash sonara install") is not carried over: the runtime needs no install step (the hook starts it).
+Short confirmations, as the Python plugin spoke them (#197): the hotkeys say `"Paused."` /
+`"Resumed."` (pause, only while an item is loaded), `"Muted."`, `"Super muted."`, `"Unmuted."` (mute
+cycle; without `agent`, `"Muted."` / `"Unmuted."`), `"Rate 225."` (faster, slower) and
+`"No session."` (`next_channel` with no channel open); a `set` of `mute_level` that changes it, of
+`audio_mode` (`"Audio off."`, `"Audio ducking."`, `"Media pause."`) and of `duck_level`
+(`"Duck level 40 percent."`) say theirs whoever sent it. A `rate` set from a page is not announced.
+A cue is synthesized on the extension's own engines in the voice and at the rate in force and played
+as a clip mixed over whatever is read, like a voice preview: it is heard while the reader is paused
+and at every `mute_level`, never touches the queue, and a muted reader (core `mute`) plays it
+silently. With an [external engine](#external-engines) current, the cues of a mute change
+(`"Muted."`, `"Super muted."`, `"Unmuted."`) and every cue said while Sonara is muted are spoken
+with the built-in engine, never sent to it (#227). Cues are spoken in order; a rate, duck-level or
+audio-mode cue still waiting when a newer one of the same kind comes is skipped. Stream `cues` (ask
+for it by name in `subscribe`, or `GET /v1/events?events=cues`; `E_UNSUPPORTED` over TCP while the
+extension is off): `{"event": "cue", "text": "Muted."}` for every cue spoken. The Python plugin's
+setup-guide cue ("run slash sonara install") is not carried over: the runtime needs no install step
+(the hook starts it).
 
 ### Hotkeys
 
@@ -538,9 +879,18 @@ Actions and what they do (the same as the protocol request named):
 | `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` then says `"Session changed: <label>."` (the announcement; `"Session changed."` for a session without a label; when switches are not announced, the earcon alone); with no channel open, the cue `"No session."` |
 | `faster` / `slower` | unbound | `rate` plus or minus 25, then `"Rate N."` |
 
-A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A hotkey must hold Ctrl, Alt or Win (`E_BAD_REQUEST` otherwise: it would take that key away from every app); an unknown key, modifier or action is `E_BAD_REQUEST`, and nothing is written. Holding a key does not repeat an action, and a second press of `pause` or `mute` within 0.3 s is ignored. Hotkeys do nothing once a takeover was accepted.
+A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`,
+`pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A
+hotkey must hold Ctrl, Alt or Win (`E_BAD_REQUEST` otherwise: it would take that key away from every
+app); an unknown key, modifier or action is `E_BAD_REQUEST`, and nothing is written. Holding a key
+does not repeat an action, and a second press of `pause` or `mute` within 0.3 s is ignored. Hotkeys
+do nothing once a takeover was accepted.
 
-The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a hotkey that is AltGr typing a character is reported in `altgr`, and the fix is a binding with Win (Windows itself owns Win+Alt+Up/Down/M/P). The user's bindings are kept in `keymap.json` in the home (only the overrides; `nav_start` and `next_session` from the Python plugin's keymap are read as `restart` and `next_channel`).
+The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a hotkey that is AltGr
+typing a character is reported in `altgr`, and the fix is a binding with Win (Windows itself owns
+Win+Alt+Up/Down/M/P). The user's bindings are kept in `keymap.json` in the home (only the overrides;
+`nav_start` and `next_session` from the Python plugin's keymap are read as `restart` and
+`next_channel`).
 
 `get hotkeys` value:
 
@@ -552,11 +902,58 @@ The defaults use Ctrl+Alt, which is AltGr on many European keyboard layouts: a h
  "keys": ["0", "1", "...", "up"], "mods": ["alt", "cmd", "control", "ctrl", "shift", "win"], "problems": []}
 ```
 
-`active`: the hotkeys are registered now (the extension is armed). `registered: false` with `error: "already_owned"` means another program owns that chord. `problems` lists entries of `keymap.json` that were skipped: an unknown key or modifier never disables the other hotkeys.
+`active`: the hotkeys are registered now (the extension is armed). `registered: false` with
+`error: "already_owned"` means another program owns that chord. `problems` lists entries of
+`keymap.json` that were skipped: an unknown key or modifier never disables the other hotkeys.
 
 ### Settings page
 
-`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves the settings page, on this API. Since 0.20.0 (#237) it is one dark page with a sidebar (search, the sections, and a "Now" card that says which engine reads and how it is doing, from `runtime.engine_status`), labels without helper text, a small "Saved" toast and one polite live region: Speech (the voice engine's status from `runtime.engine_status`, voice with previews, rate, mute level, Detail (`verbosity`), Other sessions (`background_policy`)), Summary (mode Off, Tidy, Natural or Brief, the model, the prompt of the style in force (Default or Custom, Reset), live reading: `read_mode` Immediately, Queue with its `minqueue` stepper shown only in Queue, or When done, gated while a summary mode is on; Advanced: summary timeout and settle time), Audio (speech volume, other apps, duck level shown only for Duck, the folder for your own chimes and which ones are in use), Sessions (`channel_prefs`: name and audio per open session; "Earlier (n)", the closed sessions with saved preferences, each with Forget (`channel_prefs` `forget`); switch announcements), Hotkeys (capture, unbind, reset; a chord another program owns or Windows refused is shown at its row, an AltGr clash only by `sonara doctor`; Flush skips: This session or Everything queued, the `flush_scope`), Engines (only when `hello.capabilities` has `engines`, since 0.18.0, #227: the `engine_list` profiles with where each sends text, key state and status, Use (`set engine`), Test (`engine_test` with `play: true`, the reply's `ms` or the error with its `reason`), Edit and Remove (`engine_remove`, after a confirmation); an add/edit form in a modal slide-over drawer (the page behind is inert, Escape or the scrim closes it, asking first when there are unsaved changes) that sends `engine_add` (`replace: true` when editing, `secret` only when the password field is filled, which empties after the save; `url` only when set and not the preset's own, `send_mode` only once picked in "Send to the engine" (Full message in one request, or As it comes in; the provider's default is preselected, #235), `model` and `voice` when chosen (nothing is preselected: since 0.19.0, #235, the page names no model or voice; the model is a list from `engine_models` with "Other model id", or a typed id where the provider has no list, and the voice a list with "Other voice id"; both starred where required), the form starting from the view's `explicit`). The form marks required fields with a star, starts the label at the provider's name and makes the ID from it (lowercase, `a-z0-9-_`, unique, editable), checks the fields before sending and shows each problem (and a refusal of the runtime) next to its field, says when it is saved or has unsaved changes, and tests only the saved engine. Its voice and model lists load before a save from `voices {profile, secret}` (protocol 1.4) and `engine_models {profile, secret}` (protocol 1.5) as soon as the provider and key are filled in, each voice named with its provider ("Adam (ElevenLabs)"), and from `voices {engine, refresh: true}` when editing) and System (version, uptime, protocol, the settings file, the debug log). Since #227 (0.18.0) the Speech section's engine is a dropdown again: the built-in engines (Kokoro, Windows voices), every usable added engine by its label, and a last entry "Add new engine" that opens the Engines form; choosing one sends `set engine`, the voice list follows it (`voices {engine}`), and the status line under it says how it is doing. The page polls `engine_list` every 3 s, which writes no `in` line to the troubleshooting log. The per-session `voice` of `channel_prefs` is stored but not applied, so the page does not show it. The agent sections say so while no client enabled `agent`. It uses only the HTTP API above, with the token filled in by the runtime. It is answered only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host` `127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). Its fonts (Geist and Geist Mono, SIL OFL 1.1) are compiled into sonarad and inlined as `data:` URLs, so it loads nothing from another origin. It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`, connections to itself only, images and fonts only as `data:`), `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
+`GET /settings?token=<token>` on the HTTP port (the `settings_url`) serves the settings page, on
+this API. Since 0.20.0 (#237) it is one dark page with a sidebar (search, the sections, and a "Now"
+card that says which engine reads and how it is doing, from `runtime.engine_status`), labels without
+helper text, a small "Saved" toast and one polite live region: Speech (the voice engine's status
+from `runtime.engine_status`, voice with previews, rate, mute level, Detail (`verbosity`), Other
+sessions (`background_policy`)), Summary (mode Off, Tidy, Natural or Brief, the model, the prompt of
+the style in force (Default or Custom, Reset), live reading: `read_mode` Immediately, Queue with its
+`minqueue` stepper shown only in Queue, or When done, gated while a summary mode is on; Advanced:
+summary timeout and settle time), Audio (speech volume, other apps, duck level shown only for Duck,
+the folder for your own chimes and which ones are in use), Sessions (`channel_prefs`: name and audio
+per open session; "Earlier (n)", the closed sessions with saved preferences, each with Forget
+(`channel_prefs` `forget`); switch announcements), Hotkeys (capture, unbind, reset; a chord another
+program owns or Windows refused is shown at its row, an AltGr clash only by `sonara doctor`; Flush
+skips: This session or Everything queued, the `flush_scope`), Engines (only when
+`hello.capabilities` has `engines`, since 0.18.0, #227: the `engine_list` profiles with where each
+sends text, key state and status, Use (`set engine`), Test (`engine_test` with `play: true`, the
+reply's `ms` or the error with its `reason`), Edit and Remove (`engine_remove`, after a
+confirmation); an add/edit form in a modal slide-over drawer (the page behind is inert, Escape or
+the scrim closes it, asking first when there are unsaved changes) that sends `engine_add`
+(`replace: true` when editing, `secret` only when the password field is filled, which empties after
+the save; `url` only when set and not the preset's own, `send_mode` only once picked in "Send to the
+engine" (Full message in one request, or As it comes in; the provider's default is preselected,
+#235), `model` and `voice` when chosen (nothing is preselected: since 0.19.0, #235, the page names
+no model or voice; the model is a list from `engine_models` with "Other model id", or a typed id
+where the provider has no list, and the voice a list with "Other voice id"; both starred where
+required), the form starting from the view's `explicit`). The form marks required fields with a
+star, starts the label at the provider's name and makes the ID from it (lowercase, `a-z0-9-_`,
+unique, editable), checks the fields before sending and shows each problem (and a refusal of the
+runtime) next to its field, says when it is saved or has unsaved changes, and tests only the saved
+engine. Its voice and model lists load before a save from `voices {profile, secret}` (protocol 1.4)
+and `engine_models {profile, secret}` (protocol 1.5) as soon as the provider and key are filled in,
+each voice named with its provider ("Adam (ElevenLabs)"), and from `voices {engine, refresh: true}`
+when editing) and System (version, uptime, protocol, the settings file, the debug log). Since #227
+(0.18.0) the Speech section's engine is a dropdown again: the built-in engines (Kokoro, Windows
+voices), every usable added engine by its label, and a last entry "Add new engine" that opens the
+Engines form; choosing one sends `set engine`, the voice list follows it (`voices {engine}`), and
+the status line under it says how it is doing. The page polls `engine_list` every 3 s, which writes
+no `in` line to the troubleshooting log. The per-session `voice` of `channel_prefs` is stored but
+not applied, so the page does not show it. The agent sections say so while no client enabled
+`agent`. It uses only the HTTP API above, with the token filled in by the runtime. It is answered
+only while `system` is enabled (`404` before), only with the token (`401`) and only for the `Host`
+`127.0.0.1:<http_port>` or `localhost:<http_port>` (`403`, against DNS rebinding). Its fonts (Geist
+and Geist Mono, SIL OFL 1.1) are compiled into sonarad and inlined as `data:` URLs, so it loads
+nothing from another origin. It is sent with `Content-Security-Policy` (`frame-ancestors 'none'`,
+connections to itself only, images and fonts only as `data:`), `Referrer-Policy: no-referrer` and
+`Cache-Control: no-store`. The API sends no CORS headers, so other origins cannot read its replies.
 
 ```json
 > {"type": "hello", "token": "...", "extensions": ["agent", "system"]}

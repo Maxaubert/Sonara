@@ -4,13 +4,15 @@ Start here. `CLAUDE.md` holds the rules and gates; this index says where everyth
 
 | Doc | Purpose | Status |
 |---|---|---|
-| [architecture.md](architecture.md) | Process chain, threads and locks, how the code fits together. The Rust crate map and recipes are being rewritten (#253); the Python sections are legacy | partly legacy |
-| [protocol-v1.md](protocol-v1.md) | Wire contract for embedding hosts (TCP and HTTP, extensions, external engines). Changes stay additive | current |
+| [architecture.md](architecture.md) | Crate map (layer, owns, deps, key files, tests), process chain, threads, locks and the lock order, how-to recipes (setting, message, hotkey, engine kind, earcon), log pointers | current |
+| [protocol-v1.md](protocol-v1.md) | Wire contract for embedding hosts (TCP and HTTP, extensions), contents at the top. Changes stay additive | current |
+| [protocol-v1-engines.md](protocol-v1-engines.md) | External engines (capability `engines`): profiles, keys, one section per kind, the `engine_*` messages, the voice rule | current |
 | [bundling.md](bundling.md) | Embedding the runtime in npm and PyPI hosts | current |
 | [testing.md](testing.md) | Live tests and their env vars, Kokoro and G2P, conformance, SDK steps, earcons, notices, version files, safe redeploy | current |
 | [plans/](plans/) | Specs and plans: external engines (`2026-10-04-external-engines-spec.md`), Rust runtime spec and plan (`2026-10-02-sonara-runtime-*.md`) | current |
 | [history/](history/README.md) | Finished plans, specs, audits and checklists. Ignored by rg and Grep (`/.ignore`) | history |
 | [protocol.md](protocol.md) | Wire protocol of the retired Python daemon | legacy, deleted with `src/sonara` (#248) |
+| [history/architecture-python.md](history/architecture-python.md) | Architecture of the retired Python daemon | history |
 
 Other places:
 

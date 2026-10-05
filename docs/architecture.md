@@ -1,276 +1,274 @@
 # Sonara architecture
 
-How Sonara is put together, for contributors. Current as of 0.8.3 (2026-10-02). User-facing
-behaviour is in the [README](../README.md); the wire contract for embedding hosts is
-[protocol.md](protocol.md).
+How the Rust runtime in `crates/` is put together, for contributors. User-facing behaviour is in
+the [README](../README.md); the wire contract for clients is [protocol-v1.md](protocol-v1.md)
+(external engines: [protocol-v1-engines.md](protocol-v1-engines.md)). The design came from the
+runtime spec and plan in `docs/plans/`. The retired Python daemon's architecture (up to 0.10) is
+kept in [history/architecture-python.md](history/architecture-python.md).
 
-> Since 0.11 (#202) the Claude Code plugin runs the Rust runtime (`crates/`) and no longer uses
-> the Python package described here; it stays until a follow-up removes it. The runtime's
-> contract is [protocol-v1.md](protocol-v1.md), its design the runtime spec and plan in
-> `docs/plans/`.
+Each crate's `src/lib.rs` opens with a `//!` header that says what it owns and the rules it keeps.
+This page is the map; the headers are the detail.
 
-## External engines (Rust runtime, 0.15+)
+## Contents
 
-Speech engines the user adds at run time (#224, spec
-`docs/plans/2026-10-04-external-engines-spec.md`; contract: "External engines" in
-[protocol-v1.md](protocol-v1.md)). Each profile is an `Engine` of licence class `External` in the
-reader's `Registry` (shared, with interior mutability, so profiles come and go while the reader
-runs), next to Kokoro and OneCore; the reader and the higher layers only see engines.
+- [Layers and crates](#layers-and-crates)
+- [Process chain](#process-chain)
+- [Inside sonarad](#inside-sonarad)
+- [Threads](#threads)
+- [Locks and the lock order](#locks-and-the-lock-order)
+- [External engines](#external-engines)
+- [Persisted state and logs](#persisted-state-and-logs)
+- [How to](#how-to)
 
-- `crates/sonara-engine/src/external/` (feature `external`): `profile.rs` (validation, presets),
-  `keys.rs` (`Secret`, `KeyStore`: Credential Manager, memory, the `--keys fake` file;
-  `KeyResolver`), `error.rs` (`ExtError`, cue texts), `health.rs` (breaker, blocked state, the
-  once-per-episode cue; injectable clock), `cache.rs` (cue cache), `audio.rs` (body to PCM),
-  `rate.rs`, `split.rs`, `worker.rs` (a request on its own thread, a wait `cancel` ends),
-  `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes, paged voice and model
-  lists, the stream hooks), `sse.rs` (a request whose server-sent events arrive on a channel),
-  `streaming.rs` (#235: a streamed chunk returns at its first audio within `first_audio_ms`, the
-  rest follows on the `PcmStream`; a stall or break after audio reads the rest of a message with
-  the fallback from the sentence reached, `rest_of`),
-  `openai.rs` (kind `openai-compatible`), `elevenlabs.rs`, `azure.rs` (SSML, XML escaping),
-  `google.rs` (base64 `audioContent`), `gemini.rs` (`streamGenerateContent?alt=sse`, else
-  `generateContent`; base64 `inlineData`; models and voices from `/v1beta/models` and
-  `/v1beta/voices`; the rate as a style; drops a refused field or the stream through
-  `Adapter::adapt`, 429 `retryDelay`), `cartesia.rs`, `deepgram.rs` (drops a refused `speed`
-  through `Adapter::adapt`), `command.rs` (kind `command`: not an `Adapter`; runs the user's
-  program with no shell, kills it on timeout or cancel), `mod.rs` (the `External` engine over a
-  `Backend` of an adapter or a program: fallback with the cue, retry policy, status, the voice
-  rule's last step (`voice_for`: the caller's voice, else the profile's; none in code), "choose a
-  model/voice" (#235)). No model id or voice name is in the code: models and voices come from
-  the profile and the provider's lists.
-  `src/bin/sonara-fake-tts.rs` (feature `test-util`) is the stand-in program of the tests. `http.rs` holds the `ureq` agent shared with the Kokoro download.
-- `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or
-  the fake engine) as its fallback, registration in the reader's and the previews' registries,
-  the notice lines of `sonarad.log`, `reload` of the file, and the `E_FORBIDDEN` refusal of a
-  `command` profile in `engine_add` (local-only). `engines_ext.rs`: the protocol handlers;
-  `engine_remove` and `engine_reload` live in `protocol.rs` because they may switch `engine`.
-  `engines_ext.rs` holds the voice rule (#235): `engine_test` takes the request's voice, else the
-  reader's voice when the engine is current, else the profile's; `engine_models` lists a saved
-  or a draft profile's models.
-- `sonara-reader` streaming (#235): `Engine::streams` engines hand each piece to the worker
-  (`Done::Part`); a chunk the reader waits for plays from its first piece
-  (`Output::play_open`, `append`, `finish`), and its whole audio is kept for a replay.
-- `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
-  chunks ahead of the playing one. Send mode (#235): `Engine::send_mode` and `Engine::input_limit`
-  set `Reader::set_chunking` at start and on `set engine`: `Sentences`, or `Message` (one chunk
-  per item, cut past the limit by `reader::pack_message`); `ReaderHandle::send_mode` tells L3,
-  whose `Rules::set_whole_messages` (set by the driver before every call) makes each release of
-  prose one `Speak`, so one entry, one item, one request. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
-- `sonara-cli` `engines.rs`: `sonara engines ...` (`engines_file.rs` writes a `command` profile
-  into `engines.json` locally, then `engine_reload`); `uninstall` deletes the `sonara:*`
-  credentials unless settings are kept.
+## Layers and crates
 
-## Big picture
+Five layers, each building only on the ones below it; `sonarad` hosts them all. The rule (R7 in the
+runtime spec) is checked by `crates/*/tests/layering.rs`, which read `cargo metadata`, so a new
+dependency on a higher layer fails a test.
 
-Sonara is two kinds of process:
+| Crate | Layer | Owns | Workspace deps | Key files | Tests |
+|---|---|---|---|---|---|
+| `sonara-core` | L1 | Pure text rules (markdown cleanup, the streamed-text assembler) and the reader state machine (one queue of items, controls, state and item events). No threads, no I/O, no clock | none | `text.rs`, `assembler.rs`, `reader/mod.rs`, `reader/types.rs`, `reader/chunks.rs` | `tests/golden.rs` (shared fixtures in `tests/fixtures/text_rules/`), `tests/reader_*.rs`, `tests/layering.rs` |
+| `sonara-engine` | L1 | The `Engine` trait, its types, the `Registry` (licence rule R6), OneCore, Kokoro (feature `kokoro`), external engines (feature `external`), the fake engine (feature `test-util`) | `sonara-log` (feature `external`), `misaki` (feature `kokoro`) | `lib.rs`, `types.rs`, `registry.rs`, `onecore/`, `kokoro/`, `external/`, `http.rs`, `bin/sonara-fake-tts.rs` | `tests/registry.rs`, `tests/fake.rs`, `tests/kokoro_*.rs` (G2P goldens in `tests/golden/`), `tests/external_*.rs`; opt-in live: `onecore_live`, `kokoro_live`, `external_live`, `credman_live` |
+| `misaki` | L1 | Vendored, trimmed misaki G2P (US English) for Kokoro | none | `g2p.rs`, `lexicon.rs`, `tagger.rs`, `data/` (packed by `tools/pack_data.py`) | `tests/data.rs` |
+| `sonara-audio` | L1 | Audio output: plays one chunk's PCM with true pause and resume, volume, clips mixed over speech; device trouble is an `AudioEvent::Failed`, never a panic | `sonara-core`, `sonara-engine` | `rodio_output.rs` (rodio on WASAPI, own thread), `test_output.rs` (feature `test-util`) | unit tests |
+| `sonara-reader` | L1 | The facade `ReaderHandle`: a worker thread owns the state machine and carries out its effects with an engine and an output; synthesis on its own thread; `subscribe` for events | `sonara-core`, `sonara-engine`, `sonara-audio` | `lib.rs`, `worker.rs`, `synth.rs`, `settings.rs` | `tests/playback.rs`, `threads.rs`, `lookahead.rs`, `settings.rs`, `engine_status.rs` |
+| `sonara-log` | L1 | The log folder: streams, 1 MB segments, a 10 MB budget for the folder, an OS lock per append; secret masking | none | `lib.rs`, `secrets.rs` | `tests/budget.rs` |
+| `sonara-channels` | L2 | Several named sources share one reader; one channel reads at a time, switches are announced, entries are fed one at a time when the reader is idle | `sonara-reader` | `lib.rs` (the driver), `router.rs` (pure rules) | `tests/channels.rs`, `router.rs`, `layering.rs` |
+| `sonara-agent` | L3 | Agent sessions on channels: streamed turns, decisions with priority, earcons (one at a time), three mute levels, read modes, summaries | `sonara-channels`, `sonara-reader`, `sonara-core`, `sonara-engine` | `lib.rs` (the driver), `rules.rs` (pure), `decision.rs`, `earcon.rs` + `sounds/`, `sequencer.rs`, `settings.rs`, `summarizer.rs`, `prompts/` | `tests/agent.rs`, `rules.rs`, `muted_store.rs`, `send_mode.rs`, `summarizer_process.rs`, `layering.rs` |
+| `sonara-system` | L4 | Windows extras: duck or pause other apps while speech plays (with crash restore), global hotkeys, the keymap and AltGr check, activity log lines; all OS access behind `platform::Platform` | `sonara-reader` | `audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `platform.rs`, `win.rs`, `fake.rs`, `log.rs` | `tests/audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `activity_log.rs`, `layering.rs`; opt-in live: `win_live` |
+| `sonara-hook` | L5 | `sonara-hook.exe`: maps a Claude Code hook event to protocol v1 `channels` and `agent` messages, sends them as one batch, starts `sonarad` when none answers; never fails the session | `sonara-log` only (no runtime crate) | `lib.rs` (`map_event`, `deliver`), `project.rs` (session names), `main.rs` | `tests/golden.rs` (cases in `tests/golden/`), `binary.rs`, `layering.rs` |
+| `sonara-cli` | L5 | `sonara.exe`: `start`, `stop`, `settings`, `doctor`, `uninstall`, `engines`; a protocol v1 client | `sonara-hook` | `main.rs`, `client.rs`, `lifecycle.rs`, `doctor.rs`, `uninstall.rs`, `engines.rs`, `engines_file.rs`, `paths.rs` | unit tests; conformance `conformance/plugin/` |
+| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | every crate above but the L5 ones | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
 
-- **Hook processes**, short-lived: Claude Code runs one per hook event. Each translates the event
-  into protocol messages, sends them to the daemon and exits.
-- **The daemon**, long-lived, one per Windows user: it owns the speech queue, the voice, the
-  hotkeys and the settings page. A per-user Task Scheduler task starts a supervisor loop at logon
-  that keeps the daemon running; a hook also starts it on demand.
+Pure rules and drivers: L1 (`sonara_core::reader`), L2 (`router.rs`) and L3 (`rules.rs`) keep their
+decisions in pure code with no threads, clock or I/O, and a driver carries out the actions they
+return. New behaviour goes into the rules with a unit test; the driver only executes.
 
-The daemon runs the copy of the package in `~/.sonara/app`, not the plugin's files, so plugin
-updates never change code under a running daemon. `/sonara:install` refreshes that copy.
+## Process chain
 
-## Data flow
-
-The Claude Code plugin (0.11+, #202) no longer takes this path. Its hook chain is:
+Claude Code hook events:
 
 ```
 Claude Code hook event
   -> hooks/hooks.json
-  -> bin/sonara-hook-launch       Git Bash; picks the runtime in %LOCALAPPDATA%\Sonara\runtime\
-                                  (bin/sonara-runtime.sh), or starts bin/sonara-bootstrap.ps1
-  -> sonara-hook.exe              event -> protocol v1 messages; starts sonarad.exe if needed
-  -> sonarad.exe                  the Rust runtime (crates/), contract docs/protocol-v1.md
+  -> bin/sonara-hook-launch    Git Bash: reads bin/runtime-version, picks the runtime folder in
+                               %LOCALAPPDATA%\Sonara\runtime\<version>\ (bin/sonara-runtime.sh),
+                               else starts bin/sonara-bootstrap.ps1 once in the background
+  -> sonara-hook.exe <Event>   payload on stdin -> protocol v1 messages (map_event, pure);
+                               finds sonarad through <home>\runtime.json, starts it when none
+                               answers (within START_BUDGET), sends one batch, exits 0
+  -> sonarad.exe               TCP JSON lines, token from runtime.json
 ```
 
-The rest of this section, and of this document, is the legacy Python package:
+Slash commands:
 
 ```
-Claude Code hook event
-  -> hooks/hooks.json
-  -> bin/sonara-hook-run          picks the interpreter (python.path, PATH python, py -3)
-  -> bin/sonara-hook              reads the event JSON on stdin
-  -> hooks_entry.py               pure: event -> list of protocol messages
-  -> client.py                    send_many: token line + JSON lines on one TCP connection
-                                  (lifecycle.ensure_running starts the daemon if needed)
-  -> daemon/server.py             token check, one handler thread per connection
-  -> daemon/__init__.py           handle_message: table dispatch under the daemon lock
-  -> daemon/ingest.py             prose -> assembler.py + cleaner.py -> SpeechItems;
-                                  decisions -> decision_text.py; earcons; session lifecycle
-  -> router.py / channel.py       one SessionChannel per session; the router picks the reader
-  -> daemon/playback.py           the speak loop: next item, mute/pause rules, audio mode
-  -> speaker.py                   synthesis + playback, cancel epochs, earcons
-  -> platform/windows/tts.py      WinRT OneCore or Kokoro synthesis, winsound playback
+/sonara:<command> -> commands/<command>.md -> bin/sonara (installs the runtime first when it is
+missing) -> sonara.exe <command> -> sonarad.exe (protocol v1, like any client)
 ```
 
-Other producers enter at `handle_message` the same way: the CLI (`cli.py` through `client.py`),
-global hotkeys (`daemon/hotkeys.py`), the settings page (`webui.py`) and embedding hosts
-(SPEAK, SUBSCRIBE).
+Other clients (apps that bundle Sonara, the SDKs in `clients/`, the settings page) talk to the same
+`sonarad` over TCP or HTTP. Discovery, authentication and lifetime (one instance per user and
+home, idle exit, takeover) are in [protocol-v1.md](protocol-v1.md#discovery).
 
-**Summary mode** branches at ingest: prose is recorded to history but not queued. When the turn
-settles, `daemon/summary/pipeline.py` runs `summarizer.py` (`claude -p` or `codex exec`) on a
-worker thread, and `daemon/summary/reorder.py` releases digests in turn-finish order. A question
-waits behind the digest of the text that leads into it.
+## Inside sonarad
 
-**One message, always the last.** A channel holds only its session's current turn; a new prompt
-(FLUSH) wipes it. Spoken items are not discarded, a cursor moves over them, so restart (NAV first,
-`nav_start`, default Ctrl+Alt+Up) replays the turn from its start and a session switch can resume
-or replay it. Nothing may silently drop the latest turn.
+`main.rs` parses the command line (`args.rs`), resolves the home (`home.rs`), takes the
+single-instance mutex (`instance.rs`), loads `config.json` (`config.rs`, migrating from the Python
+plugin once, `migrate.rs`), builds the engines and the `ReaderHandle`, writes `runtime.json`
+(`runtime_file.rs`) and serves on a tokio runtime.
 
-## Threads and the lock contract
+| Module | Role |
+|---|---|
+| `tcp.rs`, `http.rs` | Framing only: JSON lines; `POST /v1/<type>`, SSE `GET /v1/events`, `GET /settings`. Each request runs `Server::handle` on a blocking thread |
+| `protocol.rs` | `Server`: synchronous, transport-free dispatch of core messages and the extensions (`dispatch`), `CAPABILITIES`, `EXTENSION_TYPES`, `EXTENSION_KEYS`, the admission lock, `set`/`get` |
+| `wire.rs` | JSON shapes of replies, errors and events |
+| `channels_ext.rs`, `agent_ext.rs`, `system_ext.rs` | The extensions on top of L2, L3 and L4: their `TYPES` and `KEYS`, enabled at a client's `hello` and kept for the life of the process |
+| `engines.rs`, `engines_ext.rs` | External engine profiles (`engines.json`, keys, registration) and the `engine_*` handlers |
+| `events.rs` | Relays reader, earcon and cue events to one client through a bounded queue |
+| `cues.rs` | Spoken control cues ("Paused.", "Rate 250.") on one worker, mixed over speech as clips |
+| `quiet.rs` | Muted means no request reaches an external engine (#227) |
+| `config.rs` | `SCHEMA` of persisted settings, `Store` (`config.json`, `session_prefs.json`), `apply_reader` |
+| `lifetime.rs` | Clients, activity and the idle exit |
+| `settings_page.rs`, `assets/settings.html` | The settings page, driving the runtime only through the public HTTP API |
+| `support_log.rs`, `trace_log.rs` | The lines of `logs\sonarad.log` |
+| `null_output.rs` | `--output null`: a silent output that keeps real time (conformance, CI) |
 
-The daemon has one lock, `SpeechDaemon._lock` (a `threading.Lock`). **All daemon state is
-guarded by it**: router and channels, history, sessions, the summary pipeline, cues, shared
-state and the per-session registry.
+## Threads
 
-| Thread | What it does | Lock |
+| Thread (name) | Crate | What it does |
 |---|---|---|
-| main | `run()`: binds the socket, starts the others, waits | |
-| accept | `server.accept_loop`, at most 32 request connections | |
-| connection (one each) | reads lines, `handle_message_guarded` | takes the lock per message |
-| SUBSCRIBE connection | writes queued state events to its socket | never writes under the lock |
-| speak loop | `playback.SpeakLoop.run` | takes the lock to read state, speaks off-lock |
-| synthesis | `speaker.py` renders an utterance ahead of playback | off-lock |
-| hotkey listener | `platform/windows/hotkeys.py` message pump | puts fires on a queue |
-| hotkey worker | applies a fire like a socket message | takes the lock |
-| settings page | `webui.py` ThreadingHTTPServer | `_dispatch` takes the lock |
-| summary timers and workers | settle timer, hold cap, watchdog, summarizer call | take the lock themselves; the summarizer call runs off-lock |
-| Kokoro download, warm-up, previews | background work | off-lock |
+| tokio runtime workers | `sonarad` | Accept connections, frame requests (`tcp.rs`, `http.rs`), the lifetime monitor |
+| blocking pool | `sonarad` | `Server::handle` for each request, so a slow handler never stalls the transport |
+| `sonara-reader` | reader | Owns the state machine; requests, audio events and finished syntheses arrive on one inbox |
+| `sonara-synth` | reader | Engine calls in order, off the control path; cancels the job of an item that ended |
+| `sonara-audio-events` | reader | Forwards the output's events into the worker's inbox |
+| `sonara-audio` | audio | rodio output (one `Sink` per chunk); `sonarad-null-output` in its place with `--output null` |
+| `sonara-channels` | channels | Follows reader events and feeds the next entry when an item ends |
+| `sonara-agent-timer` | agent | One per rules timer (settle, hold caps); holds the agent weakly |
+| `sonara-summary` | agent | One per summary job (`claude -p` or `codex exec` child process) |
+| `sonara-earcons` | agent | Plays earcons that wait behind another one (#238) |
+| `sonara-system-audio` | system | Duck, pause, restore: the Core Audio and GSMTC calls |
+| `sonara-system-events` | system | Follows the reader's state and tells the audio worker to engage or restore |
+| `sonara-hotkeys` | system | RegisterHotKey and the message loop (they must share a thread) |
+| `sonara-hotkey-actions` | system | Hands each press to the host, so a busy host never stalls hotkey capture |
+| `sonarad-events`, `sonarad-earcons`, `sonarad-cues-relay` | `sonarad` | One set per subscription: drains reader, earcon and cue events into the client's queue |
+| `sonarad-cues` | `sonarad` | The cue worker |
+| `sonarad-support-log`, `sonarad-cue-log`, `sonarad-read-log` | `sonarad` | Write engine readiness, cue and read-text lines to the log |
+| `sonara-kokoro-prepare` | engine | Kokoro model download and load |
+| `sonara-external-request`, `sonara-external-stream` | engine | One HTTP request (a wait that `cancel` ends), and a streamed answer's server-sent events |
 
 Rules:
 
-- Message handlers run with the lock held. Code that relies on that calls
-  `core.assert_lock_held()`; set `SONARA_DEBUG_LOCKS=1` to make it raise (a local diagnostic; CI stopped running it in #250).
-- Never block under the lock: no synthesis, no subprocess, no socket write. Collect what you
-  need under the lock, release it, then do the slow part.
-- Feature modules that keep daemon state by reference (playback, cues, summary pipeline, audio)
-  require that the daemon never rebinds those attributes. Mutate in place.
-- `_publish_state()` runs after every handled message and around every utterance, with the
-  lock held; it only queues events.
-- `AudioControl` (`daemon/audio.py`) has one inner lock of its own around engage and restore,
-  so a PAUSE's restore cannot land between an engage's cancel-epoch check and its duck or
-  pause (F3). Order: daemon lock, then the audio lock; never the reverse.
+- The reader worker never waits for an engine, a client or a subscriber: synthesis is on its own
+  thread and event channels are unbounded on the reader's side; `sonarad` bounds or drops per
+  client (`events::QUEUE`).
+- Timer, summary and earcon threads hold the agent weakly and end with it. A thread that finds its
+  owner gone exits.
+- A slow job (synthesis, a network request, a child process, a file write that can wait) never
+  runs while holding a layer lock. Collect what is needed under the lock, release it, then work.
 
-## The daemon package
+## Locks and the lock order
 
-`src/sonara/daemon/`:
+Each layer's driver has one main lock, so messages apply in the order they arrive:
 
-| Module | Responsibility |
-|---|---|
-| `__init__.py` | `SpeechDaemon` facade: wiring, the lock, wake and paused events, mute level, item ids, heard-markers, `_enqueue`, `_replay`, `note_spoken`, `handle_message`, `run`, `stop`; owns PING, SHUTDOWN, SUBSCRIBE |
-| `core.py` | `add_handlers` (one owner per message type), `SessionRegistry`, `SharedState`, `assert_lock_held` |
-| `ingest.py` | Hook traffic: PROSE, CHOICE, PLAN, PERMISSION, TOOL, EARCON, FLUSH, CHOICE_ANSWERED, session lifecycle, SPEAK; owns the prose assemblers |
-| `controls.py` | PAUSE, MUTE, SKIP, STOP, NAV (restart), REPEAT, NEXT_SESSION, FLUSH_SESSION |
-| `settings.py` | SET_RATE, SET_VOICE, SET_VERBOSITY, SET_MINQUEUE, SET_SUMMARY_MODE, SET_SESSION_PREF, STATUS; `set_config_value`, `set_summary_prompt` |
-| `audio.py` | SET_AUDIO_MODE, SET_DUCK_LEVEL, SET_VOLUME; duck or pause other apps and restore them |
-| `hotkeys.py` | Start, stop and reload the listener, debounce toggles, RELOAD_KEYMAP |
-| `playback.py` | The speak loop and the deferred session-change alert |
-| `cues.py` | Spoken control cues on the CONTROL channel, the fast cue voice, Kokoro notices |
-| `summary/pipeline.py`, `summary/reorder.py` | Summary mode and digest ordering |
-| `state_stream.py` | The state snapshot for STATUS and SUBSCRIBE events |
-| `server.py` | TCP accept loop, token handshake, connection caps |
-| `previews.py` | Settings-page voice previews |
-| `rehydrate.py` | Re-seeds recent sessions' channels from persisted digests at startup |
-| `decision_text.py` | Spoken text for questions, plans and permissions |
-| `setup_health.py` | The "run /sonara:install" cue when not installed or out of date |
-| `tokens.py` | The persistent access token |
-| `startup.py` | `main()`: process setup, single-instance guard, building the daemon |
-
-Handler modules (`ingest`, `controls`, `settings`) get the daemon and read its attributes at
-call time, so tests can replace one. Every per-session dict or set is registered with the
-`SessionRegistry`; ending a session calls `forget_session(sid)` once, so new per-session state
-must be registered there or it leaks.
-
-Outside the package: `router.py` and `channel.py` (who reads, and each session's turn),
-`speaker.py`, `assembler.py` and `cleaner.py` (text to spoken items; golden cases in
-`tests/fixtures/text_rules/`), `history.py` (in memory), `summarizer.py`, `kokoro.py` and
-`kokoro_provision.py`, `webui.py` with `settings.html`, `cli.py`, and `install/` (install,
-uninstall, doctor, cleanup, voices, the app copy and the hooks in `~/.claude/settings.json`).
-
-## Persisted state
-
-Every path comes from `paths.py` (the test suite redirects it per test). The full list with what
-each file holds is in [PRIVACY.md](../PRIVACY.md). The ones the daemon reads back:
-
-| File | Owner | Purpose |
+| Lock | Where | Guards |
 |---|---|---|
-| `config.json` | `config.py` | User-set settings only; written atomically |
-| `keymap.json` | `keymap.py` | Hotkey bindings merged over the defaults |
-| `sessions.json`, `session_seen.json` | `sessions.py` | Session folder names and last activity |
-| `session_prefs.json` | `session_prefs.py` | Per-session name, mute, voice |
-| `session_digests.json` | `digest_store.py` | Each session's last digest, for rehydration |
-| `daemon.lock`, `webui.token` | `platform/transport.py`, `daemon/tokens.py` | Port and token for clients |
-| `duck_state.json`, `pause_state.json` | `platform/windows/ducking.py`, `pausing.py` | Crash recovery for other apps' audio |
-| `install.json` | `install_record.py` | What was installed where |
+| agent `rules` | `sonara_agent::Inner::rules` | The pure rules; every agent message runs under it. `seen` (the dead-session sweep) is taken only while `rules` is held |
+| channels `state` | `sonara_channels::Inner::state` | The router, the fed item, the announce and drop hooks |
+| agent `schedule` | `sonara_agent::Inner::schedule` | Earcons waiting or playing (#238); taken by the session-change chime under the channels' lock |
+| agent `player` | `sonara_agent::Inner::player` | The earcon thread's inbox |
+| reader | `ReaderHandle` calls | Not a mutex: a call waits for the worker's answer. The worker never calls up into L2 or L3 |
 
-The JSON stores share one discipline: opt-in path (tests stay in memory), best-effort atomic
-writes, a cap on entries, and a missing or corrupt file means empty.
+**Lock order: agent rules > channels state > schedule > player > reader.** Code may take a lock to
+the right while holding one to the left, never the reverse. Hooks that run under a lock (L2's
+`on_announce` and `on_drop`, L3's `on_trace`) must not call back into the crate whose lock they
+run under. Trace hooks under the agent lock are a known exception being cleaned up (#255).
 
-## Platform seam
+Host locks in `sonarad` are taken at the start of handling a request, before any layer lock:
 
-The core is OS-free: `daemon/`, `install/`, `webui.py`, `cli.py` and `summarizer.py` contain no
-`sys.platform` branch and no Win32 import (`tests/test_no_os_branch_in_core.py`). OS code is
-reached through `sonara.platform`:
+- `retiring` (the admission lock, `Server::admit`): held while `speak`, `control` and the
+  extension messages reach the reader, so the idle exit or a takeover cannot drop an accepted
+  request (#194).
+- `setting`: one `set` at a time, the change and its record in `config.json` together. Under it,
+  `Quiet::change` serializes mute changes.
+- `enabling`: one extension enabled at a time.
+- `SystemExt::transition` then `holds`: arming and disarming the `system` extension.
+- Leaf locks, taken last and held briefly: the `Store` (`config.json` writes), `engines.rs`
+  registries and entries, the engine name, `Origins`, the cue queue, the log folder's OS lock.
 
-- `get_platform()` returns the backends declared in `platform/base.py` and implemented in
-  `platform/windows/`: `tts`, `earcon`, `hotkey`, `supervisor` (the scheduled task, launcher,
-  hooks and stray-daemon sweep), the ducker and the pauser.
-- `daemon_process()` returns `platform/windows/process.py` (faulthandler, priority, VC runtime
-  preload, the single-instance mutex) before any backend loads.
-- `child_processes()` returns `platform/windows/child_process.py` (spawning the summarizer,
-  PATHEXT lookup, killing a process tree).
-- `platform/transport.py` is the OS-free loopback TCP and lockfile code.
+## External engines
 
-Tests use fakes for every backend (`tests/_fakeplatform.py`, `tests/_winfakes.py`), so the suite
-needs no speech engine, audio device or real hotkeys.
+Speech engines the user adds at run time (#224 to #227, #235; spec
+`docs/plans/2026-10-04-external-engines-spec.md`; contract
+[protocol-v1-engines.md](protocol-v1-engines.md)). Each profile is an `Engine` of licence class
+`External` in the reader's `Registry` (shared, with interior mutability, so profiles come and go
+while the reader runs), next to Kokoro and OneCore. The reader and the layers above only see
+engines. No model id or voice name is in the code: they come from the profile and the provider's
+lists.
 
-## Protocol
+- `crates/sonara-engine/src/external/` (feature `external`):
+  - `profile.rs`: `Kind`, validation, presets, default addresses, options per kind.
+  - `mod.rs`: the `External` engine over a `Backend` (an `Adapter`, or a program): fallback with
+    the cue, retries, status, the voice rule's last step (`voice_for`), model and voice lists.
+  - `adapter.rs`: the `Adapter` trait (one HTTP request per part of a chunk), `execute`, error-body
+    shapes, paged lists, stream hooks. One file per kind implements it: `openai.rs`
+    (`openai-compatible`), `elevenlabs.rs`, `azure.rs`, `google.rs`, `gemini.rs`, `cartesia.rs`,
+    `deepgram.rs`. `command.rs` runs the user's program with no shell instead.
+  - `keys.rs` (`Secret`, `KeyStore`: Credential Manager, memory, the `--keys fake` file;
+    `KeyResolver`), `health.rs` (breaker, blocked state, the once-per-episode cue), `hold.rs`
+    (muted: nothing is sent), `error.rs`, `cache.rs`, `audio.rs` (body to PCM), `rate.rs`,
+    `split.rs`, `worker.rs`, `sse.rs`, `streaming.rs` (a streamed chunk plays from its first
+    audio; a stall reads the rest with the fallback).
+- `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or the
+  fake engine) as its fallback, registration in the reader's and the previews' registries,
+  `reload`, the `E_FORBIDDEN` refusal of a `command` profile. `engines_ext.rs`: the handlers and
+  the voice rule; `engine_remove` and `engine_reload` live in `protocol.rs` because they may switch
+  `engine`.
+- Send mode (#235): `Engine::send_mode` and `Engine::input_limit` set `Reader::set_chunking`;
+  `ReaderHandle::send_mode` tells L3, whose `Rules::set_whole_messages` makes each release of
+  prose one entry, one item and one request. `Engine::lookahead` asks for chunks ahead;
+  `Engine::streams` engines hand each piece to the worker as it arrives.
+- `sonara-cli` `engines.rs`: `sonara engines ...`; `engines_file.rs` writes a `command` profile
+  into `engines.json` locally, then sends `engine_reload`.
 
-Newline-delimited JSON over loopback TCP, authenticated by a token from `~/.sonara/daemon.lock`.
-Message types are in `protocol.py`. The full contract, including SPEAK, SUBSCRIBE and the host
-tab, is [protocol.md](protocol.md). Changes stay additive, and the doc changes with the code.
+## Persisted state and logs
 
-## Config schema
+Everything lives in the home, `%LOCALAPPDATA%\Sonara` (`SONARA_HOME` or `--home` override it).
+[PRIVACY.md](../PRIVACY.md) lists every file and what it holds; update it when adding one. The
+runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
 
-`config_schema.py` holds one `Setting` per `config.json` key: the default, a validator
-(`clean`), how the settings page writes it (`page="msg"` through a protocol message,
-`page="config"` through `set_config_value`), an optional live-apply hook and CLI choices.
-`config.DEFAULTS`, the daemon's setters, `webui.py` and the CLI all read it. `config.json`
-stores only keys the user set, so a new default reaches existing installs. In a file written
-before #136 (which stored every key), a value equal to a current or past default
-(`LEGACY_DEFAULTS`) counts as unset.
+- `config.json`: only the keys the user set (`sonarad::config`); `session_prefs.json`: label,
+  voice and mute per channel; `keymap.json`: hotkey overrides (`sonara_system::keymap`);
+  `engines.json`: external engine profiles, never a key; `runtime.json`: discovery; the
+  crash-restore files of ducking and pausing (`sonara_system`); `stopped`: the stop sentinel.
+- Logs, `logs\` (crate `sonara-log`: streams, segments, the folder budget, masking):
+  - `sonarad.log`: activity lines (`support_log.rs`: start, engine readiness, `read text`; and
+    `sonara_system::log`: `media pause`, `duck`, `restore`, ...) and troubleshooting lines
+    (`trace_log.rs`: `in`, `agent`, `drop`, `cue`). Text and payloads only while `debug_log` is
+    on. The line formats are documented at the top of those files.
+  - `hook.log`: each hook's payload and what it sent (`sonara-hook`).
+  - `bootstrap.log`: the runtime download and install (`bin/sonara-bootstrap.ps1`).
 
 ## How to
 
 **Add a setting**
 
-1. Add a `Setting` to `config_schema.SCHEMA` with a default and a validator.
-2. If changing it needs work in the daemon beyond storing it, either give it a protocol message
-   (`page="msg"`, a `MsgType` in `protocol.py` and a handler in `daemon/settings.py` or
-   `daemon/audio.py`) or a live-apply hook (`apply="<SpeechDaemon method>"`). Otherwise
-   `page="config"` is enough.
-3. Read it with `config_schema.get(config, key)` or `current(...)`, never a literal default.
-4. Add the control to `settings.html` (and a CLI verb in `cli.py` if it belongs there).
-5. Test the validator, the handler and the page round trip (`tests/test_webui.py`,
-   `tests/e2e/` for UI).
+1. Add a `Setting` to `sonarad::config::SCHEMA` (`crates/sonarad/src/config.rs`) with its layer,
+   validation and default. The default is the product's; `the_defaults_are_the_product_defaults`
+   pins it.
+2. Make the owning layer take it: a reader key in `sonara-reader/src/settings.rs`; an extension key
+   in the extension's `KEYS` (`channels_ext`, `agent_ext`, `system_ext`) and in
+`protocol::EXTENSION_KEYS`; a host key (like `debug_log`) in `protocol.rs`. Apply the saved value at
+start (`config::apply_reader`,
+   `agent_ext::settings_from`, the extension's enable path).
+3. Add the control to `crates/sonarad/assets/settings.html` and run the e2e tests
+   (`tests/e2e/test_sonarad_settings_e2e.py`).
+4. Document the key in [protocol-v1.md](protocol-v1.md) (core "set / get" or the extension's
+   Settings section) and add a conformance test (`conformance/persistence/` for the saved value).
 
-**Add a message type**
+**Add a message**
 
-1. Add the constant to `MsgType` in `protocol.py`.
-2. Handle it in the feature module that owns that state and register it in its `register()`
-   through `core.add_handlers` (a second owner raises). The handler runs with the lock held and
-   returns a reply dict or `None`.
-3. Add a producer: `hooks_entry.py`, `cli.py`, `keymap.ACTION_MESSAGES` or `webui.py`.
-4. If an embedding host may use it, document it in `docs/protocol.md`. Keep it additive.
+1. Dispatch it in `Server::dispatch` (`crates/sonarad/src/protocol.rs`). A core message also gets
+   a capability in `CAPABILITIES` and a protocol minor (`PROTOCOL_MINOR`); an extension message
+   goes in that extension's `TYPES` and in `EXTENSION_TYPES`, so a client without the extension
+   gets `E_UNSUPPORTED`, not `E_UNKNOWN_TYPE`.
+2. Handle it in the module that owns the state (`*_ext.rs`, or the layer crate through its public
+   API). Take the admission lock (`self.admit()`) when it can start speech.
+3. Document it in [protocol-v1.md](protocol-v1.md): changes are additive only (Versioning).
+4. Add conformance tests (`conformance/<area>/`) and the call in both SDKs (`clients/ts`,
+   `clients/python`).
 
 **Add a hotkey action**
 
-1. Add `action: message` to `keymap.ACTION_MESSAGES`; the message must already be handled.
-2. Leave it unbound, or add a default key to `keymap._DEFAULT_KEYS`. Check that the Ctrl+Alt
-   chord is free on Windows 11 and is not an AltGr character on common layouts (see the
-   README), and run `sonara doctor`.
-3. If it is a toggle, add its message type to `daemon/hotkeys.DEBOUNCED_TYPES`.
-4. Add a row with `data-action="<action>"` to the Hotkeys page in `settings.html`.
+1. Add the variant to `sonara_system::keymap::Action` (`ALL`, `as_str`, `parse`; `debounced` for a
+   toggle) and, only if it gets a default chord, to `DEFAULT_KEYS`. A default must be free on
+   Windows 11 and must not be an AltGr character on common layouts (see the README).
+2. Map it to protocol controls in `SystemExt::apply` (`crates/sonarad/src/system_ext.rs`).
+3. Add a `data-action="<action>"` row to the Hotkeys page of `settings.html` and run the e2e tests.
+4. Document it under Hotkeys in [protocol-v1.md](protocol-v1.md#hotkeys); test it in
+   `crates/sonara-system/tests/keymap.rs` and `conformance/system/`.
+
+**Add an external engine kind**
+
+1. Add the variant to `Kind` in `external/profile.rs` (`ALL`, `as_str`, `display_name`,
+   `default_base`, its options and rates) and in `rate.rs`.
+2. Write `external/<kind>.rs` implementing `Adapter` (request, error mapping, voice and model
+   lists) and return it from the `Backend` match in `external/mod.rs`.
+3. Update the host and its clients: the `kinds` test in `crates/sonarad/src/engines.rs`, the kind
+   tables of `settings.html`, the help text of `crates/sonara-cli/src/engines.rs`.
+4. Document it: a section under Kinds in [protocol-v1-engines.md](protocol-v1-engines.md) and a
+   row in PRIVACY.md (where the text goes, how the key is sent).
+5. Test it: unit tests in the crate, a local fake of the provider in `conformance/engines/fakes.py`
+   with `test_cloud_engines.py`, and an opt-in case in `tests/external_live.rs` with its env var in
+   `docs/testing.md`. Never put a model id or voice name in code, defaults or docs.
+
+**Add an earcon**
+
+1. Add `Variant => "<kind>"` to the `earcons!` list in `crates/sonara-agent/src/earcon.rs`.
+2. Render `crates/sonara-agent/sounds/<kind>.wav` with `packaging/sounds/build_earcons.py` (add
+   the kind to `PICKS`) and update `sounds/SHA256SUMS` (`--check` compares them).
+3. Fire it from the rules (`rules.rs`); `earcon` messages take any kind of `Earcon::ALL`, and a
+   custom earcons folder may override it by file name. List the kind in
+   [protocol-v1.md](protocol-v1.md#extension-agent) and test it in `conformance/agent/`.

@@ -15,4 +15,5 @@ This folder is listed in the root `.ignore`, so rg and Grep skip it. Search it o
 | `spikes/` | Early technical spikes (key injection) |
 | `verification/` | Clean-room install checklist (phase 3.1) |
 | `mockups/` | Settings page mockups |
+| `architecture-python.md` | The Python daemon's architecture (0.8.3), moved out of `docs/architecture.md` in #253 |
 | Top-level files | Windows acceptance runs (M2, M3), friend test round 1, phase 1 to 3 logs and smoke checklists, the eyes-free prompts spec, the M2 Windows API reference |

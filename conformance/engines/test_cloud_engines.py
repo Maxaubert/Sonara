@@ -1,4 +1,4 @@
-"""Cloud kinds of external engines (#225, #226, ``docs/protocol-v1.md``
+"""Cloud kinds of external engines (#225, #226, ``docs/protocol-v1-engines.md``
 "External engines"): ``elevenlabs``, ``azure``, ``google``, ``gemini``, ``cartesia`` and
 ``deepgram``, each against a local fake of its provider (``fakes.py``). A sentence reaches the provider with
 the key in the provider's own header, and a refused key makes the runtime

@@ -1,4 +1,4 @@
-"""External engines (protocol 1.2, ``docs/protocol-v1.md`` "External
+"""External engines (protocol 1.2, ``docs/protocol-v1-engines.md`` "External
 engines"): capability ``engines``, ``engine_add``/``engine_list``/
 ``engine_remove``/``engine_key``/``engine_test``, speech through a profile,
 the fallback with its reason, persistence, and keys that never land in a

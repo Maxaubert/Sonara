@@ -1,4 +1,4 @@
-"""Muted means nothing leaves the PC (#227, ``docs/protocol-v1.md``
+"""Muted means nothing leaves the PC (#227, ``docs/protocol-v1-engines.md``
 "External engines", Muted): while the reader is muted (``control mute``) or
 the agent's ``mute_level`` is 1 or 2, no request of any kind reaches an
 external engine. Text is read with the built-in voice (the fake engine

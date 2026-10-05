@@ -1,4 +1,4 @@
-"""The ``command`` kind of external engines (#226, ``docs/protocol-v1.md``
+"""The ``command`` kind of external engines (#226, ``docs/protocol-v1-engines.md``
 "External engines"): a program of the user's own on this PC speaks. The
 program here is this Python interpreter (an ``.exe`` with a full path)
 running a small script that reads the text on stdin and prints a WAV. No
