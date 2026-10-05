@@ -31,7 +31,11 @@ python packaging/runtime_dlls.py stage target/release
 R="$LOCALAPPDATA/Sonara/runtime/<ver>"
 "$R/sonara.exe" stop     # writes <home>\stopped, restores ducked apps, waits for the exit
 cp target/release/{sonarad,sonara-hook,sonara}.exe "$R/"
-cp target/release/{onnxruntime.dll,onnxruntime-LICENSE.txt,onnxruntime-ThirdPartyNotices.txt,msvcp140.dll,msvcp140_1.dll,vcruntime140.dll,vcruntime140_1.dll} "$R/"
+# the VC++ DLLs are in target/release only when they were staged (not after --no-vc)
+for f in onnxruntime.dll onnxruntime-LICENSE.txt onnxruntime-ThirdPartyNotices.txt \
+         msvcp140.dll msvcp140_1.dll vcruntime140.dll vcruntime140_1.dll; do
+  [ -f "target/release/$f" ] && cp "target/release/$f" "$R/"
+done
 "$R/sonara.exe" start    # clears stopped
 ```
 

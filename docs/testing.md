@@ -2,7 +2,7 @@
 
 The gates every PR runs are in `CLAUDE.md`, `CONTRIBUTING.md` and the project skill
 `.claude/skills/sonara-gates`. This page holds the rest:
-opt-in live tests, engine staging, SDK steps, generated assets, the version file list and the
+opt-in live tests, engine staging, SDK steps, generated assets, the version bump and the
 safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 
 ## Rust live tests (opt-in, on this PC)
@@ -110,10 +110,10 @@ builds the runtime zip and publishes `v<version>`. It refuses a version that alr
 ## Safe redeploy of a branch build
 
 The project skill `.claude/skills/sonara-redeploy` has the full procedure, including a new
-version folder and the rollback. The short form:
+version folder and the rollback.
 
-The plugin runs the runtime in `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`. To try a
-branch build in the same version folder (never during someone's session):
+The plugin runs the runtime in `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`. The short
+form, to try a branch build in the same version folder (never during someone's session):
 
 1. `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release`
 2. `"$LOCALAPPDATA/Sonara/runtime/<ver>/sonara.exe" stop` (writes `stopped`, restores ducked
