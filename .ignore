@@ -1,0 +1,3 @@
+# Read by rg (and Claude Code's Grep). Finished plans, specs and audits: 2.4 MB that only add
+# noise to searches. Search them on purpose with `rg --no-ignore-dot <pattern> docs/history`.
+docs/history/

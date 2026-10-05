@@ -1,8 +1,9 @@
 # Contributing to Sonara
 
-Sonara is a Windows-only tool. Verification has two layers: the test suite checks the logic,
-and a human checks the Windows runtime on real hardware. Start with
-[docs/architecture.md](docs/architecture.md) for how the code fits together.
+Sonara is a Windows-only tool. Verification has two layers: the gates check the logic, and a
+human checks the Windows runtime on real hardware. Start with [docs/README.md](docs/README.md)
+for where everything lives, and [docs/architecture.md](docs/architecture.md) for how the code
+fits together.
 
 ## Branch model
 
@@ -12,57 +13,75 @@ and a human checks the Windows runtime on real hardware. Start with
   (`fix/128-up-always-restart`, `feat/...`, `refactor/...`, `docs/...`, `ci/...`).
   Commits are `type(scope): subject (#issue)`. A version bump or tooling change needed by a
   change rides inside that change's PR.
-- **Bump the version in every PR**: patch for fixes, minor for features, in `pyproject.toml`,
-  `src/sonara/__init__.py`, `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
-  (`tests/test_manifests.py` keeps them equal). A push to `main` runs `release.yml`, which
-  publishes `v<version>` and refuses a version that already exists.
+- **Bump the version in every PR**: patch for fixes, minor for features, in every file listed
+  under "Version files" in [docs/testing.md](docs/testing.md) (`tests/test_manifests.py` keeps
+  them equal). A push to `main` runs CI, and once it passes `release.yml` publishes
+  `v<version>`; it refuses a version that already exists.
 - **Squash-merge into `main`**, then delete the branch locally and on the remote.
 
-## 1. The test suite (runs anywhere)
+## 1. The gates (run anywhere)
 
-The suite uses fakes for speech, audio and hotkeys, so it needs no speech engine and runs
-headless. Before opening a PR:
+The runtime is the Rust workspace in `crates/`. Tests use fakes for speech, audio and hotkeys
+(`--engine fake --system fake`), so they need no speech engine and run headless. Install Rust
+with rustup (`rust-toolchain.toml` picks stable with clippy and rustfmt), Python 3.9 or
+newer, and `cargo install cargo-deny`. Before opening a PR:
 
 ```powershell
+# Rust
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo deny check licenses bans
+python packaging/notices/gen_notices.py --check
+
+# Protocol v1 conformance (black box against the built binaries)
+cargo build -p sonarad -p sonara-hook -p sonara-cli
+python -m pytest conformance -q
+
+# Python lint and repo checks
 python -m venv .venv
 .venv\Scripts\pip install -e ".[dev,windows]"
-.venv\Scripts\ruff check src tests
+.venv\Scripts\ruff check src tests conformance clients/python packaging
 .venv\Scripts\python -m pytest -q
 ```
 
-Both must be green. CI (`.github/workflows/ci.yml`) runs on Windows: the unit suite on Python
-3.9 and 3.12, plus ruff on 3.12 (lock checks, `SONARA_DEBUG_LOCKS=1`, are a local diagnostic
-since #250). Tests must not depend on what is
-installed on your PC (Kokoro, Windows voices): patch the platform and `kokoro.is_installed`.
+All must be green. CI (`.github/workflows/ci.yml`) runs the same on Windows, plus the SDK
+clients job. Tests must not depend on what is installed on your PC (Kokoro models, Windows
+voices, API keys).
 
-- **Settings page changes** (`settings.html`, `webui.py`) also need the browser tests:
-  `pip install -e ".[e2e]"`, `playwright install chromium`, then `python -m pytest tests/e2e -q`.
-  CI skips them, so they are the local gate.
-- **Real speech checks** are marked `live_windows` and run only on request:
-  `python -m pytest -m live_windows`.
+- **Settings page changes** (`crates/sonarad/assets/settings.html`,
+  `crates/sonarad/src/settings_page.rs`) also need the browser tests:
+  `pip install -e ".[e2e]"`, `playwright install chromium`, `cargo build -p sonarad`, then
+  `python -m pytest tests/e2e -q`. CI skips them, so they are the local gate.
+- **SDK changes** (`clients/`, `packaging/npm-runtime`, version files) run the SDK steps in
+  [docs/testing.md](docs/testing.md).
+- **Real speech, audio and hotkey checks** are opt-in `--ignored` tests, listed with their
+  env vars in [docs/testing.md](docs/testing.md).
 - **Bug fixes are test-first**: a regression test named after the behaviour, failing before the
   fix.
 
 ## 2. Runtime acceptance (a human, on Windows)
 
-The suite proves nothing about real speech, the daemon's crash and restart paths, the global
-hotkeys, earcon mixing, ducking or autostart. For a change that touches runtime behaviour,
-deploy the branch to `~/.sonara/app` (see the safe redeploy steps in `CLAUDE.md`), use it in a
-real Claude Code session, and say in the PR what you tested.
+The gates prove nothing about real speech, the runtime's crash and restart paths, the global
+hotkeys, earcon mixing or ducking. For a change that touches runtime behaviour, deploy the
+branch build into `%LOCALAPPDATA%\Sonara\runtime\<version>\` (the safe redeploy steps are in
+[docs/testing.md](docs/testing.md)), use it in a real Claude Code session, and say in the PR
+what you tested.
 
 ## Code rules
 
-- The core stays OS-free. Windows code lives behind the platform seam in
-  `src/sonara/platform/` (`tests/test_no_os_branch_in_core.py` enforces it).
-- Python 3.9 syntax (`tests/test_py39_compat.py`).
-- Every `~/.sonara` path goes through `paths.py`.
-- Protocol changes are additive and update `docs/protocol.md`.
-- No em-dashes in user-facing text.
+- Crates are layered (L1 core to L5 hook and CLI, `sonarad` on top) and never depend upward;
+  `crates/*/tests/layering.rs` enforces it.
+- Protocol changes are additive and update [docs/protocol-v1.md](docs/protocol-v1.md), the
+  conformance tests and both SDKs.
+- A new file in `%LOCALAPPDATA%\Sonara` is listed in [PRIVACY.md](PRIVACY.md).
+- No em-dashes anywhere.
+- `src/sonara` is the retired Python daemon, frozen until it is removed (#248): do not extend it.
 
 ## A PR merges when
 
 1. It is one concern, branched off `main`.
-2. Ruff and the test suite are green, locally and in CI.
+2. The gates are green, locally and in CI.
 3. A maintainer has approved it.
 4. If it touches runtime behaviour, it has been tested on real hardware.
 
