@@ -7,7 +7,8 @@ These serve as golden fixtures for parser and integration tests.
 
 `sonara-hook.exe` (`crates/sonara-hook/src/main.rs`) reads the env var `SONARA_CAPTURE`. When
 set to a directory path, the hook dumps the raw stdin bytes it receives to
-`${SONARA_CAPTURE}/<event>-<pid>.json` BEFORE any other processing, so even a crash in
+`${SONARA_CAPTURE}/<event>-<pid>.json` before any other work (hooks of the summarizer's own session,
+`SONARA_SUMMARIZER`, are skipped), so even a crash in
 downstream code leaves the payload on disk.
 
 Each payload here is used by a golden case in `crates/sonara-hook/tests/golden/` (its

@@ -10,7 +10,7 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - Rust (needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. One crate: `cargo test -p <crate>`.
 - Conformance (protocol v1, black box): `cargo build -p sonarad -p sonara-hook -p sonara-cli; python -m pytest conformance -q`.
 - Typecheck/lint: `ruff check tests conformance clients/python packaging`; TS: `npm run typecheck` in `clients/ts`.
-- Repo checks (`tests/repo`, Python 3.12, `pip install --group dev`; `pyproject.toml` is dev config only): `python -m pytest -q`.
+- Repo checks (`tests/repo`, Python 3.12, `pip install --group dev`; `pyproject.toml` is dev config only): `python -m pytest tests/repo -q` (plain `python -m pytest -q` also runs `tests/e2e`).
 - E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings.html` or `crates/sonarad/src/settings_page.rs` change (needs `cargo build -p sonarad`).
 - `clients/`, `packaging/npm-runtime` or a version file changed: run the SDK gates. Rust dependency changed: regenerate notices. Live tests, Kokoro, G2P bless, earcons, SDK steps: `docs/testing.md`.
 - Skill `sonara-gates`: every gate command and when the e2e and SDK gates apply.

@@ -196,7 +196,9 @@ def test_the_release_version_is_the_cargo_workspace_version():
 def test_no_python_package_carries_a_version_any_more():
     # src/sonara is gone (#248): the root pyproject.toml is dev config only.
     mod = _bump_module()
-    assert not (REPO_ROOT / "src").exists()
+    # Ignored leftovers (__pycache__) can outlive the package in an old checkout,
+    # so check what makes a package, not whether the folder exists.
+    assert not (REPO_ROOT / "src" / "sonara" / "__init__.py").exists()
     assert "[project]" not in (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert not [rel for rel in mod.all_paths() if rel == "pyproject.toml" or rel.startswith("src/")]
 

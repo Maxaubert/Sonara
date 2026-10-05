@@ -29,13 +29,13 @@ cargo build -p sonarad -p sonara-hook -p sonara-cli
 python -m pytest conformance -q
 ```
 
-Python lint and repo checks (Python 3.12, `python -m pip install --group dev`; `tests/repo`, and
-`tests/e2e`, which skips without playwright):
+Python lint and repo checks (Python 3.12, `python -m pip install --group dev`; plain
+`python -m pytest -q` also runs `tests/e2e`, which skips without playwright or sonarad):
 
 ```sh
 ruff check tests conformance clients/python packaging
 python packaging/bump_version.py --check
-python -m pytest -q
+python -m pytest tests/repo -q
 ```
 
 ## Also, when the change touches
