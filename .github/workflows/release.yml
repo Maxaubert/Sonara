@@ -112,7 +112,7 @@ jobs:
           $tag = "v${{ steps.ver.outputs.version }}"
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Error "Release $tag already exists. Bump the version in pyproject.toml, plugin.json and marketplace.json (patch for a fix, minor for a feature) and push again."
+            Write-Error "Release $tag already exists. Bump the version with python packaging/bump_version.py <version> (patch for a fix, minor for a feature) and push again."
             exit 1
           }
           # gh exiting 1 (release absent) is the pass case, but the pwsh step

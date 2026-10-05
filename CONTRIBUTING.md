@@ -13,9 +13,9 @@ fits together.
   (`fix/128-up-always-restart`, `feat/...`, `refactor/...`, `docs/...`, `ci/...`).
   Commits are `type(scope): subject (#issue)`. A version bump or tooling change needed by a
   change rides inside that change's PR.
-- **Bump the version in every PR**: patch for fixes, minor for features, in every file listed
-  under "Version files" in [docs/testing.md](docs/testing.md) (`tests/test_manifests.py` keeps
-  them equal). A push to `main` runs CI, and once it passes `release.yml` publishes
+- **Bump the version in every PR**: patch for fixes, minor for features, with
+  `python packaging/bump_version.py <version>` (it sets every version file and lockfile entry;
+  `tests/test_manifests.py` keeps them equal). A push to `main` runs CI, and once it passes `release.yml` publishes
   `v<version>`; it refuses a version that already exists.
 - **Squash-merge into `main`**, then delete the branch locally and on the remote.
 

@@ -13,14 +13,17 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - Unit (legacy Python and repo checks): `python -m pytest -q`.
 - E2E (headless): `python -m pytest tests/e2e -q` (`pip install -e ".[e2e]"`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings.html` or `crates/sonarad/src/settings_page.rs` change (needs `cargo build -p sonarad`).
 - `clients/`, `packaging/npm-runtime` or a version file changed: run the SDK gates. Rust dependency changed: regenerate notices. Live tests, Kokoro, G2P bless, earcons, SDK steps: `docs/testing.md`.
+- Skill `sonara-gates`: every gate command and when the e2e and SDK gates apply.
+- Skill `sonara-live-tests`: the opt-in live checks and their env vars.
 - Build / package: `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py`   Artifact: `sonara-runtime-win-x64-<version>.zip` + `SHA256SUMS`
 - Known failures to tolerate: none
-- Version source: 12 files kept equal by `tests/test_manifests.py` (list in `docs/testing.md`)   Release: release.yml once ci.yml passed on a push to main (`workflow_run`, #250); users get the release named in `bin/runtime-version`
+- Version: `python packaging/bump_version.py <version>` sets every version file and lockfile entry (`tests/test_manifests.py` checks them)   Release: release.yml once ci.yml passed on a push to main (`workflow_run`, #250); users get the release named in `bin/runtime-version`
 - Install locally after merge: `/plugin update sonara@sonara` once the release exists, restart Claude Code   Confirm version: `/sonara:doctor` (its `version` row)
 - Deploy: plugin marketplace   Signing: unsigned
 
 ## Runtime deploy drift (the biggest gotcha)
-- The plugin runs `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`, NOT the repo or `target/`. Before diagnosing behaviour compare `sonara.exe version` there with the branch. Redeploy a branch build only with `sonara.exe stop` first and `start` after the copy, never during someone's session (steps: `docs/testing.md`).
+- The plugin runs `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`, NOT the repo or `target/`. Before diagnosing behaviour compare `sonara.exe version` there with the branch. Redeploy a branch build only with `sonara.exe stop` first and `start` after the copy, never during someone's session.
+- Skill `sonara-redeploy`: the safe stop, copy and start of a branch build, in the same or a new version folder, and the rollback.
 - Home (`SONARA_HOME` overrides): `%LOCALAPPDATA%\Sonara`: `config.json` (only user-set keys), `runtime.json`, `logs\` (`sonarad.log`, `hook.log`, `bootstrap.log`).
 
 ## Architecture (map: `docs/architecture.md`)
