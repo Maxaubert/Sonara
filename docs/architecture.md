@@ -38,8 +38,8 @@ dependency on a higher layer fails a test.
 | `sonara-agent` | L3 | Agent sessions on channels: streamed turns, decisions with priority, earcons (one at a time), three mute levels, read modes, summaries | `sonara-channels`, `sonara-reader`, `sonara-core`, `sonara-engine` | `lib.rs` (the driver), `rules.rs` (pure), `decision.rs`, `earcon.rs` + `sounds/`, `sequencer.rs`, `settings.rs`, `summarizer.rs`, `prompts/` | `tests/agent.rs`, `rules.rs`, `muted_store.rs`, `send_mode.rs`, `summarizer_process.rs`, `layering.rs` |
 | `sonara-system` | L4 | Windows extras: duck or pause other apps while speech plays (with crash restore), global hotkeys, the keymap and AltGr check, activity log lines; all OS access behind `platform::Platform` | `sonara-reader` | `audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `platform.rs`, `win.rs`, `fake.rs`, `log.rs` | `tests/audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `activity_log.rs`, `layering.rs`; opt-in live: `win_live` |
 | `sonara-hook` | L5 | `sonara-hook.exe`: maps a Claude Code hook event to protocol v1 `channels` and `agent` messages, sends them as one batch, starts `sonarad` when none answers; never fails the session | `sonara-log` only (no runtime crate) | `lib.rs` (`map_event`, `deliver`), `project.rs` (session names), `main.rs` | `tests/golden.rs` (cases in `tests/golden/`), `binary.rs`, `layering.rs` |
-| `sonara-cli` | L5 | `sonara.exe`: `start`, `stop`, `settings`, `doctor`, `uninstall`, `engines`; a protocol v1 client | `sonara-hook` | `main.rs`, `client.rs`, `lifecycle.rs`, `doctor.rs`, `uninstall.rs`, `engines.rs`, `engines_file.rs`, `paths.rs` | unit tests; conformance `conformance/plugin/` |
-| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | every crate above but the L5 ones | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
+| `sonara-cli` | L5 | `sonara.exe`: `start`, `stop`, `settings`, `doctor`, `uninstall`, `engines`, `version`; a protocol v1 client | `sonara-hook` | `main.rs`, `client.rs`, `lifecycle.rs`, `doctor.rs`, `uninstall.rs`, `engines.rs`, `engines_file.rs`, `paths.rs` | unit tests; conformance `conformance/plugin/` |
+| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | `sonara-reader`, `sonara-engine`, `sonara-audio`, `sonara-channels`, `sonara-agent`, `sonara-system`, `sonara-log` | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
 
 Pure rules and drivers: L1 (`sonara_core::reader`), L2 (`router.rs`) and L3 (`rules.rs`) keep their
 decisions in pure code with no threads, clock or I/O, and a driver carries out the actions they
@@ -118,6 +118,7 @@ plugin once, `migrate.rs`), builds the engines and the `ReaderHandle`, writes `r
 | `sonarad-support-log`, `sonarad-cue-log`, `sonarad-read-log` | `sonarad` | Write engine readiness, cue and read-text lines to the log |
 | `sonara-kokoro-prepare` | engine | Kokoro model download and load |
 | `sonara-external-request`, `sonara-external-stream` | engine | One HTTP request (a wait that `cancel` ends), and a streamed answer's server-sent events |
+| unnamed helper threads | agent, engine | Child-process stdin and stdout pumps (summarizer, `command` engine), the sse helpers, the agent's fallback when a summary cannot start; they hold nothing |
 
 Rules:
 
@@ -177,21 +178,43 @@ lists.
     (`openai-compatible`), `elevenlabs.rs`, `azure.rs`, `google.rs`, `gemini.rs`, `cartesia.rs`,
     `deepgram.rs`. `command.rs` runs the user's program with no shell instead.
   - `keys.rs` (`Secret`, `KeyStore`: Credential Manager, memory, the `--keys fake` file;
-    `KeyResolver`), `health.rs` (breaker, blocked state, the once-per-episode cue), `hold.rs`
-    (muted: nothing is sent), `error.rs`, `cache.rs`, `audio.rs` (body to PCM), `rate.rs`,
-    `split.rs`, `worker.rs`, `sse.rs`, `streaming.rs` (a streamed chunk plays from its first
-    audio; a stall reads the rest with the fallback).
+    `KeyResolver`), `health.rs` (breaker, blocked state, the once-per-episode cue; injectable
+    clock), `hold.rs` (muted: nothing is sent), `error.rs` (`ExtError`, the cue texts), `cache.rs`
+    (the cue cache), `audio.rs` (body to PCM), `rate.rs`, `split.rs`, `worker.rs` (a request on
+    its own thread, a wait `cancel` ends), `sse.rs` (a request whose server-sent events arrive on
+    a channel), `streaming.rs` (a streamed chunk returns at its first audio within
+    `first_audio_ms`, the rest follows on the `PcmStream`; a stall or break after audio reads the
+    rest of the message with the fallback from the sentence reached, `rest_of`).
+  - Kind details: `azure.rs` builds SSML (XML escaping); `google.rs` decodes a base64
+    `audioContent`; `gemini.rs` streams `streamGenerateContent?alt=sse` (else `generateContent`,
+    base64 `inlineData`), lists models and voices from `/v1beta/models` and `/v1beta/voices`,
+    sends the rate as a style, honours a 429 `retryDelay`, and like `deepgram.rs` (a refused
+    `speed`) drops a refused field or the stream through `Adapter::adapt`. `command.rs` kills the
+    program on timeout or cancel.
+- `crates/sonara-engine/src/http.rs`: the `ureq` agent shared by the external adapters and the
+  Kokoro download. `src/bin/sonara-fake-tts.rs` (feature `test-util`) is the stand-in program of
+  the `command` tests.
+- `Engine::accepts_unlisted_voices` lets `set voice` take any id (external engines: cloud voice
+  ids, cloned voices, file names of a local server).
 - `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or the
   fake engine) as its fallback, registration in the reader's and the previews' registries,
-  `reload`, the `E_FORBIDDEN` refusal of a `command` profile. `engines_ext.rs`: the handlers and
-  the voice rule; `engine_remove` and `engine_reload` live in `protocol.rs` because they may switch
-  `engine`.
-- Send mode (#235): `Engine::send_mode` and `Engine::input_limit` set `Reader::set_chunking`;
-  `ReaderHandle::send_mode` tells L3, whose `Rules::set_whole_messages` makes each release of
-  prose one entry, one item and one request. `Engine::lookahead` asks for chunks ahead;
-  `Engine::streams` engines hand each piece to the worker as it arrives.
+  the notice lines of `sonarad.log`, `reload`, the `E_FORBIDDEN` refusal of a `command` profile in
+  `engine_add` (local-only). `engines_ext.rs`: the handlers and the voice rule: `engine_test`
+  takes the request's voice, else the reader's voice when the engine is current, else the
+  profile's; `engine_models` lists a saved or a draft profile's models. `engine_remove` and
+  `engine_reload` live in `protocol.rs` because they may switch `engine`.
+- Send mode (#235): `Engine::send_mode` and `Engine::input_limit` set `Reader::set_chunking` at
+  start and on `set engine`: `Sentences`, or `Message` (one chunk per item, cut past the limit by
+  `reader::pack_message`). `ReaderHandle::send_mode` tells L3, whose `Rules::set_whole_messages`
+  (set by the driver before every call) makes each release of prose one entry, one item and one
+  request. `Engine::lookahead` and `Reader::set_lookahead`: a cloud engine asks for two chunks
+  ahead of the playing one.
+- Reader streaming (#235): `Engine::streams` engines hand each piece to the worker as it arrives
+  (`Done::Part`); a chunk the reader waits for plays from its first piece (`Output::play_open`,
+  `append`, `finish`), and its whole audio is kept for a replay.
 - `sonara-cli` `engines.rs`: `sonara engines ...`; `engines_file.rs` writes a `command` profile
-  into `engines.json` locally, then sends `engine_reload`.
+  into `engines.json` locally, then sends `engine_reload`; `uninstall` deletes the `sonara:*`
+  credentials unless settings are kept.
 
 ## Persisted state and logs
 
@@ -220,9 +243,9 @@ runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
    pins it.
 2. Make the owning layer take it: a reader key in `sonara-reader/src/settings.rs`; an extension key
    in the extension's `KEYS` (`channels_ext`, `agent_ext`, `system_ext`) and in
-`protocol::EXTENSION_KEYS`; a host key (like `debug_log`) in `protocol.rs`. Apply the saved value at
-start (`config::apply_reader`,
-   `agent_ext::settings_from`, the extension's enable path).
+   `protocol::EXTENSION_KEYS`; a host key (like `debug_log`) in `protocol.rs`. Apply the saved
+   value at start (`config::apply_reader`, `agent_ext::settings_from`, the extension's enable
+   path).
 3. Add the control to `crates/sonarad/assets/settings.html` and run the e2e tests
    (`tests/e2e/test_sonarad_settings_e2e.py`).
 4. Document the key in [protocol-v1.md](protocol-v1.md) (core "set / get" or the extension's
@@ -256,7 +279,8 @@ start (`config::apply_reader`,
    `default_base`, its options and rates) and in `rate.rs`.
 2. Write `external/<kind>.rs` implementing `Adapter` (request, error mapping, voice and model
    lists) and return it from the `Backend` match in `external/mod.rs`.
-3. Update the host and its clients: the `kinds` test in `crates/sonarad/src/engines.rs`, the kind
+3. Update the host and its clients: the `list["kinds"]` assertion in the engines tests of
+   `crates/sonarad/src/engines.rs`, the kind
    tables of `settings.html`, the help text of `crates/sonara-cli/src/engines.rs`.
 4. Document it: a section under Kinds in [protocol-v1-engines.md](protocol-v1-engines.md) and a
    row in PRIVACY.md (where the text goes, how the key is sent).

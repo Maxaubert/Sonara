@@ -12,57 +12,6 @@ behaviour is in the [README](../../README.md); the wire contract for embedding h
 > contract is [protocol-v1.md](../protocol-v1.md), its design the runtime spec and plan in
 > `docs/plans/`.
 
-## External engines (Rust runtime, 0.15+)
-
-Speech engines the user adds at run time (#224, spec
-`docs/plans/2026-10-04-external-engines-spec.md`; contract: "External engines" in
-[protocol-v1.md](../protocol-v1.md)). Each profile is an `Engine` of licence class `External` in the
-reader's `Registry` (shared, with interior mutability, so profiles come and go while the reader
-runs), next to Kokoro and OneCore; the reader and the higher layers only see engines.
-
-- `crates/sonara-engine/src/external/` (feature `external`): `profile.rs` (validation, presets),
-  `keys.rs` (`Secret`, `KeyStore`: Credential Manager, memory, the `--keys fake` file;
-  `KeyResolver`), `error.rs` (`ExtError`, cue texts), `health.rs` (breaker, blocked state, the
-  once-per-episode cue; injectable clock), `cache.rs` (cue cache), `audio.rs` (body to PCM),
-  `rate.rs`, `split.rs`, `worker.rs` (a request on its own thread, a wait `cancel` ends),
-  `adapter.rs` (the `Adapter` trait, `execute`, error-body shapes, paged voice and model
-  lists, the stream hooks), `sse.rs` (a request whose server-sent events arrive on a channel),
-  `streaming.rs` (#235: a streamed chunk returns at its first audio within `first_audio_ms`, the
-  rest follows on the `PcmStream`; a stall or break after audio reads the rest of a message with
-  the fallback from the sentence reached, `rest_of`),
-  `openai.rs` (kind `openai-compatible`), `elevenlabs.rs`, `azure.rs` (SSML, XML escaping),
-  `google.rs` (base64 `audioContent`), `gemini.rs` (`streamGenerateContent?alt=sse`, else
-  `generateContent`; base64 `inlineData`; models and voices from `/v1beta/models` and
-  `/v1beta/voices`; the rate as a style; drops a refused field or the stream through
-  `Adapter::adapt`, 429 `retryDelay`), `cartesia.rs`, `deepgram.rs` (drops a refused `speed`
-  through `Adapter::adapt`), `command.rs` (kind `command`: not an `Adapter`; runs the user's
-  program with no shell, kills it on timeout or cancel), `mod.rs` (the `External` engine over a
-  `Backend` of an adapter or a program: fallback with the cue, retry policy, status, the voice
-  rule's last step (`voice_for`: the caller's voice, else the profile's; none in code), "choose a
-  model/voice" (#235)). No model id or voice name is in the code: models and voices come from
-  the profile and the provider's lists.
-  `src/bin/sonara-fake-tts.rs` (feature `test-util`) is the stand-in program of the tests. `http.rs` holds the `ureq` agent shared with the Kokoro download.
-- `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or
-  the fake engine) as its fallback, registration in the reader's and the previews' registries,
-  the notice lines of `sonarad.log`, `reload` of the file, and the `E_FORBIDDEN` refusal of a
-  `command` profile in `engine_add` (local-only). `engines_ext.rs`: the protocol handlers;
-  `engine_remove` and `engine_reload` live in `protocol.rs` because they may switch `engine`.
-  `engines_ext.rs` holds the voice rule (#235): `engine_test` takes the request's voice, else the
-  reader's voice when the engine is current, else the profile's; `engine_models` lists a saved
-  or a draft profile's models.
-- `sonara-reader` streaming (#235): `Engine::streams` engines hand each piece to the worker
-  (`Done::Part`); a chunk the reader waits for plays from its first piece
-  (`Output::play_open`, `append`, `finish`), and its whole audio is kept for a replay.
-- `sonara-core` `Reader::set_lookahead` and `Engine::lookahead`: a cloud engine asks for two
-  chunks ahead of the playing one. Send mode (#235): `Engine::send_mode` and `Engine::input_limit`
-  set `Reader::set_chunking` at start and on `set engine`: `Sentences`, or `Message` (one chunk
-  per item, cut past the limit by `reader::pack_message`); `ReaderHandle::send_mode` tells L3,
-  whose `Rules::set_whole_messages` (set by the driver before every call) makes each release of
-  prose one `Speak`, so one entry, one item, one request. `Engine::accepts_unlisted_voices` lets `set voice` take any id.
-- `sonara-cli` `engines.rs`: `sonara engines ...` (`engines_file.rs` writes a `command` profile
-  into `engines.json` locally, then `engine_reload`); `uninstall` deletes the `sonara:*`
-  credentials unless settings are kept.
-
 ## Big picture
 
 Sonara is two kinds of process:
@@ -78,18 +27,8 @@ updates never change code under a running daemon. `/sonara:install` refreshes th
 
 ## Data flow
 
-The Claude Code plugin (0.11+, #202) no longer takes this path. Its hook chain is:
-
-```
-Claude Code hook event
-  -> hooks/hooks.json
-  -> bin/sonara-hook-launch       Git Bash; picks the runtime in %LOCALAPPDATA%\Sonara\runtime\
-                                  (bin/sonara-runtime.sh), or starts bin/sonara-bootstrap.ps1
-  -> sonara-hook.exe              event -> protocol v1 messages; starts sonarad.exe if needed
-  -> sonarad.exe                  the Rust runtime (crates/), contract docs/protocol-v1.md
-```
-
-The rest of this section, and of this document, is the legacy Python package:
+The Claude Code plugin (0.11+, #202) no longer takes the path below; its Rust hook chain is in
+[../architecture.md](../architecture.md#process-chain). The legacy Python package's path:
 
 ```
 Claude Code hook event
