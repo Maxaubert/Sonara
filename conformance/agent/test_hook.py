@@ -141,7 +141,7 @@ def test_a_session_end_closes_the_channel(hook_exe, rt):
 
 
 def test_a_session_keeps_its_project_name_when_it_moves_between_worktrees(hook_exe, rt, tmp_path):
-    """#245, the hook logs of 2026-10-05: a Filesmith session's cwd flipped
+    r"""#245, the hook logs of 2026-10-05: a Filesmith session's cwd flipped
     between the repository and its .claude\worktrees\statusbar, and between
     subfolders, and the session's name followed. It stays "Filesmith"."""
     repo = tmp_path / "Filesmith"
