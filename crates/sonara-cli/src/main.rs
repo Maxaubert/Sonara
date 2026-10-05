@@ -9,7 +9,7 @@ use sonara_cli::lifecycle::{self, Running, Stopped};
 use sonara_cli::paths::{self, Paths};
 use sonara_cli::uninstall::{self, Keep};
 use sonara_cli::VERSION;
-use sonara_hook::{runtime_args, RUNTIME_EXE, STOPPED};
+use sonara_client::{runtime_args, RUNTIME_EXE, STOPPED};
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;

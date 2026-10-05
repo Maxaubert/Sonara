@@ -55,15 +55,30 @@
 //! - `on_drop` (#219) reports every entry dropped unread (and an item cut
 //!   while it was read) with the reason: `replaced` (policy `latest` or
 //!   mode `replace`), the reason given to `control_because` (L3 passes
-//!   `turn_start`, `answered`, `mute`, `stop`), `closed`, `muted`. It runs
-//!   under the driver's lock and must not call back into `Channels`.
+//!   `turn_start`, `answered`, `mute`, `stop`), `closed`, `muted`. The
+//!   drops are collected under the driver's lock and reported right after
+//!   it is released (#255), in order, on the thread that dropped them: the
+//!   hook may call back into `Channels` and may do slow work (sonarad
+//!   writes a log line).
+//!
+//! **Locks** (#255; the whole order is in docs/architecture.md): the
+//! driver's lock (`state`) is taken after L3's (`rules`, `seen`) and before the
+//! reader's worker: under it the driver calls the reader (`speak`,
+//! `state`, `control`), which blocks on the reader's worker thread. The
+//! reader never calls back into L2 on that thread (its events reach the
+//! drain thread through a channel), so the order is
+//! `rules > channels.state > reader`. `on_announce` runs under `state`
+//! (it must come before the announcement is fed); L3's hook there takes
+//! only locks below `state` (its earcon schedule and player, the reader).
 pub mod router;
 
 pub use router::{Channel, Entry, Feed, Policy, Resolved, Router};
 pub use sonara_reader::{Control, ItemId, QueueMode, ReaderHandle};
 
 use sonara_reader::{Event, ItemPhase};
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 /// Item tags remembered for `tag` (state events are rendered after the
@@ -168,8 +183,45 @@ struct State {
     config: Config,
     on_announce: Option<AnnounceHook>,
     on_drop: Option<DropHook>,
+    /// Drops waiting for the lock's release (`report`, `Locked`).
+    dropped: RefCell<Vec<Dropped>>,
     in_flight: Option<InFlight>,
     tags: VecDeque<(ItemId, Tag)>,
+}
+
+/// The driver's lock. Dropping it releases the lock first, then reports
+/// the drops collected meanwhile to `on_drop` (module docs, #255).
+struct Locked<'a> {
+    guard: Option<MutexGuard<'a, State>>,
+}
+
+impl Deref for Locked<'_> {
+    type Target = State;
+    fn deref(&self) -> &State {
+        self.guard.as_ref().expect("held until dropped")
+    }
+}
+
+impl DerefMut for Locked<'_> {
+    fn deref_mut(&mut self) -> &mut State {
+        self.guard.as_mut().expect("held until dropped")
+    }
+}
+
+impl Drop for Locked<'_> {
+    fn drop(&mut self) {
+        let Some(st) = self.guard.as_mut() else {
+            return;
+        };
+        let dropped = st.dropped.take();
+        let hook = st.on_drop.clone();
+        drop(self.guard.take());
+        if let Some(hook) = hook {
+            for d in &dropped {
+                hook(d);
+            }
+        }
+    }
 }
 
 struct Inner {
@@ -246,6 +298,7 @@ impl Channels {
                 config,
                 on_announce: None,
                 on_drop: None,
+                dropped: RefCell::new(Vec::new()),
                 in_flight: None,
                 tags: VecDeque::new(),
             }),
@@ -274,7 +327,7 @@ impl Channels {
         &self.inner.reader
     }
 
-    fn lock(&self) -> MutexGuard<'_, State> {
+    fn lock(&self) -> Locked<'_> {
         self.inner.lock()
     }
 
@@ -625,8 +678,8 @@ impl Channels {
     }
 
     /// `stop_reading`, running `before` with the channel to flush right
-    /// before its drops are reported (so a log names the flush first). It
-    /// runs under the channels' lock and must not call back into them.
+    /// before its drops are reported (so a log names the flush first). Like
+    /// `on_drop` it runs once the lock is released (#255).
     pub fn stop_reading_with(&self, reason: &str, before: impl FnMut(&str)) -> Result<Flushed> {
         Ok(self.flush_with(reason, before, |_| false)?.flushed)
     }
@@ -637,15 +690,47 @@ impl Channels {
     /// while idle (entries a muted channel or the focus-only gate holds),
     /// and also for the channel a skipped announcement named. `before`
     /// runs with each channel flushed, before its drops are reported (for
-    /// another channel only when it had unread entries). Both run under
-    /// the channels' lock and must not call back into them.
+    /// another channel only when it had unread entries). `also` runs under
+    /// the channels' lock and must not call back into them; `before` and
+    /// the drops run in order once the lock is released (#255).
     pub fn flush_with(
         &self,
         reason: &str,
         mut before: impl FnMut(&str),
         also: impl Fn(&str) -> bool,
     ) -> Result<FlushReport> {
+        // Each `before` is noted with the number of drops reported ahead of
+        // it, and replayed among them after the release.
+        let mut marks: Vec<(usize, String)> = Vec::new();
         let mut st = self.lock();
+        let result = self.flush_locked(&mut st, reason, &mut marks, also);
+        let dropped = st.dropped.take();
+        let hook = st.on_drop.clone();
+        drop(st);
+        let mut marks = marks.into_iter().peekable();
+        for (i, d) in dropped.iter().enumerate() {
+            while let Some((_, ch)) = marks.next_if(|(at, _)| *at <= i) {
+                before(&ch);
+            }
+            if let Some(hook) = &hook {
+                hook(d);
+            }
+        }
+        for (_, ch) in marks {
+            before(&ch);
+        }
+        result
+    }
+
+    fn flush_locked(
+        &self,
+        st: &mut State,
+        reason: &str,
+        marks: &mut Vec<(usize, String)>,
+        also: impl Fn(&str) -> bool,
+    ) -> Result<FlushReport> {
+        let mut before =
+            |st: &State, ch: &str| marks.push((st.dropped.borrow().len(), ch.to_string()));
         let reader = &self.inner.reader;
         let target = st
             .in_flight
@@ -657,10 +742,10 @@ impl Channels {
             reader.control(Control::Skip)?;
             Flushed::Announcement(ch)
         } else if let Some((ch, false)) = target {
-            before(&ch);
-            report(&st, &ch, unread(&st, &ch), reason, None);
+            before(st, &ch);
+            report(st, &ch, unread(st, &ch), reason, None);
             st.router.flush(Some(&ch));
-            self.inner.cut_if(&mut st, &ch, Some(reason))?;
+            self.inner.cut_if(st, &ch, Some(reason))?;
             Flushed::Channel(ch)
         } else if reader.state()?.now_playing.is_some() {
             reader.control(Control::Skip)?;
@@ -674,12 +759,12 @@ impl Channels {
             if flushed == Flushed::Channel(id.clone()) || !also(&id) {
                 continue;
             }
-            let entries = unread(&st, &id);
+            let entries = unread(st, &id);
             if entries.is_empty() {
                 continue;
             }
-            before(&id);
-            report(&st, &id, entries, reason, None);
+            before(st, &id);
+            report(st, &id, entries, reason, None);
             st.router.flush(Some(&id));
             others.push(id);
         }
@@ -689,7 +774,7 @@ impl Channels {
         if reader.state()?.paused {
             reader.control(Control::Play)?;
         }
-        self.inner.pump(&mut st)?;
+        self.inner.pump(st)?;
         Ok(FlushReport { flushed, others })
     }
 
@@ -829,13 +914,15 @@ fn cut_entry(st: &State, channel: &str) -> Option<(ItemId, Entry)> {
     Some((f.id, e))
 }
 
-/// Tell `on_drop` about `entries` of `channel`.
+/// Tell `on_drop` about `entries` of `channel` once the lock is released
+/// (`Locked`).
 fn report(st: &State, channel: &str, entries: Vec<Entry>, reason: &str, item: Option<ItemId>) {
-    let Some(hook) = &st.on_drop else {
+    if st.on_drop.is_none() {
         return;
-    };
+    }
+    let mut dropped = st.dropped.borrow_mut();
     for e in entries {
-        hook(&Dropped {
+        dropped.push(Dropped {
             channel: channel.to_string(),
             entry: e.id,
             text: e.text,
@@ -846,9 +933,11 @@ fn report(st: &State, channel: &str, entries: Vec<Entry>, reason: &str, item: Op
 }
 
 impl Inner {
-    fn lock(&self) -> MutexGuard<'_, State> {
+    fn lock(&self) -> Locked<'_> {
         // A panic under the lock already failed a test; keep serving.
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        Locked {
+            guard: Some(self.state.lock().unwrap_or_else(|e| e.into_inner())),
+        }
     }
 
     /// The reader ended an item: if it was ours, feed the next one.

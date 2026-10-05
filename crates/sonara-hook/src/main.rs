@@ -5,10 +5,8 @@
 #![windows_subsystem = "windows"]
 
 use serde_json::Value;
-use sonara_hook::{
-    debug_log, deliver, home, log, log_line, map_event, outcome, runtime_args, runtime_exe, stamp,
-    START_BUDGET,
-};
+use sonara_client::{deliver, home, runtime_args, runtime_exe};
+use sonara_hook::{debug_log, log, log_line, map_event, outcome, stamp, HELLO, START_BUDGET};
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -63,6 +61,7 @@ fn run(t0: f64, started: Instant) {
         };
         Some(deliver(
             &home,
+            &HELLO,
             &msgs,
             exe.as_deref(),
             &runtime_args(&env),

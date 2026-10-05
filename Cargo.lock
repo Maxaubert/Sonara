@@ -1194,8 +1194,15 @@ name = "sonara-cli"
 version = "0.20.9"
 dependencies = [
  "serde_json",
- "sonara-hook",
+ "sonara-client",
  "windows 0.62.2",
+]
+
+[[package]]
+name = "sonara-client"
+version = "0.20.9"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -1231,6 +1238,7 @@ name = "sonara-hook"
 version = "0.20.9"
 dependencies = [
  "serde_json",
+ "sonara-client",
  "sonara-log",
 ]
 
@@ -1277,6 +1285,7 @@ dependencies = [
  "sonara-agent",
  "sonara-audio",
  "sonara-channels",
+ "sonara-client",
  "sonara-engine",
  "sonara-log",
  "sonara-reader",

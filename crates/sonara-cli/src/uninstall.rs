@@ -1,7 +1,7 @@
 //! `sonara uninstall`: remove the runtime folders and the home, except
 //! what the user keeps, and leave the stop sentinel.
 use crate::paths::is_within;
-use sonara_hook::STOPPED;
+use sonara_client::STOPPED;
 use std::path::{Path, PathBuf};
 
 /// What the user may keep.

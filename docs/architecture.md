@@ -38,9 +38,10 @@ crates each crate may depend on, read against `cargo metadata`, so a new depende
 | `sonara-channels` | L2 | Several named sources share one reader; one channel reads at a time, switches are announced, entries are fed one at a time when the reader is idle | `sonara-reader` | `lib.rs` (the driver), `router.rs` (pure rules) | `tests/channels.rs`, `router.rs` |
 | `sonara-agent` | L3 | Agent sessions on channels: streamed turns, decisions with priority, earcons (one at a time), three mute levels, read modes, summaries | `sonara-channels`, `sonara-reader`, `sonara-core`, `sonara-engine` | `lib.rs` (the driver), `rules.rs` (pure), `decision.rs`, `earcon.rs` + `sounds/`, `sequencer.rs`, `settings.rs`, `summarizer.rs`, `prompts/` | `tests/agent.rs`, `rules.rs`, `muted_store.rs`, `send_mode.rs`, `summarizer_process.rs` |
 | `sonara-system` | L4 | Windows extras: duck or pause other apps while speech plays (with crash restore), global hotkeys, the keymap and AltGr check, activity log lines; all OS access behind `platform::Platform` | `sonara-reader` | `audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `platform.rs`, `win.rs`, `fake.rs`, `log.rs` | `tests/audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `activity_log.rs`; opt-in live: `win_live` |
-| `sonara-hook` | L5 | `sonara-hook.exe`: maps a Claude Code hook event to protocol v1 `channels` and `agent` messages, sends them as one batch, starts `sonarad` when none answers; never fails the session | `sonara-log` only (no runtime crate) | `lib.rs` (`map_event`, `deliver`), `project.rs` (session names), `main.rs` | `tests/golden.rs` (cases in `tests/golden/`), `binary.rs` |
-| `sonara-cli` | L5 | `sonara.exe`: `start`, `stop`, `settings`, `doctor`, `uninstall`, `engines`, `version`; a protocol v1 client | `sonara-hook` | `main.rs`, `client.rs`, `lifecycle.rs`, `doctor.rs`, `uninstall.rs`, `engines.rs`, `engines_file.rs`, `paths.rs` | unit tests; conformance `conformance/plugin/` |
-| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | `sonara-reader`, `sonara-engine`, `sonara-audio`, `sonara-channels`, `sonara-agent`, `sonara-system`, `sonara-log` | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
+| `sonara-client` | L5 support (leaf) | The protocol v1 client of a local `sonarad` (#255): the home (`SONARA_HOME`, else `%LOCALAPPDATA%\Sonara`), `runtime.json` and the stop sentinel, connect, `hello`, a fire-and-forget batch that starts the runtime when none answers (`deliver`), request and reply with events (`Conn`, `attach`), the runtime started detached (`start_runtime`). Only `serde_json` | none | `home.rs`, `runtime.rs`, `hello.rs`, `batch.rs`, `conn.rs` | unit tests; the hook's `tests/binary.rs` and conformance end to end |
+| `sonara-hook` | L5 | `sonara-hook.exe`: maps a Claude Code hook event to protocol v1 `channels` and `agent` messages (only the mapping, its `hello` and its log; `sonara-client` delivers them as one batch and starts `sonarad` when none answers); never fails the session | `sonara-client`, `sonara-log` (no runtime crate) | `lib.rs` (`map_event`, `HELLO`, `log_line`), `project.rs` (session names), `main.rs` | `tests/golden.rs` (cases in `tests/golden/`), `binary.rs` |
+| `sonara-cli` | L5 | `sonara.exe`: `start`, `stop`, `settings`, `doctor`, `uninstall`, `engines`, `version`; a protocol v1 client through `sonara-client` | `sonara-client` | `main.rs`, `client.rs` (its `hello`), `lifecycle.rs`, `doctor.rs`, `uninstall.rs`, `engines.rs`, `engines_file.rs`, `paths.rs` | unit tests; conformance `conformance/plugin/` |
+| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | `sonara-reader`, `sonara-engine`, `sonara-audio`, `sonara-channels`, `sonara-agent`, `sonara-system`, `sonara-log`, `sonara-client` (the home and the `runtime.json` name, shared with the clients) | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
 
 Pure rules and drivers: L1 (`sonara_core::reader`), L2 (`router.rs`) and L3 (`rules.rs`) keep their
 decisions in pure code with no threads, clock or I/O, and a driver carries out the actions they
@@ -137,16 +138,32 @@ Each layer's driver has one main lock, so messages apply in the order they arriv
 
 | Lock | Where | Guards |
 |---|---|---|
-| agent `rules` | `sonara_agent::Inner::rules` | The pure rules; every agent message runs under it. `seen` (the dead-session sweep) is taken only while `rules` is held |
-| channels `state` | `sonara_channels::Inner::state` | The router, the fed item, the announce and drop hooks |
+| agent `rules` | `sonara_agent::Inner::rules` | The pure rules; every agent message runs under it |
+| agent `seen` | `sonara_agent::Inner::seen` | The dead-session sweep; taken only while `rules` is held, and it calls into L2 |
+| channels `state` | `sonara_channels::Inner::state` | The router, the fed item, the announce and drop hooks, the drops waiting to be reported |
 | agent `schedule` | `sonara_agent::Inner::schedule` | Earcons waiting or playing (#238); taken by the session-change chime under the channels' lock |
 | agent `player` | `sonara_agent::Inner::player` | The earcon thread's inbox |
-| reader | `ReaderHandle` calls | Not a mutex: a call waits for the worker's answer. The worker never calls up into L2 or L3 |
+| reader | `ReaderHandle` calls | Not a mutex: a call waits for the worker's answer. The worker never calls up into L2 or L3 and takes none of their locks; its events reach other threads through channels |
 
-**Lock order: agent rules > channels state > schedule > player > reader.** Code may take a lock to
-the right while holding one to the left, never the reverse. Hooks that run under a lock (L2's
-`on_announce` and `on_drop`, L3's `on_trace`) must not call back into the crate whose lock they
-run under. Trace hooks under the agent lock are a known exception being cleaned up (#255).
+**Lock order: agent rules > seen > channels state > schedule > player > reader.** Code may take a
+lock to the right while holding one to the left, never the reverse. The agent's `trace` and
+`subscribers` locks are leaves: held only to clone the hook or to send, never while another lock is
+taken. Each crate's header repeats its part (`sonara_channels`, `sonara_agent`,
+`ReaderHandle::call`).
+
+Hooks (#255):
+
+- L2 `on_drop` runs **off** the channels' lock: the drops are collected under it and reported, in
+  order, right after it is released, on the thread that dropped them. The `before` callback of
+  `flush_with` is replayed among them, so each flush line still comes right before its drops. A
+  drop hook may call back into `Channels` (`tests/channels.rs` checks it from two threads).
+- L2 `on_announce` runs under the channels' lock, because the chime must be queued and the
+  announcement held (`hold_start`) before the announcement is fed. L3's hook there takes only
+  locks to the right (`schedule`, `player`, the reader) and must not call back into `Channels`.
+- L3 `on_trace` runs under the agent's `rules` lock and must not call back into the agent. It stays
+  there on purpose: `sonarad` writes trace lines and L2's drop lines into one log, and a wipe line
+  must come before the drops it explains; deferring traces past `rules` would put the drops first.
+  The `sonarad` hook only formats a line and appends it (a short write under the log's OS lock).
 
 Host locks in `sonarad` are taken at the start of handling a request, before any layer lock:
 

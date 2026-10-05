@@ -12,5 +12,8 @@ path = "src/main.rs"
 [dependencies]
 # L5 speaks the protocol only: no runtime crate (R7).
 serde_json.workspace = true
+# The protocol client (home, runtime.json, connect, send, start the
+# runtime; a leaf crate, #255).
+sonara-client.workspace = true
 # The shared log folder (a leaf crate with no dependencies).
 sonara-log.workspace = true

@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Protocol only, like the hook (R7): no runtime crate.
-sonara-hook = { path = "../sonara-hook" }
+sonara-client.workspace = true
 serde_json.workspace = true
 
 # Credential Manager (uninstall removes the external engine keys) and the
