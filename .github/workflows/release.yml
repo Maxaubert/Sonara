@@ -20,8 +20,11 @@
 #   published. Unsigned until SignPath enrolment.
 # - Nothing goes to npm or PyPI: publish-packages runs only once the
 #   NPM_TOKEN / PYPI_TOKEN secrets exist (manual steps: docs/bundling.md).
-# A push that changes only docs (*.md, docs/, .github/ISSUE_TEMPLATE/) is
-# not released (the "Changes" step; workflow_run has no paths filter).
+# A push that changes only docs or repo tooling (*.md, docs/, .github/) since
+# the last release tag is not released (the "Changes" step; workflow_run has
+# no paths filter), so a Dependabot actions update needs no version bump.
+# - GitHub picks the Latest release by version, so a run that finishes after
+#   a newer one never takes the Latest mark.
 name: release
 
 on:
@@ -34,8 +37,10 @@ on:
 permissions:
   contents: write
 
+# One group per commit: a newer push never cancels an older one's pending
+# release. Two releases of one version fail at the tag, never overwrite.
 concurrency:
-  group: release-main
+  group: release-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 env:
@@ -58,17 +63,21 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.RELEASE_SHA }}
-          fetch-depth: 2
+          # Full history and tags: the changes are counted since the last
+          # release tag, so a multi-commit push is judged as a whole.
+          fetch-depth: 0
       - name: Changes
         id: changes
         shell: pwsh
         run: |
           if ("${{ github.event_name }}" -eq "workflow_dispatch") { "release=true" >> $env:GITHUB_OUTPUT; exit 0 }
-          $files = @(git diff --name-only HEAD~1 HEAD)
+          $base = git describe --tags --abbrev=0 --match 'v*' HEAD 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $base) { $base = "HEAD~1" }
+          $files = @(git diff --name-only $base HEAD)
           if ($LASTEXITCODE -ne 0) { Write-Error "cannot list the changed files"; exit 1 }
-          $code = @($files | Where-Object { $_ -notmatch '\.md$' -and $_ -notmatch '^docs/' -and $_ -notmatch '^\.github/ISSUE_TEMPLATE/' })
+          $code = @($files | Where-Object { $_ -notmatch '\.md$' -and $_ -notmatch '^docs/' -and $_ -notmatch '^\.github/' })
           if ($files.Count -gt 0 -and $code.Count -eq 0) {
-            Write-Output "Docs-only change: no release."
+            Write-Output "Only docs or tooling changed since ${base}: no release."
             "release=false" >> $env:GITHUB_OUTPUT
           } else {
             "release=true" >> $env:GITHUB_OUTPUT
@@ -143,7 +152,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --latest --target $env:RELEASE_SHA
+          gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --target $env:RELEASE_SHA
 
   # Disabled until registry tokens exist: every step is skipped while the
   # secrets are empty, so the job passes without publishing. Manual

@@ -39,6 +39,9 @@ type BoxBody = http_body_util::combinators::UnsyncBoxBody<Bytes, Infallible>;
 const DRAIN_QUIET: Duration = Duration::from_millis(50);
 /// The drain never takes longer than this.
 const DRAIN_MAX: Duration = Duration::from_secs(1);
+/// After the exit is decided, a connection that has not sent its first
+/// request within this long stops holding the exit (`connection`).
+const FIRST_GRACE: Duration = Duration::from_millis(200);
 
 /// Serves until the exit is decided, then answers the connections that are
 /// already waiting (`E_BUSY`) and returns, closing the listener. `main`
@@ -61,7 +64,7 @@ pub async fn serve(listener: TcpListener, server: Arc<Server>) {
         let quiet = (tokio::time::Instant::now() + DRAIN_QUIET).min(end);
         match tokio::time::timeout_at(quiet, listener.accept()).await {
             Ok(Ok((stream, _))) => connection(stream, &server),
-            Ok(Err(_)) => continue,
+            Ok(Err(_)) => tokio::time::sleep(Duration::from_millis(10)).await,
             Err(_) => return,
         }
     }
@@ -69,14 +72,18 @@ pub async fn serve(listener: TcpListener, server: Arc<Server>) {
 
 /// One connection on its own task. It counts as a pending request until
 /// its first reply (so one accepted just before the exit is answered), and
-/// so does each request on it.
+/// so does each request on it. Once the exit is decided, a connection that
+/// sent nothing within `FIRST_GRACE` (a browser preconnect) stops counting,
+/// so it never holds the exit.
 fn connection(stream: tokio::net::TcpStream, server: &Arc<Server>) {
     let server = server.clone();
-    let first = Arc::new(std::sync::Mutex::new(Some(server.lifetime().request())));
+    let life = server.lifetime().clone();
+    let first = Arc::new(std::sync::Mutex::new(Some(life.request())));
+    let first_reply = first.clone();
     tokio::spawn(async move {
         let service = service_fn(move |req| {
             let server = server.clone();
-            let first = first.clone();
+            let first = first_reply.clone();
             async move {
                 let _pending = server.lifetime().request();
                 let reply = route(req, server).await;
@@ -84,9 +91,20 @@ fn connection(stream: tokio::net::TcpStream, server: &Arc<Server>) {
                 Ok::<_, Infallible>(reply)
             }
         });
-        let _ = hyper::server::conn::http1::Builder::new()
-            .serve_connection(TokioIo::new(stream), service)
-            .await;
+        let conn = hyper::server::conn::http1::Builder::new()
+            .serve_connection(TokioIo::new(stream), service);
+        tokio::pin!(conn);
+        tokio::select! {
+            _ = &mut conn => return,
+            _ = life.wait_exit() => {}
+        }
+        tokio::select! {
+            _ = &mut conn => return,
+            _ = tokio::time::sleep(FIRST_GRACE) => {
+                first.lock().unwrap_or_else(|e| e.into_inner()).take();
+            }
+        }
+        let _ = conn.await;
     });
 }
 
@@ -374,6 +392,40 @@ mod tests {
         let _ = stream.read_to_string(&mut reply);
         assert!(reply.starts_with("HTTP/1.1 409"), "{reply:?}");
         assert!(reply.contains("E_BUSY"), "{reply:?}");
+    }
+
+    // An idle connection that never sends a request (a browser preconnect
+    // from the settings page) must not hold the exit for the full limit.
+    #[test]
+    fn an_idle_connection_does_not_hold_the_exit() {
+        use crate::lifetime::{ExitReason, Lifetime};
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let life = Lifetime::new(Duration::from_secs(30), false);
+        let server = server(life.clone());
+        let listener = rt
+            .block_on(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _idle = std::net::TcpStream::connect(addr).unwrap();
+        rt.block_on(async {
+            let served = tokio::spawn(serve(listener, server.clone()));
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            life.request_exit(ExitReason::Idle);
+            tokio::time::timeout(Duration::from_secs(5), served)
+                .await
+                .expect("serve returns once the exit is decided")
+                .unwrap();
+            let started = tokio::time::Instant::now();
+            life.requests_done(Duration::from_secs(5)).await;
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "waited {:?}",
+                started.elapsed()
+            );
+        });
     }
 
     #[test]

@@ -12,10 +12,11 @@ on:
 permissions:
   contents: read
 
-# A newer PR push cancels the older run; pushes to main all run to the end,
-# since each successful one is released.
+# A newer PR push cancels the older run. Each push to main has its own
+# group (its commit), so none is cancelled or left pending behind a newer
+# one: each successful one is released.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -67,6 +68,8 @@ jobs:
         # the order, which no timing breaks.
         env:
           SONARA_TEST_HOOK_QUICK: "5"
+          # The idle time of the countdown check (#247), likewise.
+          SONARA_TEST_IDLE_EXIT: "1"
         run: python -m pytest conformance -q
       # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
       # dependency change must regenerate it (spec R6).
