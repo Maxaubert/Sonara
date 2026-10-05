@@ -541,6 +541,8 @@ mod tests {
             json!({"type": "stream", "channel": "a", "delta": "x", "index": -1}),
             json!({"type": "stream", "channel": "a", "delta": "x", "t": "soon"}),
             json!({"type": "stream", "channel": "a", "delta": "x", "final": 1}),
+            json!({"type": "stream", "channel": "a", "delta": "x", "label": 5}),
+            json!({"type": "tool", "channel": "a", "name": "Bash", "label": true}),
             json!({"type": "turn_start"}),
             json!({"type": "ask", "channel": "a"}),
             json!({"type": "ask", "channel": "a", "kind": "quiz"}),
@@ -716,5 +718,69 @@ mod tests {
         }
         let r = call(&s, &mut a, json!({"type": "channel_close", "channel": "a"}));
         assert_eq!(code(&r), "E_NOT_FOUND");
+    }
+
+    #[test]
+    fn a_message_label_names_a_channel_that_has_none() {
+        // #241: after a restart a session's first message is often not its
+        // prompt, so every agent message carries the session's label.
+        let (s, mut a) = enabled();
+        let label = |s: &Server, id: &str| s.channels().unwrap().channel(id).and_then(|c| c.label);
+        let r = call(
+            &s,
+            &mut a,
+            json!({"type": "stream", "channel": "s1", "delta": "Hi.", "label": "repo-one"}),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            label(&s, "s1").as_deref(),
+            Some("repo-one"),
+            "opened with it"
+        );
+        assert_eq!(s.store().client_label("s1").as_deref(), Some("repo-one"));
+        // A label it already has is never replaced by a message's.
+        call(
+            &s,
+            &mut a,
+            json!({"type": "tool", "channel": "s1", "name": "Bash", "label": "other"}),
+        );
+        assert_eq!(label(&s, "s1").as_deref(), Some("repo-one"));
+        // A channel opened without one gets it from the next message.
+        call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "s2", "host_tab": "t2"}),
+        );
+        assert_eq!(label(&s, "s2"), None);
+        for req in [
+            json!({"type": "turn_end", "channel": "s2", "label": "repo-two"}),
+            json!({"type": "ask", "channel": "s3", "kind": "question", "text": "Pick?",
+                   "label": "repo-three"}),
+            json!({"type": "turn_start", "channel": "s4", "label": "repo-four"}),
+            json!({"type": "answered", "channel": "s5", "label": "repo-five"}),
+        ] {
+            let r = call(&s, &mut a, req.clone());
+            assert_eq!(r["ok"], true, "{req} -> {r}");
+        }
+        assert_eq!(label(&s, "s2").as_deref(), Some("repo-two"));
+        let c = s.channels().unwrap().channel("s2").unwrap();
+        assert_eq!(c.host_tab.as_deref(), Some("t2"), "the host tab stays");
+        assert_eq!(label(&s, "s3").as_deref(), Some("repo-three"));
+        assert_eq!(label(&s, "s4").as_deref(), Some("repo-four"));
+        assert_eq!(label(&s, "s5").as_deref(), Some("repo-five"));
+        // The user's label for the channel (channel_prefs) wins.
+        s.store().set_prefs(
+            "s6",
+            crate::config::PrefsUpdate {
+                label: Some(Some("Mine".into())),
+                ..Default::default()
+            },
+        );
+        call(
+            &s,
+            &mut a,
+            json!({"type": "stream", "channel": "s6", "delta": "Hi.", "label": "repo-six"}),
+        );
+        assert_eq!(label(&s, "s6").as_deref(), Some("Mine"));
     }
 }

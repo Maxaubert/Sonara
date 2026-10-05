@@ -156,16 +156,36 @@ pub fn announce(ch: &Channels, value: Option<&Value>) -> Handled {
     ok(f)
 }
 
-/// A channel opened implicitly (by its first text) with a label the user
-/// gave it: open it with that label first, so switches announce it.
-pub fn apply_label(ch: &Channels, store: &Store, id: &str) {
+/// Before an agent message: a channel it opens implicitly (by its first
+/// text) is opened with the user's label for it (`channel_prefs`), else the
+/// message's `label`; an open channel that has no label yet gets one the
+/// same way (#241: after a restart a session's first message is often not
+/// its prompt). A label a channel has is never replaced here.
+pub fn apply_label(ch: &Channels, store: &Store, id: &str, client_label: Option<&str>) {
     if id.is_empty() {
         return;
     }
-    if let Some(label) = store.prefs(id).label {
-        if !ch.channel_ids().iter().any(|c| c == id) {
-            let _ = ch.open(id, Some(label), None, None);
+    let open = ch.channel(id);
+    if let Some(c) = &open {
+        if c.label.as_deref().is_some_and(|l| !l.is_empty()) {
+            return;
         }
+    }
+    let client_label = client_label.filter(|l| !l.is_empty());
+    if client_label.is_some() {
+        store.note_client_label(id, client_label);
+    }
+    let Some(label) = store
+        .prefs(id)
+        .label
+        .or_else(|| client_label.map(str::to_string))
+    else {
+        return;
+    };
+    if open.is_some() {
+        let _ = ch.label_if_missing(id, &label);
+    } else {
+        let _ = ch.open(id, Some(label), None, None);
     }
 }
 

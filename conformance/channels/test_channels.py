@@ -214,8 +214,8 @@ def test_closing_the_reading_channel_cuts_it(rt):
     heard(c, 1)
     ok(c, {"type": "channel_close", "channel": "a"})
     c.item(a, "skipped")
-    # The channel that read last is gone: no announcement.
-    assert heard(c, 1) == [("From beta.", "b")]
+    # The user heard the closed channel last: the switch is announced (#241).
+    assert heard(c, 2) == [("Beta.", "b"), ("From beta.", "b")]
 
 
 def test_stop_flushes_every_channel_and_restart_replays(rt):

@@ -248,7 +248,7 @@ fn the_announce_hook_runs_for_automatic_and_manual_switches_before_the_announcem
         let s = seen.lock().unwrap();
         assert_eq!(s.len(), 1, "the automatic hand-off");
         assert_eq!(s[0].0.channel, "b");
-        assert_eq!(s[0].0.label, "Beta");
+        assert_eq!(s[0].0.label.as_deref(), Some("Beta"));
         assert!(!s[0].0.replay && !s[0].0.manual);
         assert_eq!(
             s[0].1, before,
@@ -264,6 +264,68 @@ fn the_announce_hook_runs_for_automatic_and_manual_switches_before_the_announcem
     assert_eq!(s[1].0.channel, "a");
     assert!(s[1].0.replay && s[1].0.manual);
     assert_eq!(s[1].1, before);
+}
+
+#[test]
+fn a_channel_without_a_label_is_announced_with_the_unnamed_text() {
+    // #241: an unnamed switch is said without a name, not skipped.
+    let r = Rig::new();
+    let seen = hooked(&r);
+    r.ch.set_unnamed_announce_texts(Some("Switched."), Some("Switched, again."));
+    r.ch.open("a", Some("Alpha".into()), None, Some(Policy::Queue))
+        .unwrap();
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    assert!(r.ch.announces("a") && r.ch.announces("b"));
+    r.read("From alpha.");
+    r.read("Switched.");
+    r.read("From beta.");
+    {
+        let s = seen.lock().unwrap();
+        assert_eq!(s.len(), 1, "the hook runs for an unnamed switch too");
+        assert_eq!(s[0].0.channel, "b");
+        assert_eq!(s[0].0.label, None);
+    }
+    r.stays_idle();
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("a"));
+    r.read("Alpha, reading again.");
+    r.read("From alpha.");
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("b"));
+    r.read("Switched, again.");
+    r.read("From beta.");
+}
+
+#[test]
+fn without_an_unnamed_text_a_channel_without_a_label_is_not_announced() {
+    let r = Rig::new();
+    let seen = hooked(&r);
+    r.ch.open("a", Some("Alpha".into()), None, Some(Policy::Queue))
+        .unwrap();
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    assert!(r.ch.announces("a") && !r.ch.announces("b"));
+    r.read("From alpha.");
+    r.read("From beta.");
+    r.stays_idle();
+    assert!(seen.lock().unwrap().is_empty());
+    r.ch.set_announce(false);
+    assert!(!r.ch.announces("a"));
+}
+
+#[test]
+fn a_label_given_after_the_channel_opened_names_its_announcement() {
+    // #241: a channel a stream opened gets its label from a later message.
+    let r = Rig::new();
+    r.ch.open("a", Some("Alpha".into()), None, Some(Policy::Queue))
+        .unwrap();
+    r.speak("a", "From alpha.");
+    r.speak("b", "From beta.");
+    assert!(r.ch.label_if_missing("b", "Beta").unwrap());
+    assert!(!r.ch.label_if_missing("b", "Other").unwrap());
+    assert!(r.ch.label_if_missing("zz", "Z").is_err());
+    r.read("From alpha.");
+    r.read("Beta.");
+    r.read("From beta.");
 }
 
 #[test]
@@ -326,7 +388,9 @@ fn closing_the_reading_channel_cuts_it_and_hands_off() {
     r.speak("b", "From beta.");
     r.wait_for("From alpha.");
     r.ch.close("a").unwrap();
-    // The channel that read last is gone: no announcement.
+    // The channel that read last is gone, but the user heard it last: the
+    // switch is announced (#241).
+    r.read("Beta.");
     r.read("From beta.");
     r.stays_idle();
     assert!(r.ch.close("a").is_err());

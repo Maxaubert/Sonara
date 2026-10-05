@@ -4,7 +4,8 @@
 use sonara_channels::{Feed, Policy, Router};
 
 /// One feed in compact notation: an entry's text, or `[label]` for an
-/// announcement (`again` for a replay, `manual` for `next_channel`).
+/// announcement (`[]` for a channel without a label, `again` for a replay,
+/// `manual` for `next_channel`).
 fn show(f: Option<Feed>) -> Option<String> {
     f.map(|f| match f {
         Feed::Entry { entry, .. } => entry.text,
@@ -14,7 +15,8 @@ fn show(f: Option<Feed>) -> Option<String> {
             manual,
             ..
         } => format!(
-            "[{label}{}{}]",
+            "[{}{}{}]",
+            label.unwrap_or_default(),
             if replay { " again" } else { "" },
             if manual { " manual" } else { "" }
         ),
@@ -95,15 +97,134 @@ fn the_reading_channel_finishes_its_batch_before_a_handoff() {
 }
 
 #[test]
-fn a_channel_without_a_label_is_not_announced() {
+fn a_channel_without_a_label_is_announced_without_a_name() {
+    // #241: an unnamed switch is still a switch; the driver says it without
+    // a name (or not at all when it has no text for it).
     let mut r = Router::new();
     r.open("A", Some("alpha".into()), None, Some(Policy::Queue));
     r.open("B", None, None, Some(Policy::Queue));
     push(&mut r, "A", &["a1"]);
     push(&mut r, "B", &["b1"]);
-    assert_eq!(drain(&mut r), ["a1", "b1"]);
+    assert_eq!(drain(&mut r), ["a1", "[]", "b1"]);
     push(&mut r, "A", &["a2"]);
     assert_eq!(drain(&mut r), ["[alpha]", "a2"]);
+}
+
+#[test]
+fn a_channel_first_created_by_a_stream_is_announced_with_its_label() {
+    // #241: after a runtime restart a session's first message is often a
+    // stream, which opens its channel without a label; a later message
+    // names it, and the switch to it says the name.
+    let mut r = router(&["A"]);
+    push(&mut r, "A", &["a1"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r.open("B", None, None, Some(Policy::Queue));
+    push(&mut r, "B", &["b1"]);
+    assert!(r.label_if_missing("B", "beta"));
+    assert!(
+        !r.label_if_missing("B", "other"),
+        "a label is never replaced"
+    );
+    assert!(!r.label_if_missing("A", "other"));
+    assert!(!r.label_if_missing("Z", "zeta"), "not open");
+    assert_eq!(drain(&mut r), ["[beta]", "b1"]);
+    assert_eq!(r.channel("B").unwrap().label.as_deref(), Some("beta"));
+}
+
+#[test]
+fn a_switch_after_the_last_reader_closed_is_announced() {
+    // #241, the log of 2026-10-04 23:29:55: "agent-hooks" read, its session
+    // ended (channel_close), and a question in "work" was read with no
+    // announcement because closing forgot who read last.
+    let mut r = router(&["hooks", "work"]);
+    push(&mut r, "hooks", &["ok"]);
+    assert_eq!(drain(&mut r), ["ok"]);
+    r.close("hooks");
+    push(&mut r, "work", &["Red or blue?"]);
+    assert!(r.prioritize("work"));
+    assert_eq!(drain(&mut r), ["[work]", "Red or blue?"]);
+}
+
+#[test]
+fn a_new_session_in_the_closed_readers_host_tab_is_not_announced() {
+    // A /clear (or exit and relaunch) in the same host tab replaces the
+    // session that read last: the same place, not a switch.
+    let mut r = Router::new();
+    r.open(
+        "old",
+        Some("repo".into()),
+        Some("3".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "old", &["bye"]);
+    assert_eq!(drain(&mut r), ["bye"]);
+    r.close("old");
+    r.open(
+        "new",
+        Some("repo".into()),
+        Some("3".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "new", &["hello"]);
+    assert_eq!(drain(&mut r), ["hello"]);
+    // Another tab after that is a switch again.
+    r.open(
+        "other",
+        Some("work".into()),
+        Some("4".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "other", &["hi"]);
+    assert_eq!(drain(&mut r), ["[work]", "hi"]);
+}
+
+#[test]
+fn a_new_session_in_another_host_tab_after_a_close_is_announced() {
+    let mut r = Router::new();
+    r.open(
+        "old",
+        Some("repo".into()),
+        Some("3".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "old", &["bye"]);
+    assert_eq!(drain(&mut r), ["bye"]);
+    r.close("old");
+    r.open(
+        "new",
+        Some("repo".into()),
+        Some("5".into()),
+        Some(Policy::Queue),
+    );
+    push(&mut r, "new", &["hello"]);
+    assert_eq!(drain(&mut r), ["[repo]", "hello"]);
+}
+
+#[test]
+fn a_prioritized_question_in_another_channel_is_announced_once() {
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "A", &["a1"]);
+    assert_eq!(drain(&mut r), ["a1"]);
+    push(&mut r, "B", &["question"]);
+    assert!(r.prioritize("B"));
+    assert_eq!(drain(&mut r), ["[b]", "question"]);
+    push(&mut r, "B", &["more"]);
+    assert_eq!(
+        drain(&mut r),
+        ["more"],
+        "the same channel again: no announcement"
+    );
+}
+
+#[test]
+fn the_same_channel_reopened_after_closing_is_not_announced() {
+    let mut r = router(&["A"]);
+    push(&mut r, "A", &["a1"]);
+    assert_eq!(drain(&mut r), ["a1"]);
+    r.close("A");
+    r.open("A", Some("a".into()), None, Some(Policy::Queue));
+    push(&mut r, "A", &["a2"]);
+    assert_eq!(drain(&mut r), ["a2"]);
 }
 
 #[test]
@@ -275,8 +396,9 @@ fn closing_a_channel_clears_its_armed_replay_announcement() {
     r.close("A");
     assert!(!r.announce_armed());
     push(&mut r, "B", &["b2"]);
-    // A was the last reader and is gone: no announcement, no "again".
-    assert_eq!(drain(&mut r), ["b2"]);
+    // The user switched away from B, so its new text is announced (#241),
+    // with no "again": it is new content.
+    assert_eq!(drain(&mut r), ["[b]", "b2"]);
 }
 
 #[test]
@@ -353,7 +475,7 @@ fn latest_policy_never_drops_the_latest_message() {
     push(&mut r, "A", &["newest"]);
     assert_eq!(drain(&mut r), ["newest"]);
     assert_eq!(r.next_channel(), Some(("A".to_string(), true)));
-    assert_eq!(drain(&mut r), ["newest"]);
+    assert_eq!(drain(&mut r), ["[ again manual]", "newest"]);
 }
 
 #[test]
@@ -415,14 +537,16 @@ fn reopening_keeps_the_entries_and_updates_the_label() {
 }
 
 #[test]
-fn closing_the_reading_channel_hands_off_without_announcement() {
+fn closing_the_reading_channel_hands_off_with_an_announcement() {
+    // #241: the user heard A last, so B's text is announced.
     let mut r = router(&["A", "B"]);
     push(&mut r, "A", &["a1", "a2"]);
     push(&mut r, "B", &["b1"]);
     assert_eq!(next(&mut r).unwrap(), "a1");
     r.close("A");
     assert_eq!(r.active(), None);
-    assert_eq!(drain(&mut r), ["b1"]);
+    assert_eq!(r.last_active(), None);
+    assert_eq!(drain(&mut r), ["[b]", "b1"]);
 }
 
 #[test]

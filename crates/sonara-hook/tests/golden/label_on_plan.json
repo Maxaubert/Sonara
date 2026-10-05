@@ -1,0 +1,23 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work",
+    "tool_name": "ExitPlanMode",
+    "tool_input": {
+      "plan": "Do it."
+    }
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "ask",
+      "channel": "s1",
+      "kind": "plan",
+      "text": "Do it.",
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate.",
+      "label": "work"
+    }
+  ]
+}

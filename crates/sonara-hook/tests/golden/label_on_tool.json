@@ -1,0 +1,21 @@
+{
+  "event": "PreToolUse",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "/home/me/agent-hooks/",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls"
+    }
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "tool",
+      "channel": "s1",
+      "name": "Bash",
+      "summary": "ls",
+      "label": "agent-hooks"
+    }
+  ]
+}

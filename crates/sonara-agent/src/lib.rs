@@ -52,7 +52,9 @@
 //!   cancel waiting earcons.
 //! - **Session switches** (the Python daemon's "Session changed"): the
 //!   agent sets L2's announcement texts to `SESSION_CHANGED` /
-//!   `SESSION_CHANGED_AGAIN` and plays the `session_change` earcon right
+//!   `SESSION_CHANGED_AGAIN` (a session without a label yet:
+//!   `SESSION_CHANGED_UNNAMED` / `SESSION_CHANGED_UNNAMED_AGAIN`, #241: a
+//!   switch is never silent) and plays the `session_change` earcon right
 //!   before each announcement is handed to the reader (L2's
 //!   `on_announce`), so every switch the user hears, automatic or manual,
 //!   chimes first and then says "Session changed: <label>.". The chime
@@ -105,6 +107,10 @@ pub const FORGET_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
 pub const SESSION_CHANGED: &str = "Session changed: {label}.";
 /// The switch announcement when the session is read again from the top.
 pub const SESSION_CHANGED_AGAIN: &str = "Session changed: {label}, reading again.";
+/// The switch announcement for a session without a label (#241).
+pub const SESSION_CHANGED_UNNAMED: &str = "Session changed.";
+/// The replay announcement for a session without a label.
+pub const SESSION_CHANGED_UNNAMED_AGAIN: &str = "Session changed, reading again.";
 
 /// The most earcons waiting or playing at one time (#238).
 pub const EARCON_QUEUE: usize = sequencer::MAX;
@@ -287,6 +293,10 @@ impl Agent {
         }
         channels.set_focus_only(config.settings.background == BackgroundPolicy::EarconOnly)?;
         channels.set_announce_texts(SESSION_CHANGED, SESSION_CHANGED_AGAIN);
+        channels.set_unnamed_announce_texts(
+            Some(SESSION_CHANGED_UNNAMED),
+            Some(SESSION_CHANGED_UNNAMED_AGAIN),
+        );
         let mute_level = AtomicU8::new(config.settings.mute_level);
         let inner = Arc::new(Inner {
             channels: channels.clone(),

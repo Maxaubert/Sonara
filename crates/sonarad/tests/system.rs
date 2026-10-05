@@ -654,6 +654,46 @@ fn the_next_session_hotkey_chimes_then_says_session_changed() {
 }
 
 #[test]
+fn the_next_session_hotkey_on_a_session_without_a_label_chimes_once() {
+    // #241: an unnamed session is announced "Session changed." with the
+    // agent's chime, so the hotkey must not chime a second time.
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    let chimes = s.agent().unwrap().subscribe();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "channel_open", "channel": "a", "label": "alpha-repo"}),
+    );
+    for (id, text) in [("a", "Alpha words."), ("b", "Beta words.")] {
+        ok(
+            s,
+            &mut session,
+            json!({"type": "speak", "channel": id, "text": text}),
+        );
+    }
+    assert!(eventually(|| playing(s).as_deref() == Some("Alpha words.")));
+    r.fake.press(Action::NextChannel.id());
+    assert!(
+        eventually(|| playing(s).as_deref() == Some("Session changed.")),
+        "playing {:?}",
+        playing(s)
+    );
+    assert_eq!(
+        chimes.recv_timeout(Duration::from_secs(5)).unwrap(),
+        sonara_agent::Earcon::SessionChange
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(chimes.try_recv().is_err(), "one chime per press");
+}
+
+#[test]
 fn an_automatic_session_switch_chimes_then_says_session_changed() {
     let r = rig();
     let s = &r.server;

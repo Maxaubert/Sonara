@@ -48,6 +48,61 @@ def test_next_channel_chimes_and_says_session_changed_reading_again(rt):
     no_earcon(c)
 
 
+def test_a_question_after_the_last_reader_closed_is_announced(rt):
+    """#241, the log of 2026-10-04 23:29:55: "agent-hooks" read its reply and
+    its session ended; a question in "work" was then read without "Session
+    changed"."""
+    c = agent_client(rt, announce=True, policy="all")
+    ok(c, {"type": "channel_open", "channel": "h", "label": "agent-hooks"})
+    ok(c, {"type": "focus", "channel": "h"})
+    ok(c, {"type": "turn_start", "channel": "h"})
+    stream(c, "h", "ok")
+    ok(c, {"type": "turn_end", "channel": "h"})
+    assert heard(c, 1) == [("ok", "h")]
+    assert earcon(c) == "turn_done"
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "channel_close", "channel": "h"})
+    ok(c, {"type": "channel_open", "channel": "w", "label": "work"})
+    ok(c, {"type": "focus", "channel": "w"})
+    ok(c, {"type": "turn_start", "channel": "w"})
+    ok(c, {"type": "ask", "channel": "w", "kind": "question", "text": "Red or blue?",
+           "options": ["Red", "Blue"], "label": "work"})
+    assert heard(c, 2) == [
+        ("Session changed: work.", "w"),
+        ("Red or blue?", "w"),
+    ]
+    assert sorted([earcon(c), earcon(c)]) == ["choice", "session_change"]
+    no_earcon(c)
+
+
+def test_a_session_first_seen_by_its_stream_is_announced_with_its_label(rt):
+    """#241: after a restart a session's first message is often a stream;
+    the label it carries names the session."""
+    c = agent_client(rt, announce=True, policy="all")
+    ok(c, {"type": "channel_open", "channel": "a", "label": "alpha-repo"})
+    stream(c, "a", "Alpha words.")
+    ok(c, {"type": "stream", "channel": "b", "delta": "Beta words.", "final": True,
+           "label": "beta-repo"})
+    assert heard(c, 3) == [
+        ("Alpha words.", "a"),
+        ("Session changed: beta-repo.", "b"),
+        ("Beta words.", "b"),
+    ]
+
+
+def test_a_session_without_a_label_is_announced_without_a_name(rt):
+    c = agent_client(rt, announce=True, policy="all")
+    ok(c, {"type": "channel_open", "channel": "a", "label": "alpha-repo"})
+    stream(c, "a", "Alpha words.")
+    stream(c, "b", "Beta words.")
+    assert heard(c, 3) == [
+        ("Alpha words.", "a"),
+        ("Session changed.", "b"),
+        ("Beta words.", "b"),
+    ]
+    assert earcon(c) == "session_change"
+
+
 def test_announcements_off_say_nothing_and_do_not_chime(rt):
     c = agent_client(rt, announce=False, policy="all")
     two_sessions(c)
@@ -113,3 +168,13 @@ def test_the_start_is_logged(rt):
     log = (rt.home / "logs" / "sonarad.log").read_text(encoding="utf-8")
     assert "started (pid" in log and "engine fake ready" in log, log
     assert rt.read_runtime()["version"] in log
+
+
+def test_label_is_checked_only_on_messages_that_name_a_channel(rt):
+    """#241: ``label`` names the message's channel. ``earcon`` names none, so
+    a label there is ignored as before; on a channel message it must be a
+    string."""
+    c = agent_client(rt, announce=True, policy="all")
+    ok(c, {"type": "earcon", "kind": "nav", "label": 5})
+    r = c.request({"type": "stream", "channel": "a", "delta": "x", "label": 5})
+    assert r["error"]["code"] == "E_BAD_REQUEST"

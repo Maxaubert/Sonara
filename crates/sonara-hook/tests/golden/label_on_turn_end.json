@@ -1,0 +1,15 @@
+{
+  "event": "Stop",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "turn_end",
+      "channel": "s1",
+      "label": "work"
+    }
+  ]
+}

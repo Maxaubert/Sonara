@@ -1,0 +1,21 @@
+{
+  "event": "MessageDisplay",
+  "payload": {
+    "session_id": "s1",
+    "cwd": "C:\\Users\\me\\work",
+    "delta": "Hello.",
+    "index": 2,
+    "final": true
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "stream",
+      "channel": "s1",
+      "delta": "Hello.",
+      "index": 2,
+      "final": true,
+      "label": "work"
+    }
+  ]
+}
