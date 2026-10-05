@@ -5,23 +5,13 @@ These serve as golden fixtures for parser and integration tests.
 
 ## How the capture mechanism works
 
-`bin/sonara-hook` reads the env var `SONARA_CAPTURE`. When set to a directory path, the hook
-dumps the raw stdin bytes it receives to `${SONARA_CAPTURE}/<event>-<pid>.json` BEFORE any
-other processing, so even a crash in downstream code leaves the payload on disk.
+`sonara-hook.exe` (`crates/sonara-hook/src/main.rs`) reads the env var `SONARA_CAPTURE`. When
+set to a directory path, the hook dumps the raw stdin bytes it receives to
+`${SONARA_CAPTURE}/<event>-<pid>.json` BEFORE any other processing, so even a crash in
+downstream code leaves the payload on disk.
 
-The relevant code is in `bin/sonara-hook`:
-
-```python
-if os.environ.get("SONARA_CAPTURE"):
-    try:
-        cap_dir = os.environ["SONARA_CAPTURE"]
-        os.makedirs(cap_dir, exist_ok=True)
-        cap_path = os.path.join(cap_dir, f"{event}-{os.getpid()}.json")
-        with open(cap_path, "wb") as fh:
-            fh.write(raw)
-    except Exception:
-        pass
-```
+Each payload here is used by a golden case in `crates/sonara-hook/tests/golden/` (its
+`fixture` field); `crates/sonara-hook/tests/golden.rs` checks that none is left without one.
 
 ## Steps to capture real payloads
 
@@ -81,7 +71,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 ## Expected fixture set
 
 After capture, the directory should contain exactly these six JSON files
-(plus this instruction file and `.gitkeep`):
+(plus this instruction file):
 
 ```
 tests/fixtures/MessageDisplay.json
@@ -92,9 +82,7 @@ tests/fixtures/Notification-permission_prompt.json
 tests/fixtures/Notification-idle_prompt.json
 ```
 
-## Note on representative fixtures
+## After a new capture
 
-The `seed representative golden payload fixtures` task in the plan creates best-effort
-representative payloads from the live schemas. The TDD tasks use those representative
-payloads. Once you replace them with real captures, re-run the parser tests - they should
-still pass since the representative schemas match the real field shapes.
+Run `cargo test -p sonara-hook --test golden`: a new payload needs a golden case, and a
+replaced one must still map to the messages its case lists.

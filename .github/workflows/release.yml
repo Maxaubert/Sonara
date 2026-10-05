@@ -2,8 +2,10 @@
 # - Runs only after ci.yml succeeded for that push (workflow_run), and
 #   builds and tags exactly the commit CI checked (head_sha), so a red main
 #   never ships. workflow_dispatch releases the chosen ref by hand.
-# - Reads the version from pyproject.toml and refuses to run if
-#   .claude-plugin/plugin.json or marketplace.json disagree.
+# - Reads the version from Cargo.toml [workspace.package] (#248) with
+#   `python packaging/bump_version.py --check`, which refuses to run if any
+#   version file (plugin manifests, bin/runtime-version, the SDKs) disagrees;
+#   ci.yml runs the same check on every PR as its dry run.
 # - REFUSES to run if release v<version> already exists: bump the version in the PR.
 # - Publishes v<version> with GitHub-generated notes and two assets:
 #   sonara-runtime-win-x64-<version>.zip (sonarad.exe, sonara-hook.exe and
@@ -93,14 +95,11 @@ jobs:
         id: ver
         shell: pwsh
         run: |
-          $v = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
-          if ($LASTEXITCODE -ne 0 -or -not $v) { Write-Error "cannot read the version from pyproject.toml"; exit 1 }
-          $plugin = (Get-Content .claude-plugin/plugin.json -Raw | ConvertFrom-Json).version
-          $market = (Get-Content .claude-plugin/marketplace.json -Raw | ConvertFrom-Json).plugins[0].version
-          if ($plugin -ne $v -or $market -ne $v) {
-            Write-Error "Version mismatch: pyproject.toml $v, plugin.json $plugin, marketplace.json $market. Keep all three equal."
-            exit 1
-          }
+          # Cargo.toml [workspace.package]; exits 1 naming any version file
+          # that disagrees (fix: python packaging/bump_version.py <version>).
+          $v = python packaging/bump_version.py --check
+          if ($LASTEXITCODE -ne 0 -or -not $v) { Write-Error "cannot read the release version from Cargo.toml, or a version file disagrees (see above)"; exit 1 }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { Write-Error "release version '$v' is not major.minor.patch"; exit 1 }
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Refuse to overwrite an existing release

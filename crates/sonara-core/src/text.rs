@@ -1,5 +1,6 @@
 //! Strip markdown noise and normalize symbols so text reads naturally aloud.
-//! Port of src/sonara/cleaner.py; the golden fixtures are the contract.
+//! Port of the retired Python plugin's `cleaner.py` (removed in #248); the
+//! golden fixtures (`tests/fixtures/text_rules`) are the contract.
 use once_cell::sync::Lazy;
 use regex::Regex;
 

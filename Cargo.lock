@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-agent"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "sonara-audio",
  "sonara-channels",
@@ -1171,7 +1171,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-audio"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "rodio",
  "sonara-audio",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-channels"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "sonara-audio",
  "sonara-engine",
@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-cli"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "serde_json",
  "sonara-client",
@@ -1200,14 +1200,14 @@ dependencies = [
 
 [[package]]
 name = "sonara-client"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "sonara-core"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "once_cell",
  "regex",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-engine"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "base64",
  "misaki",
@@ -1235,7 +1235,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-hook"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "serde_json",
  "sonara-client",
@@ -1244,14 +1244,14 @@ dependencies = [
 
 [[package]]
 name = "sonara-log"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "sonara-reader"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "sonara-audio",
  "sonara-core",
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "sonara-system"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1275,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "sonarad"
-version = "0.20.10"
+version = "0.21.0"
 dependencies = [
  "bytes",
  "http-body-util",

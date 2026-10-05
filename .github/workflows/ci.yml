@@ -1,6 +1,8 @@
-# CI gate: lint + full unit suite on every PR and every push to main.
-# The e2e settings-page tests skip here (no playwright installed); they are the
-# local PR gate for UI changes. Live OneCore checks (-m live_windows) never run.
+# CI gate on every PR and every push to main: the Python repo checks
+# (ruff, tests/repo, the release version dry run), the Rust workspace with
+# protocol conformance, the SDKs, and cargo-deny. The e2e settings-page tests
+# (tests/e2e) skip here (no playwright installed); they are the local PR gate
+# for UI changes.
 # release.yml runs only after this workflow succeeded on a push to main (#250).
 name: ci
 
@@ -23,21 +25,22 @@ jobs:
   check:
     runs-on: windows-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.9", "3.12"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
           cache: pip
-      - run: python -m pip install -e ".[dev,windows]"
+      # pyproject.toml holds dependency groups only (#248); --group needs pip 25.1.
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install --group dev
       - name: Lint
-        if: matrix.python == '3.12'
-        run: ruff check src tests conformance clients/python packaging
-      - name: Unit tests
+        run: ruff check tests conformance clients/python packaging
+      # The step release.yml reads the version with, as a dry run: Cargo.toml
+      # [workspace.package] and every other version file agree.
+      - name: Release version
+        run: python packaging/bump_version.py --check
+      - name: Repo checks and e2e (skipped without playwright)
         run: python -m pytest -q
 
   rust:

@@ -15,7 +15,7 @@ fits together.
   change rides inside that change's PR.
 - **Bump the version in every PR**: patch for fixes, minor for features, with
   `python packaging/bump_version.py <version>` (it sets every version file and lockfile entry;
-  `tests/test_manifests.py` keeps them equal). A push to `main` runs CI, and once it passes `release.yml` publishes
+  `tests/repo/test_manifests.py` keeps them equal; the release version is `Cargo.toml` `[workspace.package]`). A push to `main` runs CI, and once it passes `release.yml` publishes
   `v<version>`; it refuses a version that already exists.
 - **Squash-merge into `main`**, then delete the branch locally and on the remote.
 
@@ -23,8 +23,8 @@ fits together.
 
 The runtime is the Rust workspace in `crates/`. Tests use fakes for speech, audio and hotkeys
 (`--engine fake --system fake`), so they need no speech engine and run headless. Install Rust
-with rustup (`rust-toolchain.toml` picks stable with clippy and rustfmt), Python 3.9 or
-newer, and `cargo install cargo-deny`. Before opening a PR:
+with rustup (`rust-toolchain.toml` picks stable with clippy and rustfmt), Python 3.12 or
+newer (pip 25.1 or newer), and `cargo install cargo-deny`. Before opening a PR:
 
 ```powershell
 # Rust
@@ -38,10 +38,12 @@ python packaging/notices/gen_notices.py --check
 cargo build -p sonarad -p sonara-hook -p sonara-cli
 python -m pytest conformance -q
 
-# Python lint and repo checks
+# Python lint and repo checks (pyproject.toml holds only dev dependency groups)
 python -m venv .venv
-.venv\Scripts\pip install -e ".[dev,windows]"
-.venv\Scripts\ruff check src tests conformance clients/python packaging
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install --group dev
+.venv\Scripts\ruff check tests conformance clients/python packaging
+.venv\Scripts\python packaging/bump_version.py --check
 .venv\Scripts\python -m pytest -q
 ```
 
@@ -51,7 +53,7 @@ voices, API keys).
 
 - **Settings page changes** (`crates/sonarad/assets/settings.html`,
   `crates/sonarad/src/settings_page.rs`) also need the browser tests:
-  `pip install -e ".[e2e]"`, `playwright install chromium`, `cargo build -p sonarad`, then
+  `python -m pip install --group e2e`, `python -m playwright install chromium`, `cargo build -p sonarad`, then
   `python -m pytest tests/e2e -q`. CI skips them, so they are the local gate.
 - **SDK changes** (`clients/`, `packaging/npm-runtime`, version files) run the SDK steps in
   [docs/testing.md](docs/testing.md).
@@ -77,7 +79,6 @@ what you tested.
   conformance tests and both SDKs.
 - A new file in `%LOCALAPPDATA%\Sonara` is listed in [PRIVACY.md](PRIVACY.md).
 - No em-dashes anywhere.
-- `src/sonara` is the retired Python daemon, frozen until it is removed (#248): do not extend it.
 
 ## A PR merges when
 

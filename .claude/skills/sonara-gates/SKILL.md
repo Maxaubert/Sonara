@@ -29,10 +29,12 @@ cargo build -p sonarad -p sonara-hook -p sonara-cli
 python -m pytest conformance -q
 ```
 
-Python lint and repo checks (system Python with `.[dev,windows]`):
+Python lint and repo checks (Python 3.12, `python -m pip install --group dev`; `tests/repo`, and
+`tests/e2e`, which skips without playwright):
 
 ```sh
-ruff check src tests conformance clients/python packaging
+ruff check tests conformance clients/python packaging
+python packaging/bump_version.py --check
 python -m pytest -q
 ```
 
@@ -40,7 +42,7 @@ python -m pytest -q
 
 | Paths | Extra gate |
 |---|---|
-| `crates/sonarad/assets/settings.html`, `crates/sonarad/src/settings_page.rs` | `cargo build -p sonarad`, then `python -m pytest tests/e2e -q` (needs `pip install -e ".[e2e]"`, `playwright install chromium`). CI skips it: it is the local gate. |
+| `crates/sonarad/assets/settings.html`, `crates/sonarad/src/settings_page.rs` | `cargo build -p sonarad`, then `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e`, `python -m playwright install chromium`). CI skips it: it is the local gate. |
 | `clients/`, `packaging/npm-runtime`, any version file (every PR bumps one) | SDK gates below |
 | Rust dependencies (`Cargo.toml`, `Cargo.lock` beyond the version) | `python packaging/notices/gen_notices.py`, commit the result |
 | `crates/sonara-agent/sounds/`, `packaging/sounds/` | `python packaging/sounds/build_earcons.py --check` |
@@ -62,7 +64,8 @@ before the next conformance run.
 ## Version
 
 Every PR bumps the version: `python packaging/bump_version.py <major.minor.patch>` (patch for
-fixes, minor for features). `tests/test_manifests.py` fails when a file disagrees.
+fixes, minor for features). The release version is `Cargo.toml` `[workspace.package]`;
+`tests/repo/test_manifests.py` and `bump_version.py --check` fail when a file disagrees.
 
 Report each gate as one line (`cargo test --workspace: ok`), and give detail only on a failure.
 Known failures to tolerate: none.

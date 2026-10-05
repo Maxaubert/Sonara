@@ -9,15 +9,15 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 ## Build, test, release
 - Rust (needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. One crate: `cargo test -p <crate>`.
 - Conformance (protocol v1, black box): `cargo build -p sonarad -p sonara-hook -p sonara-cli; python -m pytest conformance -q`.
-- Typecheck/lint: `ruff check src tests conformance clients/python packaging`; TS: `npm run typecheck` in `clients/ts`.
-- Unit (legacy Python and repo checks): `python -m pytest -q`.
-- E2E (headless): `python -m pytest tests/e2e -q` (`pip install -e ".[e2e]"`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings.html` or `crates/sonarad/src/settings_page.rs` change (needs `cargo build -p sonarad`).
+- Typecheck/lint: `ruff check tests conformance clients/python packaging`; TS: `npm run typecheck` in `clients/ts`.
+- Repo checks (`tests/repo`, Python 3.12, `pip install --group dev`; `pyproject.toml` is dev config only): `python -m pytest -q`.
+- E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings.html` or `crates/sonarad/src/settings_page.rs` change (needs `cargo build -p sonarad`).
 - `clients/`, `packaging/npm-runtime` or a version file changed: run the SDK gates. Rust dependency changed: regenerate notices. Live tests, Kokoro, G2P bless, earcons, SDK steps: `docs/testing.md`.
 - Skill `sonara-gates`: every gate command and when the e2e and SDK gates apply.
 - Skill `sonara-live-tests`: the opt-in live checks and their env vars.
 - Build / package: `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py`   Artifact: `sonara-runtime-win-x64-<version>.zip` + `SHA256SUMS`
 - Known failures to tolerate: none
-- Version: `python packaging/bump_version.py <version>` sets every version file and lockfile entry (`tests/test_manifests.py` checks them)   Release: release.yml once ci.yml passed on a push to main (`workflow_run`, #250); users get the release named in `bin/runtime-version`
+- Version: `Cargo.toml` `[workspace.package]`; `python packaging/bump_version.py <version>` sets every version file and lockfile entry (`--check` prints it, as release.yml reads it; `tests/repo/test_manifests.py`)   Release: release.yml once ci.yml passed on a push to main (`workflow_run`, #250); users get the release named in `bin/runtime-version`
 - Install locally after merge: `/plugin update sonara@sonara` once the release exists, restart Claude Code   Confirm version: `/sonara:doctor` (its `version` row)
 - Deploy: plugin marketplace   Signing: unsigned
 
@@ -42,7 +42,7 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 ## Conventions
 - No em-dashes anywhere (code, comments, docs, commit messages).
 - Bug fixes are test-first, with a regression test named after the behaviour.
-- Legacy: `src/sonara`, its tests and `docs/protocol.md` are the retired Python daemon, frozen until removed (#248). Search `crates/` first and do not edit them unless asked; while they exist, text rules, agent prompts and hook mapping changes also update the Python parity goldens (`test_text_rules_golden.py`, `test_agent_prompts.py`, `test_hook_golden.py`).
+- Golden fixtures: text rules `tests/fixtures/text_rules/` (`crates/sonara-core/tests/golden.rs`), hook mapping `crates/sonara-hook/tests/golden/` with the captured payloads in `tests/fixtures/`. Change a case only with a deliberate rule change.
 
 ## Current work
-- Repo cleanup after the 2026-10-05 audit and the `src/sonara` removal: #248.
+- Repo cleanup after the 2026-10-05 audit (the Python package `src/sonara` was removed in #248).

@@ -1,8 +1,7 @@
 //! Golden cases (`tests/golden/*.json`): each Claude Code hook event (the
 //! payloads captured in the repo's `tests/fixtures/` and a few inline ones)
-//! must map to exactly the messages listed. `tests/test_hook_golden.py`
-//! proves the same messages are the Python plugin's mapping adapted to the
-//! new message names.
+//! must map to exactly the messages listed. The cases are the contract of
+//! the hook mapping: change one only with a deliberate change to the mapping.
 use serde_json::{Map, Value};
 use sonara_hook::map_event;
 use std::path::PathBuf;
@@ -41,4 +40,34 @@ fn every_golden_case_maps_to_its_messages() {
         n += 1;
     }
     assert!(n >= 20, "only {n} golden cases");
+}
+
+#[test]
+fn every_captured_payload_has_a_golden_case() {
+    let used: std::collections::BTreeSet<String> = std::fs::read_dir(dir().join("tests/golden"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .filter_map(|p| {
+            let case: Value = serde_json::from_slice(&std::fs::read(p).unwrap()).unwrap();
+            case.get("fixture")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    let captured: Vec<String> = std::fs::read_dir(dir().join("../../tests/fixtures"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !captured.is_empty(),
+        "no captured payloads in tests/fixtures"
+    );
+    let missing: Vec<&String> = captured.iter().filter(|f| !used.contains(*f)).collect();
+    assert!(
+        missing.is_empty(),
+        "captured payloads with no golden case: {missing:?}"
+    );
 }

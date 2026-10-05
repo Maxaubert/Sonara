@@ -1,4 +1,3 @@
-src/sonara/**/*.py text eol=lf
 bin/sonara text eol=lf
 bin/sonara-hook-launch text eol=lf
 bin/runtime-version text eol=lf

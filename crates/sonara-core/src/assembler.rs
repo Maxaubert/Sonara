@@ -1,9 +1,9 @@
 //! Assemble streamed text deltas into complete, speakable chunks.
 //!
 //! PURE: no I/O. Splits prose into sentences and replaces triple-backtick
-//! fenced code blocks with a spoken one-line summary. Port of
-//! src/sonara/assembler.py, method for method; the golden fixtures are the
-//! contract.
+//! fenced code blocks with a spoken one-line summary. Port of the retired
+//! Python plugin's `assembler.py` (removed in #248), method for method; the
+//! golden fixtures (`tests/fixtures/text_rules`) are the contract.
 //!
 //! Offsets (`emitted`, slice points into `buf` and `pending`) are BYTE offsets
 //! into UTF-8 strings where Python uses code-point offsets. Every slice point
