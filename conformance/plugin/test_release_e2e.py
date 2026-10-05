@@ -24,7 +24,7 @@ def test_the_first_hook_installs_the_release_and_later_hooks_speak(box, releases
     box.env["SONARA_RELEASE_BASE_URL"] = r.url
 
     code, took = box.launch("SessionStart", {"session_id": SESSION, "cwd": r"C:\work\proj"})
-    assert code == 0 and took < 1.5
+    assert code == 0 and took < ph.QUICK
     # The bootstrap installs the runtime and starts it (sonara.exe start).
     box.wait_for(lambda: box.runtime_info() is not None, what="the runtime to start")
     box.wait_bootstrap()

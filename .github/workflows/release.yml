@@ -1,4 +1,7 @@
-# Auto-release on every push to main.
+# Auto-release once CI passed on a push to main (#250).
+# - Runs only after ci.yml succeeded for that push (workflow_run), and
+#   builds and tags exactly the commit CI checked (head_sha), so a red main
+#   never ships. workflow_dispatch releases the chosen ref by hand.
 # - Reads the version from pyproject.toml and refuses to run if
 #   .claude-plugin/plugin.json or marketplace.json disagree.
 # - REFUSES to run if release v<version> already exists: bump the version in the PR.
@@ -11,22 +14,21 @@
 #   .claude-plugin/), and on first use its bin/sonara-hook-launch downloads
 #   the zip of the release named in bin/runtime-version and checks it against
 #   SHA256SUMS (#202). So the release must exist before users install or
-#   update the plugin: merge -> this workflow publishes v<version> -> users
-#   install or update. A plugin update whose release is missing stays silent
-#   (each hook retries the download every 5 minutes) until it is published.
-#   Unsigned until SignPath enrolment.
+#   update the plugin: merge -> CI -> this workflow publishes v<version> ->
+#   users install or update. A plugin update whose release is missing stays
+#   silent (each hook retries the download every 5 minutes) until it is
+#   published. Unsigned until SignPath enrolment.
 # - Nothing goes to npm or PyPI: publish-packages runs only once the
 #   NPM_TOKEN / PYPI_TOKEN secrets exist (manual steps: docs/bundling.md).
-# Docs-only pushes are skipped by paths-ignore.
+# A push that changes only docs (*.md, docs/, .github/ISSUE_TEMPLATE/) is
+# not released (the "Changes" step; workflow_run has no paths filter).
 name: release
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 permissions:
@@ -36,16 +38,49 @@ concurrency:
   group: release-main
   cancel-in-progress: false
 
+env:
+  # The commit CI checked; github.sha is main's newest commit under
+  # workflow_run, which may be a later one.
+  RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 jobs:
   release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      released: ${{ steps.changes.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 2
+      - name: Changes
+        id: changes
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") { "release=true" >> $env:GITHUB_OUTPUT; exit 0 }
+          $files = @(git diff --name-only HEAD~1 HEAD)
+          if ($LASTEXITCODE -ne 0) { Write-Error "cannot list the changed files"; exit 1 }
+          $code = @($files | Where-Object { $_ -notmatch '\.md$' -and $_ -notmatch '^docs/' -and $_ -notmatch '^\.github/ISSUE_TEMPLATE/' })
+          if ($files.Count -gt 0 -and $code.Count -eq 0) {
+            Write-Output "Docs-only change: no release."
+            "release=false" >> $env:GITHUB_OUTPUT
+          } else {
+            "release=true" >> $env:GITHUB_OUTPUT
+          }
+          exit 0
+      - uses: actions/setup-python@v7
+        if: steps.changes.outputs.release == 'true'
         with:
           python-version: "3.12"
 
       - name: Read version
+        if: steps.changes.outputs.release == 'true'
         id: ver
         shell: pwsh
         run: |
@@ -60,6 +95,7 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
 
       - name: Refuse to overwrite an existing release
+        if: steps.changes.outputs.release == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -75,7 +111,9 @@ jobs:
           exit 0
 
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.changes.outputs.release == 'true'
       - name: Build the runtime zip
+        if: steps.changes.outputs.release == 'true'
         id: zip
         shell: pwsh
         run: |
@@ -99,19 +137,22 @@ jobs:
           "sums=$sums" >> $env:GITHUB_OUTPUT
 
       - name: Publish release
+        if: steps.changes.outputs.release == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v${{ steps.ver.outputs.version }}"
-          gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --latest --target $env:GITHUB_SHA
+          gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --latest --target $env:RELEASE_SHA
 
   # Disabled until registry tokens exist: every step is skipped while the
   # secrets are empty, so the job passes without publishing. Manual
   # publishing: docs/bundling.md.
   publish-packages:
     needs: release
+    if: needs.release.outputs.released == 'true'
     runs-on: windows-latest
+    timeout-minutes: 45
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
@@ -119,11 +160,13 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: env.NPM_TOKEN != '' || env.PYPI_TOKEN != ''
+        with:
+          ref: ${{ env.RELEASE_SHA }}
       - uses: dtolnay/rust-toolchain@stable
         if: env.NPM_TOKEN != ''
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: env.NPM_TOKEN != ''
         with:
           node-version: "20"
@@ -137,7 +180,7 @@ jobs:
           python packaging/runtime_dlls.py stage target/release
           (cd clients/ts && npm ci && npm run build && npm publish --access public)
           (cd packaging/npm-runtime && npm publish --access public)
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: env.PYPI_TOKEN != ''
         with:
           python-version: "3.12"

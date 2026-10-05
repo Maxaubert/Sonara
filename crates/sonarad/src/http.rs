@@ -34,26 +34,60 @@ pub const PING: Duration = Duration::from_secs(15);
 
 type BoxBody = http_body_util::combinators::UnsyncBoxBody<Bytes, Infallible>;
 
+/// After the exit is decided, connections keep being accepted (and answered
+/// `E_BUSY`) until none arrived for this long, then the listener closes.
+const DRAIN_QUIET: Duration = Duration::from_millis(50);
+/// The drain never takes longer than this.
+const DRAIN_MAX: Duration = Duration::from_secs(1);
+
+/// Serves until the exit is decided, then answers the connections that are
+/// already waiting (`E_BUSY`) and returns, closing the listener. `main`
+/// waits for this and for `Lifetime::requests_done` before the process
+/// ends, so no request loses its connection without a reply (#247).
 pub async fn serve(listener: TcpListener, server: Arc<Server>) {
+    let life = server.lifetime().clone();
     loop {
-        let (stream, _) = match listener.accept().await {
-            Ok(s) => s,
-            Err(_) => {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                continue;
-            }
+        let accepted = tokio::select! {
+            a = listener.accept() => a,
+            _ = life.wait_exit() => break,
         };
-        let server = server.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |req| {
-                let server = server.clone();
-                async move { Ok::<_, Infallible>(route(req, server).await) }
-            });
-            let _ = hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await;
-        });
+        match accepted {
+            Ok((stream, _)) => connection(stream, &server),
+            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+        }
     }
+    let end = tokio::time::Instant::now() + DRAIN_MAX;
+    loop {
+        let quiet = (tokio::time::Instant::now() + DRAIN_QUIET).min(end);
+        match tokio::time::timeout_at(quiet, listener.accept()).await {
+            Ok(Ok((stream, _))) => connection(stream, &server),
+            Ok(Err(_)) => continue,
+            Err(_) => return,
+        }
+    }
+}
+
+/// One connection on its own task. It counts as a pending request until
+/// its first reply (so one accepted just before the exit is answered), and
+/// so does each request on it.
+fn connection(stream: tokio::net::TcpStream, server: &Arc<Server>) {
+    let server = server.clone();
+    let first = Arc::new(std::sync::Mutex::new(Some(server.lifetime().request())));
+    tokio::spawn(async move {
+        let service = service_fn(move |req| {
+            let server = server.clone();
+            let first = first.clone();
+            async move {
+                let _pending = server.lifetime().request();
+                let reply = route(req, server).await;
+                first.lock().unwrap_or_else(|e| e.into_inner()).take();
+                Ok::<_, Infallible>(reply)
+            }
+        });
+        let _ = hyper::server::conn::http1::Builder::new()
+            .serve_connection(TokioIo::new(stream), service)
+            .await;
+    });
 }
 
 fn json_response(status: u16, v: &Value) -> Response<BoxBody> {
@@ -282,6 +316,64 @@ mod tests {
         assert_eq!(s.names(), ["state", "items"]);
         assert_eq!(event_set(Some("x=1&events=log")).unwrap().names(), ["log"]);
         assert!(event_set(Some("events=nope")).is_err());
+    }
+
+    fn server(life: Arc<crate::lifetime::Lifetime>) -> Arc<Server> {
+        use sonara_audio::TestOutput;
+        use sonara_engine::fake::FakeEngine;
+        use sonara_reader::{Config, ReaderHandle, Registry};
+        let registry = Registry::default();
+        registry.register(Arc::new(FakeEngine::new())).unwrap();
+        let (out, rx) = TestOutput::new();
+        let reader =
+            ReaderHandle::new(Config::new(registry).with_output(Box::new(out), rx)).unwrap();
+        Arc::new(Server::new(reader, "secret".into(), life))
+    }
+
+    // #247: a request that reached the runtime as the idle exit was decided
+    // lost its connection (RemoteDisconnected) because the process ended
+    // without answering it. It must get its E_BUSY reply first.
+    #[test]
+    fn a_request_waiting_when_the_exit_is_decided_gets_e_busy() {
+        use crate::lifetime::{ExitReason, Lifetime};
+        use std::io::{Read, Write};
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let life = Lifetime::new(Duration::from_secs(30), false);
+        let server = server(life.clone());
+        let listener = rt
+            .block_on(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        // The client connects and sends before the runtime accepts: the
+        // connection waits in the listen backlog.
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        stream
+            .write_all(
+                b"POST /v1/get HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer secret\r\n\
+                  Content-Type: application/json\r\nContent-Length: 16\r\n\r\n{\"key\":\"volume\"}",
+            )
+            .unwrap();
+        life.request_exit(ExitReason::Idle);
+        rt.block_on(async {
+            let served = tokio::spawn(serve(listener, server.clone()));
+            tokio::time::timeout(Duration::from_secs(5), served)
+                .await
+                .expect("serve returns once the exit is decided")
+                .unwrap();
+            life.requests_done(Duration::from_secs(5)).await;
+        });
+        // What main does next: return, which ends every task.
+        drop(rt);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reply = String::new();
+        let _ = stream.read_to_string(&mut reply);
+        assert!(reply.starts_with("HTTP/1.1 409"), "{reply:?}");
+        assert!(reply.contains("E_BUSY"), "{reply:?}");
     }
 
     #[test]

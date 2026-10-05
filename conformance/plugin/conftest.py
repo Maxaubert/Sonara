@@ -41,8 +41,8 @@ def box(tmp_path, exes, bash):
 def releases():
     started = []
 
-    def _serve(files, delay=0.0):
-        r = ph.Releases(files, delay)
+    def _serve(files, delay=0.0, hold=False):
+        r = ph.Releases(files, delay, hold)
         started.append(r)
         return r
 

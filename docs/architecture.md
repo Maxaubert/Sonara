@@ -143,7 +143,7 @@ state and the per-session registry.
 Rules:
 
 - Message handlers run with the lock held. Code that relies on that calls
-  `core.assert_lock_held()`; set `SONARA_DEBUG_LOCKS=1` to make it raise (CI does).
+  `core.assert_lock_held()`; set `SONARA_DEBUG_LOCKS=1` to make it raise (a local diagnostic; CI stopped running it in #250).
 - Never block under the lock: no synthesis, no subprocess, no socket write. Collect what you
   need under the lock, release it, then do the slow part.
 - Feature modules that keep daemon state by reference (playback, cues, summary pipeline, audio)

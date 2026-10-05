@@ -31,8 +31,8 @@ python -m venv .venv
 ```
 
 Both must be green. CI (`.github/workflows/ci.yml`) runs on Windows: the unit suite on Python
-3.9 and 3.12, plus ruff and a second suite run with lock checks on (`SONARA_DEBUG_LOCKS=1`) on
-3.12 only. Tests must not depend on what is
+3.9 and 3.12, plus ruff on 3.12 (lock checks, `SONARA_DEBUG_LOCKS=1`, are a local diagnostic
+since #250). Tests must not depend on what is
 installed on your PC (Kokoro, Windows voices): patch the platform and `kokoro.is_installed`.
 
 - **Settings page changes** (`settings.html`, `webui.py`) also need the browser tests:
