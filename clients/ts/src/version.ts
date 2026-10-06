@@ -1,5 +1,5 @@
 /** Version of this package, sent as `client.version` in `hello`. */
-export const VERSION = "0.20.9";
+export const VERSION = "0.20.10";
 
 /** Protocol this client speaks. */
 export const PROTOCOL = { major: 1, minor: 0 } as const;
