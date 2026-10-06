@@ -120,7 +120,7 @@ def _labels(gate_name):
 def test_the_sdk_gate_runs_every_step_of_the_ci_clients_job():
     labels = _labels("sdk")
     for want in ("stage runtime DLLs", "examples/player-demo: npm ci", "examples/player-demo: build",
-                 "Python smoke host"):
+                 "Python smoke host", "packages: build, check, publish dry run"):
         assert want in labels, want
     assert labels.index("stage runtime DLLs") < labels.index("npm-runtime: build")
     host = next(s for s in gate.steps_for("sdk", None, False) if s[0] == "Python smoke host")

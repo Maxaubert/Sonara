@@ -93,10 +93,11 @@ cd clients/player && npm ci && npm run typecheck && npm run build && npm test
 python -m pytest clients/python/tests -q
 cd packaging/npm-runtime && npm run build && npm test
 node packaging/smoke/run-node.mjs
+python packaging/build_packages.py --publish-dry-run          # the packages release.yml publishes
 ```
 
 Player demo: `examples/player-demo` (see `clients/player/README.md`). npm and PyPI publishing is
-manual (`docs/bundling.md`).
+automatic once switched on (trusted publishing, #279; setup in `docs/bundling.md`).
 
 ## Embedder e2e (`tests/embed`, #274)
 

@@ -11,7 +11,8 @@ gate runs when a changed path starts with one of its triggers (GATES):
   conformance  protocol v1 and plugin conformance against the debug build
   python       ruff, the version check and tests/repo (always, when anything changed)
   e2e          the settings-page browser tests (fails without the e2e dependency group)
-  sdk          the SDKs, the player demo, the npm runtime package and the smoke hosts
+  sdk          the SDKs, the player demo, the npm runtime package, the smoke hosts
+               and the publishable packages (packaging/build_packages.py, #279)
   embed        the embedder e2e suite (tests/embed, #274): Node, Python and raw
                protocol host apps on the packed packages, the wheel and the
                release zip, with the audio checked through --output wav:<dir>
@@ -64,7 +65,8 @@ CONFORMANCE = RUST + ("conformance/", "bin/", "hooks/", "packaging/release_zip.p
                       "packaging/runtime_dlls.py")
 E2E = ("crates/sonarad/assets/settings/", "crates/sonarad/src/settings_page.rs",
        "crates/sonarad/src/config.rs", "tests/e2e/")
-SDK = ("clients/", "packaging/npm-runtime/", "packaging/smoke/", "examples/") + tuple(bump_version.all_paths())
+SDK = ("clients/", "packaging/npm-runtime/", "packaging/smoke/", "examples/",
+       "packaging/build_packages.py") + tuple(bump_version.all_paths())
 # What an app that embeds Sonara runs: the runtime and the crates it speaks
 # with, the SDKs and packages, and the docs the raw host is written from.
 EMBED = ("clients/", "packaging/npm-runtime/", "packaging/release_zip.py", "packaging/runtime_dlls.py",
@@ -219,7 +221,10 @@ def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Ste
                 _step("npm-runtime: test", [npm, "test"], "packaging/npm-runtime", release),
                 _step("Node smoke host", [node, "packaging/smoke/run-node.mjs"], env=release),
                 _step("clients/python tests", [py, "-m", "pytest", "clients/python/tests", "-q"], env=release),
-                _step("Python smoke host", [py, "packaging/smoke/python_host.py"], env=host)]
+                _step("Python smoke host", [py, "packaging/smoke/python_host.py"], env=host),
+                # What release.yml publishes (#279): build, contents, publish dry run.
+                _step("packages: build, check, publish dry run",
+                      [py, "packaging/build_packages.py", "--publish-dry-run"])]
         return out
     if gate == "embed":
         npm = shutil.which("npm") or "npm"
