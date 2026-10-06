@@ -1,0 +1,14 @@
+# cargo-nextest (#256): each test in its own process, the test binaries in
+# parallel. CI runs `cargo nextest run --workspace --profile ci`; locally
+# `cargo nextest run --workspace` (or python packaging/gate.py, which uses it
+# when installed). Doc tests still need `cargo test --doc`.
+
+[profile.default]
+# A test still running after 60 s is reported as slow and ended at 180 s, so
+# a hang fails that test instead of the whole run timing out.
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+# Run every test and list every failure; no retries, so a flaky test fails.
+fail-fast = false
+failure-output = "immediate-final"

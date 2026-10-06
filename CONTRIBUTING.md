@@ -24,13 +24,24 @@ fits together.
 The runtime is the Rust workspace in `crates/`. Tests use fakes for speech, audio and hotkeys
 (`--engine fake --system fake`), so they need no speech engine and run headless. Install Rust
 with rustup (`rust-toolchain.toml` picks stable with clippy and rustfmt), Python 3.12 or
-newer (pip 25.1 or newer), and `cargo install cargo-deny`. Before opening a PR:
+newer (pip 25.1 or newer), `cargo install cargo-deny` and (optional, much faster tests)
+`cargo install cargo-nextest --locked`. Before opening a PR, run the gate script: it picks the
+gates below from the paths your branch changed and runs them as CI does
+(`--dry-run` shows the plan, `--quick` limits the Rust tests to the changed crates, `--all` runs
+everything):
+
+```powershell
+python packaging/gate.py
+```
+
+By hand, the same gates:
 
 ```powershell
 # Rust
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo nextest run --workspace   # or: cargo test --workspace
+cargo test --workspace --doc
 cargo deny check licenses bans
 python packaging/notices/gen_notices.py --check
 
@@ -47,9 +58,9 @@ python -m venv .venv
 .venv\Scripts\python -m pytest -q
 ```
 
-All must be green. CI (`.github/workflows/ci.yml`) runs the same on Windows, plus the SDK
-clients job. Tests must not depend on what is installed on your PC (Kokoro models, Windows
-voices, API keys).
+All must be green. CI (`.github/workflows/ci.yml`) runs the same on Windows in the jobs
+`check`, `rust`, `conformance`, `clients` (the SDKs) and `deny`, the required checks of a PR.
+Tests must not depend on what is installed on your PC (Kokoro models, Windows voices, API keys).
 
 - **Settings page changes** (`crates/sonarad/assets/settings.html`,
   `crates/sonarad/src/settings_page.rs`) also need the browser tests:

@@ -1,6 +1,6 @@
 # Testing, live checks and release chores
 
-The gates every PR runs are in `CLAUDE.md`, `CONTRIBUTING.md` and the project skill
+The gates every PR runs (`python packaging/gate.py` picks and runs them) are in `CLAUDE.md`, `CONTRIBUTING.md` and the project skill
 `.claude/skills/sonara-gates`. This page holds the rest:
 opt-in live tests, engine staging, SDK steps, generated assets, the version bump and the
 safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
