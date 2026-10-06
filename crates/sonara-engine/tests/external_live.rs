@@ -24,7 +24,9 @@
 //! - `deepgram_live`: `DEEPGRAM_API_KEY` (also prints whether Deepgram
 //!   applies `speed`, spec 13.3 item 2)
 //! - `command_live`: `SONARA_LIVE_COMMAND` (a JSON argv of a real program of
-//!   your own), optional `SONARA_LIVE_COMMAND_OPTIONS` (a JSON object)
+//!   your own), optional `SONARA_LIVE_COMMAND_OPTIONS` (a JSON object) and,
+//!   when argv has `{voice}`, `SONARA_LIVE_COMMAND_VOICE` (else the first of
+//!   `options.voices`; with `options.voices`, every listed voice is tried)
 use serde_json::{json, Value};
 use sonara_engine::external::keys::{KeyResolver, MemoryStore};
 use sonara_engine::external::profile::Profile;
@@ -288,8 +290,45 @@ fn command_live() {
             options[k] = v.clone();
         }
     }
-    check(
-        "COMMAND",
-        json!({"id": "command-live", "kind": "command", "options": options}),
-    );
+    let mut profile = json!({"id": "command-live", "kind": "command", "options": options});
+    // `{voice}` in argv (#274): the voice is SONARA_LIVE_COMMAND_VOICE, else
+    // the first of options.voices, so the substitution runs live too; each
+    // listed voice is then tried, and one outside the list must be refused.
+    let voice_in_argv = profile["options"]["argv"].as_array().is_some_and(|a| {
+        a.iter()
+            .skip(1)
+            .any(|x| x.as_str().is_some_and(|x| x.contains("{voice}")))
+    });
+    let listed: Vec<String> = profile["options"]["voices"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    if voice_in_argv {
+        if let Some(v) = var("SONARA_LIVE_COMMAND_VOICE").or_else(|| listed.first().cloned()) {
+            profile["voice"] = json!(v);
+        } else {
+            println!("note: argv has {{voice}} but no voice is set (SONARA_LIVE_COMMAND_VOICE or options.voices)");
+        }
+    }
+    check("COMMAND", profile.clone());
+    if voice_in_argv && !listed.is_empty() {
+        let e = engine(&profile);
+        for v in &listed {
+            let t = e
+                .test("A voice check.", v, 200)
+                .expect("each listed voice speaks");
+            let n: usize = t.pcm.iter().map(|c| c.samples.len()).sum();
+            println!("voice {v}: {n} samples in {} ms", t.ms);
+            assert!(n > 0, "voice {v}: no audio");
+        }
+        assert!(
+            e.test("A voice check.", "sonara-not-a-listed-voice", 200)
+                .is_err(),
+            "a voice outside options.voices is refused"
+        );
+    }
 }

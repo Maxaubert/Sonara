@@ -216,7 +216,10 @@ fn engines_cmd(paths: &Paths, action: Action) -> Result<(), String> {
     } else {
         println!("{}", engines::done_line(&request, &reply));
     }
-    Ok(())
+    match engines::fetch_error(&request, &reply) {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// `sonara engines add <id> --kind command`: written into `engines.json`
