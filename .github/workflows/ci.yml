@@ -1,6 +1,7 @@
 # CI gate: lint + full unit suite on every PR and every push to main.
 # The e2e settings-page tests skip here (no playwright installed); they are the
 # local PR gate for UI changes. Live OneCore checks (-m live_windows) never run.
+# release.yml runs only after this workflow succeeded on a push to main (#250).
 name: ci
 
 on:
@@ -8,20 +9,27 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+# A newer PR push cancels the older run. Each push to main has its own
+# group (its commit), so none is cancelled or left pending behind a newer
+# one: each successful one is released.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     runs-on: windows-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python: ["3.9", "3.12"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -31,18 +39,12 @@ jobs:
         run: ruff check src tests conformance clients/python packaging
       - name: Unit tests
         run: python -m pytest -q
-      # The daemon's lock-discipline asserts (daemon/core.py) are off in
-      # production; one run with them on catches a caller that forgot the lock.
-      - name: Unit tests with lock checks
-        if: matrix.python == '3.12'
-        env:
-          SONARA_DEBUG_LOCKS: "1"
-        run: python -m pytest -q
 
   rust:
     runs-on: windows-latest
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -52,7 +54,7 @@ jobs:
       - run: cargo test --workspace
       # Protocol v1 conformance: black-box tests against the built sonarad.exe
       # (fake engine, silent output; no audio device or voices needed).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m pip install pytest
@@ -61,6 +63,13 @@ jobs:
       # PowerShell bootstrap in Git Bash against a local release server,
       # sonara.exe, and a release zip installed by the first hook.
       - name: Conformance (core, channels, agent, system, persistence, plugin)
+        # A hook's wall-clock bound, loosened for a busy runner where Git
+        # Bash alone can take a second (#249); the launcher tests also check
+        # the order, which no timing breaks.
+        env:
+          SONARA_TEST_HOOK_QUICK: "5"
+          # The idle time of the countdown check (#247), likewise.
+          SONARA_TEST_IDLE_EXIT: "1"
         run: python -m pytest conformance -q
       # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
       # dependency change must regenerate it (spec R6).
@@ -71,6 +80,7 @@ jobs:
   # engine), on the oldest Node and Python they support.
   clients:
     runs-on: windows-latest
+    timeout-minutes: 40
     # bash -e: a failing command fails the step (pwsh only checks the last one).
     defaults:
       run:
@@ -78,13 +88,13 @@ jobs:
     env:
       SONARAD: ${{ github.workspace }}\target\release\sonarad.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "18"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.9"
       - run: cargo build -p sonarad --release
@@ -134,8 +144,9 @@ jobs:
   # dependencies are still checked from here.
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check licenses bans

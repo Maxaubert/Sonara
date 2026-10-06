@@ -8,11 +8,17 @@ speech (one is never accepted and then lost), and a request that arrives
 while the runtime exits is ``E_BUSY``, never an HTTP 500."""
 from __future__ import annotations
 
+import os
 import socket
 import time
 
 import pytest
 from harness import long_text, non_loopback_addresses, wait_until
+
+# The idle time of the countdown check: short, so a countdown that starts
+# before runtime.json fails it; CI raises it, since a busy runner can take
+# that long between runtime.json and the first request (#247).
+QUICK_IDLE = os.environ.get("SONARA_TEST_IDLE_EXIT") or "0.3"
 
 
 def test_runtime_json_describes_the_instance(rt):
@@ -70,7 +76,7 @@ def test_idle_exit_with_no_client_at_all(start):
 
 
 def test_keep_alive_survives_the_last_client(start):
-    rt = start("--idle-exit", "0.5")
+    rt = start("--idle-exit", "1")
     c = rt.tcp(keep_alive=True)
     c.close()
     time.sleep(2)
@@ -78,30 +84,38 @@ def test_keep_alive_survives_the_last_client(start):
 
 
 def test_playing_keeps_it_alive_without_clients(start):
-    rt = start("--idle-exit", "0.5")
-    status, _ = rt.post("speak", {"text": long_text(2)})
+    # #247: a connected client holds the runtime while the test sets up, so
+    # a slow CI runner never lets the idle time run out before the first
+    # request; the countdown starts when the test closes it.
+    rt = start("--idle-exit", "1")
+    c = rt.tcp()
+    status, _ = rt.post("speak", {"text": long_text(3)})
     assert status == 200
-    # The item lasts about 6 s: well past the idle time, and well before
+    c.close()
+    # The item lasts about 9 s: well past the idle time, and well before
     # its end, it must still be reading.
-    time.sleep(2.0)
+    time.sleep(2.5)
     assert rt.alive(), "it reads to the end first"
-    assert rt.wait_exit(20) == 0
+    assert rt.wait_exit(30) == 0
 
 
 def test_a_paused_item_does_not_keep_it_alive(start):
-    rt = start("--idle-exit", "0.5")
-    rt.post("speak", {"text": long_text(2)})
+    rt = start("--idle-exit", "1")
+    c = rt.tcp()
+    status, _ = rt.post("speak", {"text": long_text(2)})
+    assert status == 200
     status, _ = rt.post("control", {"action": "pause"})
     assert status == 200
+    c.close()
     assert rt.wait_exit(10) == 0
 
 
 def test_an_open_event_stream_counts_as_a_client(start):
-    rt = start("--idle-exit", "0.5")
+    rt = start("--idle-exit", "1")
     sse = rt.sse("state")
     assert sse.status == 200
     assert sse.next_event(lambda name, e: name == "state")[1]["now_playing"] is None
-    time.sleep(1.5)
+    time.sleep(2)
     assert rt.alive()
     sse.close()
     assert rt.wait_exit() == 0
@@ -112,8 +126,10 @@ def test_the_idle_time_starts_when_clients_can_find_it(start):
     # slow start could use it up and the runtime left right after a client
     # arrived. Many quick starts with a short idle time: each first request
     # finds the runtime alive and is served.
+    # The idle time is short so a countdown that starts too early fails
+    # here; CI raises it for a slow runner (SONARA_TEST_IDLE_EXIT, #247).
     for _ in range(5):
-        rt = start("--idle-exit", "0.3")
+        rt = start("--idle-exit", QUICK_IDLE)
         status, r = rt.post("speak", {"text": long_text(1)})
         assert status == 200, r
         assert r["item_id"] == 1
@@ -199,3 +215,38 @@ def test_relaunch_as_soon_as_runtime_json_is_gone_after_a_takeover(start, rt):
     new = start(home=rt.home)
     assert new.info["pid"] != rt.info["pid"]
     assert rt.wait_exit() == 0
+
+
+def test_a_request_as_the_exit_is_decided_is_answered(start):
+    # #247: a request that reached the runtime as the idle exit was decided
+    # lost its connection (RemoteDisconnected): the process ended without
+    # answering it. Aim requests at the moment of the exit: each one is
+    # answered (200 before, E_BUSY during) or finds the port closed. A smoke
+    # check over real timing; the deterministic regression test is the Rust
+    # one, a_request_waiting_when_the_exit_is_decided_gets_e_busy.
+    outcomes = {"served": 0, "busy": 0, "refused": 0}
+    for i in range(15):
+        rt = start("--idle-exit", "0.3")
+        time.sleep(0.2 + i * 0.015)
+        # Windows resets a connection still waiting in the listener's backlog
+        # when the listener closes (WinError 10054): the port closed, as with
+        # a refusal.
+        closed = (ConnectionRefusedError, ConnectionResetError)
+        try:
+            status, body = rt.post("get", {"key": "volume"})
+        except closed:
+            outcomes["refused"] += 1
+            continue
+        except OSError as e:
+            if isinstance(getattr(e, "reason", None), closed):
+                outcomes["refused"] += 1
+                continue
+            raise
+        if status == 200:
+            outcomes["served"] += 1
+        else:
+            assert body["error"]["code"] == "E_BUSY", body
+            outcomes["busy"] += 1
+        rt.close()
+    # At least one request met the exit, or the loop missed the window.
+    assert outcomes["busy"] + outcomes["refused"] > 0, outcomes

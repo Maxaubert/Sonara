@@ -6,7 +6,8 @@
 //! count) and no Kokoro model download or load running (`sonarad` passes
 //! both as `busy`) for the idle timeout (30 s by default), unless it runs standalone
 //! or a client said `keep_alive: true` (sticky until the process ends). An
-//! idle takeover or Ctrl+C end it at once.
+//! idle takeover or Ctrl+C end it at once. Requests already received when the
+//! exit is decided are answered (`E_BUSY`) before the process ends (#247).
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -29,6 +30,8 @@ pub struct Lifetime {
     idle_exit: Duration,
     last_active: Mutex<Instant>,
     exit: watch::Sender<Option<ExitReason>>,
+    /// HTTP requests received and not answered yet (`RequestGuard`).
+    requests: AtomicUsize,
 }
 
 /// Counts one client while it lives.
@@ -38,6 +41,15 @@ impl Drop for ClientGuard {
     fn drop(&mut self) {
         self.0.clients.fetch_sub(1, Ordering::SeqCst);
         self.0.touch();
+    }
+}
+
+/// Counts one HTTP request until its reply is ready.
+pub struct RequestGuard(Arc<Lifetime>);
+
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        self.0.requests.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -51,6 +63,7 @@ impl Lifetime {
             idle_exit,
             last_active: Mutex::new(Instant::now()),
             exit,
+            requests: AtomicUsize::new(0),
         })
     }
 
@@ -58,6 +71,21 @@ impl Lifetime {
         self.clients.fetch_add(1, Ordering::SeqCst);
         self.touch();
         ClientGuard(self.clone())
+    }
+
+    /// Count a request (or a new connection, until its first reply) as
+    /// pending, so the exit waits for its answer (`requests_done`).
+    pub fn request(self: &Arc<Self>) -> RequestGuard {
+        self.requests.fetch_add(1, Ordering::SeqCst);
+        RequestGuard(self.clone())
+    }
+
+    /// Resolves once no request is pending, or after `limit`.
+    pub async fn requests_done(&self, limit: Duration) {
+        let end = tokio::time::Instant::now() + limit;
+        while self.requests.load(Ordering::SeqCst) > 0 && tokio::time::Instant::now() < end {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     pub fn clients(&self) -> usize {
@@ -201,6 +229,24 @@ mod tests {
         life.request_exit(ExitReason::Takeover);
         life.request_exit(ExitReason::Idle);
         assert_eq!(life.exit_requested(), Some(ExitReason::Takeover));
+    }
+
+    #[tokio::test]
+    async fn the_exit_waits_for_pending_requests() {
+        let life = Lifetime::new(DEFAULT_IDLE_EXIT, false);
+        life.requests_done(Duration::from_secs(5)).await;
+        let guard = life.request();
+        let started = tokio::time::Instant::now();
+        life.requests_done(Duration::from_millis(100)).await;
+        assert!(started.elapsed() >= Duration::from_millis(100), "it waited");
+        let l = life.clone();
+        let waiter = tokio::spawn(async move { l.requests_done(Duration::from_secs(5)).await });
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        drop(guard);
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("done once the request was answered")
+            .unwrap();
     }
 
     #[tokio::test]

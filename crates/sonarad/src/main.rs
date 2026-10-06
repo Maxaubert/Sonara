@@ -409,7 +409,7 @@ async fn run(
         let _ = tokio::task::spawn_blocking(move || s.recover()).await;
     }
     tokio::spawn(tcp::serve(tcp_listener, server.clone()));
-    tokio::spawn(http::serve(http_listener, server.clone()));
+    let http_task = tokio::spawn(http::serve(http_listener, server.clone()));
 
     let info = RuntimeInfo {
         pid: std::process::id(),
@@ -451,8 +451,16 @@ async fn run(
 
     let why = tokio::select! {
         why = life.wait_exit() => why,
-        _ = tokio::signal::ctrl_c() => ExitReason::Signal,
+        _ = tokio::signal::ctrl_c() => {
+            life.request_exit(ExitReason::Signal);
+            ExitReason::Signal
+        }
     };
+    // Answer the HTTP requests that arrived as the exit was decided
+    // (`E_BUSY`) before the process ends, so none loses its connection
+    // without a reply (#247). Both waits are bounded.
+    let _ = tokio::time::timeout(Duration::from_secs(2), http_task).await;
+    life.requests_done(Duration::from_secs(2)).await;
     // `start` removes runtime.json once speech stopped and the instance
     // lock is released.
     eprintln!("sonarad: exiting ({why:?})");

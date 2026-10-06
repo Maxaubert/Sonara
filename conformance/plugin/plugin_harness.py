@@ -28,6 +28,12 @@ VERSION = (BIN / "runtime-version").read_text(encoding="utf-8").strip()
 ZIP_NAME = f"sonara-runtime-win-x64-{VERSION}.zip"
 EXES = ("sonarad.exe", "sonara-hook.exe", "sonara.exe")
 FAKE = "--engine fake --system fake --keys fake"
+# A hook may take at most about a second (Claude Code waits for it). The
+# wall-clock bound is loose on a busy CI runner, where Git Bash alone can
+# take that long (#249): SONARA_TEST_HOOK_QUICK raises it there. Tests that
+# must prove the hook does not wait for the bootstrap also check the order
+# (`Releases(hold=True)`), which no timing can break.
+QUICK = float(os.environ.get("SONARA_TEST_HOOK_QUICK") or "1.5")
 
 
 def find_bash() -> Path | None:
@@ -97,18 +103,23 @@ def sums_for(data: bytes, name: str = ZIP_NAME) -> bytes:
 
 class Releases:
     """A local stand-in for github.com/<repo>/releases/download: serves
-    ``/v<version>/<file>`` from ``files`` and counts the requests."""
+    ``/v<version>/<file>`` from ``files`` and counts the requests. With
+    ``hold``, every download waits until ``open_gate()``."""
 
-    def __init__(self, files: dict[str, bytes], delay: float = 0.0):
+    def __init__(self, files: dict[str, bytes], delay: float = 0.0, hold: bool = False):
         self.files = files
         self.hits: dict[str, int] = {}
         self.delay = delay
+        self.gate = threading.Event()
+        if not hold:
+            self.gate.set()
         outer = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):  # noqa: N802
                 name = self.path.rsplit("/", 1)[-1]
                 outer.hits[name] = outer.hits.get(name, 0) + 1
+                outer.gate.wait(120)
                 if outer.delay:
                     time.sleep(outer.delay)
                 body = outer.files.get(name) if self.path.startswith(f"/v{VERSION}/") else None
@@ -130,7 +141,11 @@ class Releases:
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
+    def open_gate(self):
+        self.gate.set()
+
     def close(self):
+        self.gate.set()
         self.server.shutdown()
         self.server.server_close()
 

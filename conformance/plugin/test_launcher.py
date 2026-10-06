@@ -11,8 +11,7 @@ import time
 
 import plugin_harness as ph
 
-# A hook may take at most about a second (Claude Code waits for it).
-QUICK = 1.5
+QUICK = ph.QUICK
 NO_START = {"SONARA_BOOTSTRAP_START": "0"}
 # A release newer than the plugin's (bin/runtime-version), as a newer plugin
 # installs it while sessions of this one keep running.
@@ -27,10 +26,16 @@ def serve_good_release(box, releases, exes):
 
 
 def test_a_missing_runtime_is_installed_in_the_background(box, releases, exes):
-    r = serve_good_release(box, releases, exes)
+    # The downloads wait until the hook has returned: the order proves the
+    # hook never waits for the bootstrap, whatever the runner's speed (#249).
+    data = ph.fake_zip(exes)
+    r = releases({ph.ZIP_NAME: data, "SHA256SUMS": ph.sums_for(data)}, hold=True)
+    box.env["SONARA_RELEASE_BASE_URL"] = r.url
     code, took = box.launch("SessionStart", {"session_id": "s1"}, NO_START)
     assert code == 0
-    assert took < QUICK, f"the hook waited {took:.2f} s for the bootstrap"
+    assert not box.dest.exists(), "the hook returned before the install"
+    assert took < QUICK, f"the hook took {took:.2f} s"
+    r.open_gate()
     box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
     box.wait_bootstrap()
     for e in ph.EXES:

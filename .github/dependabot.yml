@@ -1,0 +1,14 @@
+# Keeps the workflows' actions current (#250). Each Dependabot PR still
+# needs a version bump before it is merged: release.yml publishes every
+# successful push to main and refuses a version that already exists.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
