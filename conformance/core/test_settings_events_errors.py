@@ -180,10 +180,12 @@ def test_http_body_must_be_an_object(rt):
 
 def test_an_http_body_may_start_with_a_utf8_bom(rt):
     """Windows PowerShell 5.1 with a UTF-8 $OutputEncoding pipes a BOM
-    first (docs/bundling.md recipe); RFC 8259 lets a parser ignore it."""
-    status, r = rt.post("get", raw=b'\xef\xbb\xbf{"key": "rate"}')
-    assert status == 200, r
-    assert r["ok"] is True and r["value"] == 250
+    first (docs/bundling.md recipe); RFC 8259 lets a parser ignore it. On
+    a UTF-8 console, setting $OutputEncoding to UTF-8 again pipes two."""
+    for bom in (b"\xef\xbb\xbf", b"\xef\xbb\xbf" * 2):
+        status, r = rt.post("get", raw=bom + b'{"key": "rate"}')
+        assert status == 200, r
+        assert r["ok"] is True and r["value"] == 250
 
 
 def test_unknown_fields_are_ignored(client):

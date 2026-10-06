@@ -202,9 +202,13 @@ async fn post(req: Request<Incoming>, kind: String, server: Arc<Server>) -> Resp
             ))
         }
     };
-    // A UTF-8 byte order mark is ignored (RFC 8259 allows it): Windows
-    // PowerShell 5.1 with a UTF-8 `$OutputEncoding` pipes one first.
-    let body = body.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&body);
+    // Leading UTF-8 byte order marks are ignored (RFC 8259 allows it):
+    // Windows PowerShell 5.1 with a UTF-8 `$OutputEncoding` pipes one first,
+    // two when it is set again on a UTF-8 console (GitHub's runners).
+    let mut body: &[u8] = &body;
+    while let Some(rest) = body.strip_prefix(b"\xEF\xBB\xBF") {
+        body = rest;
+    }
     let mut map = if body.iter().all(u8::is_ascii_whitespace) {
         Map::new()
     } else {
