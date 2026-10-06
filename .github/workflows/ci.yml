@@ -1,9 +1,12 @@
 # CI gate on every PR and every push to main: the Python repo checks
-# (ruff, tests/repo, the release version dry run), the Rust workspace with
+# (ruff, tests/repo, the release version dry run), the Rust workspace,
 # protocol conformance, the SDKs, and cargo-deny. The e2e settings-page tests
 # (tests/e2e) skip here (no playwright installed); they are the local PR gate
-# for UI changes.
+# for UI changes (python packaging/gate.py runs them when needed).
 # release.yml runs only after this workflow succeeded on a push to main (#250).
+# The job names (check, rust, conformance, clients, deny) are the required
+# checks of the branch protection: rename one only together with it
+# (packaging/gate.py REQUIRED_CHECKS, tests/repo/test_gate.py).
 name: ci
 
 on:
@@ -52,11 +55,35 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      # cargo-nextest runs the test binaries in parallel (cargo test runs
+      # them one after the other); profile ci in .config/nextest.toml (#256).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-      # Protocol v1 conformance: black-box tests against the built sonarad.exe
-      # (fake engine, silent output; no audio device or voices needed).
+      - run: cargo nextest run --workspace --profile ci
+      # nextest does not run doc tests.
+      - run: cargo test --workspace --doc
+      # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
+      # dependency change must regenerate it (spec R6).
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Notices up to date
+        run: python packaging/notices/gen_notices.py --check
+
+  # Protocol v1 conformance: black-box tests against the built debug
+  # binaries (fake engine, silent output; no audio device or voices needed).
+  # Its own job, parallel to rust (#256): it builds only the three
+  # executables, and its rust-cache (keyed per job) keeps their dependencies.
+  conformance:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -74,10 +101,6 @@ jobs:
           # The idle time of the countdown check (#247), likewise.
           SONARA_TEST_IDLE_EXIT: "1"
         run: python -m pytest conformance -q
-      # THIRD_PARTY_NOTICES.md is generated from `cargo metadata`; a
-      # dependency change must regenerate it (spec R6).
-      - name: Notices up to date
-        run: python packaging/notices/gen_notices.py --check
 
   # The SDKs and the npm runtime package against a real sonarad.exe (fake
   # engine), on the oldest Node and Python they support.

@@ -7,13 +7,15 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - `gh` default repo is `Maxaubert/Sonara`. Issue numbers in commits and docs refer to the fork.
 
 ## Build, test, release
-- Rust (needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace; cargo deny check licenses bans`. One crate: `cargo test -p <crate>`.
-- Conformance (protocol v1, black box): `cargo build -p sonarad -p sonara-hook -p sonara-cli; python -m pytest conformance -q`.
+- Gate script (#256): `python packaging/gate.py` runs the gates the changed paths need, as CI does (`--dry-run` plan, `--quick` changed crates only, `--all` everything); run it before every commit.
+- Rust (needs `~/.cargo/bin` on PATH): `cargo fmt --all -- --check; cargo clippy --workspace --all-targets -- -D warnings; cargo nextest run --workspace; cargo test --workspace --doc; cargo deny check licenses bans` (without cargo-nextest: `cargo test --workspace`). One crate: `cargo nextest run -p <crate>`.
+- Conformance (protocol v1, black box): `cargo build -p sonarad -p sonara-hook -p sonara-cli; python -m pytest conformance -q` (the newest of `target/release` and `target/debug` unless `SONARAD`/`SONARA_HOOK` are set).
+- CI (`ci.yml`) jobs, the required checks: `check`, `rust`, `conformance`, `clients`, `deny`; keep the names (`packaging/gate.py` `REQUIRED_CHECKS`).
 - Typecheck/lint: `ruff check tests conformance clients/python packaging`; TS: `npm run typecheck` in `clients/ts`.
 - Repo checks (`tests/repo`, Python 3.12, `pip install --group dev`; `pyproject.toml` is dev config only): `python -m pytest tests/repo -q` (plain `python -m pytest -q` also runs `tests/e2e`).
 - E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings.html` or `crates/sonarad/src/settings_page.rs` change (needs `cargo build -p sonarad`).
 - `clients/`, `packaging/npm-runtime` or a version file changed: run the SDK gates. Rust dependency changed: regenerate notices. Live tests, Kokoro, G2P bless, earcons, SDK steps: `docs/testing.md`.
-- Skill `sonara-gates`: every gate command and when the e2e and SDK gates apply.
+- Skill `sonara-gates`: the gate script, every gate command and when the e2e and SDK gates apply.
 - Skill `sonara-live-tests`: the opt-in live checks and their env vars.
 - Build / package: `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py`   Artifact: `sonara-runtime-win-x64-<version>.zip` + `SHA256SUMS`
 - Known failures to tolerate: none

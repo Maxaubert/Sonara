@@ -105,16 +105,22 @@ fn raising_the_hold_ends_a_request_in_flight_and_speaks_it_locally() {
         SPEECH,
         Route::wav(&[1], 24_000).delayed(Duration::from_secs(3)),
     );
-    let hold = r.hold.clone();
-    let raiser = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(150));
-        let at = Instant::now();
-        hold.set(true);
-        at
+    let engine = r.engine.clone();
+    let speaker = std::thread::spawn(move || {
+        let got = samples(&engine, "Slow one.");
+        (got, Instant::now())
     });
-    let got = samples(&r.engine, "Slow one.");
-    let ended = Instant::now();
-    let raised_at = raiser.join().unwrap();
+    // Raise the hold once the request is in flight (the server has it), not
+    // after a fixed sleep: on a busy machine the request can take longer to
+    // arrive (#256).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while r.server.count(SPEECH) == 0 {
+        assert!(Instant::now() < deadline, "the request never arrived");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let raised_at = Instant::now();
+    r.hold.set(true);
+    let (got, ended) = speaker.join().unwrap();
     assert_eq!(got.unwrap(), fake_audio("Slow one."));
     assert!(
         ended.duration_since(raised_at) < Duration::from_millis(300),
