@@ -1,0 +1,179 @@
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to settings</a>
+  <div id="offline-banner" class="banner" role="alert" hidden>The Sonara runtime is not reachable. This page reconnects once it runs again.</div>
+  <div id="live" class="sr-only" role="status" aria-live="polite"></div>
+  <div class="window" id="window">
+    <aside class="nav-pane">
+      <label class="search"><span class="sr-only">Search settings</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg><input id="settings-search" type="search" placeholder="Search" autocomplete="off" spellcheck="false"></label>
+      <nav class="side-nav" aria-label="Settings sections">
+        <button type="button" data-page="speech" aria-current="page" title="Speech"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 10v4"/></svg><span>Speech</span></button>
+        <button type="button" data-page="engines" class="cap-off" title="Engines"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg><span>Engines</span></button>
+        <button type="button" data-page="summary" title="Summary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg><span>Summary</span></button>
+        <button type="button" data-page="audio" title="Audio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg><span>Audio</span></button>
+        <button type="button" data-page="sessions" title="Sessions"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg><span>Sessions</span></button>
+        <button type="button" data-page="hotkeys" title="Hotkeys"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg><span>Hotkeys</span></button>
+        <button type="button" data-page="system" title="System"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg><span>System</span></button>
+      </nav>
+      <div class="empty-search" id="empty-search" hidden>No settings found</div>
+      <div class="now" id="now" title="">
+        <div class="k">Now</div>
+        <div class="v"><i class="dot" id="now-dot" aria-hidden="true"></i><span id="now-text">&ndash;</span></div>
+      </div>
+    </aside>
+
+    <main class="content-pane" id="main" tabindex="-1">
+      <section class="page active" id="speech" aria-labelledby="h-speech">
+        <h1 id="h-speech">Speech</h1>
+        <div class="group">
+          <div class="row"><div class="l"><label class="n" for="engine-select">Engine</label></div><div class="c"><select id="engine-select" aria-describedby="engine-status"></select></div></div>
+          <div class="status-line" id="engine-line"><i class="dot ok" aria-hidden="true"></i><span class="engine-status" id="engine-status" role="status">&ndash;</span></div>
+          <div class="row"><div class="l"><label class="n" for="voice-select">Voice</label></div><div class="c"><select id="voice-select"></select><button class="ib play" id="voice-preview" type="button" aria-label="Preview the selected voice" title="Preview"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M7 4v16l13-8z"/></svg></button></div></div>
+          <p class="sub-status" id="voice-saved" hidden></p>
+          <div class="row"><div class="l"><label class="n" for="rate">Rate</label></div><div class="c range"><input id="rate" type="range" step="5"><output id="rate-out" for="rate"></output></div></div>
+        </div>
+        <h2 class="gl">Delivery</h2>
+        <p class="notice agent-off" hidden>Needs an agent app, such as the Claude Code plugin, connected.</p>
+        <div class="group">
+          <div class="row agent-pref"><div class="l"><span class="n" id="mute-label">Mute</span></div><div class="c"><div class="seg" id="mute-seg" role="radiogroup" aria-labelledby="mute-label"><button type="button" role="radio" data-value="0">Unmuted</button><button type="button" role="radio" data-value="1">Muted</button><button type="button" role="radio" data-value="2">Super muted</button></div></div></div>
+          <div class="row agent-pref"><div class="l"><span class="n" id="verbosity-label">Detail</span></div><div class="c"><div class="seg" id="verbosity-seg" role="radiogroup" aria-labelledby="verbosity-label"><button type="button" role="radio" data-value="everything">Everything</button><button type="button" role="radio" data-value="skip_code">Skip code</button></div></div></div>
+          <div class="row agent-pref"><div class="l"><span class="n" id="background-label">Other sessions</span></div><div class="c"><div class="seg" id="background-seg" role="radiogroup" aria-labelledby="background-label"><button type="button" role="radio" data-value="all">Read all</button><button type="button" role="radio" data-value="earcon_only">Chime only</button></div></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="engines" aria-labelledby="h-engines">
+        <h1 id="h-engines">Engines</h1>
+        <h2 class="gl" style="margin-top:0">Added engines</h2>
+        <div class="group">
+          <div id="profile-rows" role="list" aria-label="Your engines"></div>
+          <p class="empty" id="engines-empty">No engines added yet.</p>
+        </div>
+        <div class="after"><button class="btn primary" id="engine-new" type="button">Add an engine</button></div>
+      </section>
+
+      <section class="page" id="summary" aria-labelledby="h-summary">
+        <h1 id="h-summary">Summary</h1>
+        <p class="notice agent-off" hidden>Needs an agent app, such as the Claude Code plugin, connected.</p>
+        <div class="group">
+          <div class="row agent-pref"><div class="l"><span class="n" id="mode-label">Summary</span></div><div class="c"><div class="seg" id="summary-seg" role="radiogroup" aria-labelledby="mode-label"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="tidy">Tidy</button><button type="button" role="radio" data-value="natural">Natural</button><button type="button" role="radio" data-value="brief">Brief</button></div></div></div>
+          <div class="row agent-pref" id="model-row"><div class="l"><label class="n" for="model-select">Model</label></div><div class="c"><select id="model-select"></select></div></div>
+          <div class="row block agent-pref" id="prompt-card"><div class="prompt-head"><div class="n"><label for="prompt-text">Prompt</label> <span class="tag" id="prompt-state"></span></div><button class="btn ghost" id="prompt-reset" type="button">Reset</button></div><textarea class="fld" id="prompt-text" spellcheck="false"></textarea></div>
+        </div>
+        <h2 class="gl">Live reading</h2>
+        <div class="group">
+          <div class="row agent-pref" id="read-row"><div class="l"><span class="n" id="readmode-label">Reading</span></div><div class="c"><div class="seg" id="readmode-seg" role="radiogroup" aria-labelledby="readmode-label"><button type="button" role="radio" data-value="immediate">Immediately</button><button type="button" role="radio" data-value="queue">Queue</button><button type="button" role="radio" data-value="done">When done</button></div></div></div>
+          <div class="row agent-pref" id="minqueue-row" hidden><div class="l"><span class="n" id="mq-label">Queue size</span></div><div class="c"><div class="stepper" role="group" aria-labelledby="mq-label"><button id="mq-minus" type="button" aria-label="Fewer sentences">&minus;</button><output id="minqueue-out" aria-live="polite"></output><button id="mq-plus" type="button" aria-label="More sentences">+</button></div></div></div>
+        </div>
+        <h2 class="gl">Advanced</h2>
+        <div class="group">
+          <div class="row agent-pref" id="timeout-row"><div class="l"><label class="n" for="timeout">Summary timeout</label></div><div class="c num"><input class="fld" id="timeout" type="number" inputmode="numeric" min="15" max="300" step="1"><i aria-hidden="true">s</i></div></div>
+          <div class="row agent-pref" id="settle-row"><div class="l"><label class="n" for="settle">Settle time</label></div><div class="c num"><input class="fld" id="settle" type="number" inputmode="numeric" min="0" max="5000" step="100"><i aria-hidden="true">ms</i></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="audio" aria-labelledby="h-audio">
+        <h1 id="h-audio">Audio</h1>
+        <div class="group">
+          <div class="row"><div class="l"><label class="n" for="volume">Volume</label></div><div class="c range"><input id="volume" type="range" step="5"><output id="volume-out" for="volume"></output></div></div>
+          <div class="row"><div class="l"><span class="n" id="audio-label">Other apps</span></div><div class="c"><div class="seg" id="audio-seg" role="radiogroup" aria-labelledby="audio-label"><button type="button" role="radio" data-value="off">Off</button><button type="button" role="radio" data-value="duck">Duck</button><button type="button" role="radio" data-value="pause">Pause</button></div></div></div>
+          <div class="row" id="duck-row"><div class="l"><label class="n" for="duck">Duck to</label></div><div class="c range"><input id="duck" type="range"><output id="duck-out" for="duck"></output></div></div>
+        </div>
+        <h2 class="gl">Chimes</h2>
+        <div class="group">
+          <div class="row"><div class="l"><span class="n">Folder</span></div><div class="c"><div class="code" id="earcons-folder-box"><bdi id="earcons-folder">&ndash;</bdi></div></div></div>
+          <div class="row"><div class="l"><span class="n">Your chimes</span></div><div class="c"><span class="tag" id="earcons-custom" aria-live="polite">&ndash;</span></div></div>
+        </div>
+      </section>
+
+      <section class="page" id="sessions" aria-labelledby="h-sessions">
+        <h1 id="h-sessions">Sessions</h1>
+        <p class="notice" id="sessions-off" hidden>Sessions appear once an agent app, such as the Claude Code plugin, is connected.</p>
+        <div class="group">
+          <div class="row channels-pref"><div class="l"><span class="n" id="announce-label">Announce switches</span></div><div class="c"><button class="switch" id="announce-switch" type="button" role="switch" aria-checked="true" aria-labelledby="announce-label"></button></div></div>
+        </div>
+        <h2 class="gl">Open now</h2>
+        <div class="group">
+          <div id="session-rows" role="list" aria-label="Open sessions"></div>
+          <p class="empty" id="sessions-empty">No open sessions.</p>
+        </div>
+        <details class="older" id="sessions-older" hidden><summary id="sessions-older-sum">Earlier</summary><div class="group"><div id="session-rows-older" role="list" aria-label="Earlier sessions"></div></div></details>
+      </section>
+
+      <section class="page" id="hotkeys" aria-labelledby="h-hotkeys">
+        <h1 id="h-hotkeys">Hotkeys</h1>
+        <p class="notice" id="hotkeys-inactive" hidden>Hotkeys are off until an app that uses them is connected.</p>
+        <div class="group key-list">
+          <div class="row key-row" data-action="restart"><div class="l key-copy"><span class="n">Restart</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Restart"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="flush"><div class="l key-copy"><span class="n">Flush</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Flush"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="pause"><div class="l key-copy"><span class="n">Pause</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Pause / resume"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="mute"><div class="l key-copy"><span class="n">Mute</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Mute cycle"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="next_channel"><div class="l key-copy"><span class="n">Next session</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Next session"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="faster"><div class="l key-copy"><span class="n">Faster</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Faster"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+          <div class="row key-row" data-action="slower"><div class="l key-copy"><span class="n">Slower</span></div><div class="c keys"><button type="button" class="kbd"></button><button type="button" class="ib unbind" aria-label="Unbind Slower"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div></div>
+        </div>
+        <h2 class="gl">Flush scope</h2>
+        <div class="group">
+          <div class="row agent-pref" id="flushscope-row"><div class="l"><span class="n" id="flushscope-label">Flush skips</span></div><div class="c"><div class="seg" id="flushscope-seg" role="radiogroup" aria-labelledby="flushscope-label"><button type="button" role="radio" data-value="session">This session</button><button type="button" role="radio" data-value="all">Everything queued</button></div></div></div>
+        </div>
+        <div class="after"><button class="btn ghost" id="keymap-reset" type="button">Reset all</button></div>
+      </section>
+
+      <section class="page" id="system" aria-labelledby="h-system">
+        <h1 id="h-system">System</h1>
+        <div class="group">
+          <div class="metrics">
+            <div><div class="k">Version</div><div class="v" id="rt-version">&ndash;</div></div>
+            <div><div class="k">Uptime</div><div class="v" id="rt-uptime">&ndash;</div></div>
+            <div><div class="k">Protocol</div><div class="v" id="rt-protocol">&ndash;</div></div>
+          </div>
+        </div>
+        <div class="group">
+          <div class="row"><div class="l"><span class="n">Config file</span></div><div class="c"><div class="code" id="rt-config-box"><bdi id="rt-config">&ndash;</bdi></div></div></div>
+          <div class="row"><div class="l"><span class="n" id="debuglog-label">Debug log</span></div><div class="c"><button class="switch" id="debuglog-switch" type="button" role="switch" aria-checked="true" aria-labelledby="debuglog-label"></button></div></div>
+        </div>
+        <footer class="foot"><span translate="no">Sonara</span><span id="app-version"></span></footer>
+      </section>
+    </main>
+  </div>
+
+  <div class="scrim" id="ef-scrim" hidden></div>
+  <form class="drawer" id="engine-form" role="dialog" aria-modal="true" aria-labelledby="ef-title" aria-describedby="ef-legend" novalidate hidden>
+    <div class="dh"><div class="dt"><h2 id="ef-title">Add an engine</h2><span class="badge quiet" id="ef-badge"></span></div><button class="ib" id="ef-x" type="button" aria-label="Close"><svg viewBox="0 0 10 10" aria-hidden="true" stroke="currentColor" stroke-width="1.3"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button></div>
+    <div class="df">
+      <p class="legend" id="ef-legend"><span class="req" aria-hidden="true">*</span>Required field</p>
+      <div class="f"><label for="ef-kind">Provider<span class="req" aria-hidden="true">*</span></label><div class="control"><select id="ef-kind" aria-required="true"></select></div></div>
+      <div class="f" id="ef-preset-row"><label for="ef-preset">Server<span class="req" aria-hidden="true">*</span></label><div class="control"><select id="ef-preset" aria-required="true"></select></div></div>
+      <div class="two">
+        <div class="f"><label for="ef-label">Label<span class="req" aria-hidden="true">*</span></label><div class="control"><input class="fld" id="ef-label" type="text" maxlength="40" autocomplete="off" aria-required="true"></div></div>
+        <div class="f"><label for="ef-id">ID<span class="req" aria-hidden="true">*</span></label><div class="control"><input class="fld mono" id="ef-id" type="text" maxlength="32" autocomplete="off" spellcheck="false" aria-required="true"></div></div>
+      </div>
+      <div class="f" id="ef-url-row"><label for="ef-url">Address<span class="req" id="ef-url-req" aria-hidden="true" hidden>*</span></label><div class="control"><input class="fld mono" id="ef-url" type="url" autocomplete="off" spellcheck="false"></div></div>
+      <div class="f" id="ef-key-row"><label for="ef-keyref">API key<span class="req" id="ef-key-req" aria-hidden="true" hidden>*</span></label><div class="control"><div class="pair key"><select id="ef-keyref" aria-label="Where the key comes from"><option value="credman">Saved key</option><option value="env">Environment variable</option><option value="none">No key</option></select><input class="fld mono" id="ef-key" type="password" autocomplete="new-password" spellcheck="false" aria-label="API key" placeholder="Paste the key"><input class="fld mono" id="ef-keyenv" type="text" maxlength="128" autocomplete="off" spellcheck="false" aria-label="Environment variable name" placeholder="OPENAI_API_KEY" hidden></div></div></div>
+      <div class="f" id="ef-model-row"><label for="ef-model-select">Model<span class="req" id="ef-model-req" aria-hidden="true" hidden>*</span></label><div class="control"><div class="pair"><select id="ef-model-select" aria-describedby="ef-model-hint"></select><input class="fld mono" id="ef-model" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Model id" aria-describedby="ef-model-hint" placeholder="Model id" hidden></div><p class="hint-live" id="ef-model-hint"></p></div></div>
+      <div class="f"><label for="ef-voice">Voice<span class="req" id="ef-voice-req" aria-hidden="true" hidden>*</span></label><div class="control"><div class="pair"><select id="ef-voice" aria-describedby="ef-voice-hint"></select><input class="fld mono" id="ef-voice-other" type="text" maxlength="200" autocomplete="off" spellcheck="false" aria-label="Voice id" aria-describedby="ef-voice-hint" placeholder="Voice id" hidden></div><p class="hint-live" id="ef-voice-hint"></p></div></div>
+      <div class="f" id="ef-send-row"><span class="flabel" id="ef-send-label">Send to the engine</span><div class="control"><div class="seg" id="ef-send" role="radiogroup" aria-labelledby="ef-send-label"><button type="button" role="radio" data-value="message">Full message in one request</button><button type="button" role="radio" data-value="sentence">As it comes in</button></div></div></div>
+      <div id="ef-kind-fields"></div>
+      <details class="more"><summary>More options</summary>
+        <div class="two">
+          <div class="f"><label for="ef-timeout">Timeout</label><div class="control"><div class="unit"><input class="fld" id="ef-timeout" type="number" inputmode="numeric" min="1000" max="120000" step="500" placeholder="Default"><span aria-hidden="true">ms</span></div></div></div>
+          <div class="f" id="ef-first-audio-row"><label for="ef-first-audio">Wait for audio</label><div class="control"><div class="unit"><input class="fld" id="ef-first-audio" type="number" inputmode="numeric" min="1000" max="60000" step="500" placeholder="12000"><span aria-hidden="true">ms</span></div></div></div>
+          <div class="f" id="ef-chunk-row"><label for="ef-chunk">Characters per request</label><div class="control"><input class="fld mono" id="ef-chunk" type="number" inputmode="numeric" min="200" max="5000" step="100" placeholder="Default"></div></div>
+          <div class="f"><label for="ef-prefetch">Read ahead</label><div class="control"><input class="fld mono" id="ef-prefetch" type="number" inputmode="numeric" min="1" max="4" step="1" placeholder="Default"></div></div>
+        </div>
+        <div class="f"><label for="ef-options">Other options (JSON)</label><div class="control"><textarea class="fld" id="ef-options" spellcheck="false" placeholder="{}"></textarea></div></div>
+      </details>
+    </div>
+    <div class="dfoot">
+      <div class="dmsgs"><p class="form-status" id="ef-status" role="status" aria-live="polite"></p><p class="form-error" id="ef-error" role="alert"></p></div>
+      <div class="dbtns">
+        <button class="btn ghost grow" id="ef-test" type="button" aria-describedby="ef-test-why">Test saved engine</button><span class="sr-only" id="ef-test-why"></span>
+        <button class="btn" id="ef-cancel" type="button">Close</button>
+        <button class="btn primary" id="ef-save" type="submit"><svg class="tick" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg><span id="ef-save-text">Save engine</span></button>
+      </div>
+    </div>
+  </form>
+
+  <div class="toast" id="toast" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg><span id="toast-text">Saved</span></div>
+
+  <script>

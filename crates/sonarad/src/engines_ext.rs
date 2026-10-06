@@ -2,7 +2,7 @@
 //! `engine_list`, `engine_add`, `engine_key`, `engine_test`,
 //! `engine_models` (protocol 1.5, #235), the `refresh` of `voices` and its
 //! `profile` (an unsaved one, protocol 1.4). `engine_remove` is in
-//! `protocol.rs`, which owns `set engine` (the current engine is switched
+//! `protocol/profiles.rs`, which owns `set engine` (the current engine is switched
 //! away first).
 //!
 //! The voice of an external engine (one rule, #235): the voice a request

@@ -81,7 +81,7 @@ manual (`docs/bundling.md`).
 ## Settings page (e2e)
 
 `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e` and
-`python -m playwright install chromium`, plus `cargo build -p sonarad`). Run it when `crates/sonarad/assets/settings.html` or
+`python -m playwright install chromium`, plus `cargo build -p sonarad`). Run it when `crates/sonarad/assets/settings/`, `crates/sonarad/src/config.rs` or
 `crates/sonarad/src/settings_page.rs` change.
 
 ## Generated assets

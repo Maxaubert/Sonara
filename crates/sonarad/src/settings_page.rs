@@ -1,5 +1,5 @@
 //! The settings page (`GET /settings` on the HTTP port, `system`
-//! extension). The page is compiled in (`assets/settings.html`) and drives
+//! extension). The page is compiled in (`assets/settings/`) and drives
 //! the runtime only through the public HTTP API (`POST /v1/<type>`), with
 //! the token injected here.
 //!
@@ -19,13 +19,25 @@ use std::sync::OnceLock;
 
 use crate::protocol::token_eq;
 
-pub const PAGE: &str = include_str!("../assets/settings.html");
+/// The page, kept in parts (`assets/settings/`: the markup around the style
+/// sheet and the script) and joined at compile time.
+pub const PAGE: &str = concat!(
+    include_str!("../assets/settings/head.html"),
+    include_str!("../assets/settings/style.css"),
+    include_str!("../assets/settings/body.html"),
+    include_str!("../assets/settings/script.js"),
+    include_str!("../assets/settings/foot.html"),
+);
 
 /// The placeholder the token replaces (a JSON string in the page script).
 pub const TOKEN_SLOT: &str = "\"__SONARA_TOKEN__\"";
 
 /// The placeholder in the page's style sheet the `@font-face` rules replace.
 pub const FONTS_SLOT: &str = "/*__SONARA_FONTS__*/";
+
+/// The placeholder in the page script `config::page_ranges` replaces: the
+/// sliders' and the stepper's ranges and defaults come from `SCHEMA` (#257).
+pub const SCHEMA_SLOT: &str = "/*__SONARA_SCHEMA__*/{}";
 
 /// The fonts: (family, woff2 bytes). Latin subsets of the variable fonts
 /// (weights 100 to 900); other scripts fall back to the system font.
@@ -75,11 +87,17 @@ fn font_css() -> &'static str {
     })
 }
 
-/// The page with its fonts in place, built once (the token goes in per
-/// request).
+/// The page with its fonts and the schema's ranges in place, built once
+/// (the token goes in per request).
 fn page_with_fonts() -> &'static str {
     static FULL: OnceLock<String> = OnceLock::new();
-    FULL.get_or_init(|| PAGE.replacen(FONTS_SLOT, font_css(), 1))
+    FULL.get_or_init(|| {
+        PAGE.replacen(FONTS_SLOT, font_css(), 1).replacen(
+            SCHEMA_SLOT,
+            &crate::config::page_ranges().to_string(),
+            1,
+        )
+    })
 }
 
 /// Response headers of the page.
@@ -191,6 +209,33 @@ mod tests {
             "the Python daemon's private API is gone"
         );
         assert!(PAGE.contains("/v1/"));
+    }
+
+    #[test]
+    fn the_page_takes_ranges_and_defaults_from_the_schema() {
+        assert_eq!(PAGE.matches(SCHEMA_SLOT).count(), 1);
+        let page = render(Some("127.0.0.1:5000"), Some("token=abc123"), 5000, "abc123").unwrap();
+        assert!(!page.contains(SCHEMA_SLOT));
+        let ranges = crate::config::page_ranges();
+        assert!(page.contains(&format!("const SCHEMA = {ranges};")));
+        assert_eq!(
+            ranges["rate"],
+            serde_json::json!({"min": 100, "max": 400, "default": 250}),
+            "the rate default is SCHEMA's 250, not a page constant (#257)"
+        );
+        for key in ["volume", "duck_level", "minqueue"] {
+            assert_eq!(ranges[key]["default"], crate::config::default(key).unwrap());
+        }
+        // The page hard-codes no range or default of its own.
+        for id in ["rate", "volume", "duck"] {
+            let tag = format!("<input id=\"{id}\" type=\"range\"");
+            let at = PAGE.find(&tag).unwrap_or_else(|| panic!("{tag}"));
+            let end = at + PAGE[at..].find('>').unwrap();
+            let input = &PAGE[at..end];
+            for attr in ["min=", "max=", "value="] {
+                assert!(!input.contains(attr), "{input}");
+            }
+        }
     }
 
     #[test]

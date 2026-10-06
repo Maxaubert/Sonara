@@ -39,7 +39,7 @@ def test_a_dependency_change_also_runs_deny_and_notices():
 
 
 def test_the_settings_page_runs_the_e2e_tests():
-    for path in ("crates/sonarad/assets/settings.html", "crates/sonarad/src/settings_page.rs",
+    for path in ("crates/sonarad/assets/settings/script.js", "crates/sonarad/src/settings_page.rs",
                  "crates/sonarad/src/config.rs", "tests/e2e/test_sonarad_settings_e2e.py"):
         assert "e2e" in gate.select([path]), path
 

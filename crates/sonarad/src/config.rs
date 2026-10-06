@@ -213,6 +213,22 @@ pub fn default(key: &str) -> Option<Value> {
     setting(key).map(|s| serde_json::from_str(s.default).expect("schema defaults are JSON"))
 }
 
+/// The ranges and defaults of the whole-number settings, as
+/// `{key: {min, max, default}}`: the settings page takes its sliders and
+/// stepper from here rather than keeping its own copy (#257).
+pub fn page_ranges() -> Value {
+    let mut ranges = Map::new();
+    for s in SCHEMA {
+        if let Kind::Range(min, max) = s.kind {
+            ranges.insert(
+                s.key.into(),
+                json!({"min": min, "max": max, "default": default(s.key)}),
+            );
+        }
+    }
+    Value::Object(ranges)
+}
+
 /// A whole number, also from a float with no fraction (a hand-edited file).
 fn whole(v: &Value) -> Option<u64> {
     v.as_u64().or_else(|| {
