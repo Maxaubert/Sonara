@@ -1,0 +1,46 @@
+{
+ "x-source": "Hand-transcribed from speech.py and openedai.py of matatonic/openedai-speech (see SOURCES.md). No voice list route.",
+ "operations": {
+  "POST /v1/audio/speech": {
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "schema": {"$ref": "#/$defs/GenerateSpeechRequest"}
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "description": "Content-Type per response_format: wav audio/wav; pcm audio/pcm;rate=22050 (tts-1) or audio/pcm;rate=24000 (tts-1-hd).",
+     "content": {"audio/wav": {"schema": {"type": "string", "format": "binary"}}}
+    },
+    "400": {"content": {"application/json": {"schema": {"$ref": "#/$defs/APIError"}}}},
+    "503": {"content": {"application/json": {"schema": {"$ref": "#/$defs/APIError"}}}}
+   }
+  }
+ },
+ "$defs": {
+  "GenerateSpeechRequest": {
+   "type": "object",
+   "properties": {
+    "model": {"type": "string", "default": "tts-1"},
+    "input": {"type": "string"},
+    "voice": {"type": "string", "default": "alloy"},
+    "response_format": {"type": "string", "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"], "default": "mp3"},
+    "speed": {"type": "number", "minimum": 0.25, "maximum": 4.0, "default": 1.0}
+   },
+   "required": ["input"]
+  },
+  "APIError": {
+   "description": "openai_statuserror_handler: {message, code, type, param} at the top level.",
+   "type": "object",
+   "properties": {
+    "message": {"type": "string"},
+    "code": {"type": "integer"},
+    "type": {"type": "string"},
+    "param": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+   },
+   "required": ["message", "code", "type", "param"]
+  }
+ }
+}

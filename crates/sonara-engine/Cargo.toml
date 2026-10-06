@@ -51,3 +51,5 @@ sonara-engine = { path = ".", features = ["test-util", "kokoro", "external"] }
 sha2.workspace = true
 serde_json.workspace = true
 base64 = "0.23"
+# The contract tests' schema `pattern` (#275).
+regex.workspace = true

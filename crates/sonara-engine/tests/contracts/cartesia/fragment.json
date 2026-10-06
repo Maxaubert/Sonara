@@ -1,0 +1,149 @@
+{
+ "x-source": "Transcribed from the Stainless-generated types of cartesia-ai/cartesia-python ('generated from our OpenAPI spec') and the docs.cartesia.ai API reference for Cartesia-Version 2026-08-14 (see SOURCES.md); docs.cartesia.ai/openapi.json sits behind a bot checkpoint.",
+ "securitySchemes": {
+  "bearer": {"type": "http", "scheme": "bearer"},
+  "version": {"type": "apiKey", "in": "header", "name": "Cartesia-Version", "enum": ["2026-08-14"]}
+ },
+ "operations": {
+  "POST /tts/bytes": {
+   "parameters": [
+    {"name": "Cartesia-Version", "in": "header", "required": true, "schema": {"type": "string", "enum": ["2026-08-14"]}}
+   ],
+   "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/$defs/TTSGenerateParams"}}}},
+   "responses": {
+    "200": {"content": {"audio/*": {"schema": {"type": "string", "format": "binary"}}}},
+    "400": {"description": "BadRequestError"},
+    "401": {"description": "AuthenticationError"},
+    "403": {"description": "PermissionDeniedError"},
+    "404": {"description": "NotFoundError"},
+    "409": {"description": "ConflictError"},
+    "422": {"description": "UnprocessableEntityError"},
+    "429": {"description": "RateLimitError"},
+    "500": {"description": "InternalServerError"}
+   }
+  },
+  "GET /voices": {
+   "parameters": [
+    {"name": "Cartesia-Version", "in": "header", "required": true, "schema": {"type": "string", "enum": ["2026-08-14"]}},
+    {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 100}},
+    {"name": "starting_after", "in": "query", "required": false, "schema": {"type": "string"}},
+    {"name": "ending_before", "in": "query", "required": false, "schema": {"type": "string"}},
+    {"name": "q", "in": "query", "required": false, "schema": {"type": "string"}},
+    {"name": "is_owner", "in": "query", "required": false, "schema": {"type": "boolean"}},
+    {"name": "gender", "in": "query", "required": false, "schema": {"type": "string", "enum": ["masculine", "feminine", "gender_neutral"]}},
+    {"name": "language", "in": "query", "required": false, "schema": {"type": "string"}},
+    {"name": "include_archived", "in": "query", "required": false, "schema": {"type": "boolean"}},
+    {"name": "expand[]", "in": "query", "required": false, "schema": {"type": "string", "enum": ["preview_file_url"]}}
+   ],
+   "responses": {
+    "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/VoicePage"}}}}
+   }
+  }
+ },
+ "$defs": {
+  "TTSGenerateParams": {
+   "type": "object",
+   "properties": {
+    "model_id": {"type": "string"},
+    "transcript": {"type": "string"},
+    "voice": {
+     "anyOf": [
+      {"type": "string"},
+      {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": true}
+     ]
+    },
+    "output_format": {"anyOf": [{"$ref": "#/$defs/RawOutputFormat"}, {"$ref": "#/$defs/WavOutputFormat"}, {"$ref": "#/$defs/Mp3OutputFormat"}]},
+    "generation_config": {"$ref": "#/$defs/GenerationConfig"},
+    "language": {"anyOf": [{"type": "string"}, {"type": "null"}], "description": "A request may set language or locale, never both."},
+    "locale": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "accent": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "normalization": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "pronunciation_dict_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "save": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+    "speed": {"type": "string", "description": "Deprecated experimental model speed; generation_config.speed is the sonic-3 control."}
+   },
+   "required": ["model_id", "output_format", "transcript", "voice"]
+  },
+  "RawOutputFormat": {
+   "type": "object",
+   "properties": {
+    "container": {"type": "string", "enum": ["raw"]},
+    "encoding": {"type": "string", "enum": ["pcm_f32le", "pcm_s16le", "pcm_mulaw", "pcm_alaw"]},
+    "sample_rate": {"type": "integer", "enum": [8000, 16000, 22050, 24000, 44100, 48000]}
+   },
+   "required": ["container", "encoding", "sample_rate"],
+   "additionalProperties": false
+  },
+  "WavOutputFormat": {
+   "type": "object",
+   "properties": {
+    "container": {"type": "string", "enum": ["wav"]},
+    "encoding": {"type": "string", "enum": ["pcm_f32le", "pcm_s16le", "pcm_mulaw", "pcm_alaw"]},
+    "sample_rate": {"type": "integer", "enum": [8000, 16000, 22050, 24000, 44100, 48000]}
+   },
+   "required": ["container", "encoding", "sample_rate"],
+   "additionalProperties": false
+  },
+  "Mp3OutputFormat": {
+   "type": "object",
+   "properties": {
+    "container": {"type": "string", "enum": ["mp3"]},
+    "sample_rate": {"type": "integer"},
+    "bit_rate": {"type": "integer", "minimum": 32000, "maximum": 192000}
+   },
+   "required": ["container", "sample_rate", "bit_rate"],
+   "additionalProperties": false
+  },
+  "GenerationConfig": {
+   "type": "object",
+   "properties": {
+    "speed": {"type": "number", "minimum": 0.6, "maximum": 1.5},
+    "volume": {"type": "number", "minimum": 0.5, "maximum": 2.0},
+    "emotion": {"type": "string"}
+   }
+  },
+  "VoicePage": {
+   "type": "object",
+   "properties": {
+    "data": {"type": "array", "items": {"$ref": "#/$defs/Voice"}},
+    "has_more": {"type": "boolean"},
+    "next_page": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+   },
+   "required": ["data", "has_more"]
+  },
+  "Voice": {
+   "description": "The API reference lists accents[] {accent, locale, is_native}; the generated SDK types list locales[] {locale, is_native} and accent as a catalog id. Both shapes are kept.",
+   "type": "object",
+   "properties": {
+    "id": {"type": "string"},
+    "name": {"type": "string"},
+    "tagline": {"type": "string"},
+    "description": {"type": "string"},
+    "gender": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "language": {"type": "string"},
+    "accents": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {"accent": {"type": "string"}, "locale": {"type": "string"}, "is_native": {"type": "boolean"}}
+     }
+    },
+    "locales": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {"locale": {"type": "string"}, "is_native": {"type": "boolean"}},
+      "required": ["locale", "is_native"]
+     }
+    },
+    "accent": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "status": {"type": "string", "enum": ["active", "archived"]},
+    "access": {"type": "string", "enum": ["private", "public"]},
+    "is_owner": {"type": "boolean"},
+    "created_at": {"type": "string"},
+    "preview_file_url": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+   },
+   "required": ["id", "name", "description", "is_owner", "language", "created_at"]
+  }
+ }
+}

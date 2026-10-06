@@ -1,0 +1,886 @@
+{
+ "rootUrl": "https://generativelanguage.googleapis.com/",
+ "servicePath": "",
+ "revision": "20261005",
+ "parameters": {
+  "key": {
+   "location": "query",
+   "type": "string",
+   "description": "API key. Your API key identifies your project and provides you with API access, quota, and reports. Required unless you provide an OAuth 2.0 token."
+  },
+  "alt": {
+   "default": "json",
+   "location": "query",
+   "description": "Data format for response.",
+   "enum": [
+    "json",
+    "media",
+    "proto"
+   ],
+   "type": "string"
+  }
+ },
+ "methods": {
+  "models.generateContent": {
+   "httpMethod": "POST",
+   "path": "v1beta/{+model}:generateContent",
+   "flatPath": "v1beta/models/{modelsId}:generateContent",
+   "parameters": {
+    "model": {
+     "pattern": "^models/[^/]+$",
+     "type": "string",
+     "description": "Required. The name of the `Model` to use for generating the completion. Format: `models/{model}`.",
+     "location": "path",
+     "required": true
+    }
+   },
+   "request": {
+    "$ref": "#/$defs/GenerateContentRequest"
+   },
+   "response": {
+    "$ref": "#/$defs/GenerateContentResponse"
+   }
+  },
+  "models.streamGenerateContent": {
+   "httpMethod": "POST",
+   "path": "v1beta/{+model}:streamGenerateContent",
+   "flatPath": "v1beta/models/{modelsId}:streamGenerateContent",
+   "parameters": {
+    "model": {
+     "description": "Required. The name of the `Model` to use for generating the completion. Format: `models/{model}`.",
+     "location": "path",
+     "required": true,
+     "pattern": "^models/[^/]+$",
+     "type": "string"
+    }
+   },
+   "request": {
+    "$ref": "#/$defs/GenerateContentRequest"
+   },
+   "response": {
+    "$ref": "#/$defs/GenerateContentResponse"
+   }
+  },
+  "models.list": {
+   "httpMethod": "GET",
+   "path": "v1beta/models",
+   "flatPath": "v1beta/models",
+   "parameters": {
+    "pageSize": {
+     "format": "int32",
+     "description": "The maximum number of `Models` to return (per page). If unspecified, 50 models will be returned per page. This method returns at most 1000 models per page, even...",
+     "type": "integer",
+     "location": "query"
+    },
+    "pageToken": {
+     "description": "A page token, received from a previous `ListModels` call. Provide the `page_token` returned by one request as an argument to the next request to retrieve the ne...",
+     "type": "string",
+     "location": "query"
+    }
+   },
+   "response": {
+    "$ref": "#/$defs/ListModelsResponse"
+   }
+  },
+  "voices.list": {
+   "httpMethod": "GET",
+   "path": "v1beta/voices",
+   "parameters": {
+    "page_size": {
+     "location": "query",
+     "type": "integer"
+    },
+    "page_token": {
+     "location": "query",
+     "type": "string"
+    },
+    "accent": {
+     "location": "query",
+     "type": "string"
+    },
+    "context": {
+     "location": "query",
+     "type": "string"
+    },
+    "gender": {
+     "location": "query",
+     "type": "string"
+    },
+    "language_code": {
+     "location": "query",
+     "type": "string"
+    },
+    "persona": {
+     "location": "query",
+     "type": "string"
+    },
+    "pitch": {
+     "location": "query",
+     "type": "string"
+    },
+    "region_code": {
+     "location": "query",
+     "type": "string"
+    },
+    "search": {
+     "location": "query",
+     "type": "string"
+    },
+    "type": {
+     "location": "query",
+     "type": "string"
+    }
+   },
+   "response": {
+    "$ref": "#/$defs/ListVoicesResponse"
+   }
+  }
+ },
+ "$defs": {
+  "AudioResponseFormat": {
+   "description": "Configuration for audio output format.",
+   "id": "AudioResponseFormat",
+   "type": "object",
+   "properties": {
+    "bitRate": {
+     "type": "integer",
+     "format": "int32",
+     "description": "Optional. Bit rate in bits per second (bps). Only applicable for compressed formats (MP3, Opus)."
+    },
+    "sampleRate": {
+     "type": "integer",
+     "format": "int32",
+     "description": "Optional. Sample rate in Hz."
+    },
+    "mimeType": {
+     "type": "string",
+     "enum": [
+      "MIME_TYPE_UNSPECIFIED",
+      "AUDIO_MP3",
+      "AUDIO_OGG_OPUS",
+      "AUDIO_L16",
+      "AUDIO_WAV",
+      "AUDIO_ALAW",
+      "AUDIO_MULAW"
+     ],
+     "description": "Optional. The MIME type of the audio output."
+    },
+    "delivery": {
+     "type": "string",
+     "description": "Optional. The delivery mode for the audio output.",
+     "enum": [
+      "DELIVERY_UNSPECIFIED",
+      "INLINE",
+      "URI"
+     ]
+    }
+   }
+  },
+  "Blob": {
+   "type": "object",
+   "description": "Raw media bytes. Text should not be sent as raw bytes, use the 'text' field.",
+   "id": "Blob",
+   "properties": {
+    "mimeType": {
+     "type": "string",
+     "description": "The IANA standard MIME type of the source data. Examples of supported types: - Images: image/png, image/jpeg, image/jpg, image/webp, image/heic, image/heif, ima..."
+    },
+    "data": {
+     "description": "Raw bytes for media formats.",
+     "type": "string",
+     "format": "byte"
+    },
+    "displayName": {
+     "type": "string",
+     "description": "Optional. Specifies the name used to refer to this blob to the model (e.g. \"my_blob.png\"). Used as the blob reference identifier when `verbalization_mode` is se..."
+    }
+   }
+  },
+  "Candidate": {
+   "id": "Candidate",
+   "type": "object",
+   "properties": {
+    "finishMessage": {
+     "description": "Optional. Output only. Details the reason why the model stopped generating tokens. This is populated only when `finish_reason` is set.",
+     "type": "string",
+     "readOnly": true
+    },
+    "safetyRatings": {
+     "items": {
+      "description": "pruned: SafetyRating (not used by Sonara)"
+     },
+     "description": "List of ratings for the safety of a response candidate. There is at most one rating per category.",
+     "type": "array"
+    },
+    "index": {
+     "description": "Output only. Index of the candidate in the list of response candidates.",
+     "readOnly": true,
+     "type": "integer",
+     "format": "int32"
+    },
+    "urlContextMetadata": {
+     "readOnly": true,
+     "description": "Output only. Metadata related to url context retrieval tool."
+    },
+    "citationMetadata": {
+     "readOnly": true,
+     "description": "Output only. Citation information for model-generated candidate. This field may be populated with recitation information for any text included in the `content`...."
+    },
+    "groundingAttributions": {
+     "items": {
+      "description": "pruned: GroundingAttribution (not used by Sonara)"
+     },
+     "description": "Output only. Attribution information for sources that contributed to a grounded answer. This field is populated for `GenerateAnswer` calls.",
+     "readOnly": true,
+     "type": "array"
+    },
+    "groundingMetadata": {
+     "readOnly": true,
+     "description": "pruned: GroundingMetadata (not used by Sonara)"
+    },
+    "logprobsResult": {
+     "description": "pruned: LogprobsResult (not used by Sonara)",
+     "readOnly": true
+    },
+    "avgLogprobs": {
+     "type": "number",
+     "readOnly": true,
+     "format": "double",
+     "description": "Output only. Average log probability score of the candidate."
+    },
+    "finishReason": {
+     "description": "Optional. Output only. The reason why the model stopped generating tokens. If empty, the model has not stopped generating tokens.",
+     "enum": [
+      "FINISH_REASON_UNSPECIFIED",
+      "STOP",
+      "MAX_TOKENS",
+      "SAFETY",
+      "RECITATION",
+      "LANGUAGE",
+      "OTHER",
+      "BLOCKLIST",
+      "PROHIBITED_CONTENT",
+      "SPII",
+      "MALFORMED_FUNCTION_CALL",
+      "IMAGE_SAFETY",
+      "IMAGE_PROHIBITED_CONTENT",
+      "IMAGE_OTHER",
+      "NO_IMAGE",
+      "IMAGE_RECITATION",
+      "UNEXPECTED_TOOL_CALL",
+      "TOO_MANY_TOOL_CALLS",
+      "MISSING_THOUGHT_SIGNATURE",
+      "MALFORMED_RESPONSE",
+      "ESCALATION",
+      "PUP_LIMITED_DISABLED"
+     ],
+     "readOnly": true,
+     "type": "string"
+    },
+    "tokenCount": {
+     "description": "Output only. Token count for this candidate.",
+     "type": "integer",
+     "format": "int32",
+     "readOnly": true
+    },
+    "content": {
+     "readOnly": true,
+     "description": "Output only. Generated content returned from the model.",
+     "$ref": "#/$defs/Content"
+    }
+   },
+   "description": "A response candidate generated from the model."
+  },
+  "Content": {
+   "description": "The base structured datatype containing multi-part content of a message. A `Content` includes a `role` field designating the producer of the `Content` and a `pa...",
+   "properties": {
+    "parts": {
+     "items": {
+      "$ref": "#/$defs/Part"
+     },
+     "type": "array",
+     "description": "Ordered `Parts` that constitute a single message. Parts may have different MIME types."
+    },
+    "role": {
+     "description": "Optional. The producer of the content. Must be either 'user' or 'model'. Useful to set for multi-turn conversations, otherwise can be left blank or unset.",
+     "type": "string"
+    }
+   },
+   "id": "Content",
+   "type": "object"
+  },
+  "GenerateContentRequest": {
+   "type": "object",
+   "description": "Request to generate a completion from the model.",
+   "id": "GenerateContentRequest",
+   "properties": {
+    "generationConfig": {
+     "$ref": "#/$defs/GenerationConfig",
+     "description": "Optional. Configuration options for model generation and outputs."
+    },
+    "labels": {
+     "type": "object",
+     "description": "Optional. Labels with user-defined metadata for the request. Optional. Labels must follow standard unified Cloud label requirements: - Label keys must start wit...",
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "cachedContent": {
+     "description": "Optional. The name of the content [cached](https://ai.google.dev/gemini-api/docs/caching) to use as context to serve the prediction. Format: `cachedContents/{ca...",
+     "type": "string"
+    },
+    "tools": {
+     "type": "array",
+     "description": "Optional. A list of `Tools` the `Model` may use to generate the next response. A `Tool` is a piece of code that enables the system to interact with external sys...",
+     "items": {
+      "description": "pruned: Tool (not used by Sonara)"
+     }
+    },
+    "model": {
+     "type": "string",
+     "description": "Required. The name of the `Model` to use for generating the completion. Format: `models/{model}`."
+    },
+    "serviceTier": {
+     "enum": [
+      "unspecified",
+      "standard",
+      "flex",
+      "priority"
+     ],
+     "type": "string",
+     "description": "Optional. The service tier of the request."
+    },
+    "contents": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/Content"
+     },
+     "description": "Required. The content of the current conversation with the model. For single-turn queries, this is a single instance. For multi-turn queries like [chat](https:/..."
+    },
+    "toolConfig": {
+     "description": "pruned: ToolConfig (not used by Sonara)"
+    },
+    "store": {
+     "description": "Optional. Configures the logging behavior for a given request. If set, it takes precedence over the project-level logging config.",
+     "type": "boolean"
+    },
+    "systemInstruction": {
+     "description": "Optional. Developer set [system instruction(s)](https://ai.google.dev/gemini-api/docs/system-instructions). Currently, text only.",
+     "$ref": "#/$defs/Content"
+    },
+    "safetySettings": {
+     "description": "Optional. A list of unique `SafetySetting` instances for blocking unsafe content. This will be enforced on the `GenerateContentRequest.contents` and `GenerateCo...",
+     "type": "array",
+     "items": {
+      "description": "pruned: SafetySetting (not used by Sonara)"
+     }
+    }
+   },
+   "required": [
+    "contents"
+   ],
+   "x-derived": "required from 'Required.' in the descriptions; 'model' dropped: in REST it is the path parameter ({+model})"
+  },
+  "GenerateContentResponse": {
+   "properties": {
+    "candidates": {
+     "type": "array",
+     "description": "Candidate responses from the model.",
+     "items": {
+      "$ref": "#/$defs/Candidate"
+     }
+    },
+    "modelStatus": {
+     "description": "pruned: ModelStatus (not used by Sonara)",
+     "readOnly": true
+    },
+    "promptFeedback": {
+     "description": "Returns the prompt's feedback related to the content filters.",
+     "$ref": "#/$defs/PromptFeedback"
+    },
+    "responseId": {
+     "description": "Output only. response_id is used to identify each response.",
+     "type": "string",
+     "readOnly": true
+    },
+    "modelVersion": {
+     "type": "string",
+     "readOnly": true,
+     "description": "Output only. The model version used to generate the response."
+    },
+    "usageMetadata": {
+     "readOnly": true,
+     "description": "pruned: UsageMetadata (not used by Sonara)"
+    }
+   },
+   "id": "GenerateContentResponse",
+   "type": "object",
+   "description": "Response from the model supporting multiple candidate responses. Safety ratings and content filtering are reported for both prompt in `GenerateContentResponse.p..."
+  },
+  "GenerationConfig": {
+   "id": "GenerationConfig",
+   "properties": {
+    "frequencyPenalty": {
+     "format": "float",
+     "description": "Optional. Frequency penalty applied to the next token's logprobs, multiplied by the number of times each token has been seen in the respponse so far. A positive...",
+     "type": "number"
+    },
+    "responseModalities": {
+     "items": {
+      "enum": [
+       "MODALITY_UNSPECIFIED",
+       "TEXT",
+       "IMAGE",
+       "AUDIO"
+      ],
+      "type": "string"
+     },
+     "type": "array",
+     "description": "Optional. The requested modalities of the response. Represents the set of modalities that the model can return, and should be expected in the response. This is..."
+    },
+    "logprobs": {
+     "description": "Optional. Only valid if response_logprobs=True. This sets the number of top logprobs, including the chosen candidate, to return at each decoding step in the Can...",
+     "type": "integer",
+     "format": "int32"
+    },
+    "seed": {
+     "type": "integer",
+     "format": "int32",
+     "description": "Optional. Seed used in decoding. If not set, the request uses a randomly generated seed."
+    },
+    "presencePenalty": {
+     "description": "Optional. Presence penalty applied to the next token's logprobs if the token has already been seen in the response. This penalty is binary on/off and not depend...",
+     "type": "number",
+     "format": "float"
+    },
+    "candidateCount": {
+     "description": "Optional. Number of generated responses to return. If unset, this will default to 1. Please note that this doesn't work for previous generation models (Gemini 1...",
+     "type": "integer",
+     "format": "int32"
+    },
+    "thinkingConfig": {
+     "description": "pruned: ThinkingConfig (not used by Sonara)"
+    },
+    "responseSchema": {
+     "description": "pruned: Schema (not used by Sonara)"
+    },
+    "responseLogprobs": {
+     "description": "Optional. If true, export the logprobs results in response.",
+     "type": "boolean"
+    },
+    "responseMimeType": {
+     "type": "string",
+     "description": "Optional. MIME type of the generated candidate text. Supported MIME types are: `text/plain`: (default) Text output. `application/json`: JSON response in the res..."
+    },
+    "translationConfig": {
+     "description": "pruned: TranslationConfig (not used by Sonara)"
+    },
+    "stopSequences": {
+     "type": "array",
+     "description": "Optional. The set of character sequences (up to 5) that will stop output generation. If specified, the API will stop at the first appearance of a `stop_sequence...",
+     "items": {
+      "type": "string"
+     }
+    },
+    "responseJsonSchema": {
+     "description": "Optional. An internal detail. Use `responseJsonSchema` rather than this field.",
+     "type": "any"
+    },
+    "imageConfig": {
+     "description": "Optional. Config for image generation. An error will be returned if this field is set for models that don't support these config options."
+    },
+    "responseFormat": {
+     "$ref": "#/$defs/ResponseFormatConfig",
+     "description": "Optional. Configuration for the response output format. Allows specifying output configuration per modality (text, audio, image) in a flat structure."
+    },
+    "speechConfig": {
+     "description": "Optional. The speech generation config.",
+     "$ref": "#/$defs/SpeechConfig"
+    },
+    "temperature": {
+     "description": "Optional. Controls the randomness of the output. Note: The default value varies by model, see the `Model.temperature` attribute of the `Model` returned from the...",
+     "format": "float",
+     "type": "number"
+    },
+    "topK": {
+     "type": "integer",
+     "description": "Optional. The maximum number of tokens to consider when sampling. Gemini models use Top-p (nucleus) sampling or a combination of Top-k and nucleus sampling. Top...",
+     "format": "int32"
+    },
+    "audioTranscriptionConfig": {
+     "description": "pruned: AudioTranscriptionConfig (not used by Sonara)"
+    },
+    "_responseJsonSchema": {
+     "type": "any",
+     "description": "Optional. Output schema of the generated response. This is an alternative to `response_schema` that accepts [JSON Schema](https://json-schema.org/). If set, `re..."
+    },
+    "maxOutputTokens": {
+     "format": "int32",
+     "description": "Optional. The maximum number of tokens to include in a response candidate. Note: The default value varies by model, see the `Model.output_token_limit` attribute...",
+     "type": "integer"
+    },
+    "mediaResolution": {
+     "description": "Optional. If specified, the media resolution specified will be used.",
+     "type": "string",
+     "enum": [
+      "MEDIA_RESOLUTION_UNSPECIFIED",
+      "MEDIA_RESOLUTION_LOW",
+      "MEDIA_RESOLUTION_MEDIUM",
+      "MEDIA_RESOLUTION_HIGH"
+     ]
+    },
+    "topP": {
+     "format": "float",
+     "description": "Optional. The maximum cumulative probability of tokens to consider when sampling. The model uses combined Top-k and Top-p (nucleus) sampling. Tokens are sorted...",
+     "type": "number"
+    },
+    "enableAffectiveDialog": {
+     "type": "boolean",
+     "description": "Optional. If enabled, the model will detect emotions and adapt its responses accordingly."
+    },
+    "enableEnhancedCivicAnswers": {
+     "type": "boolean",
+     "description": "Optional. Enables enhanced civic answers. It may not be available for all models."
+    }
+   },
+   "description": "Configuration options for model generation and outputs. Not all parameters are configurable for every model.",
+   "type": "object"
+  },
+  "ListModelsResponse": {
+   "id": "ListModelsResponse",
+   "properties": {
+    "nextPageToken": {
+     "type": "string",
+     "description": "A token, which can be sent as `page_token` to retrieve the next page. If this field is omitted, there are no more pages."
+    },
+    "models": {
+     "items": {
+      "$ref": "#/$defs/Model"
+     },
+     "type": "array",
+     "description": "The returned Models."
+    }
+   },
+   "type": "object",
+   "description": "Response from `ListModel` containing a paginated list of Models."
+  },
+  "Model": {
+   "description": "Information about a Generative Language Model.",
+   "id": "Model",
+   "properties": {
+    "outputTokenLimit": {
+     "description": "Maximum number of output tokens available for this model.",
+     "type": "integer",
+     "format": "int32"
+    },
+    "temperature": {
+     "type": "number",
+     "format": "float",
+     "description": "Controls the randomness of the output. Values can range over `[0.0,max_temperature]`, inclusive. A higher value will produce responses that are more varied, whi..."
+    },
+    "topP": {
+     "type": "number",
+     "format": "float",
+     "description": "For [Nucleus sampling](https://ai.google.dev/gemini-api/docs/prompting-strategies#top-p). Nucleus sampling considers the smallest set of tokens whose probabilit..."
+    },
+    "thinking": {
+     "description": "Whether the model supports thinking.",
+     "type": "boolean"
+    },
+    "baseModelId": {
+     "type": "string",
+     "description": "Required. The name of the base model, pass this to the generation request. Examples: * `gemini-1.5-flash`"
+    },
+    "inputTokenLimit": {
+     "description": "Maximum number of input tokens allowed for this model.",
+     "type": "integer",
+     "format": "int32"
+    },
+    "maxTemperature": {
+     "format": "float",
+     "description": "The maximum temperature this model can use.",
+     "type": "number"
+    },
+    "version": {
+     "type": "string",
+     "description": "Required. The version number of the model. This represents the major version (`1.0` or `1.5`)"
+    },
+    "name": {
+     "description": "Required. The resource name of the `Model`. Refer to [Model variants](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for all allowed valu...",
+     "type": "string"
+    },
+    "topK": {
+     "description": "For Top-k sampling. Top-k sampling considers the set of `top_k` most probable tokens. This value specifies default to be used by the backend while making the ca...",
+     "type": "integer",
+     "format": "int32"
+    },
+    "supportedGenerationMethods": {
+     "description": "The model's supported generation methods. The corresponding API method names are defined as Pascal case strings, such as `generateMessage` and `generateContent`...",
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "displayName": {
+     "description": "The human-readable name of the model. E.g. \"Gemini 1.5 Flash\". The name can be up to 128 characters long and can consist of any UTF-8 characters.",
+     "type": "string"
+    },
+    "description": {
+     "type": "string",
+     "description": "A short description of the model."
+    }
+   },
+   "type": "object",
+   "required": [
+    "baseModelId",
+    "name",
+    "version"
+   ],
+   "x-derived": "required from 'Required.' in the descriptions"
+  },
+  "Part": {
+   "type": "object",
+   "description": "A datatype containing media that is part of a multi-part `Content` message. A `Part` consists of data which has an associated datatype. A `Part` can only contai...",
+   "id": "Part",
+   "properties": {
+    "thought": {
+     "description": "Optional. Indicates if the part is thought from the model.",
+     "type": "boolean"
+    },
+    "text": {
+     "type": "string",
+     "description": "Inline text."
+    },
+    "partMetadata": {
+     "description": "Custom metadata associated with the Part. Agents using genai.Part as content representation may need to keep track of the additional information. For example it...",
+     "additionalProperties": {
+      "type": "any",
+      "description": "Properties of the object."
+     },
+     "type": "object"
+    },
+    "executableCode": {
+     "description": "Code generated by the model that is meant to be executed."
+    },
+    "functionResponse": {
+     "description": "pruned: FunctionResponse (not used by Sonara)"
+    },
+    "videoMetadata": {
+     "description": "pruned: VideoMetadata (not used by Sonara)"
+    },
+    "codeExecutionResult": {
+     "description": "Result of executing the `ExecutableCode`."
+    },
+    "thoughtSignature": {
+     "format": "byte",
+     "description": "Optional. An opaque signature for the thought so it can be reused in subsequent requests.",
+     "type": "string"
+    },
+    "toolResponse": {
+     "description": "The output from a server-side `ToolCall` execution. This field is populated by the client with the results of executing the corresponding `ToolCall`."
+    },
+    "mediaResolution": {
+     "description": "pruned: V1mainMediaResolution (not used by Sonara)"
+    },
+    "mediaProcessing": {
+     "enum": [
+      "MEDIA_PROCESSING_UNSPECIFIED",
+      "STATIC",
+      "AGENTIC"
+     ],
+     "description": "Optional. How the model processes this part's media for understanding. Only meaningful for video parts (`inline_data` or `file_data` with video mime). Non-video...",
+     "type": "string"
+    },
+    "audioTranscription": {
+     "description": "Optional. Audio (input or output) transcription. This is only set when this Part contains audio data."
+    },
+    "functionCall": {
+     "description": "pruned: FunctionCall (not used by Sonara)"
+    },
+    "fileData": {
+     "description": "URI based data."
+    },
+    "toolCall": {
+     "description": "Server-side tool call. This field is populated when the model predicts a tool invocation that should be executed on the server. The client is expected to echo t..."
+    },
+    "inlineData": {
+     "description": "Inline media bytes.",
+     "$ref": "#/$defs/Blob"
+    },
+    "speechMetadata": {
+     "description": "Optional. Metadata applied to text parts to customize how they should be spoken or synthesized, such as specifying speaker identity or speaking style.",
+     "$ref": "#/$defs/SpeechMetadata"
+    }
+   }
+  },
+  "PrebuiltVoiceConfig": {
+   "description": "The configuration for the prebuilt speaker to use.",
+   "type": "object",
+   "id": "PrebuiltVoiceConfig",
+   "properties": {
+    "voiceName": {
+     "description": "Optional. The name of the preset voice to use.",
+     "type": "string"
+    }
+   }
+  },
+  "PromptFeedback": {
+   "type": "object",
+   "properties": {
+    "blockReason": {
+     "enum": [
+      "BLOCK_REASON_UNSPECIFIED",
+      "SAFETY",
+      "OTHER",
+      "BLOCKLIST",
+      "PROHIBITED_CONTENT",
+      "IMAGE_SAFETY"
+     ],
+     "description": "Optional. If set, the prompt was blocked and no candidates are returned. Rephrase the prompt.",
+     "type": "string"
+    },
+    "safetyRatings": {
+     "type": "array",
+     "items": {
+      "description": "pruned: SafetyRating (not used by Sonara)"
+     },
+     "description": "Ratings for safety of the prompt. There is at most one rating per category."
+    }
+   },
+   "id": "PromptFeedback",
+   "description": "A set of the feedback metadata the prompt specified in `GenerateContentRequest.content`."
+  },
+  "ResponseFormatConfig": {
+   "type": "object",
+   "properties": {
+    "audio": {
+     "description": "Optional. Audio output format configuration.",
+     "$ref": "#/$defs/AudioResponseFormat"
+    },
+    "text": {
+     "description": "pruned: TextResponseFormat (not used by Sonara)"
+    },
+    "image": {
+     "description": "pruned: ImageResponseFormat (not used by Sonara)"
+    }
+   },
+   "description": "Configuration for the response output format. This is a flat object where each optional sub-field configures a specific output modality.",
+   "id": "ResponseFormatConfig"
+  },
+  "SpeechConfig": {
+   "type": "object",
+   "id": "SpeechConfig",
+   "properties": {
+    "multiSpeakerVoiceConfig": {
+     "description": "pruned: MultiSpeakerVoiceConfig (not used by Sonara)"
+    },
+    "languageCode": {
+     "description": "Optional. The IETF [BCP-47](https://www.rfc-editor.org/rfc/bcp/bcp47.txt) language code that the user configured the app to use. Used for speech recognition and...",
+     "type": "string"
+    },
+    "voiceConfig": {
+     "description": "The configuration in case of single-voice output.",
+     "$ref": "#/$defs/VoiceConfig"
+    }
+   },
+   "description": "Config for speech generation and transcription."
+  },
+  "SpeechMetadata": {
+   "type": "object",
+   "description": "Speech metadata for `text` parts.",
+   "id": "SpeechMetadata",
+   "properties": {
+    "speaker": {
+     "description": "Optional. Optional speaker name for multi-speaker synthesis.",
+     "type": "string"
+    },
+    "style": {
+     "description": "Optional. Optional style instruction for the speech synthesis.",
+     "type": "string"
+    }
+   }
+  },
+  "VoiceConfig": {
+   "properties": {
+    "voice": {
+     "description": "Optional. The speaker identifier for synthesis. Supported formats: * Speaker name for prebuilt voices (for example, `Orus` or `Kore`). * Voice ID for stored voi...",
+     "type": "string"
+    },
+    "prebuiltVoiceConfig": {
+     "$ref": "#/$defs/PrebuiltVoiceConfig",
+     "description": "The configuration for the prebuilt voice to use."
+    }
+   },
+   "description": "The configuration for the voice to use.",
+   "type": "object",
+   "id": "VoiceConfig"
+  },
+  "ListVoicesResponse": {
+   "id": "ListVoicesResponse",
+   "type": "object",
+   "properties": {
+    "voices": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/StoredVoice"
+     }
+    },
+    "next_page_token": {
+     "type": "string"
+    }
+   }
+  },
+  "StoredVoice": {
+   "id": "StoredVoice",
+   "type": "object",
+   "properties": {
+    "accent": {
+     "type": "string"
+    },
+    "context": {
+     "type": "string"
+    },
+    "description": {
+     "type": "string"
+    },
+    "display_name": {
+     "type": "string"
+    },
+    "expire_time": {
+     "type": "string"
+    },
+    "gender": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "key": {
+     "type": "string"
+    },
+    "language_code": {
+     "type": "string"
+    },
+    "model": {
+     "type": "string"
+    },
+    "persona": {
+     "type": "string"
+    },
+    "pitch": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    },
+    "usage": {
+     "type": "string"
+    },
+    "prompted": {
+     "type": "boolean"
+    }
+   }
+  }
+ },
+ "x-voices-source": "voices.list is not in the discovery document; transcribed from the API reference https://ai.google.dev/api/voices (see SOURCES.md)."
+}

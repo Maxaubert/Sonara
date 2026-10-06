@@ -41,6 +41,26 @@ Any check also takes `SONARA_LIVE_<NAME>_MODEL` and `SONARA_LIVE_<NAME>_VOICE`; 
 uses the provider's first listed model or voice; a provider without a voice list (OpenAI) needs the
 voice variable. No model ids or voice names in code (#235).
 
+### Contract tests against the providers' own specs (#275)
+
+`cargo test -p sonara-engine --test 'contract_*'` (part of `cargo test --workspace`, no network).
+Each external kind and preset has a schema fragment taken from its provider's official spec in
+`crates/sonara-engine/tests/contracts/<provider>/fragment.json` (OpenAI, ElevenLabs, Deepgram,
+LocalAI and Speaches OpenAPI; Google Cloud TTS and Gemini discovery documents; google.rpc.Status;
+hand-transcribed from docs or server source for Azure, Cartesia, Kokoro-FastAPI, the two Chatterbox
+servers and openedai-speech). Each folder's `SOURCES.md` gives the URLs, the date, the commit and
+the licence. The tests capture each adapter's real request (method, path, query, headers, body)
+and validate it against the fragment (request bodies strictly: a field the spec does not name
+fails), and feed spec-shaped answers (audio, voice and model lists, error bodies, each validated
+against the fragment first) through the adapter's parsing and error mapping.
+
+To refresh a fragment: fetch the spec into the session scratchpad, run the command in its
+`SOURCES.md` (`python packaging/contracts/extract_fragment.py ...`), update the date and commit
+there, and run the tests: a failure is either a spec change Sonara must follow or a bug.
+The command does not rebuild everything: re-apply the edits a `SOURCES.md` lists under
+"Hand-added" and "Derived" (for example Gemini's `voices.list` and Speaches'
+`GET /v1/audio/voices`), or the tests fail as if the spec had changed.
+
 ## Kokoro engine and G2P
 
 - `python packaging/runtime_dlls.py stage target/<debug|release>` puts `onnxruntime.dll`

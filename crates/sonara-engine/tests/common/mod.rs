@@ -1,6 +1,7 @@
 //! Test helpers: a temporary folder and a tiny local HTTP file server with
 //! scripted faults (no network, no real model).
 #![allow(dead_code)]
+pub mod contract;
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
