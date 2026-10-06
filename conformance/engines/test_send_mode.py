@@ -1,4 +1,4 @@
-"""Send to the engine (#235, ``docs/protocol-v1.md`` "External engines",
+"""Send to the engine (#235, ``docs/protocol-v1-engines.md`` "Send to the engine",
 ``send_mode``): with a cloud profile in send mode ``message`` (the cloud
 default) the agent's reply in read mode ``done`` is ONE request to the
 provider; in ``sentence`` mode it is one request per sentence (the
