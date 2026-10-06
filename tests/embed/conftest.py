@@ -78,3 +78,15 @@ def prepare_voice_home(engine: str, home: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     if engine == "kokoro":
         support.seed_kokoro(home, support.kokoro_models())
+
+
+def unavailable_skips_only_onecore(report: dict, engine: str) -> None:
+    """A host found ``engine`` unavailable. OneCore may lack voices on a PC
+    (a skip). Kokoro passed ``real_engine_or_skip`` (its DLL and model are
+    there), so unavailable means the runtime could not load them: a
+    packaging regression, a failure."""
+    if not report.get("unavailable"):
+        return
+    if engine == "onecore":
+        pytest.skip(f"onecore cannot speak on this PC: {report['engine_status']}")
+    pytest.fail(f"{engine} is unavailable although its DLL and model are there: {report['engine_status']}")

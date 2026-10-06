@@ -254,9 +254,12 @@ def voice() -> dict:
         return {"host": "python", "unavailable": True, "engine_status": status}
     item = sonara.speak(os.environ["SONARA_EMBED_SENTENCE"])
     phase = t.end(item, 60)
+    # The status once the item finished: the same engine, still ready, no
+    # fallback, so the item was this engine's voice.
+    after = t.last().get("engine_status")
     sonara.close()
     return {"host": "python", "version": sonara.info["version"], "item": item, "phase": phase,
-            "engine_status": status}
+            "engine_status": status, "engine_status_after": after}
 
 
 if __name__ == "__main__":

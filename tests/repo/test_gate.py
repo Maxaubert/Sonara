@@ -155,4 +155,4 @@ def test_the_embed_gate_builds_the_release_zip_inputs_and_points_at_the_release_
         assert exe in build, exe
     assert "--release" in build
     suite = next(s for s in steps if s[0] == "tests/embed")
-    assert suite[3]["SONARAD"].endswith("release\sonarad.exe") or suite[3]["SONARAD"].endswith("release/sonarad.exe")
+    assert Path(suite[3]["SONARAD"]).parts[-2:] == ("release", "sonarad.exe")

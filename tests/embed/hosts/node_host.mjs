@@ -241,7 +241,7 @@ async function voice() {
   await sonara.eventsReady();
   await t.until(() => t.states.length > 0, "first state");
   // Kokoro loads its model first (a pre-seeded home: no download).
-  // "unavailable": this PC cannot run it (no voices); the test skips then.
+  // "unavailable": it cannot run here; the test decides (only OneCore may skip).
   const settled = () => {
     const st = t.last().engine_status;
     return st && (st.ready === true || st.status === "unavailable");
@@ -254,8 +254,12 @@ async function voice() {
   }
   const item = await sonara.speak(process.env.SONARA_EMBED_SENTENCE);
   const phase = await t.end(item, 60000);
+  // The status once the item finished: the same engine, still ready, no
+  // fallback, so the item was this engine's voice.
+  const after = t.last().engine_status;
   await sonara.close();
-  return { host: "node", version: sonara.info.version, item, phase, engine_status: engineStatus };
+  return { host: "node", version: sonara.info.version, item, phase, engine_status: engineStatus,
+    engine_status_after: after };
 }
 
 const report = await (mode === "voice" ? voice() : scenario());

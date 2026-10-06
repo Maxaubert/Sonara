@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from . import support
-from .conftest import prepare_voice_home, real_engine_or_skip
+from .conftest import prepare_voice_home, real_engine_or_skip, unavailable_skips_only_onecore
 
 CLIENT = support.REPO / "clients" / "python"
 # SONARA_EMBED_VENV=venv uses pip and python -m venv even where uv is (as on CI).
@@ -109,6 +109,27 @@ def test_a_python_app_speaks_with_a_real_voice_from_the_release_zip(python_app, 
     env = support.host_env(home, support.voice_args(engine, wav_dir), "voice",
                            SONARA_RUNTIME=str(python_app["runtime"]))
     report = support.run_host([str(python_app["python"]), "host.py"], env, python_app["app"])
-    if report.get("unavailable"):
-        pytest.skip(f"{engine} cannot speak on this PC: {report['engine_status']}")
+    unavailable_skips_only_onecore(report, engine)
     support.check_real_voice(report, wav_dir, engine)
+
+
+def test_kokoro_without_onnxruntime_is_reported_unavailable_not_ready(python_app, work):
+    """The negative of the real-voice test: the release folder without
+    ``onnxruntime.dll``. Kokoro must say ``unavailable`` with the reason,
+    never ready, so a bundle that lost its DLL is visible to the host (and
+    the Kokoro test above fails instead of passing on another voice)."""
+    if support.kokoro_models() is None:
+        pytest.skip("Kokoro's model is not on this PC (set SONARA_KOKORO_MODELS)")
+    bare = work / "bare"
+    shutil.copytree(python_app["runtime"].parent, bare)
+    (bare / "onnxruntime.dll").unlink()
+    home = work / "home"
+    prepare_voice_home("kokoro", home)
+    env = support.host_env(home, support.voice_args("kokoro", work / "wav"), "voice",
+                           SONARA_RUNTIME=str(bare / "sonarad.exe"))
+    env["SONARA_ORT_DYLIB"] = ""
+    report = support.run_host([str(python_app["python"]), "host.py"], env, python_app["app"])
+    assert report.get("unavailable") is True, report
+    st = report["engine_status"]
+    assert st["engine"] == "kokoro" and st["ready"] is False and st["status"] == "unavailable", st
+    assert "onnxruntime" in (st.get("message") or "").lower(), st

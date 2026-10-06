@@ -316,6 +316,11 @@ def check_real_voice(report: dict, wav_dir: Path, engine: str) -> Wav:
     assert report["engine_status"]["engine"] == engine, report["engine_status"]
     assert report["engine_status"]["ready"] is True, report["engine_status"]
     assert report["phase"] == "finished", report
+    # Still this engine once the item finished, with no fallback named: the
+    # audio below is its voice, not a fallback's.
+    after = report["engine_status_after"]
+    assert after["engine"] == engine and after["ready"] is True, after
+    assert not after.get("fallback"), after
     audio = joined(item_wavs(wav_dir)[report["item"]])
     if engine == "kokoro":
         assert audio.rate == 24_000, audio.rate

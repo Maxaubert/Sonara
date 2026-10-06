@@ -106,7 +106,10 @@ engine's audio (a constant the fake provider sends) is what played, not the fall
 real-voice tests check speech: 24 kHz for Kokoro, 1.2 to 10 s for the test sentence, peak, RMS,
 pauses and many distinct levels. They need `onnxruntime.dll` next to the runtime and Kokoro's
 model (`SONARA_KOKORO_MODELS`, else the one in `%LOCALAPPDATA%\Sonara\models\kokoro\v1.0`, only
-read: the temp home gets hard links); without them the Kokoro test skips. The OneCore test skips
+read: the temp home gets hard links); without them the Kokoro test skips. With them, Kokoro
+reporting `unavailable` is a failure (the bundle's DLLs did not load), and a negative test runs
+the zip's folder without `onnxruntime.dll` and expects exactly that. The engine status after the
+item must still name the same engine, ready and with no fallback. The OneCore test skips
 when the PC has no usable Windows voice (`engine_status` `unavailable`). Every run has its own temp
 `SONARA_HOME`; nothing touches the user's runtime. `python packaging/gate.py` runs the suite as
 the `embed` gate; CI runs it in the `clients` job (no Kokoro model there).

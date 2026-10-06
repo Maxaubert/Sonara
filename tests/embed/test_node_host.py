@@ -14,7 +14,7 @@ import pytest
 
 from . import support
 from . import npm_app
-from .conftest import prepare_voice_home, real_engine_or_skip
+from .conftest import prepare_voice_home, real_engine_or_skip, unavailable_skips_only_onecore
 
 NODE = npm_app.NODE
 pytestmark = pytest.mark.skipif(not (npm_app.NODE and npm_app.NPM), reason="node and npm are needed")
@@ -63,6 +63,5 @@ def test_a_node_app_speaks_with_a_real_voice_from_node_modules(node_app, work, e
     wav_dir = work / "wav"
     report = support.run_host([NODE, "host.mjs"], support.host_env(home, support.voice_args(engine, wav_dir), "voice"),
                               node_app)
-    if report.get("unavailable"):
-        pytest.skip(f"{engine} cannot speak on this PC: {report['engine_status']}")
+    unavailable_skips_only_onecore(report, engine)
     support.check_real_voice(report, wav_dir, engine)

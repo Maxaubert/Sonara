@@ -391,8 +391,18 @@ def test_an_idle_takeover_ends_the_runtime(runtime):
         shutil.rmtree(d, ignore_errors=True)
 
 
-def test_the_runtime_exits_when_the_last_client_left(rt):
-    """Lifetime: --idle-exit after the last client left, runtime.json removed."""
-    rt["anchor"].close()
-    assert rt["proc"].wait(15) == 0
-    assert not (rt["home"] / "runtime.json").exists()
+def test_the_runtime_exits_when_the_last_client_left(runtime):
+    """Lifetime: --idle-exit after the last client left, runtime.json removed.
+    Its own runtime: closing the module's anchor would end ``rt`` for any
+    test run after this one."""
+    d = Path(tempfile.mkdtemp(prefix="sonara-embed-idle-"))
+    proc, info = raw.start_runtime(runtime, d / "home", runtime_args(d / "wav", "1"))
+    try:
+        c, _ = raw.hello(info)
+        c.close()
+        assert proc.wait(15) == 0
+        assert not (d / "home" / "runtime.json").exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        shutil.rmtree(d, ignore_errors=True)

@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from . import support
-from .conftest import prepare_voice_home, real_engine_or_skip
+from .conftest import prepare_voice_home, real_engine_or_skip, unavailable_skips_only_onecore
 
 REPO_SLUG = "Maxaubert/Sonara"
 GH = shutil.which("gh")
@@ -86,8 +86,7 @@ def test_the_released_runtime_speaks_with_a_real_voice(released, node_app, work,
             "--idle-exit", "2"]
     env = support.host_env(home, args, "voice", SONARA_EMBED_RUNTIME=str(released["exe"]))
     report = support.run_host([support.which_node(), "host.mjs"], env, node_app)
-    if report.get("unavailable"):
-        pytest.skip(f"{engine} cannot speak on this PC: {report['engine_status']}")
+    unavailable_skips_only_onecore(report, engine)
     if "wav:" in args[-3]:
         support.check_real_voice(report, wav_dir, engine)
     else:
