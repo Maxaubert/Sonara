@@ -2,11 +2,11 @@
 //! engines off the control path, engine errors, shutdown, control storms.
 mod common;
 
-use common::engines::{BrokenEngine, GateEngine, SlowWarmEngine};
+use common::engines::{BrokenEngine, GateEngine, SlowWarmEngine, TurnstileEngine};
 use common::{fmt, len, play, Rig, THREE, TIMEOUT};
 use sonara_audio::OutputCall;
 use sonara_reader::{
-    AudioEvent, Control, Error, Event, ItemId, ItemPhase, Key, QueueMode, ReaderHandle, Value,
+    Config, Control, Error, Event, ItemId, ItemPhase, Key, QueueMode, ReaderHandle, Registry, Value,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::RecvTimeoutError;
@@ -246,6 +246,107 @@ fn dropping_the_last_handle_shuts_the_reader_down() {
     }
 }
 
+/// A reader on two `TurnstileEngine`s: `turnstile` speaks, and switching
+/// to `barrier` and back queues a warm-up behind the synthesis in flight.
+fn turnstiles() -> (Rig, Arc<TurnstileEngine>, Arc<TurnstileEngine>) {
+    let engine = Arc::new(TurnstileEngine::new("turnstile"));
+    let barrier = Arc::new(TurnstileEngine::new("barrier"));
+    let registry = Registry::default();
+    registry.register(engine.clone()).unwrap();
+    registry.register(barrier.clone()).unwrap();
+    let mut config = Config::new(registry);
+    config.engine = Some("turnstile".into());
+    (Rig::config(config), engine, barrier)
+}
+
+/// Let the synthesis in flight return its (late) audio, and wait until the
+/// worker has handled it: the barrier warms up only after it.
+fn late_audio_handled(r: &Rig, engine: &TurnstileEngine, barrier: &TurnstileEngine, n: usize) {
+    engine.let_through(1);
+    r.h.set(Key::Engine, Value::Text("barrier".into())).unwrap();
+    barrier.wait_warmed(n);
+    r.h.set(Key::Engine, Value::Text("turnstile".into()))
+        .unwrap();
+}
+
+/// #269: audio an engine hands back after its item was stopped (it ignored
+/// the cancel) is never loaded: neither the playing chunk's nor the
+/// lookahead's.
+#[test]
+fn a_chunk_synthesized_after_stop_is_never_loaded() {
+    let (r, engine, barrier) = turnstiles();
+    // The playing chunk: still in the engine at Stop.
+    speak(&r.h, "Held in the engine.");
+    engine.wait_started(1);
+    r.h.control(Control::Stop).unwrap();
+    assert_eq!(engine.cancels(), 1);
+    late_audio_handled(&r, &engine, &barrier, 1);
+    assert_eq!(r.calls_now(), []);
+    assert_eq!(r.out.loaded(), None);
+    // The lookahead: chunk 0 plays, chunk 1 is in the engine at Stop.
+    speak(&r.h, "First is heard. Second is late.");
+    engine.wait_started(2);
+    engine.let_through(1);
+    assert_eq!(r.calls(1), [play(2, 0, 2, len("First is heard.", 200))]);
+    engine.wait_started(3);
+    r.h.control(Control::Stop).unwrap();
+    assert_eq!(engine.cancels(), 2);
+    assert_eq!(r.calls_now(), [OutputCall::Stop]);
+    late_audio_handled(&r, &engine, &barrier, 2);
+    assert_eq!(r.calls_now(), []);
+    assert_eq!(r.out.loaded(), None);
+    // And the next item plays.
+    speak(&r.h, "Heard.");
+    engine.wait_started(4);
+    engine.let_through(1);
+    assert_eq!(r.calls(1), [play(3, 0, 3, len("Heard.", 200))]);
+    assert_eq!(r.calls_now(), []);
+}
+
+/// #269 with a hold (#238): a first chunk the hold kept waiting, its audio
+/// ready, is never loaded once its item was stopped, also when the hold
+/// ends.
+#[test]
+fn a_held_first_chunk_is_never_loaded_after_stop() {
+    let (r, engine, _) = turnstiles();
+    r.h.hold_start(Instant::now() + Duration::from_secs(60))
+        .unwrap();
+    speak(&r.h, "Held by the chime.");
+    speak(&r.h, "Next in line.");
+    engine.wait_started(1);
+    engine.let_through(1);
+    // The lookahead started: the first chunk's audio is in the inbox,
+    // ahead of the Stop.
+    engine.wait_started(2);
+    r.h.control(Control::Stop).unwrap();
+    r.h.hold_start(Instant::now()).unwrap();
+    assert_eq!(r.calls_now(), []);
+    assert_eq!(r.out.loaded(), None);
+    engine.let_through(1);
+    speak(&r.h, "Heard.");
+    engine.wait_started(3);
+    engine.let_through(1);
+    assert_eq!(r.calls(1), [play(3, 0, 2, len("Heard.", 200))]);
+    assert_eq!(r.calls_now(), []);
+}
+
+/// #269: the storm's player sent `ChunkFinished` without unloading the
+/// chunk, so an item that ended on its own left a stale gen "loaded" that
+/// no real output keeps, and a `Stop` when idle (rightly) touched nothing.
+/// The storm's ending, deterministically: a chunk that played through is
+/// unloaded, and nothing is loaded after `Stop`.
+#[test]
+fn stop_after_an_item_played_through_leaves_nothing_loaded() {
+    let (r, _) = Rig::new();
+    speak(&r.h, "Only one.");
+    r.calls(1);
+    assert_eq!(r.out.play_through(), Some(1));
+    r.events_until("state idle");
+    r.h.control(Control::Stop).unwrap();
+    assert_eq!(r.calls_now(), []);
+    assert_eq!(r.out.loaded(), None);
+}
+
 /// A tiny deterministic generator, so a failing storm can be replayed.
 fn lcg(seed: &mut u64) -> u64 {
     *seed = seed
@@ -268,17 +369,15 @@ fn rapid_control_storms_from_several_threads_leave_a_consistent_reader() {
         Control::Mute,
         Control::Unmute,
     ];
-    // Audio keeps finishing whatever is loaded while the storm runs.
+    // Audio keeps finishing whatever is loaded while the storm runs, and
+    // unloads it as a real output does (#269).
     let out = r.out.clone();
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let player = {
         let stop = stop.clone();
         thread::spawn(move || {
             while !stop.load(std::sync::atomic::Ordering::SeqCst) {
-                if let Some(gen) = out.loaded() {
-                    out.send(AudioEvent::ChunkStarted { gen });
-                    out.send(AudioEvent::ChunkFinished { gen });
-                }
+                out.play_through();
                 thread::sleep(Duration::from_micros(200));
             }
         })

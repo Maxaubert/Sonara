@@ -87,6 +87,109 @@ impl Engine for GateEngine {
     }
 }
 
+/// Lets one synthesis through per permit (`let_through`) and ignores
+/// `cancel` (it only counts it): a slow engine whose audio still arrives
+/// after its item ended (#269). A synthesis no permit reached within
+/// `TIMEOUT` gives up, so a failing test still shuts down.
+pub struct TurnstileEngine {
+    id: &'static str,
+    permits: Mutex<usize>,
+    changed: Condvar,
+    started: AtomicUsize,
+    cancels: AtomicUsize,
+    warms: AtomicUsize,
+}
+
+impl TurnstileEngine {
+    pub fn new(id: &'static str) -> Self {
+        TurnstileEngine {
+            id,
+            permits: Mutex::new(0),
+            changed: Condvar::new(),
+            started: AtomicUsize::new(0),
+            cancels: AtomicUsize::new(0),
+            warms: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn let_through(&self, n: usize) {
+        *self.permits.lock().unwrap() += n;
+        self.changed.notify_all();
+    }
+
+    pub fn cancels(&self) -> usize {
+        self.cancels.load(Ordering::SeqCst)
+    }
+
+    /// Wait until `n` syntheses have started. The synthesis thread hands
+    /// back a chunk before it starts its next task, so once `n` started,
+    /// the results of the first `n - 1` are in the reader's inbox.
+    pub fn wait_started(&self, n: usize) {
+        wait_count(&self.started, n, "started");
+    }
+
+    /// Wait until `n` warm-ups ran (the same ordering as `wait_started`).
+    pub fn wait_warmed(&self, n: usize) {
+        wait_count(&self.warms, n, "warmed");
+    }
+}
+
+fn wait_count(count: &AtomicUsize, n: usize, what: &str) {
+    let end = Instant::now() + super::TIMEOUT;
+    while count.load(Ordering::SeqCst) < n {
+        assert!(
+            Instant::now() < end,
+            "only {} {what}",
+            count.load(Ordering::SeqCst)
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+impl Engine for TurnstileEngine {
+    fn id(&self) -> EngineId {
+        EngineId(self.id)
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Permissive
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        self.warms.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+        let end = Instant::now() + super::TIMEOUT;
+        let mut permits = self.permits.lock().unwrap();
+        while *permits == 0 {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(Error::Cancelled);
+            }
+            permits = self.changed.wait_timeout(permits, left).unwrap().0;
+        }
+        *permits -= 1;
+        drop(permits);
+        let samples = FakeEngine::render(text, voice, rate)?;
+        Ok(Box::new(std::iter::once(Ok(PcmChunk {
+            samples,
+            sample_rate: 16_000,
+            channels: 1,
+        }))))
+    }
+
+    fn cancel(&self) {
+        self.cancels.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 /// Speaks like the fake engine, but `warm` blocks until `cancel`.
 #[derive(Default)]
 pub struct SlowWarmEngine {
