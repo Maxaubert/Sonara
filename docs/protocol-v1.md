@@ -516,9 +516,15 @@ up (and not still reading its last message) starts a new batch.
 - **Policy** `latest` (the default): a new message replaces the channel's unread messages, so the
   newest one is always read and never dropped ("one message, always the last"). `queue`: every
   message is read, in order.
-- **Who reads next:** the channel being read keeps the floor until its batch is read; then the
-  focused channel; then the first channel (in opening order) with something unread. A channel you
-  left with `next_channel` is not resumed on its own until it gets a new message.
+- **Who reads next:** a replay the user started (`restart`, or `next_channel` landing on a replay)
+  keeps the floor until its batch is read (runtime 0.21.4, #271): no other channel's message and no
+  decision (`ask` with `agent`) cuts in at a message boundary; what arrived meanwhile is read after
+  it, decisions first. `flush`, `control stop` of that channel (also a `turn_start` of its session),
+  `next_channel`, `speak` with `interrupt` into another channel and muting it end that hold. Else a
+  decision is read first (after the item playing); then a channel whose batch a decision cut, which
+  resumes where it stopped; then the channel being read keeps the floor until its batch is read;
+  then the focused channel; then the first channel (in opening order) with something unread. A
+  channel you left with `next_channel` is not resumed on its own until it gets a new message.
 - **Muted channels** (`channel_prefs` `muted`): a muted channel's messages wait, unread, and it
   never takes the floor (muting the channel being read cuts its item); `next_channel` skips it
   unless every channel is muted. Unmuted, its waiting messages are read.
@@ -672,7 +678,7 @@ dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id tha
 | `stream` | `channel`, `delta`, `index?` (default 0), `final?`, `turn?`, `t?`, `label?` | a piece of the agent's text. `index` numbers the deltas of one block (a new block may restart at 0); `final` ends the block and flushes an unfinished sentence. Reply `{stale}` |
 | `turn_start` | `channel`, `turn?`, `t?`, `label?` | a new turn: the channel's unread text is dropped and its item cut; a question waiting for an answer and summary work of the old turn are dropped. If the channel is the one being read or read last and the reader is paused, it resumes; **a new turn in another channel keeps the pause on**. Reply `{stale}` |
 | `turn_end` | `channel`, `turn?`, `t?`, `label?` | the agent finished: plays `turn_done` and reads text held by `read_mode`. Reply `{stale}` |
-| `ask` | `channel`, `kind: question\|permission\|plan`, `text?`, `options?`, `multi_select?`, `notes?`, `hint?`, `hint_once?`, `label?` | a decision, read with priority (after the item playing, before the other channels). `question`: the text, then `Option n: label.` and its description for each of `options` (strings or `{label, description?}`; an option without a label keeps its number), plays `choice`, and marks the channel as waiting for an answer. `permission`: the pending action, plays `permission`; while a question waits, the permission prompt it fires itself is dropped (no earcon, no text) and clears the mark. `plan`: `"Plan ready. <text>"`, no earcon. `notes` is read after the decision; `hint` too at verbosity `everything`, and `hint_once` after it the first time a channel gets one |
+| `ask` | `channel`, `kind: question\|permission\|plan`, `text?`, `options?`, `multi_select?`, `notes?`, `hint?`, `hint_once?`, `label?` | a decision, read with priority (after the item playing, before the other channels; a replay the user started is read to its end first, #271). `question`: the text, then `Option n: label.` and its description for each of `options` (strings or `{label, description?}`; an option without a label keeps its number), plays `choice`, and marks the channel as waiting for an answer. `permission`: the pending action, plays `permission`; while a question waits, the permission prompt it fires itself is dropped (no earcon, no text) and clears the mark. `plan`: `"Plan ready. <text>"`, no earcon. `notes` is read after the decision; `hint` too at verbosity `everything`, and `hint_once` after it the first time a channel gets one |
 | `tool` | `channel`, `name`, `summary?`, `label?` | the agent runs a tool: clears a waiting question; at verbosity `everything` it reads `summary` (else `"Running <name>."`) after the text held so far (read_mode `done`: the text stays held until the turn ends or a decision) |
 | `answered` | `channel`, `label?` | the user answered the question: everything queued for the channel is stale, so its unread text is dropped and its item cut, summary work and held decisions are dropped; the turn goes on |
 | `earcon` | `kind` | play an earcon: `choice`, `permission`, `error`, `turn_done`, `nav`, `nav_edge`, `session_change`, `summary_failed` |

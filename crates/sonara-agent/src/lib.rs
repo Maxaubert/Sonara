@@ -15,8 +15,8 @@
 //! - `Speak` goes to the channel as an appended entry (`Channels::add`,
 //!   whatever the channel's policy: a turn is many chunks); a decision also
 //!   `prioritize`s the channel, so it is read before the other channels
-//!   once the item playing ends; a summary delivery `authorize`s it past
-//!   the background policy.
+//!   once the item playing ends (after a replay the user started, #271);
+//!   a summary delivery `authorize`s it past the background policy.
 //! - **Background policy** (`set_background_policy`): `earcon_only` turns
 //!   on L2's focus-only gate, so only the focused channel (the session the
 //!   user last prompted) is read; `all` turns it off.

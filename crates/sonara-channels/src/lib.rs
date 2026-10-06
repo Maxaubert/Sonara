@@ -39,6 +39,9 @@
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
 //!   uses it so a decision preempts (the Python router's decision rule).
+//!   The cut batch resumes right after. A replay the user started
+//!   (`Restart`, `next_channel` landing on a replay) is not preempted: it
+//!   holds the floor until its batch ends (router docs, #271).
 //! - `set_muted` mutes one channel (its entries wait; muting the channel
 //!   being read cuts its item) and `set_focus_only` reads only the focused
 //!   channel automatically: L3 uses them for per-channel mute and the
@@ -393,7 +396,8 @@ impl Channels {
 
     /// Read `channel` before the other channels once the item playing ends
     /// (it does not cut), until its unread entries are read: the batch
-    /// reading now waits. L3 uses it so a decision preempts.
+    /// reading now waits, unless it is a replay the user started (#271).
+    /// L3 uses it so a decision preempts.
     pub fn prioritize(&self, channel: &str) -> Result<()> {
         let mut st = self.lock();
         if !st.router.prioritize(channel) {
