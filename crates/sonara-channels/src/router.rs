@@ -12,12 +12,24 @@
 //!   last entry is no longer being read starts a new batch. Policy `latest` (or a push with `replace`) drops the
 //!   channel's unread entries first, so the newest entry is never dropped
 //!   and the batch is just that entry ("one message, always the last").
-//! - Auto pick: a **prioritized** channel first (`prioritize`, oldest
-//!   first, until its batch drains: L3 decisions preempt); then the channel
-//!   that is reading keeps the floor until its batch drains; then the
-//!   focused channel; then the first channel (in opening order) with
-//!   something unread. A channel the user switched away from with
-//!   `next_channel` is skipped until it gets new content.
+//! - Auto pick: a **held replay** first (#271): a replay the user started
+//!   (`replay`: Up while idle or a restart with a channel; `next_channel`
+//!   landing on a replay) holds the floor until the entries its batch had
+//!   when it started are read (text added since is live reading), so nothing
+//!   preempts it at an entry boundary, not another channel's new entries
+//!   and not its decisions. A flush of the channel (the flush hotkey, a
+//!   new turn in it, `Stop`), `next_channel`, `take_floor` for another
+//!   channel, muting or closing it end the hold (muting also drops its
+//!   resume below). Then a **prioritized**
+//!   channel (`prioritize`, oldest first, until its batch drains: L3
+//!   decisions preempt live reading after the current entry); then the
+//!   channel whose batch a priority cut, which resumes (whatever the
+//!   focus-only gate: it was reading); then the channel that is reading
+//!   keeps the floor until its batch drains; then the focused channel;
+//!   then the first channel (in opening order) with something unread. So
+//!   what arrived during a held replay is read after it, decisions first.
+//!   A channel the user switched away from with `next_channel` is skipped
+//!   until it gets new content.
 //! - **Muted** channels (`set_muted`, kept by id whether open or not) are
 //!   never picked: their entries wait, unread, until they are unmuted (the
 //!   Python `session_prefs` `muted` rule). A muted channel never takes the
@@ -305,6 +317,13 @@ pub struct Router {
     /// Channels to read before anything else, oldest first; one leaves the
     /// list once it has nothing unread.
     priority: Vec<String>,
+    /// A replay the user started: it holds the floor until its batch ends
+    /// (module docs, #271). With the last entry id that existed when it
+    /// started: text added since is live reading, not held.
+    hold: Option<(String, u64)>,
+    /// The channel whose batch a prioritized channel cut: it resumes once
+    /// the priorities drained (module docs, #271).
+    resume: Option<String>,
     /// Muted channel ids (open or not, so a channel opened later starts
     /// muted).
     muted: HashSet<String>,
@@ -453,7 +472,41 @@ impl Router {
         self.suppressed.remove(id);
         self.priority.retain(|p| p != id);
         self.authorized.remove(id);
+        self.end_hold(Some(id));
         true
+    }
+
+    /// End the replay hold and the resume of a cut batch (both when `id` is
+    /// `None`, else only where they name `id`): the user moved on.
+    fn end_hold(&mut self, id: Option<&str>) {
+        let is = |o: &Option<String>| id.is_none() || o.as_deref() == id;
+        if id.is_none() || self.hold.as_ref().map(|(h, _)| h.as_str()) == id {
+            self.hold = None;
+        }
+        if is(&self.resume) {
+            self.resume = None;
+        }
+    }
+
+    /// The channel whose replay holds the floor (diagnostics, tests).
+    pub fn held(&self) -> Option<&str> {
+        self.hold.as_ref().map(|(h, _)| h.as_str())
+    }
+
+    /// Hold the floor for `id`'s replay: its entries up to now (module
+    /// docs).
+    fn start_hold(&mut self, id: &str) {
+        self.end_hold(None);
+        self.hold = Some((id.to_string(), self.next_entry));
+    }
+
+    /// `id` is audible and still has an unread entry of the batch its
+    /// replay started with (ids up to `mark`).
+    fn holds(&self, id: &str, mark: u64) -> bool {
+        self.audible(id)
+            && self
+                .channel(id)
+                .is_some_and(|c| c.entries[c.cursor..].iter().any(|e| e.id <= mark))
     }
 
     /// Put `id` in front for the auto pick. False if it is not open. The
@@ -481,6 +534,10 @@ impl Router {
         }
         if let Some(c) = self.channel_mut(id) {
             c.muted = muted;
+        }
+        if muted {
+            // Nothing reads it any more: no hold, no resume.
+            self.end_hold(Some(id));
         }
     }
 
@@ -666,9 +723,24 @@ impl Router {
         for a in spent {
             self.authorized.remove(&a);
         }
+        // A replay the user started holds the floor until its batch ends.
+        if let Some((h, mark)) = self.hold.clone() {
+            if self.holds(&h, mark) {
+                return Some(h);
+            }
+            self.hold = None;
+        }
         let first = self.priority.clone().into_iter().find(|p| self.pickable(p));
         if first.is_some() {
             return first;
+        }
+        // The batch a priority cut resumes (it was reading: no gate).
+        if let Some(c) = self.resume.clone() {
+            if self.active.as_deref() == Some(c.as_str()) || !self.ready(&c) {
+                self.resume = None;
+            } else if self.audible(&c) && !self.is_suppressed(&c) {
+                return Some(c);
+            }
         }
         if let Some(a) = self.active.clone() {
             if self.audible(&a) {
@@ -724,6 +796,12 @@ impl Router {
             return None;
         };
         if self.active.as_deref() != Some(target.as_str()) {
+            // A priority cuts the batch reading now: remember it (#271).
+            if let Some(cut) = self.active.clone() {
+                if self.resume.is_none() && self.priority.contains(&target) && self.audible(&cut) {
+                    self.resume = Some(cut);
+                }
+            }
             let handoff = self.is_handoff(&target);
             self.set_reader(&target);
             if handoff {
@@ -808,6 +886,10 @@ impl Router {
         }
         self.set_reader(&target);
         self.arm(&target, replay, true);
+        self.end_hold(None);
+        if replay {
+            self.start_hold(&target);
+        }
         Some((target, replay))
     }
 
@@ -820,6 +902,9 @@ impl Router {
         let handoff = self.is_handoff(id);
         self.set_reader(id);
         self.suppressed.remove(id);
+        if self.held() != Some(id) {
+            self.end_hold(None);
+        }
         if handoff {
             self.arm(id, false, false);
         } else if self.announce.as_ref().is_some_and(|s| s.channel != id) {
@@ -845,6 +930,8 @@ impl Router {
         self.suppressed.remove(id);
         // A replay is read whatever the focus (Python authorize_replay).
         self.authorized.insert(id.to_string());
+        // The user started it: it holds the floor (#271).
+        self.start_hold(id);
         if handoff {
             self.arm(id, true, true);
         }
@@ -860,6 +947,7 @@ impl Router {
                 if self.announce.as_ref().map(|s| s.channel.as_str()) == Some(id) {
                     self.announce = None;
                 }
+                self.end_hold(Some(id));
                 self.channel_mut(id).map_or(0, |c| {
                     // The next agent text starts a new batch (#243).
                     c.growing = false;
@@ -868,6 +956,7 @@ impl Router {
             }
             None => {
                 self.announce = None;
+                self.end_hold(None);
                 self.channels.iter_mut().map(Channel::skip_to_end).sum()
             }
         }

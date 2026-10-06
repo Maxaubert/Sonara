@@ -1295,3 +1295,97 @@ fn after_super_mute_the_next_earcon_does_not_wait_for_skipped_ones() {
         clips[1].0 - at
     );
 }
+
+// -- a replay holds the floor (#271) ---------------------------------------
+
+/// Alpha's reply was heard, then Up (restart while idle) replays it.
+fn replaying_alpha() -> Rig {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.stays_idle();
+    r.agent.channels().control(Control::Restart, None).unwrap();
+    r.wait_for("One is here.");
+    r
+}
+
+fn deploy() -> Ask {
+    let mut ask = Ask::new(AskKind::Question, "Deploy now?");
+    ask.options = vec![sonara_agent::Choice {
+        label: "Yes".into(),
+        description: None,
+    }];
+    ask
+}
+
+#[test]
+fn a_replay_is_not_taken_over_by_another_sessions_question() {
+    let r = replaying_alpha();
+    r.agent.ask("b", &deploy()).unwrap();
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.read("Deploy now?");
+    r.read("Option 1: Yes.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_replay_is_not_taken_over_by_another_sessions_message() {
+    let r = replaying_alpha();
+    r.agent.turn_start("b", None, None).unwrap();
+    r.stream("b", "Beta speaks.", 0, None);
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.read("Beta speaks.");
+    r.stays_idle();
+}
+
+#[test]
+fn what_arrived_during_a_replay_is_read_after_it_decisions_first() {
+    let r = replaying_alpha();
+    r.stream("c", "Gamma speaks.", 0, None);
+    r.agent.ask("b", &deploy()).unwrap();
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.read("Deploy now?");
+    r.read("Option 1: Yes.");
+    r.read("Gamma speaks.");
+    r.stays_idle();
+}
+
+#[test]
+fn flush_during_a_replay_moves_on() {
+    let r = replaying_alpha();
+    r.agent.ask("b", &deploy()).unwrap();
+    assert_eq!(
+        r.agent.flush().unwrap().flushed,
+        Flushed::Channel("a".into())
+    );
+    r.read("Deploy now?");
+    r.read("Option 1: Yes.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_new_prompt_in_the_replayed_session_ends_the_replay() {
+    let r = replaying_alpha();
+    r.agent.ask("b", &deploy()).unwrap();
+    r.agent.turn_start("a", None, None).unwrap();
+    r.read("Deploy now?");
+    r.read("Option 1: Yes.");
+    r.stays_idle();
+}
+
+#[test]
+fn live_reading_still_lets_a_question_in() {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    r.wait_for("One is here.");
+    r.agent.ask("b", &deploy()).unwrap();
+    r.read("One is here.");
+    r.read("Deploy now?");
+    r.read("Option 1: Yes.");
+    r.read("Two is here.");
+    r.stays_idle();
+}

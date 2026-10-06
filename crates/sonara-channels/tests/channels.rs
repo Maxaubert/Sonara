@@ -978,3 +978,97 @@ fn a_panic_under_the_lock_skips_the_drop_hook_and_the_channels_keep_serving() {
     r.ch.on_drop(None);
     assert_eq!(r.ch.channel_ids(), vec!["a".to_string(), "b".to_string()]);
 }
+
+// -- a replay holds the floor (#271) ---------------------------------------
+
+/// Alpha read "One." and "Two.", then Up while idle replays it; "One." is
+/// playing again.
+fn replaying_alpha() -> Rig {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("a", "Two.");
+    r.read("One.");
+    r.read("Two.");
+    r.wait_idle();
+    r.ch.control(Control::Restart, None).unwrap();
+    r.wait_for("One.");
+    r
+}
+
+#[test]
+fn a_replay_is_not_taken_over_by_another_sessions_question() {
+    let r = replaying_alpha();
+    r.ch.add_with("b", "A question.", true).unwrap();
+    r.ch.prioritize("b").unwrap();
+    r.read("One.");
+    r.read("Two.");
+    r.read("Beta.");
+    r.read("A question.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_replay_is_not_taken_over_by_another_sessions_message() {
+    let r = replaying_alpha();
+    r.ch.focus("b").unwrap();
+    r.speak("b", "From beta.");
+    r.read("One.");
+    r.read("Two.");
+    r.read("Beta.");
+    r.read("From beta.");
+    r.stays_idle();
+}
+
+#[test]
+fn flush_during_a_replay_moves_on() {
+    let r = replaying_alpha();
+    r.ch.add_with("b", "A question.", true).unwrap();
+    r.ch.prioritize("b").unwrap();
+    assert_eq!(
+        r.ch.stop_reading("flush").unwrap(),
+        Flushed::Channel("a".into())
+    );
+    r.read("Beta.");
+    r.read("A question.");
+    r.stays_idle();
+}
+
+#[test]
+fn reading_returns_to_a_batch_cut_by_a_priority() {
+    // Background policy earcon_only, Beta focused: Alpha reads because the
+    // user switched to it. Beta's question cuts in; Alpha's rest follows
+    // (it used to stall: Alpha was gated once it lost the floor).
+    let r = Rig::two();
+    r.ch.focus("b").unwrap();
+    r.ch.set_focus_only(true).unwrap();
+    r.ch.add("a", "One.").unwrap();
+    r.ch.add("a", "Two.").unwrap();
+    r.stays_idle();
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("a"));
+    r.read("Alpha.");
+    r.wait_for("One.");
+    r.ch.add_with("b", "A question.", true).unwrap();
+    r.ch.prioritize("b").unwrap();
+    r.read("One.");
+    r.read("Beta.");
+    r.read("A question.");
+    r.read("Alpha.");
+    r.read("Two.");
+    r.stays_idle();
+}
+
+#[test]
+fn live_reading_still_lets_a_question_in() {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("a", "Two.");
+    r.wait_for("One.");
+    r.ch.add_with("b", "A question.", true).unwrap();
+    r.ch.prioritize("b").unwrap();
+    r.read("One.");
+    r.read("Beta.");
+    r.read("A question.");
+    r.read("Alpha.");
+    r.read("Two.");
+    r.stays_idle();
+}

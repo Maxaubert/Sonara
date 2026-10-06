@@ -901,3 +901,183 @@ fn ending_a_batch_makes_the_next_agent_text_start_a_new_one() {
     r.append("A", "new turn", false, false).unwrap();
     assert_eq!(texts(&r, "A"), ["new turn"]);
 }
+
+// -- a replay holds the floor (#271) ---------------------------------------
+
+/// `A` read `a1..a3` to the end, then the user restarts it (Up while idle):
+/// the replay has read `a1`.
+fn replaying_a(ids: &[&str]) -> Router {
+    let mut r = router(ids);
+    push(&mut r, "A", &["a1", "a2", "a3"]);
+    drain(&mut r);
+    assert!(r.replay("A"));
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r
+}
+
+#[test]
+fn a_replay_is_not_taken_over_by_another_sessions_question() {
+    let mut r = replaying_a(&["A", "B"]);
+    push(&mut r, "B", &["question"]);
+    assert!(r.prioritize("B"));
+    assert_eq!(drain(&mut r), ["a2", "a3", "[b]", "question"]);
+    assert!(r.prioritized().is_empty());
+}
+
+#[test]
+fn a_replay_by_next_channel_is_not_taken_over_by_another_sessions_question() {
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "A", &["a1", "a2"]);
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(drain(&mut r), ["a1", "a2", "[b]", "b1"]);
+    assert_eq!(r.next_channel(), Some(("A".to_string(), true)));
+    assert_eq!(next(&mut r).unwrap(), "[a again manual]");
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["a2", "[b]", "question"]);
+}
+
+#[test]
+fn a_replay_is_not_taken_over_by_another_sessions_message() {
+    // B opened first and is focused (the user last prompted there): its
+    // new message still waits for the replay's batch to end.
+    let mut r = replaying_a(&["B", "A"]);
+    r.focus("B");
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(drain(&mut r), ["a2", "a3", "[b]", "b1"]);
+}
+
+#[test]
+fn what_arrived_during_a_replay_is_read_after_it_decisions_first() {
+    let mut r = replaying_a(&["C", "A", "B"]);
+    push(&mut r, "C", &["c1"]);
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["a2", "a3", "[b]", "question", "[c]", "c1"]);
+}
+
+#[test]
+fn flush_during_a_replay_moves_on() {
+    // The flush hotkey (and a turn_start in the replayed session, which
+    // flushes it) ends the hold: the question is read next.
+    let mut r = replaying_a(&["A", "B"]);
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    r.flush(Some("A"));
+    assert_eq!(drain(&mut r), ["[b]", "question"]);
+}
+
+#[test]
+fn next_channel_and_mute_during_a_replay_move_on() {
+    let mut r = replaying_a(&["A", "B", "C"]);
+    push(&mut r, "B", &["b1"]);
+    push(&mut r, "C", &["question"]);
+    r.prioritize("C");
+    // next_channel lands on B's unread message: not a replay, no hold
+    // (live reading: the question goes first, then B resumes).
+    assert_eq!(r.next_channel(), Some(("B".to_string(), false)));
+    assert_eq!(
+        drain(&mut r),
+        ["[b manual]", "[c]", "question", "[b]", "b1"]
+    );
+
+    let mut r = replaying_a(&["A", "B"]);
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    r.set_muted("A", true);
+    assert_eq!(drain(&mut r), ["[b]", "question"]);
+}
+
+#[test]
+fn a_restart_with_a_channel_mid_read_holds_the_floor_too() {
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "A", &["a1", "a2"]);
+    drain(&mut r);
+    push(&mut r, "B", &["b1"]);
+    assert_eq!(next(&mut r).unwrap(), "[b]");
+    assert!(r.replay("A"));
+    assert_eq!(next(&mut r).unwrap(), "[a again manual]");
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["a2", "[b]", "b1", "question"]);
+}
+
+#[test]
+fn reading_returns_to_a_batch_cut_by_a_priority() {
+    // A reads live; C (opened first) has a waiting message; B's question
+    // cuts A's batch. A resumes right after the question, before C.
+    let mut r = router(&["C", "A", "B"]);
+    r.focus("A");
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r.focus("C");
+    push(&mut r, "C", &["c1"]);
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["[b]", "question", "[a]", "a2", "[c]", "c1"]);
+}
+
+#[test]
+fn reading_returns_to_a_batch_cut_by_a_priority_under_focus_only() {
+    // No stall: A reads by next_channel (not focused, not authorized) when
+    // the focused session's question cuts in; A's rest is still read.
+    let mut r = router(&["F", "A"]);
+    r.set_focus_only(true);
+    r.focus("F");
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(r.next_channel(), Some(("A".to_string(), false)));
+    assert_eq!(next(&mut r).unwrap(), "[a manual]");
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "F", &["question"]);
+    r.prioritize("F");
+    assert_eq!(drain(&mut r), ["[f]", "question", "[a]", "a2"]);
+}
+
+#[test]
+fn live_reading_still_lets_a_question_in() {
+    let mut r = router(&["A", "B"]);
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["[b]", "question", "[a]", "a2"]);
+}
+
+#[test]
+fn a_replay_does_not_hold_text_appended_after_it_started() {
+    // Up replays a session that is still writing its turn: what it writes
+    // during the replay is live reading, so a decision gets in after the
+    // replayed entries.
+    let mut r = router(&["A", "B"]);
+    r.append("A", "a1", false, false).unwrap();
+    r.append("A", "a2", false, false).unwrap();
+    assert_eq!(drain(&mut r), ["a1", "a2"]);
+    assert!(r.replay("A"));
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    r.append("A", "a3", false, false).unwrap();
+    push(&mut r, "B", &["question"]);
+    r.prioritize("B");
+    assert_eq!(drain(&mut r), ["a2", "[b]", "question", "[a]", "a3"]);
+}
+
+#[test]
+fn a_channel_muted_mid_read_does_not_resume_past_the_focus_gate() {
+    // A reads by next_channel while unfocused; the focused session's
+    // question waits; the user mutes A. Unmuted later, A is gated again
+    // like any unfocused channel: nothing was reading it any more.
+    let mut r = router(&["F", "A"]);
+    r.set_focus_only(true);
+    r.focus("F");
+    push(&mut r, "A", &["a1", "a2"]);
+    assert_eq!(r.next_channel(), Some(("A".to_string(), false)));
+    assert_eq!(next(&mut r).unwrap(), "[a manual]");
+    assert_eq!(next(&mut r).unwrap(), "a1");
+    push(&mut r, "F", &["question"]);
+    r.prioritize("F");
+    r.set_muted("A", true);
+    assert_eq!(drain(&mut r), ["[f]", "question"]);
+    r.set_muted("A", false);
+    assert!(drain(&mut r).is_empty());
+}

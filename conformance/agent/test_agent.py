@@ -606,3 +606,52 @@ def test_flush_keeps_a_reply_another_session_is_still_writing(rt, scope):
     stream(c, "b", " Done now.", final=True)
     ok(c, {"type": "turn_end", "channel": "b"})
     assert heard(c, 2) == [("Beta still arriving.", "b"), ("Done now.", "b")]
+
+
+def replaying_a(rt):
+    """Session a's two-sentence reply was heard, then ``restart`` while idle
+    (the Up key) replays it: its first sentence is playing again."""
+    c = agent_client(rt)
+    stream(c, "a", TWO_LONG)
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    ok(c, {"type": "control", "action": "skip"})
+    assert starts_long(heard(c, 1)[0], "a", 1)
+    ok(c, {"type": "control", "action": "skip"})
+    c.state(lambda s: s["now_playing"] is None)
+    ok(c, {"type": "control", "action": "restart"})
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    return c
+
+
+def ask_b(c):
+    ok(c, {"type": "ask", "channel": "b", "kind": "question", "text": "Deploy now?",
+           "options": ["Yes"]})
+    assert earcon(c) == "choice"
+
+
+def test_a_replay_is_not_taken_over_by_another_sessions_question(rt):
+    # #271: the replay the user started holds the floor until its batch
+    # ends; the question waits behind it.
+    c = replaying_a(rt)
+    ask_b(c)
+    ok(c, {"type": "control", "action": "skip"})
+    assert starts_long(heard(c, 1)[0], "a", 1)
+    ok(c, {"type": "control", "action": "skip"})
+    assert heard(c, 1) == [("Deploy now?", "b")]
+
+
+def test_flush_during_a_replay_moves_on(rt):
+    c = replaying_a(rt)
+    ask_b(c)
+    r = ok(c, {"type": "control", "action": "flush"})
+    assert (r["flushed"], r["channel"]) == ("channel", "a")
+    assert heard(c, 1) == [("Deploy now?", "b")]
+
+
+def test_live_reading_still_lets_a_question_in(rt):
+    c = agent_client(rt)
+    stream(c, "a", TWO_LONG)
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    ask_b(c)
+    ok(c, {"type": "control", "action": "skip"})
+    assert heard(c, 1) == [("Deploy now?", "b")]
