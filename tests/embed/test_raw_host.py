@@ -350,7 +350,12 @@ def test_the_powershell_recipe_of_bundling_md_runs_as_written(rt, shell, prelude
     r = subprocess.run([exe, "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=30,
                        env=raw.env_with(LOCALAPPDATA=str(rt["home"].parent)))
     out = r.stdout
-    assert "E_BAD_REQUEST" not in out, out
+    if "E_BAD_REQUEST" in out:
+        # What the shell pipes to a program, for the failure message.
+        dump = "\n".join(([prelude] if prelude else [])
+                         + ["'{\"text\": \"x\"}' | python -c \"import sys; print(sys.stdin.buffer.read())\""])
+        piped = subprocess.run([exe, "-NoProfile", "-Command", dump], capture_output=True, text=True, timeout=30)
+        pytest.fail(f"{out}\npiped bytes: {piped.stdout!r} {piped.stderr!r}")
     assert re.search(r'"item_id":\s*\d+', out) and '{"ok":true}' in out, (out, r.stderr)
     assert "event: state" in out, out
     raw.post_json(rt["info"], "control", action="stop")
