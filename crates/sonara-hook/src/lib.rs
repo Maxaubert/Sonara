@@ -54,6 +54,8 @@
 //! The log never holds up or fails the hook: the lock is waited for
 //! `LOG_WAIT` at most and every error is ignored.
 use serde_json::{json, Map, Value};
+/// The log's masking and clipping, shared with the other writer.
+pub use sonara_log::{scrub, FIELD_MAX};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -89,8 +91,6 @@ const MANY_NOTE: &str = "More than nine options; use arrow keys for ten and up."
 
 /// The hook's stream in the log folder (`hook.log`).
 pub const LOG_STREAM: &str = "hook";
-/// A payload string longer than this (bytes) is clipped in the log.
-pub const FIELD_MAX: usize = 4096;
 /// How long a hook waits for another writer of the log before it skips
 /// its line.
 pub const LOG_WAIT: Duration = Duration::from_millis(50);
@@ -360,34 +360,6 @@ pub fn debug_log(home: &Path) -> bool {
         .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
         .and_then(|v| v.get("debug_log").and_then(Value::as_bool))
         .unwrap_or(true)
-}
-
-/// Make `v` fit for the log, anywhere in it: the value of a field whose
-/// name says it holds a secret is masked, credential-looking words in text
-/// are masked (`sonara_log::mask`), and every string over `FIELD_MAX`
-/// bytes is clipped.
-pub fn scrub(v: &mut Value) {
-    match v {
-        Value::String(s) => {
-            if let std::borrow::Cow::Owned(m) = sonara_log::mask(s) {
-                *s = m;
-            }
-            if s.len() > FIELD_MAX {
-                *s = sonara_log::clip(s, FIELD_MAX).into_owned();
-            }
-        }
-        Value::Array(a) => a.iter_mut().for_each(scrub),
-        Value::Object(o) => {
-            for (k, v) in o.iter_mut() {
-                if sonara_log::secret_key(k) && !v.is_null() {
-                    *v = Value::String(sonara_log::MASK.into());
-                } else {
-                    scrub(v);
-                }
-            }
-        }
-        _ => {}
-    }
 }
 
 /// Tools whose input Sonara reads, so the log keeps it whole.

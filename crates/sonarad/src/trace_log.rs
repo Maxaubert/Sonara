@@ -28,14 +28,13 @@
 use serde_json::{json, Map, Value};
 use sonara_agent::{Trace, Traced};
 use sonara_channels::Dropped;
+/// The log's masking and clipping, shared with the other writer.
+pub use sonara_log::{scrub, FIELD_MAX};
 use sonara_system::log::value;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// A protocol string field longer than this (bytes) is clipped in an `in`
-/// line.
-pub const FIELD_MAX: usize = 4096;
 /// Entries whose origin is remembered (`Origins`).
 const ORIGINS: usize = 1024;
 
@@ -206,34 +205,6 @@ const PRIVATE_FIELDS: &[&str] = &[
     "takeover",
     "events",
 ];
-
-/// Make `v` fit for the log, anywhere in it: the value of a field whose
-/// name says it holds a secret is masked, credential-looking words in text
-/// are masked (`sonara_log::mask`), and every string over `FIELD_MAX`
-/// bytes is clipped.
-pub fn scrub(v: &mut Value) {
-    match v {
-        Value::String(s) => {
-            if let std::borrow::Cow::Owned(m) = sonara_log::mask(s) {
-                *s = m;
-            }
-            if s.len() > FIELD_MAX {
-                *s = sonara_log::clip(s, FIELD_MAX).into_owned();
-            }
-        }
-        Value::Array(a) => a.iter_mut().for_each(scrub),
-        Value::Object(o) => {
-            for (k, v) in o.iter_mut() {
-                if sonara_log::secret_key(k) && !v.is_null() {
-                    *v = Value::String(sonara_log::MASK.into());
-                } else {
-                    scrub(v);
-                }
-            }
-        }
-        _ => {}
-    }
-}
 
 /// Whether the `value` of a `set` is safe to log with `debug_log` off.
 fn plain(m: &Map<String, Value>, v: &Value) -> bool {

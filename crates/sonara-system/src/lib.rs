@@ -15,7 +15,7 @@
 //!   restored, and why) a host writes to its support log.
 //!
 //! Everything Windows-facing goes through [`platform::Platform`]; tests use
-//! [`fake::Fake`]. L4 builds only on the L1 facade (R7, `tests/layering.rs`).
+//! [`fake::Fake`]. L4 builds only on the L1 facade (R7, `sonara-core/tests/layering.rs`).
 pub mod audio;
 pub mod ducking;
 pub mod fake;

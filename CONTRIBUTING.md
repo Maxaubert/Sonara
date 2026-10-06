@@ -71,7 +71,7 @@ what you tested.
 ## Code rules
 
 - Crates are layered (L1 core to L5 hook and CLI, `sonarad` on top) and never depend upward;
-  `crates/*/tests/layering.rs` enforces it.
+  `crates/sonara-core/tests/layering.rs` (one table of allowed edges) enforces it.
 - Protocol changes are additive and update [docs/protocol-v1.md](docs/protocol-v1.md) (or
   [docs/protocol-v1-engines.md](docs/protocol-v1-engines.md) for external engines), the
   conformance tests and both SDKs.

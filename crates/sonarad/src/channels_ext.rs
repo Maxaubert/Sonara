@@ -16,6 +16,9 @@ pub type Slot = Arc<OnceLock<Channels>>;
 
 pub const NAME: &str = "channels";
 
+/// Message types of the extension.
+pub const TYPES: &[&str] = &["channel_open", "channel_close", "focus"];
+
 /// The setting that turns switch announcements on and off.
 pub const ANNOUNCE_KEY: &str = "channel_announce";
 
