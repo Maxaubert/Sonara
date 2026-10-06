@@ -329,8 +329,14 @@ def test_the_curl_examples_of_protocol_v1_run_as_written(rt):
     raw.post_json(info, "control", action="stop")
 
 
-@pytest.mark.parametrize("shell", ["pwsh", "powershell"])
-def test_the_powershell_recipe_of_bundling_md_runs_as_written(rt, shell):
+@pytest.mark.parametrize("shell,prelude", [
+    ("pwsh", ""),
+    ("powershell", ""),
+    # A UTF-8 $OutputEncoding (as on GitHub's Windows runners) pipes a BOM
+    # first, which the runtime ignores.
+    ("powershell", "$OutputEncoding = [Text.Encoding]::UTF8"),
+])
+def test_the_powershell_recipe_of_bundling_md_runs_as_written(rt, shell, prelude):
     """In PowerShell 7 (which passes quotes to programs as they are since
     7.3) and Windows PowerShell 5.1 alike."""
     exe = shutil.which(shell)
@@ -340,7 +346,7 @@ def test_the_powershell_recipe_of_bundling_md_runs_as_written(rt, shell):
              if ln.strip()]
     assert lines[0].startswith("$rt = Get-Content"), lines[0]
     # The runtime.json read and the two requests; the event stream for 2 s.
-    script = "\n".join(lines[:3] + [lines[3].replace("curl.exe -sN", "curl.exe -sN --max-time 2")])
+    script = "\n".join(([prelude] if prelude else []) + lines[:3] + [lines[3].replace("curl.exe -sN", "curl.exe -sN --max-time 2")])
     r = subprocess.run([exe, "-NoProfile", "-Command", script], capture_output=True, text=True, timeout=30,
                        env=raw.env_with(LOCALAPPDATA=str(rt["home"].parent)))
     out = r.stdout

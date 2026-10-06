@@ -202,10 +202,13 @@ async fn post(req: Request<Incoming>, kind: String, server: Arc<Server>) -> Resp
             ))
         }
     };
+    // A UTF-8 byte order mark is ignored (RFC 8259 allows it): Windows
+    // PowerShell 5.1 with a UTF-8 `$OutputEncoding` pipes one first.
+    let body = body.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&body);
     let mut map = if body.iter().all(u8::is_ascii_whitespace) {
         Map::new()
     } else {
-        match serde_json::from_slice::<Value>(&body) {
+        match serde_json::from_slice::<Value>(body) {
             Ok(Value::Object(m)) => m,
             Ok(_) => {
                 return failure(Failure::new(

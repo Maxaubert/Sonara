@@ -113,7 +113,9 @@ curl.exe -sN -H "Authorization: Bearer $($rt.token)" "http://127.0.0.1:$($rt.htt
 
 The JSON goes to curl on stdin (`--data-binary '@-'`): PowerShell 7.3 and later pass quotes in
 arguments to programs as they are, so the older `-d '{\"text\": ...}'` form sends invalid JSON
-there (`E_BAD_REQUEST`), while Windows PowerShell 5.1 needs it. Piping works in both.
+there (`E_BAD_REQUEST`), while Windows PowerShell 5.1 needs it. Piping works in both. With a
+UTF-8 `$OutputEncoding`, Windows PowerShell 5.1 pipes a byte order mark first; the runtime
+ignores it (since 0.21.5).
 
 Any language with sockets can use the TCP JSON-lines transport instead (`hello` with the token first); see `docs/protocol-v1.md`.
 

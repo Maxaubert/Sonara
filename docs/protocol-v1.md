@@ -118,7 +118,8 @@ JSON object with a `type`; requests are applied in the order they arrive on a co
 ### HTTP (`http_port`)
 
 - `POST /v1/<type>` with header `Authorization: Bearer <token>`. The body is the request without
-  `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB.
+  `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB. A leading
+  UTF-8 byte order mark is ignored (since runtime 0.21.5).
 - No `hello` is needed (the bearer token authenticates each request), but `POST /v1/hello` works,
   including `keep_alive` and `takeover`.
 - The reply body is the same JSON as on TCP. Status: 200 for `ok: true`; for errors `E_AUTH` 401,
