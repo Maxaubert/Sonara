@@ -112,8 +112,11 @@ def start_runtime(runtime_path: str, home: str, args: Sequence[str], timeout: fl
         kwargs["creationflags"] = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
+    # An absolute path: Windows does not find a relative one written with
+    # forward slashes ("sonara/sonarad.exe"), which Node's spawn accepts (#274).
+    exe = os.path.abspath(str(runtime_path))
     try:
-        proc = subprocess.Popen([str(runtime_path), "--home", str(home), *args], **kwargs)
+        proc = subprocess.Popen([exe, "--home", str(home), *args], **kwargs)
     except OSError as e:
         raise SonaraError(E_START_FAILED, f"cannot start {runtime_path}: {e}") from None
     _started.append(proc)

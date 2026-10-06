@@ -35,6 +35,7 @@ pub mod support_log;
 pub mod system_ext;
 pub mod tcp;
 pub mod trace_log;
+pub mod wav_output;
 pub mod wire;
 
 /// The runtime version (the workspace version).

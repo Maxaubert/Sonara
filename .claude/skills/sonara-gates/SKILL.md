@@ -56,6 +56,7 @@ python -m pytest tests/repo -q
 |---|---|
 | `crates/sonarad/assets/settings/`, `crates/sonarad/src/settings_page.rs`, `crates/sonarad/src/config.rs` | `cargo build -p sonarad`, then `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e`, `python -m playwright install chromium`). CI skips it: it is the local gate. |
 | `clients/`, `packaging/npm-runtime`, `packaging/smoke`, `examples/`, any version file (every PR bumps one) | SDK gates below |
+| `crates/sonarad`, `sonara-reader`, `sonara-engine`, `sonara-audio`, `clients/`, `packaging/npm-runtime`, `packaging/release_zip.py`, `tests/embed/`, `docs/protocol-v1.md`, `docs/bundling.md`, any version file | Embedder e2e (#274): `cargo build -p sonarad -p sonara-hook -p sonara-cli --release`, stage the DLLs, `(cd clients/ts && npm ci && npm run build)`, then `python -m pytest tests/embed -q -rs` (`docs/testing.md`). A Kokoro or OneCore skip is fine when the model or a Windows voice is missing; a failure is not |
 | Rust dependencies (`Cargo.toml`, `Cargo.lock` beyond the version) | `python packaging/notices/gen_notices.py`, commit the result |
 | `crates/sonara-agent/sounds/`, `packaging/sounds/` | `python packaging/sounds/build_earcons.py --check` |
 

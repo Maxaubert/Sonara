@@ -9,7 +9,7 @@ use sonara_audio::{AudioEvent, Output, PcmChunk};
 use sonara_core::reader::{
     Chunking, Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
 };
-use sonara_engine::{Engine, EngineStatus, InputLimit, Registry, SendMode};
+use sonara_engine::{Engine, EngineStatus, InputLimit, Readiness, Registry, SendMode};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -108,6 +108,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         muted: false,
         subscribers: Vec::new(),
         not_ready: None,
+        warm_error: None,
         status: EngineStatus::ready(),
         status_changes: 0,
         whole: start.whole,
@@ -191,6 +192,10 @@ struct Loop {
     /// Why the current engine failed its warm-up, told again to each new
     /// subscriber (they can only subscribe once `new` returned).
     not_ready: Option<String>,
+    /// The current engine's failed warm-up, while it has not spoken since
+    /// (#274): an engine that calls itself ready (OneCore with no usable
+    /// voices) is reported `unavailable` with this message meanwhile.
+    warm_error: Option<String>,
     /// The current engine's status as last told to subscribers.
     status: EngineStatus,
     /// How many status changes were told (`Event::EngineStatus::changes`).
@@ -211,7 +216,7 @@ impl Loop {
         self.volume = self.reader.state().volume;
         let fx = self.reader.set_volume(volume);
         self.run(fx);
-        self.status = self.engine.status();
+        self.status = self.current_status();
         let fx = self.reader.set_lookahead(self.engine.lookahead());
         self.run(fx);
         let fx = self.set_chunking();
@@ -226,16 +231,34 @@ impl Loop {
         self.reader.set_chunking(c)
     }
 
+    /// The current engine's status, except that one which calls itself
+    /// ready while its warm-up failed (and it has not spoken since) is
+    /// `unavailable`, with the warm-up's error (#274).
+    fn current_status(&self) -> EngineStatus {
+        let status = self.engine.status();
+        match &self.warm_error {
+            Some(error) if status.readiness == Readiness::Ready => EngineStatus {
+                readiness: Readiness::Unavailable,
+                message: Some(error.clone()),
+                ..status
+            },
+            _ => status,
+        }
+    }
+
     /// Tell subscribers when the current engine's status changed (a model
     /// loaded, a download moved on or failed), with a log line when its
     /// readiness changed (not for every bit of download progress).
     fn check_status(&mut self) {
-        let status = self.engine.status();
+        let status = self.current_status();
         if status != self.status {
             let moved = status.readiness != self.status.readiness;
+            // A failed warm-up was logged already ("is not ready: ...").
+            let warm_failure =
+                self.warm_error.is_some() && status.readiness == Readiness::Unavailable;
             self.status = status.clone();
             self.status_changes += 1;
-            if moved {
+            if moved && !warm_failure {
                 self.broadcast(Event::Log {
                     message: format!("engine '{}' is {status}", self.engine.id()),
                 });
@@ -360,6 +383,7 @@ impl Loop {
                 let same_id = engine.id() == self.engine.id();
                 self.engine = engine;
                 self.not_ready = None;
+                self.warm_error = None;
                 let mut fx = self.reader.set_lookahead(self.engine.lookahead());
                 fx.extend(self.set_chunking());
                 self.synth.warm(self.engine.clone());
@@ -429,11 +453,24 @@ impl Loop {
             Done::Chunk {
                 item,
                 chunk,
+                engine,
                 result,
-            } => (item, chunk, result),
-            Done::WarmFailed { engine, message } => {
+            } => {
+                // It speaks after all (voices installed since): ready.
+                if result.is_ok() && engine == self.engine.id() {
+                    self.not_ready = None;
+                    self.warm_error = None;
+                }
+                (item, chunk, result)
+            }
+            Done::WarmFailed {
+                engine,
+                message,
+                error,
+            } => {
                 if engine == self.engine.id() {
                     self.not_ready = Some(message.clone());
+                    self.warm_error = Some(error);
                 }
                 self.broadcast(Event::Log { message });
                 return;

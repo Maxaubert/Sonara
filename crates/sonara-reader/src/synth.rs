@@ -35,11 +35,16 @@ pub(crate) enum Done {
     Chunk {
         item: ItemId,
         chunk: usize,
+        /// The engine that made it.
+        engine: EngineId,
         result: Result<Vec<PcmChunk>, sonara_engine::Error>,
     },
     WarmFailed {
         engine: EngineId,
+        /// The log line.
         message: String,
+        /// The engine's error alone (`engine_status.message`).
+        error: String,
     },
 }
 
@@ -177,6 +182,7 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
                     done(Done::WarmFailed {
                         engine: engine.id(),
                         message: format!("engine '{}' is not ready: {e}", engine.id()),
+                        error: e.to_string(),
                     });
                 }
             }
@@ -218,6 +224,7 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
                 done(Done::Chunk {
                     item: job.item,
                     chunk: job.chunk,
+                    engine: job.engine.id(),
                     result,
                 });
             }

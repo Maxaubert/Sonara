@@ -382,6 +382,13 @@ pub fn head(resp: &ureq::http::Response<ureq::Body>) -> (u16, Option<String>, Op
 
 pub fn transport(e: ureq::Error, host: &str) -> ExtError {
     match e {
+        // No connection within the connect timeout (a stopped local
+        // server on Windows, which answers a refused loopback connect only
+        // after about 2 s): the host cannot be reached, as when refused.
+        ureq::Error::Timeout(ureq::Timeout::Connect) => ExtError::new(
+            Reason::Network,
+            format!("cannot reach {host}: no connection"),
+        ),
         ureq::Error::Timeout(_) => {
             ExtError::new(Reason::Timeout, format!("{host} did not answer in time"))
         }
@@ -512,6 +519,18 @@ impl ErrorBody {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_connect_timeout_is_a_network_failure_and_a_slow_answer_a_timeout() {
+        let e = transport(ureq::Error::Timeout(ureq::Timeout::Connect), "127.0.0.1");
+        assert_eq!(e.reason, Reason::Network);
+        let e = transport(
+            ureq::Error::Timeout(ureq::Timeout::RecvResponse),
+            "127.0.0.1",
+        );
+        assert_eq!(e.reason, Reason::Timeout);
+    }
+
     use super::*;
 
     #[test]

@@ -345,9 +345,6 @@ pub fn done_line(request: &Value, reply: &Value) -> String {
             } else if models.is_empty() {
                 lines.push("No models listed.".into());
             }
-            if let Some(m) = reply["error"]["message"].as_str() {
-                lines.push(format!("The list could not be fetched: {m}"));
-            }
             lines.join("\n")
         }
         "voices" => {
@@ -377,9 +374,6 @@ pub fn done_line(request: &Value, reply: &Value) -> String {
                         .into(),
                 );
             }
-            if let Some(m) = reply["error"]["message"].as_str() {
-                lines.push(format!("The list could not be fetched: {m}"));
-            }
             lines.join("\n")
         }
         "engine_remove" => format!(
@@ -393,6 +387,18 @@ pub fn done_line(request: &Value, reply: &Value) -> String {
         ),
         _ => "Done.".into(),
     }
+}
+
+/// A model or voice list the runtime could not fetch (muted, offline, a
+/// bad key): the reply is ok but carries an error. The CLI prints it on
+/// stderr and exits nonzero, so a script can tell it from an empty list.
+pub fn fetch_error(request: &Value, reply: &Value) -> Option<String> {
+    if request["type"] != "engine_models" && request["type"] != "voices" {
+        return None;
+    }
+    reply["error"]["message"]
+        .as_str()
+        .map(|m| format!("the list could not be fetched: {m}"))
 }
 
 /// The error of a reply, with its reason when there is one.
@@ -714,5 +720,27 @@ cartesia, deepgram, command"
             "v1 (Voice one) [en-US]"
         );
         assert!(done_line(&req, &json!({"voices": []})).contains("--voice <voice>"));
+    }
+
+    #[test]
+    fn a_list_that_could_not_be_fetched_is_an_error_not_an_empty_list() {
+        // Muted, offline or a bad key: the reply is ok with an error inside.
+        // The CLI must exit nonzero so a script can tell it from an empty list.
+        let failed = json!({"models": [], "list": true, "takes_model": true,
+            "error": {"code": "E_ENGINE", "message": "Sonara is muted"}});
+        let req = json!({"type": "engine_models"});
+        assert_eq!(
+            fetch_error(&req, &failed).as_deref(),
+            Some("the list could not be fetched: Sonara is muted")
+        );
+        assert!(!done_line(&req, &failed).contains("could not be fetched"));
+        let req = json!({"type": "voices"});
+        assert!(fetch_error(
+            &req,
+            &json!({"voices": [], "error": {"message": "offline"}})
+        )
+        .is_some());
+        assert_eq!(fetch_error(&req, &json!({"voices": []})), None);
+        assert_eq!(fetch_error(&json!({"type": "engine_test"}), &failed), None);
     }
 }

@@ -35,7 +35,7 @@ def test_a_crate_source_change_runs_rust_and_conformance():
 
 def test_a_dependency_change_also_runs_deny_and_notices():
     got = gate.select(["crates/sonara-engine/Cargo.toml"])
-    assert got == ["rust", "deps", "conformance", "python"]
+    assert got == ["rust", "deps", "conformance", "python", "embed"]
 
 
 def test_the_settings_page_runs_the_e2e_tests():
@@ -46,7 +46,7 @@ def test_the_settings_page_runs_the_e2e_tests():
 
 def test_a_version_bump_runs_every_gate_but_the_e2e_and_earcons():
     got = gate.select(gate.bump_version.all_paths())
-    assert got == ["rust", "deps", "conformance", "python", "sdk"]
+    assert got == ["rust", "deps", "conformance", "python", "sdk", "embed"]
 
 
 def test_client_and_packaging_changes_run_the_sdk_gates():
@@ -138,3 +138,21 @@ def test_the_e2e_gate_fails_when_playwright_is_missing_instead_of_skipping():
     assert labels.index("playwright installed") < labels.index("tests/e2e")
     check = steps[labels.index("playwright installed")][1]
     assert "playwright" in " ".join(check)
+
+
+def test_runtime_sdk_and_doc_changes_run_the_embedder_suite():
+    for path in ("crates/sonarad/src/main.rs", "crates/sonara-reader/src/worker.rs", "clients/ts/src/client.ts",
+                 "clients/python/src/sonara_client/discovery.py", "docs/protocol-v1.md", "docs/bundling.md",
+                 "tests/embed/support.py", "packaging/release_zip.py"):
+        assert "embed" in gate.select([path]), path
+    assert "embed" not in gate.select(["crates/sonara-agent/src/lib.rs"])
+
+
+def test_the_embed_gate_builds_the_release_zip_inputs_and_points_at_the_release_runtime():
+    steps = gate.steps_for("embed", None, False)
+    build = steps[0][1]
+    for exe in ("sonarad", "sonara-hook", "sonara-cli"):
+        assert exe in build, exe
+    assert "--release" in build
+    suite = next(s for s in steps if s[0] == "tests/embed")
+    assert Path(suite[3]["SONARAD"]).parts[-2:] == ("release", "sonarad.exe")

@@ -17,7 +17,9 @@ use sonarad::migrate;
 use sonarad::protocol::{self, Server};
 use sonarad::runtime_file::{self, RuntimeInfo};
 use sonarad::system_ext::SystemHost;
-use sonarad::{http, null_output::NullOutput, support_log, tcp, trace_log, VERSION};
+use sonarad::{
+    http, null_output::NullOutput, support_log, tcp, trace_log, wav_output::WavOutput, VERSION,
+};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -174,12 +176,19 @@ fn preview_registry(
 }
 
 /// The reader on `built`, starting with `engine`.
-fn build_reader(built: &Built, engine: &str, output: OutputKind) -> Result<ReaderHandle, String> {
+fn build_reader(built: &Built, engine: &str, output: &OutputKind) -> Result<ReaderHandle, String> {
     let mut config = Config::new(built.registry.clone());
     config.engine = Some(engine.to_string());
-    if output == OutputKind::Null {
-        let (out, events) = NullOutput::new();
-        config = config.with_output(Box::new(out), events);
+    match output {
+        OutputKind::Device => {}
+        OutputKind::Null => {
+            let (out, events) = NullOutput::new();
+            config = config.with_output(Box::new(out), events);
+        }
+        OutputKind::Wav(dir) => {
+            let (out, events) = WavOutput::new(dir)?;
+            config = config.with_output(Box::new(out), events);
+        }
     }
     ReaderHandle::new(config).map_err(|e| format!("cannot start the reader: {e}"))
 }
@@ -281,14 +290,14 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         (Some("fake"), Some(s), Some(x)) if x.get(s).is_some() => s.clone(),
         _ => built.chosen.clone(),
     };
-    let (reader, engine) = match build_reader(&built, &chosen, args.output) {
+    let (reader, engine) = match build_reader(&built, &chosen, &args.output) {
         Ok(r) => (r, chosen.clone()),
         Err(e) if args.engine.is_none() && wanted.is_some() => {
             home.log(&format!(
                 "config.json: engine '{}' not available ({e}); using the default",
                 wanted.as_deref().unwrap_or_default()
             ));
-            let r = build_reader(&built, &built.default_engine, args.output).map_err(fail)?;
+            let r = build_reader(&built, &built.default_engine, &args.output).map_err(fail)?;
             (r, built.default_engine.clone())
         }
         Err(e) => return Err(fail(e)),

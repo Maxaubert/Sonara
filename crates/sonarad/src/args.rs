@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fake|ID] \
-[--output device|null] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
+[--output device|null|wav:DIR] [--system windows|fake] [--idle-exit SECONDS] [--standalone]
        [--keys windows|fake] [--no-external-engines] [--migrate-from DIR] [--version]
 
   --home DIR          home folder (default: SONARA_HOME, else %LOCALAPPDATA%\\Sonara)
@@ -15,7 +15,9 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
                       (no Kokoro, no download); a saved external engine still
                       applies, with the fake engine as its fallback
   --output KIND       'device' (default; 'null' with --engine fake) or 'null',
-                      a silent output that keeps real time
+                      a silent output that keeps real time, or 'wav:DIR', the
+                      null output that also writes every chunk it is given
+                      to a WAV file in DIR (a testing aid)
   --system KIND       platform of the 'system' extension: 'windows' (default)
                       or 'fake', a testing aid that keeps fake apps, media
                       and hotkeys in <home>\\fake-system.json
@@ -32,10 +34,13 @@ pub const USAGE: &str = "usage: sonarad [--home DIR] [--engine kokoro|onecore|fa
                       home has no config.json yet (default: %USERPROFILE%\\.sonara,
                       and only for the default home)";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputKind {
     Device,
     Null,
+    /// `wav:<DIR>`: the null output that also writes what it is given to
+    /// WAV files in DIR (tests, #274).
+    Wav(PathBuf),
 }
 
 /// Where external engine keys are kept.
@@ -98,10 +103,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             "--engine" => engine = Some(value("--engine")?),
             "--migrate-from" => migrate_from = Some(PathBuf::from(value("--migrate-from")?)),
             "--output" => {
-                output = Some(match value("--output")?.as_str() {
+                let v = value("--output")?;
+                output = Some(match v.as_str() {
                     "device" => OutputKind::Device,
                     "null" => OutputKind::Null,
-                    other => return Err(format!("unknown --output '{other}'")),
+                    other => match other.strip_prefix("wav:").filter(|d| !d.is_empty()) {
+                        Some(dir) => OutputKind::Wav(PathBuf::from(dir)),
+                        None => return Err(format!("unknown --output '{other}'")),
+                    },
                 })
             }
             "--system" => {
@@ -218,12 +227,20 @@ mod tests {
     }
 
     #[test]
+    fn the_wav_output_names_its_folder() {
+        let a = run(&["--engine", "kokoro", "--output", r"wav:C:\out dir"]);
+        assert_eq!(a.output, OutputKind::Wav(PathBuf::from(r"C:\out dir")));
+        assert_eq!(run(&["--output", "null"]).output, OutputKind::Null);
+    }
+
+    #[test]
     fn bad_arguments_are_errors() {
         let p = |v: &[&str]| parse(v.iter().map(|s| s.to_string()));
         assert!(p(&["--bogus"]).is_err());
         assert!(p(&["--home"]).is_err());
         assert!(p(&["--idle-exit", "-1"]).is_err());
         assert!(p(&["--output", "speaker"]).is_err());
+        assert!(p(&["--output", "wav:"]).is_err());
         assert_eq!(p(&["--version"]).unwrap(), Command::Version);
     }
 }

@@ -118,7 +118,8 @@ JSON object with a `type`; requests are applied in the order they arrive on a co
 ### HTTP (`http_port`)
 
 - `POST /v1/<type>` with header `Authorization: Bearer <token>`. The body is the request without
-  `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB.
+  `type` (the path gives it), a JSON object; an empty body is `{}`. At most 1 MiB. Leading
+  UTF-8 byte order marks are ignored (since runtime 0.21.5).
 - No `hello` is needed (the bearer token authenticates each request), but `POST /v1/hello` works,
   including `keep_alive` and `takeover`.
 - The reply body is the same JSON as on TCP. Status: 200 for `ok: true`; for errors `E_AUTH` 401,
@@ -297,7 +298,7 @@ to date.
 |---|---|
 | `engine` | the current engine id |
 | `ready` | `true` when it speaks with its own voice |
-| `status` | `ready`, `loading` (its model, a few seconds), `downloading`, `waiting` (the last download or load failed; it retries later) or `unavailable` (it cannot run in this install, for Kokoro: no `onnxruntime.dll`) |
+| `status` | `ready`, `loading` (its model, a few seconds), `downloading`, `waiting` (the last download or load failed; it retries later) or `unavailable` (it cannot run in this install, for Kokoro: no `onnxruntime.dll`; for OneCore, since runtime 0.21.5 (#274): no usable Windows voice, with `message` saying how to add one, until a sentence was spoken) |
 | `progress` | `{done, total}` bytes, while `downloading` |
 | `fallback` | the engine speaking meanwhile (`onecore`), while not ready |
 | `message` | why it is not ready, after a failure |
@@ -450,6 +451,13 @@ copy, a development aid), else `onecore`. A Kokoro start verifies or downloads a
 in the background right away. `sonarad --engine fake` uses a deterministic tone engine (10 ms of
 audio per character at rate 200; text containing `[fail]` fails to synthesize) and, unless
 `--output device` is given, `--output null`: a silent output that keeps real time.
+`sonarad --output wav:<dir>` (runtime 0.21.5, #274) is that null output, and it also writes the
+PCM of every chunk it is handed to a 16-bit WAV file in `<dir>` (created if needed):
+`<seq>-item<item_id>-chunk<n>.wav` per chunk played (numbered in play order; a chunk played again
+gets a new file, a streamed chunk grows until it finished), `<seq>-clip.wav` per clip (an earcon, a
+preview, `engine_test` with `play`). The files hold the audio as the engine made it (before volume
+and mute), all of it even when a stop cut the chunk, so an end-to-end test can check that a real
+engine spoke (`tests/embed`). It works with every engine.
 `sonarad --system fake` replaces the Windows side of the [`system`](#extension-system) extension
 with fake apps, media sessions, hotkeys and keyboard layout kept in `<home>\fake-system.json` (read
 and written on every operation), so a test can set up the "apps", kill the runtime and check what

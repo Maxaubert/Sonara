@@ -222,7 +222,7 @@ impl External {
         let agent = config.agent.clone().unwrap_or_else(|| {
             crate::http::provider_agent(
                 crate::http::Timeouts {
-                    connect: Duration::from_secs(5),
+                    connect: crate::http::connect_timeout(direct),
                     recv_response: timeout,
                     // A body that stalls (Wi-Fi gone after the headers) falls
                     // back after the same wait, not 30 s more.
@@ -234,7 +234,7 @@ impl External {
         let voices_agent = config.agent.unwrap_or_else(|| {
             crate::http::provider_agent(
                 crate::http::Timeouts {
-                    connect: Duration::from_secs(5),
+                    connect: crate::http::connect_timeout(direct),
                     recv_response: VOICES_TIMEOUT,
                     recv_body: VOICES_TIMEOUT,
                 },

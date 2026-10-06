@@ -127,3 +127,12 @@ def test_never_takes_over_a_busy_instance(runtime, home, sonarad):
     assert pid_alive(a.runtime["pid"])
     assert read_json(home / "runtime.json")["pid"] == a.runtime["pid"]
     a.control("stop")
+
+
+def test_a_relative_runtime_path_with_forward_slashes_starts_the_runtime(runtime, sonarad, monkeypatch):
+    """#274: Popen on Windows did not find a relative runtime_path written
+    with forward slashes ("sonara/sonarad.exe"), where the Node client's
+    spawn did: connect() failed with E_START_FAILED."""
+    monkeypatch.chdir(sonarad.parent.parent)
+    c = runtime(runtime_path=sonarad.relative_to(sonarad.parent.parent).as_posix())
+    assert c.info["version"]
