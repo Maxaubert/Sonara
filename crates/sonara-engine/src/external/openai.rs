@@ -403,6 +403,9 @@ pub fn parse_voice_list(v: &Value) -> Vec<VoiceInfo> {
         .filter_map(|e| match e {
             Value::String(id) => Some(VoiceInfo::named(id)),
             Value::Object(_) => {
+                // `name` before `filename` for every preset: chatterbox-api's
+                // speech route looks voices up by library name, and a server
+                // that lists both means the name as the handle.
                 let id = s(e, "id")
                     .or_else(|| s(e, "voice_id"))
                     .or_else(|| s(e, "name"))

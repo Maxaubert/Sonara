@@ -102,7 +102,7 @@ def derive(schema):
             prop["maximum"] = float(m.group(2))
             prop["x-derived"] = "minimum/maximum from the description"
     if req:
-        schema["required"] = req
+        schema["required"] = sorted(req)
         schema["x-derived"] = "required from 'Required.' in the descriptions"
     return schema
 
@@ -115,6 +115,7 @@ def openapi(spec, ops):
     def rewrite(node):
         if isinstance(node, dict):
             out = {}
+            pruned = None
             for k, v in node.items():
                 if k == "$ref" and isinstance(v, str):
                     m = re.match(
@@ -136,9 +137,7 @@ def openapi(spec, ops):
                             else f"{m.group(1)}.{m.group(2)}"
                         )
                         if name in PRUNE:
-                            out.update(
-                                {"description": f"pruned: {name} (not read by Sonara)"}
-                            )
+                            pruned = f"pruned: {name} (not read by Sonara)"
                             continue
                         if name not in defs:
                             defs[name] = None
@@ -146,6 +145,10 @@ def openapi(spec, ops):
                         out[k] = f"#/$defs/{name}"
                         continue
                 out[k] = rewrite(v)
+            if pruned:
+                # The note always replaces a sibling description, whatever the
+                # key order in the fetched document, so refreshes diff stably.
+                out["description"] = pruned
             return out
         if isinstance(node, list):
             return [rewrite(x) for x in node]
@@ -186,16 +189,21 @@ def discovery(spec, methods, extra):
     def rewrite(node):
         if isinstance(node, dict):
             out = {}
+            pruned = None
             for k, v in node.items():
                 if k == "$ref" and isinstance(v, str):
                     if KEEP and v not in KEEP:
-                        out.update({"description": f"pruned: {v} (not used by Sonara)"})
+                        pruned = f"pruned: {v} (not used by Sonara)"
                         continue
                     if v not in defs and v not in queue:
                         queue.append(v)
                     out[k] = f"#/$defs/{v}"
                     continue
                 out[k] = rewrite(v)
+            if pruned:
+                # The note always replaces a sibling description, whatever the
+                # key order in the fetched document, so refreshes diff stably.
+                out["description"] = pruned
             return out
         if isinstance(node, list):
             return [rewrite(x) for x in node]

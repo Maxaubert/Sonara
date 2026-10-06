@@ -193,7 +193,7 @@ a `generic` server).
 | `localai` | required | `GET {url}/audio/voices?model=<model>` |
 | `speaches` | required | `GET {url}/audio/voices`; sends `sample_rate` |
 | `openedai-speech` | optional | none (typed) |
-| `chatterbox-api` | optional | `GET {root}/voices` (`{root}`: the URL without `/v1`); the voice id is the library `name` the speech route takes |
+| `chatterbox-api` | optional | `GET {root}/voices` (`{root}`: the URL without `/v1`); the voice id is the library `name` the speech route takes (a voice saved before 0.21.6 is a file name such as `narrator.wav`, which the server does not know and answers with its default voice: pick the voice again) |
 | `chatterbox-server` | optional | `GET {root}/get_predefined_voices` (file names); always WAV; without a model, an empty `model` (the server's schema requires the field, its route ignores it) |
 | `generic` | optional | `GET {url}/audio/voices` (or `voices_path`); a failure is an empty list |
 

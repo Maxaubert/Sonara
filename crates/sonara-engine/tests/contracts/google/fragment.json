@@ -176,9 +176,9 @@
     }
    },
    "required": [
+    "audioConfig",
     "input",
-    "voice",
-    "audioConfig"
+    "voice"
    ],
    "x-derived": "required from 'Required.' in the descriptions"
   },

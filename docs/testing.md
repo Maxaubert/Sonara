@@ -57,6 +57,9 @@ against the fragment first) through the adapter's parsing and error mapping.
 To refresh a fragment: fetch the spec into the session scratchpad, run the command in its
 `SOURCES.md` (`python packaging/contracts/extract_fragment.py ...`), update the date and commit
 there, and run the tests: a failure is either a spec change Sonara must follow or a bug.
+The command does not rebuild everything: re-apply the edits a `SOURCES.md` lists under
+"Hand-added" and "Derived" (for example Gemini's `voices.list` and Speaches'
+`GET /v1/audio/voices`), or the tests fail as if the spec had changed.
 
 ## Kokoro engine and G2P
 

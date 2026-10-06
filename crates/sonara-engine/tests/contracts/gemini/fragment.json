@@ -633,8 +633,8 @@
    "type": "object",
    "required": [
     "baseModelId",
-    "version",
-    "name"
+    "name",
+    "version"
    ],
    "x-derived": "required from 'Required.' in the descriptions"
   },
