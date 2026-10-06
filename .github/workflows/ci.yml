@@ -103,7 +103,11 @@ jobs:
         run: python -m pytest conformance -q
 
   # The SDKs and the npm runtime package against a real sonarad.exe (fake
-  # engine), on the oldest Node and Python they support.
+  # engine), on the oldest Node and Python they support, then the embedder
+  # e2e suite (tests/embed, #274): host apps on the packed npm packages, the
+  # wheel in a fresh venv and the release zip, with the audio checked
+  # through sonarad --output wav:<dir>. Kokoro's real-voice checks skip here
+  # (no model cached); OneCore's skip when the runner has no usable voice.
   clients:
     runs-on: windows-latest
     timeout-minutes: 40
@@ -123,7 +127,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.9"
-      - run: cargo build -p sonarad --release
+      # sonara-hook and sonara.exe too: tests/embed builds the release zip.
+      - run: cargo build -p sonarad -p sonara-hook -p sonara-cli --release
       # Microsoft's official ONNX Runtime CPU build (fetched by URL, pinned
       # SHA-256) and the VC++ runtime DLLs it imports, next to sonarad.exe,
       # so the npm runtime package below is built as it ships.
@@ -164,6 +169,8 @@ jobs:
         env:
           SONARA_RUNTIME: ${{ github.workspace }}\target\release\sonarad.exe
         run: python packaging/smoke/python_host.py
+      - name: Embedder e2e (Node, Python and raw protocol hosts)
+        run: python -m pytest tests/embed -q -rs
 
   # cargo-deny-action is a Docker action, which GitHub runs only on Linux
   # runners. deny.toml pins the graph to the Windows target, so Windows-only

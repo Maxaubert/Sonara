@@ -486,3 +486,39 @@ impl Engine for StreamEngine {
         true
     }
 }
+
+/// Its warm-up fails (as OneCore's with no usable voices, #274) until the
+/// test lets it speak; then it is the fake engine.
+#[derive(Default)]
+pub struct ColdEngine {
+    pub inner: FakeEngine,
+    pub speaks: std::sync::atomic::AtomicBool,
+}
+
+impl Engine for ColdEngine {
+    fn id(&self) -> EngineId {
+        EngineId("cold")
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Os
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        Err(Error::NoVoices)
+    }
+
+    fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
+        if self.speaks.load(std::sync::atomic::Ordering::SeqCst) {
+            self.inner.synthesize(text, voice, rate)
+        } else {
+            Err(Error::NoVoices)
+        }
+    }
+
+    fn cancel(&self) {}
+}

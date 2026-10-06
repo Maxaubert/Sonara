@@ -106,10 +106,14 @@ Without an SDK, read `runtime.json` and use HTTP. The runtime must already be ru
 
 ```powershell
 $rt = Get-Content "$env:LOCALAPPDATA\Sonara\runtime.json" | ConvertFrom-Json
-curl.exe -s -H "Authorization: Bearer $($rt.token)" -d '{\"text\": \"Hello from curl.\"}' "http://127.0.0.1:$($rt.http_port)/v1/speak"
-curl.exe -s -H "Authorization: Bearer $($rt.token)" -d '{\"action\": \"pause\"}' "http://127.0.0.1:$($rt.http_port)/v1/control"
+'{"text": "Hello from curl."}' | curl.exe -s -H "Authorization: Bearer $($rt.token)" --data-binary '@-' "http://127.0.0.1:$($rt.http_port)/v1/speak"
+'{"action": "pause"}' | curl.exe -s -H "Authorization: Bearer $($rt.token)" --data-binary '@-' "http://127.0.0.1:$($rt.http_port)/v1/control"
 curl.exe -sN -H "Authorization: Bearer $($rt.token)" "http://127.0.0.1:$($rt.http_port)/v1/events?events=state,items"
 ```
+
+The JSON goes to curl on stdin (`--data-binary '@-'`): PowerShell 7.3 and later pass quotes in
+arguments to programs as they are, so the older `-d '{\"text\": ...}'` form sends invalid JSON
+there (`E_BAD_REQUEST`), while Windows PowerShell 5.1 needs it. Piping works in both.
 
 Any language with sockets can use the TCP JSON-lines transport instead (`hello` with the token first); see `docs/protocol-v1.md`.
 
@@ -126,7 +130,7 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 
 ## Extensions
 
-`channels`, `agent` and `system` (spec sections 4.2 to 4.4) are optional layers. Ask for them in `connect({ extensions: [...] })`; the clients expose them as `client.channels`, `client.agent` and `client.system`, which send the protocol messages as they are. The current runtime offers the core only, so these answer `E_UNSUPPORTED` and `client.info.unavailable` lists what you asked for and did not get.
+`channels`, `agent` and `system` (spec sections 4.2 to 4.4) are optional layers. Ask for them in `connect({ extensions: [...] })`; the clients expose them as `client.channels`, `client.agent` and `client.system`, which send the protocol messages as they are. The runtime offers all three (`runtime.json` lists them in `extensions`); an extension is enabled for the whole runtime once any client asks for it, and until then its messages answer `E_UNSUPPORTED`. `client.info.unavailable` lists what you asked for and the runtime does not offer. `system` acts on the PC (ducks or pauses other apps, holds global hotkeys) while a client that asked for it is connected, so ask for it only when your app wants that (see `docs/protocol-v1.md`).
 
 ## External engines
 

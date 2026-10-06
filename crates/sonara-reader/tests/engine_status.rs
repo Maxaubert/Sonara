@@ -78,3 +78,37 @@ fn an_always_ready_engine_sends_no_status_events() {
     assert!(rig.events_now().iter().all(|e| !e.starts_with("engine ")));
     assert_eq!(rig.h.engine_status().unwrap(), EngineStatus::ready());
 }
+
+/// #274: OneCore with no usable voices said `ready` in `engine_status`
+/// while every item failed. A failed warm-up of an engine that calls itself
+/// ready is reported `unavailable`, with why, until it speaks.
+#[test]
+fn an_engine_whose_warm_up_failed_is_not_reported_ready() {
+    let engine = Arc::new(common::engines::ColdEngine::default());
+    let rig = Rig::with(engine.clone());
+    let events = rig.events_until("engine cold unavailable");
+    assert!(
+        events
+            .iter()
+            .any(|e| e.starts_with("log engine 'cold' is not ready: no usable Windows voices")),
+        "{events:?}"
+    );
+    let status = rig.h.engine_status().unwrap();
+    assert_eq!(status.readiness, Readiness::Unavailable);
+    assert!(
+        status
+            .message
+            .as_deref()
+            .is_some_and(|m| m.starts_with("no usable Windows voices")),
+        "{status:?}"
+    );
+    // Voices installed meanwhile: the first sentence it speaks makes it ready.
+    engine
+        .speaks
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    rig.h
+        .speak("Hello.", sonara_reader::QueueMode::Append, false, None)
+        .unwrap();
+    rig.events_until("engine cold ready");
+    assert_eq!(rig.h.engine_status().unwrap(), EngineStatus::ready());
+}

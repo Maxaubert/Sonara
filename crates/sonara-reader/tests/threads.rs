@@ -130,7 +130,15 @@ fn an_engine_that_cannot_speak_fails_items_and_says_why() {
     let r = Rig::with(Arc::new(BrokenEngine));
     speak(&r.h, "First. Second.");
     let events = r.events_until("state idle");
-    let (logs, rest): (Vec<_>, Vec<_>) = events.iter().partition(|e| e.starts_with("log"));
+    // The warm-up's failure comes as a log line and, since #274, as the
+    // status `unavailable`, in either order with the item's events.
+    let (logs, rest): (Vec<_>, Vec<_>) = events
+        .iter()
+        .filter(|e| {
+            e.as_str() != "engine broken unavailable"
+                && e.as_str() != "log engine 'broken' is unavailable"
+        })
+        .partition(|e| e.starts_with("log"));
     assert_eq!(
         rest,
         [
@@ -147,8 +155,12 @@ fn an_engine_that_cannot_speak_fails_items_and_says_why() {
         "{logs:?}"
     );
     assert_eq!(r.calls_now(), []);
-    // Still answering.
+    // Still answering, and not reported ready (#274).
     assert_eq!(r.h.get(Key::Engine).unwrap(), Value::Text("broken".into()));
+    assert_eq!(
+        r.h.engine_status().unwrap().readiness,
+        sonara_engine::Readiness::Unavailable
+    );
 }
 
 #[test]
@@ -162,7 +174,13 @@ fn a_late_subscriber_still_hears_why_the_engine_is_not_ready() {
     r.h.state().unwrap();
     let got: Vec<_> = late.try_iter().map(|e| fmt(&e)).collect();
     assert_eq!(got, [first]);
-    assert_eq!(r.events_now(), Vec::<String>::new());
+    // Besides the status change that followed it (#274), nothing more.
+    let rest = r.events_now();
+    assert!(
+        rest.iter()
+            .all(|e| e == "engine broken unavailable" || e == "log engine 'broken' is unavailable"),
+        "{rest:?}"
+    );
 }
 
 #[test]

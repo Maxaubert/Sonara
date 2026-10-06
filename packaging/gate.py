@@ -12,6 +12,9 @@ gate runs when a changed path starts with one of its triggers (GATES):
   python       ruff, the version check and tests/repo (always, when anything changed)
   e2e          the settings-page browser tests (fails without the e2e dependency group)
   sdk          the SDKs, the player demo, the npm runtime package and the smoke hosts
+  embed        the embedder e2e suite (tests/embed, #274): Node, Python and raw
+               protocol host apps on the packed packages, the wheel and the
+               release zip, with the audio checked through --output wav:<dir>
   earcons      the bundled earcon WAVs match packaging/sounds
 
 --all runs every gate except earcons (it needs numpy and scipy); --quick
@@ -62,6 +65,11 @@ CONFORMANCE = RUST + ("conformance/", "bin/", "hooks/", "packaging/release_zip.p
 E2E = ("crates/sonarad/assets/settings/", "crates/sonarad/src/settings_page.rs",
        "crates/sonarad/src/config.rs", "tests/e2e/")
 SDK = ("clients/", "packaging/npm-runtime/", "packaging/smoke/", "examples/") + tuple(bump_version.all_paths())
+# What an app that embeds Sonara runs: the runtime and the crates it speaks
+# with, the SDKs and packages, and the docs the raw host is written from.
+EMBED = ("clients/", "packaging/npm-runtime/", "packaging/release_zip.py", "packaging/runtime_dlls.py",
+         "tests/embed/", "docs/protocol-v1.md", "docs/bundling.md", "crates/sonarad/", "crates/sonara-reader/",
+         "crates/sonara-engine/", "crates/sonara-audio/") + tuple(bump_version.all_paths())
 EARCONS = ("crates/sonara-agent/sounds/", "packaging/sounds/")
 
 PLAYWRIGHT_CHECK = ("import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('playwright') "
@@ -76,6 +84,7 @@ GATES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("python", ("",)),
     ("e2e", E2E),
     ("sdk", SDK),
+    ("embed", EMBED),
     ("earcons", EARCONS),
 )
 
@@ -212,6 +221,15 @@ def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Ste
                 _step("clients/python tests", [py, "-m", "pytest", "clients/python/tests", "-q"], env=release),
                 _step("Python smoke host", [py, "packaging/smoke/python_host.py"], env=host)]
         return out
+    if gate == "embed":
+        npm = shutil.which("npm") or "npm"
+        exe = str(REPO_ROOT / "target" / "release" / "sonarad.exe")
+        return [_step("cargo build runtime (release)", ["cargo", "build", "-p", "sonarad", "-p", "sonara-hook",
+                                                        "-p", "sonara-cli", "--release"]),
+                _step("stage runtime DLLs", [py, "packaging/runtime_dlls.py", "stage", "target/release"]),
+                _step("clients/ts: npm ci", [npm, "ci"], "clients/ts"),
+                _step("clients/ts: build", [npm, "run", "build"], "clients/ts"),
+                _step("tests/embed", [py, "-m", "pytest", "tests/embed", "-q", "-rs"], env={"SONARAD": exe})]
     if gate == "earcons":
         return [_step("earcons", [py, "packaging/sounds/build_earcons.py", "--check"])]
     raise ValueError(gate)
@@ -269,7 +287,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "" if crates is None else " (crates: {0})".format(", ".join(crates) or "none"),
         "cargo nextest" if nextest else "cargo test"))
 
-    plan = [s for g in gates for s in steps_for(g, crates, nextest)]
+    plan: List[Step] = []
+    for step in (s for g in gates for s in steps_for(g, crates, nextest)):
+        # A step two gates share (the release build, npm ci) runs once.
+        if not any(step[1:] == done[1:] for done in plan):
+            plan.append(step)
     if args.dry_run:
         for step in plan:
             print("  " + describe(step))

@@ -78,6 +78,39 @@ node packaging/smoke/run-node.mjs
 Player demo: `examples/player-demo` (see `clients/player/README.md`). npm and PyPI publishing is
 manual (`docs/bundling.md`).
 
+## Embedder e2e (`tests/embed`, #274)
+
+Apps that use Sonara for speech, built the way a developer would, against the release runtime:
+
+| Host | What it proves |
+|---|---|
+| Node (`test_node_host.py`) | `@sonara/client` and `@sonara/runtime-win32-x64` packed as published and installed into an empty project (ESM, CommonJS, types, `bin/` with the DLLs); the whole public API (autostart, speak append/replace/interrupt, pause/resume/skip/stop, mute, volume, rate, voice, state and item events, channels open/speak/next/close, engines list/add/test/voices/remove against a local fake provider, `set engine`); real Kokoro speech from `node_modules` |
+| Python (`test_python_host.py`) | the `sonara-client` wheel (built from a copy of `clients/python`) in a fresh venv (`uv venv`, else `python -m venv`); the same scenario with `sonarad.exe` from a release zip that `packaging/release_zip.py` builds and the test checks against `SHA256SUMS`; real Kokoro speech from the zip |
+| Raw protocol (`test_raw_host.py`, `raw_client.py`) | a client written only from `docs/protocol-v1.md` and `docs/bundling.md`: discovery, TCP JSON lines, HTTP status codes, SSE, errors, channels, takeover, idle exit; the doc examples (protocol-v1 Python and curl, the bundling.md PowerShell recipe in PowerShell 7 and 5.1) run as written |
+| Released zip (`test_release_zip.py`, opt-in) | `SONARA_EMBED_RELEASE=1`: `gh release download` of the latest release (`SONARA_EMBED_RELEASE_TAG` for another), checked and unpacked, the Node host run against it |
+
+```sh
+cargo build -p sonarad -p sonara-hook -p sonara-cli --release
+python packaging/runtime_dlls.py stage target/release
+(cd clients/ts && npm ci)
+python -m pytest tests/embed -q -rs        # SONARAD names another runtime
+SONARA_EMBED_RELEASE=1 python -m pytest tests/embed/test_release_zip.py -q -rs
+```
+
+The audio is checked, not only the events: every run starts the runtime with
+`--output wav:<dir>` (a testing aid, see `docs/protocol-v1.md` "Testing aids"), which keeps time
+like `--output null` and writes each chunk it is handed to `<seq>-item<id>-chunk<n>.wav` (clips:
+`<seq>-clip.wav`). The fake engine's tone has an exact length per character, so the tests check
+that the rate and voice reached the engine, that skipped items never played, and that an external
+engine's audio (a constant the fake provider sends) is what played, not the fallback. The
+real-voice tests check speech: 24 kHz for Kokoro, 1.2 to 10 s for the test sentence, peak, RMS,
+pauses and many distinct levels. They need `onnxruntime.dll` next to the runtime and Kokoro's
+model (`SONARA_KOKORO_MODELS`, else the one in `%LOCALAPPDATA%\Sonara\models\kokoro\v1.0`, only
+read: the temp home gets hard links); without them the Kokoro test skips. The OneCore test skips
+when the PC has no usable Windows voice (`engine_status` `unavailable`). Every run has its own temp
+`SONARA_HOME`; nothing touches the user's runtime. `python packaging/gate.py` runs the suite as
+the `embed` gate; CI runs it in the `clients` job (no Kokoro model there).
+
 ## Settings page (e2e)
 
 `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e` and

@@ -9,8 +9,7 @@
 //   python packaging/runtime_dlls.py stage target/release
 //   node scripts/build.mjs [--exe path\to\sonarad.exe]
 //
-// Earcon sounds are not copied: they belong to the agent extension, which
-// this runtime does not offer yet.
+// Earcon sounds are not copied: they are built into sonarad.exe.
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
