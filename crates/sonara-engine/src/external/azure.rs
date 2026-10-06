@@ -10,11 +10,21 @@ use super::adapter::{
 };
 use super::error::{clean, headline, ExtError};
 use super::keys::Secret;
-use super::profile::{voice_locale, Kind, Profile, Url, AZURE_FORMATS};
+use super::profile::{voice_locale, Kind, Profile, Url};
 use super::rate;
 use super::split::Limit;
 use crate::Reason;
 use serde_json::Value;
+
+/// Azure's raw 16-bit mono PCM formats and their rates.
+pub const AZURE_FORMATS: &[(&str, u32)] = &[
+    ("raw-8khz-16bit-mono-pcm", 8_000),
+    ("raw-16khz-16bit-mono-pcm", 16_000),
+    ("raw-22050hz-16bit-mono-pcm", 22_050),
+    ("raw-24khz-16bit-mono-pcm", 24_000),
+    ("raw-44100hz-16bit-mono-pcm", 44_100),
+    ("raw-48khz-16bit-mono-pcm", 48_000),
+];
 
 /// The default output format.
 pub const DEFAULT_FORMAT: &str = "raw-24khz-16bit-mono-pcm";

@@ -188,7 +188,7 @@ engines. No model id or voice name is in the code: they come from the profile an
 lists.
 
 - `crates/sonara-engine/src/external/` (feature `external`):
-  - `profile.rs`: `Kind`, validation, presets, default addresses, options per kind.
+  - `profile/`: `Profile` (`mod.rs`), `Kind`, presets and key sources (`kind.rs`), addresses and origins (`url.rs`), validation and options per kind (`validate.rs`); a provider's own constants live in its file.
   - `mod.rs`: the `External` engine over a `Backend` (an `Adapter`, or a program): fallback with
     the cue, retries, status, the voice rule's last step (`voice_for`), model and voice lists.
   - `adapter.rs`: the `Adapter` trait (one HTTP request per part of a chunk), `execute`, error-body
@@ -294,7 +294,7 @@ runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
 
 **Add an external engine kind**
 
-1. Add the variant to `Kind` in `external/profile.rs` (`ALL`, `as_str`, `display_name`,
+1. Add the variant to `Kind` in `external/profile/kind.rs` (`ALL`, `as_str`, `display_name`,
    `default_base`, its options and rates) and in `rate.rs`.
 2. Write `external/<kind>.rs` implementing `Adapter` (request, error mapping, voice and model
    lists) and return it from the `Backend` match in `external/mod.rs`.

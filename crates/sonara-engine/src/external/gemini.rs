@@ -45,6 +45,11 @@ use serde_json::{json, Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// Gemini's default `chunk_chars` in send mode `message` (#235): a request
+/// of up to 2000 characters is about two minutes of speech, well inside
+/// the models' output limit.
+pub const GEMINI_CHUNK_CHARS: u64 = 2000;
+
 /// The rate Sonara asks Gemini for (24 kHz is its native rate).
 pub const GEMINI_RATE: u32 = 24_000;
 /// Voices and models asked for per page (the API's maximum is 1000).

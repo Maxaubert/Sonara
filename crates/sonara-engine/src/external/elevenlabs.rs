@@ -17,6 +17,9 @@ use super::split::Limit;
 use crate::Reason;
 use serde_json::{json, Map, Value};
 
+/// ElevenLabs' raw PCM formats (`pcm_44100` needs the Pro tier).
+pub const ELEVENLABS_FORMATS: &[&str] = &["pcm_16000", "pcm_22050", "pcm_24000", "pcm_44100"];
+
 /// The default output format.
 pub const DEFAULT_FORMAT: &str = "pcm_24000";
 /// Voices asked for per page.
