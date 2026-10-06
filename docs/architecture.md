@@ -294,8 +294,10 @@ runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
 
 **Add an external engine kind**
 
-1. Add the variant to `Kind` in `external/profile/kind.rs` (`ALL`, `as_str`, `display_name`,
-   `default_base`, its options and rates) and in `rate.rs`.
+1. Add the variant to `Kind` in `external/profile/kind.rs` (`ALL`, `as_str`, `display_name`),
+   its default address in `default_base` (`profile/url.rs`), its options and validator in
+   `profile/validate.rs`, its rate and format constants in `external/<kind>.rs` (re-exported
+   from `profile/mod.rs`), and in `rate.rs`.
 2. Write `external/<kind>.rs` implementing `Adapter` (request, error mapping, voice and model
    lists) and return it from the `Backend` match in `external/mod.rs`.
 3. Update the host and its clients: the `list["kinds"]` assertion in the engines tests of
