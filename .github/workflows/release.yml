@@ -172,13 +172,14 @@ jobs:
   # every PR: the npm tarballs packed as tests/embed packs them (the runtime
   # package with sonarad.exe and the files runtime_dlls.py stages next to
   # it), the wheel and the sdist. Skipped while neither PUBLISH_PYPI nor
-  # PUBLISH_NPM is 'true', and after a failed or skipped release.
+  # PUBLISH_NPM is 'true', and after a failed or skipped release (a failed
+  # job still passes on the outputs it set, so its result is checked too).
   packages:
     needs: release
     if: >-
       !cancelled() &&
       (vars.PUBLISH_PYPI == 'true' || vars.PUBLISH_NPM == 'true') &&
-      (needs.release.outputs.released == 'true' ||
+      ((needs.release.result == 'success' && needs.release.outputs.released == 'true') ||
        (github.event_name == 'workflow_dispatch' && inputs.packages_only))
     runs-on: windows-latest
     timeout-minutes: 45
@@ -233,7 +234,9 @@ jobs:
   # npm 11.5.1 or later; provenance is attached by npm itself.
   publish-npm:
     needs: packages
-    if: vars.PUBLISH_NPM == 'true'
+    # Not the implicit success(): it also wants the release job, which a
+    # packages_only run skips.
+    if: "!cancelled() && needs.packages.result == 'success' && vars.PUBLISH_NPM == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: npm
@@ -277,7 +280,9 @@ jobs:
   # Linux only; the dists are pure Python, built on Windows above.
   publish-pypi:
     needs: packages
-    if: vars.PUBLISH_PYPI == 'true'
+    # Not the implicit success(): it also wants the release job, which a
+    # packages_only run skips.
+    if: "!cancelled() && needs.packages.result == 'success' && vars.PUBLISH_PYPI == 'true'"
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:

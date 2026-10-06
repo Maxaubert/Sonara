@@ -75,7 +75,10 @@ def test_each_registry_publishes_by_oidc_from_its_environment_behind_its_switch(
         assert spec["permissions"]["id-token"] == "write", job
         name = spec["environment"]["name"] if isinstance(spec["environment"], dict) else spec["environment"]
         assert name == env, job
-        assert spec["if"] == "vars.{0} == 'true'".format(switch), job
+        # !cancelled(): the implicit success() also wants the release job,
+        # which a packages_only run skips, so the publish would never run.
+        assert spec["if"] == "!cancelled() && needs.packages.result == 'success' && vars.{0} == 'true'".format(
+            switch), job
         # Trusted publishing works only on GitHub-hosted runners; pypa's action needs Linux.
         assert spec["runs-on"] == "ubuntu-latest", job
     # Only the publish jobs can mint an OIDC token.
@@ -88,7 +91,8 @@ def test_the_packages_are_built_only_when_a_registry_is_switched_on():
     jobs = _release_jobs()
     cond = jobs["packages"]["if"]
     assert "vars.PUBLISH_PYPI == 'true' || vars.PUBLISH_NPM == 'true'" in cond
-    assert "needs.release.outputs.released == 'true'" in cond
+    # A failed release job still passes on its outputs: never publish after one.
+    assert "needs.release.result == 'success' && needs.release.outputs.released == 'true'" in cond
     assert "inputs.packages_only" in cond
     run = "\n".join(s.get("run", "") for s in jobs["packages"]["steps"])
     assert "packaging/build_packages.py" in run
@@ -110,3 +114,43 @@ def test_ci_dry_runs_the_publish_in_the_clients_job():
     ci = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     run = "\n".join(s.get("run", "") for s in ci["jobs"]["clients"]["steps"])
     assert "python packaging/build_packages.py --publish-dry-run" in run
+
+
+def test_a_runtime_tarball_without_sonarad_fails_the_check(tmp_path):
+    import io
+    import tarfile
+
+    mod = _module()
+    tgz = tmp_path / "sonara-runtime-win32-x64-0.0.0.tgz"
+    with tarfile.open(tgz, "w:gz") as t:
+        for name in mod.RUNTIME_REQUIRED:
+            if name == "bin/sonarad.exe":
+                continue
+            data = b"x"
+            info = tarfile.TarInfo("package/" + name)
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    with pytest.raises(SystemExit, match="bin/sonarad.exe"):
+        mod._check(tgz.name, mod.tarball_files(tgz), mod.RUNTIME_REQUIRED)
+
+
+def test_a_wheel_without_the_version_module_fails_the_check(tmp_path):
+    import zipfile
+
+    mod = _module()
+    whl = tmp_path / "sonara_client-0.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(whl, "w") as z:
+        z.writestr("sonara_client/__init__.py", "")
+        z.writestr("sonara_client/client.py", "")
+    with pytest.raises(SystemExit, match="sonara_client/version.py"):
+        mod._check(whl.name, mod.wheel_files(whl), mod.WHEEL_REQUIRED)
+
+
+def test_the_npm_dry_run_never_asks_the_real_registry():
+    # npm 11 fails a dry run of a version the registry has: every branch
+    # without a bump would fail once a release is on npm.
+    mod = _module()
+    flags = mod.DRY_RUN_OFFLINE
+    assert "--offline" in flags
+    registry = flags[flags.index("--registry") + 1]
+    assert "registry.npmjs.org" not in registry

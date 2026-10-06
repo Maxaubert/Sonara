@@ -44,7 +44,9 @@ RUNTIME_REQUIRED = ("package.json", "README.md", "LICENSE", "THIRD_PARTY_NOTICES
                     "bin/sonarad.exe", "bin/onnxruntime.dll", "bin/onnxruntime-LICENSE.txt",
                     "bin/onnxruntime-ThirdPartyNotices.txt", "bin/msvcp140.dll", "bin/msvcp140_1.dll",
                     "bin/vcruntime140.dll", "bin/vcruntime140_1.dll")
-WHEEL_REQUIRED = ("sonara_client/__init__.py", "sonara_client/client.py", "sonara_client/version.py")
+# npm publish --dry-run flags that keep it off the real registry (see build_npm).
+DRY_RUN_OFFLINE = ("--offline", "--registry", "http://127.0.0.1:9/")
+WHEEL_REQUIRED =("sonara_client/__init__.py", "sonara_client/client.py", "sonara_client/version.py")
 SDIST_REQUIRED = ("pyproject.toml", "README.md", "LICENSE", "src/sonara_client/__init__.py")
 
 
@@ -107,7 +109,11 @@ def build_npm(out: Path, exe: Path, version: str, dry_run: bool) -> List[Path]:
                                                                                      version))
         _check(tarball.name, tarball_files(tarball), required)
         if dry_run:
-            _run([npm, "publish", "--dry-run", "--access", "public", tarball], REPO_ROOT)
+            # Offline, against no registry: npm 11 fails a dry run when the
+            # registry already has the version, which would fail every branch
+            # without a version bump once a release is published (release.yml
+            # skips such a version itself).
+            _run([npm, "publish", "--dry-run", "--access", "public", *DRY_RUN_OFFLINE, tarball], REPO_ROOT)
         built.append(tarball)
     return built
 
