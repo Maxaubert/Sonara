@@ -15,14 +15,14 @@ pub struct Paths {
     pub exe_dir: PathBuf,
 }
 
+/// The runtime folders stay under `%LOCALAPPDATA%\Sonara` whatever
+/// `SONARA_HOME` says: the plugin installs them there.
 pub fn runtime_root(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
-    env("LOCALAPPDATA")
-        .filter(|d| !d.is_empty())
-        .map(|d| Path::new(&d).join("Sonara").join(RUNTIME_DIR))
+    sonara_client::default_home(env("LOCALAPPDATA").as_deref()).map(|d| d.join(RUNTIME_DIR))
 }
 
 pub fn resolve(env: &dyn Fn(&str) -> Option<String>, exe: &Path) -> Result<Paths, String> {
-    let home = sonara_hook::home(env).ok_or("no home folder: set SONARA_HOME or LOCALAPPDATA")?;
+    let home = sonara_client::home(env).ok_or("no home folder: set SONARA_HOME or LOCALAPPDATA")?;
     Ok(Paths {
         home,
         runtime_root: runtime_root(env),

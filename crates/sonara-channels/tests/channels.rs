@@ -863,6 +863,32 @@ fn flush_with_also_flushes_the_other_channels_it_names() {
 }
 
 #[test]
+fn flush_with_names_each_channel_right_before_its_own_drops() {
+    // #255: the drops are reported after the lock is released, and each
+    // `before` still comes right before the drops it explains.
+    let r = Rig::two();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.wait_for("Alpha one.");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let seen = log.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        seen.lock().unwrap().push(format!("drop {}", d.text));
+    })));
+    let before = log.clone();
+    r.ch.flush_with(
+        "flush",
+        |ch| before.lock().unwrap().push(format!("flush {ch}")),
+        |_| true,
+    )
+    .unwrap();
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["flush a", "drop Alpha one.", "flush b", "drop Beta one."]
+    );
+}
+
+#[test]
 fn flush_with_during_an_announcement_flushes_the_announced_channel_it_names() {
     let r = Rig::two();
     r.speak("a", "Alpha one.");
@@ -886,4 +912,69 @@ fn flush_with_while_idle_flushes_the_waiting_channels_it_names() {
     assert_eq!(report.others, ["b"]);
     r.ch.set_muted("b", false).unwrap();
     r.stays_idle();
+}
+
+#[test]
+fn the_drop_hook_runs_off_the_lock_so_it_and_other_threads_can_use_channels() {
+    // #255: `on_drop` used to run under the driver's lock, so a hook that
+    // called back into `Channels` (or waited on a thread that did) hung.
+    let r = Rig::two();
+    r.ch.set_announce(false);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let me = r.ch.clone();
+    r.ch.on_drop(Some(Arc::new(move |d: &sonara_channels::Dropped| {
+        // The same thread calls back in ...
+        let ids = me.channel_ids();
+        // ... and another thread gets the lock while the hook runs.
+        let other = me.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(other.pending());
+        });
+        let other_ran = done_rx.recv_timeout(TIMEOUT).is_ok();
+        let _ = tx.send((d.text.clone(), ids, other_ran));
+    })));
+    let worker = {
+        let ch = r.ch.clone();
+        std::thread::spawn(move || {
+            ch.add("a", "Unread.").unwrap();
+            ch.control_because(Control::Stop, Some("a"), "stop")
+                .unwrap();
+        })
+    };
+    let (text, ids, other_ran) = rx.recv_timeout(TIMEOUT).expect("the hook ran and returned");
+    assert_eq!(text, "Unread.");
+    assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+    assert!(other_ran, "another thread took the lock while the hook ran");
+    worker.join().unwrap();
+    // The hook holds a clone: let it go, so the rig can end.
+    r.ch.on_drop(None);
+}
+
+#[test]
+fn a_panic_under_the_lock_skips_the_drop_hook_and_the_channels_keep_serving() {
+    // #255 review: the drops are reported when the lock is released. While
+    // a panic unwinds through it, a hook that panics too would abort the
+    // process, so the hook is skipped and the lock just stays poisoned.
+    let r = Rig::two();
+    r.ch.set_muted("a", true).unwrap();
+    r.ch.set_muted("b", true).unwrap();
+    r.speak("a", "Alpha one.");
+    r.speak("b", "Beta one.");
+    r.stays_idle();
+    let calls = Arc::new(Mutex::new(0));
+    let seen = calls.clone();
+    r.ch.on_drop(Some(Arc::new(move |_: &sonara_channels::Dropped| {
+        *seen.lock().unwrap() += 1;
+        panic!("a hook that panics");
+    })));
+    let ch = r.ch.clone();
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        // `a` is flushed and its drop collected before `also` panics on `b`.
+        let _ = ch.flush_with("flush", |_| {}, |id| id != "b" || panic!("under the lock"));
+    }));
+    assert!(unwound.is_err());
+    assert_eq!(*calls.lock().unwrap(), 0, "the hook was skipped");
+    r.ch.on_drop(None);
+    assert_eq!(r.ch.channel_ids(), vec!["a".to_string(), "b".to_string()]);
 }

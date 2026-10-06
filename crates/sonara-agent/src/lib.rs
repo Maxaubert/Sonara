@@ -92,7 +92,20 @@
 //!   (`rules::Note`), late text dropped, earcons and wipes (L2 reports the
 //!   entries a wipe drops, with the reason given here: `turn_start`,
 //!   `answered`, `mute`, `stop`, `flush`). The hook runs under the agent's lock and
-//!   must not call back into the agent.
+//!   must not call back into the agent. It stays there on purpose: the
+//!   host writes these lines and L2's drop lines into one log, and a wipe
+//!   line must come before the drops it explains (L2 reports its drops
+//!   when its own lock is released, which is still under this one).
+//!
+//! **Locks** (#255; the whole order is in docs/architecture.md). Taken in
+//! this order only, never the other way round:
+//! `rules > seen > channels.state (L2) > schedule > player > reader`.
+//! Every message runs under `rules` and calls into L2 there; `seen` is
+//! taken only under `rules`; L2's `on_announce` runs under L2's lock and
+//! takes `schedule`, then `player` (and the reader); the reader's calls
+//! block on its worker thread, which takes none of these. `trace` and
+//! `subscribers` are leaves: held only to clone or send, never while
+//! another of these locks is taken.
 pub mod decision;
 pub mod earcon;
 pub mod rules;

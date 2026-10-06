@@ -27,10 +27,10 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - Home (`SONARA_HOME` overrides): `%LOCALAPPDATA%\Sonara`: `config.json` (only user-set keys), `runtime.json`, `logs\` (`sonarad.log`, `hook.log`, `bootstrap.log`).
 
 ## Architecture (map: `docs/architecture.md`)
-- Layers: L1 `sonara-core`, `-engine`, `-audio`, `-reader`, `misaki`, `sonara-log`; L2 `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system`; L5 `sonara-hook`, `sonara-cli`; `sonarad` hosts them. No crate depends upward (one table of allowed edges: `crates/sonara-core/tests/layering.rs`).
+- Layers: L1 `sonara-core`, `-engine`, `-audio`, `-reader`, `misaki`, `sonara-log`; L2 `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system`; L5 `sonara-hook`, `sonara-cli` on the leaf protocol client `sonara-client`; `sonarad` hosts them. No crate depends upward (one table of allowed edges: `crates/sonara-core/tests/layering.rs`).
 - Add a setting: `sonarad::config::SCHEMA` (`crates/sonarad/src/config.rs`), then `settings.html`, then e2e.
 - Add a message: dispatch in `crates/sonarad/src/protocol.rs` plus the `*_ext.rs` `TYPES` (`EXTENSION_TYPES` chains them); document it in `docs/protocol-v1.md` (the contract, changes additive only), add conformance tests, update both SDKs (`clients/ts`, `clients/python`).
-- Lock order across crates: agent rules > channels state > schedule > player > reader. New code must not call back into a crate whose lock it holds (trace hooks under the agent lock are a known exception, #255).
+- Lock order across crates: agent rules > seen > channels state > schedule > player > reader (`docs/architecture.md`). Never take a lock to the left while holding one to the right; L2 `on_drop` runs off-lock, `on_announce` and L3 `on_trace` run under a lock and must not call back in.
 - PRIVACY.md lists every file in `%LOCALAPPDATA%\Sonara`: update it when adding one.
 
 ## Product rules

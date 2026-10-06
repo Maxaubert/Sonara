@@ -1,5 +1,7 @@
 //! The home folder (spec section 3): `--home`, else `SONARA_HOME`, else
-//! `%LOCALAPPDATA%\Sonara`. Every path under it is built here.
+//! `%LOCALAPPDATA%\Sonara`. Every path under it is built here. The
+//! environment half and the names clients look for (`runtime.json`) come
+//! from `sonara_client`, so the hook, the CLI and the runtime agree (#255).
 use std::path::{Path, PathBuf};
 
 /// The runtime's stream in the log folder (`sonarad.log`).
@@ -15,9 +17,7 @@ pub struct Home {
 
 /// `%LOCALAPPDATA%\Sonara`, if `LOCALAPPDATA` is set.
 pub fn default_dir(localappdata: Option<&str>) -> Option<PathBuf> {
-    localappdata
-        .filter(|s| !s.is_empty())
-        .map(|d| Path::new(d).join("Sonara"))
+    sonara_client::default_home(localappdata)
 }
 
 /// Pick the home from the flag and the environment values given.
@@ -29,10 +29,7 @@ pub fn choose(
     if let Some(f) = flag {
         return Ok(f.to_path_buf());
     }
-    if let Some(h) = sonara_home.filter(|s| !s.is_empty()) {
-        return Ok(PathBuf::from(h));
-    }
-    default_dir(localappdata).ok_or_else(|| {
+    sonara_client::home_from(sonara_home, localappdata).ok_or_else(|| {
         "no home folder: set SONARA_HOME, pass --home, or set LOCALAPPDATA".to_string()
     })
 }
@@ -63,7 +60,7 @@ pub fn resolve(flag: Option<&Path>) -> Result<Home, String> {
 
 impl Home {
     pub fn runtime_json(&self) -> PathBuf {
-        self.dir.join("runtime.json")
+        self.dir.join(sonara_client::RUNTIME_FILE)
     }
 
     /// `logs\`: every log file of the home (`sonara_log`: rotating

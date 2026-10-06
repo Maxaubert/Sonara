@@ -7,8 +7,9 @@
 //! `-audio`, `-reader` and the leaves `misaki` and `sonara-log`; L2
 //! `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system` (L1 only: the
 //! host maps hotkey actions to L2 and L3); L5 `sonara-hook` (an adapter
-//! that speaks protocol v1, so no runtime crate) and `sonara-cli`;
-//! `sonarad` hosts them. Every allowed edge points down, so following
+//! that speaks protocol v1, so no runtime crate) and `sonara-cli`, both on
+//! the leaf protocol client `sonara-client` (#255); `sonarad` hosts them
+//! and shares the client's home and file names. Every allowed edge points down, so following
 //! allowed edges never climbs either.
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -33,6 +34,7 @@ const L1_L2: &[&str] = &[
     "sonara-channels",
 ];
 const RUNTIME: &[&str] = &[
+    "sonara-client",
     "misaki",
     "sonara-log",
     "sonara-core",
@@ -55,8 +57,9 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("sonara-channels", L1),
     ("sonara-agent", L1_L2),
     ("sonara-system", L1),
-    ("sonara-hook", &["sonara-log"]),
-    ("sonara-cli", &["sonara-hook", "sonara-log"]),
+    ("sonara-client", &[]),
+    ("sonara-hook", &["sonara-client", "sonara-log"]),
+    ("sonara-cli", &["sonara-client", "sonara-log"]),
     ("sonarad", RUNTIME),
 ];
 
@@ -146,6 +149,21 @@ fn sonara_log_stays_a_leaf() {
         .filter(|d| !LOG_EXTERNAL.contains(&d.as_str()))
         .collect();
     assert!(extra.is_empty(), "sonara-log links {extra:?}");
+}
+
+/// The protocol client links only `serde_json`, so the hook (a process
+/// per Claude Code event) stays small.
+const CLIENT_EXTERNAL: &[&str] = &["serde_json"];
+
+#[test]
+fn sonara_client_stays_a_leaf() {
+    let deps = dependencies(&workspace_metadata());
+    let client = &deps["sonara-client"];
+    let extra: Vec<&String> = client
+        .iter()
+        .filter(|d| !CLIENT_EXTERNAL.contains(&d.as_str()))
+        .collect();
+    assert!(extra.is_empty(), "sonara-client links {extra:?}");
 }
 
 #[test]

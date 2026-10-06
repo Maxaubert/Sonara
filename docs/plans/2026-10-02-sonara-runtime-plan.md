@@ -1,5 +1,7 @@
 # Sonara runtime Implementation Plan
 
+> Note (#255, 2026-10-06): the Rust protocol client (`runtime.json` lookup, connect, `hello`, requests) now lives in `crates/sonara-client`, shared by `sonara-hook` and `sonara-cli`. Where this document puts that client inside `sonara-hook`, it describes the code as it was; the live map is `docs/architecture.md`.
+
 > **For agentic workers:** execute milestone by milestone with the Workflow tool (one implementer per PR in its own worktree, an independent reviewer, then a finalize step), as in Phase 0. Steps use checkbox (`- [ ]`) syntax for tracking. Milestones M2 onward are specified here by deliverables, interfaces and tests; their bite-sized steps are written by the executor at the start of each milestone, inside the milestone's PR, from this plan and the spec. A milestone plan needs no separate sign-off unless it deviates from the spec.
 
 **Goal:** Turn Sonara into a layered Rust reader that apps bundle (PrismTerminal first): a minimal reader core with optional channels, agent, system, adapter and UI layers, served in-process or by a shared `sonarad.exe`; then move the Claude Code plugin onto it and retire the Python daemon.

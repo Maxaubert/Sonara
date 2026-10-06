@@ -224,6 +224,12 @@ impl ReaderHandle {
         })
     }
 
+    /// Send a request to the worker thread and wait for its reply. The
+    /// bottom of the cross-crate lock order (#255, docs/architecture.md):
+    /// callers may hold their own locks (L2 holds `channels.state`, L3's
+    /// earcon path its `schedule`), because the worker never takes a lock
+    /// of a layer above or calls back into one; its events go out through
+    /// channels that other threads drain.
     fn call<T>(&self, make: impl FnOnce(Sender<T>) -> Msg) -> Result<T> {
         let (reply, rx) = channel();
         self.shared

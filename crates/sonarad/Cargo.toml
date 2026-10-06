@@ -19,6 +19,8 @@ sonara-channels.workspace = true
 sonara-agent = { workspace = true, features = ["summaries"] }
 sonara-system.workspace = true
 sonara-log.workspace = true
+# The home and file names clients use (a leaf, #255).
+sonara-client.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros", "signal"] }
 hyper = { workspace = true, features = ["server", "http1"] }

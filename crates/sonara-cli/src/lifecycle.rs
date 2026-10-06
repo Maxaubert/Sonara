@@ -3,7 +3,7 @@ use crate::client::{attach, Conn, PRODUCT};
 use crate::paths::{canonical, Paths};
 use crate::VERSION;
 use serde_json::json;
-use sonara_hook::{read_runtime, start_runtime, Runtime, PROBE, RUNTIME_EXE, STOPPED};
+use sonara_client::{read_runtime, start_runtime, Runtime, PROBE, RUNTIME_EXE, STOPPED};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 

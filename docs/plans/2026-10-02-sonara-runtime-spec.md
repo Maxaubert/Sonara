@@ -1,5 +1,7 @@
 # Sonara runtime: a layered, bundleable reader (spec)
 
+> Note (#255, 2026-10-06): the Rust protocol client (`runtime.json` lookup, connect, `hello`, requests) now lives in `crates/sonara-client`, shared by `sonara-hook` and `sonara-cli`. Where this document puts that client inside `sonara-hook`, it describes the code as it was; the live map is `docs/architecture.md`.
+
 Date: 2026-10-02, revised 2026-10-02 (layered design, licensing rule R6). Issue: #168. Research: `docs/plans/2026-10-02-distribution-research.md`. Plan: `docs/plans/2026-10-02-sonara-runtime-plan.md`.
 
 ## 1. Goal
