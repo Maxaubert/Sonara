@@ -517,10 +517,12 @@ up (and not still reading its last message) starts a new batch.
   newest one is always read and never dropped ("one message, always the last"). `queue`: every
   message is read, in order.
 - **Who reads next:** a replay the user started (`restart`, or `next_channel` landing on a replay)
-  keeps the floor until its batch is read (runtime 0.21.4, #271): no other channel's message and no
-  decision (`ask` with `agent`) cuts in at a message boundary; what arrived meanwhile is read after
-  it, decisions first. `flush`, `control stop` of that channel (also a `turn_start` of its session),
-  `next_channel`, `speak` with `interrupt` into another channel and muting it end that hold. Else a
+  keeps the floor until the messages its batch had when it started are read (runtime 0.21.4, #271;
+  text the session writes during the replay is read as live reading): no other channel's message
+  and no decision (`ask` with `agent`) cuts in at a message boundary; what arrived meanwhile is read
+  after it, decisions first. `flush`, `control stop` of that channel or without a channel (also a
+  `turn_start` or an `answered` of its session), `next_channel`, `speak` with `interrupt` into
+  another channel and muting it end that hold. Else a
   decision is read first (after the item playing); then a channel whose batch a decision cut, which
   resumes where it stopped; then the channel being read keeps the floor until its batch is read;
   then the focused channel; then the first channel (in opening order) with something unread. A
