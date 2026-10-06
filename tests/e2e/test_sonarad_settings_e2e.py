@@ -1,4 +1,4 @@
-"""E2E: the runtime's settings page (crates/sonarad/assets/settings.html,
+"""E2E: the runtime's settings page (crates/sonarad/assets/settings/,
 #201) driven by Playwright against a real sonarad (``--engine fake
 --system fake``, temporary home), so every click goes through protocol v1
 and lands in ``config.json``.
@@ -531,4 +531,25 @@ def test_the_page_uses_its_own_fonts(live, browser):
     assert page.evaluate("document.fonts.load('12px \"Geist Mono\"').then(f => f.length)") >= 1
     family = page.evaluate("getComputedStyle(document.body).fontFamily")
     assert family.startswith('Geist') or family.startswith('"Geist"'), family
+    page.close()
+
+
+def test_ranges_and_defaults_come_from_the_schema_before_get_answers(live, browser):
+    # #257: the markup carries no min, max or value; the page fills them in
+    # from config::SCHEMA, so the rate slider starts at 250 (not 200) even
+    # while `get` has not answered yet.
+    lv = live()
+    page = browser.new_page()
+    page.route("**/v1/**", lambda route: None)  # stall every call: no `get` arrives
+    page.goto(lv.url)
+    rate = page.locator("#rate")
+    pw.expect(rate).to_have_value("250")
+    pw.expect(rate).to_have_attribute("min", "100")
+    pw.expect(rate).to_have_attribute("max", "400")
+    pw.expect(page.locator("#rate-out")).to_have_text("250 wpm")
+    pw.expect(page.locator("#volume")).to_have_value("100")
+    pw.expect(page.locator("#duck")).to_have_value("30")
+    pw.expect(page.locator("#duck-out")).to_have_text("30 %")
+    pw.expect(page.locator("#minqueue-out")).to_have_text("5")
+    page.unroute("**/v1/**")
     page.close()

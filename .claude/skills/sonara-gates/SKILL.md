@@ -54,7 +54,7 @@ python -m pytest tests/repo -q
 
 | Paths | Extra gate |
 |---|---|
-| `crates/sonarad/assets/settings.html`, `crates/sonarad/src/settings_page.rs` | `cargo build -p sonarad`, then `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e`, `python -m playwright install chromium`). CI skips it: it is the local gate. |
+| `crates/sonarad/assets/settings/`, `crates/sonarad/src/settings_page.rs`, `crates/sonarad/src/config.rs` | `cargo build -p sonarad`, then `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e`, `python -m playwright install chromium`). CI skips it: it is the local gate. |
 | `clients/`, `packaging/npm-runtime`, `packaging/smoke`, `examples/`, any version file (every PR bumps one) | SDK gates below |
 | Rust dependencies (`Cargo.toml`, `Cargo.lock` beyond the version) | `python packaging/notices/gen_notices.py`, commit the result |
 | `crates/sonara-agent/sounds/`, `packaging/sounds/` | `python packaging/sounds/build_earcons.py --check` |

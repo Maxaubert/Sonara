@@ -62,8 +62,8 @@ All must be green. CI (`.github/workflows/ci.yml`) runs the same on Windows in t
 `check`, `rust`, `conformance`, `clients` (the SDKs) and `deny`, the required checks of a PR.
 Tests must not depend on what is installed on your PC (Kokoro models, Windows voices, API keys).
 
-- **Settings page changes** (`crates/sonarad/assets/settings.html`,
-  `crates/sonarad/src/settings_page.rs`) also need the browser tests:
+- **Settings page changes** (`crates/sonarad/assets/settings/`,
+  `crates/sonarad/src/settings_page.rs`, `crates/sonarad/src/config.rs`) also need the browser tests:
   `python -m pip install --group e2e`, `python -m playwright install chromium`, `cargo build -p sonarad`, then
   `python -m pytest tests/e2e -q`. CI skips them, so they are the local gate.
 - **SDK changes** (`clients/`, `packaging/npm-runtime`, version files) run the SDK steps in

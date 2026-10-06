@@ -59,7 +59,7 @@ RUST = ("crates/",) + WORKSPACE_FILES
 DEPS = ("Cargo.toml", "crates/*/Cargo.toml", "Cargo.lock", "deny.toml", "packaging/notices/")
 CONFORMANCE = RUST + ("conformance/", "bin/", "hooks/", "packaging/release_zip.py",
                       "packaging/runtime_dlls.py")
-E2E = ("crates/sonarad/assets/settings.html", "crates/sonarad/src/settings_page.rs",
+E2E = ("crates/sonarad/assets/settings/", "crates/sonarad/src/settings_page.rs",
        "crates/sonarad/src/config.rs", "tests/e2e/")
 SDK = ("clients/", "packaging/npm-runtime/", "packaging/smoke/", "examples/") + tuple(bump_version.all_paths())
 EARCONS = ("crates/sonara-agent/sounds/", "packaging/sounds/")

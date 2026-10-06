@@ -13,7 +13,7 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - CI (`ci.yml`) jobs, the required checks: `check`, `rust`, `conformance`, `clients`, `deny`; keep the names (`packaging/gate.py` `REQUIRED_CHECKS`).
 - Typecheck/lint: `ruff check tests conformance clients/python packaging`; TS: `npm run typecheck` in `clients/ts`.
 - Repo checks (`tests/repo`, Python 3.12, `pip install --group dev`; `pyproject.toml` is dev config only): `python -m pytest tests/repo -q` (plain `python -m pytest -q` also runs `tests/e2e`).
-- E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings.html` or `crates/sonarad/src/settings_page.rs` change (needs `cargo build -p sonarad`).
+- E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings/` (the page in parts, joined in `settings_page.rs`), `crates/sonarad/src/settings_page.rs` or `config.rs` change (needs `cargo build -p sonarad`).
 - `clients/`, `packaging/npm-runtime` or a version file changed: run the SDK gates. Rust dependency changed: regenerate notices. Live tests, Kokoro, G2P bless, earcons, SDK steps: `docs/testing.md`.
 - Skill `sonara-gates`: the gate script, every gate command and when the e2e and SDK gates apply.
 - Skill `sonara-live-tests`: the opt-in live checks and their env vars.
@@ -30,8 +30,8 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 
 ## Architecture (map: `docs/architecture.md`)
 - Layers: L1 `sonara-core`, `-engine`, `-audio`, `-reader`, `misaki`, `sonara-log`; L2 `sonara-channels`; L3 `sonara-agent`; L4 `sonara-system`; L5 `sonara-hook`, `sonara-cli` on the leaf protocol client `sonara-client`; `sonarad` hosts them. No crate depends upward (one table of allowed edges: `crates/sonara-core/tests/layering.rs`).
-- Add a setting: `sonarad::config::SCHEMA` (`crates/sonarad/src/config.rs`), then `settings.html`, then e2e.
-- Add a message: dispatch in `crates/sonarad/src/protocol.rs` plus the `*_ext.rs` `TYPES` (`EXTENSION_TYPES` chains them); document it in `docs/protocol-v1.md` (the contract, changes additive only), add conformance tests, update both SDKs (`clients/ts`, `clients/python`).
+- Add a setting: `sonarad::config::SCHEMA` (`crates/sonarad/src/config.rs`), then the page (`assets/settings/`; ranges and defaults come from `SCHEMA`), then e2e.
+- Add a message: dispatch in `crates/sonarad/src/protocol/mod.rs` plus the `*_ext.rs` `TYPES` (`EXTENSION_TYPES` chains them); document it in `docs/protocol-v1.md` (the contract, changes additive only), add conformance tests, update both SDKs (`clients/ts`, `clients/python`).
 - Lock order across crates: agent rules > seen > channels state > schedule > player > reader (`docs/architecture.md`). Never take a lock to the left while holding one to the right; L2 `on_drop` runs off-lock, `on_announce` and L3 `on_trace` run under a lock and must not call back in.
 - PRIVACY.md lists every file in `%LOCALAPPDATA%\Sonara`: update it when adding one.
 

@@ -84,16 +84,16 @@ plugin once, `migrate.rs`), builds the engines and the `ReaderHandle`, writes `r
 | Module | Role |
 |---|---|
 | `tcp.rs`, `http.rs` | Framing only: JSON lines; `POST /v1/<type>`, SSE `GET /v1/events`, `GET /settings`. Each request runs `Server::handle` on a blocking thread |
-| `protocol.rs` | `Server`: synchronous, transport-free dispatch of core messages and the extensions (`dispatch`), `CAPABILITIES`, `EXTENSION_TYPES`, `EXTENSION_KEYS`, the admission lock, `set`/`get` |
+| `protocol/` | `Server`: synchronous, transport-free dispatch of core messages and the extensions (`mod.rs`: `dispatch`, `CAPABILITIES`, `EXTENSION_TYPES`, `EXTENSION_KEYS`, the admission lock), the core messages and `set`/`get` (`messages.rs`), enabling the extensions (`extensions.rs`), `engine_reload`/`engine_remove` (`profiles.rs`) |
 | `wire.rs` | JSON shapes of replies, errors and events |
 | `channels_ext.rs`, `agent_ext.rs`, `system_ext.rs` | The extensions on top of L2, L3 and L4: their `TYPES` and `KEYS`, enabled at a client's `hello` and kept for the life of the process |
-| `engines.rs`, `engines_ext.rs` | External engine profiles (`engines.json`, keys, registration) and the `engine_*` handlers |
+| `engines/`, `engines_ext.rs` | External engine profiles (`file.rs`: `engines.json`; `registry.rs`: building, keys, registration; `view.rs`: the replies; `notices.rs`: the fallback lines) and the `engine_*` handlers |
 | `events.rs` | Relays reader, earcon and cue events to one client through a bounded queue |
 | `cues.rs` | Spoken control cues ("Paused.", "Rate 250.") on one worker, mixed over speech as clips |
 | `quiet.rs` | Muted means no request reaches an external engine (#227) |
 | `config.rs` | `SCHEMA` of persisted settings, `Store` (`config.json`, `session_prefs.json`), `apply_reader` |
 | `lifetime.rs` | Clients, activity and the idle exit |
-| `settings_page.rs`, `assets/settings.html` | The settings page, driving the runtime only through the public HTTP API |
+| `settings_page.rs`, `assets/settings/` | The settings page (markup, `style.css` and `script.js`, joined at compile time; the ranges and defaults of `SCHEMA` filled in when served), driving the runtime only through the public HTTP API |
 | `support_log.rs`, `trace_log.rs` | The lines of `logs\sonarad.log` |
 | `null_output.rs` | `--output null`: a silent output that keeps real time (conformance, CI) |
 
@@ -174,7 +174,7 @@ Host locks in `sonarad` are taken at the start of handling a request, before any
   `Quiet::change` serializes mute changes.
 - `enabling`: one extension enabled at a time.
 - `SystemExt::transition` then `holds`: arming and disarming the `system` extension.
-- Leaf locks, taken last and held briefly: the `Store` (`config.json` writes), `engines.rs`
+- Leaf locks, taken last and held briefly: the `Store` (`config.json` writes), `engines/`
   registries and entries, the engine name, `Origins`, the cue queue, the log folder's OS lock.
 
 ## External engines
@@ -214,13 +214,13 @@ lists.
   the `command` tests.
 - `Engine::accepts_unlisted_voices` lets `set voice` take any id (external engines: cloud voice
   ids, cloned voices, file names of a local server).
-- `crates/sonarad/src/engines.rs`: `engines.json`, one `External` per profile with Kokoro (or the
+- `crates/sonarad/src/engines/`: `engines.json`, one `External` per profile with Kokoro (or the
   fake engine) as its fallback, registration in the reader's and the previews' registries,
   the notice lines of `sonarad.log`, `reload`, the `E_FORBIDDEN` refusal of a `command` profile in
   `engine_add` (local-only). `engines_ext.rs`: the handlers and the voice rule: `engine_test`
   takes the request's voice, else the reader's voice when the engine is current, else the
   profile's; `engine_models` lists a saved or a draft profile's models. `engine_remove` and
-  `engine_reload` live in `protocol.rs` because they may switch `engine`.
+  `engine_reload` live in `protocol/profiles.rs` because they may switch `engine`.
 - Send mode (#235): `Engine::send_mode` and `Engine::input_limit` set `Reader::set_chunking` at
   start and on `set engine`: `Sentences`, or `Message` (one chunk per item, cut past the limit by
   `reader::pack_message`). `ReaderHandle::send_mode` tells L3, whose `Rules::set_whole_messages`
@@ -261,17 +261,18 @@ runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
    pins it.
 2. Make the owning layer take it: a reader key in `sonara-reader/src/settings.rs`; an extension key
    in the extension's `KEYS` (`channels_ext`, `agent_ext`, `system_ext`) and in
-   `protocol::EXTENSION_KEYS`; a host key (like `debug_log`) in `protocol.rs`. Apply the saved
+   `protocol::EXTENSION_KEYS`; a host key (like `debug_log`) in `protocol/messages.rs`. Apply the saved
    value at start (`config::apply_reader`, `agent_ext::settings_from`, the extension's enable
    path).
-3. Add the control to `crates/sonarad/assets/settings.html` and run the e2e tests
+3. Add the control to `crates/sonarad/assets/settings/` (`body.html`, `script.js`; a whole-number
+   setting takes its range and default from `config::SCHEMA`, served as the script's `SCHEMA`) and run the e2e tests
    (`tests/e2e/test_sonarad_settings_e2e.py`).
 4. Document the key in [protocol-v1.md](protocol-v1.md) (core "set / get" or the extension's
    Settings section) and add a conformance test (`conformance/persistence/` for the saved value).
 
 **Add a message**
 
-1. Dispatch it in `Server::dispatch` (`crates/sonarad/src/protocol.rs`). A core message also gets
+1. Dispatch it in `Server::dispatch` (`crates/sonarad/src/protocol/mod.rs`) and handle it in `messages.rs`. A core message also gets
    a capability in `CAPABILITIES` and a protocol minor (`PROTOCOL_MINOR`); an extension message
    goes in that extension's `TYPES` (which `EXTENSION_TYPES` chains), so a client without the extension
    gets `E_UNSUPPORTED`, not `E_UNKNOWN_TYPE`.
@@ -287,7 +288,7 @@ runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
    toggle) and, only if it gets a default chord, to `DEFAULT_KEYS`. A default must be free on
    Windows 11 and must not be an AltGr character on common layouts (see the README).
 2. Map it to protocol controls in `SystemExt::apply` (`crates/sonarad/src/system_ext.rs`).
-3. Add a `data-action="<action>"` row to the Hotkeys page of `settings.html` and run the e2e tests.
+3. Add a `data-action="<action>"` row to the Hotkeys page of `assets/settings/body.html` and run the e2e tests.
 4. Document it under Hotkeys in [protocol-v1.md](protocol-v1.md#hotkeys); test it in
    `crates/sonara-system/tests/keymap.rs` and `conformance/system/`.
 
@@ -298,8 +299,8 @@ runtime folders are `%LOCALAPPDATA%\Sonara\runtime\<version>\`.
 2. Write `external/<kind>.rs` implementing `Adapter` (request, error mapping, voice and model
    lists) and return it from the `Backend` match in `external/mod.rs`.
 3. Update the host and its clients: the `list["kinds"]` assertion in the engines tests of
-   `crates/sonarad/src/engines.rs`, the kind
-   tables of `settings.html`, the help text of `crates/sonara-cli/src/engines.rs`.
+   `crates/sonarad/src/engines/tests.rs`, the kind
+   tables of `assets/settings/script.js`, the help text of `crates/sonara-cli/src/engines.rs`.
 4. Document it: a section under Kinds in [protocol-v1-engines.md](protocol-v1-engines.md) and a
    row in PRIVACY.md (where the text goes, how the key is sent).
 5. Test it: unit tests in the crate, a local fake of the provider in `conformance/engines/fakes.py`
