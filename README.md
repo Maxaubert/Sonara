@@ -416,6 +416,22 @@ external speech engine (OpenAI, ElevenLabs, Azure, Google, Gemini, Cartesia, Dee
 aloud, sent to that provider (a speech program of your own on your PC keeps it local). Details, and every file Sonara keeps,
 are in [PRIVACY.md](PRIVACY.md).
 
+## Use Sonara in your own app
+
+Apps can ship the Sonara runtime and speak through it (Windows x64 only). Each release publishes
+the SDKs with the same version:
+
+```sh
+pip install sonara-client                                # Python 3.9+, standard library only
+npm install @sonara/client @sonara/runtime-win32-x64     # Node 18+ / Electron: client + sonarad.exe
+```
+
+Other languages take `sonara-runtime-win-x64-<version>.zip` (with `SHA256SUMS`) from
+[the releases](https://github.com/Maxaubert/Sonara/releases) and speak
+[protocol v1](docs/protocol-v1.md) over TCP or HTTP. The binaries are not code-signed yet, so
+sign them with your app if your installer needs it. How to bundle, start and license the runtime:
+[docs/bundling.md](docs/bundling.md).
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [docs/architecture.md](docs/architecture.md)

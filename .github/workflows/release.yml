@@ -20,8 +20,17 @@
 #   users install or update. A plugin update whose release is missing stays
 #   silent (each hook retries the download every 5 minutes) until it is
 #   published. Unsigned until SignPath enrolment.
-# - Nothing goes to npm or PyPI: publish-packages runs only once the
-#   NPM_TOKEN / PYPI_TOKEN secrets exist (manual steps: docs/bundling.md).
+# - Publishes the SDKs (#279) by trusted publishing (OIDC, no tokens):
+#   sonara-client to PyPI, @sonara/client and @sonara/runtime-win32-x64 to
+#   npm (@sonara/player is private). Off until the repository variables
+#   PUBLISH_PYPI / PUBLISH_NPM are 'true' (one-time setup: docs/bundling.md),
+#   so a release never fails on a registry that is not set up yet. The
+#   packages job builds them with packaging/build_packages.py (what ci.yml
+#   checks on every PR); each publish job skips a version the registry has.
+#   workflow_dispatch with packages_only publishes the packages of the
+#   existing release v<version> (the chosen ref's Cargo.toml) without a new
+#   release, e.g. right after configuring a registry (npm wants the first
+#   trusted publish within 2 days).
 # A push that changes only docs or repo tooling (*.md, docs/, .github/) since
 # the last release tag is not released (the "Changes" step; workflow_run has
 # no paths filter), so a Dependabot actions update needs no version bump.
@@ -35,6 +44,11 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      packages_only:
+        description: "Only publish the SDK packages of the existing release v<version> (no new release)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -53,7 +67,7 @@ env:
 jobs:
   release:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && !inputs.packages_only) ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
@@ -153,52 +167,148 @@ jobs:
           $tag = "v${{ steps.ver.outputs.version }}"
           gh release create $tag "${{ steps.zip.outputs.path }}" "${{ steps.zip.outputs.sums }}" --title $tag --generate-notes --target $env:RELEASE_SHA
 
-  # Disabled until registry tokens exist: every step is skipped while the
-  # secrets are empty, so the job passes without publishing. Manual
-  # publishing: docs/bundling.md.
-  publish-packages:
+  # The SDK packages (#279), built from the release commit by
+  # packaging/build_packages.py, the script ci.yml's clients job checks on
+  # every PR: the npm tarballs packed as tests/embed packs them (the runtime
+  # package with sonarad.exe and the files runtime_dlls.py stages next to
+  # it), the wheel and the sdist. Skipped while neither PUBLISH_PYPI nor
+  # PUBLISH_NPM is 'true', and after a failed or skipped release (a failed
+  # job still passes on the outputs it set, so its result is checked too).
+  packages:
     needs: release
-    if: needs.release.outputs.released == 'true'
+    if: >-
+      !cancelled() &&
+      (vars.PUBLISH_PYPI == 'true' || vars.PUBLISH_NPM == 'true') &&
+      ((needs.release.result == 'success' && needs.release.outputs.released == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.packages_only))
     runs-on: windows-latest
     timeout-minutes: 45
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    # bash -e: a failing command fails the step.
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-        if: env.NPM_TOKEN != '' || env.PYPI_TOKEN != ''
         with:
           ref: ${{ env.RELEASE_SHA }}
-      - uses: dtolnay/rust-toolchain@stable
-        if: env.NPM_TOKEN != ''
-      - uses: actions/setup-node@v7
-        if: env.NPM_TOKEN != ''
+      - uses: actions/setup-python@v7
         with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-      - name: Publish @sonara/client and @sonara/runtime-win32-x64
-        if: env.NPM_TOKEN != ''
+          python-version: "3.12"
+      - name: Version and release commit
+        id: ver
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(python packaging/bump_version.py --check)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          # By hand: build the commit release v<version> was cut from, never a later one.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            gh release view "v$v" > /dev/null || { echo "::error::release v$v does not exist; publish it first"; exit 1; }
+            git fetch --depth 1 origin "refs/tags/v$v:refs/tags/v$v"
+            git checkout --detach "v$v"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Build and check the packages
         run: |
           cargo build -p sonarad --release
           python packaging/runtime_dlls.py stage target/release
-          (cd clients/ts && npm ci && npm run build && npm publish --access public)
-          (cd packaging/npm-runtime && npm publish --access public)
-      - uses: actions/setup-python@v7
-        if: env.PYPI_TOKEN != ''
-        with:
-          python-version: "3.12"
-      - name: Publish sonara-client
-        if: env.PYPI_TOKEN != ''
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        run: |
+          python packaging/notices/gen_notices.py --check
+          (cd clients/ts && npm ci)
           python -m pip install build twine
-          cd clients/python
-          python -m build
-          python -m twine upload dist/*
+          python packaging/build_packages.py --out dist/packages
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: dist/packages/
+          if-no-files-found: error
+
+  # npm trusted publishing (OIDC): no token. The trusted publisher of each
+  # package names this file (release.yml) and the environment npm. Needs
+  # npm 11.5.1 or later; provenance is attached by npm itself.
+  publish-npm:
+    needs: packages
+    # Not the implicit success(): it also wants the release job, which a
+    # packages_only run skips.
+    if: "!cancelled() && needs.packages.result == 'success' && vars.PUBLISH_NPM == 'true'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: packages
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: npm 11.5.1 or later
+        run: |
+          if ! node -e 'const [a, b, c] = process.argv[1].split(".").map(Number); process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$(npm --version)"; then
+            npm install -g npm@11
+          fi
+          npm --version
+      - name: Publish @sonara/client and @sonara/runtime-win32-x64
+        run: |
+          # The client first: the runtime package is useless without it.
+          for t in packages/npm/sonara-client-*.tgz packages/npm/sonara-runtime-win32-x64-*.tgz; do
+            [ -f "$t" ] || { echo "::error::$t missing from the packages artifact"; exit 1; }
+            name=$(tar -xOzf "$t" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).name')
+            ver=$(tar -xOzf "$t" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+            # The packument: 404 while the package does not exist yet.
+            code=$(curl -s -o packument.json -w '%{http_code}' "https://registry.npmjs.org/${name/\//%2F}")
+            if [ "$code" = 200 ] && node -e 'process.exit(JSON.parse(require("fs").readFileSync("packument.json", "utf8")).versions?.[process.argv[1]] ? 0 : 1)' "$ver"; then
+              echo "$name@$ver is on npm already: skipped"
+              continue
+            fi
+            if [ "$code" != 200 ] && [ "$code" != 404 ]; then echo "::error::npm registry answered $code for $name"; exit 1; fi
+            npm publish "$t" --access public
+          done
+
+  # PyPI trusted publishing (OIDC): no token. The trusted publisher names
+  # this file (release.yml) and the environment pypi. pypa's action runs on
+  # Linux only; the dists are pure Python, built on Windows above.
+  publish-pypi:
+    needs: packages
+    # Not the implicit success(): it also wants the release job, which a
+    # packages_only run skips.
+    if: "!cancelled() && needs.packages.result == 'success' && vars.PUBLISH_PYPI == 'true'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sonara-client
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: packages
+      - name: Skip a version already on PyPI
+        id: pypi
+        run: |
+          ver="${{ needs.packages.outputs.version }}"
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/sonara-client/$ver/json")
+          case "$code" in
+            200) echo "sonara-client $ver is on PyPI already: skipped"; echo "publish=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "publish=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::PyPI answered $code for sonara-client $ver"; exit 1 ;;
+          esac
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        if: steps.pypi.outputs.publish == 'true'
+        with:
+          packages-dir: packages/python/
+          # A rerun after a partly finished upload passes.
+          skip-existing: true

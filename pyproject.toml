@@ -8,7 +8,8 @@
 
 [dependency-groups]
 # pyyaml: tests/repo/test_workflow_powershell.py parses the workflows.
-dev = ["pytest>=7", "ruff>=0.16,<0.17", "pyyaml"]
+# build, twine: packaging/build_packages.py builds and checks the Python SDK (#279).
+dev = ["pytest>=7", "ruff>=0.16,<0.17", "pyyaml", "build", "twine"]
 # Headless settings-page tests (tests/e2e) against a built sonarad.
 e2e = ["pytest>=7", "playwright"]
 

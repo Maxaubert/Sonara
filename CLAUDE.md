@@ -22,6 +22,7 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - Build / package: `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py`   Artifact: `sonara-runtime-win-x64-<version>.zip` + `SHA256SUMS`
 - Known failures to tolerate: none
 - Version: `Cargo.toml` `[workspace.package]`; `python packaging/bump_version.py <version>` sets every version file and lockfile entry (`--check` prints it, as release.yml reads it; `tests/repo/test_manifests.py`)   Release: release.yml once ci.yml passed on a push to main (`workflow_run`, #250); users get the release named in `bin/runtime-version`
+- SDK publishing (#279): release.yml, trusted publishing (OIDC), on while repo vars `PUBLISH_PYPI` / `PUBLISH_NPM` are `true`; checks: `python packaging/build_packages.py --publish-dry-run`; setup in `docs/bundling.md`.
 - Install locally after merge: `/plugin update sonara@sonara` once the release exists, restart Claude Code   Confirm version: `/sonara:doctor` (its `version` row)
 - Deploy: plugin marketplace   Signing: unsigned
 

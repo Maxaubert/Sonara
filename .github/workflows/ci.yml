@@ -171,6 +171,13 @@ jobs:
         run: python packaging/smoke/python_host.py
       - name: Embedder e2e (Node, Python and raw protocol hosts)
         run: python -m pytest tests/embed -q -rs
+      # What release.yml publishes (#279), built by the same script: both npm
+      # tarballs (with the files an app needs) through npm publish --dry-run,
+      # the wheel and sdist through twine check.
+      - name: "Packages: build, check, publish dry run"
+        run: |
+          python -m pip install build twine
+          python packaging/build_packages.py --publish-dry-run
 
   # cargo-deny-action is a Docker action, which GitHub runs only on Linux
   # runners. deny.toml pins the graph to the Windows target, so Windows-only
