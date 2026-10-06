@@ -47,6 +47,8 @@ struct Inner {
     timed: Vec<(Instant, OutputCall)>,
     /// gen of the loaded chunk.
     loaded: Option<u64>,
+    /// The loaded chunk is still being made (`play_open` without `finish`).
+    open: bool,
     paused: bool,
     volume: u8,
     /// When set, every play fails at once with this reason (a dead device).
@@ -142,12 +144,16 @@ impl TestOutput {
     /// The loaded chunk, if any, plays to its end at once: `ChunkStarted`,
     /// then `ChunkFinished`, and it is unloaded, as a real output does. One
     /// step under the lock, so a thread that keeps playing whatever is
-    /// loaded never races the host's `play` or `stop` (#269). Returns its
-    /// gen.
+    /// loaded never races the host's `play` or `stop` (#269). Like a real
+    /// output it plays nothing while paused, nor a chunk still being made
+    /// (`play_open` without `finish`): then it returns `None`. Returns the
+    /// gen it played.
     pub fn play_through(&self) -> Option<u64> {
         let mut inner = self.lock();
+        if inner.paused || inner.open {
+            return None;
+        }
         let gen = inner.loaded.take()?;
-        inner.paused = false;
         let _ = self.events.send(AudioEvent::ChunkStarted { gen });
         let _ = self.events.send(AudioEvent::ChunkFinished { gen });
         Some(gen)
@@ -174,6 +180,7 @@ impl Output for TestOutput {
             samples,
         });
         inner.paused = false;
+        inner.open = false;
         if let Some(reason) = inner.fail_plays.clone() {
             inner.loaded = None;
             drop(inner);
@@ -194,6 +201,7 @@ impl Output for TestOutput {
         });
         inner.paused = false;
         inner.loaded = Some(gen);
+        inner.open = true;
     }
 
     fn append(&mut self, gen: u64, pcm: Vec<PcmChunk>) {
@@ -202,7 +210,11 @@ impl Output for TestOutput {
     }
 
     fn finish(&mut self, gen: u64) {
-        self.lock().record(OutputCall::Finish { gen });
+        let mut inner = self.lock();
+        inner.record(OutputCall::Finish { gen });
+        if inner.loaded == Some(gen) {
+            inner.open = false;
+        }
     }
 
     fn pause(&mut self) {
@@ -221,6 +233,7 @@ impl Output for TestOutput {
         let mut inner = self.lock();
         inner.record(OutputCall::Stop);
         inner.loaded = None;
+        inner.open = false;
         inner.paused = false;
     }
 
