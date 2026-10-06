@@ -42,6 +42,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
+/// At most this many `argv` entries and voices of a `command` profile.
+pub const COMMAND_MAX_ARGS: usize = 64;
+pub const COMMAND_MAX_VOICES: usize = 200;
+
 /// The environment variable that carries a resolved key to the program.
 pub const KEY_ENV: &str = "SONARA_ENGINE_KEY";
 /// How often the run looks at the process, the clock and the cancel.

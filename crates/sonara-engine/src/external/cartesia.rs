@@ -12,11 +12,17 @@ use super::adapter::{
 };
 use super::error::{clean, headline, model_message, ExtError};
 use super::keys::Secret;
-use super::profile::{Kind, Profile, CARTESIA_VERSION};
+use super::profile::{Kind, Profile};
 use super::rate;
 use super::split::Limit;
 use crate::Reason;
 use serde_json::{json, Map, Value};
+
+/// Cartesia's API version (spec 5.4; the API pins its behaviour to the
+/// version date, so it is the API's contract, not a model or a voice).
+pub const CARTESIA_VERSION: &str = "2026-08-14";
+/// Cartesia's raw PCM rates.
+pub const CARTESIA_RATES: &[u64] = &[8_000, 16_000, 22_050, 24_000, 44_100, 48_000];
 
 /// Voices asked for per page.
 const PAGE_SIZE: u32 = 100;

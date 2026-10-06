@@ -20,6 +20,9 @@ use crate::Reason;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Deepgram's `linear16` rates.
+pub const DEEPGRAM_RATES: &[u64] = &[8_000, 16_000, 24_000, 32_000, 48_000];
+
 pub struct Deepgram {
     base: String,
     sample_rate: u32,
