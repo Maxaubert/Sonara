@@ -194,16 +194,14 @@ Two repository variables switch it on, one per registry. While a variable is uns
 npm configures a trusted publisher only on a package that already exists, and a new trusted publisher must publish successfully within 2 days or it expires (delete it and add it again then). So:
 
 1. Sign in at npmjs.com (2FA on), and create the organization `sonara` (free plan, public packages): the scope of `@sonara/...`.
-2. Create both packages with a placeholder `0.0.0` from your PC, outside the repository (`npm login` first; Git Bash):
+2. Publish the first version of both packages by hand, from a real terminal window (a passkey sign-in waits for the browser, which a non-interactive shell cannot do). After `npm login`, build the runtime and stage its DLLs (see the build steps above), then:
 
-   ```sh
-   for name in @sonara/client @sonara/runtime-win32-x64; do
-     dir=$(mktemp -d)
-     node -e 'require("fs").writeFileSync(process.argv[1] + "/package.json", JSON.stringify({ name: process.argv[2], version: "0.0.0", description: "Placeholder; releases are published from GitHub Actions.", license: "MIT", repository: { type: "git", url: "git+https://github.com/Maxaubert/Sonara.git" } }, null, 2))' "$dir" "$name"
-     (cd "$dir" && npm publish --access public)
-   done
+   ```powershell
+   cd clients\ts; npm publish --access public
+   cd ..\..\packaging\npm-runtime; npm publish --access public
    ```
 
+   Done for 0.21.6 on 2026-10-06. A new package can take a few minutes to show up on the registry.
 3. For each package, **Settings, Trusted publishing**, add GitHub Actions:
 
    | field | value |
@@ -215,7 +213,7 @@ npm configures a trusted publisher only on a package that already exists, and a 
 
    Or with npm 11.15.0 or later: `npm trust github <package> --repo Maxaubert/Sonara --file release.yml --env npm --allow-publish`.
 4. `gh variable set PUBLISH_NPM --body true -R Maxaubert/Sonara`, then within the 2 days run `release.yml` by hand with **packages_only**: it publishes the current release through OIDC (with provenance), which validates both trusted publishers.
-5. Mark the placeholders: `npm deprecate @sonara/client@0.0.0 "placeholder, install the latest version"` (and the same for `@sonara/runtime-win32-x64`). Then, per package, **Settings, Publishing access**: "Require two-factor authentication and disallow tokens" (trusted publishing still works).
+5. Per package, **Settings, Publishing access**: "Require two-factor authentication and disallow tokens" (trusted publishing still works).
 
 ### Notes
 
