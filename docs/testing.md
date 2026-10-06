@@ -1,7 +1,8 @@
 # Testing, live checks and release chores
 
-The gates every PR runs are in `CLAUDE.md` and `CONTRIBUTING.md`. This page holds the rest:
-opt-in live tests, engine staging, SDK steps, generated assets, the version file list and the
+The gates every PR runs are in `CLAUDE.md`, `CONTRIBUTING.md` and the project skill
+`.claude/skills/sonara-gates`. This page holds the rest:
+opt-in live tests, engine staging, SDK steps, generated assets, the version bump and the
 safe redeploy. Rust commands need `~/.cargo/bin` on PATH.
 
 ## Rust live tests (opt-in, on this PC)
@@ -94,23 +95,25 @@ chromium`, plus `cargo build -p sonarad`). Run it when `crates/sonarad/assets/se
 
 ## Version files
 
-Bump in every PR (patch for fixes, minor for features). `tests/test_manifests.py` keeps these
-equal; the lockfiles follow with `cargo build` and `npm install`:
-
-- `Cargo.toml` `[workspace.package]`, `bin/runtime-version`
-- `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`
-- `pyproject.toml`, `src/sonara/__init__.py`
-- `clients/ts/package.json`, `clients/ts/src/version.ts`, `clients/player/package.json`
-- `packaging/npm-runtime/package.json`
-- `clients/python/pyproject.toml`, `clients/python/src/sonara_client/version.py`
+Bump in every PR (patch for fixes, minor for features) with
+`python packaging/bump_version.py <major.minor.patch>`. Its `VERSION_FILES` table is the one list
+of files that carry the version (`Cargo.toml` `[workspace.package]`, `bin/runtime-version`, the
+plugin manifests, `pyproject.toml`, the SDK and npm runtime packages); it also moves the
+workspace crates in `Cargo.lock` and the package entries in the two client `package-lock.json`
+files, keeps line endings, and changes nothing if a file does not match.
+`tests/test_manifests.py` reads the same table and checks that every file agrees. A new version
+file goes into that table.
 
 Release: a push to main runs ci.yml; release.yml starts once it passed (`workflow_run`, #250),
 builds the runtime zip and publishes `v<version>`. It refuses a version that already exists.
 
 ## Safe redeploy of a branch build
 
-The plugin runs the runtime in `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`. To try a
-branch build in the same version folder (never during someone's session):
+The project skill `.claude/skills/sonara-redeploy` has the full procedure, including a new
+version folder and the rollback.
+
+The plugin runs the runtime in `%LOCALAPPDATA%\Sonara\runtime\<bin/runtime-version>\`. The short
+form, to try a branch build in the same version folder (never during someone's session):
 
 1. `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release`
 2. `"$LOCALAPPDATA/Sonara/runtime/<ver>/sonara.exe" stop` (writes `stopped`, restores ducked

@@ -1,9 +1,13 @@
 """Validate the shipped plugin manifests as real JSON and assert every
 hooks.json command points at the bin/sonara-hook-launch launcher under the
 repo root (#202: the Rust runtime, no Python)."""
+import importlib.util
 import json
 import re
+import shutil
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
@@ -11,6 +15,7 @@ MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 HOOKS_JSON = REPO_ROOT / "hooks" / "hooks.json"
 LAUNCHER = REPO_ROOT / "bin" / "sonara-hook-launch"
 RUNTIME_VERSION = REPO_ROOT / "bin" / "runtime-version"
+BUMP_SCRIPT = REPO_ROOT / "packaging" / "bump_version.py"
 
 
 def _load(path: Path) -> dict:
@@ -123,55 +128,71 @@ def test_every_phase1_event_is_hooked():
     assert not missing, f"hooks.json is missing event hooks: {sorted(missing)}"
 
 
+def _bump_module():
+    spec = importlib.util.spec_from_file_location("bump_version", BUMP_SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _pyproject_version() -> str:
-    # Regex, not tomllib: the suite also runs on Python 3.9 (no tomllib there).
-    import re
-    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    m = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
-    assert m, "pyproject.toml declares no [project] version"
-    return m.group(1)
+    # The release version (release.yml reads pyproject.toml); test_release_zip
+    # imports this helper.
+    return _bump_module().read_versions(REPO_ROOT)["pyproject.toml"]
 
 
-def test_manifest_versions_match_pyproject():
-    # release.yml publishes v<pyproject version> and refuses a mismatch; plugin
-    # updates are keyed on the manifest version, so all three must move together.
-    version = _pyproject_version()
-    assert _load(PLUGIN_JSON).get("version") == version
-    plugins = _load(REPO_ROOT / ".claude-plugin" / "marketplace.json").get("plugins") or []
+def test_every_version_file_carries_the_release_version():
+    # release.yml publishes v<version> and refuses a mismatch; plugin updates
+    # are keyed on the manifest version and the SDKs, the npm runtime package
+    # and the Rust workspace ship from the same tag. bump_version.py owns the
+    # one list of version files, so a new one is added there and checked here.
+    versions = _bump_module().read_versions(REPO_ROOT)
+    assert len(versions) >= 12, versions
+    assert len(set(versions.values())) == 1, versions
+
+
+def test_marketplace_declares_the_plugin_version_in_its_first_entry():
+    plugins = _load(MARKETPLACE_JSON).get("plugins") or []
     assert plugins, "marketplace.json declares no plugins"
-    assert plugins[0].get("version") == version
+    assert plugins[0].get("version") == _pyproject_version()
 
 
-def test_package_version_matches_pyproject():
-    # sonara.__version__ is user-visible (doctor, the settings page footer
-    # renders it from /api/state, #161), so it must move with the release.
-    import re
-    version = _pyproject_version()
-    init = (REPO_ROOT / "src" / "sonara" / "__init__.py").read_text(encoding="utf-8")
-    m = re.search(r'^__version__ = "([^"]+)"', init, re.M)
-    assert m and m.group(1) == version
+def _copy_version_files(mod, dest: Path) -> None:
+    for rel in mod.all_paths():
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(REPO_ROOT / rel, target)
 
 
-def test_pyproject_version_is_0_20_6():
-    assert _pyproject_version() == "0.20.6"
+def test_bump_version_moves_every_version_file_and_lockfile(tmp_path):
+    mod = _bump_module()
+    _copy_version_files(mod, tmp_path)
+    old = _pyproject_version()
+    before = {rel: (tmp_path / rel).read_bytes() for rel in mod.all_paths()}
+
+    mod.bump(tmp_path, "9.8.7")
+
+    assert set(mod.read_versions(tmp_path).values()) == {"9.8.7"}
+    for rel in mod.all_paths():
+        after = (tmp_path / rel).read_bytes()
+        assert after != before[rel], f"{rel} was not bumped"
+        # Only version strings change (line endings too stay as they were):
+        # put the old one back and the file is byte for byte what it was.
+        assert after.replace(b"9.8.7", old.encode()) == before[rel], rel
+    # The workspace crates in Cargo.lock move, registry crates do not.
+    lock = (tmp_path / "Cargo.lock").read_text(encoding="utf-8")
+    assert 'name = "sonarad"\nversion = "9.8.7"' in lock
+    assert (tmp_path / "bin" / "runtime-version").read_bytes() == b"9.8.7\n"
 
 
-def test_sdk_package_versions_match_pyproject():
-    # The SDKs and the npm runtime package ship from the same release tag
-    # as the runtime they talk to and bundle (runtime plan, M9).
-    import re
-    version = _pyproject_version()
-    for rel in ("clients/ts/package.json", "clients/player/package.json", "packaging/npm-runtime/package.json"):
-        assert _load(REPO_ROOT / rel).get("version") == version, rel
-    ts_version = (REPO_ROOT / "clients" / "ts" / "src" / "version.ts").read_text(encoding="utf-8")
-    m = re.search(r'^export const VERSION = "([^"]+)";', ts_version, re.M)
-    assert m and m.group(1) == version, "clients/ts/src/version.ts"
-    py_client = REPO_ROOT / "clients" / "python"
-    m = re.search(r'^version = "([^"]+)"', (py_client / "pyproject.toml").read_text(encoding="utf-8"), re.M)
-    assert m and m.group(1) == version, "clients/python/pyproject.toml"
-    init = (py_client / "src" / "sonara_client" / "version.py").read_text(encoding="utf-8")
-    m = re.search(r'^__version__ = "([^"]+)"', init, re.M)
-    assert m and m.group(1) == version, "clients/python/src/sonara_client/version.py"
+def test_bump_version_refuses_a_malformed_version(tmp_path):
+    mod = _bump_module()
+    _copy_version_files(mod, tmp_path)
+    old = _pyproject_version()
+    for bad in ("1.2", "v1.2.3", "1.2.3.4", "01.2.3", "1.2.x"):
+        with pytest.raises(ValueError):
+            mod.bump(tmp_path, bad)
+    assert set(mod.read_versions(tmp_path).values()) == {old}
 
 
 def test_sdk_packages_ship_the_mit_licence():
@@ -194,17 +215,6 @@ def test_player_has_no_runtime_dependencies():
     assert not pkg.get("dependencies")
     assert set(pkg.get("peerDependencies", {})) == {"react"}
     assert pkg["peerDependenciesMeta"]["react"]["optional"] is True
-
-
-def test_cargo_workspace_version_matches_pyproject():
-    # The Rust runtime (crates/) ships from the same release tag, so the
-    # [workspace.package] version moves with pyproject (runtime plan, M1).
-    import re
-    text = (REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8")
-    section = re.search(r"^\[workspace\.package\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
-    assert section, "Cargo.toml declares no [workspace.package]"
-    m = re.search(r'^version = "([^"]+)"', section.group(1), re.M)
-    assert m and m.group(1) == _pyproject_version()
 
 
 def test_manifests_have_no_em_dash():
