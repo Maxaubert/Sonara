@@ -1,6 +1,6 @@
 # Text-rule golden cases
 
-Input and expected output for Sonara's text rules (`cleaner.py`, `assembler.py`), one JSON file per category. `tests/test_text_rules_golden.py` runs every case against the Python code. A port of these rules (for example TypeScript in an embedding host) is correct when it passes the same files.
+Input and expected output for Sonara's text rules (`crates/sonara-core/src/text.rs`, `assembler.rs`), one JSON file per category. `crates/sonara-core/tests/golden.rs` runs every case against the Rust code. A port of these rules (for example TypeScript in an embedding host) is correct when it passes the same files.
 
 Each file is `{"description": str, "cases": [case, ...]}`. A case has a `name`, an `fn` and:
 

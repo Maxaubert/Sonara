@@ -1,12 +1,17 @@
 """Set the release version in every version file and lockfile (#252).
 
 Usage: python packaging/bump_version.py <major.minor.patch>
+       python packaging/bump_version.py --check
 
-VERSION_FILES is the one list of files that carry the release version;
-tests/test_manifests.py reads it to check they all agree. LOCKFILES are the
-lockfile entries for the repo's own packages, which follow the same version so
-`cargo build` and `npm ci` need no extra step. Line endings are kept as they
-are. Python 3.9 compatible (CI runs the tests on 3.9).
+The release version is Cargo.toml's [workspace.package] version (#248).
+VERSION_FILES is the one list of files that carry it; tests/repo/test_manifests.py
+reads it to check they all agree. LOCKFILES are the lockfile entries for the
+repo's own packages, which follow the same version so `cargo build` and
+`npm ci` need no extra step. Line endings are kept as they are.
+
+--check prints the release version when every version file agrees, else
+names the ones that differ and exits 1. release.yml reads the version this
+way, and ci.yml runs the same command on every PR as its dry run.
 """
 from __future__ import annotations
 
@@ -26,8 +31,6 @@ VERSION_FILES: Tuple[Tuple[str, str], ...] = (
     ("bin/runtime-version", r"(\A)([^\r\n]+)(\r?\n\Z)"),
     (".claude-plugin/plugin.json", r'(^  "version": ")([^"]+)(")'),
     (".claude-plugin/marketplace.json", r'(^      "version": ")([^"]+)(")'),
-    ("pyproject.toml", r'(^\[project\][^\[]*?^version = ")([^"]+)(")'),
-    ("src/sonara/__init__.py", r'(^__version__ = ")([^"]+)(")'),
     ("clients/ts/package.json", r'(^  "version": ")([^"]+)(")'),
     ("clients/ts/src/version.ts", r'(^export const VERSION = ")([^"]+)(";)'),
     ("clients/player/package.json", r'(^  "version": ")([^"]+)(")'),
@@ -47,6 +50,9 @@ LOCKFILES: Tuple[Tuple[str, str, int], ...] = (
 )
 
 _FLAGS = re.M | re.S
+
+# The release version (release.yml tags v<this>).
+RELEASE_SOURCE = "Cargo.toml"
 
 
 def all_paths() -> List[str]:
@@ -73,6 +79,16 @@ def read_versions(root: Path = REPO_ROOT) -> Dict[str, str]:
             raise ValueError(f"{rel}: expected one version, found {len(matches)}")
         out[rel] = matches[0].group(2)
     return out
+
+
+def release_version(root: Path = REPO_ROOT) -> str:
+    """Cargo.toml's [workspace.package] version, once every version file agrees."""
+    versions = read_versions(root)
+    release = versions[RELEASE_SOURCE]
+    differ = {rel: v for rel, v in versions.items() if v != release}
+    if differ:
+        raise ValueError(f"{RELEASE_SOURCE} is {release}, but {differ}: run bump_version.py {release}")
+    return release
 
 
 def _replace(text: str, rel: str, pattern: str, version: str, expect: Iterable[int]) -> str:
@@ -108,10 +124,17 @@ def bump(root: Path, version: str) -> None:
 
 def main(argv: List[str]) -> int:
     if len(argv) != 1:
-        print(__doc__.strip().splitlines()[2], file=sys.stderr)
+        print("\n".join(__doc__.strip().splitlines()[2:4]), file=sys.stderr)
         return 2
+    if argv[0] == "--check":
+        try:
+            print(release_version(REPO_ROOT))
+        except ValueError as e:
+            print(f"bump_version: {e}", file=sys.stderr)
+            return 1
+        return 0
     try:
-        old = read_versions(REPO_ROOT)["Cargo.toml"]
+        old = read_versions(REPO_ROOT)[RELEASE_SOURCE]
         bump(REPO_ROOT, argv[0])
     except ValueError as e:
         print(f"bump_version: {e}", file=sys.stderr)

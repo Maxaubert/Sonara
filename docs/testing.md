@@ -80,8 +80,8 @@ manual (`docs/bundling.md`).
 
 ## Settings page (e2e)
 
-`python -m pytest tests/e2e -q` (needs `pip install -e ".[e2e]"` and `playwright install
-chromium`, plus `cargo build -p sonarad`). Run it when `crates/sonarad/assets/settings.html` or
+`python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e` and
+`python -m playwright install chromium`, plus `cargo build -p sonarad`). Run it when `crates/sonarad/assets/settings.html` or
 `crates/sonarad/src/settings_page.rs` change.
 
 ## Generated assets
@@ -97,12 +97,14 @@ chromium`, plus `cargo build -p sonarad`). Run it when `crates/sonarad/assets/se
 
 Bump in every PR (patch for fixes, minor for features) with
 `python packaging/bump_version.py <major.minor.patch>`. Its `VERSION_FILES` table is the one list
-of files that carry the version (`Cargo.toml` `[workspace.package]`, `bin/runtime-version`, the
-plugin manifests, `pyproject.toml`, the SDK and npm runtime packages); it also moves the
+of files that carry the version (`Cargo.toml` `[workspace.package]`, the release version since
+#248, `bin/runtime-version`, the plugin manifests, the SDK and npm runtime packages); it also moves the
 workspace crates in `Cargo.lock` and the package entries in the two client `package-lock.json`
 files, keeps line endings, and changes nothing if a file does not match.
-`tests/test_manifests.py` reads the same table and checks that every file agrees. A new version
-file goes into that table.
+`tests/repo/test_manifests.py` reads the same table and checks that every file agrees. A new
+version file goes into that table. `python packaging/bump_version.py --check` prints the release
+version, or names the files that disagree and exits 1: release.yml reads the version with it,
+and the ci.yml check job runs it on every PR as the dry run.
 
 Release: a push to main runs ci.yml; release.yml starts once it passed (`workflow_run`, #250),
 builds the runtime zip and publishes `v<version>`. It refuses a version that already exists.
@@ -134,11 +136,3 @@ form, to try a branch build in the same version folder (never during someone's s
   logged only while the setting `debug_log` is on (the default).
 - Settings change live through the settings page (`sonara.exe settings`) or protocol `set`;
   product defaults are `sonarad::config::SCHEMA`.
-
-## Legacy Python (until #248)
-
-`python -m pytest -q` runs the repo checks and the legacy `src/sonara` tests (system Python with
-`.[dev,windows]`; conftest adds `src/` to `sys.path`). Live OneCore checks for the legacy
-package: `-m live_windows` (opt-in). Legacy rules (frozen code, do not extend): the daemon,
-`install/`, `webui.py`, `cli.py` and `summarizer.py` stay OS-free (`test_no_os_branch_in_core.py`),
-Python 3.9 syntax (`test_py39_compat.py`), every `~/.sonara` path goes through `paths.py`.

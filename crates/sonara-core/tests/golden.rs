@@ -63,3 +63,23 @@ fn every_golden_case_matches() {
     assert!(count > 0, "no golden cases found");
     assert!(failures.is_empty(), "failing cases: {failures:#?}");
 }
+
+#[test]
+fn the_golden_files_cover_every_category() {
+    let stems: std::collections::BTreeSet<String> = std::fs::read_dir(fixtures_dir())
+        .expect("fixtures dir")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
+        .collect();
+    for category in [
+        "markdown",
+        "code_blocks",
+        "lists",
+        "links",
+        "emoji",
+        "numbers",
+    ] {
+        assert!(stems.contains(category), "no {category}.json golden file");
+    }
+}

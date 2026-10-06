@@ -154,7 +154,7 @@ Summary of `LICENSING.md`: you may sell your app, keep it closed-source, choose 
 
 ## Publishing the packages (maintainers)
 
-Releases are cut by `release.yml` once CI (`ci.yml`) passed on a push to `main` (#250): it builds `sonarad.exe`, `sonara-hook.exe` and `sonara.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to them (`packaging/runtime_dlls.py`), attaches `sonara-runtime-win-x64-<version>.zip` and its `SHA256SUMS` to the GitHub release (the Claude Code plugin installs that zip on first use) and stops there. Nothing is published to npm or PyPI automatically: there are no registry tokens yet. To publish by hand from a checkout of the release tag (the version is already the same in every manifest; `tests/test_manifests.py` checks it):
+Releases are cut by `release.yml` once CI (`ci.yml`) passed on a push to `main` (#250): it builds `sonarad.exe`, `sonara-hook.exe` and `sonara.exe` (release), stages `onnxruntime.dll` (fetched by URL, pinned SHA-256) and the VC++ runtime next to them (`packaging/runtime_dlls.py`), attaches `sonara-runtime-win-x64-<version>.zip` and its `SHA256SUMS` to the GitHub release (the Claude Code plugin installs that zip on first use) and stops there. Nothing is published to npm or PyPI automatically: there are no registry tokens yet. To publish by hand from a checkout of the release tag (the version is already the same in every manifest; `tests/repo/test_manifests.py` checks it):
 
 ```sh
 cargo build -p sonarad --release

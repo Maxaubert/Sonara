@@ -46,5 +46,4 @@ code, tests or docs (#235): pass them through these variables.
 - Paid providers cost money per call: ask the user before a run that uses their keys.
 - `win_live` and the say example make sound and touch media sessions: not during a call or
   someone's listening session.
-- Legacy Python live checks (until #248): `python -m pytest -m live_windows`.
 - Full context (Kokoro staging, G2P bless, earcons): `docs/testing.md`.

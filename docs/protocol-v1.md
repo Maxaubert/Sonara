@@ -12,8 +12,8 @@ Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the 
 (`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec:
 `docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
 
-The Python daemon of the Claude Code plugin still speaks the older protocol in `docs/protocol.md`
-until the cutover (M11).
+Since 0.11 (#202) the Claude Code plugin runs this runtime too. The retired Python daemon's older
+protocol was removed with its package (#248); it stays in the git history before 0.21.0.
 
 ## Contents
 

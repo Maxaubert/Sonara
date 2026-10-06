@@ -11,7 +11,6 @@ Start here. `CLAUDE.md` holds the rules and gates; this index says where everyth
 | [testing.md](testing.md) | Live tests and their env vars, Kokoro and G2P, conformance, SDK steps, earcons, notices, version files, safe redeploy | current |
 | [plans/](plans/) | Specs and plans: external engines (`2026-10-04-external-engines-spec.md`), Rust runtime spec and plan (`2026-10-02-sonara-runtime-*.md`) | current |
 | [history/](history/README.md) | Finished plans, specs, audits and checklists. Ignored by rg and Grep (`/.ignore`) | history |
-| [protocol.md](protocol.md) | Wire protocol of the retired Python daemon | legacy, deleted with `src/sonara` (#248) |
 | [history/architecture-python.md](history/architecture-python.md) | Architecture of the retired Python daemon | history |
 
 Other places:
