@@ -1,0 +1,5 @@
+# Azure AI Speech (text to speech REST): sources
+
+- Source: https://github.com/MicrosoftDocs/azure-ai-docs (branch `main`), fetched 2026-10-06: `articles/ai-services/speech-service/rest-text-to-speech.md` (last changed in `777f84fbedeb`, 2026-06-05: the voice list on regional and resource hosts, the headers, the status codes, the output formats), `includes/cognitive-services-speech-service-endpoints-text-to-speech.md` (the regional endpoints), `includes/cognitive-services-speech-service-rest-auth.md` (`Ocp-Apim-Subscription-Key` or `Authorization: Bearer`) and `speech-synthesis-markup-voice.md` (`prosody rate`: a relative number is a multiplier, within 0.5 to 2). Rendered at https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech
+- Licence: CC-BY-4.0 (the documentation repository). Microsoft publishes no OpenAPI for this API, so the fragment is hand-transcribed.
+- Note: the docs document no error body, only status codes; the voice list sample gives the `Voice` fields.

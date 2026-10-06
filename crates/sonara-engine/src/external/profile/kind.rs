@@ -130,7 +130,9 @@ impl Preset {
 
     /// Whether the server needs a model in each request (OpenAI's API,
     /// LocalAI and Speaches host several): the profile must name one.
-    /// Another server picks its own when Sonara sends none.
+    /// Another server picks its own when Sonara sends none (Chatterbox-
+    /// TTS-Server, whose schema requires the field but never reads it,
+    /// gets an empty one).
     pub fn model_required(&self) -> bool {
         matches!(self, Preset::OpenAi | Preset::LocalAi | Preset::Speaches)
     }

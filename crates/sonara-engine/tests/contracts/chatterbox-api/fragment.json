@@ -1,0 +1,89 @@
+{
+ "x-source": "Hand-transcribed from the pydantic models and routes of travisvn/chatterbox-tts-api (see SOURCES.md).",
+ "operations": {
+  "POST /v1/audio/speech": {
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "schema": {"$ref": "#/$defs/TTSRequest"}
+     }
+    }
+   },
+   "responses": {
+    "200": {"content": {"audio/wav": {"schema": {"type": "string", "format": "binary"}}}},
+    "400": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPError"}}}},
+    "404": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPError"}}}},
+    "500": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPError"}}}}
+   }
+  },
+  "GET /voices": {
+   "responses": {
+    "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/VoiceLibraryResponse"}}}}
+   }
+  }
+ },
+ "$defs": {
+  "TTSRequest": {
+   "description": "voice is a voice library name or alias; an unknown name silently falls back to the default voice (resolve_voice_path_and_language).",
+   "type": "object",
+   "properties": {
+    "input": {"type": "string", "minLength": 1, "maxLength": 3000},
+    "voice": {"type": "string", "default": "alloy"},
+    "response_format": {"type": "string", "default": "wav", "description": "ignored: always WAV"},
+    "speed": {"type": "number", "default": 1.0, "description": "ignored"},
+    "stream_format": {"type": "string", "enum": ["audio", "sse"], "default": "audio"},
+    "exaggeration": {"anyOf": [{"type": "number", "minimum": 0.25, "maximum": 2.0}, {"type": "null"}]},
+    "cfg_weight": {"anyOf": [{"type": "number", "minimum": 0.0, "maximum": 1.0}, {"type": "null"}]},
+    "temperature": {"anyOf": [{"type": "number", "minimum": 0.05, "maximum": 5.0}, {"type": "null"}]},
+    "streaming_chunk_size": {"anyOf": [{"type": "integer", "minimum": 50, "maximum": 500}, {"type": "null"}]},
+    "streaming_strategy": {"anyOf": [{"type": "string", "enum": ["sentence", "paragraph", "fixed", "word"]}, {"type": "null"}]},
+    "streaming_buffer_size": {"anyOf": [{"type": "integer", "minimum": 1, "maximum": 10}, {"type": "null"}]},
+    "streaming_quality": {"anyOf": [{"type": "string", "enum": ["fast", "balanced", "high"]}, {"type": "null"}]}
+   },
+   "required": ["input"]
+  },
+  "HTTPError": {
+   "description": "HTTPException(detail={error: {message, type}}).",
+   "type": "object",
+   "properties": {
+    "detail": {
+     "type": "object",
+     "properties": {
+      "error": {
+       "type": "object",
+       "properties": {"message": {"type": "string"}, "type": {"type": "string"}},
+       "required": ["message"]
+      }
+     },
+     "required": ["error"]
+    }
+   },
+   "required": ["detail"]
+  },
+  "VoiceLibraryResponse": {
+   "type": "object",
+   "properties": {
+    "voices": {"type": "array", "items": {"$ref": "#/$defs/VoiceLibraryItem"}},
+    "count": {"type": "integer"}
+   },
+   "required": ["voices", "count"]
+  },
+  "VoiceLibraryItem": {
+   "description": "name is what the speech endpoint takes; filename is the stored file (name plus extension).",
+   "type": "object",
+   "properties": {
+    "name": {"type": "string"},
+    "filename": {"type": "string"},
+    "original_filename": {"type": "string"},
+    "file_extension": {"type": "string"},
+    "file_size": {"type": "integer"},
+    "upload_date": {"type": "string"},
+    "path": {"type": "string"},
+    "language": {"type": "string", "default": "en"},
+    "aliases": {"type": "array", "items": {"type": "string"}},
+    "exists": {"type": "boolean"}
+   },
+   "required": ["name", "filename", "original_filename", "file_extension", "file_size", "upload_date", "path"]
+  }
+ }
+}

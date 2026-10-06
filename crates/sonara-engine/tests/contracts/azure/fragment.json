@@ -1,0 +1,90 @@
+{
+ "x-source": "Hand-transcribed from Microsoft's Speech REST docs (rest-text-to-speech.md, the endpoint and auth includes, speech-synthesis-markup-voice.md; see SOURCES.md). Azure publishes no OpenAPI for the TTS REST API.",
+ "operations": {
+  "POST /cognitiveservices/v1": {
+   "x-hosts": ["https://{region}.tts.speech.microsoft.com", "https://{resource}.cognitiveservices.azure.com"],
+   "parameters": [
+    {"name": "Ocp-Apim-Subscription-Key", "in": "header", "required": false, "schema": {"type": "string"}, "description": "Either this header or Authorization (Bearer) is required."},
+    {"name": "Content-Type", "in": "header", "required": true, "schema": {"type": "string", "enum": ["application/ssml+xml"]}},
+    {"name": "X-Microsoft-OutputFormat", "in": "header", "required": true, "schema": {"$ref": "#/$defs/OutputFormat"}},
+    {"name": "User-Agent", "in": "header", "required": true, "schema": {"type": "string", "minLength": 1, "maxLength": 254}}
+   ],
+   "requestBody": {"content": {"application/ssml+xml": {"schema": {"$ref": "#/$defs/Ssml"}}}},
+   "responses": {
+    "200": {"description": "The audio in the requested format."},
+    "400": {"description": "A required parameter is missing, empty, or null, or a value is invalid."},
+    "401": {"description": "Not authorized: the key or token is invalid or for another region."},
+    "415": {"description": "Wrong Content-Type."},
+    "429": {"description": "Quota or rate of requests exceeded."},
+    "502": {"description": "Network or server-side problem."},
+    "503": {"description": "Server-side problem."}
+   }
+  },
+  "GET /cognitiveservices/voices/list": {
+   "x-hosts": ["https://{region}.tts.speech.microsoft.com"],
+   "x-resource-path": "/tts/cognitiveservices/voices/list on https://{resource}.cognitiveservices.azure.com",
+   "parameters": [
+    {"name": "Ocp-Apim-Subscription-Key", "in": "header", "required": false, "schema": {"type": "string"}}
+   ],
+   "responses": {
+    "200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/$defs/Voice"}}}}},
+    "400": {"description": "Bad request."},
+    "401": {"description": "Unauthorized."},
+    "429": {"description": "Too many requests."},
+    "502": {"description": "Bad gateway."}
+   }
+  }
+ },
+ "$defs": {
+  "OutputFormat": {
+   "type": "string",
+   "enum": [
+    "amr-wb-16000hz", "audio-16khz-16bit-32kbps-mono-opus", "audio-16khz-32kbitrate-mono-mp3",
+    "audio-16khz-64kbitrate-mono-mp3", "audio-16khz-128kbitrate-mono-mp3",
+    "audio-24khz-16bit-24kbps-mono-opus", "audio-24khz-16bit-48kbps-mono-opus",
+    "audio-24khz-48kbitrate-mono-mp3", "audio-24khz-96kbitrate-mono-mp3",
+    "audio-24khz-160kbitrate-mono-mp3", "audio-48khz-96kbitrate-mono-mp3",
+    "audio-48khz-192kbitrate-mono-mp3", "g722-16khz-64kbps", "ogg-16khz-16bit-mono-opus",
+    "ogg-24khz-16bit-mono-opus", "ogg-48khz-16bit-mono-opus", "raw-8khz-8bit-mono-alaw",
+    "raw-8khz-8bit-mono-mulaw", "raw-8khz-16bit-mono-pcm", "raw-16khz-16bit-mono-pcm",
+    "raw-16khz-16bit-mono-truesilk", "raw-22050hz-16bit-mono-pcm", "raw-24khz-16bit-mono-pcm",
+    "raw-24khz-16bit-mono-truesilk", "raw-44100hz-16bit-mono-pcm", "raw-48khz-16bit-mono-pcm",
+    "webm-16khz-16bit-mono-opus", "webm-24khz-16bit-24kbps-mono-opus", "webm-24khz-16bit-mono-opus",
+    "riff-8khz-8bit-mono-alaw", "riff-8khz-8bit-mono-mulaw", "riff-8khz-16bit-mono-pcm",
+    "riff-22050hz-16bit-mono-pcm", "riff-24khz-16bit-mono-pcm", "riff-44100hz-16bit-mono-pcm",
+    "riff-48khz-16bit-mono-pcm"
+   ]
+  },
+  "Ssml": {
+   "description": "<speak version='1.0' xml:lang='..'><voice name='..'>text</voice></speak>; prosody rate as a relative number is a multiplier, kept within 0.5 to 2.",
+   "x-ssml": {
+    "root": "speak",
+    "root_attributes": ["version", "xml:lang"],
+    "version": "1.0",
+    "voice_attribute": "name",
+    "prosody_rate": {"minimum": 0.5, "maximum": 2.0}
+   }
+  },
+  "Voice": {
+   "type": "object",
+   "properties": {
+    "Name": {"type": "string"},
+    "DisplayName": {"type": "string"},
+    "LocalName": {"type": "string"},
+    "ShortName": {"type": "string"},
+    "Gender": {"type": "string"},
+    "Locale": {"type": "string"},
+    "LocaleName": {"type": "string"},
+    "StyleList": {"type": "array", "items": {"type": "string"}},
+    "SecondaryLocaleList": {"type": "array", "items": {"type": "string"}},
+    "RolePlayList": {"type": "array", "items": {"type": "string"}},
+    "SampleRateHertz": {"type": "string"},
+    "VoiceType": {"type": "string"},
+    "Status": {"type": "string"},
+    "ExtendedPropertyMap": {"type": "object"},
+    "WordsPerMinute": {"type": "string"}
+   },
+   "required": ["Name", "DisplayName", "LocalName", "ShortName", "Gender", "Locale", "LocaleName", "SampleRateHertz", "VoiceType", "Status"]
+  }
+ }
+}

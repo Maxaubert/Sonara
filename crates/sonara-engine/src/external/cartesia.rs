@@ -207,14 +207,20 @@ impl Adapter for Cartesia {
             .iter()
             .filter_map(|e| {
                 let id = s(e, "id")?;
-                let accent = e
-                    .get("accents")
-                    .and_then(Value::as_array)
-                    .and_then(|a| a.first())
-                    .and_then(|a| s(a, "locale"));
+                // The native locale (`en-GB`) before the bare language: the
+                // API reference lists `accents[]`, the SDK's generated
+                // types `locales[]` (#275); both carry `locale`.
+                let locale = ["accents", "locales"].iter().find_map(|list| {
+                    let items = e.get(*list)?.as_array()?;
+                    items
+                        .iter()
+                        .find(|a| a.get("is_native").and_then(Value::as_bool) == Some(true))
+                        .or_else(|| items.first())
+                        .and_then(|a| s(a, "locale"))
+                });
                 Some(VoiceInfo {
                     name: s(e, "name").unwrap_or_else(|| id.clone()),
-                    language: accent.or_else(|| s(e, "language")).unwrap_or_default(),
+                    language: locale.or_else(|| s(e, "language")).unwrap_or_default(),
                     id,
                 })
             })

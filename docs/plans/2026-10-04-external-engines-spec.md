@@ -281,8 +281,8 @@ Since #235 (user decision 2026-10-05) no preset has a default model or voice: th
 | `localai` | required | optional | `GET {url}/audio/voices?model=<model>`, shape `{"data":[{"model":..,"voices":[{"name","language","gender"}]}]}` | always returns WAV; rate from the WAV header |
 | `speaches` | required | optional | `GET {url}/audio/voices`, `{"voices":[{"id","name","language","gender"}]}` | sends `sample_rate` (default 24000) |
 | `openedai-speech` | optional | none | none (typed) | archived project; generic target |
-| `chatterbox-api` | optional | none | `GET {root}/voices` (not under `/v1`), `{"voices":[{"name","aliases","language"}]}` | always WAV, possibly 32-bit float (decode handles it); `speed` ignored by the server |
-| `chatterbox-server` | optional | none | `GET {root}/get_predefined_voices`, `[{"display_name","filename"}]`, id = `filename` | `pcm` is refused (422), so `wav` is forced |
+| `chatterbox-api` | optional | none | `GET {root}/voices` (not under `/v1`), `{"voices":[{"name","filename","aliases","language"}]}`, id = `name` (#275: a file name silently speaks the default voice) | always WAV, possibly 32-bit float (decode handles it); `speed` ignored by the server |
+| `chatterbox-server` | optional | none | `GET {root}/get_predefined_voices`, `[{"display_name","filename"}]`, id = `filename` | `pcm` is refused (422), so `wav` is forced; `model` is required by its schema and never read, so a profile without one sends `""` (#275) |
 | `generic` | optional | per key_ref | `GET {url}/audio/voices` (or `voices_path`), any of the shapes above; an error or 404 gives an empty list | |
 
 `{root}` is `url` with a trailing `/v1` removed.

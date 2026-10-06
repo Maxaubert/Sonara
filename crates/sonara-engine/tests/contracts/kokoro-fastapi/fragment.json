@@ -1,0 +1,91 @@
+{
+ "x-source": "Hand-transcribed from the pydantic models and routes of remsky/Kokoro-FastAPI (see SOURCES.md); FastAPI generates its OpenAPI from these at run time, the repository ships none.",
+ "operations": {
+  "POST /v1/audio/speech": {
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "schema": {"$ref": "#/$defs/OpenAISpeechRequest"}
+     }
+    }
+   },
+   "responses": {
+    "200": {"content": {"audio/wav": {"schema": {"type": "string", "format": "binary"}}}},
+    "400": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPException"}}}},
+    "403": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPException"}}}},
+    "500": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPException"}}}}
+   }
+  },
+  "GET /v1/audio/voices": {
+   "parameters": [
+    {"name": "legacy", "in": "query", "required": false, "schema": {"type": "boolean", "default": false}}
+   ],
+   "responses": {
+    "200": {"content": {"application/json": {"schema": {"$ref": "#/$defs/VoicesResponse"}}}}
+   }
+  }
+ },
+ "$defs": {
+  "OpenAISpeechRequest": {
+   "type": "object",
+   "properties": {
+    "model": {"type": "string", "default": "kokoro"},
+    "input": {"type": "string"},
+    "voice": {"type": "string"},
+    "response_format": {"type": "string", "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"], "default": "mp3"},
+    "download_format": {"anyOf": [{"type": "string", "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"]}, {"type": "null"}]},
+    "speed": {"type": "number", "minimum": 0.25, "maximum": 4.0, "default": 1.0},
+    "stream": {"type": "boolean", "default": true},
+    "return_download_link": {"type": "boolean", "default": false},
+    "return_timing": {"type": "boolean", "default": false},
+    "lang_code": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "volume_multiplier": {"anyOf": [{"type": "number", "minimum": 0.0, "maximum": 10.0}, {"type": "null"}]},
+    "normalization_options": {"type": "object", "additionalProperties": true},
+    "allow_voice_tags": {"type": "boolean", "default": false},
+    "ssml": {"type": "boolean", "default": false}
+   },
+   "required": ["input"]
+  },
+  "HTTPException": {
+   "description": "FastAPI HTTPException with a dict detail: {error, message, type}.",
+   "type": "object",
+   "properties": {
+    "detail": {
+     "type": "object",
+     "properties": {
+      "error": {"type": "string"},
+      "message": {"type": "string"},
+      "type": {"type": "string"}
+     },
+     "required": ["error", "message", "type"]
+    }
+   },
+   "required": ["detail"]
+  },
+  "VoicesResponse": {
+   "description": "Default shape {voices: [{id, name, ...grades}], default_voice}; ?legacy=true gives {voices: [string]}.",
+   "anyOf": [
+    {
+     "type": "object",
+     "properties": {
+      "voices": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+        "required": ["id", "name"]
+       }
+      },
+      "default_voice": {"type": "string"}
+     },
+     "required": ["voices"]
+    },
+    {
+     "type": "object",
+     "properties": {"voices": {"type": "array", "items": {"type": "string"}}},
+     "required": ["voices"]
+    }
+   ]
+  }
+ }
+}

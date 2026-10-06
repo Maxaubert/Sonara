@@ -1,0 +1,679 @@
+{
+ "operations": {
+  "POST /v1/speak": {
+   "parameters": [
+    {
+     "name": "callback",
+     "in": "query",
+     "description": "URL to which we'll make the callback request",
+     "required": false,
+     "schema": {
+      "type": "string"
+     }
+    },
+    {
+     "name": "callback_method",
+     "in": "query",
+     "description": "HTTP method by which the callback request will be made",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersCallbackMethod",
+      "default": "POST"
+     }
+    },
+    {
+     "name": "mip_opt_out",
+     "in": "query",
+     "description": "Opts out requests from the Deepgram Model Improvement Program. Refer to our Docs for pricing impacts before setting this to true. https://dpgr.am/deepgram-mip",
+     "required": false,
+     "schema": {
+      "type": "boolean",
+      "default": false
+     }
+    },
+    {
+     "name": "tag",
+     "in": "query",
+     "description": "Label your requests for the purpose of identification during usage reporting",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersTag"
+     }
+    },
+    {
+     "name": "bit_rate",
+     "in": "query",
+     "description": "The bitrate of the audio in bits per second. Choose from predefined ranges or specific values based on the encoding type.",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersBitRate",
+      "default": 48000
+     }
+    },
+    {
+     "name": "container",
+     "in": "query",
+     "description": "Container specifies the file format wrapper for the output audio. The available options depend on the encoding type.",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersContainer",
+      "default": "wav"
+     }
+    },
+    {
+     "name": "encoding",
+     "in": "query",
+     "description": "Encoding allows you to specify the expected encoding of your audio output",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersEncoding",
+      "default": "mp3"
+     }
+    },
+    {
+     "name": "model",
+     "in": "query",
+     "description": "AI model used to process submitted text",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersModel",
+      "default": "aura-asteria-en"
+     }
+    },
+    {
+     "name": "sample_rate",
+     "in": "query",
+     "description": "Sample Rate specifies the sample rate for the output audio. Based on the encoding, different sample rates are supported. For some encodings, the sample rate is...",
+     "required": false,
+     "schema": {
+      "$ref": "#/$defs/V1SpeakPostParametersSampleRate",
+      "default": 24000
+     }
+    },
+    {
+     "name": "speed",
+     "in": "query",
+     "description": "Speaking rate multiplier that adjusts the pace of generated speech while preserving natural prosody and voice quality. Not yet supported in all languages.",
+     "required": false,
+     "schema": {
+      "type": "number",
+      "format": "double",
+      "minimum": 0.7,
+      "maximum": 1.5,
+      "default": 1
+     }
+    }
+   ],
+   "requestBody": {
+    "description": "Transform text to speech",
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/$defs/SpeakV1Request"
+      }
+     }
+    }
+   },
+   "responses": {
+    "200": {
+     "description": "Successful text-to-speech transformation",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/speak_v1_audio_generate_Response_200"
+       }
+      }
+     }
+    },
+    "400": {
+     "description": "Invalid Request",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/ErrorResponse"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "ApiKeyAuth": []
+    }
+   ]
+  },
+  "GET /v1/models": {
+   "parameters": [
+    {
+     "name": "include_outdated",
+     "in": "query",
+     "description": "returns non-latest versions of models",
+     "required": false,
+     "schema": {
+      "type": "boolean"
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "description": "A list of models",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/ListModelsV1Response"
+       }
+      }
+     }
+    },
+    "400": {
+     "description": "Invalid Request",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/ErrorResponse"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "ApiKeyAuth": []
+    }
+   ]
+  }
+ },
+ "$defs": {
+  "ErrorResponse": {
+   "oneOf": [
+    {
+     "$ref": "#/$defs/ErrorResponseTextError"
+    },
+    {
+     "$ref": "#/$defs/ErrorResponseLegacyError"
+    },
+    {
+     "$ref": "#/$defs/ErrorResponseModernError"
+    }
+   ]
+  },
+  "ErrorResponseLegacyError": {
+   "type": "object",
+   "properties": {
+    "err_code": {
+     "type": "string",
+     "description": "The error code"
+    },
+    "err_msg": {
+     "type": "string",
+     "description": "The error message"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "The request ID"
+    }
+   }
+  },
+  "ErrorResponseModernError": {
+   "type": "object",
+   "properties": {
+    "category": {
+     "type": "string",
+     "description": "The category of the error"
+    },
+    "message": {
+     "type": "string",
+     "description": "A message about the error"
+    },
+    "details": {
+     "type": "string",
+     "description": "A description of the error"
+    },
+    "request_id": {
+     "type": "string",
+     "description": "The unique identifier of the request"
+    }
+   }
+  },
+  "ErrorResponseTextError": {
+   "type": "string"
+  },
+  "ListModelsV1Response": {
+   "type": "object",
+   "properties": {
+    "stt": {
+     "type": "array",
+     "items": {
+      "description": "pruned: ListModelsV1ResponseSttModels (not read by Sonara)"
+     }
+    },
+    "tts": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/ListModelsV1ResponseTtsModels"
+     }
+    }
+   }
+  },
+  "ListModelsV1ResponseTtsModels": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "canonical_name": {
+     "type": "string"
+    },
+    "architecture": {
+     "type": "string"
+    },
+    "languages": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "version": {
+     "type": "string"
+    },
+    "uuid": {
+     "type": "string",
+     "format": "uuid"
+    },
+    "metadata": {
+     "description": "pruned: ListModelsV1ResponseTtsModelsMetadata (not read by Sonara)"
+    }
+   }
+  },
+  "SpeakV1Request": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "The text content to be converted to speech"
+    }
+   },
+   "required": [
+    "text"
+   ],
+   "description": "Request body for text-to-speech conversion"
+  },
+  "V1SpeakPostParametersBitRate": {
+   "oneOf": [
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersBitRate0"
+    },
+    {
+     "type": "number",
+     "format": "double",
+     "minimum": 4000,
+     "maximum": 650000
+    },
+    {
+     "type": "number",
+     "format": "double",
+     "minimum": 4000,
+     "maximum": 192000
+    }
+   ]
+  },
+  "V1SpeakPostParametersBitRate0": {
+   "type": "string",
+   "enum": [
+    "32000",
+    "48000"
+   ],
+   "description": "Encoding - mp3(default). Supported bitrates - 32000, 48000(default) bps."
+  },
+  "V1SpeakPostParametersCallbackMethod": {
+   "type": "string",
+   "enum": [
+    "POST",
+    "PUT"
+   ],
+   "default": "POST"
+  },
+  "V1SpeakPostParametersContainer": {
+   "oneOf": [
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersContainer0"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersContainer1"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersContainer2"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersContainer3"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersContainer4"
+    }
+   ]
+  },
+  "V1SpeakPostParametersContainer0": {
+   "type": "string",
+   "enum": [
+    "none"
+   ],
+   "description": "No container."
+  },
+  "V1SpeakPostParametersContainer1": {
+   "type": "string",
+   "enum": [
+    "wav"
+   ],
+   "description": "Encoding - linear16. Supported container - wav (default), or no container."
+  },
+  "V1SpeakPostParametersContainer2": {
+   "type": "string",
+   "enum": [
+    "wav"
+   ],
+   "description": "Encoding - mulaw. Supported container - wav (default), or no container."
+  },
+  "V1SpeakPostParametersContainer3": {
+   "type": "string",
+   "enum": [
+    "wav"
+   ],
+   "description": "Encoding - alaw. Supported container - wav (default), or no container."
+  },
+  "V1SpeakPostParametersContainer4": {
+   "type": "string",
+   "enum": [
+    "ogg"
+   ],
+   "description": "Encoding - opus. Supported container - ogg (default)."
+  },
+  "V1SpeakPostParametersEncoding": {
+   "oneOf": [
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding0"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding1"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding2"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding3"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding4"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding5"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersEncoding6"
+    }
+   ]
+  },
+  "V1SpeakPostParametersEncoding0": {
+   "type": "string",
+   "enum": [
+    "linear16"
+   ],
+   "description": "Encoding - linear16. Uncompressed, high-quality audio format often used for telephony or audio processing."
+  },
+  "V1SpeakPostParametersEncoding1": {
+   "type": "string",
+   "enum": [
+    "flac"
+   ],
+   "description": "Encoding - flac. Lossless audio format for high-quality compression."
+  },
+  "V1SpeakPostParametersEncoding2": {
+   "type": "string",
+   "enum": [
+    "mulaw"
+   ],
+   "description": "Encoding - mulaw. Compressed audio format commonly used in telephony."
+  },
+  "V1SpeakPostParametersEncoding3": {
+   "type": "string",
+   "enum": [
+    "alaw"
+   ],
+   "description": "Encoding - alaw. Similar to mulaw but used in international telephony."
+  },
+  "V1SpeakPostParametersEncoding4": {
+   "type": "string",
+   "enum": [
+    "mp3"
+   ],
+   "description": "Encoding - mp3. Popular compressed audio format for music and streaming."
+  },
+  "V1SpeakPostParametersEncoding5": {
+   "type": "string",
+   "enum": [
+    "opus"
+   ],
+   "description": "Encoding - opus. High-compression audio format optimized for real-time communications."
+  },
+  "V1SpeakPostParametersEncoding6": {
+   "type": "string",
+   "enum": [
+    "aac"
+   ],
+   "description": "Encoding - aac. Advanced audio format offering better quality at smaller file sizes than mp3."
+  },
+  "V1SpeakPostParametersModel": {
+   "type": "string",
+   "enum": [
+    "aura-angus-en",
+    "aura-arcas-en",
+    "aura-asteria-en",
+    "aura-athena-en",
+    "aura-helios-en",
+    "aura-hera-en",
+    "aura-luna-en",
+    "aura-orion-en",
+    "aura-orpheus-en",
+    "aura-perseus-en",
+    "aura-stella-en",
+    "aura-zeus-en",
+    "aura-2-amalthea-en",
+    "aura-2-andromeda-en",
+    "aura-2-apollo-en",
+    "aura-2-arcas-en",
+    "aura-2-aries-en",
+    "aura-2-asteria-en",
+    "aura-2-athena-en",
+    "aura-2-atlas-en",
+    "aura-2-aurora-en",
+    "aura-2-callista-en",
+    "aura-2-cora-en",
+    "aura-2-cordelia-en",
+    "aura-2-delia-en",
+    "aura-2-draco-en",
+    "aura-2-electra-en",
+    "aura-2-harmonia-en",
+    "aura-2-helena-en",
+    "aura-2-hera-en",
+    "aura-2-hermes-en",
+    "aura-2-hyperion-en",
+    "aura-2-iris-en",
+    "aura-2-janus-en",
+    "aura-2-juno-en",
+    "aura-2-jupiter-en",
+    "aura-2-luna-en",
+    "aura-2-mars-en",
+    "aura-2-minerva-en",
+    "aura-2-neptune-en",
+    "aura-2-odysseus-en",
+    "aura-2-ophelia-en",
+    "aura-2-orion-en",
+    "aura-2-orpheus-en",
+    "aura-2-pandora-en",
+    "aura-2-phoebe-en",
+    "aura-2-pluto-en",
+    "aura-2-saturn-en",
+    "aura-2-selene-en",
+    "aura-2-thalia-en",
+    "aura-2-theia-en",
+    "aura-2-vesta-en",
+    "aura-2-zeus-en",
+    "aura-2-agustina-es",
+    "aura-2-alvaro-es",
+    "aura-2-antonia-es",
+    "aura-2-aquila-es",
+    "aura-2-carina-es",
+    "aura-2-celeste-es",
+    "aura-2-diana-es",
+    "aura-2-estrella-es",
+    "aura-2-gloria-es",
+    "aura-2-javier-es",
+    "aura-2-luciano-es",
+    "aura-2-nestor-es",
+    "aura-2-olivia-es",
+    "aura-2-selena-es",
+    "aura-2-silvia-es",
+    "aura-2-sirio-es",
+    "aura-2-valerio-es",
+    "aura-2-aurelia-de",
+    "aura-2-elara-de",
+    "aura-2-fabian-de",
+    "aura-2-julius-de",
+    "aura-2-kara-de",
+    "aura-2-lara-de",
+    "aura-2-viktoria-de",
+    "aura-2-beatrix-nl",
+    "aura-2-cornelia-nl",
+    "aura-2-daphne-nl",
+    "aura-2-hestia-nl",
+    "aura-2-lars-nl",
+    "aura-2-leda-nl",
+    "aura-2-rhea-nl",
+    "aura-2-roman-nl",
+    "aura-2-sander-nl",
+    "aura-2-agathe-fr",
+    "aura-2-hector-fr",
+    "aura-2-cesare-it",
+    "aura-2-cinzia-it",
+    "aura-2-demetra-it",
+    "aura-2-dionisio-it",
+    "aura-2-elio-it",
+    "aura-2-flavio-it",
+    "aura-2-livia-it",
+    "aura-2-maia-it",
+    "aura-2-melia-it",
+    "aura-2-ama-ja",
+    "aura-2-ebisu-ja",
+    "aura-2-fujin-ja",
+    "aura-2-izanami-ja",
+    "aura-2-uzume-ja"
+   ],
+   "default": "aura-asteria-en"
+  },
+  "V1SpeakPostParametersSampleRate": {
+   "oneOf": [
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersSampleRate0"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersSampleRate1"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersSampleRate2"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersSampleRate3"
+    },
+    {
+     "$ref": "#/$defs/V1SpeakPostParametersSampleRate4"
+    }
+   ]
+  },
+  "V1SpeakPostParametersSampleRate0": {
+   "type": "string",
+   "enum": [
+    "8000",
+    "16000",
+    "24000",
+    "32000",
+    "48000"
+   ],
+   "description": "Encoding - linear16. Supported sample rates - 8000, 16000, 24000, 32000, 48000 Hz."
+  },
+  "V1SpeakPostParametersSampleRate1": {
+   "type": "string",
+   "enum": [
+    "8000",
+    "16000"
+   ],
+   "description": "Encoding - mulaw. Supported sample rates - 8000, 16000 Hz."
+  },
+  "V1SpeakPostParametersSampleRate2": {
+   "type": "string",
+   "enum": [
+    "8000",
+    "16000"
+   ],
+   "description": "Encoding - alaw. Supported sample rates - 8000, 16000 Hz."
+  },
+  "V1SpeakPostParametersSampleRate3": {
+   "type": "string",
+   "enum": [
+    "22050"
+   ],
+   "description": "Encoding - mp3. Sample rate is fixed and not configurable (22050 Hz)."
+  },
+  "V1SpeakPostParametersSampleRate4": {
+   "type": "string",
+   "enum": [
+    "48000"
+   ],
+   "description": "Encoding - opus. Sample rate is fixed at 48000 Hz."
+  },
+  "V1SpeakPostParametersTag": {
+   "oneOf": [
+    {
+     "type": "string"
+    },
+    {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   ]
+  },
+  "speak_v1_audio_generate_Response_200": {
+   "type": "object",
+   "properties": {},
+   "description": "Empty response body"
+  }
+ },
+ "securitySchemes": {
+  "ApiKeyAuth": {
+   "type": "apiKey",
+   "in": "header",
+   "name": "Authorization",
+   "description": "Use `Authorization: Token <API_KEY>`\nExample: `Authorization: Token 12345abcdef`\n"
+  },
+  "JwtAuth": {
+   "type": "http",
+   "scheme": "bearer",
+   "description": "Use `Authorization: Bearer <JWT>`\nExample: `Authorization: Bearer eyJhbGciOiJ...`\n"
+  }
+ },
+ "servers": [
+  {
+   "url": "https://agent.deepgram.com",
+   "description": "Production"
+  },
+  {
+   "url": "https://api.deepgram.com",
+   "description": "Base"
+  }
+ ],
+ "info": {
+  "title": "REST API",
+  "version": "1.0.0",
+  "openapi": "3.1.0"
+ }
+}

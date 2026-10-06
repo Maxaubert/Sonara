@@ -1,0 +1,205 @@
+{
+ "operations": {
+  "POST /v1/audio/speech": {
+   "parameters": [
+    {
+     "description": "query params",
+     "name": "request",
+     "in": "body",
+     "required": true,
+     "schema": {
+      "$ref": "#/$defs/schema.TTSRequest"
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "description": "generated audio/wav file",
+     "schema": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "GET /v1/audio/voices": {
+   "parameters": [
+    {
+     "type": "string",
+     "description": "Installed model name",
+     "name": "model",
+     "in": "query"
+    }
+   ],
+   "responses": {
+    "200": {
+     "description": "OK",
+     "schema": {
+      "$ref": "#/$defs/localai.TTSVoicesResponse"
+     }
+    },
+    "404": {
+     "description": "Not Found",
+     "schema": {
+      "$ref": "#/$defs/schema.ErrorResponse"
+     }
+    }
+   }
+  },
+  "GET /v1/models": {
+   "responses": {
+    "200": {
+     "description": "Response",
+     "schema": {
+      "$ref": "#/$defs/schema.ModelsDataResponse"
+     }
+    }
+   }
+  }
+ },
+ "$defs": {
+  "config.TTSVoice": {
+   "type": "object",
+   "properties": {
+    "gender": {
+     "type": "string"
+    },
+    "language": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   }
+  },
+  "localai.TTSModelVoices": {
+   "type": "object",
+   "properties": {
+    "model": {
+     "type": "string"
+    },
+    "voices": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/config.TTSVoice"
+     }
+    }
+   }
+  },
+  "localai.TTSVoicesResponse": {
+   "type": "object",
+   "properties": {
+    "data": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/localai.TTSModelVoices"
+     }
+    }
+   }
+  },
+  "schema.APIError": {
+   "type": "object",
+   "properties": {
+    "code": {},
+    "message": {
+     "type": "string"
+    },
+    "param": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    }
+   }
+  },
+  "schema.ErrorResponse": {
+   "type": "object",
+   "properties": {
+    "error": {
+     "$ref": "#/$defs/schema.APIError"
+    }
+   }
+  },
+  "schema.ModelsDataResponse": {
+   "type": "object",
+   "properties": {
+    "data": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/schema.OpenAIModel"
+     }
+    },
+    "object": {
+     "type": "string"
+    }
+   }
+  },
+  "schema.OpenAIModel": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "object": {
+     "type": "string"
+    }
+   }
+  },
+  "schema.TTSRequest": {
+   "description": "TTS request body",
+   "type": "object",
+   "properties": {
+    "backend": {
+     "description": "backend engine override",
+     "type": "string"
+    },
+    "input": {
+     "description": "text input",
+     "type": "string"
+    },
+    "instructions": {
+     "description": "Instructions is a free-form, per-request style/voice description. It maps to\nthe OpenAI `instructions` field and is forwarded to the backend so expressive\nTTS m...",
+     "type": "string"
+    },
+    "language": {
+     "description": "(optional) language to use with TTS model",
+     "type": "string"
+    },
+    "model": {
+     "type": "string"
+    },
+    "params": {
+     "description": "Params carries optional, backend-specific per-request generation parameters\n(LocalAI extension, e.g. Chatterbox exaggeration/cfg_weight/temperature).",
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "response_format": {
+     "description": "(optional) output format",
+     "type": "string"
+    },
+    "sample_rate": {
+     "description": "(optional) desired output sample rate",
+     "type": "integer"
+    },
+    "speed": {
+     "description": "Speed is the OpenAI `speed` field (0.25-4.0). It is a pointer so an\nexplicit `\"speed\": 0` (invalid, rejected with 400) is distinguishable\nfrom an omitted field...",
+     "type": "number"
+    },
+    "stream": {
+     "description": "(optional) enable streaming TTS",
+     "type": "boolean"
+    },
+    "voice": {
+     "description": "voice audio file or speaker id",
+     "type": "string"
+    }
+   }
+  }
+ },
+ "info": {
+  "title": "LocalAI API",
+  "version": "2.0.0",
+  "openapi": "2.0"
+ }
+}

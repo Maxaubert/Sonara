@@ -1,0 +1,72 @@
+{
+ "x-source": "Hand-transcribed from server.py and utils.py of devnen/Chatterbox-TTS-Server (see SOURCES.md).",
+ "operations": {
+  "POST /v1/audio/speech": {
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "schema": {"$ref": "#/$defs/OpenAISpeechRequest"}
+     }
+    }
+   },
+   "responses": {
+    "200": {"content": {"audio/wav": {"schema": {"type": "string", "format": "binary"}}}},
+    "400": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPException"}}}},
+    "404": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPException"}}}},
+    "422": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPValidationError"}}}},
+    "503": {"content": {"application/json": {"schema": {"$ref": "#/$defs/HTTPException"}}}}
+   }
+  },
+  "GET /get_predefined_voices": {
+   "responses": {
+    "200": {"content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/$defs/PredefinedVoice"}}}}}
+   }
+  }
+ },
+ "$defs": {
+  "OpenAISpeechRequest": {
+   "description": "model is required by the schema (pydantic, no default) but not read by the route; voice is a file name in the predefined or reference voice folder.",
+   "type": "object",
+   "properties": {
+    "model": {"type": "string"},
+    "input": {"type": "string"},
+    "voice": {"type": "string"},
+    "response_format": {"type": "string", "enum": ["wav", "opus", "mp3"], "default": "wav"},
+    "speed": {"type": "number", "default": 1.0},
+    "seed": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+    "language": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+   },
+   "required": ["model", "input", "voice"]
+  },
+  "HTTPException": {
+   "type": "object",
+   "properties": {"detail": {"type": "string"}},
+   "required": ["detail"]
+  },
+  "HTTPValidationError": {
+   "type": "object",
+   "properties": {
+    "detail": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "loc": {"type": "array", "items": {"anyOf": [{"type": "string"}, {"type": "integer"}]}},
+       "msg": {"type": "string"},
+       "type": {"type": "string"}
+      },
+      "required": ["loc", "msg", "type"]
+     }
+    }
+   }
+  },
+  "PredefinedVoice": {
+   "type": "object",
+   "properties": {
+    "display_name": {"type": "string"},
+    "filename": {"type": "string"}
+   },
+   "required": ["display_name", "filename"]
+  }
+ }
+}

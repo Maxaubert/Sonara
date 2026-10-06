@@ -1,0 +1,335 @@
+{
+ "operations": {
+  "POST /v1/audio/speech": {
+   "requestBody": {
+    "content": {
+     "application/json": {
+      "schema": {
+       "$ref": "#/$defs/CreateSpeechRequestBody"
+      }
+     }
+    },
+    "required": true
+   },
+   "responses": {
+    "200": {
+     "description": "Successful Response",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "422": {
+     "description": "Validation Error",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/HTTPValidationError"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "HTTPBearer": []
+    }
+   ]
+  },
+  "GET /v1/models": {
+   "parameters": [
+    {
+     "name": "task",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "anyOf": [
+       {
+        "enum": [
+         "automatic-speech-recognition",
+         "text-to-speech",
+         "speaker-embedding",
+         "voice-activity-detection"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    }
+   ],
+   "responses": {
+    "200": {
+     "description": "Successful Response",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/ListModelsResponse"
+       }
+      }
+     }
+    },
+    "422": {
+     "description": "Validation Error",
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/HTTPValidationError"
+       }
+      }
+     }
+    }
+   },
+   "security": [
+    {
+     "HTTPBearer": []
+    }
+   ]
+  },
+  "GET /v1/audio/voices": {
+   "responses": {
+    "200": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/$defs/ListVoicesResponse"
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "$defs": {
+  "CreateSpeechRequestBody": {
+   "properties": {
+    "model": {
+     "type": "string",
+     "minLength": 1,
+     "description": "The ID of the model. You can get a list of available models by calling `/v1/models`."
+    },
+    "input": {
+     "type": "string"
+    },
+    "voice": {
+     "type": "string"
+    },
+    "response_format": {
+     "$ref": "#/$defs/SpeechResponseFormat",
+     "default": "mp3"
+    },
+    "speed": {
+     "type": "number",
+     "default": 1.0
+    },
+    "stream_format": {
+     "type": "string",
+     "enum": [
+      "audio",
+      "sse"
+     ],
+     "default": "audio"
+    },
+    "sample_rate": {
+     "anyOf": [
+      {
+       "type": "integer",
+       "maximum": 48000.0,
+       "minimum": 8000.0
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object",
+   "required": [
+    "model",
+    "input",
+    "voice"
+   ]
+  },
+  "HTTPValidationError": {
+   "properties": {
+    "detail": {
+     "items": {
+      "$ref": "#/$defs/ValidationError"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "ListModelsResponse": {
+   "properties": {
+    "data": {
+     "items": {
+      "$ref": "#/$defs/Model"
+     },
+     "type": "array"
+    },
+    "object": {
+     "type": "string",
+     "const": "list",
+     "default": "list"
+    }
+   },
+   "type": "object",
+   "required": [
+    "data"
+   ]
+  },
+  "Model": {
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "created": {
+     "type": "integer",
+     "default": 0
+    },
+    "object": {
+     "type": "string",
+     "const": "model",
+     "default": "model"
+    },
+    "owned_by": {
+     "type": "string"
+    },
+    "language": {
+     "anyOf": [
+      {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "task": {
+     "type": "string",
+     "enum": [
+      "automatic-speech-recognition",
+      "text-to-speech",
+      "speaker-embedding",
+      "voice-activity-detection"
+     ]
+    }
+   },
+   "additionalProperties": true,
+   "type": "object",
+   "required": [
+    "id",
+    "owned_by",
+    "task"
+   ],
+   "description": "There may be additional fields in the response that are specific to the model type."
+  },
+  "SpeechResponseFormat": {
+   "type": "string",
+   "enum": [
+    "pcm",
+    "mp3",
+    "wav",
+    "flac",
+    "opus",
+    "aac"
+   ]
+  },
+  "ValidationError": {
+   "properties": {
+    "loc": {
+     "items": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "integer"
+       }
+      ]
+     },
+     "type": "array"
+    },
+    "msg": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "required": [
+    "loc",
+    "msg",
+    "type"
+   ]
+  },
+  "ListVoicesResponse": {
+   "type": "object",
+   "properties": {
+    "voices": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/ModelVoice"
+     }
+    },
+    "object": {
+     "type": "string",
+     "enum": [
+      "list"
+     ]
+    }
+   },
+   "required": [
+    "voices"
+   ]
+  },
+  "ModelVoice": {
+   "description": "KokoroModelVoice {name, language, gender} or PiperModelVoice {name, language}; id is a computed field equal to name.",
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "language": {
+     "type": "string"
+    },
+    "gender": {
+     "type": "string",
+     "enum": [
+      "male",
+      "female"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "name",
+    "language"
+   ]
+  }
+ },
+ "securitySchemes": {
+  "HTTPBearer": {
+   "type": "http",
+   "scheme": "bearer"
+  }
+ },
+ "info": {
+  "title": "Speaches",
+  "version": "0.8.3",
+  "openapi": "3.1.0"
+ },
+ "x-voices-source": "GET /v1/audio/voices: the published docs/openapi.json documents ListModelsResponse (a response_model HACK in routers/models.py); the route returns {voices: [KokoroModelVoice | PiperModelVoice], object: 'list'}, transcribed from the source (see SOURCES.md)."
+}

@@ -1,0 +1,273 @@
+{
+ "rootUrl": "https://texttospeech.googleapis.com/",
+ "servicePath": "",
+ "revision": "20260827",
+ "parameters": {
+  "key": {
+   "description": "API key. Your API key identifies your project and provides you with API access, quota, and reports. Required unless you provide an OAuth 2.0 token.",
+   "location": "query",
+   "type": "string"
+  },
+  "alt": {
+   "location": "query",
+   "type": "string",
+   "enum": [
+    "json",
+    "media",
+    "proto"
+   ],
+   "description": "Data format for response.",
+   "default": "json"
+  }
+ },
+ "methods": {
+  "text.synthesize": {
+   "httpMethod": "POST",
+   "path": "v1/text:synthesize",
+   "flatPath": "v1/text:synthesize",
+   "parameters": {},
+   "request": {
+    "$ref": "#/$defs/SynthesizeSpeechRequest"
+   },
+   "response": {
+    "$ref": "#/$defs/SynthesizeSpeechResponse"
+   }
+  },
+  "voices.list": {
+   "httpMethod": "GET",
+   "path": "v1/voices",
+   "flatPath": "v1/voices",
+   "parameters": {
+    "languageCode": {
+     "location": "query",
+     "type": "string",
+     "description": "Optional. Recommended. [BCP-47](https://www.rfc-editor.org/rfc/bcp/bcp47.txt) language tag. If not specified, the API will return all supported voices. If speci..."
+    }
+   },
+   "response": {
+    "$ref": "#/$defs/ListVoicesResponse"
+   }
+  }
+ },
+ "$defs": {
+  "AudioConfig": {
+   "type": "object",
+   "properties": {
+    "sampleRateHertz": {
+     "format": "int32",
+     "type": "integer",
+     "description": "Optional. The synthesis sample rate (in hertz) for this audio. When this is specified in SynthesizeSpeechRequest, if this is different from the voice's natural..."
+    },
+    "speakingRate": {
+     "description": "Optional. Input only. Speaking rate/speed, in the range [0.25, 2.0]. 1.0 is the normal native speed supported by the specific voice. 2.0 is twice as fast, and 0...",
+     "format": "double",
+     "type": "number",
+     "minimum": 0.25,
+     "maximum": 2.0,
+     "x-derived": "minimum/maximum from the description"
+    },
+    "pitch": {
+     "type": "number",
+     "format": "double",
+     "description": "Optional. Input only. Speaking pitch, in the range [-20.0, 20.0]. 20 means increase 20 semitones from the original pitch. -20 means decrease 20 semitones from t...",
+     "minimum": -20.0,
+     "maximum": 20.0,
+     "x-derived": "minimum/maximum from the description"
+    },
+    "volumeGainDb": {
+     "type": "number",
+     "format": "double",
+     "description": "Optional. Input only. Volume gain (in dB) of the normal native volume supported by the specific voice, in the range [-96.0, 16.0]. If unset, or set to a value o...",
+     "minimum": -96.0,
+     "maximum": 16.0,
+     "x-derived": "minimum/maximum from the description"
+    },
+    "effectsProfileId": {
+     "items": {
+      "type": "string"
+     },
+     "description": "Optional. Input only. An identifier which selects 'audio effects' profiles that are applied on (post synthesized) text to speech. Effects are applied on top of...",
+     "type": "array"
+    },
+    "audioEncoding": {
+     "type": "string",
+     "description": "Required. The format of the audio byte stream.",
+     "enum": [
+      "AUDIO_ENCODING_UNSPECIFIED",
+      "LINEAR16",
+      "MP3",
+      "OGG_OPUS",
+      "MULAW",
+      "ALAW",
+      "PCM",
+      "M4A"
+     ]
+    }
+   },
+   "description": "Description of audio data to be synthesized.",
+   "id": "AudioConfig",
+   "required": [
+    "audioEncoding"
+   ],
+   "x-derived": "required from 'Required.' in the descriptions"
+  },
+  "ListVoicesResponse": {
+   "id": "ListVoicesResponse",
+   "properties": {
+    "voices": {
+     "description": "The list of voices.",
+     "items": {
+      "$ref": "#/$defs/Voice"
+     },
+     "type": "array"
+    }
+   },
+   "description": "The message returned to the client by the `ListVoices` method.",
+   "type": "object"
+  },
+  "SynthesisInput": {
+   "type": "object",
+   "id": "SynthesisInput",
+   "description": "Contains text input to be synthesized. Either `text` or `ssml` must be supplied. Supplying both or neither returns google.rpc.Code.INVALID_ARGUMENT. The input s...",
+   "properties": {
+    "text": {
+     "type": "string",
+     "description": "The raw text to be synthesized."
+    },
+    "markup": {
+     "type": "string",
+     "description": "Markup for Chirp 3: HD voices specifically. This field may not be used with any other voices."
+    },
+    "customPronunciations": {
+     "description": "Optional. The pronunciation customizations are applied to the input. If this is set, the input is synthesized using the given pronunciation customizations. The..."
+    },
+    "prompt": {
+     "type": "string",
+     "description": "This system instruction is supported only for controllable/promptable voice models. If this system instruction is used, we pass the unedited text to Gemini-TTS...."
+    },
+    "ssml": {
+     "type": "string",
+     "description": "The SSML document to be synthesized. The SSML document must be valid and well-formed. Otherwise the RPC will fail and return google.rpc.Code.INVALID_ARGUMENT. F..."
+    },
+    "multiSpeakerMarkup": {
+     "description": "pruned: MultiSpeakerMarkup (not used by Sonara)"
+    }
+   }
+  },
+  "SynthesizeSpeechRequest": {
+   "description": "The top-level message sent by the client for the `SynthesizeSpeech` method.",
+   "type": "object",
+   "id": "SynthesizeSpeechRequest",
+   "properties": {
+    "input": {
+     "$ref": "#/$defs/SynthesisInput",
+     "description": "Required. The Synthesizer requires either plain text or SSML as input."
+    },
+    "voice": {
+     "$ref": "#/$defs/VoiceSelectionParams",
+     "description": "Required. The desired voice of the synthesized audio."
+    },
+    "advancedVoiceOptions": {
+     "description": "pruned: AdvancedVoiceOptions (not used by Sonara)"
+    },
+    "audioConfig": {
+     "description": "Required. The configuration of the synthesized audio.",
+     "$ref": "#/$defs/AudioConfig"
+    }
+   },
+   "required": [
+    "input",
+    "voice",
+    "audioConfig"
+   ],
+   "x-derived": "required from 'Required.' in the descriptions"
+  },
+  "SynthesizeSpeechResponse": {
+   "properties": {
+    "audioContent": {
+     "description": "The audio data bytes encoded as specified in the request, including the header for encodings that are wrapped in containers (e.g. MP3, OGG_OPUS). For LINEAR16 a...",
+     "format": "byte",
+     "type": "string"
+    }
+   },
+   "type": "object",
+   "id": "SynthesizeSpeechResponse",
+   "description": "The message returned to the client by the `SynthesizeSpeech` method."
+  },
+  "Voice": {
+   "description": "Description of a voice supported by the TTS service.",
+   "type": "object",
+   "id": "Voice",
+   "properties": {
+    "ssmlGender": {
+     "type": "string",
+     "description": "The gender of this voice.",
+     "enum": [
+      "SSML_VOICE_GENDER_UNSPECIFIED",
+      "MALE",
+      "FEMALE",
+      "NEUTRAL"
+     ]
+    },
+    "name": {
+     "description": "The name of this voice. Each distinct voice has a unique name.",
+     "type": "string"
+    },
+    "naturalSampleRateHertz": {
+     "format": "int32",
+     "description": "The natural sample rate (in hertz) for this voice.",
+     "type": "integer"
+    },
+    "languageCodes": {
+     "items": {
+      "type": "string"
+     },
+     "description": "The languages that this voice supports, expressed as [BCP-47](https://www.rfc-editor.org/rfc/bcp/bcp47.txt) language tags (e.g. \"en-US\", \"es-419\", \"cmn-tw\").",
+     "type": "array"
+    }
+   }
+  },
+  "VoiceSelectionParams": {
+   "type": "object",
+   "description": "Description of which voice to use for a synthesis request.",
+   "properties": {
+    "languageCode": {
+     "type": "string",
+     "description": "Required. The language (and potentially also the region) of the voice expressed as a [BCP-47](https://www.rfc-editor.org/rfc/bcp/bcp47.txt) language tag, e.g. \"..."
+    },
+    "ssmlGender": {
+     "type": "string",
+     "enum": [
+      "SSML_VOICE_GENDER_UNSPECIFIED",
+      "MALE",
+      "FEMALE",
+      "NEUTRAL"
+     ],
+     "description": "The preferred gender of the voice. If not set, the service will choose a voice based on the other parameters such as language_code and name. Note that this is o..."
+    },
+    "voiceClone": {
+     "description": "Optional. The configuration for a voice clone. If [VoiceCloneParams.voice_clone_key] is set, the service chooses the voice clone matching the specified configur..."
+    },
+    "name": {
+     "type": "string",
+     "description": "The name of the voice. If both the name and the gender are not set, the service will choose a voice based on the other parameters such as language_code."
+    },
+    "customVoice": {
+     "description": "pruned: CustomVoiceParams (not used by Sonara)"
+    },
+    "multiSpeakerVoiceConfig": {
+     "description": "Optional. The configuration for a Gemini multi-speaker text-to-speech setup. Enables the use of two distinct voices in a single synthesis request."
+    },
+    "modelName": {
+     "type": "string",
+     "description": "Optional. The name of the model. If set, the service will choose the model matching the specified configuration."
+    }
+   },
+   "id": "VoiceSelectionParams",
+   "required": [
+    "languageCode"
+   ],
+   "x-derived": "required from 'Required.' in the descriptions"
+  }
+ }
+}

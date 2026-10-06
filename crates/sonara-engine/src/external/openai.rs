@@ -117,8 +117,17 @@ impl OpenAi {
     /// The request body (tests check it per preset).
     pub fn body(&self, text: &str, voice: &str, wpm: u32) -> Value {
         let mut b = Map::new();
-        if let Some(m) = &self.model {
-            b.insert("model".into(), json!(m));
+        match &self.model {
+            Some(m) => {
+                b.insert("model".into(), json!(m));
+            }
+            // Chatterbox-TTS-Server's request schema requires `model`, which
+            // its route never reads (#275): an empty one keeps the request
+            // valid with no model name in code (#235).
+            None if self.preset == Preset::ChatterboxServer => {
+                b.insert("model".into(), json!(""));
+            }
+            None => {}
         }
         b.insert("input".into(), json!(text));
         let voice_value = if self.preset == Preset::OpenAi && voice.starts_with("voice_") {
@@ -163,6 +172,7 @@ impl OpenAi {
                         "not found",
                         "does not exist",
                         "not supported",
+                        "unsupported",
                         "unknown",
                         "deprecated",
                     ]
@@ -366,7 +376,10 @@ impl Adapter for OpenAi {
 
 /// Any of the list shapes of spec 5.4: `{"voices": [..]}`, LocalAI's
 /// `{"data": [{"voices": [..]}]}`, or a top-level array; entries are
-/// strings or objects (`id`, `voice_id`, `filename` or `name`).
+/// strings or objects (`id`, `voice_id`, `name` or `filename`). The name
+/// comes before the file name: Chatterbox TTS API lists both and its
+/// speech route takes the name (a file name there silently speaks the
+/// default voice, #275); Chatterbox-TTS-Server lists only `filename`.
 pub fn parse_voice_list(v: &Value) -> Vec<VoiceInfo> {
     let entries: Vec<&Value> = if let Some(a) = v.get("voices").and_then(Value::as_array) {
         a.iter().collect()
@@ -392,8 +405,8 @@ pub fn parse_voice_list(v: &Value) -> Vec<VoiceInfo> {
             Value::Object(_) => {
                 let id = s(e, "id")
                     .or_else(|| s(e, "voice_id"))
-                    .or_else(|| s(e, "filename"))
-                    .or_else(|| s(e, "name"))?;
+                    .or_else(|| s(e, "name"))
+                    .or_else(|| s(e, "filename"))?;
                 let name = s(e, "display_name")
                     .or_else(|| s(e, "name"))
                     .unwrap_or_else(|| id.clone());
