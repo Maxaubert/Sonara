@@ -10,8 +10,8 @@ gate runs when a changed path starts with one of its triggers (GATES):
   deps         cargo deny and THIRD_PARTY_NOTICES.md (a dependency changed)
   conformance  protocol v1 and plugin conformance against the debug build
   python       ruff, the version check and tests/repo (always, when anything changed)
-  e2e          the settings-page browser tests (needs the e2e dependency group)
-  sdk          the SDKs, the npm runtime package and the Node smoke host
+  e2e          the settings-page browser tests (fails without the e2e dependency group)
+  sdk          the SDKs, the player demo, the npm runtime package and the smoke hosts
   earcons      the bundled earcon WAVs match packaging/sounds
 
 --all runs every gate except earcons (it needs numpy and scipy); --quick
@@ -63,6 +63,10 @@ E2E = ("crates/sonarad/assets/settings.html", "crates/sonarad/src/settings_page.
        "crates/sonarad/src/config.rs", "tests/e2e/")
 SDK = ("clients/", "packaging/npm-runtime/", "packaging/smoke/", "examples/") + tuple(bump_version.all_paths())
 EARCONS = ("crates/sonara-agent/sounds/", "packaging/sounds/")
+
+PLAYWRIGHT_CHECK = ("import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('playwright') "
+                    "else 'playwright is missing, so tests/e2e would skip every test: "
+                    "python -m pip install --group e2e; python -m playwright install chromium')")
 
 # In the order they run: the fast and likely-to-fail gates first.
 GATES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
@@ -181,22 +185,32 @@ def steps_for(gate: str, crates: Optional[List[str]], nextest: bool) -> List[Ste
                 _step("version check", [py, "packaging/bump_version.py", "--check"]),
                 _step("tests/repo", [py, "-m", "pytest", "tests/repo", "-q"])]
     if gate == "e2e":
-        return [_step("cargo build sonarad (debug)", ["cargo", "build", "-p", "sonarad"]),
+        # tests/e2e skips every test without playwright, which would pass the gate unrun.
+        return [_step("playwright installed", [py, "-c", PLAYWRIGHT_CHECK]),
+                _step("cargo build sonarad (debug)", ["cargo", "build", "-p", "sonarad"]),
                 _step("tests/e2e", [py, "-m", "pytest", "tests/e2e", "-q"], env=_debug_env())]
     if gate == "sdk":
         npm = shutil.which("npm") or "npm"
         node = shutil.which("node") or "node"
-        release = {"SONARAD": str(REPO_ROOT / "target" / "release" / "sonarad.exe")}
-        out = [_step("cargo build sonarad (release)", ["cargo", "build", "-p", "sonarad", "--release"])]
+        exe = str(REPO_ROOT / "target" / "release" / "sonarad.exe")
+        release = {"SONARAD": exe}
+        # The Python host imports sonara_client the way an app does; CI pip-installs it.
+        host = {"SONARA_RUNTIME": exe, "PYTHONPATH": str(REPO_ROOT / "clients" / "python" / "src")}
+        out = [_step("cargo build sonarad (release)", ["cargo", "build", "-p", "sonarad", "--release"]),
+               _step("stage runtime DLLs", [py, "packaging/runtime_dlls.py", "stage", "target/release"])]
         for where in ("clients/ts", "clients/player"):
             out += [_step(where + ": npm ci", [npm, "ci"], where),
                     _step(where + ": typecheck", [npm, "run", "typecheck"], where),
                     _step(where + ": build", [npm, "run", "build"], where),
                     _step(where + ": test", [npm, "test"], where, release)]
-        out += [_step("clients/python tests", [py, "-m", "pytest", "clients/python/tests", "-q"], env=release),
+        demo = "examples/player-demo"
+        out += [_step(demo + ": npm ci", [npm, "ci"], demo),
+                _step(demo + ": build", [npm, "run", "build"], demo),
                 _step("npm-runtime: build", [npm, "run", "build"], "packaging/npm-runtime"),
                 _step("npm-runtime: test", [npm, "test"], "packaging/npm-runtime", release),
-                _step("Node smoke host", [node, "packaging/smoke/run-node.mjs"], env=release)]
+                _step("Node smoke host", [node, "packaging/smoke/run-node.mjs"], env=release),
+                _step("clients/python tests", [py, "-m", "pytest", "clients/python/tests", "-q"], env=release),
+                _step("Python smoke host", [py, "packaging/smoke/python_host.py"], env=host)]
         return out
     if gate == "earcons":
         return [_step("earcons", [py, "packaging/sounds/build_earcons.py", "--check"])]

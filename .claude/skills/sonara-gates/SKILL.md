@@ -55,7 +55,7 @@ python -m pytest tests/repo -q
 | Paths | Extra gate |
 |---|---|
 | `crates/sonarad/assets/settings.html`, `crates/sonarad/src/settings_page.rs` | `cargo build -p sonarad`, then `python -m pytest tests/e2e -q` (needs `python -m pip install --group e2e`, `python -m playwright install chromium`). CI skips it: it is the local gate. |
-| `clients/`, `packaging/npm-runtime`, any version file (every PR bumps one) | SDK gates below |
+| `clients/`, `packaging/npm-runtime`, `packaging/smoke`, `examples/`, any version file (every PR bumps one) | SDK gates below |
 | Rust dependencies (`Cargo.toml`, `Cargo.lock` beyond the version) | `python packaging/notices/gen_notices.py`, commit the result |
 | `crates/sonara-agent/sounds/`, `packaging/sounds/` | `python packaging/sounds/build_earcons.py --check` |
 
@@ -63,11 +63,14 @@ SDK gates (CI clients job runs Node 18 and Python 3.9):
 
 ```sh
 cargo build -p sonarad --release
+python packaging/runtime_dlls.py stage target/release
 (cd clients/ts && npm ci && npm run typecheck && npm run build && npm test)
 (cd clients/player && npm ci && npm run typecheck && npm run build && npm test)
-python -m pytest clients/python/tests -q
+(cd examples/player-demo && npm ci && npm run build)
 (cd packaging/npm-runtime && npm run build && npm test)
 node packaging/smoke/run-node.mjs
+python -m pytest clients/python/tests -q
+SONARA_RUNTIME=target/release/sonarad.exe PYTHONPATH=clients/python/src python packaging/smoke/python_host.py
 ```
 
 The SDK step builds `target/release/sonarad.exe` without the other release exes; the gate script

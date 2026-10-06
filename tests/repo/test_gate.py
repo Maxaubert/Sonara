@@ -111,3 +111,30 @@ def test_ci_keeps_the_required_check_names():
     yaml = pytest.importorskip("yaml")
     ci = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
     assert sorted(ci["jobs"]) == sorted(gate.REQUIRED_CHECKS)
+
+
+def _labels(gate_name):
+    return [step[0] for step in gate.steps_for(gate_name, None, False)]
+
+
+def test_the_sdk_gate_runs_every_step_of_the_ci_clients_job():
+    labels = _labels("sdk")
+    for want in ("stage runtime DLLs", "examples/player-demo: npm ci", "examples/player-demo: build",
+                 "Python smoke host"):
+        assert want in labels, want
+    assert labels.index("stage runtime DLLs") < labels.index("npm-runtime: build")
+    host = next(s for s in gate.steps_for("sdk", None, False) if s[0] == "Python smoke host")
+    assert host[3]["SONARA_RUNTIME"].endswith("sonarad.exe")
+
+
+def test_the_sdk_triggers_cover_the_player_demo_and_the_python_host():
+    for path in ("examples/player-demo/src/App.tsx", "packaging/smoke/python_host.py"):
+        assert "sdk" in gate.select([path]), path
+
+
+def test_the_e2e_gate_fails_when_playwright_is_missing_instead_of_skipping():
+    steps = gate.steps_for("e2e", None, False)
+    labels = [s[0] for s in steps]
+    assert labels.index("playwright installed") < labels.index("tests/e2e")
+    check = steps[labels.index("playwright installed")][1]
+    assert "playwright" in " ".join(check)

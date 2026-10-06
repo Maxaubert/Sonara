@@ -59,8 +59,8 @@ python -m venv .venv
 ```
 
 All must be green. CI (`.github/workflows/ci.yml`) runs the same on Windows in the jobs
-`check`, `rust`, `conformance`, `clients` (the SDKs) and `deny`, the required checks of a PR. Tests must not depend on what is installed on your PC (Kokoro models, Windows
-voices, API keys).
+`check`, `rust`, `conformance`, `clients` (the SDKs) and `deny`, the required checks of a PR.
+Tests must not depend on what is installed on your PC (Kokoro models, Windows voices, API keys).
 
 - **Settings page changes** (`crates/sonarad/assets/settings.html`,
   `crates/sonarad/src/settings_page.rs`) also need the browser tests:
