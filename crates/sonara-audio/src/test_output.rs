@@ -139,6 +139,20 @@ impl TestOutput {
         self.send(AudioEvent::ChunkFinished { gen });
     }
 
+    /// The loaded chunk, if any, plays to its end at once: `ChunkStarted`,
+    /// then `ChunkFinished`, and it is unloaded, as a real output does. One
+    /// step under the lock, so a thread that keeps playing whatever is
+    /// loaded never races the host's `play` or `stop` (#269). Returns its
+    /// gen.
+    pub fn play_through(&self) -> Option<u64> {
+        let mut inner = self.lock();
+        let gen = inner.loaded.take()?;
+        inner.paused = false;
+        let _ = self.events.send(AudioEvent::ChunkStarted { gen });
+        let _ = self.events.send(AudioEvent::ChunkFinished { gen });
+        Some(gen)
+    }
+
     /// The loaded chunk failed and is unloaded.
     pub fn fail(&self, reason: &str) {
         let gen = self.lock().loaded.take().expect("fail: nothing loaded");
