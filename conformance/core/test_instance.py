@@ -228,13 +228,17 @@ def test_a_request_as_the_exit_is_decided_is_answered(start):
     for i in range(15):
         rt = start("--idle-exit", "0.3")
         time.sleep(0.2 + i * 0.015)
+        # Windows resets a connection still waiting in the listener's backlog
+        # when the listener closes (WinError 10054): the port closed, as with
+        # a refusal.
+        closed = (ConnectionRefusedError, ConnectionResetError)
         try:
             status, body = rt.post("get", {"key": "volume"})
-        except ConnectionRefusedError:
+        except closed:
             outcomes["refused"] += 1
             continue
         except OSError as e:
-            if isinstance(getattr(e, "reason", None), ConnectionRefusedError):
+            if isinstance(getattr(e, "reason", None), closed):
                 outcomes["refused"] += 1
                 continue
             raise
