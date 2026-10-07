@@ -674,6 +674,48 @@ impl Channels {
         }
     }
 
+    /// Replace the text of `channel`'s entry `entry` in place
+    /// (`Router::revise`, #283). False if there is no such channel or
+    /// entry. The item reading it, if any, keeps its old text: `read_from`
+    /// reads the new one.
+    pub fn revise(&self, channel: &str, entry: u64, text: &str) -> bool {
+        self.lock().router.revise(channel, entry, text)
+    }
+
+    /// Read `channel` now from its batch entry `entry` (`None`: from the
+    /// top), whatever is being read (#283, L3's question navigation and Up
+    /// on a message with a question set): the replay holds the floor
+    /// (`Router::replay_from`, #271), the item in flight is cut, and
+    /// another channel's cut entry is read again later (as for
+    /// `next_channel`). A cut item is a user jump, not a drop: nothing goes
+    /// to `on_drop`. False (nothing done) if there is no such channel,
+    /// entry or batch.
+    pub fn read_from(&self, channel: &str, entry: Option<u64>) -> Result<bool> {
+        let mut st = self.lock();
+        if !st.router.replay_from(channel, entry) {
+            return Ok(false);
+        }
+        if let Some(cut) = st.in_flight.take() {
+            // The channel's own cut entry is not stepped back over: its
+            // cursor was just set.
+            if let (Some(e), true) = (cut.entry, cut.channel != channel) {
+                st.router.rewind(&cut.channel, e);
+            }
+        }
+        let fed = self.inner.feed(&mut st, true)?;
+        let reader = &self.inner.reader;
+        if fed.is_none() && reader.state()?.now_playing.is_some() {
+            reader.control(Control::Skip)?;
+        }
+        Ok(true)
+    }
+
+    /// The channel whose batch got the newest entry (`Restart` before any
+    /// channel was read, #243).
+    pub fn written_last(&self) -> Option<String> {
+        self.lock().router.written_last()
+    }
+
     /// The flush hotkey (#228): stop only what is being read now. When a
     /// channel's item is in flight (playing or paused) that channel is
     /// flushed as `control(Stop, channel)` (its unread entries skipped,

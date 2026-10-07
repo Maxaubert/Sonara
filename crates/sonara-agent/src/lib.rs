@@ -54,6 +54,17 @@
 //!   latest message. Prose streamed before that first tool or decision
 //!   still joins the previous batch (L3 cannot tell it from late prose of
 //!   the ended turn).
+//! - **Question sets** (#283): of a set of questions only the one shown
+//!   is an L2 entry (the rules keep the set, `rules` module docs). The
+//!   driver binds the entry of the set's first question when it carries
+//!   out its `Speak` or `Store`. `question` (Ctrl+Alt+Left/Right) moves
+//!   the engaged session's set (else the focused one's, else the one
+//!   written last; the first of them with a set): it revises that entry's
+//!   text in place (`Channels::revise`) and reads from it
+//!   (`Channels::read_from`, a replay the user started, which holds the
+//!   floor). `restart` (Up) on a session whose message has a set puts
+//!   question 1 back in the entry and reads the message from the top;
+//!   without a set it is L2's `control(Restart)`, as before.
 //! - `flush` (the flush hotkey, #228) stops the session being read and
 //!   skips the rest of its reply: L2 `flush_with`, then `Rules::flush` on
 //!   that channel. With `flush_scope` `all` every other session whose
@@ -115,7 +126,7 @@ pub mod summarizer;
 
 pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
-pub use rules::{Action, Ask, Job, Note, Rules, Stale, Timer};
+pub use rules::{Action, Ask, Job, Nav, Note, Rules, Stale, Step, Timer};
 pub use settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
     Verbosity,
@@ -204,8 +215,8 @@ pub fn default_summarizer() -> Option<Arc<dyn Summarizer>> {
 pub struct Trace {
     /// What caused it: the message (`stream`, `turn_start`, `turn_end`,
     /// `ask question`, `ask permission`, `ask plan`, `tool`, `answered`,
-    /// `earcon`, `mute_level`, `stop`, `flush`), a `timer` or a `summary`
-    /// landing.
+    /// `earcon`, `mute_level`, `stop`, `flush`, `question`, `restart`), a
+    /// `timer` or a `summary` landing.
     pub source: String,
     pub channel: Option<String>,
     pub what: Traced,
@@ -443,7 +454,7 @@ impl Agent {
                     // Its decisions were answered: a replay skips them.
                     self.inner.channels.drop_decisions(c, which);
                 }
-                self.inner.execute(&rules, source, channel, actions)?;
+                self.inner.execute(&mut rules, source, channel, actions)?;
                 Ok(true)
             }
             Err(Stale) => {
@@ -562,10 +573,11 @@ impl Agent {
     /// Every drop is noted for the troubleshooting log (#228).
     pub fn stop(&self) -> Result<()> {
         let mut rules = self.lock();
+        self.inner.skipping_sets(&mut rules);
         rules.stop_all();
         self.inner
             .trace("stop", None, Traced::Wiped { reason: "stop" });
-        self.inner.execute(&rules, "stop", None, Vec::new())?;
+        self.inner.execute(&mut rules, "stop", None, Vec::new())?;
         Ok(self
             .inner
             .channels
@@ -597,6 +609,7 @@ impl Agent {
             .filter(|c| rules.writing(c))
             .collect();
         self.inner.sync_whole(&mut rules);
+        self.inner.skipping_sets(&mut rules);
         let mut report = self.inner.channels.flush_with(
             "flush",
             |ch| {
@@ -608,7 +621,7 @@ impl Agent {
         let mut first = Ok(());
         if let Flushed::Channel(ch) = &report.flushed {
             let actions = rules.flush(ch);
-            first = self.inner.execute(&rules, "flush", Some(ch), actions);
+            first = self.inner.execute(&mut rules, "flush", Some(ch), actions);
         }
         if all {
             for ch in rules.channels() {
@@ -620,7 +633,7 @@ impl Agent {
                     if !report.others.contains(&ch) {
                         report.others.push(ch.clone());
                     }
-                    let done = self.inner.execute(&rules, "flush", Some(&ch), actions);
+                    let done = self.inner.execute(&mut rules, "flush", Some(&ch), actions);
                     if first.is_ok() {
                         first = done;
                     }
@@ -629,6 +642,119 @@ impl Agent {
         }
         first?;
         Ok(report)
+    }
+
+    /// The sessions the hotkeys aim at, in order: the engaged one (reading,
+    /// else read last), the focused one, the one written last (L2's
+    /// `Restart` target, #243).
+    fn targets(&self) -> Vec<String> {
+        let ch = &self.inner.channels;
+        let mut v: Vec<String> = Vec::new();
+        for c in [ch.engaged(), ch.focused(), ch.written_last()]
+            .into_iter()
+            .flatten()
+        {
+            if !v.contains(&c) {
+                v.push(c);
+            }
+        }
+        v
+    }
+
+    /// The question navigation (#283, Ctrl+Alt+Right / Left; module docs):
+    /// move the question set of the first session in `targets` that has
+    /// one. Returns the session and where it landed (`edge`: `Next` on the
+    /// last question, nothing moved), or `None` when no session has a set
+    /// that was spoken.
+    pub fn question(&self, step: Step) -> Result<Option<(String, Nav)>> {
+        let mut rules = self.lock();
+        let ch = &self.inner.channels;
+        for target in self.targets() {
+            let Some(entry) = rules.question_entry(&target) else {
+                continue;
+            };
+            let Some(c) = ch.channel(&target) else {
+                continue;
+            };
+            // The entry left the batch (answered): nothing to navigate.
+            let Some(at) = c.entries().iter().position(|e| e.id == entry) else {
+                continue;
+            };
+            let started = c.cursor() > at;
+            let Some(nav) = rules.navigate(&target, step, started) else {
+                continue;
+            };
+            let what = if nav.edge {
+                format!("question {} of {}: the last one", nav.index + 1, nav.size)
+            } else {
+                format!("question {} of {}", nav.index + 1, nav.size)
+            };
+            self.inner.trace(
+                "question",
+                Some(&target),
+                Traced::Note(Note {
+                    channel: Some(target.clone()),
+                    kind: "question",
+                    what,
+                    text: None,
+                }),
+            );
+            if !nav.edge {
+                ch.revise(&target, nav.entry, &nav.text);
+                ch.read_from(&target, Some(nav.entry))?;
+            }
+            return Ok(Some((target, nav)));
+        }
+        Ok(None)
+    }
+
+    /// Up (`control restart` without a channel, #283): when the session Up
+    /// aims at (L2's target: the engaged one, else the focused one, else
+    /// the one written last) has a question set, its message is read again
+    /// from the top with question 1 (the set's entry shows question 1
+    /// again) and the session is returned. Otherwise it is L2's
+    /// `control(Restart)` as before (the current item again while reading,
+    /// the engaged session's message while idle) and `None` is returned.
+    pub fn restart(&self) -> Result<Option<String>> {
+        let mut rules = self.lock();
+        let ch = &self.inner.channels;
+        if let Some(target) = self.targets().into_iter().next() {
+            let entry = rules.question_entry(&target);
+            let present = entry.is_some_and(|e| {
+                ch.channel(&target)
+                    .is_some_and(|c| c.entries().iter().any(|x| x.id == e))
+            });
+            if present {
+                if let Some(nav) = rules.rewind_questions(&target) {
+                    self.inner.trace(
+                        "restart",
+                        Some(&target),
+                        Traced::Note(Note {
+                            channel: Some(target.clone()),
+                            kind: "question",
+                            what: format!(
+                                "the message again from the top, then question 1 of {}",
+                                nav.size
+                            ),
+                            text: None,
+                        }),
+                    );
+                    ch.revise(&target, nav.entry, &nav.text);
+                    if ch.read_from(&target, None)? {
+                        return Ok(Some(target));
+                    }
+                }
+            }
+        }
+        drop(rules);
+        ch.control(Control::Restart, None)?;
+        Ok(None)
+    }
+
+    /// `channel`'s question set: the current question (0-based) and its
+    /// size (#283).
+    pub fn question_set(&self, channel: &str) -> Option<(usize, usize)> {
+        self.lock().question_set(channel)
     }
 
     /// What the flush hotkey skips (#228).
@@ -753,6 +879,24 @@ impl Inner {
     fn sync_whole(&self, rules: &mut Rules) {
         let whole = self.channels.reader().send_mode() == sonara_reader::SendMode::Message;
         rules.set_whole_messages(whole);
+    }
+
+    /// Text is about to be skipped (a flush, a stop, a mute): a question set
+    /// whose entry is still unread was not heard, so its navigation starts
+    /// at question 1 (#283). Over-marking is harmless: a set whose entry
+    /// survives unread is still not heard.
+    fn skipping_sets(&self, rules: &mut Rules) {
+        for id in rules.channels() {
+            let Some(entry) = rules.question_entry(&id) else {
+                continue;
+            };
+            let unread = self.channels.channel(&id).is_some_and(|c| {
+                c.entries()[c.cursor()..].iter().any(|e| e.id == entry)
+            });
+            if unread {
+                rules.questions_unheard(&id);
+            }
+        }
     }
 
     /// Report to the trace hook, if any.
@@ -880,7 +1024,7 @@ impl Inner {
     /// lose a later decision).
     fn execute(
         self: &Arc<Self>,
-        rules: &Rules,
+        rules: &mut Rules,
         source: &str,
         channel: Option<&str>,
         actions: Vec<Action>,
@@ -910,7 +1054,7 @@ impl Inner {
         gated.then_some("background policy earcon_only: read once the session is focused")
     }
 
-    fn carry_out(self: &Arc<Self>, rules: &Rules, source: &str, a: Action) -> Result<()> {
+    fn carry_out(self: &Arc<Self>, rules: &mut Rules, source: &str, a: Action) -> Result<()> {
         let ch = &self.channels;
         match a {
             Action::Speak {
@@ -921,6 +1065,10 @@ impl Inner {
                 kind,
             } => {
                 let spoken = ch.add_with(&channel, &text, decision)?;
+                if kind == "question" {
+                    // The entry that shows a question set (#283).
+                    rules.bind_question(&channel, spoken.entry, false);
+                }
                 if decision {
                     ch.prioritize(&channel)?;
                 }
@@ -947,6 +1095,9 @@ impl Inner {
                 kind,
             } => {
                 let stored = ch.store(&channel, &text, decision)?;
+                if kind == "question" {
+                    rules.bind_question(&channel, stored.entry, true);
+                }
                 self.trace(
                     source,
                     Some(&channel),
@@ -979,6 +1130,7 @@ impl Inner {
                 }
             }
             Action::Silence => {
+                self.skipping_sets(rules);
                 self.trace(source, None, Traced::Wiped { reason: "mute" });
                 ch.control_because(Control::Stop, None, "mute")?
             }
@@ -1003,7 +1155,7 @@ impl Inner {
         self.sync_whole(&mut rules);
         let focused = self.channels.focused();
         let actions = rules.fire(timer, focused.as_deref());
-        if let Err(e) = self.execute(&rules, "timer", None, actions) {
+        if let Err(e) = self.execute(&mut rules, "timer", None, actions) {
             eprintln!("[agent] timer {timer:?}: {e}");
         }
     }
@@ -1050,7 +1202,7 @@ impl Inner {
         let mut rules = self.lock();
         self.sync_whole(&mut rules);
         let actions = rules.digest_done(job, summary);
-        if let Err(e) = self.execute(&rules, "summary", Some(&job.channel), actions) {
+        if let Err(e) = self.execute(&mut rules, "summary", Some(&job.channel), actions) {
             eprintln!("[agent] summary for {}: {e}", job.channel);
         }
     }

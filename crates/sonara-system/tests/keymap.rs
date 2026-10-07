@@ -32,7 +32,7 @@ fn defaults_are_ctrl_alt_up_down_m_p() {
 }
 
 #[test]
-fn no_two_defaults_share_a_key_and_left_right_are_free() {
+fn no_two_defaults_share_a_key() {
     let km = keymap::defaults();
     let keys: Vec<_> = km
         .bindings
@@ -43,7 +43,42 @@ fn no_two_defaults_share_a_key_and_left_right_are_free() {
     dedup.sort();
     dedup.dedup();
     assert_eq!(keys.len(), dedup.len());
-    assert!(!keys.iter().any(|k| k == "left" || k == "right"));
+}
+
+#[test]
+fn default_keys_bind_ctrl_alt_left_and_right() {
+    // #283: Ctrl+Alt+Left/Right move between a message's questions.
+    let km = keymap::defaults();
+    assert_eq!(key_of(&km, Action::PreviousQuestion).as_deref(), Some("left"));
+    assert_eq!(key_of(&km, Action::NextQuestion).as_deref(), Some("right"));
+    let (r, _) = keymap::resolve(&km);
+    let right = r.iter().find(|r| r.action == Action::NextQuestion).unwrap();
+    assert_eq!(
+        keymap::combo_label(right.mods, right.vk),
+        "Ctrl+Alt+Right"
+    );
+    assert!(!Action::NextQuestion.debounced() && !Action::PreviousQuestion.debounced());
+}
+
+#[test]
+fn question_actions_have_stable_ids_after_the_old_ones() {
+    // The registration ids of the older actions never move (#283).
+    let old = [
+        Action::Restart,
+        Action::Flush,
+        Action::Pause,
+        Action::Mute,
+        Action::NextChannel,
+        Action::Faster,
+        Action::Slower,
+    ];
+    for (i, a) in old.iter().enumerate() {
+        assert_eq!(a.id(), i as i32 + 1, "{a:?}");
+    }
+    assert_eq!(Action::PreviousQuestion.id(), 8);
+    assert_eq!(Action::NextQuestion.id(), 9);
+    assert_eq!(Action::parse("previous_question"), Some(Action::PreviousQuestion));
+    assert_eq!(Action::parse("next_question"), Some(Action::NextQuestion));
 }
 
 #[test]

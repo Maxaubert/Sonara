@@ -14,7 +14,7 @@ use sonara_agent::settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, SummaryCommand, Verbosity,
 };
 use sonara_agent::summarizer::instruction;
-use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Style, SummarySettings};
+use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Step, Style, SummarySettings};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
@@ -178,8 +178,57 @@ pub fn ask(a: &Agent, m: &Map<String, Value>) -> Handled {
     ask.notes = owned("notes")?;
     ask.hint = owned("hint")?;
     ask.hint_once = owned("hint_once")?;
+    ask.set = set(m)?;
     a.ask(ch, &ask).map_err(failure)?;
     ok(Map::new())
+}
+
+/// `set_index` and `set_size` (#283): both or neither, the index below the
+/// size.
+fn set(m: &Map<String, Value>) -> Result<Option<(usize, usize)>, Failure> {
+    let num = |f: &str| match m.get(f) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .map(Some)
+            .ok_or_else(|| bad(format!("'{f}' must be a non-negative integer"))),
+    };
+    match (num("set_index")?, num("set_size")?) {
+        (None, None) => Ok(None),
+        (Some(i), Some(n)) if i < n => Ok(Some((i, n))),
+        (Some(_), Some(_)) => Err(bad("'set_index' must be below 'set_size'")),
+        _ => Err(bad("'set_index' and 'set_size' go together")),
+    }
+}
+
+/// The `control` actions of the question navigation (#283).
+pub fn question_step(action: &str) -> Option<Step> {
+    match action {
+        "next_question" => Some(Step::Next),
+        "previous_question" => Some(Step::Previous),
+        _ => None,
+    }
+}
+
+/// `control next_question` / `previous_question` (#283): the session whose
+/// question set moved, the question it landed on (1-based) and the set's
+/// size, `edge` when it was the last one already; `channel` null when no
+/// session has a question set to navigate.
+pub fn question(a: &Agent, step: Step) -> Handled {
+    let mut f = Map::new();
+    match a.question(step).map_err(failure)? {
+        Some((ch, nav)) => {
+            f.insert("channel".into(), json!(ch));
+            f.insert("question".into(), json!(nav.index + 1));
+            f.insert("of".into(), json!(nav.size));
+            f.insert("edge".into(), json!(nav.edge));
+        }
+        None => {
+            f.insert("channel".into(), Value::Null);
+        }
+    }
+    ok(f)
 }
 
 /// The support log line of an accepted `ask`: its kind and session (the

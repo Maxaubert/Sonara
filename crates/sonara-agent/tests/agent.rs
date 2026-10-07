@@ -6,7 +6,7 @@
 use sonara_agent::earcon::Library;
 use sonara_agent::{
     Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Settings,
-    Summarizer, SummarySettings,
+    Step, Summarizer, SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};
@@ -1387,5 +1387,152 @@ fn live_reading_still_lets_a_question_in() {
     r.read("Deploy now?");
     r.read("Option 1: Yes.");
     r.read("Two is here.");
+    r.stays_idle();
+}
+
+// -- question sets and their navigation (#283) -----------------------------
+
+/// The evidence of 2026-10-07 (#283): a message whose text is followed by
+/// a set of `n` questions, as the hook sends it (one `ask` per question
+/// with its place in the set).
+fn ask_set(r: &Rig, ch: &str, n: usize) {
+    for i in 0..n {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, n));
+        r.agent.ask(ch, &a).unwrap();
+    }
+}
+
+/// Alpha's text, then a set of four questions.
+fn text_and_four_questions() -> Rig {
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    ask_set(&r, "a", 4);
+    r
+}
+
+#[test]
+fn a_question_set_is_read_as_the_text_then_question_one_only() {
+    let r = text_and_four_questions();
+    r.read("Here is my answer.");
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn restart_with_a_question_set_reads_the_text_then_question_one() {
+    // sonarad.log 2026-10-07 18:03:14: Up while question 1 was on screen
+    // restarted question 2, which was playing. Question 2 never plays by
+    // itself now, and Up reads the whole message again.
+    let r = text_and_four_questions();
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 4.");
+    r.out.start();
+    assert_eq!(r.agent.restart().unwrap().as_deref(), Some("a"));
+    r.read("Here is my answer.");
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    // After the user moved to question 3, Up still starts from the top.
+    r.agent.question(Step::Next).unwrap();
+    r.read("Question 2 of 4.");
+    r.read("Question text 2?");
+    r.stays_idle();
+    r.agent.restart().unwrap();
+    r.read("Here is my answer.");
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn restart_without_questions_behaves_as_before() {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    r.read("One is here.");
+    r.wait_for("Two is here.");
+    r.out.start();
+    // Reading: the current item again.
+    assert_eq!(r.agent.restart().unwrap(), None);
+    r.read("Two is here.");
+    r.stays_idle();
+    // Idle: the whole message again.
+    assert_eq!(r.agent.restart().unwrap(), None);
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.stays_idle();
+}
+
+#[test]
+fn navigate_from_the_text_jumps_to_question_one_then_moves_on() {
+    for step in [Step::Next, Step::Previous] {
+        let r = text_and_four_questions();
+        r.wait_for("Here is my answer.");
+        r.out.start();
+        let (ch, nav) = r.agent.question(step).unwrap().expect("a set");
+        assert_eq!((ch.as_str(), nav.index, nav.size), ("a", 0, 4));
+        r.read("Question 1 of 4.");
+        r.read("Question text 1?");
+        r.stays_idle();
+    }
+    let r = text_and_four_questions();
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 4.");
+    r.out.start();
+    let (_, nav) = r.agent.question(Step::Next).unwrap().unwrap();
+    assert_eq!((nav.index, nav.edge), (1, false));
+    r.read("Question 2 of 4.");
+    r.wait_for("Question text 2?");
+    r.out.start();
+    r.agent.question(Step::Previous).unwrap();
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    for k in 2..=4 {
+        r.agent.question(Step::Next).unwrap();
+        r.read(&format!("Question {k} of 4."));
+        r.read(&format!("Question text {k}?"));
+    }
+    let (_, edge) = r.agent.question(Step::Next).unwrap().unwrap();
+    assert!(edge.edge, "the last question");
+    r.stays_idle();
+    // An answer forgets the set: nothing to navigate.
+    r.agent.answered("a").unwrap();
+    assert_eq!(r.agent.question(Step::Next).unwrap(), None);
+}
+
+#[test]
+fn flush_during_the_text_skips_its_questions() {
+    let r = text_and_four_questions();
+    r.wait_for("Here is my answer.");
+    r.out.start();
+    r.agent.flush().unwrap();
+    r.stays_idle();
+    // The set is kept: the user can still go to its questions.
+    r.agent.question(Step::Next).unwrap().expect("kept");
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn a_muted_question_set_is_stored_and_navigation_reads_it() {
+    let r = Rig::new();
+    r.agent.set_mute_level(1).unwrap();
+    r.stream("a", "Here is my answer.", 0, None);
+    ask_set(&r, "a", 3);
+    r.stays_idle();
+    r.agent.set_mute_level(0).unwrap();
+    r.stays_idle();
+    // Never heard: Right reads question 1 first.
+    let (_, nav) = r.agent.question(Step::Next).unwrap().unwrap();
+    assert_eq!(nav.index, 0);
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    r.agent.question(Step::Next).unwrap();
+    r.read("Question 2 of 3.");
+    r.read("Question text 2?");
     r.stays_idle();
 }

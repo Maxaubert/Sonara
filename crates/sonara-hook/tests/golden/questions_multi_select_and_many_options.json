@@ -77,7 +77,12 @@
           "label": "Metrics"
         }
       ],
-      "multi_select": true
+      "multi_select": true,
+      "hint": "Press the option's number to choose, or Escape to cancel.",
+      "hint_once": "Selecting is immediate.",
+      "notes": "Select multiple: press each number, or Space on the highlighted item, then Enter to confirm. More than nine options; use arrow keys for ten and up.",
+      "set_index": 0,
+      "set_size": 2
     },
     {
       "type": "ask",
@@ -116,9 +121,8 @@
           "label": "8009"
         }
       ],
-      "hint": "Press the option's number to choose, or Escape to cancel.",
-      "hint_once": "Selecting is immediate.",
-      "notes": "Select multiple: press each number, or Space on the highlighted item, then Enter to confirm. More than nine options; use arrow keys for ten and up."
+      "set_index": 1,
+      "set_size": 2
     }
   ]
 }

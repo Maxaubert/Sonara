@@ -32,10 +32,20 @@ pub enum Action {
     Faster,
     /// Speak slower (rate - 25).
     Slower,
+    /// The previous question of the message's question set; from the
+    /// message text, question 1; on question 1, question 1 again
+    /// (`control previous_question`, #283).
+    PreviousQuestion,
+    /// The next question of the message's question set; from the message
+    /// text, or a set not started yet, question 1 (`control
+    /// next_question`, #283).
+    NextQuestion,
 }
 
 impl Action {
-    pub const ALL: [Action; 7] = [
+    /// Every action. Its order is the registration id (`id`): a new
+    /// action is appended, so the ids of the others never move.
+    pub const ALL: [Action; 9] = [
         Action::Restart,
         Action::Flush,
         Action::Pause,
@@ -43,6 +53,8 @@ impl Action {
         Action::NextChannel,
         Action::Faster,
         Action::Slower,
+        Action::PreviousQuestion,
+        Action::NextQuestion,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -54,6 +66,8 @@ impl Action {
             Action::NextChannel => "next_channel",
             Action::Faster => "faster",
             Action::Slower => "slower",
+            Action::PreviousQuestion => "previous_question",
+            Action::NextQuestion => "next_question",
         }
     }
 
@@ -68,6 +82,8 @@ impl Action {
             "next_channel" | "next_session" => Action::NextChannel,
             "faster" => Action::Faster,
             "slower" => Action::Slower,
+            "previous_question" => Action::PreviousQuestion,
+            "next_question" => Action::NextQuestion,
             _ => return None,
         })
     }
@@ -102,12 +118,17 @@ pub const MOD_WIN: u32 = 0x0008;
 /// so a clash is a warning whose fix is a rebind with Win.
 pub const DEFAULT_MODS: [&str; 2] = ["ctrl", "alt"];
 
-/// Action -> default key; pause, faster and slower ship unbound.
-pub const DEFAULT_KEYS: [(Action, &str); 4] = [
+/// Action -> default key; pause, faster and slower ship unbound. Left
+/// and Right move between a message's questions (#283); Intel graphics
+/// drivers may own Ctrl+Alt+arrows (screen rotation): a clash is a doctor
+/// and settings warning whose fix is turning that off or a rebind.
+pub const DEFAULT_KEYS: [(Action, &str); 6] = [
     (Action::Restart, "up"),
     (Action::Flush, "down"),
     (Action::Mute, "m"),
     (Action::NextChannel, "p"),
+    (Action::PreviousQuestion, "left"),
+    (Action::NextQuestion, "right"),
 ];
 
 /// Named keys and their virtual-key codes (letters and digits are added by
@@ -234,7 +255,7 @@ fn default_binding(action: Action) -> Binding {
         .unwrap_or_default()
 }
 
-/// The default keymap: Ctrl+Alt+Up/Down/M/P, the rest unbound.
+/// The default keymap: Ctrl+Alt+Up/Down/M/P/Left/Right, the rest unbound.
 pub fn defaults() -> Keymap {
     Keymap {
         bindings: Action::ALL

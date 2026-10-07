@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"Build the listing card."},"uuid":"u1"}
+{"type":"assistant","message":{"id":"msg_earlier","role":"assistant","content":[{"type":"text","text":"An earlier reply with text."}]},"uuid":"a0"}
+{"type":"attachment","attachment":{"type":"todo"},"uuid":"x1"}
+{"type":"assistant","message":{"id":"msg_011CfoHsQJmVPDZm5J5GeUer","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"c2lnbmF0dXJlLW9ubHk="}]},"uuid":"a1"}
+{"type":"assistant","message":{"id":"msg_011CfoHsQJmVPDZm5J5GeUer","role":"assistant","content":[{"type":"thinking","thinking":"The card is next. Two choices are the user's to make: where the Norwegian names live and how the price is shown. I will ask both now.","signature":"c2ln"}]},"uuid":"a2"}
+{"type":"assistant","message":{"id":"msg_011CfoHsQJmVPDZm5J5GeUer","role":"assistant","content":[{"type":"tool_use","id":"toolu_01EXJLaWWqDBnjEJ38tJ3meY","name":"AskUserQuestion","input":{"questions":[{"question":"Where do the Norwegian names live?","options":[{"label":"listings/labels.ts"},{"label":"Inside the card"}]},{"question":"How is the price shown?","options":[{"label":"Own tested function"},{"label":"Written in the card"}]}]}}]},"uuid":"a3"}

@@ -44,6 +44,18 @@
 //!   A permission otherwise plays `permission`; a plan has no earcon (the
 //!   user removed it). A tool running, an answer or a new turn clears the
 //!   mark.
+//! - **Question sets** (#283): an `ask` carrying `set` (index, size) with a
+//!   size of two or more is one question of a set (Claude Code shows them
+//!   one at a time). Only the first is spoken, as "Question 1 of N." with
+//!   the set's notes and hints (which ride on it); the others are kept and
+//!   leave a note. The driver binds the L2 entry that shows the set
+//!   (`bind_question`); `navigate` moves it to another question
+//!   (`Step::Next`, `Step::Previous`; before that entry was taken, both go
+//!   to question 1) and `rewind_questions` back to question 1 (Up). Each
+//!   question it lands on is read with the notes, the hint at verbosity
+//!   `everything` and the once hint if the channel never got it. An answer,
+//!   a tool running, a new turn or another question forgets the set; a
+//!   flush or a stop keeps it, so the user can still navigate.
 //! - **Stop and flush.** `control stop` catches every channel up;
 //!   `flush` (the flush hotkey, #228) the session being read: its held
 //!   prose, the prose kept for its summary and its summary work are
@@ -193,6 +205,10 @@ pub struct Ask {
     pub hint: Option<String>,
     /// Spoken after the hint the first time a channel gets one.
     pub hint_once: Option<String>,
+    /// A question of a set (#283): its index and the set's size. Of a set
+    /// of two or more, only the first is spoken (with "Question 1 of N.");
+    /// the others are kept for the question navigation.
+    pub set: Option<(usize, usize)>,
 }
 
 impl Ask {
@@ -205,8 +221,44 @@ impl Ask {
             notes: None,
             hint: None,
             hint_once: None,
+            set: None,
         }
     }
+}
+
+/// A step of the question navigation (#283).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Next,
+    Previous,
+}
+
+/// Where the question navigation lands (#283): the L2 entry showing the
+/// set's current question, its new text, the question (0-based) and the
+/// set's size. `edge`: Next on the last question, nothing moves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Nav {
+    pub entry: u64,
+    pub text: String,
+    pub index: usize,
+    pub size: usize,
+    pub edge: bool,
+}
+
+/// A question set (#283, module docs): the questions' spoken bodies by
+/// index, the extras the first one carries, the question shown now and the
+/// L2 entry that shows it (bound by the driver once it was spoken).
+struct QuestionSet {
+    size: usize,
+    bodies: Vec<Option<String>>,
+    notes: Option<String>,
+    hint: Option<String>,
+    hint_once: Option<String>,
+    current: usize,
+    entry: Option<u64>,
+    /// A question of it was read aloud (not only stored while muted): until
+    /// then the navigation starts at question 1.
+    heard: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,6 +289,8 @@ struct Turn {
     awaiting: bool,
     /// `hint_once` was spoken in this channel.
     hinted: bool,
+    /// The question set waiting for its answer (#283).
+    questions: Option<QuestionSet>,
     /// Prose held by `read_mode`, each chunk with whether it starts a
     /// paragraph (joined with a blank line in whole messages).
     held_prose: Vec<(String, bool)>,
@@ -283,6 +337,7 @@ impl Turn {
             retired: VecDeque::new(),
             awaiting: false,
             hinted: false,
+            questions: None,
             held_prose: Vec::new(),
             new_para: false,
             last_index: None,
@@ -674,6 +729,7 @@ impl Rules {
         }
         c.current = turn.map(str::to_string);
         c.awaiting = false;
+        c.questions = None;
         self.drop_held(channel, "turn_start");
         let c = self.turn(channel);
         c.released = false;
@@ -732,16 +788,71 @@ impl Rules {
         let mut out = Vec::new();
         let everything = self.settings.verbosity == Verbosity::Everything;
         let awaiting = self.turn(channel).awaiting;
+        let set = match ask.set {
+            Some((i, n)) if ask.kind == AskKind::Question && n >= 2 && i < n => Some((i, n)),
+            _ => None,
+        };
+        if let Some((i, n)) = set.filter(|(i, _)| *i > 0) {
+            // A later question of a set (#283): kept for the navigation.
+            let body = decision::question_text(&ask.text, &ask.options, ask.multi);
+            let kept = self
+                .turns
+                .get_mut(channel)
+                .and_then(|c| c.questions.as_mut())
+                .filter(|q| q.size == n);
+            match kept {
+                Some(q) => {
+                    q.bodies[i] = Some(body.clone());
+                    self.note(
+                        Some(channel),
+                        "question",
+                        format!("kept for navigation: question {} of {n} (#283)", i + 1),
+                        Some(body),
+                    );
+                    return out;
+                }
+                // Its first question never came: read it on its own.
+                None => self.note(
+                    Some(channel),
+                    "question",
+                    format!(
+                        "question {} of {n} has no first question: read on its own (#283)",
+                        i + 1
+                    ),
+                    None,
+                ),
+            }
+        }
         let (text, kind) = match ask.kind {
             AskKind::Question => {
                 if !awaiting {
                     self.earcon(&mut out, Earcon::Choice);
                 }
-                self.turn(channel).awaiting = true;
-                (
-                    decision::question_text(&ask.text, &ask.options, ask.multi),
-                    "question",
-                )
+                let c = self.turn(channel);
+                c.awaiting = true;
+                let body = decision::question_text(&ask.text, &ask.options, ask.multi);
+                c.questions = match set {
+                    Some((0, n)) => {
+                        let mut bodies = vec![None; n];
+                        bodies[0] = Some(body.clone());
+                        Some(QuestionSet {
+                            size: n,
+                            bodies,
+                            notes: ask.notes.clone(),
+                            hint: ask.hint.clone(),
+                            hint_once: ask.hint_once.clone(),
+                            current: 0,
+                            entry: None,
+                            heard: false,
+                        })
+                    }
+                    _ => None,
+                };
+                let text = match set {
+                    Some((0, n)) => decision::numbered_question(0, n, &body),
+                    _ => body,
+                };
+                (text, "question")
             }
             AskKind::Permission => {
                 if awaiting {
@@ -809,7 +920,9 @@ impl Rules {
     /// (read mode `done`: the prose stays held, the tool is announced).
     pub fn tool(&mut self, channel: &str, name: &str, summary: &str) -> Vec<Action> {
         let mut out = Vec::new();
-        self.turn(channel).awaiting = false;
+        let c = self.turn(channel);
+        c.awaiting = false;
+        c.questions = None;
         let summary = summary.trim();
         let text = if summary.is_empty() {
             format!("Running {}.", name.trim())
@@ -854,7 +967,9 @@ impl Rules {
     /// work and held decisions are dropped, and a later summary covers only
     /// what comes after the answer. The turn goes on.
     pub fn answered(&mut self, channel: &str) -> Vec<Action> {
-        self.turn(channel).awaiting = false;
+        let c = self.turn(channel);
+        c.awaiting = false;
+        c.questions = None;
         let (decisions, _) = self.catch_up(channel, "answered");
         self.drop_decisions(channel, decisions, "answered");
         vec![Action::Wipe {
@@ -1021,6 +1136,136 @@ impl Rules {
             }
             _ => false,
         }
+    }
+
+    /// The driver spoke (or, `stored`, kept while muted) a question in
+    /// `channel` as L2 entry `entry` (#283): when a question set waits for
+    /// its entry, that entry shows the set's questions from now on.
+    pub fn bind_question(&mut self, channel: &str, entry: u64, stored: bool) {
+        if let Some(q) = self
+            .turns
+            .get_mut(channel)
+            .and_then(|c| c.questions.as_mut())
+        {
+            if q.entry.is_none() {
+                q.entry = Some(entry);
+                q.heard = !stored;
+            }
+        }
+    }
+
+    /// The L2 entry showing `channel`'s question set, once it was spoken.
+    pub fn question_entry(&self, channel: &str) -> Option<u64> {
+        self.turns
+            .get(channel)
+            .and_then(|c| c.questions.as_ref())
+            .and_then(|q| q.entry)
+    }
+
+    /// `channel`'s question set: the current question (0-based) and the
+    /// set's size (diagnostics, tests).
+    pub fn question_set(&self, channel: &str) -> Option<(usize, usize)> {
+        self.turns
+            .get(channel)
+            .and_then(|c| c.questions.as_ref())
+            .map(|q| (q.current, q.size))
+    }
+
+    /// The text of question `k` of `channel`'s set: "Question k of N.", its
+    /// body, the notes, the hint at verbosity `everything` and the once
+    /// hint the first time the channel gets one.
+    fn numbered(&mut self, channel: &str, k: usize) -> Option<String> {
+        let everything = self.settings.verbosity == Verbosity::Everything;
+        let c = self.turns.get_mut(channel)?;
+        let q = c.questions.as_ref()?;
+        let body = q.bodies.get(k)?.clone()?;
+        let mut extras: Vec<String> = q.notes.iter().cloned().collect();
+        if everything {
+            extras.extend(q.hint.iter().cloned());
+            if let Some(once) = q.hint_once.clone() {
+                if !c.hinted {
+                    c.hinted = true;
+                    extras.push(once);
+                }
+            }
+        }
+        let size = q.size;
+        let extras: Vec<&str> = extras.iter().map(String::as_str).collect();
+        Some(decision::with_extras(
+            decision::numbered_question(k, size, &body),
+            &extras,
+        ))
+    }
+
+    /// Move `channel`'s question set to question `k` (module docs).
+    fn land_on(&mut self, channel: &str, k: usize, edge: bool) -> Option<Nav> {
+        let text = self.numbered(channel, k)?;
+        let q = self.turns.get_mut(channel)?.questions.as_mut()?;
+        q.current = k;
+        q.heard = true;
+        Some(Nav {
+            entry: q.entry?,
+            text,
+            index: k,
+            size: q.size,
+            edge,
+        })
+    }
+
+    /// The question navigation (#283, module docs). `started`: the set's
+    /// entry was taken by L2 (it is being read or was heard). Not started
+    /// (the message text is being read, or the set is coming up, or it was
+    /// only stored while muted), both steps go to question 1. Started, `Next` goes to the next question
+    /// (the last one is an `edge`: nothing moves) and `Previous` to the one
+    /// before (on question 1 it is read again). `None` when the channel has
+    /// no set or its entry was not spoken yet.
+    pub fn navigate(&mut self, channel: &str, step: Step, started: bool) -> Option<Nav> {
+        self.question_entry(channel)?;
+        let (current, size) = self.question_set(channel)?;
+        let heard = self
+            .turns
+            .get(channel)
+            .and_then(|c| c.questions.as_ref())
+            .is_some_and(|q| q.heard);
+        if !(started && heard) {
+            return self.land_on(channel, 0, false);
+        }
+        match step {
+            Step::Next => {
+                let q = self.turns.get(channel)?.questions.as_ref()?;
+                match (current + 1..size).find(|k| q.bodies[*k].is_some()) {
+                    Some(k) => self.land_on(channel, k, false),
+                    None => self.land_on(channel, current, true),
+                }
+            }
+            Step::Previous => {
+                let q = self.turns.get(channel)?.questions.as_ref()?;
+                let k = (0..current)
+                    .rev()
+                    .find(|k| q.bodies[*k].is_some())
+                    .unwrap_or(0);
+                self.land_on(channel, k, false)
+            }
+        }
+    }
+
+    /// `channel`'s question set was skipped before it was heard (a flush,
+    /// a stop or a mute dropped its unread entry, #283): the navigation
+    /// starts at question 1 again.
+    pub fn questions_unheard(&mut self, channel: &str) {
+        if let Some(q) = self
+            .turns
+            .get_mut(channel)
+            .and_then(|c| c.questions.as_mut())
+        {
+            q.heard = false;
+        }
+    }
+
+    /// Up on a message with a question set (#283): question 1 again.
+    pub fn rewind_questions(&mut self, channel: &str) -> Option<Nav> {
+        self.question_entry(channel)?;
+        self.land_on(channel, 0, false)
     }
 
     /// The channel closed (or was forgotten): free its turn state. Summary

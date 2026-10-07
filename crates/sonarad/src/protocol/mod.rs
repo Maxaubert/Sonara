@@ -93,7 +93,12 @@ const EXTENSION_KEYS: &[&str] = &[
     "settings_url",
     "runtime",
 ];
-const EXTENSION_ACTIONS: &[&str] = &["next_channel", "flush"];
+const EXTENSION_ACTIONS: &[&str] = &[
+    "next_channel",
+    "flush",
+    "next_question",
+    "previous_question",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
