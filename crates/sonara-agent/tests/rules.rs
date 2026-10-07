@@ -1645,7 +1645,8 @@ fn a_single_question_has_no_question_1_of_1_prefix() {
         ["!Pick? Option 1: A."],
         "a set of one is a plain question"
     );
-    assert_eq!(r.question_set("fg"), None);
+    // It is still a set of one, so the navigation reaches it.
+    assert_eq!(r.question_set("fg"), Some((0, 1)));
     // Without the set fields, every question is read as before.
     let mut r = rules();
     let a: Vec<Action> = ["One?", "Two?"]
@@ -1721,9 +1722,9 @@ fn answered_and_turn_start_forget_the_question_set() {
     ask_set(&mut r, "fg", 2);
     r.flush("fg");
     assert_eq!(r.question_set("fg"), Some((0, 2)));
-    // A plain question replaces it.
+    // A plain question replaces it with a set of one.
     r.ask("fg", &question("Other?", &[]));
-    assert_eq!(r.question_set("fg"), None);
+    assert_eq!(r.question_set("fg"), Some((0, 1)));
 }
 
 #[test]

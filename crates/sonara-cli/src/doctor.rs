@@ -126,7 +126,6 @@ pub fn voices_row(voices: &Value) -> Row {
     Row::new(Status::Info, "voices", detail)
 }
 
-/// The hotkeys row from `get hotkeys`.
 /// Said once when a Ctrl+Alt+arrow hotkey is taken (#283): Intel graphics
 /// drivers rotate the screen with those chords.
 pub const INTEL_ROTATION: &str = "Intel graphics uses Ctrl+Alt+arrows to rotate the screen: \
@@ -139,6 +138,7 @@ fn ctrl_alt_arrow(combo: &str) -> bool {
         .any(|k| combo == format!("Ctrl+Alt+{k}"))
 }
 
+/// The hotkeys row from `get hotkeys`.
 pub fn hotkeys_row(h: &Value) -> Row {
     let bindings = h["bindings"].as_array().cloned().unwrap_or_default();
     let mut bound = Vec::new();

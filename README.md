@@ -128,7 +128,8 @@ and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
 When Claude asks several questions at once, Sonara reads the reply, then only the first question,
 as "Question 1 of 4." and stops: Claude Code shows one question at a time. Use **Ctrl+Alt+Right**
 for the next question and **Ctrl+Alt+Left** for the one before (on question 1 it reads it again).
-While the reply is still being read, either key jumps to question 1. **Ctrl+Alt+Up** reads the
+While the reply is still being read, either key jumps to question 1 (also when Claude asks just one
+question). **Ctrl+Alt+Up** reads the
 whole message again, the reply and then question 1, and **Ctrl+Alt+Down** skips all of it. When
 Claude only thought before asking (Claude Code shows the thinking, but sends plugins no text),
 Sonara reads that thinking before the question.

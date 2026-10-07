@@ -1536,3 +1536,55 @@ fn a_muted_question_set_is_stored_and_navigation_reads_it() {
     r.read("Question text 2?");
     r.stays_idle();
 }
+
+#[test]
+fn a_question_set_read_after_another_session_was_flushed_moves_on_to_question_two() {
+    // Flushing the session being read must not mark another session's
+    // queued question set as skipped: it is still read, so Right after
+    // its question 1 goes to question 2 (#283).
+    let r = Rig::with(
+        scoped(sonara_agent::ReadMode::Immediate, FlushScope::Session),
+        None,
+    );
+    r.stream("a", "Alpha one. Alpha two.", 0, None);
+    r.wait_for("Alpha one.");
+    r.out.start();
+    r.stream("b", "Beta answer.", 0, None);
+    ask_set(&r, "b", 2);
+    let f = r.agent.flush().unwrap();
+    assert_eq!(f.flushed, Flushed::Channel("a".into()));
+    r.read("Beta answer.");
+    r.read("Question 1 of 2.");
+    r.wait_for("Question text 1?");
+    r.out.start();
+    let (ch, nav) = r.agent.question(Step::Next).unwrap().expect("b's set");
+    assert_eq!((ch.as_str(), nav.index), ("b", 1));
+    r.read("Question 2 of 2.");
+    r.read("Question text 2?");
+    r.stays_idle();
+}
+
+#[test]
+fn a_single_question_is_reached_from_the_text_and_restarted_by_left() {
+    // #283: a lone question is a set of one. Right or Left from the text
+    // go to it (unnumbered), Left on it reads it again, Right is the edge.
+    let r = Rig::new();
+    r.stream("a", "Alpha one. Alpha two.", 0, None);
+    r.agent
+        .ask("a", &Ask::new(AskKind::Question, "Only question?"))
+        .unwrap();
+    r.wait_for("Alpha one.");
+    r.out.start();
+    let (ch, nav) = r.agent.question(Step::Next).unwrap().expect("a set of one");
+    assert_eq!(
+        (ch.as_str(), nav.index, nav.size, nav.edge),
+        ("a", 0, 1, false)
+    );
+    r.wait_for("Only question?");
+    r.out.start();
+    let (_, nav) = r.agent.question(Step::Next).unwrap().unwrap();
+    assert!(nav.edge, "the last question");
+    r.agent.question(Step::Previous).unwrap().unwrap();
+    r.read("Only question?");
+    r.stays_idle();
+}

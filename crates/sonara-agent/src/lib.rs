@@ -609,7 +609,9 @@ impl Agent {
             .filter(|c| rules.writing(c))
             .collect();
         self.inner.sync_whole(&mut rules);
-        self.inner.skipping_sets(&mut rules);
+        // Only the sets the flush actually skips are unheard: another
+        // session's set queued unread is still read (#283).
+        let unread = self.inner.unread_sets(&rules);
         let mut report = self.inner.channels.flush_with(
             "flush",
             |ch| {
@@ -618,6 +620,7 @@ impl Agent {
             },
             |ch| all && !writing.iter().any(|w| w == ch),
         )?;
+        self.inner.skipped_sets(&mut rules, &unread);
         let mut first = Ok(());
         if let Flushed::Channel(ch) = &report.flushed {
             let actions = rules.flush(ch);
@@ -886,17 +889,34 @@ impl Inner {
     /// at question 1 (#283). Over-marking is harmless: a set whose entry
     /// survives unread is still not heard.
     fn skipping_sets(&self, rules: &mut Rules) {
-        for id in rules.channels() {
-            let Some(entry) = rules.question_entry(&id) else {
-                continue;
-            };
-            let unread = self
-                .channels
-                .channel(&id)
-                .is_some_and(|c| c.entries()[c.cursor()..].iter().any(|e| e.id == entry));
-            if unread {
-                rules.questions_unheard(&id);
-            }
+        for id in self.unread_sets(rules) {
+            rules.questions_unheard(&id);
+        }
+    }
+
+    /// The sessions whose question set's entry is still unread.
+    fn unread_sets(&self, rules: &Rules) -> Vec<String> {
+        rules
+            .channels()
+            .into_iter()
+            .filter(|id| {
+                rules.question_entry(id).is_some_and(|entry| {
+                    self.channels
+                        .channel(id)
+                        .is_some_and(|c| c.entries()[c.cursor()..].iter().any(|e| e.id == entry))
+                })
+            })
+            .collect()
+    }
+
+    /// After a skip that may spare some sessions (a flush, #228): of the
+    /// sets `before` found unread, those no longer unread were skipped, so
+    /// their navigation starts at question 1 (#283). One still unread is
+    /// read later as usual.
+    fn skipped_sets(&self, rules: &mut Rules, before: &[String]) {
+        let still = self.unread_sets(rules);
+        for id in before.iter().filter(|id| !still.contains(id)) {
+            rules.questions_unheard(id);
         }
     }
 

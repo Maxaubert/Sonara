@@ -48,7 +48,7 @@
 //!   size of two or more is one question of a set (Claude Code shows them
 //!   one at a time). Only the first is spoken, as "Question 1 of N." with
 //!   the set's notes and hints (which ride on it); the others are kept and
-//!   leave a note. The driver binds the L2 entry that shows the set
+//!   leave a note. A lone question is a set of one, not numbered. The driver binds the L2 entry that shows the set
 //!   (`bind_question`); `navigate` moves it to another question
 //!   (`Step::Next`, `Step::Previous`; before that entry was taken, both go
 //!   to question 1) and `rewind_questions` back to question 1 (Up). Each
@@ -831,8 +831,17 @@ impl Rules {
                 let c = self.turn(channel);
                 c.awaiting = true;
                 let body = decision::question_text(&ask.text, &ask.options, ask.multi);
-                c.questions = match set {
-                    Some((0, n)) => {
+                // A lone question is a set of one (#283): the navigation
+                // reaches it from the text and Left reads it again. A later
+                // question whose first never came is read on its own.
+                let size = match (set, ask.set) {
+                    (Some((0, n)), _) => Some(n),
+                    (None, Some((i, _))) if i > 0 => None,
+                    (None, _) => Some(1),
+                    _ => None,
+                };
+                c.questions = match size {
+                    Some(n) => {
                         let mut bodies = vec![None; n];
                         bodies[0] = Some(body.clone());
                         Some(QuestionSet {
@@ -1191,10 +1200,12 @@ impl Rules {
         }
         let size = q.size;
         let extras: Vec<&str> = extras.iter().map(String::as_str).collect();
-        Some(decision::with_extras(
-            decision::numbered_question(k, size, &body),
-            &extras,
-        ))
+        let text = if size >= 2 {
+            decision::numbered_question(k, size, &body)
+        } else {
+            body
+        };
+        Some(decision::with_extras(text, &extras))
     }
 
     /// Move `channel`'s question set to question `k` (module docs).

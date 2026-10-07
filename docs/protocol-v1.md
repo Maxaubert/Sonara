@@ -740,7 +740,8 @@ done. A reply counts as still being written until its `turn_end`: a turn the use
 `choice`) as `"Question 1 of N. "` before its text, followed by its `notes` and hints (send them on
 that one); the others are kept, not read, and logged `question: kept for navigation: question k of N
 (#283)`. A set of one, or a question without the fields, is read as before (so a client that sends
-each question without them still hears them all in turn). `answered`, `turn_start`, a `tool` or
+each question without them still hears them all in turn), unnumbered; for the navigation it is a set
+of one (the keys below reach it from the message text, and `previous_question` reads it again). `answered`, `turn_start`, a `tool` or
 another question forgets the set; `flush`, `stop` and muting keep it. While muted, question 1 is
 stored like other text. `control` actions of the extension (reply `{channel, question, of, edge}`,
 or `{channel: null}` when no session has a set that was read or stored):
