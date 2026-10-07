@@ -82,9 +82,24 @@ class Agent:
 
     def ask(self, channel: str, kind: str, text: str, options: Optional[Sequence[Any]] = None,
             **extra: Any) -> dict:
-        """``ask``: ``question``, ``permission`` or ``plan``, spoken with priority."""
+        """``ask``: ``question``, ``permission`` or ``plan``, spoken with priority.
+
+        A question of a set (protocol 1.6, runtime 0.22.0) passes ``set_index``
+        (0-based) and ``set_size``: only the first is read, "Question 1 of N.".
+        """
         return self._send("ask", _defined({**extra, "channel": channel, "kind": kind, "text": text,
                                            "options": list(options) if options is not None else None}))
+
+    def next_question(self, **extra: Any) -> dict:
+        """``control`` ``next_question`` (protocol 1.6): question 1 from the
+        message text, else the next question of the set. Returns ``{channel,
+        question, of, edge}``, ``channel`` None when no session has a set."""
+        return self._send("control", _defined({**extra, "action": "next_question"}))
+
+    def previous_question(self, **extra: Any) -> dict:
+        """``control`` ``previous_question`` (protocol 1.6): question 1 from the
+        message text, else the question before (question 1 again on question 1)."""
+        return self._send("control", _defined({**extra, "action": "previous_question"}))
 
     def earcon(self, kind: str, **extra: Any) -> dict:
         """``earcon``."""

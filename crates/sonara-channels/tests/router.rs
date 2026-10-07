@@ -1107,7 +1107,11 @@ fn replay_from_an_entry_reads_from_it_and_holds_the_floor() {
     let q = r.append("A", "Question.", true, false).unwrap();
     assert_eq!(drain(&mut r), vec!["Text.", "Question."]);
     assert!(r.replay_from("A", Some(q)));
-    assert_eq!(r.held(), Some("A"), "the user started it: it holds the floor");
+    assert_eq!(
+        r.held(),
+        Some("A"),
+        "the user started it: it holds the floor"
+    );
     // Another session's decision waits for the replay.
     push(&mut r, "B", &["From beta."]);
     r.prioritize("B");
@@ -1115,7 +1119,10 @@ fn replay_from_an_entry_reads_from_it_and_holds_the_floor() {
     assert_eq!(drain(&mut r), vec!["[b]", "From beta."]);
     // From the top, and an unknown entry or channel replays nothing.
     assert!(r.replay_from("A", None));
-    assert_eq!(drain(&mut r), vec!["[a again manual]", "Text.", "Question."]);
+    assert_eq!(
+        drain(&mut r),
+        vec!["[a again manual]", "Text.", "Question."]
+    );
     assert!(!r.replay_from("A", Some(q + 100)));
     assert!(!r.replay_from("C", None));
 }

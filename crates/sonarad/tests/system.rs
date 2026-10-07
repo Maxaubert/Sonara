@@ -1768,8 +1768,9 @@ fn the_right_hotkey_reads_the_next_question() {
         log.contains("hotkey next_question session=web-app question=2/4"),
         "{log}"
     );
-    assert!(eventually(|| log_of(&r)
-        .contains("hotkey previous_question session=web-app question=1/4")));
+    assert!(eventually(|| log_of(&r).contains(
+        "hotkey previous_question session=web-app question=1/4"
+    )));
 }
 
 #[test]
@@ -1792,8 +1793,9 @@ fn the_up_hotkey_during_question_two_restarts_the_message() {
     read_through(&r, "Question 1 of 4.");
     read_through(&r, "Question text 1?");
     stays_quiet(&r);
-    assert!(eventually(|| log_of(&r)
-        .contains("hotkey restart session=web-app question=1/4")));
+    assert!(eventually(
+        || log_of(&r).contains("hotkey restart session=web-app question=1/4")
+    ));
 }
 
 #[test]
@@ -1831,7 +1833,8 @@ fn a_question_hotkey_without_a_set_plays_nav_edge() {
         heard.recv_timeout(Duration::from_secs(10)).unwrap(),
         sonara_agent::Earcon::NavEdge
     );
-    assert!(eventually(|| log_of(&r)
-        .contains("hotkey next_question session=web-app question=4/4 edge")));
+    assert!(eventually(|| log_of(&r).contains(
+        "hotkey next_question session=web-app question=4/4 edge"
+    )));
     stays_quiet(&r);
 }

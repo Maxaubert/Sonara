@@ -191,5 +191,13 @@ form, to try a branch build in the same version folder (never during someone's s
   folder, oldest out first): `sonarad.log` (#217: `in` messages, `agent` decisions, `read text`,
   `drop` reasons), `hook.log` (each hook's payload and what it sent), `bootstrap.log`. Text is
   logged only while the setting `debug_log` is on (the default).
+- Re-check on a Claude Code upgrade (#283): the hook reads a question's thinking from the
+  transcript only when its message has no text block, because `MessageDisplay` payloads carry no
+  thinking (2026-10-07: 972 payloads in `hook.log`, fields `cwd, delta, final, index, message_id,
+  prompt_id, scratchpad_dir, session_id, transcript_path, turn_id, hook_event_name`). If a later
+  Claude Code streams thinking through `MessageDisplay`, a thinking-only question would be read
+  twice (as prose and as its lead-in): drop the lead-in (`sonara-hook` `transcript`) then. The
+  transcript row shape the reader expects (one row per content block, rows of a message sharing
+  `message.id`) is in `tests/fixtures/transcripts/`.
 - Settings change live through the settings page (`sonara.exe settings`) or protocol `set`;
   product defaults are `sonarad::config::SCHEMA`.

@@ -345,7 +345,10 @@ fn a_question_without_text_sends_its_thinking_first() {
             {"question": "How is the price shown?", "options": [{"label": "B"}]}
         ]}
     });
-    assert_eq!(run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]), 0);
+    assert_eq!(
+        run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]),
+        0
+    );
     let got = rx.recv_timeout(Duration::from_secs(10)).unwrap();
     let kinds: Vec<&str> = got.iter().map(|m| m["type"].as_str().unwrap()).collect();
     assert_eq!(kinds, ["hello", "stream", "ask", "ask"]);
@@ -354,5 +357,8 @@ fn a_question_without_text_sends_its_thinking_first() {
         .unwrap()
         .starts_with("The card is next."));
     assert_eq!(got[1]["final"], true);
-    assert_eq!((got[2]["set_index"].clone(), got[3]["set_index"].clone()), (json!(0), json!(1)));
+    assert_eq!(
+        (got[2]["set_index"].clone(), got[3]["set_index"].clone()),
+        (json!(0), json!(1))
+    );
 }

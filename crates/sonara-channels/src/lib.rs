@@ -35,7 +35,10 @@
 //!   channel's batch (the Python plugin's Up key); before any channel was
 //!   read, the focused one's, else the one written last (#243). An agent
 //!   channel whose batch is empty (its only item was an answered decision)
-//!   reads nothing: never the core's older last item.
+//!   reads nothing: never the core's older last item. `read_from` (#283)
+//!   is that replay from a given entry (or the top) whatever is being
+//!   read: L3's question navigation and Up on a message with a question
+//!   set use it, after `revise` put the question to read in the entry.
 //! - `prioritize` puts a channel ahead of the others (and of the batch
 //!   reading now) from the next item on, until it has nothing unread: L3
 //!   uses it so a decision preempts (the Python router's decision rule).

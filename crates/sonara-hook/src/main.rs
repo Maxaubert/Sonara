@@ -49,9 +49,8 @@ fn run(t0: f64, started: Instant) {
         .filter(Value::is_object)
         .unwrap_or_else(|| Value::Object(Default::default()));
     // A question's lead-in (#283) shares the start budget.
-    let lead_in = |path: &std::path::Path, id: &str| {
-        transcript::lead_in(path, id, started + START_BUDGET)
-    };
+    let lead_in =
+        |path: &std::path::Path, id: &str| transcript::lead_in(path, id, started + START_BUDGET);
     let mut msgs = map_event_with(&event, &payload, &env, &lead_in);
     stamp(&mut msgs, t0);
     let Some(home) = home(&env) else {

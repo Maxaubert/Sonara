@@ -5,8 +5,8 @@
 //! gets a new turn, decisions read with priority, earcons and mute levels.
 use sonara_agent::earcon::Library;
 use sonara_agent::{
-    Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Settings,
-    Step, Summarizer, SummarySettings,
+    Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Settings, Step,
+    Summarizer, SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};

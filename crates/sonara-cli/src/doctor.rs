@@ -127,10 +127,23 @@ pub fn voices_row(voices: &Value) -> Row {
 }
 
 /// The hotkeys row from `get hotkeys`.
+/// Said once when a Ctrl+Alt+arrow hotkey is taken (#283): Intel graphics
+/// drivers rotate the screen with those chords.
+pub const INTEL_ROTATION: &str = "Intel graphics uses Ctrl+Alt+arrows to rotate the screen: \
+turn its hotkeys off in Intel Graphics Command Center, or rebind with Win in the settings page";
+
+/// `Ctrl+Alt+Up`, `Down`, `Left` or `Right` (no other modifier).
+fn ctrl_alt_arrow(combo: &str) -> bool {
+    ["Up", "Down", "Left", "Right"]
+        .iter()
+        .any(|k| combo == format!("Ctrl+Alt+{k}"))
+}
+
 pub fn hotkeys_row(h: &Value) -> Row {
     let bindings = h["bindings"].as_array().cloned().unwrap_or_default();
     let mut bound = Vec::new();
     let mut problems = Vec::new();
+    let mut rotation = false;
     for b in &bindings {
         let (Some(action), Some(combo)) = (b["action"].as_str(), b["combo"].as_str()) else {
             continue;
@@ -138,6 +151,7 @@ pub fn hotkeys_row(h: &Value) -> Row {
         bound.push(format!("{combo} {action}"));
         if b["error"].as_str() == Some("already_owned") {
             problems.push(format!("{combo} is taken by another program"));
+            rotation |= ctrl_alt_arrow(combo);
         } else if let Some(err) = b["error"].as_str() {
             problems.push(format!("{combo}: {err}"));
         }
@@ -146,6 +160,9 @@ pub fn hotkeys_row(h: &Value) -> Row {
                 "{combo} types '{ch}' with AltGr on this keyboard; rebind it with Win in the settings page"
             ));
         }
+    }
+    if rotation {
+        problems.push(INTEL_ROTATION.to_string());
     }
     for p in h["problems"].as_array().into_iter().flatten() {
         problems.push(format!("keymap.json: {}", p.as_str().unwrap_or("?")));
@@ -250,6 +267,28 @@ mod tests {
             "{}",
             r.detail
         );
+    }
+
+    #[test]
+    fn a_taken_ctrl_alt_arrow_names_intel_rotation() {
+        let h = json!({"active": true, "bindings": [
+            {"action": "previous_question", "combo": "Ctrl+Alt+Left", "error": "already_owned"},
+            {"action": "next_question", "combo": "Ctrl+Alt+Right", "error": "already_owned"}],
+            "problems": []});
+        let r = hotkeys_row(&h);
+        assert_eq!(r.status, Status::Warn);
+        assert_eq!(
+            r.detail.matches("Intel Graphics Command Center").count(),
+            1,
+            "{}",
+            r.detail
+        );
+        // Another taken chord says nothing about Intel.
+        let h = json!({"active": true, "bindings": [
+            {"action": "mute", "combo": "Ctrl+Alt+M", "error": "already_owned"},
+            {"action": "next_question", "combo": "Win+Ctrl+Alt+Right", "error": "already_owned"}],
+            "problems": []});
+        assert!(!hotkeys_row(&h).detail.contains("Intel"));
     }
 
     #[test]

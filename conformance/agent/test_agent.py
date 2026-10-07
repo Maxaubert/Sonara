@@ -655,3 +655,88 @@ def test_live_reading_still_lets_a_question_in(rt):
     ask_b(c)
     ok(c, {"type": "control", "action": "skip"})
     assert heard(c, 1) == [("Deploy now?", "b")]
+
+
+# -- question sets (#283) -----------------------------------------------------
+
+def ask_set(c, channel, n):
+    """A set of ``n`` questions as the Claude hook sends one AskUserQuestion."""
+    for i in range(n):
+        ok(c, {"type": "ask", "channel": channel, "kind": "question", "text": f"Pick {i + 1}?",
+               "options": ["Yes"], "set_index": i, "set_size": n})
+
+
+def nav(c, action):
+    return ok(c, {"type": "control", "action": action})
+
+
+def until_idle(c):
+    """Take the state events in order until nothing plays."""
+    while c.state()["now_playing"] is not None:
+        pass
+
+
+def test_a_question_set_reads_only_its_first_question(rt):
+    c = agent_client(rt)
+    stream(c, "a", LONG)
+    ask_set(c, "a", 4)
+    assert earcon(c) == "choice"
+    no_earcon(c)
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    ok(c, {"type": "control", "action": "skip"})
+    assert heard(c, 1) == [("Question 1 of 4.", "a")]
+    until_idle(c)
+    quiet(c)
+
+
+def test_restart_with_a_question_set_reads_the_text_then_question_one(rt):
+    # sonarad.log 2026-10-07 18:03:14: Up during question 2 restarted
+    # question 2. With the set it reads the message again from the top.
+    c = agent_client(rt)
+    stream(c, "a", LONG)
+    ask_set(c, "a", 4)
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    ok(c, {"type": "control", "action": "skip"})
+    assert heard(c, 1) == [("Question 1 of 4.", "a")]
+    r = nav(c, "next_question")
+    assert (r["channel"], r["question"], r["of"], r["edge"]) == ("a", 2, 4, False)
+    assert heard(c, 1) == [("Question 2 of 4.", "a")]
+    ok(c, {"type": "control", "action": "restart"})
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    ok(c, {"type": "control", "action": "skip"})
+    assert heard(c, 1) == [("Question 1 of 4.", "a")]
+
+
+def test_next_and_previous_question_replies(rt):
+    c = agent_client(rt)
+    # No question set yet: nothing to navigate.
+    assert nav(c, "next_question")["channel"] is None
+    stream(c, "a", LONG)
+    ask_set(c, "a", 2)
+    assert starts_long(heard(c, 1)[0], "a", 0)
+    # From the text, either key goes to question 1.
+    r = nav(c, "previous_question")
+    assert (r["channel"], r["question"], r["of"], r["edge"]) == ("a", 1, 2, False)
+    assert heard(c, 1) == [("Question 1 of 2.", "a")]
+    assert nav(c, "next_question")["question"] == 2
+    r = nav(c, "next_question")
+    assert (r["question"], r["edge"]) == (2, True)
+    assert nav(c, "previous_question")["question"] == 1
+    ok(c, {"type": "answered", "channel": "a"})
+    assert nav(c, "next_question")["channel"] is None
+
+
+def test_question_actions_need_the_agent_extension(rt):
+    plain = rt.tcp()
+    channels = rt.tcp(extensions=["channels"])
+    for c in (plain, channels):
+        for action in ("next_question", "previous_question"):
+            r = c.request({"type": "control", "action": action})
+            assert r["error"]["code"] == "E_UNSUPPORTED", (action, r)
+
+
+def test_ask_set_fields_are_checked(rt):
+    c = agent_client(rt)
+    for bad in ({"set_index": 0}, {"set_index": 2, "set_size": 2}, {"set_index": -1, "set_size": 2}):
+        r = c.request({"type": "ask", "channel": "a", "kind": "question", "text": "Q?", **bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", (bad, r)

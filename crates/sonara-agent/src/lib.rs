@@ -890,9 +890,10 @@ impl Inner {
             let Some(entry) = rules.question_entry(&id) else {
                 continue;
             };
-            let unread = self.channels.channel(&id).is_some_and(|c| {
-                c.entries()[c.cursor()..].iter().any(|e| e.id == entry)
-            });
+            let unread = self
+                .channels
+                .channel(&id)
+                .is_some_and(|c| c.entries()[c.cursor()..].iter().any(|e| e.id == entry));
             if unread {
                 rules.questions_unheard(&id);
             }

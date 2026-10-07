@@ -224,6 +224,9 @@ def test_extension_namespaces_send_their_message_types(home, fake):
         c.agent.turn_end("tab-1", 3)
         c.agent.ask("tab-1", "permission", "Run it?", ["yes", "no"])
         c.agent.earcon("turn_done")
+        c.agent.ask("tab-1", "question", "Red?", ["yes"], set_index=0, set_size=2)
+        c.agent.next_question()
+        c.agent.previous_question()
         c.agent.set_mute_level(2)
         c.agent.set_summaries({"enabled": True})
         c.system.set_audio_mode("duck")
@@ -242,6 +245,10 @@ def test_extension_namespaces_send_their_message_types(home, fake):
         {"type": "turn_end", "channel": "tab-1", "turn": 3},
         {"type": "ask", "channel": "tab-1", "kind": "permission", "text": "Run it?", "options": ["yes", "no"]},
         {"type": "earcon", "kind": "turn_done"},
+        {"type": "ask", "channel": "tab-1", "kind": "question", "text": "Red?", "options": ["yes"],
+         "set_index": 0, "set_size": 2},
+        {"type": "control", "action": "next_question"},
+        {"type": "control", "action": "previous_question"},
         {"type": "set", "key": "mute_level", "value": 2},
         {"type": "set", "key": "summaries", "value": {"enabled": True}},
         {"type": "set", "key": "audio_mode", "value": "duck"},

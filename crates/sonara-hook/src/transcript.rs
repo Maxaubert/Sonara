@@ -103,7 +103,8 @@ fn find(tail: &str, tool_use_id: &str) -> Found {
             content
                 .iter()
                 .any(|b| {
-                    kind(b) == "tool_use" && b.get("id").and_then(Value::as_str) == Some(tool_use_id)
+                    kind(b) == "tool_use"
+                        && b.get("id").and_then(Value::as_str) == Some(tool_use_id)
                 })
                 .then(|| id.to_string())
         });
@@ -196,7 +197,10 @@ mod tests {
             row("m1", thinking("Second thought.")),
             row("m1", tool_use("t1")),
         ]);
-        assert_eq!(lead_in_from(&tail, "t1").as_deref(), Some("Second thought."));
+        assert_eq!(
+            lead_in_from(&tail, "t1").as_deref(),
+            Some("Second thought.")
+        );
     }
 
     #[test]
@@ -219,13 +223,19 @@ mod tests {
         ]);
         assert_eq!(lead_in_from(&tail, "t1"), None);
         // No thinking at all.
-        assert_eq!(lead_in_from(&lines(&[row("m1", tool_use("t1"))]), "t1"), None);
+        assert_eq!(
+            lead_in_from(&lines(&[row("m1", tool_use("t1"))]), "t1"),
+            None
+        );
     }
 
     #[test]
     fn a_tool_use_outside_the_tail_or_missing_file_falls_back_silently() {
         let soon = Instant::now();
-        assert_eq!(lead_in(Path::new("Z:/no/such/transcript.jsonl"), TOOL, soon), None);
+        assert_eq!(
+            lead_in(Path::new("Z:/no/such/transcript.jsonl"), TOOL, soon),
+            None
+        );
         // A subagent's call: its tool use is not in the main transcript.
         assert_eq!(lead_in(&fixture(), "toolu_of_a_subagent", soon), None);
         assert_eq!(lead_in(&fixture(), "", soon), None);
@@ -272,7 +282,10 @@ mod tests {
         let path = dir.join("t.jsonl");
         let filler = row("m0", json!({"type": "text", "text": "x".repeat(1000)})) + "\n";
         let mut body = filler.repeat((TAIL as usize / filler.len()) + 10);
-        body.push_str(&lines(&[row("m1", thinking("At the end.")), row("m1", tool_use("t1"))]));
+        body.push_str(&lines(&[
+            row("m1", thinking("At the end.")),
+            row("m1", tool_use("t1")),
+        ]));
         std::fs::write(&path, body).unwrap();
         let soon = Instant::now();
         assert_eq!(lead_in(&path, "t1", soon).as_deref(), Some("At the end."));

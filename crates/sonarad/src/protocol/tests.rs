@@ -89,7 +89,7 @@ fn hello_reports_version_protocol_and_capabilities() {
     let r = &o.reply;
     assert_eq!(r["id"], "h1");
     assert_eq!(r["version"], crate::VERSION);
-    assert_eq!(r["protocol"], json!({"major": 1, "minor": 5}));
+    assert_eq!(r["protocol"], json!({"major": 1, "minor": 6}));
     assert!(r["capabilities"]
         .as_array()
         .unwrap()

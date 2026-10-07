@@ -49,14 +49,14 @@ fn no_two_defaults_share_a_key() {
 fn default_keys_bind_ctrl_alt_left_and_right() {
     // #283: Ctrl+Alt+Left/Right move between a message's questions.
     let km = keymap::defaults();
-    assert_eq!(key_of(&km, Action::PreviousQuestion).as_deref(), Some("left"));
+    assert_eq!(
+        key_of(&km, Action::PreviousQuestion).as_deref(),
+        Some("left")
+    );
     assert_eq!(key_of(&km, Action::NextQuestion).as_deref(), Some("right"));
     let (r, _) = keymap::resolve(&km);
     let right = r.iter().find(|r| r.action == Action::NextQuestion).unwrap();
-    assert_eq!(
-        keymap::combo_label(right.mods, right.vk),
-        "Ctrl+Alt+Right"
-    );
+    assert_eq!(keymap::combo_label(right.mods, right.vk), "Ctrl+Alt+Right");
     assert!(!Action::NextQuestion.debounced() && !Action::PreviousQuestion.debounced());
 }
 
@@ -77,7 +77,10 @@ fn question_actions_have_stable_ids_after_the_old_ones() {
     }
     assert_eq!(Action::PreviousQuestion.id(), 8);
     assert_eq!(Action::NextQuestion.id(), 9);
-    assert_eq!(Action::parse("previous_question"), Some(Action::PreviousQuestion));
+    assert_eq!(
+        Action::parse("previous_question"),
+        Some(Action::PreviousQuestion)
+    );
     assert_eq!(Action::parse("next_question"), Some(Action::NextQuestion));
 }
 

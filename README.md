@@ -31,6 +31,9 @@ answer by number, and global hotkeys control the voice from any window.
   every session, even one that is not speaking.
 - **Answer by number.** Questions and permission prompts are read with their options; press the
   option's number in Claude Code. No key injection.
+- **One question at a time.** When Claude asks several questions at once, Sonara reads the first
+  ("Question 1 of 4") and stops, as Claude Code shows them one by one. **Ctrl+Alt+Right** and
+  **Ctrl+Alt+Left** move between them.
 - **Global hotkeys.** Restart, flush, mute and switch sessions without leaving your editor.
 - **Natural voices.** Kokoro neural voices (`af_sarah` by default) run fully offline once their
   model is downloaded; the built-in Windows voices speak while it downloads.
@@ -122,6 +125,14 @@ Claude Code, or `Esc` to cancel. For a multi-select question, press each option'
 `Space` on the highlighted item), then `Enter`. With more than nine options, use the arrow keys
 and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
 
+When Claude asks several questions at once, Sonara reads the reply, then only the first question,
+as "Question 1 of 4." and stops: Claude Code shows one question at a time. Use **Ctrl+Alt+Right**
+for the next question and **Ctrl+Alt+Left** for the one before (on question 1 it reads it again).
+While the reply is still being read, either key jumps to question 1. **Ctrl+Alt+Up** reads the
+whole message again, the reply and then question 1, and **Ctrl+Alt+Down** skips all of it. When
+Claude only thought before asking (Claude Code shows the thinking, but sends plugins no text),
+Sonara reads that thinking before the question.
+
 ## Hotkeys
 
 The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab (it is
@@ -129,10 +140,12 @@ saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt o
 
 | Hotkey | Action |
 |---|---|
-| Ctrl+Alt+Up | Restart the latest reply from the top (summary mode: re-read the last summary) |
+| Ctrl+Alt+Up | Restart the latest reply from the top (summary mode: re-read the last summary). With questions: the reply, then question 1 |
 | Ctrl+Alt+Down | Flush: skip the reply being read: what is playing, what that session has queued and the rest of that reply still arriving (its questions are still read). *Flush skips* on the Hotkeys tab sets what else goes: *This session* (default) goes on to the next session; *Everything queued* also drops every other session's finished replies waiting to be read. A session still writing its reply keeps it either way. To silence everything, mute (Ctrl+Alt+M). Ctrl+Alt+Up replays what had arrived before the flush |
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |
+| Ctrl+Alt+Right | Next question (from the reply: question 1) |
+| Ctrl+Alt+Left | Previous question (from the reply, or on question 1: question 1) |
 
 `pause`, `faster` and `slower` are also actions; they ship unbound. Each hotkey confirms itself
 with a short spoken cue ("Muted.", "Rate 275.").
@@ -151,9 +164,10 @@ Win+Alt is not the default because Windows 11 already owns Win+Alt+Up/Down (snap
 Win+Alt+M and Win+Alt+P, plus Win+Alt+B (HDR), Win+Alt+D (date and time), Win+Alt+H (voice
 typing), Win+Alt+K (microphone mute), Win+Alt+Enter and the Game Bar chords
 Win+Alt+G/R/T/PrtScn. If another app holds a chord, `/sonara:doctor` reports it in its hotkeys
-row.
+row. Intel graphics drivers can own Ctrl+Alt+arrows to rotate the screen: then turn those hotkeys
+off in Intel Graphics Command Center, or rebind the question keys with Win.
 
-The defaults are unchanged from 0.6.x. **Reset hotkeys to defaults** on the Hotkeys tab puts
+The defaults are unchanged from 0.6.x, plus Ctrl+Alt+Left/Right since 0.22.0. **Reset hotkeys to defaults** on the Hotkeys tab puts
 every binding back on them.
 
 </details>

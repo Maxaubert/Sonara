@@ -352,8 +352,9 @@ fn map_unlabelled(
             let input = payload.get("tool_input").unwrap_or(&empty);
             match tool {
                 "AskUserQuestion" => {
-                    let mut out: Vec<Value> =
-                        thinking_lead_in(channel, payload, lead_in).into_iter().collect();
+                    let mut out: Vec<Value> = thinking_lead_in(channel, payload, lead_in)
+                        .into_iter()
+                        .collect();
                     out.extend(questions(channel, input));
                     out
                 }
@@ -570,7 +571,9 @@ mod tests {
     fn the_thinking_goes_as_one_final_stream_before_the_asks() {
         let asked = std::cell::RefCell::new(Vec::new());
         let lead = |p: &Path, id: &str| {
-            asked.borrow_mut().push((p.display().to_string(), id.to_string()));
+            asked
+                .borrow_mut()
+                .push((p.display().to_string(), id.to_string()));
             Some("The answer before the question.".to_string())
         };
         let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &lead);
@@ -604,7 +607,10 @@ mod tests {
         let out = map_event("PreToolUse", &ask_payload(3), &|_| None);
         assert_eq!(out.len(), 3);
         for (i, m) in out.iter().enumerate() {
-            assert_eq!((m["set_index"].clone(), m["set_size"].clone()), (json!(i), json!(3)));
+            assert_eq!(
+                (m["set_index"].clone(), m["set_size"].clone()),
+                (json!(i), json!(3))
+            );
             assert_eq!(m.get("hint").is_some(), i == 0, "{m}");
         }
         let one = map_event("PreToolUse", &ask_payload(1), &|_| None);
