@@ -36,7 +36,7 @@ def free_port() -> int:
 
 def test_capability_engines_listed(rt, client):
     assert "engines" in rt.info["capabilities"]
-    assert rt.info["protocol"] == {"major": 1, "minor": 5}
+    assert rt.info["protocol"] == {"major": 1, "minor": 6}
     r = client.hello(rt.token, require=["engines"])
     assert r["ok"] is True
     assert "engines" in r["capabilities"]

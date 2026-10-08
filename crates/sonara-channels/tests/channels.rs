@@ -1072,3 +1072,37 @@ fn live_reading_still_lets_a_question_in() {
     r.read("Two.");
     r.stays_idle();
 }
+
+// -- question navigation primitives (#283) ----------------------------------
+
+#[test]
+fn read_from_while_reading_cuts_the_item_and_rewinds_another_channel() {
+    let r = Rig::two();
+    r.ch.add("a", "Alpha text.").unwrap();
+    let q = r.ch.add_with("a", "Alpha question.", true).unwrap().entry;
+    r.speak("b", "Beta one.");
+    // Alpha reads its text; the jump to its question cuts it.
+    r.wait_for("Alpha text.");
+    r.out.start();
+    assert!(r.ch.read_from("a", Some(q)).unwrap());
+    r.read("Alpha question.");
+    r.read("Beta.");
+    r.read("Beta one.");
+    r.wait_idle();
+    // While Beta reads, a jump into Alpha cuts Beta, which is read again
+    // after (it was not heard).
+    r.speak("b", "Beta two.");
+    r.read("Beta two.");
+    r.wait_idle();
+    r.speak("b", "Beta three.");
+    r.wait_for("Beta three.");
+    r.out.start();
+    assert!(r.ch.revise("a", q, "Alpha question again."));
+    assert!(r.ch.read_from("a", Some(q)).unwrap());
+    r.read("Alpha, reading again.");
+    r.read("Alpha question again.");
+    r.read("Beta.");
+    r.read("Beta three.");
+    r.stays_idle();
+    assert!(!r.ch.read_from("nope", None).unwrap());
+}

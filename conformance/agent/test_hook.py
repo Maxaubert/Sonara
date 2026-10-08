@@ -180,3 +180,36 @@ def test_a_session_started_outside_a_repo_keeps_its_first_folder(hook_exe, rt, t
           "final": True})
     s = started(c, "Notes here.")
     assert s["now_playing"]["label"] == "notes"
+
+
+def test_a_question_without_text_is_read_after_its_thinking_and_alone_in_its_set(hook_exe, rt):
+    # #283, transcript rows 4834 to 4836 (2026-10-07): the message held only
+    # thinking blocks and the AskUserQuestion. The hook reads the thinking
+    # from the transcript; the runtime reads it, then question 1 of 2 only.
+    c = listener(rt)
+    transcript = harness.REPO / "tests" / "fixtures" / "transcripts" / "thinking_only_question.jsonl"
+    hook(hook_exe, rt, "PreToolUse", {
+        "session_id": SESSION,
+        "transcript_path": str(transcript),
+        "tool_use_id": "toolu_01EXJLaWWqDBnjEJ38tJ3meY",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [
+            {"question": "Where do the Norwegian names live?", "options": [{"label": "A file"}]},
+            {"question": "How is the price shown?", "options": [{"label": "A function"}]},
+        ]},
+    })
+    started(c, "The card is next.")
+    started(c, "Question 1 of 2.")
+    # Question 2 is kept for the navigation, never read on its own.
+    end = time.monotonic() + 1.5
+    while time.monotonic() < end:
+        try:
+            e = c.next_event(lambda e: e.get("event") == "state", 0.2)
+        except AssertionError:
+            continue
+        np = e["now_playing"]
+        assert np is None or not np["text"].startswith("Question 2"), np
+    r = c.request({"type": "control", "action": "next_question"})
+    assert (r["channel"], r["question"], r["of"]) == (SESSION, 2, 2)
+    started(c, "Question 2 of 2.")

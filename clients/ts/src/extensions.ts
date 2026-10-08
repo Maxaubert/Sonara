@@ -100,9 +100,30 @@ export class AgentApi {
     return this.send("turn_end", defined({ ...extra, channel, turn }));
   }
 
-  /** `ask`: a question, permission or plan, spoken with priority. */
+  /**
+   * `ask`: a question, permission or plan, spoken with priority. A question
+   * of a set (protocol 1.6, runtime 0.22.0) carries `set_index` (0-based)
+   * and `set_size` in `extra`: only the first is read, "Question 1 of N.".
+   */
   ask(channel: string, kind: AskKind, text: string, options?: unknown[], extra: Extra = {}): Promise<Reply> {
     return this.send("ask", defined({ ...extra, channel, kind, text, options }));
+  }
+
+  /**
+   * `control` `next_question` (protocol 1.6): question 1 from the message
+   * text, else the next question of the set. Resolves `{channel, question,
+   * of, edge}`, `channel` null when no session has a question set.
+   */
+  nextQuestion(extra: Extra = {}): Promise<Reply> {
+    return this.send("control", defined({ ...extra, action: "next_question" }));
+  }
+
+  /**
+   * `control` `previous_question` (protocol 1.6): question 1 from the
+   * message text, else the question before (question 1 again on question 1).
+   */
+  previousQuestion(extra: Extra = {}): Promise<Reply> {
+    return this.send("control", defined({ ...extra, action: "previous_question" }));
   }
 
   /** `earcon`. */

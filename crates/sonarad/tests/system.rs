@@ -399,7 +399,7 @@ async fn another_client_that_needs_it_keeps_it_armed() {
     drop(b);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(ducked(&r.fake), "client a still needs it");
-    assert_eq!(r.fake.world().hotkeys.len(), 4);
+    assert_eq!(r.fake.world().hotkeys.len(), 6);
     drop(a);
     let fake = r.fake.clone();
     assert!(
@@ -435,7 +435,7 @@ async fn keep_alive_arms_for_good_and_exit_restores() {
     );
     start_playing(&r.out);
     assert!(eventually(|| ducked(&r.fake)));
-    assert_eq!(r.fake.world().hotkeys.len(), 4);
+    assert_eq!(r.fake.world().hotkeys.len(), 6);
     // The runtime exits (as main does after its run loop).
     let s = r.server.system().unwrap().clone();
     tokio::task::spawn_blocking(move || s.shutdown())
@@ -1696,4 +1696,145 @@ fn control_flush_tells_the_scope_and_the_other_sessions() {
     );
     let f = ok(s, &mut h, json!({"type": "control", "action": "flush"}));
     assert_eq!(f["scope"], "all");
+}
+
+// -- question navigation (#283) ---------------------------------------------
+
+/// The evidence of 2026-10-07 (#283): a message's text, then four
+/// questions as the hook sends them, in session `a` ("web-app").
+fn text_and_four_questions(r: &Rig, session: &mut Session) {
+    let s = &r.server;
+    ok(
+        s,
+        session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    ok(
+        s,
+        session,
+        json!({"type": "channel_open", "channel": "a", "label": "web-app"}),
+    );
+    ok(
+        s,
+        session,
+        json!({"type": "stream", "channel": "a", "delta": "Here is my answer.", "final": true}),
+    );
+    for i in 0..4 {
+        ok(
+            s,
+            session,
+            json!({"type": "ask", "channel": "a", "kind": "question",
+                   "text": format!("Question text {}?", i + 1),
+                   "set_index": i, "set_size": 4}),
+        );
+    }
+}
+
+/// Wait until `text` plays, then play it to its end.
+fn read_through(r: &Rig, text: &str) {
+    assert!(
+        eventually(|| playing(&r.server).as_deref() == Some(text)),
+        "waited for '{text}', playing {:?}",
+        playing(&r.server)
+    );
+    start_playing(&r.out);
+    r.out.finish();
+}
+
+/// Nothing plays for a moment.
+fn stays_quiet(r: &Rig) {
+    assert!(eventually(|| playing(&r.server).is_none()));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(playing(&r.server), None);
+}
+
+#[test]
+fn the_right_hotkey_reads_the_next_question() {
+    let r = rig();
+    let mut session = Session::http();
+    text_and_four_questions(&r, &mut session);
+    read_through(&r, "Here is my answer.");
+    read_through(&r, "Question 1 of 4.");
+    read_through(&r, "Question text 1?");
+    // Question 2 never follows by itself (Bug 1).
+    stays_quiet(&r);
+    r.fake.press(Action::NextQuestion.id());
+    read_through(&r, "Question 2 of 4.");
+    read_through(&r, "Question text 2?");
+    r.fake.press(Action::PreviousQuestion.id());
+    read_through(&r, "Question 1 of 4.");
+    let log = log_of(&r);
+    assert!(
+        log.contains("hotkey next_question session=web-app question=2/4"),
+        "{log}"
+    );
+    assert!(eventually(|| log_of(&r).contains(
+        "hotkey previous_question session=web-app question=1/4"
+    )));
+}
+
+#[test]
+fn the_up_hotkey_during_question_two_restarts_the_message() {
+    // sonarad.log 2026-10-07 18:03:14 and 18:03:28: Up restarted question 2
+    // twice. Now it reads the message again: its text, then question 1.
+    let r = rig();
+    let mut session = Session::http();
+    text_and_four_questions(&r, &mut session);
+    read_through(&r, "Here is my answer.");
+    read_through(&r, "Question 1 of 4.");
+    read_through(&r, "Question text 1?");
+    r.fake.press(Action::NextQuestion.id());
+    assert!(eventually(
+        || playing(&r.server).as_deref() == Some("Question 2 of 4.")
+    ));
+    start_playing(&r.out);
+    r.fake.press(Action::Restart.id());
+    read_through(&r, "Here is my answer.");
+    read_through(&r, "Question 1 of 4.");
+    read_through(&r, "Question text 1?");
+    stays_quiet(&r);
+    assert!(eventually(
+        || log_of(&r).contains("hotkey restart session=web-app question=1/4")
+    ));
+}
+
+#[test]
+fn a_question_hotkey_without_a_set_plays_nav_edge() {
+    let r = rig();
+    let s = &r.server;
+    let mut session = Session::http();
+    ok(
+        s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    let heard = s.agent().unwrap().subscribe();
+    r.fake.press(Action::NextQuestion.id());
+    assert_eq!(
+        heard.recv_timeout(Duration::from_secs(10)).unwrap(),
+        sonara_agent::Earcon::NavEdge
+    );
+    assert!(eventually(
+        || log_of(&r).contains("hotkey next_question none")
+    ));
+    // The last question: nothing moves, the edge chimes.
+    text_and_four_questions(&r, &mut session);
+    read_through(&r, "Here is my answer.");
+    read_through(&r, "Question 1 of 4.");
+    read_through(&r, "Question text 1?");
+    for k in 2..=4 {
+        r.fake.press(Action::NextQuestion.id());
+        read_through(&r, &format!("Question {k} of 4."));
+        read_through(&r, &format!("Question text {k}?"));
+    }
+    while heard.try_recv().is_ok() {}
+    r.fake.press(Action::NextQuestion.id());
+    assert_eq!(
+        heard.recv_timeout(Duration::from_secs(10)).unwrap(),
+        sonara_agent::Earcon::NavEdge
+    );
+    assert!(eventually(|| log_of(&r).contains(
+        "hotkey next_question session=web-app question=4/4 edge"
+    )));
+    stays_quiet(&r);
 }

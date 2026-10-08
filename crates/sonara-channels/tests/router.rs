@@ -1081,3 +1081,48 @@ fn a_channel_muted_mid_read_does_not_resume_past_the_focus_gate() {
     r.set_muted("A", false);
     assert!(drain(&mut r).is_empty());
 }
+
+// -- question navigation primitives (#283) ----------------------------------
+
+#[test]
+fn revise_replaces_an_entry_text_and_keeps_its_decision_mark() {
+    let mut r = router(&["A"]);
+    r.append("A", "Text.", false, false).unwrap();
+    let q = r.append("A", "Question 1 of 2. Red?", true, false).unwrap();
+    assert!(r.revise("A", q, "Question 2 of 2. Blue?"));
+    assert!(!r.revise("A", q + 100, "No such entry."));
+    assert!(!r.revise("B", q, "No such channel."));
+    let c = r.channel("A").unwrap();
+    assert_eq!(c.entries()[1].id, q, "the id is kept");
+    assert_eq!(c.entries()[1].text, "Question 2 of 2. Blue?");
+    // Still a decision: an answer takes it out of the batch.
+    assert_eq!(r.drop_decisions("A", Resolved::All).len(), 1);
+    assert_eq!(r.channel("A").unwrap().entries().len(), 1);
+}
+
+#[test]
+fn replay_from_an_entry_reads_from_it_and_holds_the_floor() {
+    let mut r = router(&["A", "B"]);
+    r.append("A", "Text.", false, false).unwrap();
+    let q = r.append("A", "Question.", true, false).unwrap();
+    assert_eq!(drain(&mut r), vec!["Text.", "Question."]);
+    assert!(r.replay_from("A", Some(q)));
+    assert_eq!(
+        r.held(),
+        Some("A"),
+        "the user started it: it holds the floor"
+    );
+    // Another session's decision waits for the replay.
+    push(&mut r, "B", &["From beta."]);
+    r.prioritize("B");
+    assert_eq!(next(&mut r).as_deref(), Some("Question."));
+    assert_eq!(drain(&mut r), vec!["[b]", "From beta."]);
+    // From the top, and an unknown entry or channel replays nothing.
+    assert!(r.replay_from("A", None));
+    assert_eq!(
+        drain(&mut r),
+        vec!["[a again manual]", "Text.", "Question."]
+    );
+    assert!(!r.replay_from("A", Some(q + 100)));
+    assert!(!r.replay_from("C", None));
+}

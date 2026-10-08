@@ -917,13 +917,29 @@ impl Router {
     /// (restart when idle). Announced when another channel read last.
     /// False if it is not open or has nothing to replay.
     pub fn replay(&mut self, id: &str) -> bool {
+        self.replay_from(id, None)
+    }
+
+    /// `replay`, from the batch entry `entry` on (`None`: the top), as a
+    /// replay the user started: it holds the floor (#271). L3's question
+    /// navigation (#283) jumps to its question entry with it. False if
+    /// the channel is not open, has nothing to replay, or has no such
+    /// entry.
+    pub fn replay_from(&mut self, id: &str, entry: Option<u64>) -> bool {
         let Some(c) = self.channel_mut(id) else {
             return false;
         };
         if c.entries.is_empty() {
             return false;
         }
-        c.cursor = 0;
+        let at = match entry {
+            None => 0,
+            Some(e) => match c.entries.iter().position(|x| x.id == e) {
+                Some(i) => i,
+                None => return false,
+            },
+        };
+        c.cursor = at;
         c.replaying = true;
         let handoff = self.is_handoff(id);
         self.set_reader(id);
@@ -935,6 +951,22 @@ impl Router {
         if handoff {
             self.arm(id, true, true);
         }
+        true
+    }
+
+    /// Replace the text of `id`'s batch entry `entry` in place (#283: L3
+    /// shows another question of a set in its question entry). The entry
+    /// keeps its id, its place and its decision mark; it is not new content
+    /// (no new batch, no lifted suppression). False if there is no such
+    /// channel or entry.
+    pub fn revise(&mut self, id: &str, entry: u64, text: &str) -> bool {
+        let Some(e) = self
+            .channel_mut(id)
+            .and_then(|c| c.entries.iter_mut().find(|e| e.id == entry))
+        else {
+            return false;
+        };
+        e.text = text.to_string();
         true
     }
 

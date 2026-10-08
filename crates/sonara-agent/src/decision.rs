@@ -106,6 +106,12 @@ pub fn permission_text(text: &str) -> String {
     }
 }
 
+/// Question `k` (0-based) of a set of `n` (#283): "Question k+1 of n."
+/// before its text.
+pub fn numbered_question(k: usize, n: usize, body: &str) -> String {
+    format!("Question {} of {n}. {body}", k + 1)
+}
+
 /// `base` followed by the non-empty `extras`, one space apart.
 pub fn with_extras(base: String, extras: &[&str]) -> String {
     let extras: Vec<&str> = extras
@@ -174,6 +180,11 @@ mod tests {
         assert_eq!(plan_text(""), "A plan is ready for your review.");
         assert_eq!(permission_text("Run git status"), "Run git status");
         assert_eq!(permission_text("  "), "Permission needed.");
+    }
+
+    #[test]
+    fn a_question_of_a_set_is_numbered() {
+        assert_eq!(numbered_question(1, 4, "Pick?"), "Question 2 of 4. Pick?");
     }
 
     #[test]

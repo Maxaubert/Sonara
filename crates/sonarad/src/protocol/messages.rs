@@ -152,6 +152,16 @@ impl Server {
             if action == "flush" {
                 return self.flush(ch, m);
             }
+            if let Some(step) = agent_ext::question_step(action) {
+                let a = self.agent.get().ok_or_else(|| {
+                    Failure::new(
+                        Code::Unsupported,
+                        format!("action '{action}' belongs to the agent extension"),
+                    )
+                })?;
+                let _admitted = self.admit()?;
+                return agent_ext::question(a, step);
+            }
             let c = match parse_control(action) {
                 Some(c) => Some(c),
                 None if action == "next_channel" => None,
@@ -164,6 +174,14 @@ impl Server {
                 (self.agent.get(), c, opt_str(m, "channel")?)
             {
                 a.stop().map_err(agent_ext::failure)?;
+                return Ok((Map::new(), After::Nothing));
+            }
+            // With the agent on, a restart without a channel reads a
+            // message with a question set again from the top (#283).
+            if let (Some(a), Some(Control::Restart), None) =
+                (self.agent.get(), c, opt_str(m, "channel")?)
+            {
+                a.restart().map_err(agent_ext::failure)?;
                 return Ok((Map::new(), After::Nothing));
             }
             return channels_ext::control(ch, c, m);

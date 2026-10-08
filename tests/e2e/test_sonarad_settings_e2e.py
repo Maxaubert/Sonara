@@ -553,3 +553,28 @@ def test_ranges_and_defaults_come_from_the_schema_before_get_answers(live, brows
     pw.expect(page.locator("#minqueue-out")).to_have_text("5")
     page.unroute("**/v1/**")
     page.close()
+
+
+def test_the_question_hotkeys_are_listed_and_can_be_rebound(live, browser):
+    # #283: Ctrl+Alt+Left/Right move between a message's questions.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=hotkeys]")
+    for action, name, key in [("previous_question", "Previous question", "Left"),
+                              ("next_question", "Next question", "Right")]:
+        row = page.locator(f"[data-action={action}]")
+        pw.expect(row.locator(".n")).to_have_text(name)
+        pw.expect(row.locator(".kbd")).to_have_attribute(
+            "aria-label", f"{name}: Ctrl+Alt+{key}. Press to change.")
+    for action, chord, combo in [("previous_question", "Control+Alt+KeyJ", "Ctrl+Alt+J"),
+                                 ("next_question", "Control+Alt+KeyK", "Ctrl+Alt+K")]:
+        page.locator(f"[data-action={action}] .kbd").focus()
+        page.keyboard.press("Enter")
+        page.wait_for_selector(f"[data-action={action}].listen")
+        page.keyboard.press(chord)
+
+        def bound(action=action, combo=combo):
+            b = {x["action"]: x for x in lv.get("hotkeys")["bindings"]}
+            return b[action]["combo"] == combo
+        assert eventually(bound)
+    page.close()

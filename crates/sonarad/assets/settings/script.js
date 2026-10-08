@@ -496,7 +496,10 @@ function renderSessions(list) {
 
 // ---- hotkeys ------------------------------------------------------------
 const ACTION_NAMES = {restart: "Restart", flush: "Flush", pause: "Pause / resume", mute: "Mute cycle",
-                      next_channel: "Next session", faster: "Faster", slower: "Slower"};
+                      next_channel: "Next session", faster: "Faster", slower: "Slower",
+                      previous_question: "Previous question", next_question: "Next question"};
+// Intel graphics drivers rotate the screen with Ctrl+Alt+arrows (#283).
+const ROTATION_HINT = " Intel graphics uses Ctrl+Alt+arrows to rotate the screen: turn its hotkeys off in Intel Graphics Command Center, or rebind with Win.";
 function renderHotkeys(h) {
   $("hotkeys-inactive").hidden = !!h.active;
   for (const b of h.bindings) {
@@ -521,6 +524,7 @@ function renderHotkeys(h) {
     let text = "";
     if (b.error === "already_owned") {
       text = "Another program owns " + (b.combo || "this shortcut") + ". Pick another one.";
+      if (/^Ctrl\+Alt\+(Up|Down|Left|Right)$/.test(b.combo || "")) text += ROTATION_HINT;
     } else if (b.error) {
       text = "Windows refused this shortcut (" + b.error + ").";
     }

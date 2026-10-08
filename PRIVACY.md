@@ -1,6 +1,6 @@
 # Sonara privacy policy
 
-_Last updated: 2026-10-05 (0.19.0: Gemini as an external speech engine, model lists fetched from the provider; 0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
+_Last updated: 2026-10-07 (0.22.0: the hook reads the end of the session's transcript when Claude asks a question; 0.19.0: Gemini as an external speech engine, model lists fetched from the provider; 0.18.0: the Engines section of the settings page; 0.17.0: Cartesia, Deepgram and a program of your own as external
 speech engines; 0.16.0: ElevenLabs, Azure and Google as external speech engines;
 0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
@@ -46,6 +46,14 @@ folder and the folders above it (up to, not including, your home folder), checks
 `HEAD` there, and reads two small files of git's own: a worktree's `.git` file
 and the `commondir` file it points to (only the paths in them, to find the main repository's
 folder name). It reads nothing else of your project, starts no program and stores nothing.
+
+When Claude asks you a question (`AskUserQuestion`), the hook reads the end (the last 2 MB) of
+that session's own transcript, the file Claude Code names in `transcript_path`. It looks only for
+the message that asks the question: when that message has no text (Claude only thought before
+asking, which Claude Code shows but does not send to plugins), its last thinking block is read
+aloud before the question, like a reply. It reads nothing else from the transcript and stores
+nothing. With the troubleshooting log on, that thinking appears in `hook.log` and `sonarad.log` like
+other text Sonara reads.
 
 The reading history Sonara uses for restart, summaries waiting to be read and each session's
 turn state are held in memory and are gone when the runtime stops.

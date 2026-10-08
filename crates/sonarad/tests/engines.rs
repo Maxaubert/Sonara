@@ -117,7 +117,7 @@ fn the_capability_and_the_list() {
         .as_array()
         .unwrap()
         .contains(&json!("engines")));
-    assert_eq!(o["protocol"]["minor"], 5);
+    assert_eq!(o["protocol"]["minor"], 6);
     assert!(r.server.capabilities().contains(&"engines"));
     let l = r.call(json!({"type": "engine_list"}));
     assert_eq!(l["ok"], true);

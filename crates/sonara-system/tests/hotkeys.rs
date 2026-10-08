@@ -28,12 +28,12 @@ fn the_defaults_are_registered_with_norepeat() {
     let fake = Fake::new();
     let (hk, _) = start(&fake);
     let w = fake.world();
-    assert_eq!(w.hotkeys.len(), 4);
+    assert_eq!(w.hotkeys.len(), 6);
     let up = w.hotkeys.iter().find(|h| h.vk == 0x26).unwrap();
     assert_eq!(up.mods, MOD_CTRL | MOD_ALT | MOD_NOREPEAT);
     assert_eq!(up.id, Action::Restart.id());
     assert!(hk.collisions().is_empty());
-    assert_eq!(hk.registered().len(), 4);
+    assert_eq!(hk.registered().len(), 6);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn a_chord_another_program_owns_is_a_collision_not_a_failure() {
     assert_eq!(hk.collisions()[0].action, Action::Mute);
     assert_eq!(hk.collisions()[0].error, ERROR_HOTKEY_ALREADY_REGISTERED);
     assert!(hk.collisions()[0].already_owned());
-    assert_eq!(fake.world().hotkeys.len(), 3, "the other three still work");
+    assert_eq!(fake.world().hotkeys.len(), 5, "the other five still work");
     fake.press(Action::Restart.id());
     assert!(eventually(|| got.lock().unwrap().len() == 1));
 }
@@ -91,7 +91,7 @@ fn stop_unregisters_so_a_restart_gets_every_chord_back() {
     assert!(fake.world().hotkeys.is_empty());
     let (hk2, got) = start(&fake);
     assert!(hk2.collisions().is_empty());
-    assert_eq!(fake.world().hotkeys.len(), 4);
+    assert_eq!(fake.world().hotkeys.len(), 6);
     fake.press(Action::Mute.id());
     assert!(eventually(|| got.lock().unwrap().len() == 1));
     drop(hk2);

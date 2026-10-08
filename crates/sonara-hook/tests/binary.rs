@@ -322,3 +322,43 @@ fn a_log_that_cannot_be_written_never_fails_or_holds_up_the_hook() {
     assert_eq!(run(&home, "Stop", payload, &[]), 0);
     assert!(hook_log(&home).contains("hook Stop"));
 }
+
+// -- a question whose message has no text (#283) ---------------------------
+
+#[test]
+fn a_question_without_text_sends_its_thinking_first() {
+    // Transcript rows 4834 to 4836 (2026-10-07): only thinking, then the
+    // AskUserQuestion. The built hook reads the transcript and sends the
+    // last thinking as one final stream before the asks.
+    let home = Home::new("thinking");
+    let rx = fake_runtime(&home);
+    let transcript = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/transcripts/thinking_only_question.jsonl");
+    let payload = json!({
+        "session_id": "s1",
+        "transcript_path": transcript,
+        "tool_use_id": "toolu_01EXJLaWWqDBnjEJ38tJ3meY",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [
+            {"question": "Where do the Norwegian names live?", "options": [{"label": "A"}]},
+            {"question": "How is the price shown?", "options": [{"label": "B"}]}
+        ]}
+    });
+    assert_eq!(
+        run(&home, "PreToolUse", payload.to_string().as_bytes(), &[]),
+        0
+    );
+    let got = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let kinds: Vec<&str> = got.iter().map(|m| m["type"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["hello", "stream", "ask", "ask"]);
+    assert!(got[1]["delta"]
+        .as_str()
+        .unwrap()
+        .starts_with("The card is next."));
+    assert_eq!(got[1]["final"], true);
+    assert_eq!(
+        (got[2]["set_index"].clone(), got[3]["set_index"].clone()),
+        (json!(0), json!(1))
+    );
+}

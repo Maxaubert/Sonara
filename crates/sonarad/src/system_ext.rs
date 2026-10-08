@@ -23,7 +23,7 @@ use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::quiet::Quiet;
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_agent::{Earcon, FlushReport, Flushed};
+use sonara_agent::{Earcon, FlushReport, Flushed, Step};
 use sonara_reader::{Control, Key, ReaderHandle, Registry, RATE_MAX, RATE_MIN};
 use sonara_system::audio::{AudioConfig, AudioControl, AudioMode};
 use sonara_system::hotkeys::Hotkeys;
@@ -158,7 +158,52 @@ impl HotkeyTarget {
     /// alone does not say it.
     fn apply(&self, action: Action) -> Result<Option<String>, String> {
         match action {
-            Action::Restart => self.control(Control::Restart).map(|_| None),
+            Action::Restart => match self.agent.get() {
+                // A message with a question set is read again from the
+                // top, with question 1 (#283); else as before.
+                Some(a) => match a.restart().map_err(|e| e.to_string())? {
+                    Some(ch) => {
+                        let set = a.question_set(&ch);
+                        Ok(Some(match set {
+                            Some((_, n)) => {
+                                format!("session={} question=1/{n}", self.session_value(&ch))
+                            }
+                            None => format!("session={}", self.session_value(&ch)),
+                        }))
+                    }
+                    None => Ok(None),
+                },
+                None => self.control(Control::Restart).map(|_| None),
+            },
+            Action::NextQuestion | Action::PreviousQuestion => {
+                // #283: move between the message and its questions. A move
+                // says "Question k of N." itself; nothing to move to (no
+                // set, or the last question) chimes the edge.
+                let step = if action == Action::NextQuestion {
+                    Step::Next
+                } else {
+                    Step::Previous
+                };
+                let moved = match self.agent.get() {
+                    Some(a) => a.question(step).map_err(|e| e.to_string())?,
+                    None => None,
+                };
+                let Some((ch, nav)) = moved else {
+                    self.earcon(Earcon::NavEdge);
+                    return Ok(Some("none".into()));
+                };
+                let mut detail = format!(
+                    "session={} question={}/{}",
+                    self.session_value(&ch),
+                    nav.index + 1,
+                    nav.size
+                );
+                if nav.edge {
+                    self.earcon(Earcon::NavEdge);
+                    detail.push_str(" edge");
+                }
+                Ok(Some(detail))
+            }
             Action::Pause => {
                 // "Paused." / "Resumed." (Python controls.py): spoken over
                 // the paused reader, so the user hears what the key did.

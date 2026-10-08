@@ -322,6 +322,9 @@ describe("extension namespaces", () => {
     await c.agent.turnEnd("tab-1", 3);
     await c.agent.ask("tab-1", "permission", "Run it?", ["yes", "no"]);
     await c.agent.earcon("turn_done");
+    await c.agent.ask("tab-1", "question", "Red?", ["yes"], { set_index: 0, set_size: 2 });
+    await c.agent.nextQuestion();
+    await c.agent.previousQuestion();
     await c.agent.setMuteLevel(2);
     await c.agent.setSummaries({ enabled: true });
     await c.system.setAudioMode("duck");
@@ -341,6 +344,9 @@ describe("extension namespaces", () => {
       { type: "turn_end", channel: "tab-1", turn: 3 },
       { type: "ask", channel: "tab-1", kind: "permission", text: "Run it?", options: ["yes", "no"] },
       { type: "earcon", kind: "turn_done" },
+      { type: "ask", channel: "tab-1", kind: "question", text: "Red?", options: ["yes"], set_index: 0, set_size: 2 },
+      { type: "control", action: "next_question" },
+      { type: "control", action: "previous_question" },
       { type: "set", key: "mute_level", value: 2 },
       { type: "set", key: "summaries", value: { enabled: true } },
       { type: "set", key: "audio_mode", value: "duck" },

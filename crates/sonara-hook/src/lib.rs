@@ -37,7 +37,13 @@
 //! - `MessageDisplay` -> `stream` (PROSE).
 //! - `PreToolUse` `AskUserQuestion` -> one `ask` `question` per question
 //!   (EARCON choice + CHOICE); the Claude TUI's key notes and selection
-//!   hints ride on the last one. `ExitPlanMode` -> `ask` `plan` (PLAN).
+//!   hints ride on the first one. Of two or more, each carries `set_index`
+//!   and `set_size` (#283): the runtime reads only the first and the
+//!   question hotkeys move between them. When the question's message has
+//!   no text block, its last thinking block (read from the end of the
+//!   session's transcript, `transcript`) goes first as one final `stream`,
+//!   so the answer before the question is read (#283).
+//!   `ExitPlanMode` -> `ask` `plan` (PLAN).
 //!   Any other tool -> `tool` with a short summary (TOOL).
 //! - `PostToolUse` `AskUserQuestion` -> `answered` (CHOICE_ANSWERED).
 //! - `Notification` `permission_prompt` -> `ask` `permission` (EARCON
@@ -64,6 +70,7 @@ use std::path::Path;
 use std::time::Duration;
 
 mod project;
+pub mod transcript;
 pub use project::{basename, project_label};
 
 /// How long a hook may spend starting the runtime and waiting for it.
@@ -246,13 +253,47 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
         m.insert("text".into(), json!(""));
         out.push(m);
     }
-    let last = out.pop().expect("one at least");
-    let mut last = with_hints(last);
+    // The hints ride on the first question, the one read (#283).
+    let first = out.remove(0);
+    let mut first = with_hints(first);
     if !notes.is_empty() {
-        last.insert("notes".into(), json!(notes.join(" ")));
+        first.insert("notes".into(), json!(notes.join(" ")));
     }
-    out.push(last);
+    out.insert(0, first);
+    let size = out.len();
+    if size >= 2 {
+        for (i, m) in out.iter_mut().enumerate() {
+            m.insert("set_index".into(), json!(i));
+            m.insert("set_size".into(), json!(size));
+        }
+    }
     out.into_iter().map(Value::Object).collect()
+}
+
+/// How the hook finds the lead-in of a question (#283): the transcript's
+/// path and the tool use's id give the message's last thinking block when
+/// it has no text (`transcript::lead_in`).
+pub type LeadIn<'a> = &'a dyn Fn(&Path, &str) -> Option<String>;
+
+/// The lead-in before the questions of `payload`, as one final `stream`
+/// (the prose rules apply: held and released by the question, skipped in a
+/// flushed reply). A subagent's question (`agent_id`) has its tool use in
+/// another transcript: no lead-in.
+fn thinking_lead_in(channel: &str, payload: &Value, lead_in: LeadIn) -> Option<Value> {
+    if !text(payload, "agent_id").is_empty() {
+        return None;
+    }
+    let path = text(payload, "transcript_path");
+    let id = text(payload, "tool_use_id");
+    if path.is_empty() || id.is_empty() {
+        return None;
+    }
+    let t = lead_in(Path::new(path), id)?;
+    let mut m = msg("stream", channel);
+    m.insert("delta".into(), json!(t));
+    m.insert("index".into(), json!(0));
+    m.insert("final".into(), json!(true));
+    Some(Value::Object(m))
 }
 
 /// Map one hook event to protocol messages (no `t` yet). Pure: the
@@ -260,9 +301,21 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 /// The label is looked up only for an event that sends something: the walk
 /// to `.git` touches the file system, and most tool events send nothing.
 pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<String>) -> Vec<Value> {
+    map_event_with(event, payload, env, &|_, _| None)
+}
+
+/// `map_event`, with `lead_in` finding the thinking to read before a
+/// question whose message has no text (#283; `main` passes
+/// `transcript::lead_in`, the tests a pure stand-in).
+pub fn map_event_with(
+    event: &str,
+    payload: &Value,
+    env: &dyn Fn(&str) -> Option<String>,
+    lead_in: LeadIn,
+) -> Vec<Value> {
     let cell = std::cell::OnceCell::new();
     let lazy = || cell.get_or_init(|| label(payload, env)).clone();
-    let msgs = map_unlabelled(event, payload, &lazy, env);
+    let msgs = map_unlabelled(event, payload, &lazy, env, lead_in);
     if msgs.is_empty() {
         return msgs;
     }
@@ -274,6 +327,7 @@ fn map_unlabelled(
     payload: &Value,
     label: &dyn Fn() -> Option<String>,
     env: &dyn Fn(&str) -> Option<String>,
+    lead_in: LeadIn,
 ) -> Vec<Value> {
     let channel = match text(payload, "session_id") {
         "" => DEFAULT_CHANNEL,
@@ -297,7 +351,13 @@ fn map_unlabelled(
             let empty = Value::Object(Map::new());
             let input = payload.get("tool_input").unwrap_or(&empty);
             match tool {
-                "AskUserQuestion" => questions(channel, input),
+                "AskUserQuestion" => {
+                    let mut out: Vec<Value> = thinking_lead_in(channel, payload, lead_in)
+                        .into_iter()
+                        .collect();
+                    out.extend(questions(channel, input));
+                    out
+                }
                 "ExitPlanMode" => {
                     let mut m = msg("ask", channel);
                     m.insert("kind".into(), json!("plan"));
@@ -496,6 +556,65 @@ mod tests {
         let out = map_event("Stop", &p, &env);
         assert_eq!(out[0]["label"], json!("proj"));
         assert!(asked.get());
+    }
+
+    fn ask_payload(n: usize) -> Value {
+        let qs: Vec<Value> = (1..=n)
+            .map(|i| json!({"question": format!("Q{i}?"), "options": [{"label": "A"}]}))
+            .collect();
+        json!({"session_id": "s", "tool_name": "AskUserQuestion",
+               "transcript_path": r"C:\t\s.jsonl", "tool_use_id": "toolu_1",
+               "tool_input": {"questions": qs}})
+    }
+
+    #[test]
+    fn the_thinking_goes_as_one_final_stream_before_the_asks() {
+        let asked = std::cell::RefCell::new(Vec::new());
+        let lead = |p: &Path, id: &str| {
+            asked
+                .borrow_mut()
+                .push((p.display().to_string(), id.to_string()));
+            Some("The answer before the question.".to_string())
+        };
+        let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &lead);
+        assert_eq!(
+            asked.borrow().as_slice(),
+            [(r"C:\t\s.jsonl".to_string(), "toolu_1".to_string())]
+        );
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(
+            out[0],
+            json!({"type": "stream", "channel": "s", "index": 0, "final": true,
+                   "delta": "The answer before the question."})
+        );
+        assert_eq!(out[1]["type"], "ask");
+        // No lead-in (a text block, or nothing found): the asks alone.
+        let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &|_, _| None);
+        assert!(out.iter().all(|m| m["type"] == "ask"));
+        // A subagent's question is not looked up.
+        let mut sub = ask_payload(1);
+        sub["agent_id"] = json!("agent-1");
+        let out = map_event_with("PreToolUse", &sub, &|_| None, &|_, _| panic!("looked up"));
+        assert_eq!(out.len(), 1);
+        // Other tools never read the transcript.
+        let bash = json!({"session_id": "s", "tool_name": "Bash", "transcript_path": "x",
+                          "tool_use_id": "t"});
+        map_event_with("PreToolUse", &bash, &|_| None, &|_, _| panic!("looked up"));
+    }
+
+    #[test]
+    fn a_question_set_carries_set_index_and_size_and_its_hints_on_the_first() {
+        let out = map_event("PreToolUse", &ask_payload(3), &|_| None);
+        assert_eq!(out.len(), 3);
+        for (i, m) in out.iter().enumerate() {
+            assert_eq!(
+                (m["set_index"].clone(), m["set_size"].clone()),
+                (json!(i), json!(3))
+            );
+            assert_eq!(m.get("hint").is_some(), i == 0, "{m}");
+        }
+        let one = map_event("PreToolUse", &ask_payload(1), &|_| None);
+        assert!(one[0].get("set_index").is_none() && one[0].get("hint").is_some());
     }
 
     #[test]

@@ -246,7 +246,7 @@ def test_hotkeys_are_registered_only_while_a_client_needs_them(rt):
         b = binding(v, action)
         assert b["combo"] == combo and b["registered"] is True, b
     assert binding(v, "pause")["key"] is None, "pause, faster and slower ship unbound"
-    assert len(read_world(rt.fake_system)["hotkeys"]) == 4
+    assert len(read_world(rt.fake_system)["hotkeys"]) == 6
     c.close()
     assert wait_until(lambda: read_world(rt.fake_system)["hotkeys"] == [])
     status, r = rt.post("hello", {"extensions": ["system"]})
@@ -259,7 +259,7 @@ def test_keep_alive_holds_the_hotkeys_after_the_client_left(rt):
     c = system_client(rt, keep_alive=True)
     c.close()
     time.sleep(0.3)
-    assert len(read_world(rt.fake_system)["hotkeys"]) == 4
+    assert len(read_world(rt.fake_system)["hotkeys"]) == 6
 
 
 def test_bind_unbind_reset_and_the_keymap_file(rt):

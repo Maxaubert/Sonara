@@ -165,6 +165,11 @@ Hooks (#255):
   must come before the drops it explains; deferring traces past `rules` would put the drops first.
   The `sonarad` hook only formats a line and appends it (a short write under the log's OS lock).
 
+The question navigation (#283) keeps this order: `Agent::question` and `Agent::restart` read the
+set under `rules`, then call L2 (`Channels::channel`, `revise`, `read_from`), which take the
+channels' lock and the reader below it. The set itself lives in L3; L2 only gains the two
+primitives `revise` (an entry's text in place) and `read_from` (a replay from an entry).
+
 Host locks in `sonarad` are taken at the start of handling a request, before any layer lock:
 
 - `retiring` (the admission lock, `Server::admit`): held while `speak`, `control` and the
