@@ -126,7 +126,7 @@ pub mod summarizer;
 
 pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
-pub use rules::{Action, Ask, Job, Nav, Note, Rules, Stale, Step, Timer};
+pub use rules::{Action, Ask, Job, Nav, Note, Rules, Stale, Step, Timer, DELTA_GAP};
 pub use settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
     Verbosity,

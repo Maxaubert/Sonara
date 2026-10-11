@@ -132,6 +132,29 @@ def test_a_turn_is_read_sentence_by_sentence(rt):
     quiet(c)
 
 
+def test_deltas_that_arrive_out_of_order_are_read_in_index_order(rt):
+    # #286: each delta is its own hook process, so a block's deltas race
+    # (seen: 0, 2 final, 1). They are read in index order.
+    c = agent_client(rt)
+    ok(c, {"type": "turn_start", "channel": "a", "t": 1.0})
+    stream(c, "a", "Both work. ", 0, final=False)
+    stream(c, "a", "Public part.", 2)
+    stream(c, "a", "Local only. ", 1, final=False)
+    assert heard(c, 3) == [("Both work.", "a"), ("Local only.", "a"), ("Public part.", "a")]
+    quiet(c)
+
+
+def test_a_missing_delta_never_holds_back_the_rest(rt):
+    # #286: a delta ahead of a missing one waits briefly for it, then is read.
+    c = agent_client(rt)
+    ok(c, {"type": "turn_start", "channel": "a", "t": 1.0})
+    stream(c, "a", "First part. ", 0, final=False)
+    assert heard(c, 1) == [("First part.", "a")]
+    stream(c, "a", "Third part.", 2)
+    assert heard(c, 1) == [("Third part.", "a")]
+    quiet(c)
+
+
 def test_one_message_always_the_last(rt):
     # A new turn cuts what is left of the previous one: its item and its
     # unread sentences; only the new turn is read.
