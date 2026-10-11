@@ -13,6 +13,10 @@ sonara-core.workspace = true
 sonara-engine.workspace = true
 rodio.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The default render endpoint's id, to follow a change of the default output (#288).
+windows = { workspace = true, features = ["Win32_Media_Audio", "Win32_System_Com"] }
+
 [dev-dependencies]
 # Builds TestOutput with the crate's own tests and lints.
 sonara-audio = { path = ".", features = ["test-util"] }

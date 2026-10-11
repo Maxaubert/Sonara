@@ -4,10 +4,19 @@
 //! 5 ms) and makes `stop` a plain drop. Callbacks queued before and after the
 //! chunk's audio report `ChunkStarted` and `ChunkFinished`. The device opens
 //! on the first play and reopens on a later one after it failed or was lost.
+//!
+//! It follows the Windows default output (#288): before each chunk (and
+//! before a clip while no speech is left to play) it compares the default
+//! render endpoint with the one its stream opened on, and reopens on the new
+//! default when they differ. The check runs at a chunk boundary only, so a
+//! change never cuts a chunk mid-word: the chunk playing ends on the old
+//! device.
 use crate::{AudioEvent, ItemId, Output, PcmChunk};
 use rodio::buffer::SamplesBuffer;
+use rodio::cpal::traits::HostTrait;
+use rodio::mixer::Mixer;
 use rodio::source::EmptyCallback;
-use rodio::{OutputStream, OutputStreamBuilder, Sink};
+use rodio::{DeviceTrait, OutputStream, OutputStreamBuilder, Sink};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 
@@ -59,17 +68,108 @@ impl ErrorReporter {
     }
 }
 
-type Opener = fn(ErrorReporter) -> Result<OutputStream, String>;
-
-fn open_default(reporter: ErrorReporter) -> Result<OutputStream, String> {
-    let mut stream = OutputStreamBuilder::from_default_device()
-        .map_err(|e| e.to_string())?
-        .with_error_callback(move |e| reporter.report(e.to_string()))
-        .open_stream_or_fallback()
-        .map_err(|e| e.to_string())?;
-    stream.log_on_drop(false);
-    Ok(stream)
+/// An open output stream: what sinks connect to.
+trait Stream: Send {
+    fn mixer(&self) -> &Mixer;
 }
+
+impl Stream for OutputStream {
+    fn mixer(&self) -> &Mixer {
+        OutputStream::mixer(self)
+    }
+}
+
+/// A stream and the name of the device it plays on (for the log).
+struct Opened {
+    stream: Box<dyn Stream>,
+    device: String,
+}
+
+/// Where the output plays: the system's default render device, or a fake
+/// in tests. Both calls run on the output thread.
+trait Endpoint: Send {
+    /// Open a stream on the current default device.
+    fn open(&mut self, reporter: ErrorReporter) -> Result<Opened, String>;
+    /// The id of the current default render device, `None` when unknown
+    /// (the output then keeps its stream).
+    fn default_id(&mut self) -> Option<String>;
+}
+
+/// The real default device: rodio (cpal) opens it, and the id is the
+/// Windows endpoint of the role cpal opens, `eConsole` (the "default
+/// device" of the Sound settings, which sets `eMultimedia` with it).
+struct DefaultDevice {
+    /// COM is initialized on the output thread.
+    #[cfg(windows)]
+    com: bool,
+}
+
+impl DefaultDevice {
+    fn new() -> Self {
+        DefaultDevice {
+            #[cfg(windows)]
+            com: false,
+        }
+    }
+}
+
+impl Endpoint for DefaultDevice {
+    fn open(&mut self, reporter: ErrorReporter) -> Result<Opened, String> {
+        let default = rodio::cpal::default_host()
+            .default_output_device()
+            .ok_or("NoDevice")?;
+        let device = default
+            .name()
+            .unwrap_or_else(|_| "an unnamed device".into());
+        let mut stream = OutputStreamBuilder::from_device(default)
+            .map_err(|e| e.to_string())?
+            .with_error_callback(move |e| reporter.report(e.to_string()))
+            .open_stream_or_fallback()
+            .map_err(|e| e.to_string())?;
+        stream.log_on_drop(false);
+        Ok(Opened {
+            stream: Box::new(stream),
+            device,
+        })
+    }
+
+    #[cfg(windows)]
+    fn default_id(&mut self) -> Option<String> {
+        use windows::Win32::Media::Audio::{
+            eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
+        };
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
+        };
+        if !self.com {
+            // The apartment cpal asks for on this thread; RPC_E_CHANGED_MODE
+            // is fine too, COM is initialized either way.
+            // SAFETY: initializes COM for the calling (output) thread.
+            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            self.com = true;
+        }
+        // SAFETY: COM calls on interfaces this function owns; the id is
+        // copied, then freed with CoTaskMemFree as GetId documents.
+        unsafe {
+            let enumerator: IMMDeviceEnumerator =
+                CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+            let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole).ok()?;
+            let raw = device.GetId().ok()?;
+            let id = raw.to_string().ok();
+            CoTaskMemFree(Some(raw.0 as *const _));
+            id
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn default_id(&mut self) -> Option<String> {
+        None
+    }
+}
+
+/// Where the output writes its notes (the device it opened on and why):
+/// the host's log.
+pub type LogHook = Box<dyn Fn(&str) + Send>;
 
 /// The audio output on the default device.
 pub struct RodioOutput {
@@ -83,17 +183,26 @@ impl RodioOutput {
     /// creating an output never fails; a missing device shows up as
     /// `AudioEvent::Failed` for that play.
     pub fn new() -> (Self, Receiver<AudioEvent>) {
-        Self::with_opener(open_default)
+        Self::with_log(Box::new(|_| {}))
     }
 
-    fn with_opener(open: Opener) -> (Self, Receiver<AudioEvent>) {
+    /// `new`, with a line to `log` whenever the output opens a device: the
+    /// first time, after one was lost, and when it follows a new default.
+    pub fn with_log(log: LogHook) -> (Self, Receiver<AudioEvent>) {
+        Self::with_endpoint(Box::new(DefaultDevice::new()), log)
+    }
+
+    fn with_endpoint(endpoint: Box<dyn Endpoint>, log: LogHook) -> (Self, Receiver<AudioEvent>) {
         let (events, events_rx) = channel();
         let (cmds, cmds_rx) = channel();
         let worker = Worker {
-            open,
+            endpoint,
+            log,
             cmds: cmds.clone(),
             events: events.clone(),
             stream: None,
+            opened_on: None,
+            followed: false,
             stream_no: 0,
             sink: None,
             loaded: None,
@@ -178,10 +287,15 @@ impl Output for RodioOutput {
 }
 
 struct Worker {
-    open: Opener,
+    endpoint: Box<dyn Endpoint>,
+    log: LogHook,
     cmds: Sender<Cmd>,
     events: Sender<AudioEvent>,
-    stream: Option<OutputStream>,
+    stream: Option<Box<dyn Stream>>,
+    /// The default device id when the stream opened (`None`: unknown).
+    opened_on: Option<String>,
+    /// The stream was dropped to follow a new default device.
+    followed: bool,
     /// Number of the current stream, so a late error from a replaced
     /// stream cannot tear down the new one.
     stream_no: u64,
@@ -273,22 +387,53 @@ impl Worker {
         }
     }
 
-    fn ensure_stream(&mut self) -> Result<&OutputStream, String> {
+    /// At a chunk boundary: the default device id now, with the stream
+    /// dropped when it plays on another device than the default (#288), so
+    /// the next `ensure_stream` opens the new one. An unknown id keeps it.
+    fn follow_default(&mut self) -> Option<String> {
+        let now = self.endpoint.default_id();
+        if let (Some(_), Some(was), Some(id)) = (&self.stream, &self.opened_on, &now) {
+            if was != id {
+                self.sink = None;
+                self.loaded = None;
+                self.stream = None;
+                self.followed = true;
+            }
+        }
+        now
+    }
+
+    /// The stream, opened on the default device (whose id is `default`)
+    /// when there is none.
+    fn ensure_stream(&mut self, default: Option<String>) -> Result<&dyn Stream, String> {
         if self.stream.is_none() {
             self.stream_no += 1;
             let reporter = ErrorReporter {
                 tx: self.cmds.clone(),
                 stream: self.stream_no,
             };
-            self.stream = Some((self.open)(reporter)?);
+            let opened = self.endpoint.open(reporter)?;
+            let why = if std::mem::take(&mut self.followed) {
+                " (the Windows default output changed)"
+            } else {
+                ""
+            };
+            (self.log)(&format!("audio output on \"{}\"{why}", opened.device));
+            self.stream = Some(opened.stream);
+            self.opened_on = default;
+        } else if self.opened_on.is_none() {
+            self.opened_on = default;
         }
-        self.stream.as_ref().ok_or_else(|| "no stream".to_string())
+        self.stream
+            .as_deref()
+            .ok_or_else(|| "no stream".to_string())
     }
 
     fn play(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk: usize, gen: u64, open: bool) {
         self.sink = None;
         self.loaded = None;
-        let sink = match self.ensure_stream() {
+        let default = self.follow_default();
+        let sink = match self.ensure_stream(default) {
             Ok(stream) => Sink::connect_new(stream.mixer()),
             Err(e) => {
                 let _ = self.events.send(AudioEvent::Failed {
@@ -327,8 +472,16 @@ impl Worker {
             channels: 1,
         };
         let volume = self.volume;
+        // Follow the default only with no speech left to play: a clip never
+        // cuts a chunk.
+        let idle = self.sink.as_ref().is_none_or(|s| s.empty());
+        let default = if idle {
+            self.follow_default()
+        } else {
+            self.opened_on.clone()
+        };
         // A clip is a cue: with no device it is dropped, nothing to report.
-        if let (Some(buffer), Ok(stream)) = (to_buffer(&pcm), self.ensure_stream()) {
+        if let (Some(buffer), Ok(stream)) = (to_buffer(&pcm), self.ensure_stream(default)) {
             let sink = Sink::connect_new(stream.mixer());
             sink.set_volume(volume);
             sink.append(buffer);
@@ -355,10 +508,158 @@ impl Worker {
 mod tests {
     use super::*;
     use std::sync::mpsc::RecvTimeoutError;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    fn no_device(_: ErrorReporter) -> Result<OutputStream, String> {
-        Err("NoDevice".into())
+    /// A machine with no audio device.
+    struct NoDevice;
+
+    impl Endpoint for NoDevice {
+        fn open(&mut self, _: ErrorReporter) -> Result<Opened, String> {
+            Err("NoDevice".into())
+        }
+        fn default_id(&mut self) -> Option<String> {
+            None
+        }
+    }
+
+    fn no_device() -> (RodioOutput, Receiver<AudioEvent>) {
+        RodioOutput::with_endpoint(Box::new(NoDevice), Box::new(|_| {}))
+    }
+
+    /// A stream on no device: sinks connect to a mixer nobody plays.
+    struct Silent(Mixer);
+
+    impl Stream for Silent {
+        fn mixer(&self) -> &Mixer {
+            &self.0
+        }
+    }
+
+    /// Fake default devices: `default` is the id Windows would report now;
+    /// every call goes to `calls` in order (`id`, `open <id>`).
+    struct FakeDevices {
+        default: Arc<Mutex<String>>,
+        calls: Sender<String>,
+    }
+
+    impl Endpoint for FakeDevices {
+        fn open(&mut self, _: ErrorReporter) -> Result<Opened, String> {
+            let id = self.default.lock().unwrap().clone();
+            let _ = self.calls.send(format!("open {id}"));
+            let (mixer, _source) = rodio::mixer::mixer(1, 16_000);
+            Ok(Opened {
+                stream: Box::new(Silent(mixer)),
+                device: format!("Speakers {id}"),
+            })
+        }
+        fn default_id(&mut self) -> Option<String> {
+            let _ = self.calls.send("id".into());
+            Some(self.default.lock().unwrap().clone())
+        }
+    }
+
+    struct Fake {
+        out: RodioOutput,
+        default: Arc<Mutex<String>>,
+        calls: Receiver<String>,
+        log: Receiver<String>,
+    }
+
+    fn fake_devices(first: &str) -> Fake {
+        let default = Arc::new(Mutex::new(first.to_string()));
+        let (calls_tx, calls) = channel();
+        let (log_tx, log) = channel();
+        let log_tx = Mutex::new(log_tx);
+        let (out, _events) = RodioOutput::with_endpoint(
+            Box::new(FakeDevices {
+                default: default.clone(),
+                calls: calls_tx,
+            }),
+            Box::new(move |line| {
+                let _ = log_tx.lock().unwrap().send(line.to_string());
+            }),
+        );
+        Fake {
+            out,
+            default,
+            calls,
+            log,
+        }
+    }
+
+    impl Fake {
+        fn set_default(&self, id: &str) {
+            *self.default.lock().unwrap() = id.to_string();
+        }
+
+        /// The next `n` endpoint calls, then none more.
+        fn calls(&self, n: usize) -> Vec<String> {
+            let got: Vec<String> = (0..n)
+                .map(|_| self.calls.recv_timeout(Duration::from_secs(5)).unwrap())
+                .collect();
+            assert_eq!(
+                self.calls.recv_timeout(Duration::from_millis(200)),
+                Err(RecvTimeoutError::Timeout),
+                "after {got:?}"
+            );
+            got
+        }
+    }
+
+    #[test]
+    fn a_new_windows_default_output_is_followed_at_the_next_chunk() {
+        let mut f = fake_devices("A");
+        f.out.play(pcm(160), ItemId(1), 0, 1);
+        f.out.play(pcm(160), ItemId(1), 1, 2);
+        assert_eq!(f.calls(3), ["id", "open A", "id"]);
+        f.set_default("B");
+        f.out.play(pcm(160), ItemId(1), 2, 3);
+        f.out.play(pcm(160), ItemId(1), 3, 4);
+        assert_eq!(f.calls(3), ["id", "open B", "id"]);
+        assert_eq!(
+            f.log.try_iter().collect::<Vec<_>>(),
+            [
+                "audio output on \"Speakers A\"",
+                "audio output on \"Speakers B\" (the Windows default output changed)"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unchanged_default_output_keeps_the_stream() {
+        let mut f = fake_devices("A");
+        for chunk in 0..4 {
+            f.out.play(pcm(160), ItemId(1), chunk, chunk as u64 + 1);
+        }
+        f.out.play_clip(&[1, 2, 3], 16_000);
+        assert_eq!(f.calls(5), ["id", "open A", "id", "id", "id"]);
+    }
+
+    #[test]
+    fn a_default_change_never_cuts_the_chunk_playing() {
+        let mut f = fake_devices("A");
+        f.out.play_open(pcm(160), ItemId(1), 0, 1);
+        assert_eq!(f.calls(2), ["id", "open A"]);
+        f.set_default("B");
+        // More audio of the same chunk, and a clip over it: no check.
+        f.out.append(1, pcm(160));
+        f.out.play_clip(&[1, 2, 3], 16_000);
+        f.out.finish(1);
+        assert_eq!(f.calls(0), Vec::<String>::new());
+        // The next chunk moves to B.
+        f.out.play(pcm(160), ItemId(1), 1, 2);
+        assert_eq!(f.calls(2), ["id", "open B"]);
+    }
+
+    #[test]
+    fn a_clip_with_no_speech_loaded_follows_the_default_output() {
+        let mut f = fake_devices("A");
+        f.out.play_clip(&[1, 2, 3], 16_000);
+        assert_eq!(f.calls(2), ["id", "open A"]);
+        f.set_default("B");
+        f.out.play_clip(&[1, 2, 3], 16_000);
+        assert_eq!(f.calls(2), ["id", "open B"]);
     }
 
     fn pcm(n: usize) -> Vec<PcmChunk> {
@@ -371,7 +672,7 @@ mod tests {
 
     #[test]
     fn a_missing_device_fails_the_play_and_keeps_working() {
-        let (mut out, events) = RodioOutput::with_opener(no_device);
+        let (mut out, events) = no_device();
         out.play(pcm(160), ItemId(1), 0, 7);
         assert_eq!(
             events.recv_timeout(Duration::from_secs(5)),
@@ -395,7 +696,7 @@ mod tests {
 
     #[test]
     fn a_dead_output_thread_fails_plays_instead_of_panicking() {
-        let (mut out, events) = RodioOutput::with_opener(no_device);
+        let (mut out, events) = no_device();
         let _ = out.cmds.send(Cmd::Shutdown);
         // Wait for the thread to exit, so the next send fails.
         for _ in 0..100 {

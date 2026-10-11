@@ -3,6 +3,10 @@
 //! every start (version, process, engine and its model status, home) and a
 //! line whenever the engine's readiness changes (the Kokoro model finished
 //! downloading or loading, or failed). Download progress is not logged.
+//! The audio output adds `audio output on "<device>"` when it opens a
+//! device (the first play, after a device was lost) and the same line with
+//! ` (the Windows default output changed)` when it follows a new default
+//! output at a chunk boundary (#288, `sonara_audio::RodioOutput::with_log`).
 //!
 //! The activity lines (#217), one per event and never any spoken text:
 //! - `read start item=<id> session=<label|channel|direct> chunks=<n>`

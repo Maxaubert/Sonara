@@ -3,6 +3,7 @@
 //! Exit codes: 0 clean exit (idle, takeover, Ctrl+C), 1 startup failure,
 //! 2 bad command line, 3 another instance already runs for this user and
 //! home.
+use sonara_audio::RodioOutput;
 use sonara_engine::external::keys::{CredentialStore, FileStore, KeyStore};
 use sonara_engine::kokoro::{self, Kokoro};
 use sonara_engine::{Engine, LicenseClass};
@@ -175,12 +176,22 @@ fn preview_registry(
     Some(Arc::new(r))
 }
 
-/// The reader on `built`, starting with `engine`.
-fn build_reader(built: &Built, engine: &str, output: &OutputKind) -> Result<ReaderHandle, String> {
+/// The reader on `built`, starting with `engine`. The device output logs
+/// the device it plays on to `home` (#288).
+fn build_reader(
+    built: &Built,
+    engine: &str,
+    output: &OutputKind,
+    home: &Home,
+) -> Result<ReaderHandle, String> {
     let mut config = Config::new(built.registry.clone());
     config.engine = Some(engine.to_string());
     match output {
-        OutputKind::Device => {}
+        OutputKind::Device => {
+            let home = home.clone();
+            let (out, events) = RodioOutput::with_log(Box::new(move |line| home.log(line)));
+            config = config.with_output(Box::new(out), events);
+        }
         OutputKind::Null => {
             let (out, events) = NullOutput::new();
             config = config.with_output(Box::new(out), events);
@@ -290,14 +301,15 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         (Some("fake"), Some(s), Some(x)) if x.get(s).is_some() => s.clone(),
         _ => built.chosen.clone(),
     };
-    let (reader, engine) = match build_reader(&built, &chosen, &args.output) {
+    let (reader, engine) = match build_reader(&built, &chosen, &args.output, &home) {
         Ok(r) => (r, chosen.clone()),
         Err(e) if args.engine.is_none() && wanted.is_some() => {
             home.log(&format!(
                 "config.json: engine '{}' not available ({e}); using the default",
                 wanted.as_deref().unwrap_or_default()
             ));
-            let r = build_reader(&built, &built.default_engine, &args.output).map_err(fail)?;
+            let r =
+                build_reader(&built, &built.default_engine, &args.output, &home).map_err(fail)?;
             (r, built.default_engine.clone())
         }
         Err(e) => return Err(fail(e)),
