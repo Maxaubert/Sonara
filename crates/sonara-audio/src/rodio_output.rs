@@ -206,6 +206,7 @@ impl RodioOutput {
             stream_no: 0,
             sink: None,
             loaded: None,
+            awaiting_finish: false,
             volume: 1.0,
         };
         // If the thread cannot start, every play fails (see `send`).
@@ -302,6 +303,9 @@ struct Worker {
     /// The sink of the loaded chunk; dropping it stops the chunk.
     sink: Option<Sink>,
     loaded: Option<u64>,
+    /// The loaded chunk is streamed and its `Finish` has not come yet: it
+    /// is still playing even when its sink has run dry.
+    awaiting_finish: bool,
     volume: f32,
 }
 
@@ -350,6 +354,7 @@ impl Worker {
                 Cmd::Finish { gen } => {
                     if let (Some(s), Some(g)) = (&self.sink, self.loaded) {
                         if g == gen {
+                            self.awaiting_finish = false;
                             let tx = self.events.clone();
                             s.append(EmptyCallback::new(Box::new(move || {
                                 let _ = tx.send(AudioEvent::ChunkFinished { gen });
@@ -463,6 +468,7 @@ impl Worker {
         }
         self.sink = Some(sink);
         self.loaded = Some(gen);
+        self.awaiting_finish = open;
     }
 
     fn clip(&mut self, samples: Vec<i16>, sample_rate: u32) {
@@ -473,8 +479,11 @@ impl Worker {
         };
         let volume = self.volume;
         // Follow the default only with no speech left to play: a clip never
-        // cuts a chunk.
-        let idle = self.sink.as_ref().is_none_or(|s| s.empty());
+        // cuts a chunk, nor a streamed one waiting for more audio.
+        let idle = match &self.sink {
+            None => true,
+            Some(s) => s.empty() && !self.awaiting_finish,
+        };
         let default = if idle {
             self.follow_default()
         } else {
@@ -507,6 +516,7 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc::RecvTimeoutError;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -536,20 +546,63 @@ mod tests {
         }
     }
 
+    /// A stream whose mixer a thread plays at about real time, so sinks
+    /// drain as on a real device; the thread ends with the stream.
+    struct Draining {
+        mixer: Mixer,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Draining {
+        fn new() -> Self {
+            let (mixer, mut source) = rodio::mixer::mixer(1, 16_000);
+            let stop = Arc::new(AtomicBool::new(false));
+            let ended = stop.clone();
+            thread::spawn(move || {
+                while !ended.load(Ordering::Relaxed) {
+                    for _ in 0..160 {
+                        source.next();
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+            });
+            Draining { mixer, stop }
+        }
+    }
+
+    impl Stream for Draining {
+        fn mixer(&self) -> &Mixer {
+            &self.mixer
+        }
+    }
+
+    impl Drop for Draining {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+        }
+    }
+
     /// Fake default devices: `default` is the id Windows would report now;
     /// every call goes to `calls` in order (`id`, `open <id>`).
     struct FakeDevices {
         default: Arc<Mutex<String>>,
         calls: Sender<String>,
+        /// The devices play their audio (sinks drain) instead of holding it.
+        draining: bool,
     }
 
     impl Endpoint for FakeDevices {
         fn open(&mut self, _: ErrorReporter) -> Result<Opened, String> {
             let id = self.default.lock().unwrap().clone();
             let _ = self.calls.send(format!("open {id}"));
-            let (mixer, _source) = rodio::mixer::mixer(1, 16_000);
+            let stream: Box<dyn Stream> = if self.draining {
+                Box::new(Draining::new())
+            } else {
+                let (mixer, _source) = rodio::mixer::mixer(1, 16_000);
+                Box::new(Silent(mixer))
+            };
             Ok(Opened {
-                stream: Box::new(Silent(mixer)),
+                stream,
                 device: format!("Speakers {id}"),
             })
         }
@@ -564,17 +617,23 @@ mod tests {
         default: Arc<Mutex<String>>,
         calls: Receiver<String>,
         log: Receiver<String>,
+        events: Receiver<AudioEvent>,
     }
 
     fn fake_devices(first: &str) -> Fake {
+        fake_devices_with(first, false)
+    }
+
+    fn fake_devices_with(first: &str, draining: bool) -> Fake {
         let default = Arc::new(Mutex::new(first.to_string()));
         let (calls_tx, calls) = channel();
         let (log_tx, log) = channel();
         let log_tx = Mutex::new(log_tx);
-        let (out, _events) = RodioOutput::with_endpoint(
+        let (out, events) = RodioOutput::with_endpoint(
             Box::new(FakeDevices {
                 default: default.clone(),
                 calls: calls_tx,
+                draining,
             }),
             Box::new(move |line| {
                 let _ = log_tx.lock().unwrap().send(line.to_string());
@@ -585,6 +644,7 @@ mod tests {
             default,
             calls,
             log,
+            events,
         }
     }
 
@@ -650,6 +710,32 @@ mod tests {
         // The next chunk moves to B.
         f.out.play(pcm(160), ItemId(1), 1, 2);
         assert_eq!(f.calls(2), ["id", "open B"]);
+    }
+
+    /// A streamed chunk whose audio so far has played (its sink is empty)
+    /// is still playing until `Finish`: a clip then must not move the
+    /// output, which would drop the chunk and never report it finished.
+    #[test]
+    fn a_clip_between_streamed_audio_never_drops_the_open_chunk() {
+        let mut f = fake_devices_with("A", true);
+        f.out.play_open(pcm(160), ItemId(1), 0, 1);
+        assert_eq!(
+            f.events.recv_timeout(Duration::from_secs(5)),
+            Ok(AudioEvent::ChunkStarted { gen: 1 })
+        );
+        // The 10 ms of audio plays out while the synth is still working.
+        thread::sleep(Duration::from_millis(200));
+        f.set_default("B");
+        f.out.play_clip(&[1, 2, 3], 16_000);
+        f.out.append(1, pcm(160));
+        f.out.finish(1);
+        assert_eq!(
+            f.events.recv_timeout(Duration::from_secs(5)),
+            Ok(AudioEvent::ChunkFinished { gen: 1 })
+        );
+        // The next chunk moves to B.
+        f.out.play(pcm(160), ItemId(1), 1, 2);
+        assert_eq!(f.calls(4), ["id", "open A", "id", "open B"]);
     }
 
     #[test]
