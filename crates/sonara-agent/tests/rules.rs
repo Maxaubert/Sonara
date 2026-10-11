@@ -307,7 +307,7 @@ fn a_blocks_final_is_not_the_turn_boundary() {
         ["Alpha one.", "Alpha two.", "Beta one.", "Beta two."]
     );
     // After the turn end the rest of the turn flows at once.
-    assert_eq!(spoken(&prose(&mut r, "fg", "Late. ", 1, false)), ["Late."]);
+    assert_eq!(spoken(&prose(&mut r, "fg", "Late. ", 0, false)), ["Late."]);
 }
 
 #[test]
@@ -401,7 +401,7 @@ fn read_mode_done_holds_all_prose_until_the_turn_end() {
     assert_eq!(spoken(&a)[0], "Sentence 0.");
     assert_eq!(earcons(&a), [Earcon::TurnDone]);
     // After the turn end late prose flows at once.
-    assert_eq!(spoken(&prose(&mut r, "fg", "Late. ", 20, false)), ["Late."]);
+    assert_eq!(spoken(&prose(&mut r, "fg", "Late. ", 0, false)), ["Late."]);
 }
 
 #[test]
@@ -757,7 +757,7 @@ fn late_prose_restarts_the_settle_window() {
     let mut r = summary_rules();
     prose(&mut r, "fg", "Part one. ", 0, true);
     let first = settle_of(&r.turn_end("fg", None, None).unwrap());
-    let a = prose(&mut r, "fg", "Late part. ", 1, true);
+    let a = prose(&mut r, "fg", "Late part. ", 0, true);
     let second = settle_of(&a);
     assert_ne!(first, second);
     assert!(r.fire(&first, Some("fg")).is_empty(), "stale fire");
@@ -1412,7 +1412,7 @@ fn flush_ready_with_nothing_to_drop_says_so() {
     assert!(r.flush_ready("b", false).is_none());
     assert!(r.flush_ready("ghost", true).is_none());
     // Nothing was flushed: its late prose is still read.
-    assert_eq!(spoken(&prose(&mut r, "b", "Late. ", 1, true)), ["Late."]);
+    assert_eq!(spoken(&prose(&mut r, "b", "Late. ", 0, true)), ["Late."]);
 }
 
 #[test]
@@ -1478,7 +1478,7 @@ fn flush_drop_is_logged() {
     prose(&mut r, "a", &PAD.repeat(6), 0, true);
     end_and_settle(&mut r, "a", None);
     r.ask("a", &question("Deploy?", &[]));
-    prose(&mut r, "a", "More text. ", 1, true);
+    prose(&mut r, "a", "More text. ", 0, true);
     r.take_notes();
     r.flush("a");
     let notes = notes_of(&r, "a");
@@ -1842,9 +1842,14 @@ fn a_missing_delta_never_holds_back_the_rest() {
     let mut r = mode_rules(ReadMode::Immediate);
     prose(&mut r, "fg", "One. ", 0, false);
     prose(&mut r, "fg", "Three. ", 2, true);
+    r.take_notes();
     assert_eq!(
         spoken(&prose(&mut r, "fg", "New block. ", 0, true)),
         ["Three.", "New block."]
+    );
+    assert_eq!(
+        notes_of(&r, "fg"),
+        ["prose: released: 1 delta(s) held for their order without delta(s) [1] (next block, #286)"]
     );
 
     // A decision reads its lead-in first, held deltas included.
@@ -1908,4 +1913,53 @@ fn a_summary_gets_the_deltas_in_index_order() {
     out_of_order(&mut r, "fg");
     let a = end_and_settle(&mut r, "fg", Some("fg"));
     assert_eq!(spoken(&a).join(" "), "Both work. Local only. Public part.");
+}
+
+#[test]
+fn deltas_that_arrive_after_the_turn_end_are_read_in_index_order() {
+    // The Stop hook races the last block's deltas too (the live log has
+    // deltas after turn_end, #14): a block that arrives whole after the
+    // turn end, 1 before 0, is still read 0, 1.
+    for mode in [ReadMode::Immediate, ReadMode::Queue, ReadMode::Done] {
+        let mut r = mode_rules(mode);
+        r.settings.minqueue = 1;
+        let mut heard = spoken(&prose(&mut r, "fg", "Before the tool. ", 0, true));
+        heard.extend(spoken(&r.turn_end("fg", None, None).unwrap()));
+        heard.extend(spoken(&prose(&mut r, "fg", "Second. ", 1, true)));
+        heard.extend(spoken(&prose(&mut r, "fg", "First. ", 0, false)));
+        assert_eq!(heard, ["Before the tool.", "First.", "Second."], "{mode:?}");
+    }
+    // A late delta whose block start never comes still waits only briefly.
+    let mut r = rules();
+    prose(&mut r, "fg", "Done. ", 0, true);
+    r.turn_end("fg", None, None).unwrap();
+    let gap = gap_of(&prose(&mut r, "fg", "Orphan. ", 1, true));
+    assert_eq!(spoken(&r.fire(&gap, Some("fg"))), ["Orphan."]);
+}
+
+#[test]
+fn a_given_up_index_does_not_jump_ahead_in_the_next_block() {
+    // Block A gives up its delta 2 at the gap timer. Once block B has
+    // started, an index 2 is B's: B's 2 before B's 1 still waits for it.
+    let mut r = mode_rules(ReadMode::Immediate);
+    prose(&mut r, "fg", "A zero. ", 0, false);
+    prose(&mut r, "fg", "A one. ", 1, false);
+    let gap = gap_of(&prose(&mut r, "fg", "A three. ", 3, true));
+    assert_eq!(spoken(&r.fire(&gap, Some("fg"))), ["A three."]);
+    let mut heard = spoken(&prose(&mut r, "fg", "B zero. ", 0, false));
+    heard.extend(spoken(&prose(&mut r, "fg", "B two. ", 2, true)));
+    heard.extend(spoken(&prose(&mut r, "fg", "B one. ", 1, false)));
+    assert_eq!(heard, ["B zero.", "B one.", "B two."]);
+}
+
+#[test]
+fn a_gap_timer_of_a_closed_channel_does_not_cut_a_new_wait_short() {
+    let mut r = mode_rules(ReadMode::Immediate);
+    prose(&mut r, "fg", "Old. ", 0, false);
+    let old = gap_of(&prose(&mut r, "fg", "Old two. ", 2, true));
+    r.close("fg");
+    prose(&mut r, "fg", "New. ", 0, false);
+    let new = gap_of(&prose(&mut r, "fg", "New two. ", 2, true));
+    assert!(spoken(&r.fire(&old, Some("fg"))).is_empty(), "stale timer");
+    assert_eq!(spoken(&r.fire(&new, Some("fg"))), ["New two."]);
 }

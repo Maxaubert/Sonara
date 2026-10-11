@@ -144,6 +144,18 @@ def test_deltas_that_arrive_out_of_order_are_read_in_index_order(rt):
     quiet(c)
 
 
+def test_deltas_after_the_turn_end_are_read_in_index_order(rt):
+    # #286: the turn_end races the last deltas too (#14); they are ordered
+    # the same way.
+    c = agent_client(rt)
+    ok(c, {"type": "turn_start", "channel": "a", "t": 1.0})
+    ok(c, {"type": "turn_end", "channel": "a", "t": 1.0})
+    stream(c, "a", "Second part.", 1)
+    stream(c, "a", "First part. ", 0, final=False)
+    assert heard(c, 2) == [("First part.", "a"), ("Second part.", "a")]
+    quiet(c)
+
+
 def test_a_missing_delta_never_holds_back_the_rest(rt):
     # #286: a delta ahead of a missing one waits briefly for it, then is read.
     c = agent_client(rt)

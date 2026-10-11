@@ -182,18 +182,21 @@ pub const DELTA_GAP: Duration = Duration::from_millis(400);
 /// announcement releases the prose, or the next block starts (index 0
 /// again). A delta behind the expected index (a duplicate), or one whose
 /// gap was given up (it came late after all), goes on at once: nothing is
-/// dropped for its order, it is read late at worst. After the turn end, a block
-/// that starts past index 0 is the late tail of the reply (#14, its gap
-/// given up at the turn end) and is read at once too. A new turn, an
-/// answer, a stop or a flush drop what is held with the rest of the held
-/// prose.
+/// dropped for its order, it is read late at worst. A given-up index is
+/// forgotten once the next block starts (index 0), so the next block's
+/// own delta with that index keeps its place. Deltas after the turn end
+/// (#14: the Stop hook races the last ones) are ordered the same way. A
+/// new turn, an answer, a stop or a flush drop what is held with the rest
+/// of the held prose.
 #[derive(Default)]
 struct DeltaOrder {
     /// The index the block expects next (0: a new block).
     next: u32,
     /// Deltas that arrived ahead of a missing one: index -> (text, final).
     ahead: BTreeMap<u32, (String, bool)>,
-    /// Moved whenever the held deltas go, so an older gap timer is a no-op.
+    /// Set from the rules' counter when a gap begins and moved whenever
+    /// the held deltas go, so an older gap timer is a no-op (also one of
+    /// a closed channel, whose new state starts over).
     gen: u64,
     /// The indices given up when held deltas went without them.
     skipped: BTreeSet<u32>,
@@ -204,9 +207,8 @@ type Delta = (String, u32, bool);
 
 impl DeltaOrder {
     /// Take one delta. Returns the deltas ready now, in order, and whether
-    /// a new gap began (the caller arms its timer).
-    /// `ended`: the turn ended (`turn_end`).
-    fn accept(&mut self, delta: &str, index: u32, fin: bool, ended: bool) -> (Vec<Delta>, bool) {
+    /// a new gap began (the caller arms its timer and sets `gen`).
+    fn accept(&mut self, delta: &str, index: u32, fin: bool) -> (Vec<Delta>, bool) {
         let mut ready = Vec::new();
         if index == 0 && self.next > 0 {
             // The next block (or a sender that does not number its deltas):
@@ -214,9 +216,13 @@ impl DeltaOrder {
             ready.extend(self.release());
             self.next = 0;
         }
-        let tail = ended && self.next == 0 && self.ahead.is_empty();
+        if index == 0 {
+            // A block starts: the indices the last one gave up are no
+            // longer late ones (one that comes now is read as this block's).
+            self.skipped.clear();
+        }
         let late = index != self.next && self.skipped.remove(&index);
-        if index < self.next || self.ahead.contains_key(&index) || tail || late {
+        if index < self.next || self.ahead.contains_key(&index) || late {
             // Behind the gap, or a second delta with a held index: at once,
             // after what is held (never dropped).
             ready.extend(self.release());
@@ -721,10 +727,17 @@ impl Rules {
             }
             return Ok(out);
         }
-        // The block's deltas in index order (#286, `DeltaOrder`).
-        let (ready, gap) = c.order.accept(delta, index, is_final, c.ended);
+        // The block's deltas in index order (#286, `DeltaOrder`). The next
+        // block starting releases what the last one held, with a note.
+        if index == 0 && c.order.next > 0 && !c.order.ahead.is_empty() {
+            out.extend(self.release_gap(channel, "next block"));
+        }
+        let c = self.turn(channel);
+        let (ready, gap) = c.order.accept(delta, index, is_final);
         if gap {
-            let gen = c.order.gen;
+            let gen = self.gen();
+            let c = self.turn(channel);
+            c.order.gen = gen;
             let missing = c.order.missing();
             out.push(Action::Timer {
                 after: DELTA_GAP,
