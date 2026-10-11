@@ -112,9 +112,9 @@ fn immediate_mode_releases_each_finished_paragraph() {
         ["Three. Four. Five."]
     );
     // Several finished paragraphs in one delta go out as they are ready,
-    // together: one release point.
+    // together: one release point. (A new block starts at index 0, #286.)
     assert_eq!(
-        spoken(&prose(&mut r, "Six.\n\nSeven.\n\nEight", 1, false)),
+        spoken(&prose(&mut r, "Six.\n\nSeven.\n\nEight", 0, false)),
         ["Six.\n\nSeven."]
     );
     // "Eight" is no sentence yet; its block's end reads it.

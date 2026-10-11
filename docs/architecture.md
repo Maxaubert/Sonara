@@ -108,7 +108,7 @@ plugin once, `migrate.rs`), builds the engines and the `ReaderHandle`, writes `r
 | `sonara-audio-events` | reader | Forwards the output's events into the worker's inbox |
 | `sonara-audio` | audio | rodio output (one `Sink` per chunk); `sonarad-null-output` in its place with `--output null` |
 | `sonara-channels` | channels | Follows reader events and feeds the next entry when an item ends |
-| `sonara-agent-timer` | agent | One per rules timer (settle, hold caps); holds the agent weakly |
+| `sonara-agent-timer` | agent | One per rules timer (settle, hold caps, delta gaps #286); holds the agent weakly |
 | `sonara-summary` | agent | One per summary job (`claude -p` or `codex exec` child process) |
 | `sonara-earcons` | agent | Plays earcons that wait behind another one (#238) |
 | `sonara-system-audio` | system | Duck, pause, restore: the Core Audio and GSMTC calls |

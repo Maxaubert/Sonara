@@ -22,6 +22,11 @@
 //!   arrives (context first), a tool run does not release it. At verbosity `skip_code` a
 //!   code block's summary is recorded but not spoken; summary mode records
 //!   prose for the recap.
+//! - **Delta order** (#286, `DeltaOrder`): a block's deltas go to the
+//!   assembler in `index` order whatever order they arrive in; one ahead of
+//!   a missing index waits at most `DELTA_GAP` (or until the turn end, a
+//!   decision, a tool announcement or the next block), then what waited
+//!   goes in order without it. Nothing is dropped for its order.
 //! - **turn_end** plays `turn_done` and releases held prose (the turn ends
 //!   at this signal, not at a block's `final`).
 //! - **Whole messages** (#235, `set_whole_messages`, which the driver sets
@@ -98,7 +103,7 @@ use crate::settings::{ReadMode, Settings, Verbosity};
 use sonara_core::assembler::{Chunk, ProseAssembler};
 use sonara_core::text::normalize_for_speech;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
 
 /// A turn whose unvoiced prose is shorter than this (in characters) is
@@ -158,6 +163,117 @@ pub enum Timer {
     HoldCap { channel: String, decision: u64 },
     /// A turn-end summary is still out at twice the timeout.
     Watchdog { seq: u64 },
+    /// Deltas held ahead of a missing one waited `DELTA_GAP` (#286).
+    Gap { channel: String, gen: u64 },
+}
+
+/// How long a delta that arrived ahead of a missing one waits for it
+/// (#286). The hook processes of one block race by milliseconds (the log of
+/// #286: 25 ms), so the wait is short; past it the held deltas are read in
+/// index order without the missing one.
+pub const DELTA_GAP: Duration = Duration::from_millis(400);
+
+/// The deltas of a block in index order (#286). Each `stream` comes from
+/// its own hook process, so a block's deltas can reach the runtime out of
+/// order (0, 2, 1). A delta whose index is the next one goes on at once,
+/// with the held deltas it unblocks; one ahead of a missing index is held.
+/// Held deltas are released in index order, the missing ones skipped, when
+/// the gap timer fires (`DELTA_GAP`), the turn ends, a decision or a tool
+/// announcement releases the prose, or the next block starts (index 0
+/// again). A delta behind the expected index (a duplicate), or one whose
+/// gap was given up (it came late after all), goes on at once: nothing is
+/// dropped for its order, it is read late at worst. A given-up index is
+/// forgotten once the next block starts (index 0), so the next block's
+/// own delta with that index keeps its place. Deltas after the turn end
+/// (#14: the Stop hook races the last ones) are ordered the same way. A
+/// new turn, an answer, a stop or a flush drop what is held with the rest
+/// of the held prose.
+#[derive(Default)]
+struct DeltaOrder {
+    /// The index the block expects next (0: a new block).
+    next: u32,
+    /// Deltas that arrived ahead of a missing one: index -> (text, final).
+    ahead: BTreeMap<u32, (String, bool)>,
+    /// Set from the rules' counter when a gap begins and moved whenever
+    /// the held deltas go, so an older gap timer is a no-op (also one of
+    /// a closed channel, whose new state starts over).
+    gen: u64,
+    /// The indices given up when held deltas went without them.
+    skipped: BTreeSet<u32>,
+}
+
+/// A delta ready for the assembler: (text, index, final).
+type Delta = (String, u32, bool);
+
+impl DeltaOrder {
+    /// Take one delta. Returns the deltas ready now, in order, and whether
+    /// a new gap began (the caller arms its timer and sets `gen`).
+    fn accept(&mut self, delta: &str, index: u32, fin: bool) -> (Vec<Delta>, bool) {
+        let mut ready = Vec::new();
+        if index == 0 && self.next > 0 {
+            // The next block (or a sender that does not number its deltas):
+            // the old block's held deltas go first.
+            ready.extend(self.release());
+            self.next = 0;
+        }
+        if index == 0 {
+            // A block starts: the indices the last one gave up are no
+            // longer late ones (one that comes now is read as this block's).
+            self.skipped.clear();
+        }
+        let late = index != self.next && self.skipped.remove(&index);
+        if index < self.next || self.ahead.contains_key(&index) || late {
+            // Behind the gap, or a second delta with a held index: at once,
+            // after what is held (never dropped).
+            ready.extend(self.release());
+            ready.push((delta.to_string(), index, fin));
+            return (ready, false);
+        }
+        if index > self.next {
+            let gap = self.ahead.is_empty();
+            self.ahead.insert(index, (delta.to_string(), fin));
+            return (ready, gap);
+        }
+        self.skipped.remove(&index);
+        ready.push((delta.to_string(), index, fin));
+        self.advance(index, fin);
+        while let Some((t, f)) = self.ahead.remove(&self.next) {
+            let i = self.next;
+            ready.push((t, i, f));
+            self.advance(i, f);
+        }
+        if self.ahead.is_empty() {
+            self.gen += 1;
+        }
+        (ready, false)
+    }
+
+    fn advance(&mut self, index: u32, fin: bool) {
+        self.next = if fin { 0 } else { index + 1 };
+    }
+
+    /// Everything held, in index order (the missing ones skipped).
+    fn release(&mut self) -> Vec<Delta> {
+        self.skipped.extend(self.missing());
+        let held = std::mem::take(&mut self.ahead);
+        let mut out = Vec::with_capacity(held.len());
+        for (i, (t, f)) in held {
+            self.advance(i, f);
+            out.push((t, i, f));
+        }
+        if !out.is_empty() {
+            self.gen += 1;
+        }
+        out
+    }
+
+    /// The missing indices below the highest held one.
+    fn missing(&self) -> Vec<u32> {
+        let top = self.ahead.keys().next_back().copied().unwrap_or(0);
+        (self.next..top)
+            .filter(|i| !self.ahead.contains_key(i))
+            .collect()
+    }
 }
 
 /// One summarizer call.
@@ -298,6 +414,8 @@ struct Turn {
     new_para: bool,
     /// The index of the last delta (its number within its block).
     last_index: Option<u32>,
+    /// The block's deltas in index order (#286).
+    order: DeltaOrder,
     /// The turn released its prose (turn_end, or a tool in read mode
     /// `queue`): no more holding.
     released: bool,
@@ -341,6 +459,7 @@ impl Turn {
             held_prose: Vec::new(),
             new_para: false,
             last_index: None,
+            order: DeltaOrder::default(),
             released: false,
             ended: false,
             batch_cut: false,
@@ -514,8 +633,12 @@ impl Rules {
 
     /// Drop the prose held by `read_mode`, noted for the troubleshooting
     /// log: in `done` that can be a whole turn.
+    /// The deltas held for their order (#286) go with it: the block goes
+    /// on past them.
     fn drop_held(&mut self, channel: &str, why: &str) -> usize {
-        let n = std::mem::take(&mut self.turn(channel).held_prose).len();
+        let c = self.turn(channel);
+        let n = std::mem::take(&mut c.held_prose).len();
+        let deltas = c.order.release().len();
         if n > 0 {
             let mode = self.settings.read_mode.as_str();
             self.note(
@@ -525,7 +648,15 @@ impl Rules {
                 None,
             );
         }
-        n
+        if deltas > 0 {
+            self.note(
+                Some(channel),
+                "prose",
+                format!("dropped: {deltas} delta(s) held for their order ({why}, #286)"),
+                None,
+            );
+        }
+        n + deltas
     }
 
     /// Speak the prose held by `read_mode`.
@@ -573,10 +704,6 @@ impl Rules {
             return Err(Stale);
         }
         let mut out = Vec::new();
-        let summaries = self.summaries();
-        let skip_code = self.settings.verbosity == Verbosity::SkipCode;
-        let minqueue = self.settings.minqueue;
-        let mode = self.settings.read_mode;
         let c = self.turn(channel);
         if c.skip_reply {
             // The user flushed this reply (#228): the rest is skipped.
@@ -600,6 +727,69 @@ impl Rules {
             }
             return Ok(out);
         }
+        // The block's deltas in index order (#286, `DeltaOrder`). The next
+        // block starting releases what the last one held, with a note.
+        if index == 0 && c.order.next > 0 && !c.order.ahead.is_empty() {
+            out.extend(self.release_gap(channel, "next block"));
+        }
+        let c = self.turn(channel);
+        let (ready, gap) = c.order.accept(delta, index, is_final);
+        if gap {
+            let gen = self.gen();
+            let c = self.turn(channel);
+            c.order.gen = gen;
+            let missing = c.order.missing();
+            out.push(Action::Timer {
+                after: DELTA_GAP,
+                timer: Timer::Gap {
+                    channel: channel.to_string(),
+                    gen,
+                },
+            });
+            self.note(
+                Some(channel),
+                "prose",
+                format!("held: delta {index} waits for delta(s) {missing:?} (out of order, #286)"),
+                None,
+            );
+        }
+        out.extend(self.assemble(channel, ready));
+        Ok(out)
+    }
+
+    /// Release the deltas held for their order (#286) in index order, the
+    /// missing ones skipped, and assemble them.
+    fn release_gap(&mut self, channel: &str, why: &str) -> Vec<Action> {
+        let c = self.turn(channel);
+        let missing = c.order.missing();
+        let ready = c.order.release();
+        if ready.is_empty() {
+            return Vec::new();
+        }
+        self.note(
+            Some(channel),
+            "prose",
+            format!(
+                "released: {} delta(s) held for their order without delta(s) {missing:?} ({why}, #286)",
+                ready.len()
+            ),
+            None,
+        );
+        self.assemble(channel, ready)
+    }
+
+    /// Assemble deltas (in order) into chunks and speak or hold them as
+    /// `read_mode` says (module docs).
+    fn assemble(&mut self, channel: &str, deltas: Vec<Delta>) -> Vec<Action> {
+        let mut out = Vec::new();
+        if deltas.is_empty() {
+            return out;
+        }
+        let summaries = self.summaries();
+        let skip_code = self.settings.verbosity == Verbosity::SkipCode;
+        let minqueue = self.settings.minqueue;
+        let mode = self.settings.read_mode;
+        let c = self.turn(channel);
         // Every chunk is recorded for summaries; at `skip_code` a code
         // block's announcement is not spoken (#214). Each spoken chunk
         // notes whether it starts a paragraph; `breaks` counts the chunks
@@ -607,36 +797,38 @@ impl Rules {
         let mut texts: Vec<(String, bool)> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut breaks: Option<usize> = None;
-        // `index` numbers the deltas of a message block (0, 1, 2, ...): a
-        // new block restarts at 0 and starts a paragraph; the next delta of
-        // the same block does not.
-        if index == 0 && c.last_index.is_some_and(|i| i != 0) {
-            c.new_para = true;
-        }
-        c.last_index = Some(index);
-        for ch in c.assembler.feed(delta, index, is_final) {
-            match ch {
-                Chunk::Text(t) => {
-                    c.prose.push(t.clone());
-                    texts.push((t, std::mem::take(&mut c.new_para)));
-                }
-                Chunk::Code(t) => {
-                    c.prose.push(t.clone());
-                    if skip_code {
-                        skipped.push(t);
-                    } else {
+        for (delta, index, is_final) in deltas {
+            // `index` numbers the deltas of a message block (0, 1, 2, ...): a
+            // new block restarts at 0 and starts a paragraph; the next delta of
+            // the same block does not.
+            if index == 0 && c.last_index.is_some_and(|i| i != 0) {
+                c.new_para = true;
+            }
+            c.last_index = Some(index);
+            for ch in c.assembler.feed(&delta, index, is_final) {
+                match ch {
+                    Chunk::Text(t) => {
+                        c.prose.push(t.clone());
                         texts.push((t, std::mem::take(&mut c.new_para)));
                     }
-                }
-                Chunk::ParagraphBreak => {
-                    c.new_para = true;
-                    breaks = Some(texts.len());
+                    Chunk::Code(t) => {
+                        c.prose.push(t.clone());
+                        if skip_code {
+                            skipped.push(t);
+                        } else {
+                            texts.push((t, std::mem::take(&mut c.new_para)));
+                        }
+                    }
+                    Chunk::ParagraphBreak => {
+                        c.new_para = true;
+                        breaks = Some(texts.len());
+                    }
                 }
             }
-        }
-        if is_final {
-            c.new_para = true;
-            breaks = Some(texts.len());
+            if is_final {
+                c.new_para = true;
+                breaks = Some(texts.len());
+            }
         }
         let settle = c.settle_armed;
         for t in skipped {
@@ -661,13 +853,13 @@ impl Rules {
             if settle {
                 self.arm_settle(&mut out, channel);
             }
-            return Ok(out);
+            return out;
         }
         let whole = self.whole;
         // A paragraph that ended in this delta (immediate, whole messages).
         let para_end = whole && mode == ReadMode::Immediate && breaks.is_some();
         if texts.is_empty() && !para_end {
-            return Ok(out);
+            return out;
         }
         let c = self.turn(channel);
         let before = c.held_prose.len();
@@ -699,7 +891,7 @@ impl Rules {
             };
             self.note(Some(channel), "prose", what, None);
         }
-        Ok(out)
+        out
     }
 
     /// A new turn (the user's prompt).
@@ -737,6 +929,8 @@ impl Rules {
         c.skip_reply = false;
         c.new_para = false;
         c.last_index = None;
+        c.order.next = 0;
+        c.order.skipped.clear();
         c.prose.clear();
         c.voiced = 0;
         Self::cancel(c, gen, settle);
@@ -771,6 +965,10 @@ impl Rules {
         }
         let mut out = Vec::new();
         self.earcon(&mut out, Earcon::TurnDone);
+        // Deltas still held for their order are the end of the reply: they
+        // go in order, without the missing ones (#286).
+        let deltas = self.release_gap(channel, "turn_end");
+        out.extend(deltas);
         let c = self.turn(channel);
         c.released = true;
         c.ended = true;
@@ -785,7 +983,9 @@ impl Rules {
 
     /// A decision blocks the agent.
     pub fn ask(&mut self, channel: &str, ask: &Ask) -> Vec<Action> {
-        let mut out = Vec::new();
+        // The lead-in before the decision (context first): deltas held for
+        // their order go now (#286).
+        let mut out = self.release_gap(channel, "decision");
         let everything = self.settings.verbosity == Verbosity::Everything;
         let awaiting = self.turn(channel).awaiting;
         let set = match ask.set {
@@ -965,6 +1165,7 @@ impl Rules {
             if !self.whole {
                 self.turn(channel).released = true;
             }
+            out.extend(self.release_gap(channel, "tool"));
             self.flush_prose(&mut out, channel);
         }
         self.speak(&mut out, channel, text, false, "tool");
@@ -1373,6 +1574,13 @@ impl Rules {
                     if *seq >= self.serve_seq && !self.parked.contains_key(seq) {
                         self.land(&mut out, Some(*seq), release);
                     }
+                }
+            }
+            Timer::Gap { channel, gen } => {
+                // A gap timer from before the held deltas went is a no-op.
+                if self.turns.get(channel).is_some_and(|c| c.order.gen == *gen) {
+                    let why = format!("waited {} ms", DELTA_GAP.as_millis());
+                    out.extend(self.release_gap(channel, &why));
                 }
             }
         }
