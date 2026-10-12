@@ -136,14 +136,22 @@ fn prose_is_spoken_at_every_verbosity() {
 }
 
 #[test]
-fn everything_announces_a_code_block_and_skip_code_drops_it_silently() {
-    let text = "Here it is.\n```python\nprint(1)\nprint(2)\nprint(3)\n```\nDone.\n";
+fn everything_announces_a_code_block_then_reads_it_and_skip_code_drops_it_silently() {
+    // #290: the announcement, each line, then the end marker.
+    let text = "Here it is.\n```python\nprint(1)\n\nx = 2\n```\nDone.\n";
     let mut r = rules();
     r.settings.verbosity = Verbosity::Everything;
     let a = prose(&mut r, "fg", text, 0, true);
     assert_eq!(
         spoken(&a),
-        ["Here it is.", "3-line python code block", "Done."]
+        [
+            "Here it is.",
+            "3-line python code block.",
+            "print open paren 1 close paren.",
+            "x equals 2.",
+            "End of code.",
+            "Done."
+        ]
     );
     let mut r = rules();
     r.settings.verbosity = Verbosity::SkipCode;

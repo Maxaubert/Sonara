@@ -77,7 +77,7 @@ Speech starts with the next event, usually a few seconds later. `/sonara:doctor`
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
 
 **Defaults** are the voice `af_sarah` at 250 words per minute, verbosity *Skip code* (code blocks
-and tool announcements skipped), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
+and tool announcements skipped; *Everything* reads code blocks aloud, line by line), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
 them on the settings page (`/sonara:settings`).
 
 **Updates.** A plugin update names a new runtime release; the next hook installs it the same way,

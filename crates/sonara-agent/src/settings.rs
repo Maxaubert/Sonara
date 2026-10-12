@@ -17,7 +17,8 @@ pub const SUMMARY_SETTLE_MS_MAX: u64 = 5_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verbosity {
     /// The answer, decisions, tool announcements, the host's selection
-    /// hints, and each code block announced ("3-line python code block").
+    /// hints, and each code block announced ("3-line python code block")
+    /// and then read line by line (#290).
     Everything,
     /// The answer and decisions: code blocks are dropped silently, tools
     /// are not announced and hints are left out.
