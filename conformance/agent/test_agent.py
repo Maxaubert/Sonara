@@ -360,12 +360,20 @@ def test_tools_are_announced_and_an_answer_catches_up(rt):
 CODE_TURN = "Look.\n```python\nx = 1\ny = 2\n```\nDone.\n"
 
 
-def test_everything_announces_code_blocks_and_skip_code_drops_them(rt):
+def test_everything_reads_code_blocks_and_skip_code_drops_them(rt):
     # #214: two levels. A code block is announced at everything and
-    # skipped without a word at skip_code.
+    # skipped without a word at skip_code. #290: at everything the block
+    # is then read line by line, with an end marker.
     c = agent_client(rt)
     stream(c, "a", CODE_TURN)
-    assert heard(c, 3) == [("Look.", "a"), ("2-line python code block", "a"), ("Done.", "a")]
+    assert heard(c, 6) == [
+        ("Look.", "a"),
+        ("2-line python code block.", "a"),
+        ("x equals 1.", "a"),
+        ("y equals 2.", "a"),
+        ("End of code.", "a"),
+        ("Done.", "a"),
+    ]
     c.state(lambda s: s["now_playing"] is None)
     ok(c, {"type": "set", "key": "verbosity", "value": "skip_code"})
     ok(c, {"type": "turn_start", "channel": "a"})

@@ -20,7 +20,8 @@
 //!   the batch is big enough or the turn ends, a tool runs or a decision
 //!   arrives (context first); `done` held until the turn ends or a decision
 //!   arrives (context first), a tool run does not release it. At verbosity `skip_code` a
-//!   code block's summary is recorded but not spoken; summary mode records
+//!   code block's summary is recorded but not spoken; at `everything` it is
+//!   spoken and the block read line by line after it (#290); summary mode records
 //!   prose for the recap.
 //! - **Delta order** (#286, `DeltaOrder`): a block's deltas go to the
 //!   assembler in `index` order whatever order they arrive in; one ahead of
@@ -713,7 +714,7 @@ impl Rules {
                 .into_iter()
                 .filter_map(|ch| match ch {
                     Chunk::Text(t) => Some(("prose", t)),
-                    Chunk::Code(t) => Some(("code", t)),
+                    Chunk::Code { summary, .. } => Some(("code", summary)),
                     Chunk::ParagraphBreak => None,
                 })
                 .collect();
@@ -811,12 +812,19 @@ impl Rules {
                         c.prose.push(t.clone());
                         texts.push((t, std::mem::take(&mut c.new_para)));
                     }
-                    Chunk::Code(t) => {
-                        c.prose.push(t.clone());
+                    Chunk::Code { summary, lines } => {
+                        c.prose.push(summary.clone());
                         if skip_code {
-                            skipped.push(t);
+                            skipped.push(summary);
+                        } else if lines.is_empty() {
+                            texts.push((summary, std::mem::take(&mut c.new_para)));
                         } else {
-                            texts.push((t, std::mem::take(&mut c.new_para)));
+                            // `everything` reads the block after its
+                            // announcement (#290).
+                            let para = std::mem::take(&mut c.new_para);
+                            texts.push((format!("{summary}."), para));
+                            texts.extend(lines.into_iter().map(|l| (l, false)));
+                            texts.push(("End of code.".to_string(), false));
                         }
                     }
                     Chunk::ParagraphBreak => {

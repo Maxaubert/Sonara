@@ -10,7 +10,7 @@ pub fn split_chunks(text: &str) -> Vec<String> {
         .feed(text, 0, true)
         .into_iter()
         .filter_map(|c| match c {
-            Chunk::Text(s) | Chunk::Code(s) if !s.trim().is_empty() => Some(s),
+            Chunk::Text(s) | Chunk::Code { summary: s, .. } if !s.trim().is_empty() => Some(s),
             _ => None,
         })
         .collect()
@@ -23,7 +23,7 @@ fn paragraphs(text: &str) -> Vec<Vec<String>> {
     let mut cur: Vec<String> = Vec::new();
     for c in ProseAssembler::new().feed(text, 0, true) {
         match c {
-            Chunk::Text(s) | Chunk::Code(s) if !s.trim().is_empty() => cur.push(s),
+            Chunk::Text(s) | Chunk::Code { summary: s, .. } if !s.trim().is_empty() => cur.push(s),
             Chunk::ParagraphBreak if !cur.is_empty() => out.push(std::mem::take(&mut cur)),
             _ => {}
         }
