@@ -20,8 +20,9 @@
 //!   the batch is big enough or the turn ends, a tool runs or a decision
 //!   arrives (context first); `done` held until the turn ends or a decision
 //!   arrives (context first), a tool run does not release it. At verbosity `skip_code` a
-//!   code block's summary is recorded but not spoken; at `everything` it is
-//!   spoken and the block read line by line after it (#290); summary mode records
+//!   code block's summary is recorded but not spoken; at `read_code` and
+//!   `everything` it is spoken and the block read line by line after it
+//!   (#290, #292); summary mode records
 //!   prose for the recap.
 //! - **Delta order** (#286, `DeltaOrder`): a block's deltas go to the
 //!   assembler in `index` order whatever order they arrive in; one ahead of

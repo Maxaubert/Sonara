@@ -129,21 +129,22 @@ def test_the_engine_picker_shows_the_engine_and_how_it_is_doing(live, browser):
     page.close()
 
 
-def test_verbosity_has_two_levels_and_persists_across_a_reload(live, browser):
-    # #214: Everything or Skip code; Skip code is the default.
+def test_verbosity_has_three_levels_and_persists_across_a_reload(live, browser):
+    # #214, #292: Default (skip_code, the default), Read code, Everything.
     lv = live()
     page = open_page(browser, lv.url)
     buttons = page.locator("#verbosity-seg [role=radio]")
-    assert [b.strip() for b in buttons.all_text_contents()] == ["Everything", "Skip code"]
+    assert [b.strip() for b in buttons.all_text_contents()] == ["Default", "Read code", "Everything"]
     seg = "#verbosity-seg [data-value=%s]"
     pw.expect(page.locator(seg % "skip_code")).to_have_attribute("aria-checked", "true")
     # #237: no helper text under a setting.
     assert page.locator("#verbosity-hint").count() == 0
-    page.click(seg % "everything")
-    assert eventually(lambda: lv.saved().get("verbosity") == "everything")
-    assert lv.get("verbosity") == "everything"
-    page.reload()
-    pw.expect(page.locator(seg % "everything")).to_have_attribute("aria-checked", "true")
+    for value in ("read_code", "everything"):
+        page.click(seg % value)
+        assert eventually(lambda v=value: lv.saved().get("verbosity") == v)
+        assert lv.get("verbosity") == value
+        page.reload()
+        pw.expect(page.locator(seg % value)).to_have_attribute("aria-checked", "true")
     page.close()
 
 

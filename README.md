@@ -76,8 +76,8 @@ missing and installs it in the background, without holding up Claude Code:
 Speech starts with the next event, usually a few seconds later. `/sonara:doctor` shows the
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
 
-**Defaults** are the voice `af_sarah` at 250 words per minute, verbosity *Skip code* (code blocks
-and tool announcements skipped; *Everything* reads code blocks aloud, line by line), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
+**Defaults** are the voice `af_sarah` at 250 words per minute, detail *Default* (code blocks
+and tool announcements skipped; *Read code* reads code blocks aloud, line by line; *Everything* also announces each tool), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
 them on the settings page (`/sonara:settings`).
 
 **Updates.** A plugin update names a new runtime release; the next hook installs it the same way,
@@ -182,7 +182,7 @@ engine is reading.
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Everything or Skip code), other sessions (Read all or Chime only) |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), other sessions (Read all or Chime only) |
 | Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a slide-over form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the model, the prompt for each style, live reading: Immediately, Queue (with its queue size) or When done, and the summary timeout and settle time |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
@@ -409,7 +409,7 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
   session, and check the hooks row of `/sonara:doctor`.
 - **Too fast or too slow.** Change the speaking rate on the settings page (default 250 words per
   minute), or bind the `faster` and `slower` hotkeys.
-- **Too chatty.** Set verbosity to *Skip code*, turn on summary mode, or mute (the mute hotkey
+- **Too chatty.** Set detail to *Default*, turn on summary mode, or mute (the mute hotkey
   cycles muted and super muted), on the settings page.
 
 ## Uninstall

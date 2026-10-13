@@ -419,8 +419,9 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
             }
             "verbosity" => {
                 let name = v.as_str().unwrap_or("");
-                let vb = Verbosity::parse(name)
-                    .ok_or_else(|| bad("'verbosity' is \"everything\" or \"skip_code\""))?;
+                let vb = Verbosity::parse(name).ok_or_else(|| {
+                    bad("'verbosity' is \"everything\", \"read_code\" or \"skip_code\"")
+                })?;
                 a.set_verbosity(vb);
             }
             "read_mode" => {
