@@ -112,7 +112,7 @@ async function change(key, value, label, done) {
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
               "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
-              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step"];
+              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step", "pronunciations"];
 let voices = [];
 let engineData = null;   // the engine_list reply, when this runtime allows external engines
 const profileVoices = {}; // added engine id -> its voices as last fetched (null: the fetch failed)
@@ -334,6 +334,7 @@ function render() {
 
   // System
   if (s.debug_log !== undefined) setSwitch("debuglog-switch", s.debug_log === true);
+  if (s.pronunciations !== undefined) renderPronunciations(s.pronunciations);
   if (s.hello) {
     setText("rt-version", s.hello.version);
     setText("rt-protocol", s.hello.protocol.major + "." + s.hello.protocol.minor);
@@ -750,6 +751,39 @@ function statusOf(v) {
   t = t.charAt(0).toUpperCase() + t.slice(1);
   if (st.fallback) t += ". " + engineName(st.fallback).replace(" (built in)", "") + " reads meanwhile.";
   return {bad: true, text: t};
+}
+
+// Pronunciations (#294): the user's words, each with a remove button.
+let pronSig = null;
+function renderPronunciations(list) {
+  const sig = JSON.stringify(list);
+  if (sig === pronSig) return;
+  pronSig = sig;
+  const ul = $("pron-list");
+  ul.replaceChildren();
+  if (!list.length) {
+    ul.append(el("li", "empty", "None yet. Add a word and how to say it."));
+    return;
+  }
+  list.forEach((p, i) => {
+    const li = el("li");
+    li.append(el("span", "w", p.word), el("span", "s", p.say),
+      actionButton("ghost", "Remove", "Remove " + p.word, () =>
+        change("pronunciations", list.filter((_, j) => j !== i), "Pronunciations")));
+    ul.append(li);
+  });
+}
+async function addPronunciation() {
+  const word = $("pron-word").value.trim(), say = $("pron-say").value.trim();
+  if (!word || !say) {
+    showState("Type a word and how to say it", true);
+    return;
+  }
+  const list = (state.pronunciations || []).filter(p => p.word !== word).concat([{word, say}]);
+  if (await change("pronunciations", list, "Pronunciations") !== undefined) {
+    $("pron-word").value = "";
+    $("pron-say").value = "";
+  }
 }
 
 function el(tag, cls, text) {
@@ -1922,6 +1956,8 @@ $("mq-plus").addEventListener("click", () => { if (state.minqueue !== undefined)
 setText("minqueue-out", String(SCHEMA.minqueue.default));
 $("announce-switch").addEventListener("click", () => change("channel_announce", state.channel_announce === "on" ? "off" : "on", "Announcements"));
 $("debuglog-switch").addEventListener("click", () => change("debug_log", state.debug_log !== true, "Troubleshooting log"));
+$("pron-add").addEventListener("click", addPronunciation);
+$("pron-say").addEventListener("keydown", e => { if (e.key === "Enter") addPronunciation(); });
 
 try { const p = localStorage.getItem("sonara-page"); if (p) showPage(p); } catch (e) {}
 refresh();

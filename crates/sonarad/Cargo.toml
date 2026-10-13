@@ -15,6 +15,7 @@ path = "src/main.rs"
 sonara-reader = { workspace = true, features = ["onecore", "test-util"] }
 sonara-engine = { workspace = true, features = ["test-util", "kokoro", "external"] }
 sonara-audio.workspace = true
+sonara-core.workspace = true
 sonara-channels.workspace = true
 sonara-agent = { workspace = true, features = ["summaries"] }
 sonara-system.workspace = true

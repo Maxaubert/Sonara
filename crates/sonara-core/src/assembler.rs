@@ -413,7 +413,11 @@ mod tests {
         assert!(texts(a.feed("Version 3.", 0, false)).is_empty());
         assert_eq!(
             texts(a.feed("14 is out. Next", 1, true)),
-            vec![Some("Version 3.14 is out.".into()), Some("Next".into())]
+            // Said as a version since #294.
+            vec![
+                Some("Version three point fourteen is out.".into()),
+                Some("Next".into())
+            ]
         );
     }
 

@@ -92,6 +92,14 @@
     .n { font-weight:500; display:block; }
     .row .c { display:flex; align-items:center; justify-content:flex-end; gap:10px; flex:none; min-width:0; }
     .row.block { display:block; }
+    /* Pronunciations (#294): the user's words, then the add pair. */
+    .pron-list { list-style:none; margin:8px 0 10px; padding:0; }
+    .pron-list li { display:flex; align-items:center; gap:12px; padding:6px 0; border-top:1px solid var(--line); }
+    .pron-list li:first-child { border-top:0; }
+    .pron-list .w { font-weight:500; min-width:0; overflow-wrap:anywhere; }
+    .pron-list .s { flex:1; min-width:0; color:var(--tx2); overflow-wrap:anywhere; }
+    .pron-list .empty { color:var(--tx3); }
+    .pron-add { grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto; grid-auto-flow:row; }
     .dim { opacity:.42; }
     .notice { margin:0 0 14px; padding:11px 14px; border-radius:var(--r); background:rgba(26,163,155,.08); border:1px solid rgba(26,163,155,.3); color:var(--tx2); font-size:13px; }
     .status-line { display:flex; align-items:center; gap:8px; padding:9px 16px; border-top:1px solid var(--line); font-size:12.5px; color:var(--tx2); }

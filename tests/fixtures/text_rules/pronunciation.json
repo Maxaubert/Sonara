@@ -1,0 +1,1043 @@
+{
+  "description": "Prose pronunciation (#294): what Sonara says for dates, times, numbers, money, units, versions, paths, acronyms and tech terms, as words only. Cases from research/sonara/2026-10-13-text-normalization-survey.md (section 6), in the owner's style (day-first dates).",
+  "cases": [
+    {
+      "name": "dates_1",
+      "fn": "pronounce",
+      "input": "12/12/2026",
+      "output": "the twelfth of December twenty twenty six"
+    },
+    {
+      "name": "dates_2",
+      "fn": "pronounce",
+      "input": "05/06/2026",
+      "output": "the fifth of June twenty twenty six"
+    },
+    {
+      "name": "dates_3",
+      "fn": "pronounce",
+      "input": "13/05/2026",
+      "output": "the thirteenth of May twenty twenty six"
+    },
+    {
+      "name": "dates_4",
+      "fn": "pronounce",
+      "input": "12/31/2026",
+      "output": "the thirty first of December twenty twenty six"
+    },
+    {
+      "name": "dates_5",
+      "fn": "pronounce",
+      "input": "12.12.2026",
+      "output": "the twelfth of December twenty twenty six"
+    },
+    {
+      "name": "dates_6",
+      "fn": "pronounce",
+      "input": "10-12-2026",
+      "output": "the tenth of December twenty twenty six"
+    },
+    {
+      "name": "dates_7",
+      "fn": "pronounce",
+      "input": "2026-12-12",
+      "output": "the twelfth of December twenty twenty six"
+    },
+    {
+      "name": "dates_8",
+      "fn": "pronounce",
+      "input": "2026-10-13T14:30:00Z",
+      "output": "the thirteenth of October twenty twenty six at fourteen thirty U T C"
+    },
+    {
+      "name": "dates_9",
+      "fn": "pronounce",
+      "input": "12 Dec 2026",
+      "output": "the twelfth of December twenty twenty six"
+    },
+    {
+      "name": "dates_10",
+      "fn": "pronounce",
+      "input": "Dec 12, 2026",
+      "output": "the twelfth of December twenty twenty six"
+    },
+    {
+      "name": "dates_11",
+      "fn": "pronounce",
+      "input": "Monday 12 December",
+      "output": "Monday the twelfth of December"
+    },
+    {
+      "name": "dates_12",
+      "fn": "pronounce",
+      "input": "due on 1/2",
+      "output": "due on the first of February"
+    },
+    {
+      "name": "dates_13",
+      "fn": "pronounce",
+      "input": "32/13/2026",
+      "output": "32/13/2026"
+    },
+    {
+      "name": "years_1",
+      "fn": "pronounce",
+      "input": "in 1999",
+      "output": "in nineteen ninety nine"
+    },
+    {
+      "name": "years_2",
+      "fn": "pronounce",
+      "input": "since 1905",
+      "output": "since nineteen oh five"
+    },
+    {
+      "name": "years_3",
+      "fn": "pronounce",
+      "input": "by 2000",
+      "output": "by two thousand"
+    },
+    {
+      "name": "years_4",
+      "fn": "pronounce",
+      "input": "since 2005",
+      "output": "since two thousand and five"
+    },
+    {
+      "name": "years_5",
+      "fn": "pronounce",
+      "input": "until 2026",
+      "output": "until twenty twenty six"
+    },
+    {
+      "name": "years_6",
+      "fn": "pronounce",
+      "input": "2026 files",
+      "output": "two thousand and twenty six files"
+    },
+    {
+      "name": "years_7",
+      "fn": "pronounce",
+      "input": "the 1990s",
+      "output": "the nineteen nineties"
+    },
+    {
+      "name": "years_8",
+      "fn": "pronounce",
+      "input": "the '80s",
+      "output": "the eighties"
+    },
+    {
+      "name": "times_1",
+      "fn": "pronounce",
+      "input": "14:30",
+      "output": "fourteen thirty"
+    },
+    {
+      "name": "times_2",
+      "fn": "pronounce",
+      "input": "09:05",
+      "output": "nine oh five"
+    },
+    {
+      "name": "times_3",
+      "fn": "pronounce",
+      "input": "14:00",
+      "output": "fourteen hundred"
+    },
+    {
+      "name": "times_4",
+      "fn": "pronounce",
+      "input": "9am",
+      "output": "nine A M"
+    },
+    {
+      "name": "times_5",
+      "fn": "pronounce",
+      "input": "2:30pm",
+      "output": "two thirty P M"
+    },
+    {
+      "name": "times_6",
+      "fn": "pronounce",
+      "input": "14:30 UTC",
+      "output": "fourteen thirty U T C"
+    },
+    {
+      "name": "times_7",
+      "fn": "pronounce",
+      "input": "took 01:18:30",
+      "output": "took one hour eighteen minutes and thirty seconds"
+    },
+    {
+      "name": "times_8",
+      "fn": "pronounce",
+      "input": "16:9",
+      "output": "sixteen to nine"
+    },
+    {
+      "name": "versions_1",
+      "fn": "pronounce",
+      "input": "v1.20",
+      "output": "version one point twenty"
+    },
+    {
+      "name": "versions_2",
+      "fn": "pronounce",
+      "input": "version 1.20",
+      "output": "version one point twenty"
+    },
+    {
+      "name": "versions_3",
+      "fn": "pronounce",
+      "input": "v0.8.5",
+      "output": "version zero point eight point five"
+    },
+    {
+      "name": "versions_4",
+      "fn": "pronounce",
+      "input": "1.2.3",
+      "output": "version one point two point three"
+    },
+    {
+      "name": "versions_5",
+      "fn": "pronounce",
+      "input": "1.2.3-beta.1+build.5",
+      "output": "version one point two point three beta one"
+    },
+    {
+      "name": "versions_6",
+      "fn": "pronounce",
+      "input": "Python 3.12",
+      "output": "Python three point twelve"
+    },
+    {
+      "name": "versions_7",
+      "fn": "pronounce",
+      "input": "v2",
+      "output": "version two"
+    },
+    {
+      "name": "versions_8",
+      "fn": "pronounce",
+      "input": "Bumped to v2.1.3 today.",
+      "output": "Bumped to version two point one point three today."
+    },
+    {
+      "name": "ordinals_1",
+      "fn": "pronounce",
+      "input": "1st",
+      "output": "first"
+    },
+    {
+      "name": "ordinals_2",
+      "fn": "pronounce",
+      "input": "21st",
+      "output": "twenty first"
+    },
+    {
+      "name": "ordinals_3",
+      "fn": "pronounce",
+      "input": "12th",
+      "output": "twelfth"
+    },
+    {
+      "name": "ordinals_4",
+      "fn": "pronounce",
+      "input": "100th",
+      "output": "one hundredth"
+    },
+    {
+      "name": "ordinals_5",
+      "fn": "pronounce",
+      "input": "112th",
+      "output": "one hundred and twelfth"
+    },
+    {
+      "name": "ordinals_6",
+      "fn": "pronounce",
+      "input": "21th",
+      "output": "twenty first"
+    },
+    {
+      "name": "cardinals_1",
+      "fn": "pronounce",
+      "input": "42",
+      "output": "42"
+    },
+    {
+      "name": "cardinals_2",
+      "fn": "pronounce",
+      "input": "1,024",
+      "output": "one thousand and twenty four"
+    },
+    {
+      "name": "cardinals_3",
+      "fn": "pronounce",
+      "input": "1 234 567",
+      "output": "one million two hundred and thirty four thousand five hundred and sixty seven"
+    },
+    {
+      "name": "cardinals_4",
+      "fn": "pronounce",
+      "input": "3,500",
+      "output": "three thousand five hundred"
+    },
+    {
+      "name": "cardinals_5",
+      "fn": "pronounce",
+      "input": "-5",
+      "output": "minus five"
+    },
+    {
+      "name": "cardinals_6",
+      "fn": "pronounce",
+      "input": "a-5",
+      "output": "a-5"
+    },
+    {
+      "name": "cardinals_7",
+      "fn": "pronounce",
+      "input": "007",
+      "output": "zero zero seven"
+    },
+    {
+      "name": "decimals_1",
+      "fn": "pronounce",
+      "input": "3.14",
+      "output": "three point one four"
+    },
+    {
+      "name": "decimals_2",
+      "fn": "pronounce",
+      "input": "0.25",
+      "output": "zero point two five"
+    },
+    {
+      "name": "decimals_3",
+      "fn": "pronounce",
+      "input": ".5",
+      "output": "point five"
+    },
+    {
+      "name": "decimals_4",
+      "fn": "pronounce",
+      "input": "1.20",
+      "output": "one point two zero"
+    },
+    {
+      "name": "decimals_5",
+      "fn": "pronounce",
+      "input": "3.2 million",
+      "output": "three point two million"
+    },
+    {
+      "name": "decimals_6",
+      "fn": "pronounce",
+      "input": "50%",
+      "output": "fifty percent"
+    },
+    {
+      "name": "decimals_7",
+      "fn": "pronounce",
+      "input": "23.5%",
+      "output": "twenty three point five percent"
+    },
+    {
+      "name": "money_1",
+      "fn": "pronounce",
+      "input": "$5",
+      "output": "five dollars"
+    },
+    {
+      "name": "money_2",
+      "fn": "pronounce",
+      "input": "$1",
+      "output": "one dollar"
+    },
+    {
+      "name": "money_3",
+      "fn": "pronounce",
+      "input": "$5.99",
+      "output": "five dollars and ninety nine cents"
+    },
+    {
+      "name": "money_4",
+      "fn": "pronounce",
+      "input": "$0.02",
+      "output": "two cents"
+    },
+    {
+      "name": "money_5",
+      "fn": "pronounce",
+      "input": "£3",
+      "output": "three pounds"
+    },
+    {
+      "name": "money_6",
+      "fn": "pronounce",
+      "input": "€10",
+      "output": "ten euros"
+    },
+    {
+      "name": "money_7",
+      "fn": "pronounce",
+      "input": "$3.2 million",
+      "output": "three point two million dollars"
+    },
+    {
+      "name": "money_8",
+      "fn": "pronounce",
+      "input": "$5bn",
+      "output": "five billion dollars"
+    },
+    {
+      "name": "money_9",
+      "fn": "pronounce",
+      "input": "NOK 250",
+      "output": "two hundred and fifty kroner"
+    },
+    {
+      "name": "money_10",
+      "fn": "pronounce",
+      "input": "250 kr",
+      "output": "two hundred and fifty kroner"
+    },
+    {
+      "name": "money_11",
+      "fn": "pronounce",
+      "input": "kr 250,-",
+      "output": "two hundred and fifty kroner"
+    },
+    {
+      "name": "money_12",
+      "fn": "pronounce",
+      "input": "1 kr",
+      "output": "one krone"
+    },
+    {
+      "name": "money_13",
+      "fn": "pronounce",
+      "input": "kr 99,50",
+      "output": "ninety nine kroner fifty"
+    },
+    {
+      "name": "money_14",
+      "fn": "pronounce",
+      "input": "100 USD",
+      "output": "one hundred U S dollars"
+    },
+    {
+      "name": "money_15",
+      "fn": "pronounce",
+      "input": "echo $PATH",
+      "output": "echo $PATH"
+    },
+    {
+      "name": "money_16",
+      "fn": "pronounce",
+      "input": "$250-$300",
+      "output": "two hundred and fifty to three hundred dollars"
+    },
+    {
+      "name": "measures_1",
+      "fn": "pronounce",
+      "input": "5 km",
+      "output": "five kilometres"
+    },
+    {
+      "name": "measures_2",
+      "fn": "pronounce",
+      "input": "1 km",
+      "output": "one kilometre"
+    },
+    {
+      "name": "measures_3",
+      "fn": "pronounce",
+      "input": "100 km/h",
+      "output": "one hundred kilometres per hour"
+    },
+    {
+      "name": "measures_4",
+      "fn": "pronounce",
+      "input": "200ms",
+      "output": "two hundred milliseconds"
+    },
+    {
+      "name": "measures_5",
+      "fn": "pronounce",
+      "input": "5 GB",
+      "output": "five gigabytes"
+    },
+    {
+      "name": "measures_6",
+      "fn": "pronounce",
+      "input": "100 Mb",
+      "output": "one hundred megabits"
+    },
+    {
+      "name": "measures_7",
+      "fn": "pronounce",
+      "input": "20°C",
+      "output": "twenty degrees Celsius"
+    },
+    {
+      "name": "measures_8",
+      "fn": "pronounce",
+      "input": "-5 °C",
+      "output": "minus five degrees Celsius"
+    },
+    {
+      "name": "measures_9",
+      "fn": "pronounce",
+      "input": "60 fps",
+      "output": "sixty frames per second"
+    },
+    {
+      "name": "measures_10",
+      "fn": "pronounce",
+      "input": "16px",
+      "output": "sixteen pixels"
+    },
+    {
+      "name": "measures_11",
+      "fn": "pronounce",
+      "input": "1.5 s",
+      "output": "one point five seconds"
+    },
+    {
+      "name": "measures_12",
+      "fn": "pronounce",
+      "input": "3x faster",
+      "output": "three times faster"
+    },
+    {
+      "name": "measures_13",
+      "fn": "pronounce",
+      "input": "64-bit",
+      "output": "sixty four bit"
+    },
+    {
+      "name": "measures_14",
+      "fn": "pronounce",
+      "input": "5m",
+      "output": "five m"
+    },
+    {
+      "name": "measures_15",
+      "fn": "pronounce",
+      "input": "2-5 kg",
+      "output": "two to five kilograms"
+    },
+    {
+      "name": "ranges_1",
+      "fn": "pronounce",
+      "input": "10-20",
+      "output": "ten to twenty"
+    },
+    {
+      "name": "ranges_2",
+      "fn": "pronounce",
+      "input": "pages 3–5",
+      "output": "pages three to five"
+    },
+    {
+      "name": "ranges_3",
+      "fn": "pronounce",
+      "input": "1990-1995",
+      "output": "nineteen ninety to nineteen ninety five"
+    },
+    {
+      "name": "ranges_4",
+      "fn": "pronounce",
+      "input": "2024-26",
+      "output": "twenty twenty four to twenty six"
+    },
+    {
+      "name": "ranges_5",
+      "fn": "pronounce",
+      "input": "555-1212",
+      "output": "555-1212"
+    },
+    {
+      "name": "fractions_1",
+      "fn": "pronounce",
+      "input": "1/2",
+      "output": "one half"
+    },
+    {
+      "name": "fractions_2",
+      "fn": "pronounce",
+      "input": "1/4",
+      "output": "one quarter"
+    },
+    {
+      "name": "fractions_3",
+      "fn": "pronounce",
+      "input": "3/4",
+      "output": "three quarters"
+    },
+    {
+      "name": "fractions_4",
+      "fn": "pronounce",
+      "input": "3/8",
+      "output": "three eighths"
+    },
+    {
+      "name": "fractions_5",
+      "fn": "pronounce",
+      "input": "5 1/2",
+      "output": "five and a half"
+    },
+    {
+      "name": "fractions_6",
+      "fn": "pronounce",
+      "input": "½",
+      "output": "one half"
+    },
+    {
+      "name": "fractions_7",
+      "fn": "pronounce",
+      "input": "n/a",
+      "output": "not applicable"
+    },
+    {
+      "name": "fractions_8",
+      "fn": "pronounce",
+      "input": "and/or",
+      "output": "and or"
+    },
+    {
+      "name": "phones_1",
+      "fn": "pronounce",
+      "input": "+47 912 34 567",
+      "output": "plus four seven, nine one two, three four, five six seven"
+    },
+    {
+      "name": "phones_2",
+      "fn": "pronounce",
+      "input": "tel 91 23 45 67",
+      "output": "tel nine one, two three, four five, six seven"
+    },
+    {
+      "name": "addresses_1",
+      "fn": "pronounce",
+      "input": "192.168.1.10",
+      "output": "one nine two dot one six eight dot one dot one zero"
+    },
+    {
+      "name": "addresses_2",
+      "fn": "pronounce",
+      "input": "localhost:8080",
+      "output": "localhost port eight zero eight zero"
+    },
+    {
+      "name": "addresses_3",
+      "fn": "pronounce",
+      "input": "https://github.com/Maxaubert/Sonara/pull/293",
+      "output": "github dot com, pull two hundred and ninety three"
+    },
+    {
+      "name": "addresses_4",
+      "fn": "pronounce",
+      "input": "https://example.com/docs?id=5#top",
+      "output": "example dot com, docs"
+    },
+    {
+      "name": "addresses_5",
+      "fn": "pronounce",
+      "input": "ove@example.com",
+      "output": "ove at example dot com"
+    },
+    {
+      "name": "paths_1",
+      "fn": "pronounce",
+      "input": "crates/sonara-core/src/text.rs",
+      "output": "src slash text dot R S"
+    },
+    {
+      "name": "paths_2",
+      "fn": "pronounce",
+      "input": "C:\\Users\\Admin\\Documents\\notes.txt",
+      "output": "Documents slash notes dot T X T"
+    },
+    {
+      "name": "paths_3",
+      "fn": "pronounce",
+      "input": "README.md",
+      "output": "README dot M D"
+    },
+    {
+      "name": "paths_4",
+      "fn": "pronounce",
+      "input": "package.json",
+      "output": "package dot jay son"
+    },
+    {
+      "name": "paths_5",
+      "fn": "pronounce",
+      "input": "~/.claude/settings.json",
+      "output": "dot claude slash settings dot jay son"
+    },
+    {
+      "name": "paths_6",
+      "fn": "pronounce",
+      "input": "Cargo.toml",
+      "output": "Cargo dot tommel"
+    },
+    {
+      "name": "paths_7",
+      "fn": "pronounce",
+      "input": "src/main.rs:42",
+      "output": "src slash main dot R S, line forty two"
+    },
+    {
+      "name": "paths_8",
+      "fn": "pronounce",
+      "input": "file.rs:12:34",
+      "output": "file dot R S, line twelve"
+    },
+    {
+      "name": "paths_9",
+      "fn": "pronounce",
+      "input": "See daemon.py:123 for it.",
+      "output": "See daemon dot P Y, line one hundred and twenty three for it."
+    },
+    {
+      "name": "hex_1",
+      "fn": "pronounce",
+      "input": "0x1F",
+      "output": "hex one F"
+    },
+    {
+      "name": "hex_2",
+      "fn": "pronounce",
+      "input": "commit 588cf7e4",
+      "output": "commit five eight eight C"
+    },
+    {
+      "name": "hex_3",
+      "fn": "pronounce",
+      "input": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output": "a hash"
+    },
+    {
+      "name": "hex_4",
+      "fn": "pronounce",
+      "input": "123e4567-e89b-12d3-a456-426614174000",
+      "output": "a U U I D"
+    },
+    {
+      "name": "roman_1",
+      "fn": "pronounce",
+      "input": "Chapter IV",
+      "output": "Chapter four"
+    },
+    {
+      "name": "roman_2",
+      "fn": "pronounce",
+      "input": "Part XL",
+      "output": "Part forty"
+    },
+    {
+      "name": "roman_3",
+      "fn": "pronounce",
+      "input": "Phase II",
+      "output": "Phase two"
+    },
+    {
+      "name": "roman_4",
+      "fn": "pronounce",
+      "input": "World War II",
+      "output": "World War two"
+    },
+    {
+      "name": "roman_5",
+      "fn": "pronounce",
+      "input": "XIV",
+      "output": "X I V"
+    },
+    {
+      "name": "roman_6",
+      "fn": "pronounce",
+      "input": "I think so",
+      "output": "I think so"
+    },
+    {
+      "name": "acronyms_1",
+      "fn": "pronounce",
+      "input": "API",
+      "output": "A P I"
+    },
+    {
+      "name": "acronyms_2",
+      "fn": "pronounce",
+      "input": "APIs",
+      "output": "A P I's"
+    },
+    {
+      "name": "acronyms_3",
+      "fn": "pronounce",
+      "input": "HTTP",
+      "output": "H T T P"
+    },
+    {
+      "name": "acronyms_4",
+      "fn": "pronounce",
+      "input": "NASA",
+      "output": "NASA"
+    },
+    {
+      "name": "acronyms_5",
+      "fn": "pronounce",
+      "input": "ASAP",
+      "output": "ASAP"
+    },
+    {
+      "name": "acronyms_6",
+      "fn": "pronounce",
+      "input": "SQL",
+      "output": "sequel"
+    },
+    {
+      "name": "acronyms_7",
+      "fn": "pronounce",
+      "input": "PNG",
+      "output": "P N G"
+    },
+    {
+      "name": "acronyms_8",
+      "fn": "pronounce",
+      "input": "OS",
+      "output": "O S"
+    },
+    {
+      "name": "acronyms_9",
+      "fn": "pronounce",
+      "input": "the ID field",
+      "output": "the I D field"
+    },
+    {
+      "name": "acronyms_10",
+      "fn": "pronounce",
+      "input": "ITV3",
+      "output": "I T V three"
+    },
+    {
+      "name": "acronyms_11",
+      "fn": "pronounce",
+      "input": "STOP THE BUILD NOW",
+      "output": "STOP THE BUILD NOW"
+    },
+    {
+      "name": "acronyms_12",
+      "fn": "pronounce",
+      "input": "README",
+      "output": "README"
+    },
+    {
+      "name": "acronyms_13",
+      "fn": "pronounce",
+      "input": "U.S.A.",
+      "output": "U S A"
+    },
+    {
+      "name": "acronyms_14",
+      "fn": "pronounce",
+      "input": "e.g.",
+      "output": "for example"
+    },
+    {
+      "name": "acronyms_15",
+      "fn": "pronounce",
+      "input": "i.e.",
+      "output": "that is"
+    },
+    {
+      "name": "acronyms_16",
+      "fn": "pronounce",
+      "input": "etc.",
+      "output": "et cetera."
+    },
+    {
+      "name": "acronyms_17",
+      "fn": "pronounce",
+      "input": "vs.",
+      "output": "versus"
+    },
+    {
+      "name": "acronyms_18",
+      "fn": "pronounce",
+      "input": "Dr. Smith",
+      "output": "Doctor Smith"
+    },
+    {
+      "name": "tech_terms_1",
+      "fn": "pronounce",
+      "input": "nginx",
+      "output": "engine X"
+    },
+    {
+      "name": "tech_terms_2",
+      "fn": "pronounce",
+      "input": "kubectl",
+      "output": "kube control"
+    },
+    {
+      "name": "tech_terms_3",
+      "fn": "pronounce",
+      "input": "K8s",
+      "output": "Kubernetes"
+    },
+    {
+      "name": "tech_terms_4",
+      "fn": "pronounce",
+      "input": "C#",
+      "output": "C sharp"
+    },
+    {
+      "name": "tech_terms_5",
+      "fn": "pronounce",
+      "input": "C++",
+      "output": "C plus plus"
+    },
+    {
+      "name": "tech_terms_6",
+      "fn": "pronounce",
+      "input": "Node.js",
+      "output": "node J S"
+    },
+    {
+      "name": "tech_terms_7",
+      "fn": "pronounce",
+      "input": ".NET",
+      "output": "dot net"
+    },
+    {
+      "name": "tech_terms_8",
+      "fn": "pronounce",
+      "input": "PostgreSQL",
+      "output": "post gres Q L"
+    },
+    {
+      "name": "tech_terms_9",
+      "fn": "pronounce",
+      "input": "JSON",
+      "output": "jay son"
+    },
+    {
+      "name": "tech_terms_10",
+      "fn": "pronounce",
+      "input": "Wi-Fi",
+      "output": "why fy"
+    },
+    {
+      "name": "tech_terms_11",
+      "fn": "pronounce",
+      "input": "i18n",
+      "output": "internationalization"
+    },
+    {
+      "name": "tech_terms_12",
+      "fn": "pronounce",
+      "input": "x86",
+      "output": "x eighty six"
+    },
+    {
+      "name": "tech_terms_13",
+      "fn": "pronounce",
+      "input": "S3",
+      "output": "S three"
+    },
+    {
+      "name": "identifiers_1",
+      "fn": "pronounce",
+      "input": "getUserName",
+      "output": "get user name"
+    },
+    {
+      "name": "identifiers_2",
+      "fn": "pronounce",
+      "input": "SessionChannel",
+      "output": "session channel"
+    },
+    {
+      "name": "identifiers_3",
+      "fn": "pronounce",
+      "input": "max_retry_count",
+      "output": "max retry count"
+    },
+    {
+      "name": "identifiers_4",
+      "fn": "pronounce",
+      "input": "MAX_RETRY_COUNT",
+      "output": "max retry count"
+    },
+    {
+      "name": "identifiers_5",
+      "fn": "pronounce",
+      "input": "HTTP_PORT",
+      "output": "H T T P port"
+    },
+    {
+      "name": "identifiers_6",
+      "fn": "pronounce",
+      "input": "HTTPServer",
+      "output": "H T T P server"
+    },
+    {
+      "name": "identifiers_7",
+      "fn": "pronounce",
+      "input": "parseJSON",
+      "output": "parse jay son"
+    },
+    {
+      "name": "identifiers_8",
+      "fn": "pronounce",
+      "input": "foo()",
+      "output": "foo"
+    },
+    {
+      "name": "identifiers_9",
+      "fn": "pronounce",
+      "input": "--verbose",
+      "output": "dash dash verbose"
+    },
+    {
+      "name": "identifiers_10",
+      "fn": "pronounce",
+      "input": "#294",
+      "output": "number two hundred and ninety four"
+    },
+    {
+      "name": "identifiers_11",
+      "fn": "pronounce",
+      "input": "R&D",
+      "output": "R and D"
+    },
+    {
+      "name": "identifiers_12",
+      "fn": "pronounce",
+      "input": "± 5",
+      "output": "plus or minus 5"
+    },
+    {
+      "name": "identifiers_13",
+      "fn": "pronounce",
+      "input": "GitHub and TypeScript",
+      "output": "GitHub and TypeScript"
+    },
+    {
+      "name": "protected_1",
+      "fn": "pronounce",
+      "input": "Run `v1.20` now.",
+      "output": "Run `v1.20` now."
+    },
+    {
+      "name": "protected_2",
+      "fn": "pronounce",
+      "input": "See [docs](https://x.y/v1.2.3).",
+      "output": "See [docs](https://x.y/v1.2.3)."
+    }
+  ]
+}

@@ -308,8 +308,49 @@ impl Server {
         Some(Ok((f, After::Nothing)))
     }
 
+    /// `set`/`get` of `pronunciations` (#294), a host setting: the user's
+    /// own words, said their way before every other text rule.
+    pub(super) fn words_setting(&self, m: &Map<String, Value>, set: bool) -> Option<Handled> {
+        const KEY: &str = "pronunciations";
+        if opt_str(m, "key").ok().flatten() != Some(KEY) {
+            return None;
+        }
+        if set {
+            let raw = m.get("value").unwrap_or(&Value::Null);
+            let v = match config::validate(KEY, raw) {
+                Ok(v) => v,
+                Err(e) => return Some(Err(bad(e))),
+            };
+            let words = v
+                .as_array()
+                .map(|l| {
+                    l.iter()
+                        .filter_map(|e| {
+                            Some((
+                                e["word"].as_str()?.to_string(),
+                                e["say"].as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            sonara_core::pronounce::set_user_words(words);
+        }
+        let value: Vec<Value> = sonara_core::pronounce::user_words()
+            .into_iter()
+            .map(|(word, say)| json!({"word": word, "say": say}))
+            .collect();
+        let mut f = Map::new();
+        f.insert("key".into(), json!(KEY));
+        f.insert("value".into(), Value::Array(value));
+        Some(Ok((f, After::Nothing)))
+    }
+
     pub(super) fn set_now(&self, m: &Map<String, Value>) -> Handled {
         if let Some(done) = self.debug_setting(m, true) {
+            return done;
+        }
+        if let Some(done) = self.words_setting(m, true) {
             return done;
         }
         if let Some(done) = self.extension_setting(m, true) {
@@ -330,6 +371,9 @@ impl Server {
 
     pub(super) fn get(&self, m: &Map<String, Value>) -> Handled {
         if let Some(done) = self.debug_setting(m, false) {
+            return done;
+        }
+        if let Some(done) = self.words_setting(m, false) {
             return done;
         }
         if let Some(done) = self.extension_setting(m, false) {
