@@ -73,7 +73,7 @@ pub struct Setting {
 }
 
 pub const AUDIO_MODES: &[&str] = &["off", "duck", "pause"];
-pub const VERBOSITY: &[&str] = &["everything", "skip_code"];
+pub const VERBOSITY: &[&str] = &["everything", "read_code", "skip_code"];
 /// Old names of a value, accepted and stored as the new one: the
 /// verbosity levels before #214 (and the Python plugin's).
 const ALIASES: &[(&str, &str, &str)] = &[

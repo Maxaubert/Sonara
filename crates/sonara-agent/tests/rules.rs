@@ -166,9 +166,30 @@ fn verbosity_names_and_their_old_aliases() {
     for old in ["skip_code", "medium", "quiet"] {
         assert_eq!(Verbosity::parse(old), Some(Verbosity::SkipCode), "{old}");
     }
+    assert_eq!(Verbosity::parse("read_code"), Some(Verbosity::ReadCode));
     assert_eq!(Verbosity::parse("loud"), None);
     assert_eq!(Verbosity::Everything.as_str(), "everything");
+    assert_eq!(Verbosity::ReadCode.as_str(), "read_code");
     assert_eq!(Verbosity::SkipCode.as_str(), "skip_code");
+}
+
+#[test]
+fn read_code_reads_code_blocks_without_announcing_tools() {
+    // #292: the step between skip_code and everything.
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::ReadCode;
+    let a = prose(&mut r, "fg", "Look.\n```js\nx = 1\n```\nDone.\n", 0, true);
+    assert_eq!(
+        spoken(&a),
+        [
+            "Look.",
+            "1-line js code block.",
+            "x equals 1.",
+            "End of code.",
+            "Done."
+        ]
+    );
+    assert!(spoken(&r.tool("fg", "Bash", "ls")).is_empty());
 }
 
 #[test]
@@ -342,7 +363,11 @@ fn a_tool_announcement_follows_the_held_prose() {
 
 #[test]
 fn tools_are_announced_at_everything_and_suppressed_at_skip_code() {
-    for (v, n) in [(Verbosity::Everything, 1), (Verbosity::SkipCode, 0)] {
+    for (v, n) in [
+        (Verbosity::Everything, 1),
+        (Verbosity::ReadCode, 0),
+        (Verbosity::SkipCode, 0),
+    ] {
         let mut r = rules();
         r.settings.verbosity = v;
         assert_eq!(spoken(&r.tool("fg", "Bash", "ls")).len(), n, "{v:?}");

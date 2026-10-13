@@ -383,6 +383,21 @@ def test_everything_reads_code_blocks_and_skip_code_drops_them(rt):
     quiet(c)
 
 
+def test_read_code_reads_code_blocks(rt):
+    # #292: the step between skip_code and everything reads code.
+    c = agent_client(rt)
+    assert ok(c, {"type": "set", "key": "verbosity", "value": "read_code"})["value"] == "read_code"
+    stream(c, "a", CODE_TURN)
+    assert heard(c, 6)[1:5] == [
+        ("2-line python code block.", "a"),
+        ("x equals 1.", "a"),
+        ("y equals 2.", "a"),
+        ("End of code.", "a"),
+    ]
+    c.state(lambda s: s["now_playing"] is None)
+    quiet(c)
+
+
 def test_old_verbosity_names_are_accepted_as_aliases(rt):
     # #214: older clients send the three-level names.
     c = rt.tcp(extensions=["agent"])
