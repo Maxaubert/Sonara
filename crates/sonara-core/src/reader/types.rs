@@ -83,6 +83,9 @@ pub struct State {
     /// Items waiting after the current one.
     pub queued: usize,
     pub paused: bool,
+    /// Paused by step mode at a code line (#295), not by the user: other
+    /// apps stay as they are while reading.
+    pub stepping: bool,
     pub muted: bool,
     /// Speech volume in percent, as set (the host validates the range).
     pub volume: u8,

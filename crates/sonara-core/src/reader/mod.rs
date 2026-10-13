@@ -115,6 +115,8 @@ pub struct Reader {
     code_step: bool,
     /// Play was pressed in this code block: its lines read through.
     released: bool,
+    /// Paused by step mode at a code line, not by the user.
+    step_wait: bool,
     /// The last state emitted (or the initial one, seq 0).
     shown: State,
 }
@@ -146,11 +148,13 @@ impl Reader {
             chunking: Chunking::Sentences,
             code_step: false,
             released: false,
+            step_wait: false,
             shown: State {
                 seq: 0,
                 now_playing: None,
                 queued: 0,
                 paused: false,
+                stepping: false,
                 muted: false,
                 volume: 0,
                 rate: 0,
@@ -303,8 +307,17 @@ impl Reader {
 
     /// Play in a code block reads the rest of it through.
     fn release_code(&mut self) {
-        if self.code_step && self.in_code() {
+        if self.step_wait {
             self.released = true;
+        }
+    }
+
+    /// A move away from a step wait plays: only a pause the user made holds
+    /// across navigation, Skip and interrupt (#295 review).
+    fn end_wait(&mut self) {
+        if self.step_wait {
+            self.step_wait = false;
+            self.paused = false;
         }
     }
 
@@ -332,6 +345,7 @@ impl Reader {
             at
         };
         self.paused = false;
+        self.step_wait = false;
         if to >= len {
             self.skip(fx);
         } else {
@@ -435,6 +449,8 @@ impl Reader {
     // ---- transitions ----
 
     fn pause(&mut self, fx: &mut Vec<Effect>) {
+        // Pause at a step wait makes it the user's pause.
+        self.step_wait = false;
         if self.current.is_none() || self.paused {
             return;
         }
@@ -446,6 +462,7 @@ impl Reader {
 
     fn resume(&mut self, fx: &mut Vec<Effect>) {
         self.paused = false;
+        self.step_wait = false;
         if self.loaded.is_some() {
             fx.push(Effect::ResumeOutput);
         } else {
@@ -466,6 +483,7 @@ impl Reader {
         }
         self.last = None;
         self.paused = false;
+        self.step_wait = false;
     }
 
     fn skip(&mut self, fx: &mut Vec<Effect>) {
@@ -475,9 +493,14 @@ impl Reader {
 
     /// Jump to chunk `to` of the current item, replacing what is loaded.
     fn move_to(&mut self, fx: &mut Vec<Effect>, to: usize) {
+        self.end_wait();
         self.stop_output(fx);
         if let Some(cur) = &mut self.current {
             cur.chunk = to;
+        }
+        // Read through only between the lines of one block.
+        if self.kind_at(to) != CodeKind::Line {
+            self.released = false;
         }
         self.begin_chunk(fx);
     }
@@ -499,6 +522,7 @@ impl Reader {
             if self.code_step && !self.released && done != CodeKind::Prose && next == CodeKind::Line
             {
                 self.paused = true;
+                self.step_wait = true;
             }
             self.begin_chunk(fx);
         } else {
@@ -514,6 +538,7 @@ impl Reader {
 
     /// Make the front of the queue current, or go idle (and unpaused).
     fn start_next(&mut self, fx: &mut Vec<Effect>) {
+        self.end_wait();
         match self.queue.pop_front() {
             Some(item) => {
                 self.released = false;
@@ -620,6 +645,7 @@ impl Reader {
             }),
             queued: self.queue.len(),
             paused: self.paused,
+            stepping: self.step_wait,
             muted: self.muted,
             volume: self.volume,
             rate: self.rate,

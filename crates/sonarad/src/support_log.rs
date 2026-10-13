@@ -405,6 +405,7 @@ mod tests {
             }),
             queued: 0,
             paused: false,
+            stepping: false,
             muted: false,
             volume: 100,
             rate: 200,

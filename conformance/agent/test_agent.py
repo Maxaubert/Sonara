@@ -128,6 +128,8 @@ def test_hello_enables_agent_with_channels(rt):
         {"type": "turn_start", "channel": "a"},
         {"type": "ask", "channel": "a", "kind": "plan"},
         {"type": "get", "key": "mute_level"},
+        {"type": "get", "key": "code_speed"},
+        {"type": "set", "key": "code_step", "value": "on"},
     ):
         assert plain.request(msg)["error"]["code"] == "E_UNSUPPORTED", msg
     r = plain.request({"type": "subscribe", "events": ["earcons"]})

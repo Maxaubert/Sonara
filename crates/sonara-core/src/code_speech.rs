@@ -113,6 +113,25 @@ const HASH_COMMENT: &[&str] = &[
     "make",
 ];
 const DASH_COMMENT: &[&str] = &["sql", "psql", "mysql", "sqlite", "lua", "haskell", "hs"];
+/// Languages whose lines are text: read as written (#295 review).
+const PROSE: &[&str] = &["text", "txt", "plaintext", "plain", "md", "markdown"];
+/// Languages where a hyphen between letters joins a name (`font-size`).
+const KEBAB: &[&str] = &[
+    "css",
+    "scss",
+    "sass",
+    "less",
+    "yaml",
+    "yml",
+    "toml",
+    "ini",
+    "cfg",
+    "conf",
+    "dockerfile",
+    "docker",
+    "makefile",
+    "make",
+];
 const SHELL: &[&str] = &[
     "sh",
     "bash",
@@ -185,8 +204,12 @@ pub fn line(raw: &str, info: &str, n: usize) -> Option<String> {
     if code.is_empty() {
         return None;
     }
-    let mode = Mode::of(&lang, code);
-    let spoken = render(code, &mode);
+    let mode = Mode::of(&lang, code, false);
+    let spoken = if mode.prose {
+        words_of(code)
+    } else {
+        render(code, &mode)
+    };
     if spoken.is_empty() {
         return None;
     }
@@ -201,7 +224,11 @@ pub fn line(raw: &str, info: &str, n: usize) -> Option<String> {
 /// period).
 pub fn inline(code: &str) -> String {
     let code = code.trim();
-    let mode = Mode::of("", code);
+    // A URL is left to the prose rules.
+    if code.contains("://") && !code.contains(char::is_whitespace) {
+        return code.to_string();
+    }
+    let mode = Mode::of("", code, true);
     render(code, &mode)
 }
 
@@ -212,28 +239,73 @@ struct Mode {
     hash_comment: bool,
     dash_comment: bool,
     slash_comment: bool,
+    block_comment: bool,
+    /// Text, read as written.
+    prose: bool,
+    /// A hyphen between letters joins a name.
+    kebab: bool,
+    /// `'a` is a lifetime.
+    rust: bool,
+    /// Inline code in prose: digit-hyphen-digit stays one word (a date).
+    inline: bool,
 }
 
 impl Mode {
-    fn of(lang: &str, code: &str) -> Mode {
+    fn of(lang: &str, code: &str, inline: bool) -> Mode {
         let unknown = lang.is_empty();
         let python = matches!(lang, "py" | "python" | "python3" | "py3");
+        let shell = SHELL.contains(&lang);
+        let markup = MARKUP.contains(&lang) || (unknown && looks_like_markup(code));
         Mode {
-            markup: MARKUP.contains(&lang) || (unknown && looks_like_markup(code)),
-            flags: SHELL.contains(&lang) || unknown,
+            markup,
+            flags: shell || unknown,
             hash_comment: HASH_COMMENT.contains(&lang),
             dash_comment: DASH_COMMENT.contains(&lang),
-            slash_comment: !python,
+            slash_comment: !python && !shell,
+            block_comment: !python && !shell && !unknown,
+            prose: PROSE.contains(&lang),
+            kebab: unknown || shell || markup || KEBAB.contains(&lang),
+            rust: matches!(lang, "rs" | "rust"),
+            inline,
+        }
+    }
+
+    /// Attribute values inside a tag.
+    fn attrs() -> Mode {
+        Mode {
+            markup: false,
+            flags: false,
+            hash_comment: false,
+            dash_comment: false,
+            slash_comment: false,
+            block_comment: false,
+            prose: false,
+            kebab: true,
+            rust: false,
+            inline: false,
         }
     }
 }
 
+/// A `<` can open a tag here: not right after a name or a closing bracket
+/// (`Vec<String>`, `i<n` are comparisons and generics).
+fn tag_can_start(s: &str, i: usize) -> bool {
+    !s[..i]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | ')' | ']'))
+}
+
 /// A tag such as `<div>`, `</p>` or `<Welcome />`.
 fn looks_like_markup(code: &str) -> bool {
-    let b = code.as_bytes();
-    b.windows(2)
-        .any(|w| w[0] == b'<' && (w[1].is_ascii_alphabetic() || w[1] == b'/'))
-        && code.contains('>')
+    code.char_indices().any(|(i, c)| {
+        c == '<'
+            && tag_can_start(code, i)
+            && code[i + 1..]
+                .chars()
+                .next()
+                .is_some_and(|n| n.is_ascii_alphabetic() || n == '/')
+    }) && code.contains('>')
 }
 
 /// Symbols with their words, longest first.
@@ -413,7 +485,12 @@ fn is_word_start(c: char) -> bool {
 }
 
 fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
+    c.is_alphanumeric() || c == '_' || is_combining(c)
+}
+
+/// A combining mark (a decomposed accent): part of the word before it.
+fn is_combining(c: char) -> bool {
+    matches!(c, '\u{0300}'..='\u{036F}' | '\u{1AB0}'..='\u{1AFF}' | '\u{1DC0}'..='\u{1DFF}' | '\u{20D0}'..='\u{20FF}' | '\u{FE20}'..='\u{FE2F}')
 }
 
 /// The end (byte index) of the quoted string starting at `start` (its
@@ -490,6 +567,8 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
     let mut i = 0;
     // A flag can start here: the start or after whitespace.
     let mut at_word = true;
+    // Inside a JSX `{...}` expression after markup text: its depth.
+    let mut jsx: Option<usize> = None;
     while i < s.len() {
         let rest = &s[i..];
         let c = rest.chars().next().expect("not at the end");
@@ -501,31 +580,73 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
         let was_word = at_word;
         at_word = false;
         // Comments: the rest of the line read as words.
-        let comment = (mode.slash_comment && rest.starts_with("//"))
+        // A comment starts a word: `https://x` is no comment.
+        let comment = (mode.slash_comment && was_word && rest.starts_with("//"))
             || (mode.hash_comment && c == '#' && was_word)
-            || (mode.dash_comment && rest.starts_with("--"));
+            || (mode.dash_comment && was_word && rest.starts_with("--"));
         if comment {
             let text = rest.trim_start_matches(['/', '#', '-']);
             p.part("comment");
             p.part(&words_of(text));
             return;
         }
-        if let Some(body) = rest.strip_prefix("/*") {
-            let end = body.find("*/").map_or(rest.len(), |e| e + 4);
-            let inner = rest[2..end.min(rest.len())].trim_end_matches("*/");
-            p.part("comment");
-            p.part(&words_of(inner.trim_matches('*')));
-            i += end;
-            continue;
+        if mode.block_comment {
+            if let Some(body) = rest.strip_prefix("/*") {
+                let (inner, len) = match body.find("*/") {
+                    Some(e) => (&body[..e], e + 4),
+                    None => (body, rest.len()),
+                };
+                p.part("comment");
+                p.part(&words_of(inner.trim_matches('*')));
+                i += len;
+                continue;
+            }
         }
         if mode.markup {
             if let Some(n) = markup(s, i, p) {
                 i = n;
+                if s[i..].starts_with('{') {
+                    jsx = Some(0);
+                }
                 continue;
             }
         }
-        // Strings.
-        if matches!(c, '"' | '\'' | '`') {
+        // A JSX expression: its braces, then the text after it as words.
+        if let Some(depth) = jsx {
+            if c == '{' {
+                jsx = Some(depth + 1);
+            } else if c == '}' && depth <= 1 {
+                p.part("close brace");
+                jsx = None;
+                i = content(s, i + 1, p);
+                if s[i..].starts_with('{') {
+                    jsx = Some(0);
+                }
+                continue;
+            } else if c == '}' {
+                jsx = Some(depth - 1);
+            }
+        }
+        // A lifetime (`'a`), not a string.
+        if mode.rust && c == '\'' {
+            let after = &rest[1..];
+            let end = after
+                .char_indices()
+                .find(|(_, ch)| !is_word_char(*ch))
+                .map_or(after.len(), |(j, _)| j);
+            if end > 0 && !after[end..].starts_with('\'') {
+                p.part(&format!("lifetime {}", &after[..end]));
+                i += 1 + end;
+                continue;
+            }
+        }
+        // Strings; an apostrophe in a word (`don't`) opens none.
+        let apostrophe = c == '\''
+            && s[..i]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric);
+        if matches!(c, '"' | '\'' | '`') && !apostrophe {
             if let Some(end) = string_end(s, i, c) {
                 let content = &s[i + 1..end];
                 let spoken = match c {
@@ -558,13 +679,14 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
             let end = rest
                 .char_indices()
                 .find(|(j, ch)| {
+                    let digit_next = rest[j + 1..]
+                        .chars()
+                        .next()
+                        .is_some_and(|d| d.is_ascii_digit());
                     !(ch.is_alphanumeric()
                         || *ch == '_'
-                        || (*ch == '.'
-                            && rest[j + 1..]
-                                .chars()
-                                .next()
-                                .is_some_and(|d| d.is_ascii_digit())))
+                        || (*ch == '.' && digit_next)
+                        || (*ch == '-' && mode.inline && digit_next))
                 })
                 .map_or(rest.len(), |(j, _)| j);
             p.word(&rest[..end]);
@@ -572,10 +694,20 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
             continue;
         }
         if is_word_start(c) {
-            let end = rest
-                .char_indices()
-                .find(|(_, ch)| !is_word_char(*ch))
-                .map_or(rest.len(), |(j, _)| j);
+            // A hyphen (in kebab languages) or an apostrophe between letters
+            // stays in the name: `font-size`, `don't`.
+            let chars: Vec<(usize, char)> = rest.char_indices().collect();
+            let end = chars
+                .iter()
+                .enumerate()
+                .find(|(k, (_, ch))| {
+                    let joins = (*ch == '-' && mode.kebab) || *ch == '\'';
+                    let between = *k > 0
+                        && chars[k - 1].1.is_alphanumeric()
+                        && chars.get(k + 1).is_some_and(|(_, n)| n.is_alphabetic());
+                    !(is_word_char(*ch) || (joins && between))
+                })
+                .map_or(rest.len(), |(_, (j, _))| *j);
             p.word(&identifier(&rest[..end]));
             i += end;
             continue;
@@ -589,6 +721,11 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
             Some((sym, word)) => {
                 p.part(word);
                 i += sym.len();
+            }
+            None if is_combining(c) => {
+                // A stray accent joins the word before it.
+                p.words.push(c);
+                i += c.len_utf8();
             }
             None => {
                 // Anything else (an emoji, a letter-like symbol): as is.
@@ -621,6 +758,9 @@ fn markup(s: &str, i: usize, p: &mut Parts) -> Option<usize> {
         p.part("self-closing");
         return Some(content(s, i + 2, p));
     }
+    if !tag_can_start(s, i) {
+        return None;
+    }
     if let Some(after) = rest.strip_prefix("</") {
         if after.starts_with(|c: char| c.is_alphabetic()) {
             let start = i + 2;
@@ -648,14 +788,7 @@ fn markup(s: &str, i: usize, p: &mut Parts) -> Option<usize> {
             } else {
                 format!("open tag {name}")
             });
-            let attr_mode = Mode {
-                markup: false,
-                flags: false,
-                hash_comment: false,
-                dash_comment: false,
-                slash_comment: false,
-            };
-            tokens(attrs, &attr_mode, p);
+            tokens(attrs, &Mode::attrs(), p);
             if self_closing {
                 p.part("self-closing");
             }
@@ -672,8 +805,17 @@ fn content(s: &str, from: usize, p: &mut Parts) -> usize {
     let rest = &s[from..];
     let end = rest.find(['<', '{']).map_or(s.len(), |e| from + e);
     let text = words_of(&s[from..end]);
+    // Code after a tag (`(<App />)`) is read as code: text is words or
+    // sentence punctuation.
+    let is_text = text.chars().any(char::is_alphanumeric)
+        || (!text.is_empty() && text.chars().all(|c| matches!(c, '.' | '!' | '?')));
+    if !is_text {
+        return from;
+    }
+    // The comma between parts stands for a trailing `,` or `;`.
+    let text = text.trim_end_matches([',', ';']);
     if !text.is_empty() {
-        p.part(&text);
+        p.part(text);
     }
     end
 }

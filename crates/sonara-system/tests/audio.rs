@@ -85,6 +85,48 @@ fn idle_restores_after_the_grace_and_a_new_message_within_it_keeps_the_duck() {
 }
 
 #[test]
+fn a_step_wait_keeps_other_apps_as_they_are_between_code_lines() {
+    // #295: waiting at a code line in step mode is still reading, so other
+    // apps are not brought back and engaged again on every line; a wait
+    // longer than STEP_GRACE restores them.
+    let (fake, c, _) = ducked_rig(Duration::from_millis(50));
+    c.set_activity(Activity::Stepping);
+    c.sync();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(c.status().ducked, "the step wait keeps the duck");
+    c.set_activity(Activity::Speaking);
+    c.sync();
+    assert!((vol(&fake, 100) - 0.25).abs() < 1e-4);
+    let mut s = sonara_reader::State {
+        seq: 1,
+        now_playing: None,
+        queued: 0,
+        paused: true,
+        stepping: true,
+        muted: false,
+        volume: 100,
+        rate: 200,
+        voice: None,
+    };
+    assert_eq!(Activity::of(&s), Activity::Idle);
+    s.now_playing = Some(sonara_reader::NowPlaying {
+        item_id: sonara_reader::ItemId(1),
+        label: None,
+        text: "Line 2. b.".into(),
+        chunk: 3,
+        chunks: 5,
+        code: true,
+    });
+    assert_eq!(Activity::of(&s), Activity::Stepping);
+    s.muted = true;
+    assert_eq!(
+        Activity::of(&s),
+        Activity::Held,
+        "a mute still restores at once"
+    );
+}
+
+#[test]
 fn mode_off_or_disarmed_never_engages() {
     let fake = Fake::new();
     fake.add_audio(100, "vlc.exe", 0.8);

@@ -5,7 +5,7 @@ mod common;
 
 use common::Host;
 use sonara_core::code_speech::{CODE_LINE, CODE_START};
-use sonara_core::reader::{Control, ItemId};
+use sonara_core::reader::{Control, ItemId, QueueMode};
 
 /// Prose, a block of three lines, its end and more prose.
 fn block() -> String {
@@ -110,4 +110,77 @@ fn line_controls_do_nothing_outside_code() {
     assert!(h.last.is_empty(), "{:?}", h.last);
     h.ctl(Control::PreviousLine);
     assert!(h.last.is_empty(), "{:?}", h.last);
+}
+
+/// Step mode on, waiting at line 1 of `block()`.
+fn waiting() -> (Host, ItemId) {
+    let mut h = Host::new();
+    h.reader.set_code_step(true);
+    let id = h.speak(&block());
+    h.play_out();
+    assert!(h.state().paused);
+    assert!(h.state().stepping, "a step wait, not a user pause");
+    (h, id)
+}
+
+#[test]
+fn restart_during_a_step_wait_plays_from_the_top() {
+    let (mut h, id) = waiting();
+    h.ctl(Control::Restart);
+    assert_eq!(h.plays_in_last(), [(id, 0)]);
+    assert!(!h.state().paused);
+}
+
+#[test]
+fn skip_during_a_step_wait_plays_the_next_item() {
+    let (mut h, _) = waiting();
+    let next = h.speak("Next message.");
+    h.ctl(Control::Skip);
+    assert_eq!(h.plays_in_last(), [(next, 0)]);
+    assert!(!h.state().paused);
+}
+
+#[test]
+fn an_interrupting_message_during_a_step_wait_plays() {
+    let (mut h, _) = waiting();
+    let next = h.speak_with("Urgent.", QueueMode::Append, true);
+    assert_eq!(h.plays_in_last(), [(next, 0)]);
+    assert!(!h.state().paused);
+}
+
+#[test]
+fn a_user_pause_during_a_step_wait_still_holds() {
+    let (mut h, _) = waiting();
+    // Pause on a step wait makes it the user's pause: it holds.
+    h.ctl(Control::Pause);
+    assert!(!h.state().stepping);
+    h.ctl(Control::Restart);
+    assert!(h.plays_in_last().is_empty());
+    assert!(h.state().paused);
+}
+
+#[test]
+fn pause_and_play_mid_line_keeps_stepping() {
+    let (mut h, _) = waiting();
+    h.ctl(Control::NextLine); // line 1 plays
+    h.ctl(Control::Pause);
+    h.ctl(Control::Play);
+    h.finish_chunk();
+    assert!(h.state().paused, "still stepping: waits at line 2");
+    assert_eq!(h.state().now_playing.unwrap().chunk, 3);
+}
+
+#[test]
+fn restart_into_a_code_block_steps_again() {
+    let mut h = Host::new();
+    h.reader.set_code_step(true);
+    let text = format!(
+        "{CODE_START}Python code block, 2 lines.\n{CODE_LINE}Line 1. a.\n{CODE_LINE}Line 2. b."
+    );
+    h.speak(&text);
+    h.play_out(); // the announcement, then the wait at line 1
+    h.ctl(Control::Play); // the rest straight through
+    h.ctl(Control::Restart);
+    h.finish_chunk(); // the announcement again
+    assert!(h.state().paused, "waits at line 1 again");
 }

@@ -61,6 +61,11 @@ impl AudioMode {
 pub const DEFAULT_DUCK_LEVEL: u8 = 30;
 /// How long the reader may be idle before other apps come back.
 pub const IDLE_GRACE: Duration = Duration::from_millis(400);
+/// How long a step-mode wait at a code line (#295) keeps other apps as
+/// they are before they come back: stepping through a block does not
+/// bring them up and down on every line, and a user who walks away does
+/// not leave them ducked or paused.
+pub const STEP_GRACE: Duration = Duration::from_secs(30);
 
 /// File names in the state folder.
 pub const DUCK_STATE: &str = "duck_state.json";
@@ -73,6 +78,9 @@ pub enum Activity {
     Idle,
     /// An item is current but silent (paused or muted).
     Held,
+    /// Waiting at a code line in step mode (#295): restored after
+    /// `STEP_GRACE`.
+    Stepping,
     /// An item is being read aloud.
     Speaking,
 }
@@ -81,6 +89,7 @@ impl Activity {
     pub fn of(state: &sonara_reader::State) -> Activity {
         match &state.now_playing {
             None => Activity::Idle,
+            Some(_) if state.stepping && !state.muted => Activity::Stepping,
             Some(_) if state.paused || state.muted => Activity::Held,
             Some(_) => Activity::Speaking,
         }
@@ -418,22 +427,35 @@ impl Worker {
                 AudioMode::Off => {}
             }
         } else if self.engaged() {
-            let grace = s.armed
-                && s.mode != AudioMode::Off
-                && s.activity == Activity::Idle
-                && !self.grace.is_zero();
+            let wait = self.grace_for(s.activity);
+            let grace = s.armed && s.mode != AudioMode::Off && wait.is_some_and(|g| !g.is_zero());
             if !grace {
                 self.restore_all(restore_reason(&s));
             } else {
                 let since = *self.idle_since.get_or_insert_with(Instant::now);
-                if since.elapsed() >= self.grace {
-                    self.restore_all("idle");
+                if since.elapsed() >= wait.unwrap_or_default() {
+                    let why = if s.activity == Activity::Stepping {
+                        "step wait"
+                    } else {
+                        "idle"
+                    };
+                    self.restore_all(why);
                 }
             }
         } else {
             self.idle_since = None;
         }
         self.publish();
+    }
+
+    /// How long other apps stay engaged in this activity: the idle grace,
+    /// the step grace, or `None` (restored at once).
+    fn grace_for(&self, a: Activity) -> Option<Duration> {
+        match a {
+            Activity::Idle => Some(self.grace),
+            Activity::Stepping => Some(STEP_GRACE),
+            _ => None,
+        }
     }
 
     /// The startup sweep, with the worker's own platform objects (COM
@@ -447,7 +469,10 @@ impl Worker {
         loop {
             let cmd = match self.idle_since {
                 Some(since) => {
-                    let left = self.grace.saturating_sub(since.elapsed());
+                    let grace = self
+                        .grace_for(self.snapshot().activity)
+                        .unwrap_or(self.grace);
+                    let left = grace.saturating_sub(since.elapsed());
                     match rx.recv_timeout(left) {
                         Ok(c) => Some(c),
                         Err(RecvTimeoutError::Timeout) => None,

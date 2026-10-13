@@ -128,3 +128,81 @@ fn inline_code_uses_the_same_words_without_a_label() {
     assert_eq!(inline("--verbose"), "dash dash verbose");
     assert_eq!(inline("npm"), "npm");
 }
+
+#[test]
+fn a_url_is_never_read_as_a_comment() {
+    let l = line("curl -fsSL https://example.com/install.sh | sh", "bash", 1).unwrap();
+    assert!(!l.contains("comment"), "{l}");
+    assert!(l.contains("pipe"), "{l}");
+    // Inline, a URL is left to the prose rules.
+    assert_eq!(inline("https://example.com"), "https://example.com");
+}
+
+#[test]
+fn hyphenated_names_are_words_not_minus() {
+    assert_eq!(inline("sonara-core"), "sonara core");
+    assert_eq!(
+        inline("cargo test -p sonara-core"),
+        "cargo test, dash p, sonara core"
+    );
+    assert_eq!(
+        line("font-size: 12px;", "css", 1).as_deref(),
+        Some("Line 1. font size, colon, 12px.")
+    );
+    // A date inline is left whole for the prose rules.
+    assert_eq!(inline("2026-10-13"), "2026-10-13");
+}
+
+#[test]
+fn generics_are_not_tags() {
+    assert_eq!(
+        inline("Vec<String>"),
+        "Vec, less than, String, greater than"
+    );
+    let l = line("const [n, setN] = useState<number>(0);", "tsx", 1).unwrap();
+    assert!(!l.contains("tag") && !l.contains("(0)"), "{l}");
+    let l = line("for (let i = 0; i<n; i++) {", "jsx", 1).unwrap();
+    assert!(!l.contains("tag"), "{l}");
+    // Real JSX is still read as tags.
+    assert_eq!(
+        line("return (<App />)", "jsx", 1).as_deref(),
+        Some("Line 1. return, open paren, tag App, self-closing, close paren.")
+    );
+}
+
+#[test]
+fn apostrophes_and_lifetimes_are_not_strings() {
+    let l = line("fn get<'a>(&'a self) -> &'a str {", "rust", 1).unwrap();
+    assert!(!l.contains("quote"), "{l}");
+    assert!(l.contains("lifetime a"), "{l}");
+    assert_eq!(
+        line("Don't do this, it's bad.", "text", 1).as_deref(),
+        Some("Line 1. Don't do this, it's bad.")
+    );
+}
+
+#[test]
+fn globs_are_not_block_comments_and_real_ones_are() {
+    let l = line("ls src/*.rs", "sh", 1).unwrap();
+    assert!(!l.contains("comment"), "{l}");
+    assert!(!inline("src/**/*.ts").contains("comment"));
+    assert_eq!(
+        line("int x = 1; /* one */", "c", 1).as_deref(),
+        Some("Line 1. int x, equals, 1, semicolon, comment, one.")
+    );
+}
+
+#[test]
+fn jsx_text_after_an_expression_is_read_as_words() {
+    assert_eq!(
+        line("<p>Hello, {name}!</p>", "jsx", 1).as_deref(),
+        Some("Line 1. open tag p, Hello, open brace, name, close brace, !, close tag p.")
+    );
+}
+
+#[test]
+fn decomposed_accents_stay_in_their_word() {
+    let l = line("let cafe\u{301} = 1", "rust", 1).unwrap();
+    assert!(!l.contains(" \u{301}"), "{l}");
+    assert!(l.contains("cafe\u{301}"), "{l}");
+}

@@ -276,6 +276,7 @@ mod tests {
                 now_playing: None,
                 queued: 0,
                 paused: false,
+                stepping: false,
                 muted: false,
                 volume: 100,
                 rate: 200,
