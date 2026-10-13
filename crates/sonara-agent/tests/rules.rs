@@ -10,7 +10,7 @@ use sonara_agent::{
     Action, Ask, AskKind, Choice, Earcon, Job, ReadMode, Rules, Stale, Step, Timer, Verbosity,
     DELTA_GAP,
 };
-use sonara_core::code_speech::{CODE_LINE, CODE_START};
+use sonara_core::code_speech::{CODE_LINE, CODE_START, SPOKEN};
 use std::time::Duration;
 
 fn rules() -> Rules {
@@ -29,6 +29,8 @@ fn spoken(actions: &[Action]) -> Vec<String> {
         .iter()
         .filter_map(|a| match a {
             Action::Speak { text, decision, .. } => {
+                // Prose comes marked as already spoken (#294).
+                let text = text.strip_prefix(SPOKEN).unwrap_or(text);
                 Some(format!("{}{text}", if *decision { "!" } else { "" }))
             }
             _ => None,
@@ -1017,7 +1019,10 @@ fn summaries_are_heard_in_turn_finish_order_across_channels() {
     let order: Vec<(String, String)> = a
         .iter()
         .filter_map(|x| match x {
-            Action::Speak { channel, text, .. } => Some((channel.clone(), text.clone())),
+            Action::Speak { channel, text, .. } => Some((
+                channel.clone(),
+                text.strip_prefix(SPOKEN).unwrap_or(text).to_string(),
+            )),
             _ => None,
         })
         .collect();
@@ -1221,7 +1226,8 @@ fn what_is_not_spoken_leaves_a_note_with_the_reason() {
         prose(&mut r, "fg", "Quiet please.", 0, true),
         [Action::Store {
             channel: "fg".into(),
-            text: "Quiet please.".into(),
+            // In its spoken form, read as it is later (#294).
+            text: format!("{SPOKEN}Quiet please."),
             decision: false,
             kind: "prose",
         }]

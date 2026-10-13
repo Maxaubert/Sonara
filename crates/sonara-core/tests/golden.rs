@@ -64,6 +64,11 @@ fn every_golden_case_matches() {
                     if !ok {
                         failures.push(format!("{name}: got {got:?}"));
                     }
+                    // The output reads the same again (#294 review).
+                    let again = pronounce(&got);
+                    if again != got {
+                        failures.push(format!("{name}: a second pass gives {again:?}"));
+                    }
                     true
                 }
                 other => panic!("unknown fn {other}"),

@@ -18,6 +18,10 @@
 pub const CODE_LINE: char = '\u{E000}';
 /// Starts a chunk that announces a code block.
 pub const CODE_START: char = '\u{E001}';
+/// Starts a text already in its spoken form (the agent's prose, #294
+/// review): the reader cuts it into sentences and reads it as it is,
+/// without running the text rules a second time.
+pub const SPOKEN: char = '\u{E002}';
 
 /// What kind of chunk a text is, by its marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +42,8 @@ pub fn kind(chunk: &str) -> CodeKind {
 
 /// `text` without a leading code marker.
 pub fn unmarked(text: &str) -> &str {
-    text.strip_prefix([CODE_LINE, CODE_START]).unwrap_or(text)
+    text.strip_prefix([CODE_LINE, CODE_START, SPOKEN])
+        .unwrap_or(text)
 }
 
 const LANGUAGES: &[(&[&str], &str)] = &[

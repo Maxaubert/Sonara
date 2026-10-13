@@ -143,9 +143,22 @@ def test_pronunciations_are_added_saved_and_removed(live, browser):
     pw.expect(page.locator("#pron-word")).to_have_value("")
     page.reload()
     pw.expect(page.locator("#pron-list")).to_contain_text("Oo veh")
-    page.click("#pron-list button")
+    # The row sits after the code rows (#294 review).
+    order = page.locator("#verbosity-seg ~ *, .row").evaluate_all("ns => ns.map(n => n.id)")
+    assert order.index("codestep-row") < order.index("pron-card"), order
+    # Removing keeps the keyboard on the list, then on the word field.
+    page.locator("#pron-word").fill("nginx")
+    page.locator("#pron-say").fill("engine X")
+    page.click("#pron-add")
+    pw.expect(page.locator("#pron-list li")).to_have_count(2)
+    page.locator("#pron-list button").first.focus()
+    page.keyboard.press("Enter")
+    pw.expect(page.locator("#pron-list li")).to_have_count(1)
+    pw.expect(page.locator("#pron-list button")).to_be_focused()
+    page.keyboard.press("Enter")
     assert eventually(lambda: lv.saved().get("pronunciations") == [])
     pw.expect(page.locator("#pron-list")).to_contain_text("None yet")
+    pw.expect(page.locator("#pron-word")).to_be_focused()
     page.close()
 
 

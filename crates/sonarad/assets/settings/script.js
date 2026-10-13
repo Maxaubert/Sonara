@@ -760,10 +760,12 @@ function renderPronunciations(list) {
   if (sig === pronSig) return;
   pronSig = sig;
   const ul = $("pron-list");
+  // Keep the keyboard where it was: on the next Remove, else the word field.
+  const ae = document.activeElement;
+  const was = ae && ul.contains(ae) ? [...ul.querySelectorAll("button")].indexOf(ae) : -1;
   ul.replaceChildren();
   if (!list.length) {
     ul.append(el("li", "empty", "None yet. Add a word and how to say it."));
-    return;
   }
   list.forEach((p, i) => {
     const li = el("li");
@@ -772,6 +774,10 @@ function renderPronunciations(list) {
         change("pronunciations", list.filter((_, j) => j !== i), "Pronunciations")));
     ul.append(li);
   });
+  if (was >= 0) {
+    const buttons = ul.querySelectorAll("button");
+    (buttons[Math.min(was, buttons.length - 1)] || $("pron-word")).focus();
+  }
 }
 async function addPronunciation() {
   const word = $("pron-word").value.trim(), say = $("pron-say").value.trim();
@@ -783,6 +789,7 @@ async function addPronunciation() {
   if (await change("pronunciations", list, "Pronunciations") !== undefined) {
     $("pron-word").value = "";
     $("pron-say").value = "";
+    $("pron-word").focus();
   }
 }
 

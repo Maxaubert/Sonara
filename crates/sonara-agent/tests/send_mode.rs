@@ -25,6 +25,9 @@ fn spoken(actions: &[Action]) -> Vec<String> {
         .iter()
         .filter_map(|a| match a {
             Action::Speak { text, decision, .. } => {
+                let text = text
+                    .strip_prefix(sonara_core::code_speech::SPOKEN)
+                    .unwrap_or(text);
                 Some(format!("{}{text}", if *decision { "!" } else { "" }))
             }
             _ => None,
@@ -200,7 +203,8 @@ fn muted_the_joined_message_is_stored_not_spoken() {
         stored,
         [&Action::Store {
             channel: "fg".into(),
-            text: "One. Two.".into(),
+            // In its spoken form, read as it is later (#294).
+            text: format!("{}One. Two.", sonara_core::code_speech::SPOKEN),
             decision: false,
             kind: "prose",
         }]

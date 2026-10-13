@@ -103,7 +103,7 @@ use crate::decision::{self, AskKind, Choice};
 use crate::earcon::Earcon;
 use crate::settings::{ReadMode, Settings, Verbosity};
 use sonara_core::assembler::{Chunk, ProseAssembler};
-use sonara_core::code_speech::{CODE_LINE, CODE_START};
+use sonara_core::code_speech::{CODE_LINE, CODE_START, SPOKEN};
 use sonara_core::text::normalize_for_speech;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -693,15 +693,20 @@ impl Rules {
         let c = self.turn(channel);
         let n = n.min(c.held_prose.len());
         let held: Vec<(String, bool)> = c.held_prose.drain(..n).collect();
+        if held.is_empty() {
+            return;
+        }
+        // The prose is in its spoken form already (the text rules ran in
+        // the assembler): the reader only cuts it into sentences (#294).
         if !self.whole {
             for (text, _) in held {
-                self.speak(out, channel, text, false, "prose");
+                self.speak(out, channel, format!("{SPOKEN}{text}"), false, "prose");
             }
             return;
         }
-        let mut text = String::new();
+        let mut text = String::from(SPOKEN);
         for (t, para) in held {
-            if !text.is_empty() {
+            if text.len() > SPOKEN.len_utf8() {
                 text.push_str(if para { "\n\n" } else { " " });
             }
             text.push_str(&t);

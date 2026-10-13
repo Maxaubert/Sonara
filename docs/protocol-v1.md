@@ -206,7 +206,7 @@ reply `{ok: true, key, value}` with the value now in force.
 | `voice` | a voice `id` or `name` of the current engine; `null` for the engine default. `get` returns the id or `null` |
 | `engine` | an engine id: `kokoro` or `onecore` (`fake` in test runs), or the id of an [external engine](#external-engines) the user added. Switching resets a voice the new engine lacks |
 | `debug_log` | `true` or `false` (default `true`, runtime 0.13.2, #219): the troubleshooting log records text (what was read, the messages received, the hooks' raw input); `false` keeps every text out of `logs\` (see [Saved settings](#saved-settings)). A host key: it needs no extension |
-| `pronunciations` | protocol 1.8 (runtime 0.26.0, #294): the user's own words, a list of at most 200 `{word, say}` (a word up to 60 characters, what to say up to 200, both non-blank; a word given twice keeps its last `say`). Each `word` (exact case, a whole word) is read as its `say` before every other text rule. Default `[]`. See How text is read |
+| `pronunciations` | protocol 1.8 (runtime 0.26.0, #294): the user's own words, a list of at most 200 `{word, say}` (a word up to 60 characters, what to say up to 200, both non-blank; a word given twice keeps its last `say`). Each `word` (exact case, a whole word, not inside a path, URL or address) is read as its `say`, as written: before every other text rule, which never change the `say`. Default `[]`. See How text is read |
 
 A rate, voice or engine change applies to chunks synthesized from then on. Out-of-range or wrongly
 typed values are `E_BAD_REQUEST`; an unknown voice or engine is `E_NOT_FOUND`; an unknown key is
@@ -749,7 +749,7 @@ units, percent, times (`14:30` "fourteen thirty", `9am`), ranges, fractions, ord
 numbers of 1000 or more (years after a cue word), abbreviations (`e.g.`), roman numerals after a
 keyword, tech terms (`SQL` "sequel", `nginx` "engine X"), identifiers (`getUserName` "get user
 name") and capitalised abbreviations spelled out unless they make a word (`API` "A P I", `NASA`
-kept). Whole numbers under 1000 with no other reading stay digits. Inline code and link targets are
+kept). Whole numbers under 1000 with no other reading stay digits. Counts read as counts (`12/12` "twelve of twelve"), durations as seconds (`30s`), and a sentence-ending dot after `PM` or `U.S.` stays. The agent's text is converted once: the reader then only cuts it into sentences. Inline code and link targets are
 left to their own rules. The rules and their sources: `research/sonara/2026-10-13-text-normalization-survey.md`
 (outside the repo) and `tests/fixtures/text_rules/pronunciation.json` (the cases).
 

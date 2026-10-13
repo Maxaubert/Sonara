@@ -25,28 +25,34 @@ use std::sync::RwLock;
 
 /// The user's own pronunciations, matched first (whole words, case
 /// sensitive): (written, said).
-static USER: Lazy<RwLock<Vec<(String, String, Regex)>>> = Lazy::new(|| RwLock::new(Vec::new()));
+static USER: Lazy<RwLock<UserWords>> = Lazy::new(|| RwLock::new(UserWords::default()));
+
+/// The user's words and one pattern for all of them (longest first), so a
+/// word is matched once and a `say` is never read by another entry.
+#[derive(Default)]
+struct UserWords {
+    words: Vec<(String, String)>,
+    pattern: Option<Regex>,
+}
 
 /// Set the user's pronunciations (the `pronunciations` setting).
 pub fn set_user_words(words: Vec<(String, String)>) {
-    let compiled = words
-        .into_iter()
-        .filter(|(w, _)| !w.is_empty())
-        .map(|(w, say)| {
-            let pat = re(&regex::escape(&w));
-            (w, say, pat)
-        })
-        .collect();
-    *USER.write().unwrap_or_else(|e| e.into_inner()) = compiled;
+    let words: Vec<(String, String)> = words.into_iter().filter(|(w, _)| !w.is_empty()).collect();
+    let mut alts: Vec<&str> = words.iter().map(|(w, _)| w.as_str()).collect();
+    alts.sort_by_key(|w| std::cmp::Reverse(w.len()));
+    let pattern = (!alts.is_empty()).then(|| {
+        re(&alts
+            .iter()
+            .map(|w| regex::escape(w))
+            .collect::<Vec<_>>()
+            .join("|"))
+    });
+    *USER.write().unwrap_or_else(|e| e.into_inner()) = UserWords { words, pattern };
 }
 
 /// The user's pronunciations.
 pub fn user_words() -> Vec<(String, String)> {
-    USER.read()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .map(|(w, s, _)| (w.clone(), s.clone()))
-        .collect()
+    USER.read().unwrap_or_else(|e| e.into_inner()).words.clone()
 }
 
 fn re(p: &str) -> Regex {
@@ -152,9 +158,10 @@ fn date_words(day: u64, month: usize, y: Option<u64>) -> Option<String> {
     Some(s)
 }
 
-/// "fourteen thirty", "nine oh five", "fourteen hundred".
+/// "fourteen thirty", "nine oh five", "fourteen hundred", "nine o'clock".
 fn clock(h: u64, m: u64) -> String {
     let mins = match m {
+        0 if (1..=12).contains(&h) => "o'clock".to_string(),
         0 => "hundred".to_string(),
         1..=9 => format!("oh {}", cardinal(m)),
         _ => cardinal(m),
@@ -225,8 +232,8 @@ static TECH: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
         ("sudo", "soo doo"),
         ("kubectl", "kube control"),
         ("Kubernetes", "koo ber net eez"),
-        ("K8s", "Kubernetes"),
-        ("k8s", "Kubernetes"),
+        ("K8s", "koo ber net eez"),
+        ("k8s", "koo ber net eez"),
         ("npm", "N P M"),
         ("pnpm", "P N P M"),
         ("PyPI", "pie P I"),
@@ -323,6 +330,21 @@ static KEEP: Lazy<std::collections::HashSet<&'static str>> = Lazy::new(|| {
     .collect()
 });
 
+/// Capitalised English words said as words, though Festival's rule would
+/// spell them (emphasis, log levels, keywords; #294 review).
+const COMMON: &[&str] = &[
+    "NO", "SO", "GO", "DO", "TO", "OR", "IS", "AS", "AT", "IN", "ON", "OF", "BE", "ME", "WE", "HE",
+    "BY", "MY", "UP", "AN", "IF", "THE", "AND", "ARE", "ALL", "ANY", "ONE", "OUT", "WHO", "WHY",
+    "HOW", "NEW", "OFF", "OLD", "OUR", "YOU", "TOO", "USE", "ONLY", "TRUE", "HEAD", "FAIL", "INFO",
+    "NOTE", "EACH", "ALSO", "NEVER", "MUST", "NONE", "OPEN", "DONE", "READ", "SEND", "STOP",
+    "SKIP", "WARN", "NULL", "WAIT", "EXIT", "EDIT", "TEST", "FREE", "MORE", "MOST", "YES", "NOT",
+    "SEE", "ERROR", "DEBUG", "TRACE", "FATAL", "FALSE", "PASS", "OKAY", "VERY", "WILL", "SHALL",
+    "MAY", "IDEA", "AREA", "DATA", "BODY", "KEY", "KEYS", "TYPE", "FILE", "PATH", "HOME", "USER",
+    "SAVE", "LOAD", "TODO", "FIXME", "HACK", "XXX", "EOF", "AUTO", "BOTH", "FROM", "INTO", "WITH",
+    "THIS", "THAT", "HAVE", "WERE", "WHAT", "WHEN", "HERE", "THERE", "OVER", "UNDER", "ABOUT",
+    "AFTER", "BEFORE", "AGAIN", "AWAY", "BACK", "DOWN", "DONT", "CANT", "WONT",
+];
+
 /// Spelled even though they make a word (survey: forced letters).
 const FORCED: &[&str] = &[
     "OS", "ID", "IT", "CI", "IO", "US", "LED", "MIT", "PNG", "IDs",
@@ -385,7 +407,7 @@ fn caps_word(w: &str) -> String {
     if FORCED.contains(&w) {
         return spell(w);
     }
-    if KEEP.contains(w) || w.len() > 5 || w.len() < 2 {
+    if KEEP.contains(w) || COMMON.contains(&w) || w.len() > 5 || w.len() < 2 {
         return w.to_string();
     }
     // A short roman numeral on its own is spelled (`XIV`): no keyword
@@ -639,6 +661,8 @@ struct Rules {
     letters_digits: Regex,
     word: Regex,
     caps_plural: Regex,
+    rating: Regex,
+    grouped_space: Regex,
 }
 
 static RULES: Lazy<Rules> = Lazy::new(|| {
@@ -653,7 +677,7 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
         url: re(r"https?://[^\s<>()\[\]]+"),
         email: re(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"),
         path: re(
-            r"(?:[A-Za-z]:\\|~[\\/]|\.{1,2}[\\/])?(?:[A-Za-z0-9_.@-]+[\\/])*[A-Za-z0-9_@-][A-Za-z0-9_.@-]*\.[A-Za-z][A-Za-z0-9]{0,6}(?::\d+(?::\d+)?)?",
+            r"(?:[A-Za-z]:\\|~[\\/]|\.{1,2}[\\/])?(?:[\p{L}\p{N}_.@-]+[\\/])*[\p{L}\p{N}_@-][\p{L}\p{N}_.@-]*\.[A-Za-z][A-Za-z0-9]{0,6}(?::\d+(?::\d+)?)?",
         ),
         iso: re(
             r"(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?",
@@ -664,9 +688,11 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
         version_v: re(
             r"[vV](\d+(?:\.\d+)*)((?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)(?:\+[0-9A-Za-z.]+)?",
         ),
-        version_word: re(r"([Vv]ersion) (\d+(?:\.\d+)+)"),
+        version_word: re(
+            r"([Vv]ersion) (\d+(?:\.\d+)+)((?:-[A-Za-z][0-9A-Za-z]*(?:\.[0-9A-Za-z]+)*)?)(?:\+[0-9A-Za-z.]+)?",
+        ),
         version_tool: re(
-            r"(Python|Node|Rust|Go|Java|Kotlin|Swift|Ruby|PHP|Perl|Windows|Android|Debian|Chrome|Firefox|Safari|PostgreSQL|Postgres|MySQL|Redis|Docker|Electron|React|Angular|Svelte|Deno|Bun|Cargo|TypeScript|Sonara|Claude|Gemini|GPT|Kokoro|Opus|Sonnet|Haiku|Fable|Ubuntu|Fedora|Unity|Unreal|Blender|Godot|Qt|Java|Dotnet|LLVM|GCC|Clang|Excel|Office|Pixel|iPhone) (\d+(?:\.\d+)+)",
+            r"(Python|Node|Rust|Go|Java|Kotlin|Swift|Ruby|PHP|Perl|Windows|Android|Debian|Chrome|Firefox|Safari|PostgreSQL|Postgres|MySQL|Redis|Docker|Electron|React|Angular|Svelte|Deno|Bun|Cargo|TypeScript|Sonara|Claude|Gemini|GPT|Kokoro|Opus|Sonnet|Haiku|Fable|Ubuntu|Fedora|Unity|Unreal|Blender|Godot|Qt|Java|Dotnet|LLVM|GCC|Clang|Excel|Office|Pixel|iPhone) (\d+(?:\.\d+)+)((?:-[A-Za-z][0-9A-Za-z]*(?:\.[0-9A-Za-z]+)*)?)(?:\+[0-9A-Za-z.]+)?",
         ),
         version_bare: re(
             r"(\d+(?:\.\d+){2,})((?:-[0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*)?)(?:\+[0-9A-Za-z.]+)?",
@@ -680,7 +706,7 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
             r"([Tt]el|[Pp]hone|[Rr]ing|[Cc]all|[Mm]obile|[Mm]obil)\.?:? ((?:\d{2,4}[ -]){1,5}\d{2,4})",
         ),
         money: re(
-            r"([$£€])(\d[\d,]*(?:\.\d+)?)(?:\s?(bn|million|billion|thousand|trillion|k|K|m|M|b|B))?(?:\s?[-–]\s?[$£€]?(\d[\d,]*(?:\.\d+)?))?",
+            r"([$£€])(\d[\d,]*(?:\.\d+)?)(?:\s?(bn|million|billion|thousand|trillion|k|K|m|M|b|B)\b)?(?:\s?[-–]\s?[$£€]?(\d[\d,]*(?:\.\d+)?))?",
         ),
         nok_before: re(r"(?:NOK|kr\.?) ?(\d{1,3}(?:[ .]\d{3})+|\d+)(?:,(\d{2}|-))?"),
         nok_after: re(r"(\d{1,3}(?:[ .]\d{3})+|\d+)(?:,(\d{2}|-))? ?(?:kr|NOK)"),
@@ -696,16 +722,14 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
         bits: re(
             r"(\d+)-(bit|core|inch|byte|day|hour|minute|second|week|month|year|page|step|part|point|line)",
         ),
-        ampm: re(r"(\d{1,2})(?::(\d{2}))? ?([AaPp])\.?[Mm]\.?"),
+        ampm: re(r"(\d{1,2})(?::(\d{2}))? ?([AaPp])\.?[Mm](\.?)"),
         duration: re(
             r"(took|elapsed|duration|lasted|after|in|for|Took|Elapsed|Duration) (\d{1,2}):(\d{2}):(\d{2})",
         ),
         clock: re(r"(\d{1,2}):(\d{2})(?::(\d{2}))?"),
         ratio: re(r"(\d{1,2}):(\d)"),
         date_num: re(r"(\d{1,2})([./-])(\d{1,2})([./-])(\d{4})"),
-        date_short: re(
-            r"(on|by|until|due|from|since|before|after|On|By|Until|Due|From|Since|Before|After) (\d{1,2})/(\d{1,2})",
-        ),
+        date_short: re(r"(on|until|due|On|Until|Due) (\d{1,2})/(\d{1,2})"),
         date_dm: re(&format!(
             r"(\d{{1,2}})(?:st|nd|rd|th)? ({months})\.?(?:,? (\d{{4}}))?"
         )),
@@ -715,6 +739,8 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
         range: re(r"(\d{1,4}) ?[-–] ?(\d{1,4})"),
         mixed_fraction: re(r"(\d+) (\d)/(\d{1,2})"),
         fraction: re(r"(\d{1,2})/(\d{1,2})"),
+        rating: re(r"(\d+)\.(\d+)/(\d{1,2})"),
+        grouped_space: re(r"(-?)(\d{1,3}(?: \d{3})+)"),
         ordinal: re(r"(\d+)(st|nd|rd|th)"),
         decimal: re(r"(-?)(\d*)\.(\d+)"),
         grouped: re(r"(-?)(\d{1,3}(?:(?:,|\u{00A0}|\u{202F}|\u{2009})\d{3})+(?:\.\d+)?)"),
@@ -740,13 +766,14 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
 /// `text` with every rule applied (module docs).
 pub fn pronounce(text: &str) -> String {
     let r = &*RULES;
-    // Inline code and link targets wait aside, as placeholders.
+    // Inline code, link targets and the user's words wait aside, as
+    // placeholders no rule reads (their number in private-use digits).
     let mut kept: Vec<String> = Vec::new();
-    let mut t = each(text, &r.protect, |c, _, _| {
-        kept.push(c[0].to_string());
-        Some(format!("\u{E020}{}\u{E021}", kept.len() - 1))
+    let text = text.replace(['\u{E020}', '\u{E021}'], "");
+    let mut t = each(&text, &r.protect, |c, _, _| {
+        Some(hold(&mut kept, c[0].to_string()))
     });
-    t = user(&t);
+    t = user(&t, &mut kept);
     t = tech_symbols(&t);
     t = each(&t, &r.url, |c, _, _| {
         let raw = c[0].trim_end_matches(['.', ',', ';', ':', '!', '?', '\'', '"']);
@@ -827,10 +854,23 @@ pub fn pronounce(text: &str) -> String {
         return t;
     }
     each(&t, &PLACEHOLDER, |c, _, _| {
-        c[1].parse::<usize>()
-            .ok()
-            .and_then(|i| kept.get(i).cloned())
+        let i = c[1].chars().try_fold(0usize, |n, d| {
+            Some(n * 10 + (d as u32).checked_sub(0xE030)? as usize)
+        })?;
+        kept.get(i).cloned()
     })
+}
+
+/// Keep `s` aside: a placeholder with its index in private-use digits
+/// (U+E030 to U+E039), which no rule reads as a number.
+fn hold(kept: &mut Vec<String>, s: String) -> String {
+    kept.push(s);
+    let digits: String = (kept.len() - 1)
+        .to_string()
+        .chars()
+        .filter_map(|d| char::from_u32(0xE030 + d.to_digit(10)?))
+        .collect();
+    format!("\u{E020}{digits}\u{E021}")
 }
 
 /// Looks like a hash: digits and letters mixed, several different ones.
@@ -860,16 +900,27 @@ fn ip_words(ip: &str) -> Option<String> {
     )
 }
 
-fn user(t: &str) -> String {
+/// The user's words, each kept aside as its `say` (read as written, by no
+/// other rule). A word inside a path, URL or address is left to it.
+fn user(t: &str, kept: &mut Vec<String>) -> String {
     let words = USER.read().unwrap_or_else(|e| e.into_inner());
-    let mut out = t.to_string();
-    for (_, say, pat) in words.iter() {
-        let cur = out.clone();
-        out = each(&cur, pat, |_, s, e| {
-            (!wordy(prev(&cur, s)) && !wordy(next(&cur, e))).then(|| say.clone())
-        });
-    }
-    out
+    let Some(pat) = &words.pattern else {
+        return t.to_string();
+    };
+    each(t, pat, |c, s, e| {
+        let (p, n) = (prev(t, s), next(t, e));
+        let p2 = t[..s].chars().rev().nth(1);
+        let n2 = t[e..].chars().nth(1);
+        let inside = matches!(p, Some('/' | '\\'))
+            || (matches!(p, Some('.' | '@' | ':')) && wordy(p2))
+            || matches!(n, Some('/' | '\\'))
+            || (matches!(n, Some('.' | ':' | '@')) && wordy(n2));
+        if wordy(p) || wordy(n) || inside {
+            return None;
+        }
+        let say = words.words.iter().find(|(w, _)| *w == c[0])?.1.clone();
+        Some(hold(kept, say))
+    })
 }
 
 static TECH_SYMBOL_RES: Lazy<Vec<(&'static str, &'static str, Regex)>> = Lazy::new(|| {
@@ -878,7 +929,7 @@ static TECH_SYMBOL_RES: Lazy<Vec<(&'static str, &'static str, Regex)>> = Lazy::n
         .map(|(t, s)| (*t, *s, re(&regex::escape(t))))
         .collect()
 });
-static PLACEHOLDER: Lazy<Regex> = Lazy::new(|| re("\u{E020}(\\d+)\u{E021}"));
+static PLACEHOLDER: Lazy<Regex> = Lazy::new(|| re("\u{E020}([\u{E030}-\u{E039}]+)\u{E021}"));
 static SLASH_WORDS: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
     [
         ("n/a", "not applicable"),
@@ -913,13 +964,14 @@ fn paths(t: &str) -> String {
         if wordy(prev(t, s)) || wordy(next(t, e)) || matches!(prev(t, s), Some('@' | '.')) {
             return None;
         }
-        let (body, line) = match raw.split_once(':') {
-            Some((b, l))
-                if !b.ends_with('\\') && l.chars().next().is_some_and(|c| c.is_ascii_digit()) =>
-            {
-                (b, l.split(':').next())
-            }
-            _ => (raw, None),
+        // `:N` after the file is a line (not the drive's colon).
+        let split = raw
+            .match_indices(':')
+            .map(|(i, _)| (&raw[..i], &raw[i + 1..]))
+            .find(|(b, l)| !b.ends_with('\\') && l.starts_with(|c: char| c.is_ascii_digit()));
+        let (body, line) = match split {
+            Some((b, l)) => (b, l.split(':').next()),
+            None => (raw, None),
         };
         let has_sep = body.contains(['/', '\\']);
         let ext = body.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
@@ -974,15 +1026,27 @@ fn pre_release(tag: &str) -> String {
 
 fn versions(t: &str) -> String {
     let r = &*RULES;
+    let named = |c: &Captures| {
+        format!(
+            "{} {}{}",
+            &c[1],
+            version_parts(&c[2]),
+            pre_release(c.get(3).map_or("", |m| m.as_str()))
+        )
+    };
     let mut t = each(t, &r.version_word, |c, s, e| {
-        free(t, s, e).then(|| format!("{} {}", &c[1], version_parts(&c[2])))
+        free(t, s, e).then(|| named(c))
     });
     let cur = t.clone();
     t = each(&cur, &r.version_tool, |c, s, e| {
-        free(&cur, s, e).then(|| format!("{} {}", &c[1], version_parts(&c[2])))
+        free(&cur, s, e).then(|| named(c))
     });
     let cur = t.clone();
     t = each(&cur, &r.version_v, |c, s, e| {
+        // `V8`, `V2 rockets`: a capital V and a whole number is a name.
+        if c[0].starts_with('V') && !c[1].contains('.') {
+            return None;
+        }
         free_left(&cur, s, e).then(|| {
             format!(
                 "version {}{}",
@@ -998,9 +1062,44 @@ fn versions(t: &str) -> String {
         if p.len() == 3 && p[2].len() == 4 && p[0].len() <= 2 && p[1].len() <= 2 {
             return None;
         }
+        // `section 3.2.1` numbers a part: no "version".
+        let label = cur[..s]
+            .trim_end()
+            .rsplit(|ch: char| !ch.is_alphanumeric())
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let lead = if matches!(
+            label.as_str(),
+            "section"
+                | "sections"
+                | "step"
+                | "steps"
+                | "clause"
+                | "chapter"
+                | "part"
+                | "paragraph"
+                | "figure"
+                | "fig"
+                | "table"
+                | "item"
+                | "rule"
+                | "appendix"
+                | "article"
+                | "see"
+                | "listing"
+                | "example"
+                | "exercise"
+                | "task"
+                | "point"
+        ) {
+            ""
+        } else {
+            "version "
+        };
         free_left(&cur, s, e).then(|| {
             format!(
-                "version {}{}",
+                "{lead}{}{}",
                 version_parts(&c[1]),
                 pre_release(c.get(2).map_or("", |m| m.as_str()))
             )
@@ -1058,7 +1157,7 @@ fn money(t: &str) -> String {
         }
         let (whole, cents) = match amount.split_once('.') {
             Some((w, f)) if f.len() <= 2 => (
-                w.parse::<u64>().unwrap_or(0),
+                w.parse::<u64>().ok()?,
                 format!("{f:0<2}").parse::<u64>().unwrap_or(0),
             ),
             Some(_) => return Some(format!("{} {many}", number_words("", &amount))),
@@ -1122,7 +1221,18 @@ fn money(t: &str) -> String {
     };
     let cur = t.clone();
     let t = each(&cur, &r.iso_money_after, |c, s, e| {
-        free_left(&cur, s, e).then(|| format!("{} {}", number_words("", &c[1]), name(&c[2])))
+        // `3 CAD files`: a code before a noun names something else.
+        let rest = &cur[e..];
+        let noun = rest.strip_prefix(' ').is_some_and(|r| {
+            let w: String = r.chars().take_while(|ch| ch.is_alphabetic()).collect();
+            w.starts_with(char::is_lowercase)
+                && !matches!(
+                    w.as_str(),
+                    "each" | "per" | "left" | "in" | "for" | "total" | "a" | "an"
+                )
+        });
+        (free_left(&cur, s, e) && !noun)
+            .then(|| format!("{} {}", number_words("", &c[1]), name(&c[2])))
     });
     let cur = t.clone();
     each(&cur, &r.iso_money_before, |c, s, e| {
@@ -1150,6 +1260,11 @@ fn measures(t: &str) -> String {
             return None;
         }
         if *spaced && c[4].is_empty() && !c[3].contains('.') {
+            return None;
+        }
+        // A lone capital or `h`/`m` after a space is a word, not a unit
+        // ("2 V eight"): those units are written against the number.
+        if matches!(unit, "V" | "W" | "h" | "m") && !c[4].is_empty() {
             return None;
         }
         let sign = if sign_ok(&cur, s) { &c[1] } else { "" };
@@ -1193,7 +1308,17 @@ fn times(t: &str) -> String {
             1..=9 => format!("{} oh {}", cardinal(h), cardinal(m)),
             _ => format!("{} {}", cardinal(h), cardinal(m)),
         };
-        Some(format!("{when} {} M", c[3].to_ascii_uppercase()))
+        // A dot that also ends the sentence stays ("at 5 PM. Then").
+        let after = t[e..].trim_start_matches(' ');
+        let ends = !c[4].is_empty()
+            && (e == t.len()
+                || after.starts_with(['\n', '\r'])
+                || (after.len() < t[e..].len() && after.starts_with(char::is_uppercase)));
+        Some(format!(
+            "{when} {} M{}",
+            c[3].to_ascii_uppercase(),
+            if ends { "." } else { "" }
+        ))
     });
     let cur = t.clone();
     let t = each(&cur, &r.duration, |c, s, e| {
@@ -1362,6 +1487,12 @@ fn fractions(t: &str) -> String {
         Some(format!("{} and {part}", cardinal(w)))
     });
     let cur = t.clone();
+    let t = each(&cur, &r.rating, |c, s, e| {
+        let d: u64 = c[3].parse().ok()?;
+        (free_left(&cur, s, e) && !matches!(next(&cur, e), Some('/')))
+            .then(|| format!("{} out of {}", decimal(&c[1], &c[2]), cardinal(d)))
+    });
+    let cur = t.clone();
     let t = each(&cur, &r.fraction, |c, s, e| {
         if !free_left(&cur, s, e) || matches!(next(&cur, e), Some('/')) {
             return None;
@@ -1369,6 +1500,37 @@ fn fractions(t: &str) -> String {
         let (n, d): (u64, u64) = (c[1].parse().ok()?, c[2].parse().ok()?);
         if (n, d) == (24, 7) {
             return Some("twenty four seven".into());
+        }
+        // A count (`12/12 tests`, `step 1/3`, `45/50`), not a fraction.
+        let before = cur[..s]
+            .trim_end()
+            .rsplit(|ch: char| !ch.is_alphabetic())
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let counter = matches!(
+            before.as_str(),
+            "step"
+                | "page"
+                | "test"
+                | "tests"
+                | "part"
+                | "round"
+                | "score"
+                | "passed"
+                | "failed"
+                | "item"
+                | "task"
+                | "phase"
+                | "stage"
+                | "file"
+                | "files"
+                | "question"
+                | "slide"
+                | "level"
+        );
+        if n == 0 || n >= d || d > 16 || counter {
+            return Some(format!("{} of {}", cardinal(n), cardinal(d)));
         }
         fraction_words(n, d)
     });
@@ -1397,6 +1559,15 @@ fn numbers(t: &str) -> String {
         free_left(t, s, e)
             .then(|| c[1].parse().ok().map(ordinal))
             .flatten()
+    });
+    let cur = t.clone();
+    // `1 000 000` (space-grouped thousands) as one number.
+    let t = each(&cur, &r.grouped_space, |c, s, e| {
+        if !free_left(&cur, s, e) || matches!(next(&cur, e), Some('.' | ',')) {
+            return None;
+        }
+        let sign = if sign_ok(&cur, s) { &c[1] } else { "" };
+        Some(number_words(sign, &c[2].replace(' ', "")))
     });
     let cur = t.clone();
     let t = each(&cur, &r.grouped, |c, s, e| {
@@ -1433,6 +1604,22 @@ fn numbers(t: &str) -> String {
         }
         let d = &c[1];
         let n: u64 = d.parse().ok()?;
+        // Two digits are a decade only as `'80s` or after "the", "early"
+        // and the like; else seconds (`30s`).
+        let ctx = cur[..s]
+            .trim_end()
+            .rsplit(|ch: char| !ch.is_alphabetic())
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let decade = c[0].starts_with('\'')
+            || matches!(
+                ctx.as_str(),
+                "the" | "early" | "mid" | "late" | "his" | "her" | "their" | "my" | "your" | "our"
+            );
+        if d.len() == 2 && !decade {
+            return (!c[0].contains('\'')).then(|| format!("{} seconds", cardinal(n)));
+        }
         if !n.is_multiple_of(10) {
             return None;
         }
@@ -1480,6 +1667,30 @@ fn numbers(t: &str) -> String {
                     | "around"
                     | "till"
                     | "through"
+                    | "january"
+                    | "february"
+                    | "march"
+                    | "april"
+                    | "may"
+                    | "june"
+                    | "july"
+                    | "august"
+                    | "september"
+                    | "october"
+                    | "november"
+                    | "december"
+                    | "jan"
+                    | "feb"
+                    | "mar"
+                    | "apr"
+                    | "jun"
+                    | "jul"
+                    | "aug"
+                    | "sep"
+                    | "sept"
+                    | "oct"
+                    | "nov"
+                    | "dec"
             );
         Some(if is_year { year(n) } else { cardinal(n) })
     })
@@ -1511,12 +1722,50 @@ fn abbreviations(t: &str) -> String {
             "Mrs." => "Missus".into(),
             "Ms." => "Mizz".into(),
             "approx." => "about".into(),
-            other => format!("number {}", &other[4..]),
+            other => {
+                // `item no. 5`; a bare "no." ("Did it pass? no. 3 tests")
+                // stays.
+                let cue = t[..s]
+                    .trim_end()
+                    .rsplit(|ch: char| !ch.is_alphabetic())
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if !matches!(
+                    cue.as_str(),
+                    "item"
+                        | "issue"
+                        | "page"
+                        | "room"
+                        | "step"
+                        | "case"
+                        | "rule"
+                        | "version"
+                        | "part"
+                        | "section"
+                        | "ticket"
+                        | "bug"
+                        | "order"
+                        | "invoice"
+                        | "account"
+                        | "model"
+                        | "serial"
+                ) {
+                    return None;
+                }
+                format!("number {}", &other[4..])
+            }
         })
     });
     let cur = t.clone();
-    each(&cur, &r.dotted_caps, |c, s, _| {
-        (!wordy(prev(&cur, s))).then(|| spell(&c[0]))
+    each(&cur, &r.dotted_caps, |c, s, e| {
+        (!wordy(prev(&cur, s))).then(|| {
+            // A dot that also ends the sentence stays ("the U.S. Then").
+            let rest = cur[e..].trim_start();
+            let ends =
+                cur[e..].starts_with(char::is_whitespace) && rest.starts_with(char::is_uppercase);
+            format!("{}{}", spell(&c[0]), if ends { "." } else { "" })
+        })
     })
 }
 
@@ -1621,6 +1870,33 @@ fn words(t: &str) -> String {
     })
 }
 
+/// Letters and digits as said: `MD5` "M D five", `x86` "x eighty six";
+/// `None` when it is not that shape (or a known term).
+fn letters_digits(p: &str) -> Option<String> {
+    if TECH.contains_key(p) {
+        return None;
+    }
+    let split = p.find(|c: char| c.is_ascii_digit())?;
+    let (letters, digits) = p.split_at(split);
+    if letters.is_empty()
+        || letters.len() > 5
+        || !letters.chars().all(|c| c.is_ascii_alphabetic())
+        || digits.is_empty()
+        || digits.len() > 4
+        || !digits.chars().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let head = if letters.chars().all(|ch| ch.is_ascii_uppercase()) {
+        spell(letters)
+    } else if letters.len() == 1 {
+        letters.to_string()
+    } else {
+        return None;
+    };
+    Some(format!("{head} {}", cardinal_str(digits)))
+}
+
 /// An identifier in prose as words (`getUserName` "get user name",
 /// `HTTP_PORT` "H T T P port"); its parts read as words or terms.
 fn split_identifier(w: &str, shout: bool) -> String {
@@ -1633,9 +1909,12 @@ fn split_identifier(w: &str, shout: bool) -> String {
             if let Some(say) = TECH.get(p) {
                 return (*say).to_string();
             }
+            if let Some(said) = letters_digits(p) {
+                return said;
+            }
             let caps = p.chars().all(|c| c.is_ascii_uppercase()) && p.len() > 1;
             if caps && !shout {
-                if screaming && !spelled(p) && !FORCED.contains(&p) {
+                if screaming && (!spelled(p) || COMMON.contains(&p)) && !FORCED.contains(&p) {
                     return p.to_lowercase();
                 }
                 return caps_word(p);
@@ -1654,18 +1933,43 @@ fn split_identifier(w: &str, shout: bool) -> String {
 mod tests {
     use super::*;
 
+    /// The user's words are process-wide: one test at a time sets them.
+    static WORDS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
-    fn the_users_words_come_first() {
+    fn the_users_words_come_first_and_are_read_as_written() {
+        let _one = WORDS.lock().unwrap_or_else(|e| e.into_inner());
         set_user_words(vec![
             ("Ove".into(), "Oo veh".into()),
-            ("SQL".into(), "S Q L".into()),
+            ("SQL".into(), "SQL server".into()),
+            ("veh".into(), "vay".into()),
+            ("Ola".into(), "Ola 2026".into()),
         ]);
         assert_eq!(
-            pronounce("Hi Ove, the SQL query"),
-            "Hi Oo veh, the S Q L query"
+            pronounce("Hi Ove, the SQL query, Ola."),
+            "Hi Oo veh, the SQL server query, Ola 2026."
         );
+        // Inside a path or URL the word is left to those rules.
+        set_user_words(vec![("Sonara".into(), "So nara".into())]);
+        assert_eq!(
+            pronounce(
+                "See crates/Sonara/src/main.rs and https://github.com/Maxaubert/Sonara/pull/7"
+            ),
+            "See src slash main dot R S and github dot com, pull seven"
+        );
+        assert_eq!(pronounce("I like Sonara."), "I like So nara.");
+        // A digit as a word never reaches a placeholder.
+        set_user_words(vec![("0".into(), "zero".into())]);
+        assert_eq!(pronounce("Run `a` now"), "Run `a` now");
         set_user_words(Vec::new());
         assert_eq!(pronounce("the SQL query"), "the sequel query");
+    }
+
+    #[test]
+    fn placeholders_never_leak_or_collide() {
+        let many: String = (0..1100).map(|i| format!("`c{i}` ")).collect();
+        assert_eq!(pronounce(&many), many);
+        assert_eq!(pronounce("a \u{E020}0\u{E021} and `x` b"), "a 0 and `x` b");
     }
 
     #[test]
