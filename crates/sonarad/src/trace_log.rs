@@ -57,7 +57,13 @@ pub fn text_field(text: &str, debug: bool) -> String {
     if !debug {
         return String::new();
     }
-    format!(" text={}", Value::String(text.to_string()))
+    // The reader's private markers (code lines, spoken form) never reach
+    // the log.
+    let text: String = text
+        .chars()
+        .filter(|c| !('\u{E000}'..='\u{E002}').contains(c))
+        .collect();
+    format!(" text={}", Value::String(text))
 }
 
 /// What produced a channel entry: its kind (`prose`, `question`, ...)

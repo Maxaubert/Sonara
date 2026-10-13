@@ -99,6 +99,12 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
 - **The latest reply, as it streams.** Sonara turns Markdown into speakable sentences (code
   blocks are announced, and read at *Read code* and *Everything*: see [Code](#code)) and reads them in order. A question, plan or
   permission prompt is spoken in its natural place, after the text that explains it.
+- **Said the way people say it.** Dates (`12.12.2026` "the twelfth of December twenty twenty six",
+  day first), times, money (including kroner), units, versions ("version one point twenty"),
+  file paths (their last two parts), web addresses (the site and the last part), tech terms
+  (`SQL` "sequel", `nginx` "engine X") and abbreviations (`API` "A P I", `NASA` kept) are read as
+  words. Add your own words under **Pronunciations** on the settings page (a word and how to say
+  it); they come first.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.
@@ -199,7 +205,7 @@ engine is reading.
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), code reading speed, line pause and step through code (shown when code is read), other sessions (Read all or Chime only) |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), code reading speed, line pause and step through code (shown when code is read), pronunciations (your own words and how to say them), other sessions (Read all or Chime only) |
 | Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a slide-over form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the model, the prompt for each style, live reading: Immediately, Queue (with its queue size) or When done, and the summary timeout and settle time |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |

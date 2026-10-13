@@ -1,5 +1,5 @@
 {
-  "description": "Numbers, versions and dotted tokens.",
+  "description": "Numbers, versions and dotted tokens: never split as sentences, and said as words (#294).",
   "cases": [
     {
       "name": "decimal_not_split",
@@ -8,7 +8,7 @@
         "Pi is 3.14 roughly. Next."
       ],
       "output": [
-        "Pi is 3.14 roughly.",
+        "Pi is three point one four roughly.",
         "Next."
       ]
     },
@@ -20,7 +20,7 @@
         "Done."
       ],
       "output": [
-        "Bumped to v2.1.3 today.",
+        "Bumped to version two point one point three today.",
         "Done."
       ]
     },
@@ -31,7 +31,7 @@
         "See daemon.py:123 for it. Ok."
       ],
       "output": [
-        "See daemon.py:123 for it.",
+        "See daemon dot P Y, line one hundred and twenty three for it.",
         "Ok."
       ]
     },
@@ -48,10 +48,10 @@
       ]
     },
     {
-      "name": "numbers_untouched_by_normalize",
+      "name": "numbers_said_as_words_by_normalize",
       "fn": "normalize_for_speech",
       "input": "Took 1,234 ms at 99.5% on port 27431.",
-      "output": "Took 1,234 ms at 99.5% on port 27431."
+      "output": "Took one thousand two hundred and thirty four milliseconds at ninety nine point five percent on port twenty seven thousand four hundred and thirty one."
     }
   ]
 }

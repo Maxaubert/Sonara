@@ -18,7 +18,7 @@ export type ControlAction =
   | "previous_line";
 
 /** Core setting keys (protocol v1, `set` / `get`). */
-export type SettingKey = "volume" | "rate" | "voice" | "engine";
+export type SettingKey = "volume" | "rate" | "voice" | "engine" | "pronunciations";
 
 export interface SpeakOptions {
   /** `append` (default) or `replace` (drop unread items, never the current one). */

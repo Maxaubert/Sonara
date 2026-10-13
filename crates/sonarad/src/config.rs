@@ -61,6 +61,8 @@ enum Kind {
     Summaries,
     /// true or false.
     Bool,
+    /// The user's pronunciations: a list of {word, say} (#294).
+    Pronunciations,
 }
 
 /// One persisted setting.
@@ -222,6 +224,13 @@ pub const SCHEMA: &[Setting] = &[
         kind: Kind::Bool,
         default: "true",
     },
+    // Words said the user's way (#294), before every other text rule.
+    Setting {
+        key: "pronunciations",
+        layer: Layer::Host,
+        kind: Kind::Pronunciations,
+        default: "[]",
+    },
 ];
 
 pub fn setting(key: &str) -> Option<&'static Setting> {
@@ -293,7 +302,61 @@ pub fn validate(key: &str, v: &Value) -> Result<Value, String> {
             .as_bool()
             .map(Value::Bool)
             .ok_or_else(|| format!("'{key}' is true or false")),
+        Kind::Pronunciations => validate_pronunciations(v),
     }
+}
+
+/// The most pronunciations kept.
+pub const PRONUNCIATIONS_MAX: usize = 200;
+
+/// `pronunciations`: up to 200 `{word, say}`, both non-blank (a word up to
+/// 60 characters, what to say up to 200), trimmed; a word given twice
+/// keeps its last entry, in the place of its first.
+fn validate_pronunciations(v: &Value) -> Result<Value, String> {
+    let why = "'pronunciations' is a list of {word, say}, both non-empty text";
+    let list = v.as_array().ok_or(why)?;
+    if list.len() > PRONUNCIATIONS_MAX {
+        return Err(format!(
+            "'pronunciations' holds at most {PRONUNCIATIONS_MAX} words"
+        ));
+    }
+    let mut out: Vec<(String, String)> = Vec::new();
+    for e in list {
+        let word = e.get("word").and_then(non_blank).ok_or(why)?;
+        let say = e.get("say").and_then(non_blank).ok_or(why)?;
+        if word.chars().count() > 60 || say.chars().count() > 200 {
+            return Err(
+                "a pronunciation's word is at most 60 characters, what to say at most 200".into(),
+            );
+        }
+        match out.iter_mut().find(|(w, _)| *w == word) {
+            Some(slot) => slot.1 = say,
+            None => out.push((word, say)),
+        }
+    }
+    Ok(Value::Array(
+        out.into_iter()
+            .map(|(word, say)| json!({"word": word, "say": say}))
+            .collect(),
+    ))
+}
+
+/// The saved pronunciations as (word, say).
+pub fn pronunciations(store: &Store) -> Vec<(String, String)> {
+    store
+        .value("pronunciations")
+        .as_array()
+        .map(|l| {
+            l.iter()
+                .filter_map(|e| {
+                    Some((
+                        e.get("word")?.as_str()?.to_string(),
+                        e.get("say")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The custom prompts: style -> non-blank instruction.

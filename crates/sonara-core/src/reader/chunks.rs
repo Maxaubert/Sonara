@@ -1,6 +1,49 @@
 //! Split one text into the chunks of one item.
 use crate::assembler::{Chunk, ProseAssembler};
-use crate::code_speech::{unmarked, CODE_LINE, CODE_START};
+use crate::code_speech::{unmarked, CODE_LINE, CODE_START, SPOKEN};
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+/// A paragraph boundary in spoken text: a blank line.
+static BLANK_LINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n[ \t]*\n").expect("valid"));
+
+/// `text` without the spoken-form marker, and whether it had it.
+fn spoken_form(text: &str) -> (bool, &str) {
+    match text.strip_prefix(SPOKEN) {
+        Some(t) => (true, t),
+        None => (false, text),
+    }
+}
+
+/// The paragraphs of text already in its spoken form, each a list of its
+/// sentences: cut after `.`, `!` or `?` (and any closing quote or bracket)
+/// before whitespace, nothing rewritten.
+fn spoken_paragraphs(text: &str) -> Vec<Vec<String>> {
+    BLANK_LINE
+        .split(text)
+        .map(|para| {
+            let mut out = Vec::new();
+            let mut cur = String::new();
+            let chars: Vec<char> = para.chars().collect();
+            for (i, c) in chars.iter().enumerate() {
+                cur.push(*c);
+                let end = matches!(c, '.' | '!' | '?')
+                    || (matches!(c, '"' | '\'' | ')' | ']' | '\u{201D}' | '\u{2019}')
+                        && i > 0
+                        && matches!(chars[i - 1], '.' | '!' | '?'));
+                if end && chars.get(i + 1).is_none_or(|n| n.is_whitespace()) {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            out.push(cur);
+            out.into_iter()
+                .map(|s| s.split_whitespace().collect::<Vec<_>>().join(" "))
+                .filter(|s| s.chars().any(char::is_alphanumeric))
+                .collect::<Vec<_>>()
+        })
+        .filter(|p| !p.is_empty())
+        .collect()
+}
 
 /// A run of prose, or one marked code chunk (#295).
 enum Seg<'a> {
@@ -35,9 +78,11 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
 /// marker, which tells the reader to read it as code). Empty when nothing
 /// in the text is speakable.
 pub fn split_chunks(text: &str) -> Vec<String> {
+    let (spoken, text) = spoken_form(text);
     let mut out = Vec::new();
     for seg in segments(text) {
         match seg {
+            Seg::Prose(t) if spoken => out.extend(spoken_paragraphs(t).into_iter().flatten()),
             Seg::Prose(t) => out.extend(prose_chunks(t)),
             Seg::Code(c) if !unmarked(c).trim().is_empty() => out.push(c.to_string()),
             Seg::Code(_) => {}
@@ -62,7 +107,10 @@ fn prose_chunks(text: &str) -> Vec<String> {
 
 /// The spoken paragraphs of `text`, each a list of its sentences (the
 /// assembler and text rules as `split_chunks`).
-fn paragraphs(text: &str) -> Vec<Vec<String>> {
+fn paragraphs(text: &str, spoken: bool) -> Vec<Vec<String>> {
+    if spoken {
+        return spoken_paragraphs(text);
+    }
     let mut out: Vec<Vec<String>> = Vec::new();
     let mut cur: Vec<String> = Vec::new();
     for c in ProseAssembler::new().feed(text, 0, true) {
@@ -90,10 +138,11 @@ fn paragraphs(text: &str) -> Vec<Vec<String>> {
 /// gets the code speed and its pause. Empty when nothing in the text is
 /// speakable.
 pub fn pack_message(text: &str, max: usize, bytes: bool) -> Vec<String> {
+    let (spoken, text) = spoken_form(text);
     let mut out = Vec::new();
     for seg in segments(text) {
         match seg {
-            Seg::Prose(t) if !t.trim().is_empty() => out.extend(pack_prose(t, max, bytes)),
+            Seg::Prose(t) if !t.trim().is_empty() => out.extend(pack_prose(t, max, bytes, spoken)),
             Seg::Code(c) if !unmarked(c).trim().is_empty() => out.push(c.to_string()),
             _ => {}
         }
@@ -101,10 +150,10 @@ pub fn pack_message(text: &str, max: usize, bytes: bool) -> Vec<String> {
     out
 }
 
-fn pack_prose(text: &str, max: usize, bytes: bool) -> Vec<String> {
+fn pack_prose(text: &str, max: usize, bytes: bool, spoken: bool) -> Vec<String> {
     let size = |s: &str| if bytes { s.len() } else { s.chars().count() };
     let max = max.max(1);
-    let paras = paragraphs(text);
+    let paras = paragraphs(text, spoken);
     // Every sentence, with whether it starts a paragraph.
     let units: Vec<(bool, &str)> = paras
         .iter()

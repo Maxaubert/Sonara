@@ -206,6 +206,7 @@ reply `{ok: true, key, value}` with the value now in force.
 | `voice` | a voice `id` or `name` of the current engine; `null` for the engine default. `get` returns the id or `null` |
 | `engine` | an engine id: `kokoro` or `onecore` (`fake` in test runs), or the id of an [external engine](#external-engines) the user added. Switching resets a voice the new engine lacks |
 | `debug_log` | `true` or `false` (default `true`, runtime 0.13.2, #219): the troubleshooting log records text (what was read, the messages received, the hooks' raw input); `false` keeps every text out of `logs\` (see [Saved settings](#saved-settings)). A host key: it needs no extension |
+| `pronunciations` | protocol 1.8 (runtime 0.26.0, #294): the user's own words, a list of at most 200 `{word, say}` (a word up to 60 characters, what to say up to 200, both non-blank; a word given twice keeps its last `say`). Each `word` (exact case, a whole word, not inside a path, URL or address) is read as its `say`, as written: before every other text rule, which never change the `say`. Default `[]`. See How text is read |
 
 A rate, voice or engine change applies to chunks synthesized from then on. Out-of-range or wrongly
 typed values are `E_BAD_REQUEST`; an unknown voice or engine is `E_NOT_FOUND`; an unknown key is
@@ -376,7 +377,8 @@ provider's models, live), the profile's `send_mode` ("Send to the engine") and t
 `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
 filling in a default model or voice for any external engine (a profile without one it needs is kept
 and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
-are only what the profile sets. 1.7 (runtime 0.25.0, #295) added code reading: the `control` actions
+are only what the profile sets. 1.8 (runtime 0.26.0, #294) added the core key `pronunciations` and
+reads text the way people say it (see How text is read). 1.7 (runtime 0.25.0, #295) added code reading: the `control` actions
 `next_line` and `previous_line` and the `agent` keys `code_speed`, `code_pause` and `code_step`
 (see Code reading). 1.6 (runtime 0.22.0, #283) added question sets: the `ask` fields
 `set_index` and `set_size`, the `agent` `control` actions `next_question` and `previous_question`,
@@ -406,7 +408,7 @@ own (rate 200, `"everything"`, `"queue"` with 1, `"earcon_only"`, `"off"`).
 
 | file in the home | holds |
 |---|---|
-| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`. A `_migrated` key records the migration below |
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `pronunciations`. A `_migrated` key records the migration below |
 | `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
 | `engines.json` | the [external engines](#external-engines) added with `engine_add`: `{"format": 2, "engines": [profile, ...]}`, never a key. An `env:` entry may carry `key_origin` (see Keys below), which only the user writes in the file; a format 1 file is migrated at the first start (its keys and `env:` entries are bound to their addresses then) and saved as format 2. A file that is not JSON is copied to `engines.json.bad` (and logged) and counts as empty until the next change; an entry that fails validation or names a kind this runtime lacks is kept, listed and not used. Read once at start, before the first speech, so a saved `engine` naming one applies at once |
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
@@ -736,6 +738,20 @@ reply (no `turn_end` yet) keeps everything: its queued and held text and its sum
 done. A reply counts as still being written until its `turn_end`: a turn the user interrupted
 (Claude Code fires no `Stop` for it) keeps its text in scope `all` until that session's next
 `turn_start`. Mute (`mute_level`) is the way to silence every session.
+
+**How text is read** (protocol 1.8, runtime 0.26.0, #294). Every text, `speak` and agent text alike,
+is read the way people say it, in words: the user's `pronunciations` first, then URLs (host and
+last part), e-mail addresses, file paths (the last two parts, `, line N` for `:N`), ISO and
+day-first numeric dates (`12.12.2026` "the twelfth of December twenty twenty six"; month first only
+when nothing else is a date), IP addresses, versions (`v1.20` "version one point twenty"), hashes and
+UUIDs, phone numbers after `+` or a cue word, money (`$`, `£`, `€`, `kr`, `NOK`, ISO codes),
+units, percent, times (`14:30` "fourteen thirty", `9am`), ranges, fractions, ordinals, decimals,
+numbers of 1000 or more (years after a cue word), abbreviations (`e.g.`), roman numerals after a
+keyword, tech terms (`SQL` "sequel", `nginx` "engine X"), identifiers (`getUserName` "get user
+name") and capitalised abbreviations spelled out unless they make a word (`API` "A P I", `NASA`
+kept). Whole numbers under 1000 with no other reading stay digits. Counts read as counts (`12/12` "twelve of twelve"), durations as seconds (`30s`), and a sentence-ending dot after `PM` or `U.S.` stays. The agent's text is converted once: the reader then only cuts it into sentences. Inline code and link targets are
+left to their own rules. The rules and their sources: `research/sonara/2026-10-13-text-normalization-survey.md`
+(outside the repo) and `tests/fixtures/text_rules/pronunciation.json` (the cases).
 
 **Code reading** (protocol 1.7, runtime 0.25.0, #295). At `verbosity` `"read_code"` and
 `"everything"` a fenced code block in `stream` text is read as one item: its announcement

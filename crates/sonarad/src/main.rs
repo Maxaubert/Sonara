@@ -327,6 +327,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     if let Some(p) = config::apply_code(&store, &reader, &home.dir.join("keymap.json")) {
         home.log(&p);
     }
+    sonara_core::pronounce::set_user_words(config::pronunciations(&store));
     // One line per start for support, then the model's readiness changes.
     support_log::log_startup(&home, VERSION, &reader, &engine);
     support_log::watch_engine(&home, &reader);

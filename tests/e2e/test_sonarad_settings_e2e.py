@@ -129,6 +129,39 @@ def test_the_engine_picker_shows_the_engine_and_how_it_is_doing(live, browser):
     page.close()
 
 
+def test_pronunciations_are_added_saved_and_removed(live, browser):
+    # #294: the user's own words, said their way.
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#pron-list")).to_contain_text("None yet")
+    page.locator("#pron-word").fill("Ove")
+    page.locator("#pron-say").fill("Oo veh")
+    page.click("#pron-add")
+    assert eventually(lambda: lv.saved().get("pronunciations") == [{"word": "Ove", "say": "Oo veh"}])
+    assert lv.get("pronunciations") == [{"word": "Ove", "say": "Oo veh"}]
+    pw.expect(page.locator("#pron-list li")).to_have_count(1)
+    pw.expect(page.locator("#pron-word")).to_have_value("")
+    page.reload()
+    pw.expect(page.locator("#pron-list")).to_contain_text("Oo veh")
+    # The row sits after the code rows (#294 review).
+    order = page.locator("#verbosity-seg ~ *, .row").evaluate_all("ns => ns.map(n => n.id)")
+    assert order.index("codestep-row") < order.index("pron-card"), order
+    # Removing keeps the keyboard on the list, then on the word field.
+    page.locator("#pron-word").fill("nginx")
+    page.locator("#pron-say").fill("engine X")
+    page.click("#pron-add")
+    pw.expect(page.locator("#pron-list li")).to_have_count(2)
+    page.locator("#pron-list button").first.focus()
+    page.keyboard.press("Enter")
+    pw.expect(page.locator("#pron-list li")).to_have_count(1)
+    pw.expect(page.locator("#pron-list button")).to_be_focused()
+    page.keyboard.press("Enter")
+    assert eventually(lambda: lv.saved().get("pronunciations") == [])
+    pw.expect(page.locator("#pron-list")).to_contain_text("None yet")
+    pw.expect(page.locator("#pron-word")).to_be_focused()
+    page.close()
+
+
 def test_code_reading_rows_show_where_code_is_read_and_save(live, browser):
     # #295: code reading speed, line pause and step through code, under
     # Detail; hidden at Default (skip_code), where no code is read.

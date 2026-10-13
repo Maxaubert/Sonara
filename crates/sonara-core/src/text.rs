@@ -166,7 +166,9 @@ pub fn clean_markdown(text: &str) -> String {
 }
 
 pub fn normalize_for_speech(text: &str) -> String {
-    let mut t = clean_markdown(&speak_snake_case(text));
+    // Dates, numbers, units, terms and acronyms as said (#294).
+    let t = crate::pronounce::pronounce(text);
+    let mut t = clean_markdown(&speak_snake_case(&t));
     t = ARROW.replace_all(&t, " to ").into_owned();
     t = t.replace(" & ", " and ");
     t = STRAY_MD.replace_all(&t, " ").into_owned();
@@ -236,6 +238,12 @@ pub(crate) mod tests {
         );
         assert_eq!(normalize_for_speech(&inputs[1]), "a".repeat(1_100_000));
         let _ = normalize_for_speech(&inputs[2]);
-        assert_eq!(normalize_for_speech(&inputs[3]), "see link now");
+        // A URL is read as its host and last part since #294.
+        let url = normalize_for_speech(&inputs[3]);
+        assert!(
+            url.starts_with("see x dot y, q") && url.ends_with("q now"),
+            "{}",
+            &url[..40]
+        );
     }
 }

@@ -184,3 +184,35 @@ fn restart_into_a_code_block_steps_again() {
     h.finish_chunk(); // the announcement again
     assert!(h.state().paused, "waits at line 1 again");
 }
+
+#[test]
+fn text_in_its_spoken_form_is_cut_into_sentences_and_not_read_again() {
+    // #294 review: the agent's prose was converted once; the reader must
+    // not convert it a second time (inline code, the user's words).
+    use sonara_core::code_speech::SPOKEN;
+    use sonara_core::reader::{pack_message, split_chunks};
+    use sonara_core::text::normalize_for_speech;
+    for raw in [
+        "The value `v1.2.3` is set.",
+        "Run `HTTP_PORT=8080` first.",
+        "Released v1.20 on 12.12.2026 at 14:30.",
+    ] {
+        let once = normalize_for_speech(raw);
+        let spoken = format!("{SPOKEN}{once}");
+        assert_eq!(split_chunks(&spoken), std::slice::from_ref(&once), "{raw}");
+        assert_eq!(
+            pack_message(&spoken, 700, false),
+            std::slice::from_ref(&once),
+            "{raw}"
+        );
+    }
+    let two = format!("{SPOKEN}One point five. Done!\n\nNext one.");
+    assert_eq!(
+        split_chunks(&two),
+        ["One point five.", "Done!", "Next one."]
+    );
+    assert_eq!(
+        pack_message(&two, 700, false),
+        ["One point five. Done!\n\nNext one."]
+    );
+}

@@ -38,6 +38,24 @@ def test_bad_settings(client, key, value, code):
     assert r["error"]["code"] == code
 
 
+def test_pronunciations_are_said_the_users_way(client):
+    # Protocol 1.8 (#294): the user's words, before every other text rule,
+    # and the built-in rules for dates, numbers and terms.
+    words = [{"word": "Ove", "say": "Oo veh"}, {"word": "SQL", "say": "S Q L"}]
+    r = client.request({"type": "set", "key": "pronunciations", "value": words})
+    assert r["ok"] is True, r
+    assert client.request({"type": "get", "key": "pronunciations"})["value"] == words
+    client.request({"type": "subscribe", "events": ["state"]})
+    client.request({"type": "speak", "text": "Ove ran SQL on 12.12.2026."})
+    s = client.state(lambda s: s["now_playing"] is not None)
+    assert s["now_playing"]["text"] == "Oo veh ran S Q L on the twelfth of December twenty twenty six."
+    client.request({"type": "control", "action": "stop"})
+    for bad in ([{"word": "", "say": "x"}], [{"word": "x"}], "Ove", [{"word": "x", "say": "y"}] * 201):
+        r = client.request({"type": "set", "key": "pronunciations", "value": bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", bad
+    assert client.request({"type": "set", "key": "pronunciations", "value": []})["value"] == []
+
+
 def test_settings_show_in_state(client):
     client.request({"type": "subscribe", "events": ["state"]})
     client.state()

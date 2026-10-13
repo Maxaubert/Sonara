@@ -1,5 +1,6 @@
 use serde_json::Value;
 use sonara_core::assembler::{Chunk, ProseAssembler};
+use sonara_core::pronounce::pronounce;
 use sonara_core::text::{clean_markdown, normalize_for_speech};
 use std::path::PathBuf;
 
@@ -50,8 +51,25 @@ fn every_golden_case_matches() {
                         == case["output"].as_str().unwrap()
                 }
                 "normalize_for_speech" => {
-                    normalize_for_speech(case["input"].as_str().unwrap())
-                        == case["output"].as_str().unwrap()
+                    let got = normalize_for_speech(case["input"].as_str().unwrap());
+                    let ok = got == case["output"].as_str().unwrap();
+                    if !ok {
+                        failures.push(format!("{name}: got {got:?}"));
+                    }
+                    true
+                }
+                "pronounce" => {
+                    let got = pronounce(case["input"].as_str().unwrap());
+                    let ok = got == case["output"].as_str().unwrap();
+                    if !ok {
+                        failures.push(format!("{name}: got {got:?}"));
+                    }
+                    // The output reads the same again (#294 review).
+                    let again = pronounce(&got);
+                    if again != got {
+                        failures.push(format!("{name}: a second pass gives {again:?}"));
+                    }
+                    true
                 }
                 other => panic!("unknown fn {other}"),
             };
