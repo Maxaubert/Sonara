@@ -679,7 +679,7 @@ fn tokens(s: &str, mode: &Mode, p: &mut Parts) {
             let end = rest
                 .char_indices()
                 .find(|(j, ch)| {
-                    let digit_next = rest[j + 1..]
+                    let digit_next = rest[j + ch.len_utf8()..]
                         .chars()
                         .next()
                         .is_some_and(|d| d.is_ascii_digit());

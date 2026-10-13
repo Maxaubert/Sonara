@@ -201,6 +201,14 @@ fn jsx_text_after_an_expression_is_read_as_words() {
 }
 
 #[test]
+fn a_number_before_a_multibyte_character_does_not_panic() {
+    // #294 review: `90°` in inline or fenced code.
+    assert!(inline("90°").contains("90"));
+    assert!(line("x = 5€", "js", 1).unwrap().contains('5'));
+    assert!(inline("9é").contains('9'));
+}
+
+#[test]
 fn decomposed_accents_stay_in_their_word() {
     let l = line("let cafe\u{301} = 1", "rust", 1).unwrap();
     assert!(!l.contains(" \u{301}"), "{l}");
