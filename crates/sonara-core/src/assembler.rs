@@ -1,8 +1,8 @@
 //! Assemble streamed text deltas into complete, speakable chunks.
 //!
 //! PURE: no I/O. Splits prose into sentences and turns each triple-backtick
-//! fenced code block into a spoken one-line summary plus its lines as read
-//! aloud (#290). Port of the retired
+//! fenced code block into its spoken announcement, its lines as read aloud
+//! and its end (`code_speech`, #290, #295). Port of the retired
 //! Python plugin's `assembler.py` (removed in #248), method for method; the
 //! golden fixtures (`tests/fixtures/text_rules`) are the contract.
 //!
@@ -11,7 +11,8 @@
 //! comes from `find`, a regex match end, or `len() - remainder.len()`, so each
 //! one is a char boundary; `stabilize_ordinals` only swaps ASCII '.' for ':',
 //! so it keeps byte lengths and boundaries exactly as Python keeps char counts.
-use crate::text::{code_line_for_speech, normalize_for_speech, stabilize_ordinals};
+use crate::code_speech;
+use crate::text::{normalize_for_speech, stabilize_ordinals};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashSet;
@@ -39,10 +40,15 @@ static PARA: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n[ \t]*\n").unwrap());
 pub enum Chunk {
     /// A cleaned, speakable chunk (a sentence or a line).
     Text(String),
-    /// A fenced code block: its spoken one-line summary ("3-line python code
-    /// block"), apart from the prose so a reader can skip it (#214), and its
-    /// non-blank lines as they are read aloud (#290).
-    Code { summary: String, lines: Vec<String> },
+    /// A fenced code block, apart from the prose so a reader can skip it
+    /// (#214): its announcement ("Python code block, 3 lines."), its
+    /// spoken lines ("Line 1. ...", blank ones left out but counted) and
+    /// its end ("End of Python code."), #295.
+    Code {
+        summary: String,
+        lines: Vec<String>,
+        end: String,
+    },
     /// Emitted between paragraphs (Python's PARAGRAPH_BREAK sentinel).
     ParagraphBreak,
 }
@@ -282,16 +288,16 @@ impl ProseAssembler {
         let lang = std::mem::take(&mut self.fence_lang);
         let lines = std::mem::take(&mut self.fence_lines)
             .iter()
-            .filter_map(|l| code_line_for_speech(l, &lang))
+            .enumerate()
+            .filter_map(|(i, l)| code_speech::line(l, &lang, i + 1))
             .collect();
         self.in_fence = false;
         self.fence_opened_line = false;
-        let summary = if !lang.is_empty() {
-            format!("{n}-line {lang} code block")
-        } else {
-            format!("{n}-line code block")
-        };
-        Chunk::Code { summary, lines }
+        Chunk::Code {
+            summary: code_speech::announcement(&lang, n),
+            lines,
+            end: code_speech::end_of_code(&lang),
+        }
     }
 
     /// Clean one RAW chunk and append it if speakable. Cleaning happens

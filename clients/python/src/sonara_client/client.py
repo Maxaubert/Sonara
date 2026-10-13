@@ -89,7 +89,8 @@ class Client:
         return self.request("speak", fields)["item_id"]
 
     def control(self, action: str) -> None:
-        """play, pause, toggle, stop, skip, previous, next, restart, mute, unmute."""
+        """play, pause, toggle, stop, skip, previous, next, restart, mute, unmute,
+        and in a code block ``next_line``, ``previous_line`` (protocol 1.7)."""
         self.request("control", {"action": action})
 
     def set(self, key: str, value: Any) -> Any:

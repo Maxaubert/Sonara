@@ -24,7 +24,9 @@ export type PlayerAction =
   | "next"
   | "restart"
   | "mute"
-  | "unmute";
+  | "unmute"
+  | "next_line"
+  | "previous_line";
 
 /** The fields of a protocol v1 `state` event the player reads. */
 export interface PlayerState {

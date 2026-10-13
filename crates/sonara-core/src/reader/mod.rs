@@ -45,10 +45,21 @@
 //! - A failed chunk (synthesis or playback) is skipped and the item
 //!   continues. The item ends `Failed` only when it reaches its end without
 //!   any chunk having played; otherwise it ends `Finished`.
+//! - Code (#295): a chunk marked as a code line or a block's announcement
+//!   (`code_speech`) is a chunk of its own; `now_playing` shows it without
+//!   its marker. With step mode on (`set_code_step`) the reader pauses
+//!   after the announcement and after each line, at the next line, until
+//!   `NextLine` (that line, then it waits again), `PreviousLine` (the line
+//!   before) or `Play`/`Toggle` (the rest of the block straight through).
+//!   After a block's last line it reads on. `NextLine`/`PreviousLine` do
+//!   nothing outside code; while a line plays they move to the next or
+//!   previous line.
 //! - `Event::State` is emitted only on an actual change, at most once per
 //!   call and as the call's last effect, with a strictly increasing `seq`.
 mod chunks;
 mod types;
+
+use crate::code_speech::{self, CodeKind};
 
 pub use chunks::{pack_message, split_chunks};
 pub use types::*;
@@ -100,6 +111,10 @@ pub struct Reader {
     lookahead: usize,
     /// How items spoken from now on are cut into chunks.
     chunking: Chunking,
+    /// Step through code (#295).
+    code_step: bool,
+    /// Play was pressed in this code block: its lines read through.
+    released: bool,
     /// The last state emitted (or the initial one, seq 0).
     shown: State,
 }
@@ -129,6 +144,8 @@ impl Reader {
             requested: HashSet::new(),
             lookahead: 1,
             chunking: Chunking::Sentences,
+            code_step: false,
+            released: false,
             shown: State {
                 seq: 0,
                 now_playing: None,
@@ -192,12 +209,14 @@ impl Reader {
         match c {
             Control::Play => {
                 if self.paused {
+                    self.release_code();
                     self.resume(&mut fx);
                 }
             }
             Control::Pause => self.pause(&mut fx),
             Control::Toggle => {
                 if self.paused {
+                    self.release_code();
                     self.resume(&mut fx);
                 } else {
                     self.pause(&mut fx);
@@ -249,8 +268,75 @@ impl Reader {
                     fx.push(Effect::Unmute);
                 }
             }
+            Control::NextLine => self.line_step(&mut fx, true),
+            Control::PreviousLine => self.line_step(&mut fx, false),
         }
         self.finish(fx)
+    }
+
+    /// Step through code (#295): pause after a block's announcement and
+    /// after each of its lines.
+    pub fn set_code_step(&mut self, on: bool) -> Vec<Effect> {
+        self.code_step = on;
+        self.finish(Vec::new())
+    }
+
+    pub fn code_step(&self) -> bool {
+        self.code_step
+    }
+
+    /// The current chunk is code: a block's announcement or one of its
+    /// lines (also while waiting at a line in step mode).
+    pub fn in_code(&self) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|c| code_speech::kind(&c.item.chunks[c.chunk]) != CodeKind::Prose)
+    }
+
+    /// The kind of chunk `i` of the current item.
+    fn kind_at(&self, i: usize) -> CodeKind {
+        self.current
+            .as_ref()
+            .and_then(|c| c.item.chunks.get(i))
+            .map_or(CodeKind::Prose, |t| code_speech::kind(t))
+    }
+
+    /// Play in a code block reads the rest of it through.
+    fn release_code(&mut self) {
+        if self.code_step && self.in_code() {
+            self.released = true;
+        }
+    }
+
+    /// `NextLine` / `PreviousLine` (module docs).
+    fn line_step(&mut self, fx: &mut Vec<Effect>, next: bool) {
+        let Some(cur) = &self.current else {
+            return;
+        };
+        if !self.in_code() {
+            return;
+        }
+        let at = cur.chunk;
+        let len = cur.item.chunks.len();
+        // Waiting at a line in step mode: that line has not played yet.
+        let waiting = self.paused && self.loaded.is_none();
+        let to = if next {
+            if waiting {
+                at
+            } else {
+                at + 1
+            }
+        } else if at > 0 && self.kind_at(at - 1) == CodeKind::Line {
+            at - 1
+        } else {
+            at
+        };
+        self.paused = false;
+        if to >= len {
+            self.skip(fx);
+        } else {
+            self.move_to(fx, to);
+        }
     }
 
     /// Feed back what the output reports about a `PlayChunk`.
@@ -403,7 +489,17 @@ impl Reader {
             return;
         };
         if cur.chunk + 1 < cur.item.chunks.len() {
+            let done = code_speech::kind(&cur.item.chunks[cur.chunk]);
+            let next = code_speech::kind(&cur.item.chunks[cur.chunk + 1]);
             cur.chunk += 1;
+            if next != CodeKind::Line {
+                self.released = false;
+            }
+            // Step mode waits at the next line (#295).
+            if self.code_step && !self.released && done != CodeKind::Prose && next == CodeKind::Line
+            {
+                self.paused = true;
+            }
             self.begin_chunk(fx);
         } else {
             let phase = if cur.played_any {
@@ -420,6 +516,7 @@ impl Reader {
     fn start_next(&mut self, fx: &mut Vec<Effect>) {
         match self.queue.pop_front() {
             Some(item) => {
+                self.released = false;
                 emit_item(fx, item.id, ItemPhase::Started);
                 self.current = Some(Current {
                     item,
@@ -516,9 +613,10 @@ impl Reader {
             now_playing: self.current.as_ref().map(|c| NowPlaying {
                 item_id: c.item.id,
                 label: c.item.label.clone(),
-                text: c.item.chunks[c.chunk].clone(),
+                text: code_speech::unmarked(&c.item.chunks[c.chunk]).to_string(),
                 chunk: c.chunk,
                 chunks: c.item.chunks.len(),
+                code: code_speech::kind(&c.item.chunks[c.chunk]) != CodeKind::Prose,
             }),
             queued: self.queue.len(),
             paused: self.paused,

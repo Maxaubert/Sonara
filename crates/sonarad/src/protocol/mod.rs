@@ -30,7 +30,7 @@ mod profiles;
 mod tests;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 6;
+pub const PROTOCOL_MINOR: u64 = 7;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -267,6 +267,8 @@ fn parse_control(action: &str) -> Option<Control> {
         "restart" => Control::Restart,
         "mute" => Control::Mute,
         "unmute" => Control::Unmute,
+        "next_line" => Control::NextLine,
+        "previous_line" => Control::PreviousLine,
         _ => return None,
     })
 }

@@ -62,6 +62,23 @@ def heard(c, count):
     return out
 
 
+def chunks_heard(c, count):
+    """The next ``count`` chunks to play, as their text (#295: each code
+    line is a chunk of the block's item)."""
+    out, last = [], None
+    while len(out) < count:
+        e = c.next_event(lambda e: e.get("event") == "state")
+        np = e["now_playing"]
+        if np is None:
+            continue
+        at = (np["item_id"], np["chunk"])
+        if at != last:
+            last = at
+            out.append(np["text"])
+    c.last_item = last[0]
+    return out
+
+
 def earcon(c, timeout=5.0):
     return c.next_event(lambda e: e.get("event") == "earcon", timeout)["kind"]
 
@@ -360,20 +377,24 @@ def test_tools_are_announced_and_an_answer_catches_up(rt):
 CODE_TURN = "Look.\n```python\nx = 1\ny = 2\n```\nDone.\n"
 
 
+CODE_CHUNKS = [
+    "Look.",
+    "Python code block, 2 lines.",
+    "Line 1. x, equals, 1.",
+    "Line 2. y, equals, 2.",
+    "End of Python code.",
+    "Done.",
+]
+
+
 def test_everything_reads_code_blocks_and_skip_code_drops_them(rt):
     # #214: two levels. A code block is announced at everything and
-    # skipped without a word at skip_code. #290: at everything the block
-    # is then read line by line, with an end marker.
+    # skipped without a word at skip_code. #290, #295: at everything the
+    # block is then read line by line, labelled, symbols in words, and
+    # closed by name; the block is one item, each line a chunk.
     c = agent_client(rt)
     stream(c, "a", CODE_TURN)
-    assert heard(c, 6) == [
-        ("Look.", "a"),
-        ("2-line python code block.", "a"),
-        ("x equals 1.", "a"),
-        ("y equals 2.", "a"),
-        ("End of code.", "a"),
-        ("Done.", "a"),
-    ]
+    assert chunks_heard(c, 6) == CODE_CHUNKS
     c.state(lambda s: s["now_playing"] is None)
     ok(c, {"type": "set", "key": "verbosity", "value": "skip_code"})
     ok(c, {"type": "turn_start", "channel": "a"})
@@ -388,14 +409,39 @@ def test_read_code_reads_code_blocks(rt):
     c = agent_client(rt)
     assert ok(c, {"type": "set", "key": "verbosity", "value": "read_code"})["value"] == "read_code"
     stream(c, "a", CODE_TURN)
-    assert heard(c, 6)[1:5] == [
-        ("2-line python code block.", "a"),
-        ("x equals 1.", "a"),
-        ("y equals 2.", "a"),
-        ("End of code.", "a"),
-    ]
+    assert chunks_heard(c, 6) == CODE_CHUNKS
     c.state(lambda s: s["now_playing"] is None)
     quiet(c)
+
+
+def test_step_through_code_waits_at_each_line(rt):
+    # #295: with code_step on, the reader waits after the announcement and
+    # after each line; next_line reads one line, previous_line the one
+    # before, toggle the rest straight through.
+    c = agent_client(rt)
+    assert ok(c, {"type": "set", "key": "code_step", "value": "on"})["value"] == "on"
+    stream(c, "a", CODE_TURN)
+    s = c.state(lambda s: s["paused"] and s["now_playing"] is not None)
+    assert s["now_playing"]["text"] == "Line 1. x, equals, 1."
+    ok(c, {"type": "control", "action": "next_line"})
+    s = c.state(lambda s: s["paused"] and (s["now_playing"] or {}).get("chunk") == 2)
+    assert s["now_playing"]["text"] == "Line 2. y, equals, 2."
+    ok(c, {"type": "control", "action": "previous_line"})
+    c.state(lambda s: s["paused"] and (s["now_playing"] or {}).get("chunk") == 2)
+    ok(c, {"type": "control", "action": "toggle"})
+    c.state(lambda s: (s["now_playing"] or {}).get("text") == "Done.")
+    c.state(lambda s: s["now_playing"] is None)
+    c.events.clear()  # the states skipped while waiting above
+    quiet(c)
+
+
+def test_line_controls_outside_code_change_nothing(rt):
+    # #295: next_line and previous_line act only in a code block.
+    c = agent_client(rt)
+    for action in ("next_line", "previous_line"):
+        ok(c, {"type": "control", "action": action})
+    assert c.request({"type": "get", "key": "code_speed"})["value"] == 80
+    assert c.request({"type": "set", "key": "code_speed", "value": 30})["error"]["code"] == "E_BAD_REQUEST"
 
 
 def test_old_verbosity_names_are_accepted_as_aliases(rt):

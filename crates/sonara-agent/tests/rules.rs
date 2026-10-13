@@ -10,6 +10,7 @@ use sonara_agent::{
     Action, Ask, AskKind, Choice, Earcon, Job, ReadMode, Rules, Stale, Step, Timer, Verbosity,
     DELTA_GAP,
 };
+use sonara_core::code_speech::{CODE_LINE, CODE_START};
 use std::time::Duration;
 
 fn rules() -> Rules {
@@ -137,7 +138,9 @@ fn prose_is_spoken_at_every_verbosity() {
 
 #[test]
 fn everything_announces_a_code_block_then_reads_it_and_skip_code_drops_it_silently() {
-    // #290: the announcement, each line, then the end marker.
+    // #290, #295: one text for the block: the marked announcement, each
+    // marked line (numbered as in the source, the blank one counted), the
+    // end.
     let text = "Here it is.\n```python\nprint(1)\n\nx = 2\n```\nDone.\n";
     let mut r = rules();
     r.settings.verbosity = Verbosity::Everything;
@@ -145,12 +148,14 @@ fn everything_announces_a_code_block_then_reads_it_and_skip_code_drops_it_silent
     assert_eq!(
         spoken(&a),
         [
-            "Here it is.",
-            "3-line python code block.",
-            "print open paren 1 close paren.",
-            "x equals 2.",
-            "End of code.",
-            "Done."
+            "Here it is.".to_string(),
+            format!(
+                "{CODE_START}Python code block, 3 lines.\n\
+                 {CODE_LINE}Line 1. print, open paren, 1, close paren.\n\
+                 {CODE_LINE}Line 3. x, equals, 2.\n\
+                 End of Python code."
+            ),
+            "Done.".to_string(),
         ]
     );
     let mut r = rules();
@@ -182,11 +187,13 @@ fn read_code_reads_code_blocks_without_announcing_tools() {
     assert_eq!(
         spoken(&a),
         [
-            "Look.",
-            "1-line js code block.",
-            "x equals 1.",
-            "End of code.",
-            "Done."
+            "Look.".to_string(),
+            format!(
+                "{CODE_START}JavaScript code block, 1 line.\n\
+                 {CODE_LINE}Line 1. x, equals, 1.\n\
+                 End of JavaScript code."
+            ),
+            "Done.".to_string(),
         ]
     );
     assert!(spoken(&r.tool("fg", "Bash", "ls")).is_empty());

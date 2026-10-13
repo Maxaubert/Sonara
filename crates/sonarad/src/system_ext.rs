@@ -176,6 +176,22 @@ impl HotkeyTarget {
                 None => self.control(Control::Restart).map(|_| None),
             },
             Action::NextQuestion | Action::PreviousQuestion => {
+                // #295: while code is read, the keys move by code line.
+                let in_code = self
+                    .reader
+                    .state()
+                    .ok()
+                    .and_then(|s| s.now_playing)
+                    .is_some_and(|np| np.code);
+                if in_code {
+                    let c = if action == Action::NextQuestion {
+                        Control::NextLine
+                    } else {
+                        Control::PreviousLine
+                    };
+                    self.control(c)?;
+                    return Ok(Some("line".into()));
+                }
                 // #283: move between the message and its questions. A move
                 // says "Question k of N." itself; nothing to move to (no
                 // set, or the last question) chimes the edge.
@@ -801,8 +817,24 @@ impl SystemExt {
     }
 
     /// `"reset"`, `{action, key, mods}` (bind) or `{action, key: null}`
-    /// (unbind).
+    /// (unbind). The step hint (#295) then names the new next-line key.
     fn set_hotkeys(&self, v: &Value) -> Result<(), Failure> {
+        let done = self.set_hotkeys_now(v);
+        if done.is_ok() {
+            let reader = &self.target.reader;
+            if let Ok(mut c) = reader.code_reading() {
+                c.next_key = sonara_system::keymap::label(
+                    &keymap::load(&self.keymap_path),
+                    Action::NextQuestion,
+                )
+                .unwrap_or_else(|| "the next question hotkey".into());
+                let _ = reader.set_code_reading(c);
+            }
+        }
+        done
+    }
+
+    fn set_hotkeys_now(&self, v: &Value) -> Result<(), Failure> {
         let path = &self.keymap_path;
         if v.as_str() == Some("reset") {
             return keymap::reset(path).map_err(|e| Failure::new(Code::Engine, e));

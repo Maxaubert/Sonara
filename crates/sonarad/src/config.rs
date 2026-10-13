@@ -133,6 +133,26 @@ pub const SCHEMA: &[Setting] = &[
         kind: Kind::Range(0, 100),
         default: "100",
     },
+    // Code reading (#295): speed in percent of the rate, the pause after
+    // each code line in ms, step through code.
+    Setting {
+        key: "code_speed",
+        layer: Layer::Reader,
+        kind: Kind::Range(50, 100),
+        default: "80",
+    },
+    Setting {
+        key: "code_pause",
+        layer: Layer::Reader,
+        kind: Kind::Range(0, 2000),
+        default: "500",
+    },
+    Setting {
+        key: "code_step",
+        layer: Layer::Reader,
+        kind: Kind::OneOf(ON_OFF),
+        default: "\"off\"",
+    },
     Setting {
         key: "channel_announce",
         layer: Layer::Channels,
@@ -841,6 +861,34 @@ pub fn apply_reader(
         }
     }
     problems
+}
+
+/// How code is read (#295), from the saved settings, the step hint naming
+/// the key bound to `next_question` in `keymap` (it moves to the next code
+/// line while code plays).
+pub fn code_reading(store: &Store, keymap: &Path) -> sonara_reader::CodeReading {
+    use sonara_system::keymap::{self, Action};
+    let d = sonara_reader::CodeReading::default();
+    let num = |k: &str| store.value(k).as_u64();
+    sonara_reader::CodeReading {
+        speed: num("code_speed").map_or(d.speed, |n| n as u8),
+        pause_ms: num("code_pause").map_or(d.pause_ms, |n| n as u32),
+        step: store.value("code_step").as_str() == Some("on"),
+        next_key: keymap::label(&keymap::load(keymap), Action::NextQuestion)
+            .unwrap_or_else(|| "the next question hotkey".into()),
+    }
+}
+
+/// Apply the saved code reading (#295) to the reader.
+pub fn apply_code(
+    store: &Store,
+    reader: &sonara_reader::ReaderHandle,
+    keymap: &Path,
+) -> Option<String> {
+    reader
+        .set_code_reading(code_reading(store, keymap))
+        .err()
+        .map(|e| format!("config.json: code reading not applied ({e})"))
 }
 
 #[cfg(test)]

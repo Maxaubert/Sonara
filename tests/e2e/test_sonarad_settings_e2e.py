@@ -129,6 +129,34 @@ def test_the_engine_picker_shows_the_engine_and_how_it_is_doing(live, browser):
     page.close()
 
 
+def test_code_reading_rows_show_where_code_is_read_and_save(live, browser):
+    # #295: code reading speed, line pause and step through code, under
+    # Detail; hidden at Default (skip_code), where no code is read.
+    lv = live()
+    page = open_page(browser, lv.url)
+    rows = ("#codespeed-row", "#codepause-row", "#codestep-row")
+    for r in rows:
+        pw.expect(page.locator(r)).to_be_hidden()
+    page.click("#verbosity-seg [data-value=read_code]")
+    for r in rows:
+        pw.expect(page.locator(r)).to_be_visible()
+    pw.expect(page.locator("#codespeed-out")).to_have_text("80 %")
+    pw.expect(page.locator("#codepause-out")).to_have_text("0.5 s")
+    page.locator("#codespeed").fill("65")
+    page.locator("#codespeed").dispatch_event("change")
+    page.locator("#codepause").fill("1200")
+    page.locator("#codepause").dispatch_event("change")
+    page.click("#codestep-seg [data-value=on]")
+    assert eventually(lambda: lv.saved().get("code_step") == "on")
+    assert lv.saved().get("code_speed") == 65
+    assert lv.saved().get("code_pause") == 1200
+    assert (lv.get("code_speed"), lv.get("code_pause"), lv.get("code_step")) == (65, 1200, "on")
+    page.reload()
+    pw.expect(page.locator("#codepause-out")).to_have_text("1.2 s")
+    pw.expect(page.locator("#codestep-seg [data-value=on]")).to_have_attribute("aria-checked", "true")
+    page.close()
+
+
 def test_verbosity_has_three_levels_and_persists_across_a_reload(live, browser):
     # #214, #292: Default (skip_code, the default), Read code, Everything.
     lv = live()

@@ -44,6 +44,9 @@ pub const KEYS: &[&str] = &[
     "flush_scope",
     "summaries",
     "earcons",
+    "code_speed",
+    "code_pause",
+    "code_step",
 ];
 
 pub(crate) fn failure(e: Error) -> Failure {
@@ -451,6 +454,18 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
                     .ok_or_else(|| bad("'flush_scope' is \"session\" or \"all\""))?;
                 a.set_flush_scope(f);
             }
+            "code_speed" | "code_pause" | "code_step" => {
+                // #295: kept by the reader, which reads the code.
+                let v = crate::config::validate(key, v).map_err(bad)?;
+                let reader = a.channels().reader();
+                let mut c = reader.code_reading().map_err(reader_failure)?;
+                match key {
+                    "code_speed" => c.speed = v.as_u64().unwrap_or(80) as u8,
+                    "code_pause" => c.pause_ms = v.as_u64().unwrap_or(500) as u32,
+                    _ => c.step = v.as_str() == Some("on"),
+                }
+                reader.set_code_reading(c).map_err(reader_failure)?;
+            }
             _ => {
                 let mut merged = merge_summaries(a.settings().summaries, v)?;
                 let prompts = merge_prompts(store.prompts(), v, merged.style)?;
@@ -474,7 +489,11 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
         }
     }
     let s = a.settings();
+    let code = || a.channels().reader().code_reading().map_err(reader_failure);
     let value = match key {
+        "code_speed" => json!(code()?.speed),
+        "code_pause" => json!(code()?.pause_ms),
+        "code_step" => json!(if code()?.step { "on" } else { "off" }),
         "mute_level" => json!(s.mute_level),
         "verbosity" => json!(s.verbosity.as_str()),
         "read_mode" => json!(s.read_mode.as_str()),
@@ -642,6 +661,48 @@ mod tests {
             json!({"type": "turn_end", "channel": "a", "t": 9.9}),
         );
         assert_eq!(r["stale"], true);
+    }
+
+    #[test]
+    fn the_code_reading_settings_round_trip_and_are_checked() {
+        // #295: code speed (percent), the pause after a line (ms), step mode.
+        let (s, mut a) = enabled();
+        for (key, default) in [
+            ("code_speed", json!(80)),
+            ("code_pause", json!(500)),
+            ("code_step", json!("off")),
+        ] {
+            let r = call(&s, &mut a, json!({"type": "get", "key": key}));
+            assert_eq!(r["value"], default, "{key}: {r}");
+        }
+        for (key, value) in [
+            ("code_speed", json!(60)),
+            ("code_pause", json!(1200)),
+            ("code_step", json!("on")),
+        ] {
+            let r = call(
+                &s,
+                &mut a,
+                json!({"type": "set", "key": key, "value": value}),
+            );
+            assert_eq!(r["value"], value, "{key}: {r}");
+        }
+        let reader = s.reader();
+        let c = reader.code_reading().unwrap();
+        assert_eq!((c.speed, c.pause_ms, c.step), (60, 1200, true));
+        for (key, value) in [
+            ("code_speed", json!(49)),
+            ("code_speed", json!(101)),
+            ("code_pause", json!(2001)),
+            ("code_step", json!("maybe")),
+        ] {
+            let r = call(
+                &s,
+                &mut a,
+                json!({"type": "set", "key": key, "value": value}),
+            );
+            assert_eq!(code(&r), "E_BAD_REQUEST", "{key} {value}: {r}");
+        }
     }
 
     #[test]

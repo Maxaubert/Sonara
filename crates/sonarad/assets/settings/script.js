@@ -112,7 +112,7 @@ async function change(key, value, label, done) {
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
               "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
-              "channel_prefs", "earcons", "debug_log"];
+              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step"];
 let voices = [];
 let engineData = null;   // the engine_list reply, when this runtime allows external engines
 const profileVoices = {}; // added engine id -> its voices as last fetched (null: the fetch failed)
@@ -292,6 +292,11 @@ function render() {
   if (agentOn) {
     setSegments("mute-seg", s.mute_level);
     setSegments("verbosity-seg", s.verbosity);
+    // Code reading (#295): only where code is read.
+    for (const id of ["codespeed-row", "codepause-row", "codestep-row"]) $(id).hidden = s.verbosity === "skip_code";
+    if (s.code_speed !== undefined) { setVal("codespeed", s.code_speed); setText("codespeed-out", s.code_speed + " %"); }
+    if (s.code_pause !== undefined) { setVal("codepause", s.code_pause); setText("codepause-out", seconds(s.code_pause)); }
+    setSegments("codestep-seg", s.code_step);
     setSegments("background-seg", s.background_policy);
     renderSummary(s.summaries);
     setSegments("readmode-seg", s.read_mode);
@@ -1853,14 +1858,21 @@ $("voice-preview").addEventListener("click", async () => {
     setTimeout(() => btn.removeAttribute("aria-busy"), 600);
   }
 });
-for (const [id, key, out, unit] of [["rate", "rate", "rate-out", " wpm"], ["volume", "volume", "volume-out", " %"], ["duck", "duck_level", "duck-out", " %"]]) {
+// A pause in milliseconds as seconds: "0.5 s".
+function seconds(ms) { return (Number(ms) / 1000).toFixed(1) + " s"; }
+for (const [id, key, out, show] of [["rate", "rate", "rate-out", v => v + " wpm"], ["volume", "volume", "volume-out", v => v + " %"],
+                                    ["duck", "duck_level", "duck-out", v => v + " %"], ["codespeed", "code_speed", "codespeed-out", v => v + " %"],
+                                    ["codepause", "code_pause", "codepause-out", seconds]]) {
   const el = $(id), range = SCHEMA[key];
   el.min = range.min;
   el.max = range.max;
   setVal(id, range.default);
-  setText(out, range.default + unit);
-  el.addEventListener("input", () => { updateFill(el); setText(out, el.value + unit); });
+  setText(out, show(range.default));
+  el.addEventListener("input", () => { updateFill(el); setText(out, show(el.value)); });
 }
+$("codespeed").addEventListener("change", e => change("code_speed", Number(e.target.value), "Code reading speed"));
+$("codepause").addEventListener("change", e => change("code_pause", Number(e.target.value), "Line pause"));
+wireSegments("codestep-seg", v => change("code_step", v, "Step through code"));
 $("rate").addEventListener("change", e => change("rate", Number(e.target.value), "Rate"));
 $("volume").addEventListener("change", e => change("volume", Number(e.target.value), "Volume"));
 $("duck").addEventListener("change", e => change("duck_level", Number(e.target.value), "Duck level"));

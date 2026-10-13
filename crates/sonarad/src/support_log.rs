@@ -401,6 +401,7 @@ mod tests {
                 text: text.into(),
                 chunk,
                 chunks,
+                code: false,
             }),
             queued: 0,
             paused: false,

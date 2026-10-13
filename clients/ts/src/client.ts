@@ -90,7 +90,10 @@ export class SonaraClient {
     return r.item_id as number;
   }
 
-  /** Playback control: play, pause, toggle, stop, skip, previous, next, restart, mute, unmute. */
+  /**
+   * Playback control: play, pause, toggle, stop, skip, previous, next, restart, mute, unmute,
+   * and in a code block next_line, previous_line (protocol 1.7).
+   */
   async control(action: ControlAction): Promise<void> {
     await this.request("control", { action });
   }

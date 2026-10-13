@@ -192,6 +192,7 @@ Item ids start at 1 and never repeat within one runtime.
 | `previous` / `next` | one chunk back / forward within the current item; `previous` on the first chunk restarts it, `next` on the last is `skip` |
 | `restart` | back to the current item's first chunk; when idle, replay the last item that ended (not after `stop`) as a new item |
 | `mute` / `unmute` | silence the output and back; playback keeps moving, and the mute survives `stop` and new items |
+| `next_line` / `previous_line` | protocol 1.7 (runtime 0.25.0, #295), in a code block only (`now_playing` on a code chunk; nothing otherwise): the next code line (waiting at a line in step mode: that line; else the one after the line playing) / the line before (on the first line: that line again). Each plays and, in step mode, waits again after it. See Code reading |
 
 ### `set` / `get`
 
@@ -375,7 +376,9 @@ provider's models, live), the profile's `send_mode` ("Send to the engine") and t
 `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
 filling in a default model or voice for any external engine (a profile without one it needs is kept
 and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
-are only what the profile sets. 1.6 (runtime 0.22.0, #283) added question sets: the `ask` fields
+are only what the profile sets. 1.7 (runtime 0.25.0, #295) added code reading: the `control` actions
+`next_line` and `previous_line` and the `agent` keys `code_speed`, `code_pause` and `code_step`
+(see Code reading). 1.6 (runtime 0.22.0, #283) added question sets: the `ask` fields
 `set_index` and `set_size`, the `agent` `control` actions `next_question` and `previous_question`,
 and, with `agent`, `restart` without a channel reading a message with a question set again from the
 top (the text, then question 1) instead of restarting the question playing: the Up key's documented
@@ -734,6 +737,18 @@ done. A reply counts as still being written until its `turn_end`: a turn the use
 (Claude Code fires no `Stop` for it) keeps its text in scope `all` until that session's next
 `turn_start`. Mute (`mute_level`) is the way to silence every session.
 
+**Code reading** (protocol 1.7, runtime 0.25.0, #295). At `verbosity` `"read_code"` and
+`"everything"` a fenced code block in `stream` text is read as one item: its announcement
+(`"TypeScript code block, 7 lines."`, the fence's language by name), each line (`"Line 3. ..."`,
+numbered as in the source, a blank line counted but not read), then `"End of TypeScript code."`.
+A line names its symbols (`.` dot, `(` open paren, `=` equals, `=>` arrow, ...), reads strings,
+comments and the text between markup tags as written, splits identifiers into words
+(`getUserName` "get user name") and puts a comma (a brief pause) between its parts; a trailing `;`
+is not read. Each line is a chunk of its own, read at `code_speed` with `code_pause` of silence
+after it; `now_playing.text` shows it as read, without the marker that tells the reader it is code.
+Inline code in prose (`` `useState()` ``) is read with the same words. Core `speak` text is not
+read this way (a fence there is only announced).
+
 **Question sets** (protocol 1.6, runtime 0.22.0, #283). Claude Code shows the questions of one
 `AskUserQuestion` one at a time, so they are not read back to back: an `ask` `question` with
 `set_size` 2 or more is one question of a set. The one with `set_index` 0 is read (once, with
@@ -793,7 +808,10 @@ clip instead, and one line in `logs\sonarad.log` says why (once per version of t
 | key | value |
 |---|---|
 | `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Setting 1 or 2 stops everything queued and playing, core `speak` and channel `speak` items included (as the Python daemon's global mute); text spoken without the extension afterwards is read as usual. **Muting never loses a session's latest message** (runtime 0.20.2, #243): at level 1 and 2 the agent text that would be read is stored in its channel as that session's latest message, marked heard, so it is never read on its own, nothing is synthesized and no request reaches an engine. Setting 0 reads nothing. A switch to the session (`next_channel`) or `restart` (Up) reads it, from the top of the batch. Every rule runs as while unmuted (`read_mode`, send mode `message`, `turn_start`, `flush`), only the outcome is stored. Summaries are not made while muted: the prose kept for a summary is stored as it is (no summarizer run for text nobody hears); a summary that lands while muted is stored. Two exceptions to "unmuting reads nothing": a summary already in flight (or a settle window started) when muting that lands after unmuting is read, and with `read_mode` `done` prose held while muted is read by a `turn_end` that comes after unmuting (the turn ended unmuted). See "Agent batches" above |
-| `verbosity` | `"everything"`: text, decisions, tool announcements, hints, and each code block announced as `"<n>-line <lang> code block"` and then read line by line (runtime 0.23.0, #290: brackets, common operators and markup tags named, `"End of code."` after it); `"read_code"` (runtime 0.24.0, #292): text, decisions and code blocks as at `"everything"`, no tool announcements or hints; `"skip_code"` (default, shown as *Default*): text and decisions, code blocks dropped without a word, no tool announcements or hints. Aliases for older clients (#214): `"medium"` and `"quiet"` are `"skip_code"`, `"all"` is `"everything"`; a `set` with an alias answers (and saves) the new name, and a saved alias loads as the new name |
+| `verbosity` | `"everything"`: text, decisions, tool announcements, hints, and each code block read (see Code reading; runtime 0.23.0 #290, 0.25.0 #295); `"read_code"` (runtime 0.24.0, #292): text, decisions and code blocks as at `"everything"`, no tool announcements or hints; `"skip_code"` (default, shown as *Default*): text and decisions, code blocks dropped without a word, no tool announcements or hints. Aliases for older clients (#214): `"medium"` and `"quiet"` are `"skip_code"`, `"all"` is `"everything"`; a `set` with an alias answers (and saves) the new name, and a saved alias loads as the new name |
+| `code_speed` | protocol 1.7 (#295): code lines and a block's announcement are read at this percent of `rate`, `50` to `100` (default `80`). External engines without a speed parameter (Gemini) take it as their pace style |
+| `code_pause` | protocol 1.7 (#295): silence after each code line, in milliseconds, `0` to `2000` (default `500`) |
+| `code_step` | protocol 1.7 (#295): `"on"` or `"off"` (default): step through code. The reader waits after a block's announcement (which adds `"Use <key> for the next line."`, the key bound to `next_question`) and after each line, until `next_line`, `previous_line` or `play` / `toggle` (the rest of the block straight through). While waiting it is `paused` |
 | `read_mode` | when a turn's sentences are read (#222): `"immediate"`: each as it arrives; `"queue"`: held until `minqueue` are waiting, the turn ends, a tool runs or a decision arrives; `"done"` (default): held until the turn ends or a decision (question, permission, plan) arrives, a tool run does not release them. A decision reads the held sentences first, then itself; after the turn ends, late sentences are read at once. With summaries on, summaries own the turn whatever the mode. A `config.json` from before #222 with a `minqueue` the user set and no `read_mode` loads `0` and `1` as `"immediate"` and more as `"queue"` (written with the next change); without one the default applies |
 | `flush_scope` | what `control flush` (the flush hotkey) skips (#228): `"session"` (default): the session being read, for the rest of its reply, then the next session is read; `"all"`: also every other session's ready messages (queued text, finished replies, summaries); a reply still being written is kept in both. See `control flush` above |
 | `minqueue` | `0` to `10` (default 5), read mode `"queue"` only: a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
@@ -931,7 +949,7 @@ Actions and what they do (the same as the protocol request named):
 | `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` then says `"Session changed: <label>."` (the announcement; `"Session changed."` for a session without a label; when switches are not announced, the earcon alone); with no channel open, the cue `"No session."` |
 | `faster` / `slower` | unbound | `rate` plus or minus 25, then `"Rate N."` |
 | `previous_question` | Ctrl+Alt+Left | `control previous_question` (#283): question 1 from the message text; the question before; question 1 again on question 1. Plays `nav_edge` when no session has a question set |
-| `next_question` | Ctrl+Alt+Right | `control next_question` (#283): question 1 from the message text or a set not started; the next question. Plays `nav_edge` on the last question or when no session has a set |
+| `next_question` | Ctrl+Alt+Right | `control next_question` (#283): question 1 from the message text or a set not started; the next question. Plays `nav_edge` on the last question or when no session has a set. While a code block is read (#295) it is `control next_line` instead, and `previous_question` is `previous_line` |
 
 A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`,
 `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A
