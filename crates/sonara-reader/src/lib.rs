@@ -29,7 +29,10 @@ mod synth;
 mod worker;
 
 pub use error::{Error, Result};
-pub use settings::{Key, Value, RATE_MAX, RATE_MIN, VOLUME_MAX};
+pub use settings::{
+    CodeReading, Key, Value, CODE_PAUSE_MAX_MS, CODE_SPEED_MAX, CODE_SPEED_MIN, RATE_MAX, RATE_MIN,
+    VOLUME_MAX,
+};
 
 pub use sonara_audio::{AudioEvent, Output};
 pub use sonara_core::reader::{Chunking, Control, ItemId, ItemPhase, NowPlaying, QueueMode, State};
@@ -275,6 +278,18 @@ impl ReaderHandle {
     /// `Null` for the default) and the engine id as text.
     pub fn get(&self, key: Key) -> Result<Value> {
         self.call(|reply| Msg::Get { key, reply })
+    }
+
+    /// How code is read from now on (#295): chunks synthesized after this
+    /// take the new speed and pause; step mode applies at once. Refused
+    /// out of range.
+    pub fn set_code_reading(&self, code: CodeReading) -> Result<()> {
+        settings::check_code(&code)?;
+        self.call(|reply| Msg::Code(code, reply))
+    }
+
+    pub fn code_reading(&self) -> Result<CodeReading> {
+        self.call(Msg::GetCode)
     }
 
     /// The current state snapshot.

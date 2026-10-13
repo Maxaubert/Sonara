@@ -20,10 +20,16 @@
       "output": "Use strong and soft words."
     },
     {
-      "name": "inline_code_keeps_text",
+      "name": "inline_code_reads_its_symbols",
       "fn": "clean_markdown",
       "input": "Run `pytest -q` now.",
-      "output": "Run pytest -q now."
+      "output": "Run pytest, dash q now."
+    },
+    {
+      "name": "inline_code_reads_a_tag_and_a_call",
+      "fn": "clean_markdown",
+      "input": "It writes `<Welcome />` and calls `useState()`.",
+      "output": "It writes tag Welcome, self-closing and calls use state, empty parens."
     },
     {
       "name": "table_separator_removed",

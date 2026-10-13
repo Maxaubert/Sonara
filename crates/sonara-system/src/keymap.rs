@@ -417,6 +417,16 @@ pub fn reset(path: &Path) -> Result<(), String> {
     write_overrides(path, &list)
 }
 
+/// The chord bound to `action`, as `combo_label` writes it; `None` when
+/// it is unbound or cannot be registered.
+pub fn label(km: &Keymap, action: Action) -> Option<String> {
+    resolve(km)
+        .0
+        .into_iter()
+        .find(|r| r.action == action)
+        .map(|r| combo_label(r.mods, r.vk))
+}
+
 /// How a chord reads: `Ctrl+Alt+Up` (Win first, as Windows writes it).
 pub fn combo_label(mods: u32, vk: u32) -> String {
     let mut parts: Vec<String> = [

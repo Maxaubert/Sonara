@@ -324,6 +324,9 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
     for p in config::apply_reader(&store, &reader, false) {
         home.log(&p);
     }
+    if let Some(p) = config::apply_code(&store, &reader, &home.dir.join("keymap.json")) {
+        home.log(&p);
+    }
     // One line per start for support, then the model's readiness changes.
     support_log::log_startup(&home, VERSION, &reader, &engine);
     support_log::watch_engine(&home, &reader);

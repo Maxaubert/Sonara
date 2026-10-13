@@ -12,7 +12,10 @@ export type ControlAction =
   | "next"
   | "restart"
   | "mute"
-  | "unmute";
+  | "unmute"
+  /** In a code block (protocol 1.7): the next or previous code line. */
+  | "next_line"
+  | "previous_line";
 
 /** Core setting keys (protocol v1, `set` / `get`). */
 export type SettingKey = "volume" | "rate" | "voice" | "engine";

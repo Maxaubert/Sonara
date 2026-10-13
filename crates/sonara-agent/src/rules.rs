@@ -103,6 +103,7 @@ use crate::decision::{self, AskKind, Choice};
 use crate::earcon::Earcon;
 use crate::settings::{ReadMode, Settings, Verbosity};
 use sonara_core::assembler::{Chunk, ProseAssembler};
+use sonara_core::code_speech::{CODE_LINE, CODE_START};
 use sonara_core::text::normalize_for_speech;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -174,6 +175,25 @@ pub enum Timer {
 /// #286: 25 ms), so the wait is short; past it the held deltas are read in
 /// index order without the missing one.
 pub const DELTA_GAP: Duration = Duration::from_millis(400);
+
+/// A code block as one text (#295): its marked announcement, each marked
+/// line on a line of its own, then its end. One text keeps the block one
+/// item, so step mode and Up move inside it; the reader makes each marked
+/// line its own chunk. A block with no spoken line is its announcement.
+fn code_block(summary: &str, lines: &[String], end: &str) -> String {
+    if lines.is_empty() {
+        return summary.to_string();
+    }
+    let mut t = format!("{CODE_START}{summary}");
+    for l in lines {
+        t.push('\n');
+        t.push(CODE_LINE);
+        t.push_str(l);
+    }
+    t.push('\n');
+    t.push_str(end);
+    t
+}
 
 /// The deltas of a block in index order (#286). Each `stream` comes from
 /// its own hook process, so a block's deltas can reach the runtime out of
@@ -813,19 +833,17 @@ impl Rules {
                         c.prose.push(t.clone());
                         texts.push((t, std::mem::take(&mut c.new_para)));
                     }
-                    Chunk::Code { summary, lines } => {
+                    Chunk::Code {
+                        summary,
+                        lines,
+                        end,
+                    } => {
                         c.prose.push(summary.clone());
                         if skip_code {
                             skipped.push(summary);
-                        } else if lines.is_empty() {
-                            texts.push((summary, std::mem::take(&mut c.new_para)));
                         } else {
-                            // `everything` reads the block after its
-                            // announcement (#290).
                             let para = std::mem::take(&mut c.new_para);
-                            texts.push((format!("{summary}."), para));
-                            texts.extend(lines.into_iter().map(|l| (l, false)));
-                            texts.push(("End of code.".to_string(), false));
+                            texts.push((code_block(&summary, &lines, &end), para));
                         }
                     }
                     Chunk::ParagraphBreak => {

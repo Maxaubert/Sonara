@@ -77,7 +77,7 @@ Speech starts with the next event, usually a few seconds later. `/sonara:doctor`
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
 
 **Defaults** are the voice `af_sarah` at 250 words per minute, detail *Default* (code blocks
-and tool announcements skipped; *Read code* reads code blocks aloud, line by line; *Everything* also announces each tool), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
+and tool announcements skipped; *Read code* reads code blocks aloud, line by line; *Everything* also announces each tool; see [Code](#code)), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
 them on the settings page (`/sonara:settings`).
 
 **Updates.** A plugin update names a new runtime release; the next hook installs it the same way,
@@ -97,7 +97,7 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
 ## How it reads
 
 - **The latest reply, as it streams.** Sonara turns Markdown into speakable sentences (code
-  blocks are summarised, not spelled out) and reads them in order. A question, plan or
+  blocks are announced, and read at *Read code* and *Everything*: see [Code](#code)) and reads them in order. A question, plan or
   permission prompt is spoken in its natural place, after the text that explains it.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
@@ -117,6 +117,23 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   another session, by the hotkey or because another session's reply is next, plays the
   `session_change` chime and then says "Session changed: *folder*." ("..., reading again." when
   it starts over). Give a session another name on the Sessions page.
+
+### Code
+
+At detail *Read code* or *Everything* a code block is read line by line: "TypeScript code block,
+7 lines.", then "Line 1. function Welcome, empty parens, open brace." and so on, then "End of
+TypeScript code." Symbols are said as words (dot, comma, open paren, equals, arrow), strings and
+comments are read as written, and names like `getUserName` are read "get user name". The brief
+pauses between the parts of a line are commas; after each line Sonara waits the *Line pause*
+(0.5 s by default). Code is read at the *Code reading speed* (80 % of your rate by default).
+Inline code in a sentence, like `useState()`, is read with the same words.
+
+While a code block is read, **Ctrl+Alt+Right** goes to the next line and **Ctrl+Alt+Left** to
+the one before. Turn on **Step through code** on the settings page to go one line at a time:
+Sonara says the block's name and "Use Ctrl+Alt+Right for the next line." (whatever key you
+bound), then waits before each line. Past the last line it goes on with the reply. The `pause`
+action (unbound by default; bind it on the Hotkeys tab) reads the rest of the block straight
+through.
 
 ### Answering prompts
 
@@ -145,8 +162,8 @@ saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt o
 | Ctrl+Alt+Down | Flush: skip the reply being read: what is playing, what that session has queued and the rest of that reply still arriving (its questions are still read). *Flush skips* on the Hotkeys tab sets what else goes: *This session* (default) goes on to the next session; *Everything queued* also drops every other session's finished replies waiting to be read. A session still writing its reply keeps it either way. To silence everything, mute (Ctrl+Alt+M). Ctrl+Alt+Up replays what had arrived before the flush |
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |
-| Ctrl+Alt+Right | Next question (from the reply: question 1) |
-| Ctrl+Alt+Left | Previous question (from the reply, or on question 1: question 1) |
+| Ctrl+Alt+Right | Next question (from the reply: question 1); while code is read, the next code line |
+| Ctrl+Alt+Left | Previous question (from the reply, or on question 1: question 1); while code is read, the line before |
 
 `pause`, `faster` and `slower` are also actions; they ship unbound. Each hotkey confirms itself
 with a short spoken cue ("Muted.", "Rate 275.").
@@ -182,7 +199,7 @@ engine is reading.
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), other sessions (Read all or Chime only) |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), code reading speed, line pause and step through code (shown when code is read), other sessions (Read all or Chime only) |
 | Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a slide-over form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the model, the prompt for each style, live reading: Immediately, Queue (with its queue size) or When done, and the summary timeout and settle time |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |

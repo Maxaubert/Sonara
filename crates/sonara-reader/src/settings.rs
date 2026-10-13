@@ -9,6 +9,53 @@ pub const RATE_MAX: u32 = 400;
 /// Percent.
 pub const VOLUME_MAX: u8 = 100;
 
+/// Code reading (#295): speed in percent of the speech rate.
+pub const CODE_SPEED_MIN: u8 = 50;
+pub const CODE_SPEED_MAX: u8 = 100;
+/// The longest pause after a code line, in milliseconds.
+pub const CODE_PAUSE_MAX_MS: u32 = 2_000;
+
+/// How code is read (#295): its speed, the pause after each line, step
+/// mode, and the key named in the step hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeReading {
+    /// Percent of the speech rate, `CODE_SPEED_MIN..=CODE_SPEED_MAX`.
+    pub speed: u8,
+    /// Silence after each code line, `0..=CODE_PAUSE_MAX_MS`.
+    pub pause_ms: u32,
+    /// Wait after a block's announcement and after each line.
+    pub step: bool,
+    /// The next-line key as the step hint says it ("Ctrl+Alt+Right").
+    pub next_key: String,
+}
+
+impl Default for CodeReading {
+    fn default() -> Self {
+        CodeReading {
+            speed: 80,
+            pause_ms: 500,
+            step: false,
+            next_key: "Ctrl+Alt+Right".into(),
+        }
+    }
+}
+
+pub(crate) fn check_code(c: &CodeReading) -> Result<()> {
+    if !(CODE_SPEED_MIN..=CODE_SPEED_MAX).contains(&c.speed) {
+        return Err(Error::BadCode(format!(
+            "speed {} is not in {CODE_SPEED_MIN}..={CODE_SPEED_MAX}",
+            c.speed
+        )));
+    }
+    if c.pause_ms > CODE_PAUSE_MAX_MS {
+        return Err(Error::BadCode(format!(
+            "pause {} ms is not in 0..={CODE_PAUSE_MAX_MS}",
+            c.pause_ms
+        )));
+    }
+    Ok(())
+}
+
 /// A setting (spec 4.1 `set`/`get`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {

@@ -41,6 +41,13 @@ pub enum Control {
     Restart,
     Mute,
     Unmute,
+    /// In a code block (#295): the next code line (the one waited at in
+    /// step mode, else the one after the playing line). Nothing outside
+    /// code.
+    NextLine,
+    /// In a code block (#295): the line before (the playing line again on
+    /// the first line). Nothing outside code.
+    PreviousLine,
 }
 
 /// Lifecycle phase reported by `Event::Item`.
@@ -62,6 +69,9 @@ pub struct NowPlaying {
     /// Zero-based index of that chunk.
     pub chunk: usize,
     pub chunks: usize,
+    /// The chunk is code (#295): a block's announcement or one of its
+    /// lines.
+    pub code: bool,
 }
 
 /// A snapshot of the reader. `seq` is the sequence number of the last
@@ -73,6 +83,9 @@ pub struct State {
     /// Items waiting after the current one.
     pub queued: usize,
     pub paused: bool,
+    /// Paused by step mode at a code line (#295), not by the user: other
+    /// apps stay as they are while reading.
+    pub stepping: bool,
     pub muted: bool,
     /// Speech volume in percent, as set (the host validates the range).
     pub volume: u8,

@@ -149,7 +149,10 @@ fn speak_snake_case(text: &str) -> String {
 
 pub fn clean_markdown(text: &str) -> String {
     let mut t = LINK.replace_all(text, "${1}").into_owned();
-    t = INLINE_CODE.replace_all(&t, "${1}").into_owned();
+    // Inline code is read with the code words (#295).
+    t = INLINE_CODE
+        .replace_all(&t, |c: &regex::Captures| crate::code_speech::inline(&c[1]))
+        .into_owned();
     t = HEADING.replace_all(&t, "").into_owned();
     t = BULLET.replace_all(&t, "${1}").into_owned();
     t = emphasis_pass(&t);
@@ -170,104 +173,6 @@ pub fn normalize_for_speech(text: &str) -> String {
     WHITESPACE.replace_all(&t, " ").trim().to_string()
 }
 
-// Code read aloud (#290): markup tags in markup languages, then brackets and
-// operators by name, longest first.
-static CLOSE_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"</\s*([A-Za-z][\w.:-]*)\s*>").unwrap());
-static SELF_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"<([A-Za-z][\w.:-]*)([^<>]*?)/>").unwrap());
-static OPEN_TAG: Lazy<Regex> = Lazy::new(|| Regex::new(r"<([A-Za-z][\w.:-]*)([^<>]*)>").unwrap());
-static CODE_SYMBOL: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"===|!==|=>|->|==|!=|<=|>=|&&|\|\||\+=|-=|\(\)|[{}()\[\]=]").unwrap());
-const MARKUP: &[&str] = &["html", "xml", "jsx", "tsx", "vue", "svelte", "svg"];
-const HASH_COMMENT: &[&str] = &[
-    "python",
-    "py",
-    "bash",
-    "sh",
-    "shell",
-    "zsh",
-    "ruby",
-    "rb",
-    "yaml",
-    "yml",
-    "toml",
-    "powershell",
-    "ps1",
-    "pwsh",
-    "r",
-    "perl",
-];
-
-/// One line of a fenced code block as it is read aloud (#290), or None for
-/// a blank line. `lang` is the fence's info string. Indentation and trailing
-/// semicolons are not spoken; brackets, common operators and (in markup
-/// languages) tags are named; the line ends as a sentence so each line
-/// pauses.
-pub fn code_line_for_speech(line: &str, lang: &str) -> Option<String> {
-    let lang = lang
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let mut t = line.trim().trim_end_matches([';', ',', ' ']).to_string();
-    if t.is_empty() {
-        return None;
-    }
-    if let Some(rest) = t.strip_prefix("//") {
-        t = format!("comment {}", rest.trim());
-    } else if HASH_COMMENT.contains(&lang.as_str()) && t.starts_with('#') {
-        t = format!("comment {}", t.trim_start_matches('#').trim());
-    }
-    if MARKUP.contains(&lang.as_str()) {
-        t = CLOSE_TAG.replace_all(&t, " close tag $1 ").into_owned();
-        t = SELF_TAG
-            .replace_all(&t, " tag $1 $2, self-closing ")
-            .into_owned();
-        t = OPEN_TAG.replace_all(&t, " open tag $1 $2 ").into_owned();
-        t = t
-            .replace("</>", " close fragment ")
-            .replace("<>", " open fragment ");
-    }
-    t = CODE_SYMBOL
-        .replace_all(&t, |c: &regex::Captures| {
-            let name = match &c[0] {
-                "===" => "strictly equals",
-                "!==" => "not strictly equals",
-                "=>" | "->" => "arrow",
-                "==" => "double equals",
-                "!=" => "not equals",
-                "<=" => "less or equal",
-                ">=" => "greater or equal",
-                "&&" => "and",
-                "||" => "or",
-                "+=" => "plus equals",
-                "-=" => "minus equals",
-                "()" => "empty parens",
-                "{" => "open brace",
-                "}" => "close brace",
-                "(" => "open paren",
-                ")" => "close paren",
-                "[" => "open bracket",
-                "]" => "close bracket",
-                _ => "equals",
-            };
-            format!(" {name} ")
-        })
-        .into_owned();
-    let mut t = WHITESPACE.replace_all(&t, " ").trim().to_string();
-    t = t.replace(" ,", ",");
-    if t.is_empty() {
-        return None;
-    }
-    // The reader splits sentences at . ! ? only, so every line ends in one.
-    if let Some(head) = t.strip_suffix(':') {
-        t = format!("{} colon", head.trim_end());
-    }
-    if !t.ends_with(['.', '!', '?']) {
-        t.push('.');
-    }
-    Some(t)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -277,66 +182,6 @@ pub(crate) mod tests {
         let s = "1. a\n  22. b";
         assert_eq!(stabilize_ordinals(s), "1: a\n  22: b");
         assert_eq!(stabilize_ordinals(s).len(), s.len());
-    }
-
-    #[test]
-    fn a_code_line_is_spoken_with_its_symbols_named() {
-        // #290: the lesson shape that was only announced.
-        let jsx = |l| code_line_for_speech(l, "jsx");
-        assert_eq!(
-            jsx("function Welcome() {").as_deref(),
-            Some("function Welcome empty parens open brace.")
-        );
-        assert_eq!(
-            jsx("  return <h1>Hei, verden!</h1>;").as_deref(),
-            Some("return open tag h1 Hei, verden! close tag h1.")
-        );
-        assert_eq!(
-            jsx("      <Welcome />").as_deref(),
-            Some("tag Welcome, self-closing.")
-        );
-        assert_eq!(jsx("    <div>").as_deref(), Some("open tag div."));
-        assert_eq!(jsx("  );").as_deref(), Some("close paren."));
-        assert_eq!(jsx("}").as_deref(), Some("close brace."));
-        assert_eq!(
-            code_line_for_speech("const f = (a) => a === 1;", "js").as_deref(),
-            Some("const f equals open paren a close paren arrow a strictly equals 1.")
-        );
-        assert_eq!(
-            code_line_for_speech("// say hi", "js").as_deref(),
-            Some("comment say hi.")
-        );
-        assert_eq!(
-            code_line_for_speech("# say hi", "python").as_deref(),
-            Some("comment say hi.")
-        );
-        // Angle brackets outside markup languages are left alone.
-        assert_eq!(
-            code_line_for_speech("if a < b:", "python").as_deref(),
-            Some("if a < b colon.")
-        );
-        assert_eq!(code_line_for_speech("   ", "js"), None);
-    }
-
-    #[test]
-    fn a_code_line_stays_one_sentence_in_the_reader() {
-        // The reader runs the text rules again over what the agent speaks
-        // (whole messages join the chunks with a space).
-        let lines: Vec<String> = ["function Welcome() {", "  return <h1>Hi</h1>;", "}"]
-            .iter()
-            .filter_map(|l| code_line_for_speech(l, "jsx"))
-            .collect();
-        let joined = format!("3-line jsx code block. {} End of code.", lines.join(" "));
-        assert_eq!(
-            crate::reader::split_chunks(&joined),
-            [
-                "3-line jsx code block.",
-                "function Welcome empty parens open brace.",
-                "return open tag h1 Hi close tag h1.",
-                "close brace.",
-                "End of code."
-            ]
-        );
     }
 
     #[test]

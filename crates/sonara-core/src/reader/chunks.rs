@@ -1,11 +1,55 @@
 //! Split one text into the chunks of one item.
 use crate::assembler::{Chunk, ProseAssembler};
+use crate::code_speech::{unmarked, CODE_LINE, CODE_START};
+
+/// A run of prose, or one marked code chunk (#295).
+enum Seg<'a> {
+    Prose(&'a str),
+    Code(&'a str),
+}
+
+/// `text` cut into prose and marked code chunks: a code chunk runs from
+/// its marker (`code_speech::CODE_LINE` or `CODE_START`) to the end of its
+/// line or the next marker.
+fn segments(text: &str) -> Vec<Seg<'_>> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find([CODE_LINE, CODE_START]) {
+        out.push(Seg::Prose(&rest[..at]));
+        let marker = rest[at..].chars().next().map_or(1, char::len_utf8);
+        let body = &rest[at + marker..];
+        let end = body
+            .find(['\n', CODE_LINE, CODE_START])
+            .unwrap_or(body.len());
+        out.push(Seg::Code(rest[at..at + marker + end].trim_end()));
+        rest = &body[end..];
+    }
+    out.push(Seg::Prose(rest));
+    out
+}
 
 /// The spoken chunks of `text`: the M1 assembler and text rules run over the
 /// whole text as one final delta, so one item = one text and its chunks are
-/// its spoken sentences. Paragraph breaks do not create chunks. Empty when
-/// nothing in the text is speakable.
+/// its spoken sentences. Paragraph breaks do not create chunks. A marked
+/// code chunk (#295) is a chunk of its own, kept as written (with its
+/// marker, which tells the reader to read it as code). Empty when nothing
+/// in the text is speakable.
 pub fn split_chunks(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for seg in segments(text) {
+        match seg {
+            Seg::Prose(t) => out.extend(prose_chunks(t)),
+            Seg::Code(c) if !unmarked(c).trim().is_empty() => out.push(c.to_string()),
+            Seg::Code(_) => {}
+        }
+    }
+    out
+}
+
+fn prose_chunks(text: &str) -> Vec<String> {
+    if text.trim().is_empty() {
+        return Vec::new();
+    }
     ProseAssembler::new()
         .feed(text, 0, true)
         .into_iter()
@@ -42,8 +86,22 @@ fn paragraphs(text: &str) -> Vec<Vec<String>> {
 /// as possible: when cutting only between paragraphs would need more
 /// chunks than cutting anywhere between sentences, the fewest chunks win.
 /// A sentence longer than `max` stays whole (the engine splits it at
-/// words). Empty when nothing in the text is speakable.
+/// words). A marked code chunk (#295) is always a chunk of its own, so it
+/// gets the code speed and its pause. Empty when nothing in the text is
+/// speakable.
 pub fn pack_message(text: &str, max: usize, bytes: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    for seg in segments(text) {
+        match seg {
+            Seg::Prose(t) if !t.trim().is_empty() => out.extend(pack_prose(t, max, bytes)),
+            Seg::Code(c) if !unmarked(c).trim().is_empty() => out.push(c.to_string()),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn pack_prose(text: &str, max: usize, bytes: bool) -> Vec<String> {
     let size = |s: &str| if bytes { s.len() } else { s.chars().count() };
     let max = max.max(1);
     let paras = paragraphs(text);

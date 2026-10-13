@@ -14,6 +14,9 @@ pub enum Error {
     /// The registry has no engine to speak with.
     #[error("no engine is registered")]
     NoEngine,
+    /// Code reading settings out of range (#295).
+    #[error("bad code reading setting: {0}")]
+    BadCode(String),
     /// The reader was shut down.
     #[error("the reader is shut down")]
     Closed,

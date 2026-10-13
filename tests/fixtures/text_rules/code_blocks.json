@@ -1,5 +1,5 @@
 {
-  "description": "Fenced code blocks become a one-line spoken summary.",
+  "description": "Fenced code blocks become a spoken announcement, their language and size (#295); the lines are read only at verbosity read_code and everything.",
   "cases": [
     {
       "name": "python_fence",
@@ -9,7 +9,7 @@
       ],
       "output": [
         "Here is code:",
-        "2-line python code block",
+        "Python code block, 2 lines.",
         "Done."
       ]
     },
@@ -23,7 +23,7 @@
       ],
       "output": [
         "Before.",
-        "1-line js code block",
+        "JavaScript code block, 1 line.",
         "After."
       ]
     },
@@ -35,7 +35,7 @@
       ],
       "output": [
         "See:",
-        "1-line code block"
+        "Code block, 1 line."
       ]
     },
     {
@@ -46,7 +46,7 @@
       ],
       "output": [
         "Start.",
-        "1-line bash code block"
+        "Bash code block, 1 line."
       ]
     }
   ]

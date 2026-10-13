@@ -2,15 +2,16 @@
 //! effects (the effect loop). Requests from handles, audio events from the
 //! output and finished syntheses all arrive on one inbox, so the reader is
 //! touched by this thread only and never waits for an engine.
-use crate::settings::{self, Key, Value};
+use crate::settings::{self, CodeReading, Key, Value};
 use crate::synth::{Done, Job, Synth};
 use crate::{Error, Event, Result};
 use sonara_audio::{AudioEvent, Output, PcmChunk};
+use sonara_core::code_speech::{self, CodeKind};
 use sonara_core::reader::{
     Chunking, Control, Effect, Event as CoreEvent, ItemId, ItemPhase, QueueMode, Reader, State,
 };
 use sonara_engine::{Engine, EngineStatus, InputLimit, Readiness, Registry, SendMode};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -51,6 +52,8 @@ pub(crate) enum Msg {
         reply: Sender<()>,
     },
     HoldStart(Instant, Sender<()>),
+    Code(CodeReading, Sender<()>),
+    GetCode(Sender<CodeReading>),
     Audio(AudioEvent),
     Synthesized(Done),
     Shutdown,
@@ -113,6 +116,8 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         status_changes: 0,
         whole: start.whole,
         hold: None,
+        code: CodeReading::default(),
+        pause_after: HashSet::new(),
     };
     thread::Builder::new()
         .name("sonara-reader".into())
@@ -205,6 +210,10 @@ struct Loop {
     /// No item's first chunk reaches the output before this
     /// (`ReaderHandle::hold_start`, #238): it waits as `waiting`.
     hold: Option<Instant>,
+    /// How code is read (#295).
+    code: CodeReading,
+    /// Code line chunks that get `code.pause_ms` of silence after them.
+    pause_after: HashSet<(ItemId, usize)>,
 }
 
 impl Loop {
@@ -326,6 +335,15 @@ impl Loop {
             Msg::HoldStart(until, reply) => {
                 self.hold = Some(until);
                 let _ = reply.send(());
+            }
+            Msg::Code(code, reply) => {
+                let fx = self.reader.set_code_step(code.step);
+                self.code = code;
+                self.run(fx);
+                let _ = reply.send(());
+            }
+            Msg::GetCode(reply) => {
+                let _ = reply.send(self.code.clone());
             }
             Msg::Audio(e) => self.audio_event(e),
             Msg::Synthesized(done) => self.synthesized(done),
@@ -483,7 +501,16 @@ impl Loop {
         ) {
             return;
         }
-        let result = result.map_err(|e| e.to_string());
+        let mut result = result.map_err(|e| e.to_string());
+        // The pause after a code line (#295), in the chunk's own format.
+        let pause = self
+            .pause_after
+            .remove(&(item, chunk))
+            .then(|| self.silence(&result, item, chunk))
+            .flatten();
+        if let (Ok(pcm), Some(s)) = (&mut result, &pause) {
+            pcm.push(s.clone());
+        }
         if let Err(reason) = &result {
             self.broadcast(Event::Log {
                 message: format!(
@@ -497,6 +524,9 @@ impl Loop {
         if let Some((i, c, gen)) = self.open {
             if (i, c) == (item, chunk) {
                 self.open = None;
+                if let Some(s) = pause {
+                    self.output.append(gen, vec![s]);
+                }
                 self.output.finish(gen);
                 return;
             }
@@ -514,6 +544,28 @@ impl Loop {
             self.load(w.item, w.chunk, w.gen);
             self.drain();
         }
+    }
+
+    /// `code.pause_ms` of silence in the format of the chunk's audio (the
+    /// result, else the pieces that streamed in).
+    fn silence(
+        &self,
+        result: &std::result::Result<Vec<PcmChunk>, String>,
+        item: ItemId,
+        chunk: usize,
+    ) -> Option<PcmChunk> {
+        let like = match (result, self.audio.get(&(item, chunk))) {
+            (Ok(pcm), _) if !pcm.is_empty() => pcm.last().cloned(),
+            (_, Some(Slot::Streaming(parts))) => parts.last().cloned(),
+            _ => None,
+        }?;
+        let per_ms = u64::from(like.sample_rate) * u64::from(like.channels) / 1000;
+        let n = (per_ms * u64::from(self.code.pause_ms)) as usize;
+        (n > 0).then(|| PcmChunk {
+            samples: vec![0; n],
+            sample_rate: like.sample_rate,
+            channels: like.channels,
+        })
     }
 
     fn run(&mut self, fx: Vec<Effect>) {
@@ -619,12 +671,26 @@ impl Loop {
             Effect::Synthesize { item, chunk, text } => {
                 let state = self.reader.state();
                 self.audio.insert((item, chunk), Slot::Pending);
+                // Code (#295): slower, a pause after each line, the step
+                // hint after a block's announcement.
+                let kind = code_speech::kind(&text);
+                let mut words = code_speech::unmarked(&text).to_string();
+                let mut rate = state.rate;
+                if kind != CodeKind::Prose {
+                    rate = (state.rate * u32::from(self.code.speed) / 100).max(1);
+                }
+                if kind == CodeKind::Line && self.code.pause_ms > 0 {
+                    self.pause_after.insert((item, chunk));
+                }
+                if kind == CodeKind::Start && self.code.step {
+                    words.push_str(&format!(" Use {} for the next line.", self.code.next_key));
+                }
                 self.synth.push_job(Job {
                     item,
                     chunk,
-                    text,
+                    text: words,
                     voice: state.voice.unwrap_or_default(),
-                    rate: state.rate,
+                    rate,
                     engine: self.engine.clone(),
                 });
             }
@@ -678,6 +744,7 @@ impl Loop {
                             self.open = None;
                         }
                         self.audio.retain(|(item, _), _| item != item_id);
+                        self.pause_after.retain(|(item, _)| item != item_id);
                         self.synth.drop_item(*item_id);
                     }
                 }
