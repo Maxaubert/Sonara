@@ -38,19 +38,19 @@
   {
     "batches": 1,
     "normalized": "The Kokoro Engine calls normalize for speech, and the wasapi output thread uses cpal.",
-    "phonemes": "ðə kˈOkəɹˌO ˈɛnʤɪn kˈɔːlz nˈɔːɹməlˌIz fɔːɹ spˈiːʧ, ænd ðə wəsˈɑpi ˈWtpʊt θɹˈɛd jˈuːsᵻz sˈipˌæl.",
+    "phonemes": "ðə kˈOkəɹˌO ˈɛnʤɪn kˈɔːlz nˈɔːɹməlˌIz fɔːɹ spˈiːʧ, ænd ðə wəsˈɑpi ˈWtpʊt θɹˈɛd jˈuzᵻz sˈipˌæl.",
     "text": "The KokoroEngine calls normalize for speech, and the WASAPI output thread uses cpal."
   },
   {
     "batches": 1,
     "normalized": "Set SONARA_HOME to localappdata slash Sonara and restart sonarad dot E X E on port 8765.",
-    "phonemes": "sˈɛt sənˈɑɹə hˈOm tə lˈOkəlˈæpdˈAɾə slˈæʃ sənˈɑɹə ænd ɹᵻstˈɑːɹt sənˈɑɹə dˈi dˈɑːt ˈi ˈɛks ˈi ˌɔn pˈɔːɹt ˈAt θˈWzənd sˈɛvən hˈʌndɹɪd ænd sˈɪksti fˈIv.",
+    "phonemes": "sˈɛt sənˈɑɹə hˈOm tə lˈOkəlˈæpdˈAɾə slˈæʃ sənˈɑɹə ænd ɹistˈɑɹt sənˈɑɹə dˈi dˈɑːt ˈi ˈɛks ˈi ˌɔn pˈɔːɹt ˈAt θˈWzənd sˈɛvən hˈʌndɹɪd ænd sˈɪksti fˈIv.",
     "text": "Set SONARA_HOME to %LOCALAPPDATA%\\Sonara and restart sonarad.exe on port 8765."
   },
   {
     "batches": 1,
     "normalized": "Use npm i at sonara slash client, then call connect and on State from the Electron main process.",
-    "phonemes": "jˈuːs ˌɛnpˌiˈɛm ˈI æɾ sənˈɑɹə slˈæʃ klˈIənt, ðˈɛn kˈɔːl kənˈɛkt ænd ˌɔn stˈAt fɹʌm ði ᵻlˈɛktɹɑːn mˈAn pɹˈɑːsɛs.",
+    "phonemes": "jˈus ˌɛnpˌiˈɛm ˈI æɾ sənˈɑɹə slˈæʃ klˈIənt, ðˈɛn kˈɔːl kənˈɛkt ænd ˌɔn stˈAt fɹʌm ði ᵻlˈɛktɹɑːn mˈAn pɹˈɑːsɛs.",
     "text": "Use npm i @sonara/client, then call connect() and onState() from the Electron main process."
   },
   {
@@ -86,7 +86,7 @@
   {
     "batches": 1,
     "normalized": "Edit Cargo dot toml, readme dot M D and settings dot Jason.",
-    "phonemes": "ˈɛdɪt kˈɑːɹɡO dˈɑːt tˈɑməl, ɹˈiːdmˌiː dˈɑːt ˈɛm dˈi ænd sˈɛɾɪŋz dˈɑːt ʤˈAsᵊn.",
+    "phonemes": "ˈɛdɪt kˈɑːɹɡO dˈɑːt tˈɑməl, ɹˈidmˌiː dˈɑːt ˈɛm dˈi ænd sˈɛɾɪŋz dˈɑːt ʤˈAsᵊn.",
     "text": "Edit Cargo.toml, README.md and settings.json."
   },
   {
@@ -98,13 +98,13 @@
   {
     "batches": 1,
     "normalized": "Call fetch Model Files then use State in the React component.",
-    "phonemes": "kˈɔːl fˈɛʧ mˈɑːdəl fˈIlz ðˈɛn jˈuːs stˈAt ɪn ðə ɹɪˈækt kəmpˈOnənt.",
+    "phonemes": "kˈɔːl fˈɛʧ mˈɑːdəl fˈIlz ðˈɛn jˈuz stˈAt ɪn ðə ɹɪˈækt kəmpˈOnənt.",
     "text": "Call fetchModelFiles() then useState in the React component."
   },
   {
     "batches": 1,
     "normalized": "Sonara uses Kokoro and Claude, not Codex.",
-    "phonemes": "sənˈɑɹə jˈuːsᵻz kˈOkəɹˌO ænd klˈɔd, nˌɑːt kˈOdɛks.",
+    "phonemes": "sənˈɑɹə jˈuzᵻz kˈOkəɹˌO ænd klˈɔd, nˌɑːt kˈOdɛks.",
     "text": "Sonara uses Kokoro and Claude, not Codex."
   },
   {

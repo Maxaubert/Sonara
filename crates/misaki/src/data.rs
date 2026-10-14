@@ -7,6 +7,9 @@ use std::io::Read;
 
 pub const US_GOLD_XZ: &[u8] = include_bytes!("../data/us_gold.json.xz");
 pub const US_SILVER_XZ: &[u8] = include_bytes!("../data/us_silver.json.xz");
+/// misaki's words said two ways, by part of speech, that misaki-rs's gold
+/// flattened (#301, `tools/pack_data.py --heteronyms`).
+pub const US_HETERONYMS_XZ: &[u8] = include_bytes!("../data/us_heteronyms.json.xz");
 const TAGGER_WEIGHTS_XZ: &[u8] = include_bytes!("../data/tagger-weights.json.xz");
 const TAGGER_TAGS_XZ: &[u8] = include_bytes!("../data/tagger-tags.json.xz");
 pub const TAGGER_CLASSES: &str = include_str!("../data/tagger-classes.txt");
@@ -25,8 +28,11 @@ fn table(packed: &[u8]) -> HashMap<String, PhonemeEntry> {
     serde_json::from_str(&unxz(packed)).expect("embedded misaki lexicon is valid JSON")
 }
 
+/// The gold lexicon with misaki's heteronyms laid over it (#301).
 pub fn load_us_gold() -> HashMap<String, PhonemeEntry> {
-    table(US_GOLD_XZ)
+    let mut gold = table(US_GOLD_XZ);
+    gold.extend(table(US_HETERONYMS_XZ));
+    gold
 }
 
 pub fn load_us_silver() -> HashMap<String, PhonemeEntry> {

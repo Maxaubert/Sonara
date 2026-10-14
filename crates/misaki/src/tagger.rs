@@ -74,20 +74,28 @@ impl PerceptronTagger {
         let mut prev2 = "-START2-";
         let mut output = Vec::new();
 
-        let mut context = Vec::new();
+        // NLTK's `PerceptronTagger.normalize`, which the weights were
+        // trained with: a word in the context is lower case. misaki-rs kept
+        // its case and checked for the text `'-'`, so a capitalized first
+        // word ("Please read this.") tagged its neighbours wrong (#301).
+        let normalized: Vec<String> = words
+            .iter()
+            .map(|token| {
+                if token.contains('-') && !token.starts_with('-') {
+                    "!HYPHEN".to_string()
+                } else if token.parse::<usize>().is_ok() && token.len() == 4 {
+                    "!YEAR".to_string()
+                } else if token.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                    "!DIGITS".to_string()
+                } else {
+                    token.to_lowercase()
+                }
+            })
+            .collect();
+        let mut context: Vec<&str> = Vec::new();
         context.push("-START-");
         context.push("-START2-");
-        for &token in words {
-            context.push(if token.contains("'-'") && !token.starts_with('-') {
-                "!HYPHEN"
-            } else if token.parse::<usize>().is_ok() && token.len() == 4 {
-                "!YEAR"
-            } else if token.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-                "!DIGITS"
-            } else {
-                token
-            });
-        }
+        context.extend(normalized.iter().map(String::as_str));
         context.push("-END-");
         context.push("-END2-");
 
