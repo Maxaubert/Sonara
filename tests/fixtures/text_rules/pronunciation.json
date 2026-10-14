@@ -356,6 +356,12 @@
       "output": "twenty three point five percent"
     },
     {
+      "name": "percent_with_a_plus_sign",
+      "fn": "pronounce",
+      "input": "return +32%, then -8.5%",
+      "output": "return plus thirty two percent, then minus eight point five percent"
+    },
+    {
       "name": "money_1",
       "fn": "pronounce",
       "input": "$5",

@@ -12,6 +12,7 @@
 //! one is a char boundary; `stabilize_ordinals` only swaps ASCII '.' for ':',
 //! so it keeps byte lengths and boundaries exactly as Python keeps char counts.
 use crate::code_speech;
+use crate::table;
 use crate::text::{normalize_for_speech, stabilize_ordinals};
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -312,11 +313,40 @@ impl ProseAssembler {
         }
     }
 
+    /// Emit `text`, each table as one chunk per row (#303) and the prose
+    /// around it through `prose`.
+    fn with_tables(text: &str, out: &mut Vec<Chunk>, prose: impl Fn(&str, &mut Vec<Chunk>)) {
+        let mut rest = text;
+        while let Some(t) = table::find(rest) {
+            prose(&rest[..t.start], out);
+            for row in &t.rows {
+                Self::emit_chunk(row, out);
+            }
+            rest = &rest[t.end..];
+        }
+        prose(rest, out);
+    }
+
     /// Split RAW `text` into cleaned sentences. Return (sentences, raw
     /// remainder). When keep_remainder is false the trailing fragment belongs
     /// to a complete paragraph: emit it too, one chunk per line, so a closing
-    /// bullet list never leaves as one giant unpunctuated blob (#56).
+    /// bullet list never leaves as one giant unpunctuated blob (#56). Tables
+    /// are read row by row once their paragraph is complete; until then
+    /// they wait in the remainder (#303).
     fn sentences_of(text: &str, keep_remainder: bool) -> (Vec<Chunk>, &str) {
+        if keep_remainder {
+            let hold = table::hold_from(text);
+            let (out, remainder) = Self::prose_sentences(&text[..hold], true);
+            return (out, &text[hold - remainder.len()..]);
+        }
+        let mut out = Vec::new();
+        Self::with_tables(text, &mut out, |prose, out| {
+            out.extend(Self::prose_sentences(prose, false).0)
+        });
+        (out, "")
+    }
+
+    fn prose_sentences(text: &str, keep_remainder: bool) -> (Vec<Chunk>, &str) {
         let mut out = Vec::new();
         let mut last_end = 0;
         for caps in SENTENCE.captures_iter(text) {
@@ -382,11 +412,9 @@ impl ProseAssembler {
         let start = self.emitted.min(self.buf.len());
         let buf = std::mem::take(&mut self.buf);
         self.emitted = 0;
-        let mut out = Vec::new();
-        for line in split_lines(&buf[start..]) {
-            Self::emit_chunk(line, &mut out);
-        }
-        out
+        // The tail is the remainder (no sentence left in it, so this is one
+        // chunk per line) or text held for a table, which still splits (#303).
+        Self::sentences_of(&stabilize_ordinals(&buf)[start..], false).0
     }
 
     fn reset(&mut self) {
