@@ -122,7 +122,7 @@ Hand-maintained (`packaging/notices/models-and-data.md`). Each entry says whethe
 ### misaki G2P (vendored misaki-rs) and its English lexicons
 
 - Code: misaki-rs 0.6.0 by Michele Yin, https://github.com/MicheleYin/misaki-rs, MIT (Copyright (c) 2026 Michele Yin), a Rust port of misaki. Vendored and trimmed as `crates/misaki` (US English only, compressed data, no espeak fallback).
-- Lexicons: hexgrad, https://github.com/hexgrad/misaki, Apache-2.0. Attribution: the English pronunciation lexicons used by the Kokoro engine come from misaki by hexgrad.
+- Lexicons: hexgrad, https://github.com/hexgrad/misaki, Apache-2.0. Attribution: the English pronunciation lexicons used by the Kokoro engine come from misaki by hexgrad. The words said two ways by part of speech (`us_heteronyms.json.xz`, #301) are taken directly from misaki's `us_gold.json` at commit `e820629b96334db28227df37f280e4836d46fadb`.
 - Data provenance: misaki-rs extended and corrected the US lexicon "using eSpeak" (its README): some entries are output of espeak-ng (GPL-3.0). No espeak-ng code or data ships with Sonara. This provenance is reviewed before the first commercial bundle (runtime spec, section 5).
 - Part-of-speech tagger weights (inside misaki-rs): NLTK's `averaged_perceptron_tagger` model (https://github.com/nltk/nltk_data), as packaged by postagger.rs (Apache-2.0, https://github.com/shubham0204/postagger.rs); the tagger design comes from textblob-aptagger by Matthew Honnibal (MIT). The weights were trained on the Wall Street Journal part of the Penn Treebank; reviewed with the lexicon provenance before the first commercial bundle.
 - Ships: yes, compiled into `sonarad.exe` (xz-compressed).

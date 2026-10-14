@@ -9,6 +9,9 @@
 //!   host supplies its own `Fallback`;
 //! - the unused `language-tokenizer` (WTFPL) and `fancy-regex` dependencies
 //!   are gone;
+//! - misaki's words said two ways (heteronyms: "read", "live"), which
+//!   misaki-rs flattened to one pronunciation, are restored from hexgrad's
+//!   misaki (`data/us_heteronyms.json.xz`, #301);
 //! - `Lexicon::insert_gold` lets a host add its own words before misaki's;
 //!   `G2P::with_lexicon` shares one lexicon with the host's fallback.
 //!
