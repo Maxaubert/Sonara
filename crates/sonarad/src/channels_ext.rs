@@ -8,7 +8,9 @@ use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_agent::FlushScope;
-use sonara_channels::{Channels, Control, Error, FlushReport, Flushed, ItemId, Policy, QueueMode};
+use sonara_channels::{
+    Back, Channels, Control, Error, FlushReport, Flushed, ItemId, Policy, QueueMode,
+};
 use std::sync::{Arc, OnceLock};
 
 /// The extension's state: empty until a client enables it.
@@ -42,6 +44,33 @@ fn channel(m: &Map<String, Value>) -> Result<&str, Failure> {
     match opt_str(m, "channel")? {
         Some(c) if !c.is_empty() => Ok(c),
         _ => Err(bad("'channel' must be a non-empty string")),
+    }
+}
+
+/// `control back` (#299, protocol 1.10): back one section of the message
+/// being read (`Channels::back`; with the agent extension `Agent::back`,
+/// so while idle a message with a question set starts again with question
+/// 1). `channel` is the session it stepped in (null for a replay while
+/// idle) and `to` what it did: `chunk`, `entry`, `first` or `replay`.
+pub fn back(ch: &Channels, agent: Option<&sonara_agent::Agent>) -> Handled {
+    let done = match agent {
+        Some(a) => a.back().map_err(crate::agent_ext::failure)?,
+        None => ch.back().map_err(failure)?,
+    };
+    let (channel, to) = back_fields(&done);
+    let mut f = Map::new();
+    f.insert("channel".into(), json!(channel));
+    f.insert("to".into(), json!(to));
+    ok(f)
+}
+
+/// The session and the `to` of a `Back`.
+pub fn back_fields(b: &Back) -> (Option<&str>, &'static str) {
+    match b {
+        Back::Chunk(c) => (Some(c), "chunk"),
+        Back::Entry(c) => (Some(c), "entry"),
+        Back::First(c) => (Some(c), "first"),
+        Back::Replay => (None, "replay"),
     }
 }
 

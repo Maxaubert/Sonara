@@ -66,6 +66,15 @@ export class ChannelsApi {
   flush(extra: Extra = {}): Promise<Reply> {
     return this.send("control", defined({ ...extra, action: "flush" }));
   }
+
+  /**
+   * `control` `back` (protocol 1.10, a tap on Up, #299): back one section of
+   * the message being read. The reply's `channel` is the session (null for a
+   * replay while idle) and `to` is `chunk`, `entry`, `first` or `replay`.
+   */
+  back(extra: Extra = {}): Promise<Reply> {
+    return this.send("control", defined({ ...extra, action: "back" }));
+  }
 }
 
 export type AskKind = "question" | "permission" | "plan";

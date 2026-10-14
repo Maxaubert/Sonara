@@ -29,10 +29,12 @@ fn lists_media_sessions() {
 #[ignore = "registers this PC's global hotkeys for a moment"]
 fn registers_and_releases_the_default_hotkeys() {
     let (bindings, _) = keymap::resolve(&keymap::defaults());
+    let p = win::platform();
     let hk = sonara_system::Hotkeys::start(
-        win::platform().registrar,
+        p.registrar,
+        p.keys,
         bindings,
-        std::sync::Arc::new(|a: Action| println!("pressed {a:?}")),
+        std::sync::Arc::new(|a: Action, how| println!("pressed {a:?} ({how:?})")),
     );
     println!("registered {:?}", hk.registered());
     println!("collisions {:?}", hk.collisions());

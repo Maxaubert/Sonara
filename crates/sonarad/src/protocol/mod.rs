@@ -30,7 +30,7 @@ mod profiles;
 mod tests;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 9;
+pub const PROTOCOL_MINOR: u64 = 10;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -98,6 +98,7 @@ const EXTENSION_KEYS: &[&str] = &[
 ];
 const EXTENSION_ACTIONS: &[&str] = &[
     "next_channel",
+    "back",
     "flush",
     "next_question",
     "previous_question",

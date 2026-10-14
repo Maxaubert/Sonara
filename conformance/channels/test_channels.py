@@ -329,3 +329,41 @@ def test_keep_label_keeps_the_label_an_open_channel_has(rt):
     assert s["now_playing"]["label"] == "Renamed"
     r = c.request({"type": "channel_open", "channel": "f", "keep_label": "yes"})
     assert r["error"]["code"] == "E_BAD_REQUEST"
+
+
+def test_restart_while_a_channel_is_read_replays_its_whole_batch(rt):
+    # #299: with an engine in send mode sentence every sentence is an item;
+    # Up replayed only the one playing.
+    c = channels_client(rt)
+    open_two(c)
+    ok(c, {"type": "speak", "channel": "a", "text": "First alpha."})
+    ok(c, {"type": "speak", "channel": "a", "text": LONG})
+    h = heard(c, 2)
+    assert h[0] == ("First alpha.", "a") and is_long(h[1], "a")
+    ok(c, {"type": "control", "action": "restart"})
+    h = heard(c, 2)
+    assert h[0] == ("First alpha.", "a") and is_long(h[1], "a")
+
+
+def test_back_goes_to_the_previous_message_of_the_batch(rt):
+    # #299: a tap on Up.
+    c = channels_client(rt)
+    open_two(c)
+    ok(c, {"type": "speak", "channel": "a", "text": "First alpha."})
+    ok(c, {"type": "speak", "channel": "a", "text": LONG})
+    heard(c, 2)
+    r = ok(c, {"type": "control", "action": "back"})
+    assert (r["channel"], r["to"]) == ("a", "entry")
+    h = heard(c, 2)
+    assert h[0] == ("First alpha.", "a") and is_long(h[1], "a")
+    ok(c, {"type": "control", "action": "stop"})
+    c.state(lambda s: s["now_playing"] is None and s["queued"] == 0)
+    r = ok(c, {"type": "control", "action": "back"})
+    assert (r["channel"], r["to"]) == (None, "replay")
+    assert heard(c, 1) == [("First alpha.", "a")]
+
+
+def test_back_needs_the_channels_extension(rt):
+    c = rt.tcp()
+    r = c.request({"type": "control", "action": "back"})
+    assert r["ok"] is False and r["error"]["code"] == "E_UNSUPPORTED"

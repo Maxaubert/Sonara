@@ -6,7 +6,9 @@ mod common;
 
 use common::eventually;
 use sonara_system::fake::{Fake, FakeChord};
-use sonara_system::hotkeys::{Debounce, Hotkeys, DEBOUNCE, ERROR_HOTKEY_ALREADY_REGISTERED};
+use sonara_system::hotkeys::{
+    Debounce, Hotkeys, Press, DEBOUNCE, ERROR_HOTKEY_ALREADY_REGISTERED, HOLD,
+};
 use sonara_system::keymap::{self, Action, MOD_ALT, MOD_CTRL, MOD_NOREPEAT};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,12 +17,71 @@ fn start(fake: &Fake) -> (Hotkeys, Arc<Mutex<Vec<Action>>>) {
     let got = Arc::new(Mutex::new(Vec::new()));
     let g = got.clone();
     let (bindings, _) = keymap::resolve(&keymap::defaults());
+    let p = fake.platform();
     let hk = Hotkeys::start(
-        fake.platform().registrar,
+        p.registrar,
+        p.keys,
         bindings,
-        Arc::new(move |a| g.lock().unwrap().push(a)),
+        Arc::new(move |a, _| g.lock().unwrap().push(a)),
     );
     (hk, got)
+}
+
+type Got = Arc<Mutex<Vec<(Action, Press)>>>;
+
+fn start_pressed(fake: &Fake) -> (Hotkeys, Got) {
+    let got = Arc::new(Mutex::new(Vec::new()));
+    let g = got.clone();
+    let (bindings, _) = keymap::resolve(&keymap::defaults());
+    let p = fake.platform();
+    let hk = Hotkeys::start(
+        p.registrar,
+        p.keys,
+        bindings,
+        Arc::new(move |a, how| g.lock().unwrap().push((a, how))),
+    );
+    (hk, got)
+}
+
+const UP: u32 = 0x26;
+
+#[test]
+fn a_quick_press_of_up_is_a_tap() {
+    // #299: a tap goes back one section.
+    let fake = Fake::new();
+    let (_hk, got) = start_pressed(&fake);
+    fake.hold_key(UP);
+    fake.press(Action::Restart.id());
+    std::thread::sleep(Duration::from_millis(60));
+    fake.release_key(UP);
+    assert!(eventually(|| got.lock().unwrap().len() == 1));
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Restart, Press::Tap)]);
+}
+
+#[test]
+fn holding_up_is_a_hold_that_fires_before_the_release() {
+    // #299: a hold restarts the message, heard while the key is still down.
+    let fake = Fake::new();
+    let (_hk, got) = start_pressed(&fake);
+    fake.hold_key(UP);
+    let t0 = Instant::now();
+    fake.press(Action::Restart.id());
+    assert!(eventually(|| got.lock().unwrap().len() == 1));
+    assert!(t0.elapsed() >= HOLD);
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Restart, Press::Hold)]);
+    fake.release_key(UP);
+}
+
+#[test]
+fn only_up_can_be_held() {
+    let fake = Fake::new();
+    let (_hk, got) = start_pressed(&fake);
+    fake.hold_key(0x28); // Down
+    let t0 = Instant::now();
+    fake.press(Action::Flush.id());
+    assert!(eventually(|| got.lock().unwrap().len() == 1));
+    assert!(t0.elapsed() < HOLD, "no wait for a key that cannot be held");
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Flush, Press::Tap)]);
 }
 
 #[test]
@@ -122,10 +183,12 @@ fn a_slow_action_never_blocks_capture() {
     let got = Arc::new(Mutex::new(Vec::new()));
     let (g, gt) = (got.clone(), gate.clone());
     let (bindings, _) = keymap::resolve(&keymap::defaults());
+    let p = fake.platform();
     let hk = Hotkeys::start(
-        fake.platform().registrar,
+        p.registrar,
+        p.keys,
         bindings,
-        Arc::new(move |a| {
+        Arc::new(move |a, _| {
             let _wait = gt.lock().unwrap();
             g.lock().unwrap().push(a);
         }),

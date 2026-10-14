@@ -56,6 +56,12 @@ pub trait KeyboardLayout: Send + Sync {
     fn altgr_char(&self, vk: u32, shift: bool) -> Option<String>;
 }
 
+/// Whether a key is down now, from any thread (#299: a hotkey held past
+/// `hotkeys::HOLD` is a hold, not a tap).
+pub trait KeyState: Send + Sync {
+    fn is_down(&self, vk: u32) -> bool;
+}
+
 type Factory<T> = Arc<dyn Fn() -> Box<T> + Send + Sync>;
 
 /// A platform: factories, because audio and media objects live on the
@@ -68,4 +74,5 @@ pub struct Platform {
     pub media: Factory<dyn MediaSessions>,
     pub registrar: Factory<dyn Registrar>,
     pub layout: Arc<dyn KeyboardLayout>,
+    pub keys: Arc<dyn KeyState>,
 }

@@ -17,7 +17,8 @@ use std::path::Path;
 /// What a hotkey does. The host maps each action to protocol controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
-    /// Read the current message again from the top (`control restart`).
+    /// Up: a tap goes back one section (`control back`), a hold reads the
+    /// message again from the top (`control restart`, #299).
     Restart,
     /// Flush: stop only the session being read (`control flush`, #228;
     /// `control stop` without channels).
@@ -86,6 +87,12 @@ impl Action {
             "next_question" => Action::NextQuestion,
             _ => return None,
         })
+    }
+
+    /// Held past `hotkeys::HOLD` it does something else (#299: Up held
+    /// restarts the message, a tap goes back one section).
+    pub fn holdable(&self) -> bool {
+        matches!(self, Action::Restart)
     }
 
     /// A rapid repeat of a toggle is ignored (pause and mute).

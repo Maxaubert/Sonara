@@ -502,7 +502,7 @@ function renderSessions(list) {
 }
 
 // ---- hotkeys ------------------------------------------------------------
-const ACTION_NAMES = {restart: "Restart", flush: "Flush", pause: "Pause / resume", mute: "Mute cycle",
+const ACTION_NAMES = {restart: "Back / hold: restart", flush: "Flush", pause: "Pause / resume", mute: "Mute cycle",
                       next_channel: "Next session", faster: "Faster", slower: "Slower",
                       previous_question: "Previous question", next_question: "Next question"};
 // Intel graphics drivers rotate the screen with Ctrl+Alt+arrows (#283).

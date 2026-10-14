@@ -17,8 +17,8 @@
 //!
 //! `hotkeys` is written by the fake: the chords registered now.
 use crate::platform::{
-    AudioSession, AudioSessions, KeyboardLayout, MediaSession, MediaSessions, PResult, Platform,
-    Registrar,
+    AudioSession, AudioSessions, KeyState, KeyboardLayout, MediaSession, MediaSessions, PResult,
+    Platform, Registrar,
 };
 use crate::state_file;
 use serde::{Deserialize, Serialize};
@@ -103,6 +103,9 @@ pub struct World {
     /// Registered now (mods as given to RegisterHotKey).
     #[serde(default)]
     pub hotkeys: Vec<FakeChord>,
+    /// Keys held down now (virtual-key codes, #299).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub down: Vec<u32>,
 }
 
 enum Press {
@@ -238,6 +241,19 @@ impl Fake {
         }
     }
 
+    /// Hold a key down (until `release_key`).
+    pub fn hold_key(&self, vk: u32) {
+        self.with(|w| {
+            if !w.down.contains(&vk) {
+                w.down.push(vk);
+            }
+        });
+    }
+
+    pub fn release_key(&self, vk: u32) {
+        self.with(|w| w.down.retain(|k| *k != vk));
+    }
+
     /// The platform made of this world.
     pub fn platform(&self) -> Platform {
         let a = self.clone();
@@ -261,7 +277,16 @@ impl Fake {
                 }) as Box<dyn Registrar>
             }),
             layout: Arc::new(FakeLayout(self.clone())),
+            keys: Arc::new(FakeKeys(self.clone())),
         }
+    }
+}
+
+struct FakeKeys(Fake);
+
+impl KeyState for FakeKeys {
+    fn is_down(&self, vk: u32) -> bool {
+        self.0.with(|w| w.down.contains(&vk))
     }
 }
 

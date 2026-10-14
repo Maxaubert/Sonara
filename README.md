@@ -115,8 +115,10 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   replace any of them with your own sound: see [Custom chimes](#custom-chimes).
 - **A new prompt starts fresh.** When you send the next prompt, the previous reply is dropped
   and Sonara follows the new one.
-- **Restart, never rewind.** Ctrl+Alt+Up restarts the latest reply from the top (in summary
-  mode it re-reads the last summary). There is no stepping back through older replies.
+- **Back a little, or from the top.** Tap Ctrl+Alt+Up to go back one sentence (or one code line)
+  of the reply being read; tap again to go further back. Hold it for half a second to hear the
+  latest reply again from the top (in summary mode it re-reads the last summary). There is no
+  stepping back through older replies.
 - **Several sessions.** Every session's latest reply is read, one after another. With *Background sessions: earcons only* on the settings page, only that
   session is read; the others play their earcons and their latest reply waits. Ctrl+Alt+P moves
   the voice to the next session; an unread reply resumes, a read one starts over. Every move to
@@ -164,7 +166,7 @@ saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt o
 
 | Hotkey | Action |
 |---|---|
-| Ctrl+Alt+Up | Restart the latest reply from the top (summary mode: re-read the last summary). With questions: the reply, then question 1 |
+| Ctrl+Alt+Up | Tap: back one sentence or code line of the reply being read (when nothing is read: the latest reply again). Hold half a second: the latest reply from the top (summary mode: re-read the last summary; with questions: the reply, then question 1) |
 | Ctrl+Alt+Down | Flush: skip the reply being read: what is playing, what that session has queued and the rest of that reply still arriving (its questions are still read). *Flush skips* on the Hotkeys tab sets what else goes: *This session* (default) goes on to the next session; *Everything queued* also drops every other session's finished replies waiting to be read. A session still writing its reply keeps it either way. To silence everything, mute (Ctrl+Alt+M). Ctrl+Alt+Up replays what had arrived before the flush |
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |

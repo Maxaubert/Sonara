@@ -3,7 +3,7 @@
 //! and the channels thread with a timeout.
 use sonara_audio::OutputCall;
 use sonara_audio::TestOutput;
-use sonara_channels::{Announced, Channels, Config, Control, Flushed, Policy, QueueMode};
+use sonara_channels::{Announced, Back, Channels, Config, Control, Flushed, Policy, QueueMode};
 use sonara_engine::fake::FakeEngine;
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
 use std::sync::Arc;
@@ -1105,4 +1105,93 @@ fn read_from_while_reading_cuts_the_item_and_rewinds_another_channel() {
     r.read("Beta three.");
     r.stays_idle();
     assert!(!r.ch.read_from("nope", None).unwrap());
+}
+
+// -- Up: tap goes back a section, hold restarts the message (#299) ---------
+
+/// Alpha's message "One.", "Two.", "Three.": the first two read, "Three."
+/// is playing.
+fn on_the_third_section() -> Rig {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("a", "Two.");
+    r.speak("a", "Three.");
+    r.read("One.");
+    r.read("Two.");
+    r.wait_for("Three.");
+    r.out.start();
+    r
+}
+
+#[test]
+fn restart_while_reading_replays_the_whole_message() {
+    let r = on_the_third_section();
+    r.ch.control(Control::Restart, None).unwrap();
+    r.read("One.");
+    r.read("Two.");
+    r.read("Three.");
+    r.stays_idle();
+}
+
+#[test]
+fn back_goes_to_the_previous_section() {
+    let r = on_the_third_section();
+    assert_eq!(r.ch.back().unwrap(), Back::Entry("a".into()));
+    r.read("Two.");
+    r.read("Three.");
+    r.stays_idle();
+}
+
+#[test]
+fn back_twice_goes_back_two_sections() {
+    let r = on_the_third_section();
+    r.ch.back().unwrap();
+    // Straight after the first: the item being cut is not counted again.
+    assert_eq!(r.ch.back().unwrap(), Back::Entry("a".into()));
+    r.read("One.");
+    r.read("Two.");
+    r.read("Three.");
+    r.stays_idle();
+}
+
+#[test]
+fn back_on_the_first_section_restarts_it() {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("a", "Two.");
+    r.wait_for("One.");
+    r.out.start();
+    assert_eq!(r.ch.back().unwrap(), Back::First("a".into()));
+    r.read("One.");
+    r.read("Two.");
+    r.stays_idle();
+}
+
+#[test]
+fn back_inside_an_item_goes_to_its_previous_chunk() {
+    let r = Rig::two();
+    r.speak("a", "First part. Second part.");
+    r.speak("a", "After.");
+    r.read("First part.");
+    r.wait_for("Second part.");
+    r.out.start();
+    assert_eq!(r.ch.back().unwrap(), Back::Chunk("a".into()));
+    r.read("First part.");
+    r.read("Second part.");
+    r.read("After.");
+    r.stays_idle();
+}
+
+#[test]
+fn back_while_idle_replays_the_message() {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("a", "Two.");
+    r.read("One.");
+    r.read("Two.");
+    r.wait_idle();
+    assert_eq!(r.ch.back().unwrap(), Back::Replay);
+    r.read("One.");
+    r.read("Two.");
+    r.stays_idle();
 }
