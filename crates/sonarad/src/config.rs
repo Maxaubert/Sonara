@@ -224,6 +224,13 @@ pub const SCHEMA: &[Setting] = &[
         kind: Kind::Bool,
         default: "true",
     },
+    // How much of a file path is read (2026-10-14).
+    Setting {
+        key: "paths",
+        layer: Layer::Host,
+        kind: Kind::OneOf(sonara_core::pronounce::PathDetail::NAMES),
+        default: "\"short\"",
+    },
     // Words said the user's way (#294), before every other text rule.
     Setting {
         key: "pronunciations",
@@ -339,6 +346,15 @@ fn validate_pronunciations(v: &Value) -> Result<Value, String> {
             .map(|(word, say)| json!({"word": word, "say": say}))
             .collect(),
     ))
+}
+
+/// The saved path detail.
+pub fn path_detail(store: &Store) -> sonara_core::pronounce::PathDetail {
+    store
+        .value("paths")
+        .as_str()
+        .and_then(sonara_core::pronounce::PathDetail::from_name)
+        .unwrap_or(sonara_core::pronounce::PathDetail::Short)
 }
 
 /// The saved pronunciations as (word, say).

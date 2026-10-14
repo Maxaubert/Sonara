@@ -290,11 +290,13 @@ impl Reader {
     }
 
     /// The current chunk is code: a block's announcement or one of its
-    /// lines (also while waiting at a line in step mode).
+    /// lines (also while waiting in step mode, after the last line too).
     pub fn in_code(&self) -> bool {
-        self.current
-            .as_ref()
-            .is_some_and(|c| code_speech::kind(&c.item.chunks[c.chunk]) != CodeKind::Prose)
+        self.step_wait
+            || self
+                .current
+                .as_ref()
+                .is_some_and(|c| code_speech::kind(&c.item.chunks[c.chunk]) != CodeKind::Prose)
     }
 
     /// The kind of chunk `i` of the current item.
@@ -515,12 +517,18 @@ impl Reader {
             let done = code_speech::kind(&cur.item.chunks[cur.chunk]);
             let next = code_speech::kind(&cur.item.chunks[cur.chunk + 1]);
             cur.chunk += 1;
+            let released = self.released;
             if next != CodeKind::Line {
                 self.released = false;
             }
-            // Step mode waits at the next line (#295).
-            if self.code_step && !self.released && done != CodeKind::Prose && next == CodeKind::Line
-            {
+            // Step mode waits at the next line (#295), and after the last
+            // one too: the user may want to hear it again (2026-10-14).
+            let waits = match done {
+                CodeKind::Prose => false,
+                CodeKind::Start => next == CodeKind::Line,
+                CodeKind::Line => true,
+            };
+            if self.code_step && !released && waits {
                 self.paused = true;
                 self.step_wait = true;
             }
@@ -641,7 +649,7 @@ impl Reader {
                 text: code_speech::unmarked(&c.item.chunks[c.chunk]).to_string(),
                 chunk: c.chunk,
                 chunks: c.item.chunks.len(),
-                code: code_speech::kind(&c.item.chunks[c.chunk]) != CodeKind::Prose,
+                code: self.in_code(),
             }),
             queued: self.queue.len(),
             paused: self.paused,

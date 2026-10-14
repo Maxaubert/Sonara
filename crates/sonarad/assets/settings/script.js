@@ -112,7 +112,7 @@ async function change(key, value, label, done) {
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
               "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
-              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step", "pronunciations"];
+              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step", "paths", "pronunciations"];
 let voices = [];
 let engineData = null;   // the engine_list reply, when this runtime allows external engines
 const profileVoices = {}; // added engine id -> its voices as last fetched (null: the fetch failed)
@@ -334,6 +334,7 @@ function render() {
 
   // System
   if (s.debug_log !== undefined) setSwitch("debuglog-switch", s.debug_log === true);
+  setSegments("paths-seg", s.paths);
   if (s.pronunciations !== undefined) renderPronunciations(s.pronunciations);
   if (s.hello) {
     setText("rt-version", s.hello.version);
@@ -1914,6 +1915,7 @@ for (const [id, key, out, show] of [["rate", "rate", "rate-out", v => v + " wpm"
 $("codespeed").addEventListener("change", e => change("code_speed", Number(e.target.value), "Code reading speed"));
 $("codepause").addEventListener("change", e => change("code_pause", Number(e.target.value), "Line pause"));
 wireSegments("codestep-seg", v => change("code_step", v, "Step through code"));
+wireSegments("paths-seg", v => change("paths", v, "File paths"));
 $("rate").addEventListener("change", e => change("rate", Number(e.target.value), "Rate"));
 $("volume").addEventListener("change", e => change("volume", Number(e.target.value), "Volume"));
 $("duck").addEventListener("change", e => change("duck_level", Number(e.target.value), "Duck level"));

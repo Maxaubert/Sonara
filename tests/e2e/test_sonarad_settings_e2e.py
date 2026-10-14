@@ -129,6 +129,19 @@ def test_the_engine_picker_shows_the_engine_and_how_it_is_doing(live, browser):
     page.close()
 
 
+def test_the_file_paths_setting_is_saved(live, browser):
+    # 2026-10-14: how much of a path is read, short by default.
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#paths-seg [data-value=short]")).to_have_attribute("aria-checked", "true")
+    page.click("#paths-seg [data-value=full]")
+    assert eventually(lambda: lv.saved().get("paths") == "full")
+    assert lv.get("paths") == "full"
+    page.reload()
+    pw.expect(page.locator("#paths-seg [data-value=full]")).to_have_attribute("aria-checked", "true")
+    page.close()
+
+
 def test_pronunciations_are_added_saved_and_removed(live, browser):
     # #294: the user's own words, said their way.
     lv = live()

@@ -30,20 +30,23 @@ fn the_lesson_lines_are_read_with_labels_and_named_symbols() {
     // The React lesson that was only announced (#290).
     assert_eq!(
         line("function Welcome() {", "jsx", 1).as_deref(),
-        Some("Line 1. function Welcome, empty parens, open brace.")
+        Some("Line one. function Welcome, empty parens, open brace.")
     );
     assert_eq!(
         line("  return <h1>Hei, verden!</h1>;", "jsx", 2).as_deref(),
-        Some("Line 2. return, open tag h1, Hei, verden!, close tag h1.")
+        Some("Line two. return, open tag h1, Hei, verden!, close tag h1.")
     );
-    assert_eq!(line("}", "jsx", 3).as_deref(), Some("Line 3. close brace."));
+    assert_eq!(
+        line("}", "jsx", 3).as_deref(),
+        Some("Line three. close brace.")
+    );
     assert_eq!(
         line("      <Welcome />", "jsx", 4).as_deref(),
-        Some("Line 4. tag Welcome, self-closing.")
+        Some("Line four. tag Welcome, self-closing.")
     );
     assert_eq!(
         line("    <div>", "jsx", 5).as_deref(),
-        Some("Line 5. open tag div.")
+        Some("Line five. open tag div.")
     );
 }
 
@@ -57,18 +60,18 @@ fn every_symbol_has_a_word_and_dots_keep_a_name_together() {
         )
         .as_deref(),
         Some(
-            "Line 3. const greet, equals, open paren, name, close paren, arrow, \
+            "Line three. const greet, equals, open paren, name, close paren, arrow, \
              console dot log, open paren, quote Hi, end quote, plus, name, close paren."
         )
     );
     assert_eq!(
         line("if a < b and c != d:", "python", 1).as_deref(),
-        Some("Line 1. if a, less than, b and c, not equals, d, colon.")
+        Some("Line one. if a, less than, b and c, not equals, d, colon.")
     );
     assert_eq!(
         line("x = items[0] * 2 % 3;  y += 1;", "js", 2).as_deref(),
         Some(
-            "Line 2. x, equals, items, open bracket, 0, close bracket, star, 2, percent, 3, \
+            "Line two. x, equals, items, open bracket, 0, close bracket, star, 2, percent, 3, \
              semicolon, y, plus equals, 1."
         )
     );
@@ -78,11 +81,11 @@ fn every_symbol_has_a_word_and_dots_keep_a_name_together() {
 fn identifiers_are_split_into_words() {
     assert_eq!(
         line("getUserName(user_id)", "js", 1).as_deref(),
-        Some("Line 1. get user name, open paren, user id, close paren.")
+        Some("Line one. get user name, open paren, user id, close paren.")
     );
     assert_eq!(
         line("HTTPServer.listen()", "ts", 1).as_deref(),
-        Some("Line 1. HTTP server dot listen, empty parens.")
+        Some("Line one. HTTP server dot listen, empty parens.")
     );
 }
 
@@ -90,15 +93,15 @@ fn identifiers_are_split_into_words() {
 fn comments_and_strings_are_read_as_words() {
     assert_eq!(
         line("// say hi to the user", "js", 1).as_deref(),
-        Some("Line 1. comment, say hi to the user.")
+        Some("Line one. comment, say hi to the user.")
     );
     assert_eq!(
         line("print('hi')  # greet", "python", 4).as_deref(),
-        Some("Line 4. print, open paren, quote hi end quote, close paren, comment, greet.")
+        Some("Line four. print, open paren, quote hi end quote, close paren, comment, greet.")
     );
     assert_eq!(
         line("let s = `total: ${n}`;", "ts", 1).as_deref(),
-        Some("Line 1. let s, equals, backtick total: insert n end backtick.")
+        Some("Line one. let s, equals, backtick total: insert n end backtick.")
     );
 }
 
@@ -106,11 +109,11 @@ fn comments_and_strings_are_read_as_words() {
 fn shell_flags_are_dashes_not_minus() {
     assert_eq!(
         line("npm install --save-dev typescript -g", "bash", 1).as_deref(),
-        Some("Line 1. npm install, dash dash save dev, typescript, dash g.")
+        Some("Line one. npm install, dash dash save dev, typescript, dash g.")
     );
     assert_eq!(
         line("a - b", "js", 1).as_deref(),
-        Some("Line 1. a, minus, b.")
+        Some("Line one. a, minus, b.")
     );
 }
 
@@ -147,7 +150,7 @@ fn hyphenated_names_are_words_not_minus() {
     );
     assert_eq!(
         line("font-size: 12px;", "css", 1).as_deref(),
-        Some("Line 1. font size, colon, 12px.")
+        Some("Line one. font size, colon, 12px.")
     );
     // A date inline is left whole for the prose rules.
     assert_eq!(inline("2026-10-13"), "2026-10-13");
@@ -166,7 +169,7 @@ fn generics_are_not_tags() {
     // Real JSX is still read as tags.
     assert_eq!(
         line("return (<App />)", "jsx", 1).as_deref(),
-        Some("Line 1. return, open paren, tag App, self-closing, close paren.")
+        Some("Line one. return, open paren, tag App, self-closing, close paren.")
     );
 }
 
@@ -177,7 +180,7 @@ fn apostrophes_and_lifetimes_are_not_strings() {
     assert!(l.contains("lifetime a"), "{l}");
     assert_eq!(
         line("Don't do this, it's bad.", "text", 1).as_deref(),
-        Some("Line 1. Don't do this, it's bad.")
+        Some("Line one. Don't do this, it's bad.")
     );
 }
 
@@ -188,7 +191,7 @@ fn globs_are_not_block_comments_and_real_ones_are() {
     assert!(!inline("src/**/*.ts").contains("comment"));
     assert_eq!(
         line("int x = 1; /* one */", "c", 1).as_deref(),
-        Some("Line 1. int x, equals, 1, semicolon, comment, one.")
+        Some("Line one. int x, equals, 1, semicolon, comment, one.")
     );
 }
 
@@ -196,7 +199,7 @@ fn globs_are_not_block_comments_and_real_ones_are() {
 fn jsx_text_after_an_expression_is_read_as_words() {
     assert_eq!(
         line("<p>Hello, {name}!</p>", "jsx", 1).as_deref(),
-        Some("Line 1. open tag p, Hello, open brace, name, close brace, !, close tag p.")
+        Some("Line one. open tag p, Hello, open brace, name, close brace, !, close tag p.")
     );
 }
 
@@ -213,4 +216,10 @@ fn decomposed_accents_stay_in_their_word() {
     let l = line("let cafe\u{301} = 1", "rust", 1).unwrap();
     assert!(!l.contains(" \u{301}"), "{l}");
     assert!(l.contains("cafe\u{301}"), "{l}");
+}
+
+#[test]
+fn line_numbers_are_said_in_words() {
+    // 2026-10-14: `Line 1.` ran into the next word in Kokoro.
+    assert_eq!(line("x", "py", 12).as_deref(), Some("Line twelve. x."));
 }

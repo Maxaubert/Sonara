@@ -328,6 +328,7 @@ fn start(args: args::Args) -> Result<(), (u8, String)> {
         home.log(&p);
     }
     sonara_core::pronounce::set_user_words(config::pronunciations(&store));
+    sonara_core::pronounce::set_path_detail(config::path_detail(&store));
     // One line per start for support, then the model's readiness changes.
     support_log::log_startup(&home, VERSION, &reader, &engine);
     support_log::watch_engine(&home, &reader);
