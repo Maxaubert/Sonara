@@ -336,7 +336,11 @@ fn an_item_does_not_start_before_the_hold_ends() {
     r.h.hold_start(until).unwrap();
     speak(&r, "First one. Second one.");
     std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(r.calls_now(), [], "held: nothing played yet");
+    // A slow runner may sleep past the hold: then only the timing below
+    // can tell (CI, 2026-10-14).
+    if std::time::Instant::now() < until {
+        assert_eq!(r.calls_now(), [], "held: nothing played yet");
+    }
     assert_eq!(r.calls(1), [play(1, 0, 1, len("First one.", 200))]);
     let started = r
         .out
@@ -354,11 +358,15 @@ fn an_item_does_not_start_before_the_hold_ends() {
 #[test]
 fn a_held_item_that_is_stopped_never_plays() {
     let (r, _) = Rig::new();
-    r.h.hold_start(std::time::Instant::now() + Duration::from_millis(200))
-        .unwrap();
+    // A long hold, so the stop lands inside it on a slow runner too (CI,
+    // 2026-10-14); then wait until it is over.
+    let until = std::time::Instant::now() + Duration::from_millis(1500);
+    r.h.hold_start(until).unwrap();
     speak(&r, "Never heard.");
     r.h.control(Control::Stop).unwrap();
-    std::thread::sleep(Duration::from_millis(400));
+    std::thread::sleep(
+        until.saturating_duration_since(std::time::Instant::now()) + Duration::from_millis(300),
+    );
     assert!(
         !r.calls_now()
             .iter()
