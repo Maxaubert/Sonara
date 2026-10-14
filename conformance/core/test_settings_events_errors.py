@@ -56,6 +56,28 @@ def test_pronunciations_are_said_the_users_way(client):
     assert client.request({"type": "set", "key": "pronunciations", "value": []})["value"] == []
 
 
+def test_paths_are_read_as_short_as_asked(client):
+    # Protocol 1.9: how much of a file path is read; short by default.
+    assert client.request({"type": "get", "key": "paths"})["value"] == "short"
+    client.request({"type": "subscribe", "events": ["state"]})
+    text = "See C:\\Users\\Admin\\AppData\\Local\\Sonara\\logs\\sonarad.log now."
+    for value, said in (
+        ("short", "See Sonara slash logs slash sonarad dot log now."),
+        ("last_two", "See logs slash sonarad dot log now."),
+        ("full", "See Users slash Admin slash app data slash Local slash Sonara slash logs slash sonarad dot log now."),
+    ):
+        r = client.request({"type": "set", "key": "paths", "value": value})
+        assert r["ok"] is True and r["value"] == value, r
+        client.request({"type": "speak", "text": text})
+        s = client.state(lambda s, said=said: s["now_playing"] is not None and s["now_playing"]["text"] == said)
+        assert s["now_playing"]["text"] == said
+        client.request({"type": "control", "action": "stop"})
+        client.state(lambda s: s["now_playing"] is None)
+    r = client.request({"type": "set", "key": "paths", "value": "some"})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
+    assert client.request({"type": "set", "key": "paths", "value": "short"})["value"] == "short"
+
+
 def test_settings_show_in_state(client):
     client.request({"type": "subscribe", "events": ["state"]})
     client.state()

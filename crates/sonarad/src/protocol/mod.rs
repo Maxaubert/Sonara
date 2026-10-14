@@ -30,7 +30,7 @@ mod profiles;
 mod tests;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 8;
+pub const PROTOCOL_MINOR: u64 = 9;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one

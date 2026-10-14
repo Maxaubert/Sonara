@@ -346,8 +346,36 @@ impl Server {
         Some(Ok((f, After::Nothing)))
     }
 
+    /// `set`/`get` of `paths` (2026-10-14), a host setting: how much of
+    /// a file path is read.
+    pub(super) fn paths_setting(&self, m: &Map<String, Value>, set: bool) -> Option<Handled> {
+        use sonara_core::pronounce::{path_detail, set_path_detail, PathDetail};
+        const KEY: &str = "paths";
+        if opt_str(m, "key").ok().flatten() != Some(KEY) {
+            return None;
+        }
+        if set {
+            let raw = m.get("value").unwrap_or(&Value::Null);
+            match config::validate(KEY, raw) {
+                Ok(v) => {
+                    if let Some(d) = v.as_str().and_then(PathDetail::from_name) {
+                        set_path_detail(d);
+                    }
+                }
+                Err(e) => return Some(Err(bad(e))),
+            }
+        }
+        let mut f = Map::new();
+        f.insert("key".into(), json!(KEY));
+        f.insert("value".into(), json!(path_detail().name()));
+        Some(Ok((f, After::Nothing)))
+    }
+
     pub(super) fn set_now(&self, m: &Map<String, Value>) -> Handled {
         if let Some(done) = self.debug_setting(m, true) {
+            return done;
+        }
+        if let Some(done) = self.paths_setting(m, true) {
             return done;
         }
         if let Some(done) = self.words_setting(m, true) {
@@ -371,6 +399,9 @@ impl Server {
 
     pub(super) fn get(&self, m: &Map<String, Value>) -> Handled {
         if let Some(done) = self.debug_setting(m, false) {
+            return done;
+        }
+        if let Some(done) = self.paths_setting(m, false) {
             return done;
         }
         if let Some(done) = self.words_setting(m, false) {

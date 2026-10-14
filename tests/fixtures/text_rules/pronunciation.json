@@ -224,6 +224,18 @@
       "output": "Bumped to version two point one point three today."
     },
     {
+      "name": "versions_9",
+      "fn": "pronounce",
+      "input": "Version v1.20 shipped.",
+      "output": "Version one point twenty shipped."
+    },
+    {
+      "name": "versions_10",
+      "fn": "pronounce",
+      "input": "the version v2.0",
+      "output": "the version two point zero"
+    },
+    {
       "name": "ordinals_1",
       "fn": "pronounce",
       "input": "1st",
@@ -653,52 +665,76 @@
       "name": "paths_1",
       "fn": "pronounce",
       "input": "crates/sonara-core/src/text.rs",
-      "output": "src slash text dot R S"
+      "output": "sonara core slash src slash text dot R S"
     },
     {
       "name": "paths_2",
+      "fn": "pronounce",
+      "input": "C:\\Users\\Admin\\AppData\\Local\\Sonara\\logs\\sonarad.log",
+      "output": "Sonara slash logs slash sonarad dot log"
+    },
+    {
+      "name": "paths_3",
+      "fn": "pronounce",
+      "input": "/c/Users/Admin/notes.txt",
+      "output": "notes dot T X T"
+    },
+    {
+      "name": "paths_4",
+      "fn": "pronounce",
+      "input": "Check `C:\\Users\\Admin\\AppData\\Local\\Sonara\\logs\\sonarad.log` now.",
+      "output": "Check Sonara slash logs slash sonarad dot log now."
+    },
+    {
+      "name": "paths_5",
+      "fn": "pronounce",
+      "input": "Edit `src/main.rs` first.",
+      "output": "Edit src slash main dot R S first."
+    },
+    {
+      "name": "paths_6",
       "fn": "pronounce",
       "input": "C:\\Users\\Admin\\Documents\\notes.txt",
       "output": "Documents slash notes dot T X T"
     },
     {
-      "name": "paths_3",
+      "name": "paths_7",
       "fn": "pronounce",
       "input": "README.md",
       "output": "README dot M D"
     },
     {
-      "name": "paths_4",
+      "name": "paths_8",
       "fn": "pronounce",
       "input": "package.json",
       "output": "package dot jay son"
     },
     {
-      "name": "paths_5",
+      "name": "paths_9",
       "fn": "pronounce",
       "input": "~/.claude/settings.json",
       "output": "dot claude slash settings dot jay son"
     },
     {
-      "name": "paths_6",
+      "name": "paths_10",
       "fn": "pronounce",
       "input": "Cargo.toml",
       "output": "Cargo dot tommel"
     },
     {
-      "name": "paths_7",
+      "name": "paths_11",
       "fn": "pronounce",
       "input": "src/main.rs:42",
       "output": "src slash main dot R S, line forty two"
     },
     {
-      "name": "paths_8",
+      "name": "paths_12",
       "fn": "pronounce",
       "input": "file.rs:12:34",
       "output": "file dot R S, line twelve"
     },
     {
-      "name": "paths_9",
+      "name": "paths_13",
       "fn": "pronounce",
       "input": "See daemon.py:123 for it.",
       "output": "See daemon dot P Y, line one hundred and twenty three for it."
@@ -1229,7 +1265,7 @@
       "name": "review_34",
       "fn": "pronounce",
       "input": "Fix C:\\repo\\src\\lib.rs:10 today.",
-      "output": "Fix src slash lib dot R S, line ten today."
+      "output": "Fix repo slash src slash lib dot R S, line ten today."
     },
     {
       "name": "review_35",

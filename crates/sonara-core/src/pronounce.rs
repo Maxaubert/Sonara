@@ -55,6 +55,90 @@ pub fn user_words() -> Vec<(String, String)> {
     USER.read().unwrap_or_else(|e| e.into_inner()).words.clone()
 }
 
+/// How much of a file path is read (the `paths` setting, 2026-10-14).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathDetail {
+    /// Without the common folders (drive, `Users\<name>`, `AppData\Local`
+    /// and the like), at most the last three parts. The default.
+    Short,
+    LastTwo,
+    LastThree,
+    /// Every folder.
+    Full,
+}
+
+impl PathDetail {
+    pub const NAMES: &'static [&'static str] = &["short", "last_two", "last_three", "full"];
+
+    pub fn name(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
+
+    pub fn from_name(s: &str) -> Option<PathDetail> {
+        [Self::Short, Self::LastTwo, Self::LastThree, Self::Full]
+            .into_iter()
+            .find(|d| d.name() == s)
+    }
+}
+
+static PATHS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Set how much of a path is read.
+pub fn set_path_detail(d: PathDetail) {
+    PATHS.store(d as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn path_detail() -> PathDetail {
+    match PATHS.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => PathDetail::LastTwo,
+        2 => PathDetail::LastThree,
+        3 => PathDetail::Full,
+        _ => PathDetail::Short,
+    }
+}
+
+/// Leading folders that say nothing about the file: the drive and home
+/// folders, the app data folders, the program folders.
+fn common_prefix_len(parts: &[&str]) -> usize {
+    let mut i = 0;
+    while let Some(p) = parts.get(i) {
+        let p = p.to_ascii_lowercase();
+        i += match p.as_str() {
+            "users" | "home" if i + 1 < parts.len() - 1 => 2,
+            "appdata"
+            | "local"
+            | "locallow"
+            | "roaming"
+            | "programdata"
+            | "program files"
+            | "program files (x86)"
+                if i < parts.len() - 1 =>
+            {
+                1
+            }
+            // Git Bash and WSL drives: `/c/Users/...`, `/mnt/c/...`.
+            "mnt" | "c" | "d" if i == 0 && parts.len() > 2 => 1,
+            _ if i == 1 && parts[0].eq_ignore_ascii_case("mnt") && p.len() == 1 => 1,
+            _ => break,
+        };
+    }
+    i
+}
+
+/// The parts of a path that are read, by `detail`.
+fn path_tail<'a>(parts: &'a [&'a str], detail: PathDetail) -> &'a [&'a str] {
+    let keep = |n: usize| &parts[parts.len().saturating_sub(n)..];
+    match detail {
+        PathDetail::Full => parts,
+        PathDetail::LastTwo => keep(2),
+        PathDetail::LastThree => keep(3),
+        PathDetail::Short => {
+            let rest = &parts[common_prefix_len(parts)..];
+            &rest[rest.len().saturating_sub(3)..]
+        }
+    }
+}
+
 fn re(p: &str) -> Regex {
     Regex::new(p).expect("valid pattern")
 }
@@ -677,7 +761,7 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
         url: re(r"https?://[^\s<>()\[\]]+"),
         email: re(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"),
         path: re(
-            r"(?:[A-Za-z]:\\|~[\\/]|\.{1,2}[\\/])?(?:[\p{L}\p{N}_.@-]+[\\/])*[\p{L}\p{N}_@-][\p{L}\p{N}_.@-]*\.[A-Za-z][A-Za-z0-9]{0,6}(?::\d+(?::\d+)?)?",
+            r"(?:[A-Za-z]:\\|~[\\/]|\.{1,2}[\\/]|/)?(?:[\p{L}\p{N}_.@-]+[\\/])*[\p{L}\p{N}_@-][\p{L}\p{N}_.@-]*\.[A-Za-z][A-Za-z0-9]{0,6}(?::\d+(?::\d+)?)?",
         ),
         iso: re(
             r"(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?",
@@ -771,6 +855,16 @@ pub fn pronounce(text: &str) -> String {
     let mut kept: Vec<String> = Vec::new();
     let text = text.replace(['\u{E020}', '\u{E021}'], "");
     let mut t = each(&text, &r.protect, |c, _, _| {
+        // A file path in inline code is read as a path (2026-10-14).
+        let inner = c[0].strip_prefix('`').and_then(|s| s.strip_suffix('`'));
+        if let Some(p) = inner.filter(|p| p.contains(['/', '\\'])) {
+            if r.path
+                .find(p)
+                .is_some_and(|m| m.start() == 0 && m.end() == p.len())
+            {
+                return Some(p.to_string());
+            }
+        }
         Some(hold(&mut kept, c[0].to_string()))
     });
     t = user(&t, &mut kept);
@@ -958,6 +1052,10 @@ fn tech_symbols(t: &str) -> String {
 }
 
 fn paths(t: &str) -> String {
+    paths_with(t, path_detail())
+}
+
+fn paths_with(t: &str, detail: PathDetail) -> String {
     let r = &*RULES;
     each(t, &r.path, |c, s, e| {
         let raw = &c[0];
@@ -984,7 +1082,7 @@ fn paths(t: &str) -> String {
             .split(['/', '\\'])
             .filter(|p| !p.is_empty() && *p != "~" && *p != "." && *p != ".." && !p.ends_with(':'))
             .collect();
-        let tail = &parts[parts.len().saturating_sub(2)..];
+        let tail = path_tail(&parts, detail);
         let mut w = tail
             .iter()
             .map(|p| path_part(p))
@@ -1047,9 +1145,16 @@ fn versions(t: &str) -> String {
         if c[0].starts_with('V') && !c[1].contains('.') {
             return None;
         }
+        // "Version v1.20" says "version" once (2026-10-14).
+        let said = cur[..s]
+            .trim_end()
+            .rsplit(|ch: char| !ch.is_alphanumeric())
+            .next()
+            .is_some_and(|w| w.eq_ignore_ascii_case("version"));
+        let lead = if said { "" } else { "version " };
         free_left(&cur, s, e).then(|| {
             format!(
-                "version {}{}",
+                "{lead}{}{}",
                 version_parts(&c[1]),
                 pre_release(c.get(2).map_or("", |m| m.as_str()))
             )
@@ -1955,7 +2060,7 @@ mod tests {
             pronounce(
                 "See crates/Sonara/src/main.rs and https://github.com/Maxaubert/Sonara/pull/7"
             ),
-            "See src slash main dot R S and github dot com, pull seven"
+            "See Sonara slash src slash main dot R S and github dot com, pull seven"
         );
         assert_eq!(pronounce("I like Sonara."), "I like So nara.");
         // A digit as a word never reaches a placeholder.
@@ -1963,6 +2068,41 @@ mod tests {
         assert_eq!(pronounce("Run `a` now"), "Run `a` now");
         set_user_words(Vec::new());
         assert_eq!(pronounce("the SQL query"), "the sequel query");
+    }
+
+    #[test]
+    fn the_path_setting_reads_as_much_of_a_path_as_asked() {
+        let p = r"See C:\Users\Admin\AppData\Local\Sonara\logs\sonarad.log now.";
+        let said = |d| paths_with(p, d);
+        assert_eq!(
+            said(PathDetail::Short),
+            "See Sonara slash logs slash sonarad dot log now."
+        );
+        assert_eq!(
+            said(PathDetail::LastTwo),
+            "See logs slash sonarad dot log now."
+        );
+        assert_eq!(
+            said(PathDetail::LastThree),
+            "See Sonara slash logs slash sonarad dot log now."
+        );
+        assert_eq!(
+            said(PathDetail::Full),
+            "See Users slash Admin slash AppData slash Local slash Sonara slash logs slash \
+             sonarad dot log now."
+        );
+        // Short keeps a file in a home folder and the last three of a long one.
+        assert_eq!(
+            paths_with(r"C:\Users\Admin\notes.txt", PathDetail::Short),
+            "notes dot T X T"
+        );
+        assert_eq!(
+            paths_with("/home/ove/a/b/c/d.rs", PathDetail::Short),
+            "b slash c slash d dot R S"
+        );
+        for d in PathDetail::NAMES {
+            assert_eq!(PathDetail::from_name(d).map(PathDetail::name), Some(*d));
+        }
     }
 
     #[test]

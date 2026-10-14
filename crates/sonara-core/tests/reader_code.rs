@@ -71,7 +71,9 @@ fn step_mode_waits_after_the_announcement_and_after_each_line() {
 }
 
 #[test]
-fn step_mode_goes_on_to_the_prose_after_the_last_line() {
+fn step_mode_waits_after_the_last_line_until_the_user_moves_on() {
+    // 2026-10-14: the prose after a block no longer reads on its own, so
+    // the last line can be heard again.
     let mut h = Host::new();
     h.reader.set_code_step(true);
     let id: ItemId = h.speak(&block());
@@ -80,10 +82,30 @@ fn step_mode_goes_on_to_the_prose_after_the_last_line() {
         h.ctl(Control::NextLine);
         h.finish_chunk();
     }
-    // After line 3 the end and the prose read on their own.
-    assert!(!h.state().paused);
+    let s = h.state();
+    assert!(s.paused && s.stepping, "waits after line 3");
+    assert_eq!(s.now_playing.as_ref().unwrap().chunk, 5);
+    assert!(s.now_playing.unwrap().code, "the line keys still work");
+    // Previous: line 3 again, then the same wait.
+    h.ctl(Control::PreviousLine);
+    assert_eq!(chunk_of(&h), 4);
+    h.finish_chunk();
+    assert!(h.state().paused && h.state().stepping);
+    // Next: the end and the prose read on.
+    h.ctl(Control::NextLine);
+    assert_eq!(chunk_of(&h), 5);
     h.play_out();
     assert_eq!(h.heard.last(), Some(&(id, 6)));
+    assert!(!h.state().paused);
+}
+
+#[test]
+fn play_during_a_block_reads_on_into_the_prose() {
+    let (mut h, id) = waiting();
+    h.ctl(Control::Toggle);
+    h.play_out();
+    assert_eq!(h.heard.last(), Some(&(id, 6)));
+    assert!(!h.state().paused);
 }
 
 #[test]

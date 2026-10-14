@@ -206,6 +206,7 @@ reply `{ok: true, key, value}` with the value now in force.
 | `voice` | a voice `id` or `name` of the current engine; `null` for the engine default. `get` returns the id or `null` |
 | `engine` | an engine id: `kokoro` or `onecore` (`fake` in test runs), or the id of an [external engine](#external-engines) the user added. Switching resets a voice the new engine lacks |
 | `debug_log` | `true` or `false` (default `true`, runtime 0.13.2, #219): the troubleshooting log records text (what was read, the messages received, the hooks' raw input); `false` keeps every text out of `logs\` (see [Saved settings](#saved-settings)). A host key: it needs no extension |
+| `paths` | protocol 1.9 (runtime 0.27.0): how much of a file path is read: `"short"` (default: without the leading common folders, the drive, `Users\<name>`, `home/<name>`, `AppData`, `Local`, `Roaming`, `ProgramData`, then at most the last three parts), `"last_two"`, `"last_three"` or `"full"` (every folder). See How text is read |
 | `pronunciations` | protocol 1.8 (runtime 0.26.0, #294): the user's own words, a list of at most 200 `{word, say}` (a word up to 60 characters, what to say up to 200, both non-blank; a word given twice keeps its last `say`). Each `word` (exact case, a whole word, not inside a path, URL or address) is read as its `say`, as written: before every other text rule, which never change the `say`. Default `[]`. See How text is read |
 
 A rate, voice or engine change applies to chunks synthesized from then on. Out-of-range or wrongly
@@ -377,7 +378,8 @@ provider's models, live), the profile's `send_mode` ("Send to the engine") and t
 `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
 filling in a default model or voice for any external engine (a profile without one it needs is kept
 and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
-are only what the profile sets. 1.8 (runtime 0.26.0, #294) added the core key `pronunciations` and
+are only what the profile sets. 1.9 (runtime 0.27.0) added the core key `paths`; step mode also
+waits after a block's last line, and line labels are words (`"Line three."`). 1.8 (runtime 0.26.0, #294) added the core key `pronunciations` and
 reads text the way people say it (see How text is read). 1.7 (runtime 0.25.0, #295) added code reading: the `control` actions
 `next_line` and `previous_line` and the `agent` keys `code_speed`, `code_pause` and `code_step`
 (see Code reading). 1.6 (runtime 0.22.0, #283) added question sets: the `ask` fields
@@ -408,7 +410,7 @@ own (rate 200, `"everything"`, `"queue"` with 1, `"earcon_only"`, `"off"`).
 
 | file in the home | holds |
 |---|---|
-| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `pronunciations`. A `_migrated` key records the migration below |
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `paths`, `pronunciations`. A `_migrated` key records the migration below |
 | `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
 | `engines.json` | the [external engines](#external-engines) added with `engine_add`: `{"format": 2, "engines": [profile, ...]}`, never a key. An `env:` entry may carry `key_origin` (see Keys below), which only the user writes in the file; a format 1 file is migrated at the first start (its keys and `env:` entries are bound to their addresses then) and saved as format 2. A file that is not JSON is copied to `engines.json.bad` (and logged) and counts as empty until the next change; an entry that fails validation or names a kind this runtime lacks is kept, listed and not used. Read once at start, before the first speech, so a saved `engine` naming one applies at once |
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
@@ -741,9 +743,9 @@ done. A reply counts as still being written until its `turn_end`: a turn the use
 
 **How text is read** (protocol 1.8, runtime 0.26.0, #294). Every text, `speak` and agent text alike,
 is read the way people say it, in words: the user's `pronunciations` first, then URLs (host and
-last part), e-mail addresses, file paths (the last two parts, `, line N` for `:N`), ISO and
+last part), e-mail addresses, file paths (as much as `paths` says, also in inline code; `, line N` for `:N`), ISO and
 day-first numeric dates (`12.12.2026` "the twelfth of December twenty twenty six"; month first only
-when nothing else is a date), IP addresses, versions (`v1.20` "version one point twenty"), hashes and
+when nothing else is a date), IP addresses, versions (`v1.20` "version one point twenty", "version" said once after the word), hashes and
 UUIDs, phone numbers after `+` or a cue word, money (`$`, `£`, `€`, `kr`, `NOK`, ISO codes),
 units, percent, times (`14:30` "fourteen thirty", `9am`), ranges, fractions, ordinals, decimals,
 numbers of 1000 or more (years after a cue word), abbreviations (`e.g.`), roman numerals after a
@@ -755,7 +757,7 @@ left to their own rules. The rules and their sources: `research/sonara/2026-10-1
 
 **Code reading** (protocol 1.7, runtime 0.25.0, #295). At `verbosity` `"read_code"` and
 `"everything"` a fenced code block in `stream` text is read as one item: its announcement
-(`"TypeScript code block, 7 lines."`, the fence's language by name), each line (`"Line 3. ..."`,
+(`"TypeScript code block, 7 lines."`, the fence's language by name), each line (`"Line three. ..."`, the number in words,
 numbered as in the source, a blank line counted but not read), then `"End of TypeScript code."`.
 A line names its symbols (`.` dot, `(` open paren, `=` equals, `=>` arrow, ...), reads strings,
 comments and the text between markup tags as written, splits identifiers into words
@@ -827,7 +829,7 @@ clip instead, and one line in `logs\sonarad.log` says why (once per version of t
 | `verbosity` | `"everything"`: text, decisions, tool announcements, hints, and each code block read (see Code reading; runtime 0.23.0 #290, 0.25.0 #295); `"read_code"` (runtime 0.24.0, #292): text, decisions and code blocks as at `"everything"`, no tool announcements or hints; `"skip_code"` (default, shown as *Default*): text and decisions, code blocks dropped without a word, no tool announcements or hints. Aliases for older clients (#214): `"medium"` and `"quiet"` are `"skip_code"`, `"all"` is `"everything"`; a `set` with an alias answers (and saves) the new name, and a saved alias loads as the new name |
 | `code_speed` | protocol 1.7 (#295): code lines and a block's announcement are read at this percent of `rate`, `50` to `100` (default `80`). External engines without a speed parameter (Gemini) take it as their pace style |
 | `code_pause` | protocol 1.7 (#295): silence after each code line, in milliseconds, `0` to `2000` (default `500`) |
-| `code_step` | protocol 1.7 (#295): `"on"` or `"off"` (default): step through code. The reader waits after a block's announcement (which adds `"Use <key> for the next line."`, the key bound to `next_question`) and after each line, until `next_line`, `previous_line` or `play` / `toggle` (the rest of the block straight through). While waiting it is `paused`; a move away (`restart`, `skip`, `next`, an interrupting `speak`) plays at once, while a `pause` sent during the wait holds as usual. Other apps stay ducked or paused through a wait, for 30 seconds at most |
+| `code_step` | protocol 1.7 (#295): `"on"` or `"off"` (default): step through code. The reader waits after a block's announcement (which adds `"Use <key> for the next line."`, the key bound to `next_question`) and after each line, the last one too (1.9: the text after the block waits as well), until `next_line`, `previous_line` or `play` / `toggle` (the rest of the block straight through, then the text after it). While waiting it is `paused`; a move away (`restart`, `skip`, `next`, an interrupting `speak`) plays at once, while a `pause` sent during the wait holds as usual. Other apps stay ducked or paused through a wait, for 30 seconds at most |
 | `read_mode` | when a turn's sentences are read (#222): `"immediate"`: each as it arrives; `"queue"`: held until `minqueue` are waiting, the turn ends, a tool runs or a decision arrives; `"done"` (default): held until the turn ends or a decision (question, permission, plan) arrives, a tool run does not release them. A decision reads the held sentences first, then itself; after the turn ends, late sentences are read at once. With summaries on, summaries own the turn whatever the mode. A `config.json` from before #222 with a `minqueue` the user set and no `read_mode` loads `0` and `1` as `"immediate"` and more as `"queue"` (written with the next change); without one the default applies |
 | `flush_scope` | what `control flush` (the flush hotkey) skips (#228): `"session"` (default): the session being read, for the rest of its reply, then the next session is read; `"all"`: also every other session's ready messages (queued text, finished replies, summaries); a reply still being written is kept in both. See `control flush` above |
 | `minqueue` | `0` to `10` (default 5), read mode `"queue"` only: a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
