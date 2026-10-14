@@ -169,6 +169,8 @@ The question navigation (#283) keeps this order: `Agent::question` and `Agent::r
 set under `rules`, then call L2 (`Channels::channel`, `revise`, `read_from`), which take the
 channels' lock and the reader below it. The set itself lives in L3; L2 only gains the two
 primitives `revise` (an entry's text in place) and `read_from` (a replay from an entry).
+`Agent::back` (#299, a tap on Up) takes no L3 lock: it calls L2's `back` (the channels' lock, then
+the reader) or, while no session's text is read, `Agent::restart`.
 
 Host locks in `sonarad` are taken at the start of handling a request, before any layer lock:
 

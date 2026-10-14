@@ -132,7 +132,7 @@ pub use settings::{
     Verbosity,
 };
 use sonara_channels::Resolved;
-pub use sonara_channels::{Channels, Control, FlushReport, Flushed, QueueMode};
+pub use sonara_channels::{Back, Channels, Control, FlushReport, Flushed, QueueMode};
 pub use summarizer::Summarizer;
 
 use sonara_engine::PcmChunk;
@@ -716,8 +716,8 @@ impl Agent {
     /// the one written last) has a question set, its message is read again
     /// from the top with question 1 (the set's entry shows question 1
     /// again) and the session is returned. Otherwise it is L2's
-    /// `control(Restart)` as before (the current item again while reading,
-    /// the engaged session's message while idle) and `None` is returned.
+    /// `control(Restart)` (the message being read again from the top, #299,
+    /// or while idle the engaged session's) and `None` is returned.
     pub fn restart(&self) -> Result<Option<String>> {
         let mut rules = self.lock();
         let ch = &self.inner.channels;
@@ -752,6 +752,17 @@ impl Agent {
         drop(rules);
         ch.control(Control::Restart, None)?;
         Ok(None)
+    }
+
+    /// Back one section (#299, a tap on Up): L2's `back` while a session's
+    /// text is read, else Up (`restart`: the engaged session's message
+    /// again, with question 1 when it has a question set).
+    pub fn back(&self) -> Result<Back> {
+        if self.inner.channels.reading_entry() {
+            return Ok(self.inner.channels.back()?);
+        }
+        self.restart()?;
+        Ok(Back::Replay)
     }
 
     /// `channel`'s question set: the current question (0-based) and its

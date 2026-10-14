@@ -26,7 +26,7 @@ use serde_json::{json, Map, Value};
 use sonara_agent::{Earcon, FlushReport, Flushed, Step};
 use sonara_reader::{Control, Key, ReaderHandle, Registry, RATE_MAX, RATE_MIN};
 use sonara_system::audio::{AudioConfig, AudioControl, AudioMode};
-use sonara_system::hotkeys::Hotkeys;
+use sonara_system::hotkeys::{Hotkeys, Press};
 use sonara_system::keymap::{self, Action};
 use sonara_system::{LogFn, Platform};
 use std::path::PathBuf;
@@ -91,16 +91,20 @@ pub struct HotkeyTarget {
 
 impl HotkeyTarget {
     /// Carry out one hotkey action like the matching protocol request,
-    /// with one log line saying what it did.
-    pub fn perform(&self, action: Action) {
+    /// with one log line saying what it did. A tap on Up is `back`, a hold
+    /// `restart` (#299).
+    pub fn perform(&self, action: Action, press: Press) {
         let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
         if *retiring {
             return;
         }
-        let outcome = self.apply(action);
+        let (name, outcome) = match (action, press) {
+            (Action::Restart, Press::Tap) => ("back", self.back()),
+            _ => (action.as_str(), self.apply(action)),
+        };
         sonara_system::log::emit(
             self.log.as_ref(),
-            &crate::support_log::hotkey_line(action.as_str(), &outcome),
+            &crate::support_log::hotkey_line(name, &outcome),
         );
     }
 
@@ -152,6 +156,24 @@ impl HotkeyTarget {
     /// A channel's label (else its id) as a log value.
     fn session_value(&self, channel: &str) -> String {
         sonara_system::log::value(&self.session_label(channel))
+    }
+
+    /// A tap on Up (#299): back one section, as `control back`.
+    fn back(&self) -> Result<Option<String>, String> {
+        let done = match (self.agent.get(), self.channels.get()) {
+            (Some(a), _) => a.back().map_err(|e| e.to_string())?,
+            (None, Some(ch)) => ch.back().map_err(|e| e.to_string())?,
+            // No channels: the reader's own previous chunk.
+            (None, None) => {
+                self.control(Control::Previous)?;
+                return Ok(None);
+            }
+        };
+        let (channel, to) = channels_ext::back_fields(&done);
+        Ok(Some(match channel {
+            Some(c) => format!("session={} to={to}", self.session_value(c)),
+            None => format!("to={to}"),
+        }))
     }
 
     /// Carry out `action`; what it did, for the log line, when the action
@@ -578,8 +600,9 @@ impl SystemExt {
         let target = self.target.clone();
         let hk = Hotkeys::start(
             self.platform.registrar.clone(),
+            self.platform.keys.clone(),
             bindings,
-            Arc::new(move |a| target.perform(a)),
+            Arc::new(move |a, press| target.perform(a, press)),
         );
         for c in hk.collisions() {
             eprintln!(

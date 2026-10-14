@@ -29,7 +29,7 @@ pub mod state_file;
 pub mod win;
 
 pub use audio::{Activity, AudioConfig, AudioControl, AudioMode, Status};
-pub use hotkeys::{Collision, Hotkeys};
+pub use hotkeys::{Collision, Hotkeys, Press};
 pub use keymap::{Action, Binding, Keymap, Resolved};
 pub use log::LogFn;
 pub use platform::Platform;

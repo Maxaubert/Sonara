@@ -4,11 +4,17 @@
 //! the action itself, so a busy host can never stall hotkey capture (the
 //! Python mute-hang). A rapid repeat of a toggle (pause, mute) is ignored.
 //!
+//! A chord arrives once however long it is held (MOD_NOREPEAT). For an
+//! action that can be held (`Action::holdable`, #299: Up) the dispatch
+//! thread then watches the key: let go before `HOLD` it is a tap, still
+//! down at `HOLD` a hold, handed over at once (the user hears it while
+//! still holding).
+//!
 //! `stop` joins the pump thread, which unregisters every chord, before it
 //! returns: a restart that re-registered while the old thread still held
 //! the chords would lose them all (the Python H2 bug).
 use crate::keymap::{Action, Resolved, MOD_NOREPEAT};
-use crate::platform::Registrar;
+use crate::platform::{KeyState, Registrar};
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -20,6 +26,34 @@ pub const ERROR_HOTKEY_ALREADY_REGISTERED: u32 = 1409;
 
 /// A repeat of the same toggle within this window is ignored.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// A holdable chord still down after this is a hold (#299).
+pub const HOLD: Duration = Duration::from_millis(500);
+
+/// How often the key is checked while a press may become a hold.
+const HOLD_POLL: Duration = Duration::from_millis(10);
+
+/// How a chord was pressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Press {
+    /// Let go before `HOLD`, or an action that cannot be held.
+    Tap,
+    /// Still down at `HOLD` (`Action::holdable` only).
+    Hold,
+}
+
+/// Watch `vk` after a press: `Hold` once it has been down for `HOLD`,
+/// `Tap` as soon as it is up.
+pub fn watch(keys: &dyn KeyState, vk: u32) -> Press {
+    let start = Instant::now();
+    while keys.is_down(vk) {
+        if start.elapsed() >= HOLD {
+            return Press::Hold;
+        }
+        std::thread::sleep(HOLD_POLL);
+    }
+    Press::Tap
+}
 
 /// A chord that could not be registered.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,7 +91,7 @@ impl Debounce {
     }
 }
 
-pub type Handler = Arc<dyn Fn(Action) + Send + Sync>;
+pub type Handler = Arc<dyn Fn(Action, Press) + Send + Sync>;
 pub type RegistrarFactory = Arc<dyn Fn() -> Box<dyn Registrar> + Send + Sync>;
 
 /// Running hotkeys; `stop` (or dropping it) unregisters them.
@@ -71,11 +105,16 @@ pub struct Hotkeys {
 
 impl Hotkeys {
     /// Register `bindings` on a new pump thread and run `handler` for each
-    /// press on a dispatch thread. Returns once registration is done, so
-    /// `collisions` is complete.
-    pub fn start(factory: RegistrarFactory, bindings: Vec<Resolved>, handler: Handler) -> Hotkeys {
+    /// press on a dispatch thread (`keys` tells a tap from a hold).
+    /// Returns once registration is done, so `collisions` is complete.
+    pub fn start(
+        factory: RegistrarFactory,
+        keys: Arc<dyn KeyState>,
+        bindings: Vec<Resolved>,
+        handler: Handler,
+    ) -> Hotkeys {
         let (ready_tx, ready_rx) = mpsc::channel();
-        let (press_tx, press_rx) = mpsc::channel::<Action>();
+        let (press_tx, press_rx) = mpsc::channel::<Resolved>();
         let pump = std::thread::Builder::new()
             .name("sonara-hotkeys".into())
             .spawn(move || {
@@ -105,7 +144,10 @@ impl Hotkeys {
                     if !ids.contains(&id) || !debounce.allow(action, Instant::now()) {
                         continue;
                     }
-                    if press_tx.send(action).is_err() {
+                    let Some(b) = bindings.iter().find(|b| b.action == action) else {
+                        continue;
+                    };
+                    if press_tx.send(*b).is_err() {
                         break;
                     }
                 }
@@ -117,8 +159,13 @@ impl Hotkeys {
         let dispatch = std::thread::Builder::new()
             .name("sonara-hotkey-actions".into())
             .spawn(move || {
-                while let Ok(a) = press_rx.recv() {
-                    handler(a);
+                while let Ok(b) = press_rx.recv() {
+                    let press = if b.action.holdable() {
+                        watch(keys.as_ref(), b.vk)
+                    } else {
+                        Press::Tap
+                    };
+                    handler(b.action, press);
                 }
             })
             .expect("spawn the hotkey action thread");

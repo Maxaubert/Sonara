@@ -152,6 +152,10 @@ impl Server {
             if action == "flush" {
                 return self.flush(ch, m);
             }
+            if action == "back" {
+                let _admitted = self.admit()?;
+                return channels_ext::back(ch, self.agent.get());
+            }
             if let Some(step) = agent_ext::question_step(action) {
                 let a = self.agent.get().ok_or_else(|| {
                     Failure::new(

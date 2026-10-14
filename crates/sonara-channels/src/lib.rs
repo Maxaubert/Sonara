@@ -262,6 +262,20 @@ pub enum Flushed {
     Nothing,
 }
 
+/// What `back` did (#299).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Back {
+    /// The previous chunk of the item being read, in the named channel.
+    Chunk(String),
+    /// The previous entry of the named channel's batch.
+    Entry(String),
+    /// The named channel's first section again: nothing comes before it.
+    First(String),
+    /// No channel entry was being read: `control(Restart, None)` (the
+    /// engaged channel's message again while idle).
+    Replay,
+}
+
 /// What `flush_with` did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushReport {
@@ -591,8 +605,8 @@ impl Channels {
     }
 
     /// A playback control. Without a channel it acts on the reader, except
-    /// `Stop` (also flushes every channel) and `Restart` while idle (replays
-    /// the engaged channel's batch). With a channel: `Stop` flushes that
+    /// `Stop` (also flushes every channel) and `Restart` (replays the batch
+    /// being read from the top, #299, or while idle the engaged channel's). With a channel: `Stop` flushes that
     /// channel (cutting its item if it is being read), `Restart` replays it
     /// (switching to it), and other actions apply only while it is being
     /// read.
@@ -622,6 +636,13 @@ impl Channels {
                     st.router.done();
                     st.in_flight = None;
                     Ok(reader.control(Control::Stop)?)
+                }
+                // Up while a channel is read: its whole message again, not
+                // only the item playing (#299: with a sentence-mode engine
+                // that is one sentence).
+                Control::Restart if st.in_flight.is_some() => {
+                    let f = st.in_flight.clone().expect("checked");
+                    self.inner.read_from(&mut st, &f.channel, None).map(|_| ())
                 }
                 Control::Restart if reader.state()?.now_playing.is_none() => {
                     // No channel read yet (everything came while muted,
@@ -695,22 +716,45 @@ impl Channels {
     /// entry or batch.
     pub fn read_from(&self, channel: &str, entry: Option<u64>) -> Result<bool> {
         let mut st = self.lock();
-        if !st.router.replay_from(channel, entry) {
-            return Ok(false);
-        }
-        if let Some(cut) = st.in_flight.take() {
-            // The channel's own cut entry is not stepped back over: its
-            // cursor was just set.
-            if let (Some(e), true) = (cut.entry, cut.channel != channel) {
-                st.router.rewind(&cut.channel, e);
-            }
-        }
-        let fed = self.inner.feed(&mut st, true)?;
+        self.inner.read_from(&mut st, channel, entry)
+    }
+
+    /// Back one section (#299, a tap on Up): while a channel's entry is
+    /// read, its item's previous chunk (a code line, a part of a long
+    /// item), else the batch's previous entry (a sentence in send mode
+    /// `sentence`), else that first section again; the rest of the batch
+    /// follows as usual. While no channel entry is read (idle, an
+    /// announcement, text spoken to the reader directly) it is
+    /// `control(Restart, None)`.
+    pub fn back(&self) -> Result<Back> {
+        let mut st = self.lock();
         let reader = &self.inner.reader;
-        if fed.is_none() && reader.state()?.now_playing.is_some() {
-            reader.control(Control::Skip)?;
+        let Some((f, entry)) = st.in_flight.clone().and_then(|f| f.entry.map(|e| (f, e))) else {
+            drop(st);
+            self.control(Control::Restart, None)?;
+            return Ok(Back::Replay);
+        };
+        // An item fed a moment ago (two quick taps) may not have started
+        // yet: only its own chunk counts.
+        let chunk = reader
+            .state()?
+            .now_playing
+            .filter(|n| n.item_id == f.id)
+            .map_or(0, |n| n.chunk);
+        if chunk > 0 {
+            reader.control(Control::Previous)?;
+            return Ok(Back::Chunk(f.channel));
         }
-        Ok(true)
+        let previous = st.router.channel(&f.channel).and_then(|c| {
+            let at = c.entries().iter().position(|e| e.id == entry)?;
+            at.checked_sub(1).map(|i| c.entries()[i].id)
+        });
+        self.inner
+            .read_from(&mut st, &f.channel, Some(previous.unwrap_or(entry)))?;
+        Ok(match previous {
+            Some(_) => Back::Entry(f.channel),
+            None => Back::First(f.channel),
+        })
     }
 
     /// The channel whose batch got the newest entry (`Restart` before any
@@ -924,6 +968,15 @@ impl Channels {
         st.in_flight.is_none() && !st.router.has_work()
     }
 
+    /// A channel's entry is being read (not an announcement, not text
+    /// spoken to the reader directly): `back` steps inside its batch.
+    pub fn reading_entry(&self) -> bool {
+        self.lock()
+            .in_flight
+            .as_ref()
+            .is_some_and(|f| f.entry.is_some())
+    }
+
     /// The channel reading now, else the one that read last.
     pub fn engaged(&self) -> Option<String> {
         self.lock().router.engaged().map(str::to_string)
@@ -988,6 +1041,25 @@ fn report(st: &State, channel: &str, entries: Vec<Entry>, reason: &str, item: Op
 }
 
 impl Inner {
+    /// `Channels::read_from` under the lock.
+    fn read_from(&self, st: &mut State, channel: &str, entry: Option<u64>) -> Result<bool> {
+        if !st.router.replay_from(channel, entry) {
+            return Ok(false);
+        }
+        if let Some(cut) = st.in_flight.take() {
+            // The channel's own cut entry is not stepped back over: its
+            // cursor was just set.
+            if let (Some(e), true) = (cut.entry, cut.channel != channel) {
+                st.router.rewind(&cut.channel, e);
+            }
+        }
+        let fed = self.feed(st, true)?;
+        if fed.is_none() && self.reader.state()?.now_playing.is_some() {
+            self.reader.control(Control::Skip)?;
+        }
+        Ok(true)
+    }
+
     fn lock(&self) -> Locked<'_> {
         // A panic under the lock already failed a test; keep serving.
         Locked {

@@ -6,8 +6,8 @@
 //! `#[ignore]` tests in `tests/win_live.rs` (opt-in, they touch the user's
 //! session). The unit and conformance tests use `crate::fake`.
 use crate::platform::{
-    AudioSession, AudioSessions, KeyboardLayout, MediaSession, MediaSessions, PResult, Platform,
-    Registrar,
+    AudioSession, AudioSessions, KeyState, KeyboardLayout, MediaSession, MediaSessions, PResult,
+    Platform, Registrar,
 };
 use std::sync::Arc;
 use windows::core::{Interface, PWSTR};
@@ -29,8 +29,8 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyboardLayout, MapVirtualKeyExW, RegisterHotKey, ToUnicodeEx, UnregisterHotKey,
-    HOT_KEY_MODIFIERS, MAPVK_VK_TO_VSC,
+    GetAsyncKeyState, GetKeyboardLayout, MapVirtualKeyExW, RegisterHotKey, ToUnicodeEx,
+    UnregisterHotKey, HOT_KEY_MODIFIERS, MAPVK_VK_TO_VSC,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
@@ -44,6 +44,7 @@ pub fn platform() -> Platform {
         media: Arc::new(|| Box::new(Gsmtc) as Box<dyn MediaSessions>),
         registrar: Arc::new(|| Box::new(HotkeyThread::new()) as Box<dyn Registrar>),
         layout: Arc::new(Layout),
+        keys: Arc::new(Keys),
     }
 }
 
@@ -270,6 +271,17 @@ impl Registrar for HotkeyThread {
             // SAFETY: posting WM_QUIT to the pump thread's queue.
             let _ = unsafe { PostThreadMessageW(thread, WM_QUIT, WPARAM(0), LPARAM(0)) };
         })
+    }
+}
+
+struct Keys;
+
+impl KeyState for Keys {
+    /// The physical key, whichever window has the focus.
+    fn is_down(&self, vk: u32) -> bool {
+        // SAFETY: a plain keyboard query.
+        let s = unsafe { GetAsyncKeyState(vk as i32) };
+        (s as u16) & 0x8000 != 0
     }
 }
 

@@ -378,7 +378,9 @@ provider's models, live), the profile's `send_mode` ("Send to the engine") and t
 `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
 filling in a default model or voice for any external engine (a profile without one it needs is kept
 and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
-are only what the profile sets. 1.9 (runtime 0.27.0) added the core key `paths`; step mode also
+are only what the profile sets. 1.10 (runtime 0.28.0, #299) added the `channels` `control` action
+`back` (back one section) and made `restart` without a channel replay the whole batch being read,
+not only the item playing; the Up hotkey is `back` on a tap and `restart` when held. 1.9 (runtime 0.27.0) added the core key `paths`; step mode also
 waits after a block's last line, and line labels are words (`"Line three."`). 1.8 (runtime 0.26.0, #294) added the core key `pronunciations` and
 reads text the way people say it (see How text is read). 1.7 (runtime 0.25.0, #295) added code reading: the `control` actions
 `next_line` and `previous_line` and the `agent` keys `code_speed`, `code_pause` and `code_step`
@@ -588,7 +590,7 @@ up (and not still reading its last message) starts a new batch.
 | `channel_close` | `channel` | close it and forget its messages; if it is being read, its item is cut and the next channel follows (announced: the user heard the closed one last, #241) |
 | `focus` | `channel` | read this channel next once the channel being read has finished its batch (does not cut) |
 | `speak` | `channel?` plus the core fields | with `channel`: add a message to it (opened with the defaults if needed). `mode` overrides the policy for this message (`replace` drops the channel's unread messages, `append` keeps them). `interrupt: true` reads it now: it goes before the channel's unread messages, the current item is cut and the switch is announced; another channel's message cut this way is read again once this channel's batch is read. Reply `{item_id, channel, dropped}`: `item_id` is the reader item when the message went to the reader at once, `null` while it waits in its channel (behind other messages or an announcement); `dropped` counts the unread messages it replaced |
-| `control` | `channel?` plus the core `action`, or `action: next_channel` or `flush` | see below |
+| `control` | `channel?` plus the core `action`, or `action: next_channel`, `flush` or `back` | see below |
 
 `channel` is a non-empty string (`E_BAD_REQUEST` otherwise); an unknown channel in `channel_close`,
 `focus` or `control` is `E_NOT_FOUND`.
@@ -597,11 +599,21 @@ up (and not still reading its last message) starts a new batch.
 
 - `stop` also skips every channel to its end (nothing more is read until a new message; heard
   messages stay replayable).
-- `restart` while nothing is playing replays the batch of the channel being read or read last (the
-  Claude plugin's Up key), not only its last item; before any channel was read (everything came
+- `restart` while a channel's message is being read replays that channel's batch from the top, not
+  only the item playing (runtime 0.28.0, #299: with an engine in send mode `sentence` every sentence
+  is an item). While nothing is playing it replays the batch of the channel read last (the
+  Claude plugin's Up key, held), not only its last item; before any channel was read (everything came
   while muted), the focused channel's, else the one written to last (runtime 0.20.2, #243). When
   that channel is the agent's and its batch is empty (its only item was an answered decision),
   `restart` reads nothing.
+
+`back` (protocol 1.10, #299; the Claude plugin's Up key, tapped) goes back one section: while a
+channel's message is read, the previous chunk of its item (a code line, a part of a long item), else
+the batch's previous message (a sentence in send mode `sentence`), else that first section again;
+the rest of the batch follows. While no channel's message is read (idle, an announcement, a core
+`speak`) it is `restart` without a channel (with `agent`: a question set starts again with question
+1). Reply `{channel, to}`: the channel it stepped in (`null` for a replay while idle) and what it
+did: `chunk`, `entry`, `first` or `replay`.
 
 With `channel`: `stop` skips that channel to its end and cuts its item if it is being read;
 `restart` goes back to the start of its item if that channel is being read, else replays the
@@ -960,7 +972,7 @@ Actions and what they do (the same as the protocol request named):
 
 | action | default | effect |
 |---|---|---|
-| `restart` | Ctrl+Alt+Up | `control restart` (with `agent`, a message with a question set is read again from the top: its text, then question 1, #283) |
+| `restart` | Ctrl+Alt+Up | a tap is `control back` (back one section, #299); held for half a second it is `control restart` (the message again from the top; with `agent`, a message with a question set: its text, then question 1, #283), heard while the key is still down. The log line says `hotkey back session=<label> to=<what>` or `hotkey restart` |
 | `flush` | Ctrl+Alt+Down | with `channels`: `control flush` (the session being read and the rest of its reply, #228; with `flush_scope` `all` also every other session's ready messages); without it, `control stop`. With `agent`, plays `nav` (or `nav_edge` when nothing was dropped) |
 | `pause` | unbound | `control toggle`, then the cue `"Paused."` or `"Resumed."` |
 | `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute`; then its cue |

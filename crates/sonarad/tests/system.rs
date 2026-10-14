@@ -1774,9 +1774,10 @@ fn the_right_hotkey_reads_the_next_question() {
 }
 
 #[test]
-fn the_up_hotkey_during_question_two_restarts_the_message() {
+fn holding_up_during_question_two_restarts_the_message() {
     // sonarad.log 2026-10-07 18:03:14 and 18:03:28: Up restarted question 2
     // twice. Now it reads the message again: its text, then question 1.
+    // Held (#299): a tap goes back one section instead.
     let r = rig();
     let mut session = Session::http();
     text_and_four_questions(&r, &mut session);
@@ -1788,14 +1789,112 @@ fn the_up_hotkey_during_question_two_restarts_the_message() {
         || playing(&r.server).as_deref() == Some("Question 2 of 4.")
     ));
     start_playing(&r.out);
+    r.fake.hold_key(UP);
     r.fake.press(Action::Restart.id());
     read_through(&r, "Here is my answer.");
+    r.fake.release_key(UP);
     read_through(&r, "Question 1 of 4.");
     read_through(&r, "Question text 1?");
     stays_quiet(&r);
     assert!(eventually(
         || log_of(&r).contains("hotkey restart session=web-app question=1/4")
     ));
+}
+
+/// The Up key's virtual-key code.
+const UP: u32 = 0x26;
+
+/// Session `a` ("web-app") reads "One is here.", then "Two is here."
+/// starts: with a sentence-mode engine each sentence is an item (#299).
+fn on_the_second_sentence(r: &Rig, session: &mut Session) {
+    let s = &r.server;
+    ok(
+        s,
+        session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    ok(
+        s,
+        session,
+        json!({"type": "channel_open", "channel": "a", "label": "web-app"}),
+    );
+    ok(
+        s,
+        session,
+        json!({"type": "stream", "channel": "a", "delta": "One is here. Two is here.", "final": true}),
+    );
+    ok(s, session, json!({"type": "turn_end", "channel": "a"}));
+    read_through(r, "One is here.");
+    assert!(eventually(
+        || playing(&r.server).as_deref() == Some("Two is here.")
+    ));
+    start_playing(&r.out);
+}
+
+#[test]
+fn tapping_up_goes_back_one_section() {
+    // sonarad.log 2026-10-14 06:36:39 (#299): Up replayed only the
+    // sentence playing. A tap now goes back one, a hold starts over.
+    let r = rig();
+    let mut session = Session::http();
+    on_the_second_sentence(&r, &mut session);
+    r.fake.press(Action::Restart.id());
+    read_through(&r, "One is here.");
+    read_through(&r, "Two is here.");
+    stays_quiet(&r);
+    assert!(eventually(
+        || log_of(&r).contains("hotkey back session=web-app to=entry")
+    ));
+}
+
+#[test]
+fn holding_up_reads_the_whole_message_again() {
+    let r = rig();
+    let mut session = Session::http();
+    on_the_second_sentence(&r, &mut session);
+    r.fake.hold_key(UP);
+    r.fake.press(Action::Restart.id());
+    read_through(&r, "One is here.");
+    r.fake.release_key(UP);
+    read_through(&r, "Two is here.");
+    stays_quiet(&r);
+    assert!(eventually(|| log_of(&r).contains("hotkey restart")));
+    assert!(!log_of(&r).contains("hotkey back"));
+}
+
+#[test]
+fn control_back_reports_what_it_did() {
+    let r = rig();
+    let mut session = Session::http();
+    on_the_second_sentence(&r, &mut session);
+    let f = ok(
+        &r.server,
+        &mut session,
+        json!({"type": "control", "action": "back"}),
+    );
+    assert_eq!(f["channel"], "a");
+    assert_eq!(f["to"], "entry");
+    assert!(eventually(
+        || playing(&r.server).as_deref() == Some("One is here.")
+    ));
+    start_playing(&r.out);
+    let f = ok(
+        &r.server,
+        &mut session,
+        json!({"type": "control", "action": "back"}),
+    );
+    assert_eq!(f["to"], "first");
+    read_through(&r, "One is here.");
+    read_through(&r, "Two is here.");
+    stays_quiet(&r);
+    let f = ok(
+        &r.server,
+        &mut session,
+        json!({"type": "control", "action": "back"}),
+    );
+    assert_eq!(f["channel"], Value::Null);
+    assert_eq!(f["to"], "replay");
+    read_through(&r, "One is here.");
 }
 
 #[test]

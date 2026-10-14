@@ -1447,14 +1447,17 @@ fn restart_with_a_question_set_reads_the_text_then_question_one() {
 }
 
 #[test]
-fn restart_without_questions_behaves_as_before() {
+fn restart_without_questions_reads_the_whole_message_while_reading_too() {
+    // sonarad.log 2026-10-14 06:36:39 (#299): with Kokoro every sentence
+    // is an item, and Up while reading replayed only the sentence playing.
     let r = Rig::new();
     r.stream("a", "One is here. Two is here.", 0, None);
     r.read("One is here.");
     r.wait_for("Two is here.");
     r.out.start();
-    // Reading: the current item again.
+    // Reading: the whole message again.
     assert_eq!(r.agent.restart().unwrap(), None);
+    r.read("One is here.");
     r.read("Two is here.");
     r.stays_idle();
     // Idle: the whole message again.

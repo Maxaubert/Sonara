@@ -59,6 +59,12 @@ class Channels:
         """``control`` ``flush``: stop only the session being read (the flush hotkey, #228)."""
         return self._send("control", _defined({**extra, "action": "flush"}))
 
+    def back(self, **extra: Any) -> dict:
+        """``control`` ``back`` (protocol 1.10, a tap on Up, #299): back one section of
+        the message being read. The reply's ``channel`` is the session (``None`` for a
+        replay while idle) and ``to`` is ``chunk``, ``entry``, ``first`` or ``replay``."""
+        return self._send("control", _defined({**extra, "action": "back"}))
+
 
 class Agent:
     """``agent`` (needs ``channels``): streaming turns, decisions, earcons."""
