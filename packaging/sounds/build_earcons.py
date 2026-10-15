@@ -1,17 +1,19 @@
 """Render Sonara's bundled earcons into crates/sonara-agent/sounds/.
 
 The eight WAVs compiled into the runtime (crates/sonara-agent/src/earcon.rs)
-are picks from two procedural candidate sets, chosen by ear in #211:
+are picks from three procedural candidate sets, chosen by ear: in #211
 make_pack.py (round 1, all kinds) and make_round2.py (round 2: question,
-reply_finished, session_changed). Original work, Sonara, MIT licence; no
+reply_finished, session_changed); in #318 make_round3.py (round 3: the
+question, reply finished and restart/flush sounds). Original work, Sonara, MIT licence; no
 samples or third-party audio. Needs numpy and scipy.
 
     python packaging/sounds/build_earcons.py [out_dir]   (default: crates/sonara-agent/sounds)
     python packaging/sounds/build_earcons.py --check     (render to a temp dir, compare with SHA256SUMS)
 
-Writes the eight `<kind>.wav` files and SHA256SUMS. `nav_edge` uses the same
-sound as `nav` (the user's pick), rendered to its own file so every kind
-keeps one file per kind and a custom `<kind>.wav` replaces exactly one.
+Writes the eight `<kind>.wav` files and SHA256SUMS. `nav_edge` keeps the
+nav tick of round 1; `nav` (restart and flush) is round 3's rewind swell
+into that tick (#318). Every kind keeps one file, so a custom `<kind>.wav`
+replaces exactly one.
 Byte-identical output is checked with the numpy/scipy versions this was made
 with (numpy 2.4, scipy 1.17); other versions may round differently.
 """
@@ -33,11 +35,11 @@ MADE_WITH = {"numpy": "2.4", "scipy": "1.17"}
 
 # kind -> (generator, candidate file it renders)
 PICKS = {
-    "choice": ("round2", "question-13.wav"),
+    "choice": ("round3", "bubble_pops.wav"),
     "permission": ("pack", "permission-6.wav"),
-    "turn_done": ("round2", "reply_finished-08.wav"),
+    "turn_done": ("round3", "marimba_third.wav"),
     "session_change": ("round2", "session_changed-01.wav"),
-    "nav": ("pack", "nav-3.wav"),
+    "nav": ("round3", "rewind_tick.wav"),
     "nav_edge": ("pack", "nav-3.wav"),
     "error": ("pack", "error-3.wav"),
     "summary_failed": ("pack", "error-6.wav"),
@@ -50,6 +52,7 @@ def render(out_dir: Path) -> None:
         sys.path.insert(0, str(HERE))
     import make_pack as mp
     import make_round2 as r2
+    import make_round3 as r3
 
     out_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -58,6 +61,7 @@ def render(out_dir: Path) -> None:
         # pick is only reproduced when every candidate before it is rendered
         # too, in the original order.
         r2.render_all(str(tmp / "round2"))
+        r3.render_all(tmp / "round3")
         pack = tmp / "pack"
         pack.mkdir()
         for name in {f for g, f in PICKS.values() if g == "pack"}:

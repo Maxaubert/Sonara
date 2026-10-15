@@ -1863,8 +1863,14 @@ fn holding_up_reads_the_whole_message_again() {
     let r = rig();
     let mut session = Session::http();
     on_the_second_sentence(&r, &mut session);
+    let heard = r.server.agent().unwrap().subscribe();
     r.fake.hold_key(UP);
     r.fake.press(Action::Restart.id());
+    // The restart sound plays (#318; a restart played none before).
+    assert_eq!(
+        heard.recv_timeout(Duration::from_secs(10)).unwrap(),
+        sonara_agent::Earcon::Nav
+    );
     read_through(&r, "One is here.");
     r.fake.release_key(UP);
     read_through(&r, "Two is here.");
