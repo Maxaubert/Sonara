@@ -98,9 +98,9 @@ impl HotkeyTarget {
         if *retiring {
             return;
         }
-        // #307: Left (and Up) tap back one section and hold for the message
-        // from the top; Right taps on one section and holds to skip the
-        // rest of the message.
+        // #307, #309: Up (and Left) tap back one section and hold for the
+        // message from the top; Down (and Right) tap on one section; held,
+        // Down flushes and Right skips the rest of the message.
         let (name, outcome) = match (action, press) {
             (Action::Restart | Action::PreviousQuestion, Press::Tap) => {
                 ("back", self.previous_section())
@@ -108,7 +108,8 @@ impl HotkeyTarget {
             (Action::Restart | Action::PreviousQuestion, Press::Hold) => {
                 ("restart", self.apply(Action::Restart))
             }
-            (Action::NextQuestion, Press::Tap) => ("next", self.next_section()),
+            (Action::NextQuestion | Action::Flush, Press::Tap) => ("next", self.next_section()),
+            (Action::Flush, Press::Hold) => ("flush", self.apply(Action::Flush)),
             (Action::NextQuestion, Press::Hold) => ("skip", self.skip()),
             _ => (action.as_str(), self.apply(action)),
         };
@@ -920,11 +921,8 @@ impl SystemExt {
         if done.is_ok() {
             let reader = &self.target.reader;
             if let Ok(mut c) = reader.code_reading() {
-                c.next_key = sonara_system::keymap::label(
-                    &keymap::load(&self.keymap_path),
-                    Action::NextQuestion,
-                )
-                .unwrap_or_else(|| "the next question hotkey".into());
+                c.next_key = keymap::next_section_label(&keymap::load(&self.keymap_path))
+                    .unwrap_or_else(|| "the next section hotkey".into());
                 let _ = reader.set_code_reading(c);
             }
         }

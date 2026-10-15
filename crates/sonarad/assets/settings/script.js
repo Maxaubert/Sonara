@@ -502,10 +502,10 @@ function renderSessions(list) {
 }
 
 // ---- hotkeys ------------------------------------------------------------
-const ACTION_NAMES = {restart: "Back / hold: restart", flush: "Flush", pause: "Pause / resume", mute: "Mute cycle",
+const ACTION_NAMES = {restart: "Back / hold: from the start", flush: "Next / hold: flush", pause: "Pause / resume", mute: "Mute cycle",
                       next_channel: "Next session", faster: "Faster", slower: "Slower",
-                      previous_question: "Back / hold: from the start",
-                      next_question: "Next / hold: skip the rest"};
+                      previous_question: "Back, second key / hold: from the start",
+                      next_question: "Next, second key / hold: skip the rest"};
 // Intel graphics drivers rotate the screen with Ctrl+Alt+arrows (#283).
 const ROTATION_HINT = " Intel graphics uses Ctrl+Alt+arrows to rotate the screen: turn its hotkeys off in Intel Graphics Command Center, or rebind with Win.";
 function renderHotkeys(h) {

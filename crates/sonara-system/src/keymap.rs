@@ -17,12 +17,13 @@ use std::path::Path;
 /// What a hotkey does. The host maps each action to protocol controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
-    /// A tap goes back one section (`control back`), a hold reads the
-    /// message again from the top (`control restart`, #299). Unbound by
-    /// default since #307 (Left does the same).
+    /// Up: a tap goes back one section (a sentence, a code line, a
+    /// question; #299, #307), a hold reads the message again from the top
+    /// (`control restart`).
     Restart,
-    /// Flush: stop only the session being read (`control flush`, #228;
-    /// `control stop` without channels).
+    /// Down (#309): a tap goes on one section, a hold flushes: stops only
+    /// the session being read (`control flush`, #228; `control stop`
+    /// without channels).
     Flush,
     /// Pause or resume (`control toggle`).
     Pause,
@@ -34,12 +35,14 @@ pub enum Action {
     Faster,
     /// Speak slower (rate - 25).
     Slower,
-    /// Left (#307; named for #283's question navigation, kept so saved
-    /// keymaps still apply): a tap goes back one section (a sentence, a
-    /// code line, a question), a hold reads the message again from the top.
+    /// Unbound by default since #309 (Ctrl+Alt+Left in 0.22 to 0.30; named
+    /// for #283's question navigation, kept so saved keymaps still apply):
+    /// a tap goes back one section, a hold reads the message again from
+    /// the top, as Up.
     PreviousQuestion,
-    /// Right (#307): a tap goes on one section (the questions of a set
-    /// come after the text), a hold skips the rest of the message.
+    /// Unbound by default since #309 (Ctrl+Alt+Right before): a tap goes on
+    /// one section, a hold skips the rest of the message (to question 1 of
+    /// a set that follows, else as a flush, #307).
     NextQuestion,
 }
 
@@ -89,13 +92,13 @@ impl Action {
         })
     }
 
-    /// Held past `hotkeys::HOLD` it does something else (#299, #307: held,
-    /// Up and Left restart the message and Right skips the rest of it; a
-    /// tap moves one section).
+    /// Held past `hotkeys::HOLD` it does something else (#299, #307, #309:
+    /// a tap moves one section; held, Up restarts the message and Down
+    /// flushes it).
     pub fn holdable(&self) -> bool {
         matches!(
             self,
-            Action::Restart | Action::PreviousQuestion | Action::NextQuestion
+            Action::Restart | Action::Flush | Action::PreviousQuestion | Action::NextQuestion
         )
     }
 
@@ -129,18 +132,23 @@ pub const MOD_WIN: u32 = 0x0008;
 /// so a clash is a warning whose fix is a rebind with Win.
 pub const DEFAULT_MODS: [&str; 2] = ["ctrl", "alt"];
 
-/// Action -> default key; restart, pause, faster and slower ship unbound
-/// (restart since #307: Left does the same). Left and Right move one
-/// section, held to the start or the end (#307); Intel graphics
-/// drivers may own Ctrl+Alt+arrows (screen rotation): a clash is a doctor
-/// and settings warning whose fix is turning that off or a rebind.
-pub const DEFAULT_KEYS: [(Action, &str); 5] = [
+/// Action -> default key; pause, faster, slower and the Left/Right
+/// actions ship unbound. Up and Down move one section, held to the top or
+/// a flush (#309); Intel graphics drivers may own Ctrl+Alt+arrows (screen
+/// rotation): a clash is a doctor and settings warning whose fix is
+/// turning that off or a rebind.
+pub const DEFAULT_KEYS: [(Action, &str); 4] = [
+    (Action::Restart, "up"),
     (Action::Flush, "down"),
     (Action::Mute, "m"),
     (Action::NextChannel, "p"),
-    (Action::PreviousQuestion, "left"),
-    (Action::NextQuestion, "right"),
 ];
+
+/// The label of the key that goes on one section (the step hint, #295):
+/// Down, else a bound Right.
+pub fn next_section_label(km: &Keymap) -> Option<String> {
+    label(km, Action::Flush).or_else(|| label(km, Action::NextQuestion))
+}
 
 /// Named keys and their virtual-key codes (letters and digits are added by
 /// `key_code`: their codes are their ASCII values).
@@ -266,7 +274,7 @@ fn default_binding(action: Action) -> Binding {
         .unwrap_or_default()
 }
 
-/// The default keymap: Ctrl+Alt+Up/Down/M/P/Left/Right, the rest unbound.
+/// The default keymap: Ctrl+Alt+Up/Down/M/P, the rest unbound.
 pub fn defaults() -> Keymap {
     Keymap {
         bindings: Action::ALL

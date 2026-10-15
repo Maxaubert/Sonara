@@ -19,9 +19,8 @@ import urllib.parse
 from harness import TIMEOUT, long_text, wait_until
 
 LONG = long_text(3)
-# #307: Left and Right move one section; restart (Up until 0.30.0) ships unbound.
-DEFAULT_COMBOS = {"flush": "Ctrl+Alt+Down", "mute": "Ctrl+Alt+M", "next_channel": "Ctrl+Alt+P",
-                  "previous_question": "Ctrl+Alt+Left", "next_question": "Ctrl+Alt+Right"}
+# #309: Up and Down move one section; Left and Right ship unbound.
+DEFAULT_COMBOS = {"restart": "Ctrl+Alt+Up", "flush": "Ctrl+Alt+Down", "mute": "Ctrl+Alt+M", "next_channel": "Ctrl+Alt+P"}
 
 
 def write_world(path, world):
@@ -247,9 +246,9 @@ def test_hotkeys_are_registered_only_while_a_client_needs_them(rt):
     for action, combo in DEFAULT_COMBOS.items():
         b = binding(v, action)
         assert b["combo"] == combo and b["registered"] is True, b
-    for action in ("restart", "pause"):
-        assert binding(v, action)["key"] is None, "restart, pause, faster and slower ship unbound"
-    assert len(read_world(rt.fake_system)["hotkeys"]) == 5
+    for action in ("previous_question", "next_question", "pause"):
+        assert binding(v, action)["key"] is None, "Left, Right, pause, faster and slower ship unbound"
+    assert len(read_world(rt.fake_system)["hotkeys"]) == 4
     c.close()
     assert wait_until(lambda: read_world(rt.fake_system)["hotkeys"] == [])
     status, r = rt.post("hello", {"extensions": ["system"]})
@@ -262,7 +261,7 @@ def test_keep_alive_holds_the_hotkeys_after_the_client_left(rt):
     c = system_client(rt, keep_alive=True)
     c.close()
     time.sleep(0.3)
-    assert len(read_world(rt.fake_system)["hotkeys"]) == 5
+    assert len(read_world(rt.fake_system)["hotkeys"]) == 4
 
 
 def test_bind_unbind_reset_and_the_keymap_file(rt):

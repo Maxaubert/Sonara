@@ -16,15 +16,17 @@ fn mods(v: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn defaults_are_ctrl_alt_down_m_p() {
+fn defaults_are_ctrl_alt_up_down_m_p() {
     // #160: Windows owns Win+Alt+Up/Down/M/P, so the defaults stay Ctrl+Alt.
-    // #307: Up ships unbound (Left does what it did).
+    // #309: Up and Down move one section; Left and Right ship unbound.
     let km = keymap::defaults();
+    assert_eq!(key_of(&km, Action::Restart).as_deref(), Some("up"));
     assert_eq!(key_of(&km, Action::Flush).as_deref(), Some("down"));
     assert_eq!(key_of(&km, Action::Mute).as_deref(), Some("m"));
     assert_eq!(key_of(&km, Action::NextChannel).as_deref(), Some("p"));
     for a in [
-        Action::Restart,
+        Action::PreviousQuestion,
+        Action::NextQuestion,
         Action::Pause,
         Action::Faster,
         Action::Slower,
@@ -51,21 +53,27 @@ fn no_two_defaults_share_a_key() {
 }
 
 #[test]
-fn default_keys_bind_ctrl_alt_left_and_right() {
-    // #283, #307: Ctrl+Alt+Left/Right move one section; held, to the start
-    // or the end of the message.
+fn the_section_keys_can_be_held() {
+    // #299, #307, #309: Up and Down (and Left and Right when bound) move
+    // one section; held, to the top or a flush.
     let km = keymap::defaults();
-    assert_eq!(
-        key_of(&km, Action::PreviousQuestion).as_deref(),
-        Some("left")
-    );
-    assert_eq!(key_of(&km, Action::NextQuestion).as_deref(), Some("right"));
     let (r, _) = keymap::resolve(&km);
-    let right = r.iter().find(|r| r.action == Action::NextQuestion).unwrap();
-    assert_eq!(keymap::combo_label(right.mods, right.vk), "Ctrl+Alt+Right");
+    let down = r.iter().find(|r| r.action == Action::Flush).unwrap();
+    assert_eq!(keymap::combo_label(down.mods, down.vk), "Ctrl+Alt+Down");
+    assert_eq!(
+        keymap::next_section_label(&km).as_deref(),
+        Some("Ctrl+Alt+Down")
+    );
     assert!(!Action::NextQuestion.debounced() && !Action::PreviousQuestion.debounced());
-    assert!(Action::NextQuestion.holdable() && Action::PreviousQuestion.holdable());
-    assert!(Action::Restart.holdable() && !Action::Flush.holdable());
+    for a in [
+        Action::Restart,
+        Action::Flush,
+        Action::PreviousQuestion,
+        Action::NextQuestion,
+    ] {
+        assert!(a.holdable(), "{a:?}");
+    }
+    assert!(!Action::Mute.holdable() && !Action::NextChannel.holdable());
 }
 
 #[test]
@@ -96,10 +104,13 @@ fn question_actions_have_stable_ids_after_the_old_ones() {
 fn resolve_gives_windows_codes_and_masks() {
     let (r, problems) = keymap::resolve(&keymap::defaults());
     assert!(problems.is_empty());
-    let down = r.iter().find(|r| r.action == Action::Flush).unwrap();
-    assert_eq!(down.vk, 0x28);
-    assert_eq!(down.mods, keymap::MOD_CTRL | keymap::MOD_ALT);
-    assert!(!r.iter().any(|r| r.action == Action::Restart), "unbound");
+    let up = r.iter().find(|r| r.action == Action::Restart).unwrap();
+    assert_eq!(up.vk, 0x26);
+    assert_eq!(up.mods, keymap::MOD_CTRL | keymap::MOD_ALT);
+    assert!(
+        !r.iter().any(|r| r.action == Action::NextQuestion),
+        "unbound"
+    );
     assert_eq!(keymap::key_code("p"), Some(0x50));
     assert_eq!(keymap::key_code("."), Some(0xBE));
     assert_eq!(keymap::key_code("7"), Some(0x37));
