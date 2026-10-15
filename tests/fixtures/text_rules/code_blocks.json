@@ -39,6 +39,24 @@
       ]
     },
     {
+      "name": "prose_in_a_fence_without_language_is_read_as_prose",
+      "fn": "assemble",
+      "deltas": [
+        "Draft:\n\n```\nYou are Claude, a coding assistant. Sound like a friendly colleague.\n\nHow you talk\n- Say things the way a person would.\n- Keep the call short.\n```\nDone."
+      ],
+      "output": [
+        "Draft:",
+        null,
+        "You are Claude, a coding assistant.",
+        "Sound like a friendly colleague.",
+        null,
+        "How you talk.",
+        "Say things the way a person would.",
+        "Keep the call short.",
+        "Done."
+      ]
+    },
+    {
       "name": "unclosed_fence_flushed_on_final",
       "fn": "assemble",
       "deltas": [
