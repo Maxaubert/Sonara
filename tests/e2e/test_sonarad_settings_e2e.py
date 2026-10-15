@@ -631,12 +631,12 @@ def test_ranges_and_defaults_come_from_the_schema_before_get_answers(live, brows
 
 
 def test_the_section_hotkeys_are_listed_and_can_be_rebound(live, browser):
-    # #283, #307: Ctrl+Alt+Left/Right move one section (questions included).
+    # #283, #307, #309: Ctrl+Alt+Up/Down move one section (questions included).
     lv = live()
     page = open_page(browser, lv.url)
     page.click("[data-page=hotkeys]")
-    for action, name, key in [("previous_question", "Back / hold: from the start", "Left"),
-                              ("next_question", "Next / hold: skip the rest", "Right")]:
+    for action, name, key in [("restart", "Back / hold: from the start", "Up"),
+                              ("flush", "Next / hold: flush", "Down")]:
         row = page.locator(f"[data-action={action}]")
         pw.expect(row.locator(".n")).to_have_text(name)
         pw.expect(row.locator(".kbd")).to_have_attribute(

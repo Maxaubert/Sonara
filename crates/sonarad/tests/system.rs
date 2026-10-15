@@ -246,7 +246,7 @@ fn hotkeys_bind_unbind_and_reset_through_set() {
     assert_eq!(v["active"], false, "an HTTP hello does not arm the hotkeys");
     let restart = &v["bindings"][0];
     assert_eq!(restart["action"], "restart");
-    assert_eq!(restart["combo"], Value::Null, "unbound since #307");
+    assert_eq!(restart["combo"], "Ctrl+Alt+Up");
     let g = ok(
         s,
         &mut session,
@@ -288,7 +288,7 @@ fn hotkeys_bind_unbind_and_reset_through_set() {
         &mut session,
         json!({"type": "set", "key": "hotkeys", "value": "reset"}),
     );
-    assert_eq!(g["value"]["bindings"][0]["key"], Value::Null);
+    assert_eq!(g["value"]["bindings"][0]["key"], "up");
     assert_eq!(g["value"]["bindings"][1]["key"], "down");
     assert_eq!(g["value"]["bindings"][3]["key"], "m");
 }
@@ -400,7 +400,7 @@ async fn another_client_that_needs_it_keeps_it_armed() {
     drop(b);
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(ducked(&r.fake), "client a still needs it");
-    assert_eq!(r.fake.world().hotkeys.len(), 5);
+    assert_eq!(r.fake.world().hotkeys.len(), 4);
     drop(a);
     let fake = r.fake.clone();
     assert!(
@@ -436,7 +436,7 @@ async fn keep_alive_arms_for_good_and_exit_restores() {
     );
     start_playing(&r.out);
     assert!(eventually(|| ducked(&r.fake)));
-    assert_eq!(r.fake.world().hotkeys.len(), 5);
+    assert_eq!(r.fake.world().hotkeys.len(), 4);
     // The runtime exits (as main does after its run loop).
     let s = r.server.system().unwrap().clone();
     tokio::task::spawn_blocking(move || s.shutdown())
@@ -475,7 +475,7 @@ fn a_hotkey_press_runs_the_matching_control() {
         json!({"type": "speak", "text": "One. Two."}),
     );
     start_playing(&r.out);
-    r.fake.press(Action::Flush.id());
+    hold(&r, Action::Flush, DOWN);
     assert!(eventually(|| reader.state().unwrap().now_playing.is_none()));
 }
 
@@ -1536,7 +1536,7 @@ fn the_flush_hotkey_stops_only_the_session_being_read() {
     ok(s, &mut session, json!({"type": "turn_end", "channel": "a"}));
     assert!(eventually(|| playing(s).as_deref() == Some("Alpha one.")));
     start_playing(&r.out);
-    r.fake.press(Action::Flush.id());
+    hold(&r, Action::Flush, DOWN);
     assert!(eventually(
         || log_of(&r).contains("hotkey flush session=alpha-repo")
     ));
@@ -1574,7 +1574,7 @@ fn the_flush_hotkey_with_nothing_being_read_is_logged_idle() {
         &mut session,
         json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
     );
-    r.fake.press(Action::Flush.id());
+    hold(&r, Action::Flush, DOWN);
     assert!(eventually(|| log_of(&r).contains("hotkey flush idle")));
 }
 
@@ -1659,7 +1659,7 @@ fn the_flush_hotkey_with_scope_all_drops_every_ready_message_and_keeps_a_reply_s
         || playing(s).as_deref() == Some("Finished reply.")
     ));
     start_playing(&r.out);
-    r.fake.press(Action::Flush.id());
+    hold(&r, Action::Flush, DOWN);
     assert!(eventually(|| log_of(&r).contains(
         "hotkey flush session=alpha-repo scope=all others=beta-repo"
     )));
@@ -1750,7 +1750,7 @@ fn stays_quiet(r: &Rig) {
 }
 
 #[test]
-fn the_right_hotkey_reads_the_next_question() {
+fn the_down_hotkey_reads_the_next_question() {
     let r = rig();
     let mut session = Session::http();
     text_and_four_questions(&r, &mut session);
@@ -1759,10 +1759,10 @@ fn the_right_hotkey_reads_the_next_question() {
     read_through(&r, "Question text 1?");
     // Question 2 never follows by itself (Bug 1).
     stays_quiet(&r);
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.press(Action::Flush.id());
     read_through(&r, "Question 2 of 4.");
     read_through(&r, "Question text 2?");
-    r.fake.press(Action::PreviousQuestion.id());
+    r.fake.press(Action::Restart.id());
     read_through(&r, "Question 1 of 4.");
     let log = log_of(&r);
     assert!(
@@ -1775,25 +1775,25 @@ fn the_right_hotkey_reads_the_next_question() {
 }
 
 #[test]
-fn holding_left_during_question_two_restarts_the_message() {
+fn holding_up_during_question_two_restarts_the_message() {
     // sonarad.log 2026-10-07 18:03:14 and 18:03:28: Up restarted question 2
     // twice. Now a hold reads the message again: its text, then question 1
-    // (#299 on Up, #307 on Left).
+    // (#299, #309).
     let r = rig();
     let mut session = Session::http();
     text_and_four_questions(&r, &mut session);
     read_through(&r, "Here is my answer.");
     read_through(&r, "Question 1 of 4.");
     read_through(&r, "Question text 1?");
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.press(Action::Flush.id());
     assert!(eventually(
         || playing(&r.server).as_deref() == Some("Question 2 of 4.")
     ));
     start_playing(&r.out);
-    r.fake.hold_key(LEFT);
-    r.fake.press(Action::PreviousQuestion.id());
+    r.fake.hold_key(UP);
+    r.fake.press(Action::Restart.id());
     read_through(&r, "Here is my answer.");
-    r.fake.release_key(LEFT);
+    r.fake.release_key(UP);
     read_through(&r, "Question 1 of 4.");
     read_through(&r, "Question text 1?");
     stays_quiet(&r);
@@ -1802,9 +1802,18 @@ fn holding_left_during_question_two_restarts_the_message() {
     ));
 }
 
-/// The Left and Right keys' virtual-key codes.
-const LEFT: u32 = 0x25;
-const RIGHT: u32 = 0x27;
+/// The Up and Down keys' virtual-key codes.
+const UP: u32 = 0x26;
+const DOWN: u32 = 0x28;
+
+/// Hold `vk` past the hold time while `action` is pressed, then let go
+/// (#309: a flush is a hold on Down).
+fn hold(r: &Rig, action: Action, vk: u32) {
+    r.fake.hold_key(vk);
+    r.fake.press(action.id());
+    std::thread::sleep(sonara_system::hotkeys::HOLD + Duration::from_millis(150));
+    r.fake.release_key(vk);
+}
 
 /// Session `a` ("web-app") reads "One is here.", then "Two is here."
 /// starts: with a sentence-mode engine each sentence is an item (#299).
@@ -1834,14 +1843,13 @@ fn on_the_second_sentence(r: &Rig, session: &mut Session) {
 }
 
 #[test]
-fn tapping_left_goes_back_one_section() {
+fn tapping_up_goes_back_one_section() {
     // sonarad.log 2026-10-14 06:36:39 (#299): Up replayed only the
-    // sentence playing. A tap now goes back one, a hold starts over (Left
-    // since #307).
+    // sentence playing. A tap now goes back one, a hold starts over.
     let r = rig();
     let mut session = Session::http();
     on_the_second_sentence(&r, &mut session);
-    r.fake.press(Action::PreviousQuestion.id());
+    r.fake.press(Action::Restart.id());
     read_through(&r, "One is here.");
     read_through(&r, "Two is here.");
     stays_quiet(&r);
@@ -1851,14 +1859,14 @@ fn tapping_left_goes_back_one_section() {
 }
 
 #[test]
-fn holding_left_reads_the_whole_message_again() {
+fn holding_up_reads_the_whole_message_again() {
     let r = rig();
     let mut session = Session::http();
     on_the_second_sentence(&r, &mut session);
-    r.fake.hold_key(LEFT);
-    r.fake.press(Action::PreviousQuestion.id());
+    r.fake.hold_key(UP);
+    r.fake.press(Action::Restart.id());
     read_through(&r, "One is here.");
-    r.fake.release_key(LEFT);
+    r.fake.release_key(UP);
     read_through(&r, "Two is here.");
     stays_quiet(&r);
     assert!(eventually(|| log_of(&r).contains("hotkey restart")));
@@ -1897,18 +1905,18 @@ fn on_the_first_sentence(r: &Rig, session: &mut Session) {
 }
 
 #[test]
-fn tapping_right_goes_on_one_section() {
-    // #307: Right taps to the next sentence; on the last one it chimes
+fn tapping_down_goes_on_one_section() {
+    // #307, #309: Down taps to the next sentence; on the last one it chimes
     // the edge and keeps reading it.
     let r = rig();
     let mut session = Session::http();
     on_the_first_sentence(&r, &mut session);
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.press(Action::Flush.id());
     assert!(eventually(
         || playing(&r.server).as_deref() == Some("Two is here.")
     ));
     start_playing(&r.out);
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.press(Action::Flush.id());
     read_through(&r, "Two is here.");
     let log = log_of(&r);
     assert!(
@@ -1921,19 +1929,19 @@ fn tapping_right_goes_on_one_section() {
 }
 
 #[test]
-fn holding_right_skips_the_rest_of_the_message() {
-    // #307: the rest of web-app's message is skipped; docs is read next.
+fn holding_down_flushes_the_message() {
+    // #309: held, Down flushes web-app's message; docs is read next.
     let r = rig();
     let mut session = Session::http();
     on_the_first_sentence(&r, &mut session);
-    r.fake.hold_key(RIGHT);
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.hold_key(DOWN);
+    r.fake.press(Action::Flush.id());
     read_through(&r, "Session changed: docs.");
-    r.fake.release_key(RIGHT);
+    r.fake.release_key(DOWN);
     read_through(&r, "From beta.");
     stays_quiet(&r);
     assert!(eventually(
-        || log_of(&r).contains("hotkey skip session=web-app")
+        || log_of(&r).contains("hotkey flush session=web-app")
     ));
 }
 
@@ -1983,7 +1991,7 @@ fn a_question_hotkey_without_a_set_plays_nav_edge() {
         json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
     );
     let heard = s.agent().unwrap().subscribe();
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.press(Action::Flush.id());
     assert_eq!(
         heard.recv_timeout(Duration::from_secs(10)).unwrap(),
         sonara_agent::Earcon::NavEdge
@@ -1995,12 +2003,12 @@ fn a_question_hotkey_without_a_set_plays_nav_edge() {
     read_through(&r, "Question 1 of 4.");
     read_through(&r, "Question text 1?");
     for k in 2..=4 {
-        r.fake.press(Action::NextQuestion.id());
+        r.fake.press(Action::Flush.id());
         read_through(&r, &format!("Question {k} of 4."));
         read_through(&r, &format!("Question text {k}?"));
     }
     while heard.try_recv().is_ok() {}
-    r.fake.press(Action::NextQuestion.id());
+    r.fake.press(Action::Flush.id());
     assert_eq!(
         heard.recv_timeout(Duration::from_secs(10)).unwrap(),
         sonara_agent::Earcon::NavEdge

@@ -25,15 +25,15 @@ answer by number, and global hotkeys control the voice from any window.
 
 ## Features
 
-- **One message, always the last.** Sonara reads the latest reply. Hold **Ctrl+Alt+Left** and it
+- **One message, always the last.** Sonara reads the latest reply. Hold **Ctrl+Alt+Up** and it
   starts that reply over; nothing older gets in the way.
 - **Decision earcons.** A short sound the instant a question or permission prompt appears, in
   every session, even one that is not speaking.
 - **Answer by number.** Questions and permission prompts are read with their options; press the
   option's number in Claude Code. No key injection.
 - **One question at a time.** When Claude asks several questions at once, Sonara reads the first
-  ("Question 1 of 4") and stops, as Claude Code shows them one by one. **Ctrl+Alt+Right** and
-  **Ctrl+Alt+Left** move between them.
+  ("Question 1 of 4") and stops, as Claude Code shows them one by one. **Ctrl+Alt+Down** and
+  **Ctrl+Alt+Up** move between them.
 - **Global hotkeys.** Move a sentence back or on, restart, skip, flush, mute and switch sessions
   without leaving your editor.
 - **Natural voices.** Kokoro neural voices (`af_sarah` by default) run fully offline once their
@@ -108,7 +108,7 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   it); they come first.
 - **Tables row by row.** Each row of a Markdown table is one sentence with every value after
   its column name: "Fund KLP Global, share of funds 16.4 percent, return plus 24 percent." The
-  header row is not read on its own, and Ctrl+Alt+Left and Right move one row.
+  header row is not read on its own, and Ctrl+Alt+Up and Down move one row.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.
@@ -119,12 +119,11 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   replace any of them with your own sound: see [Custom chimes](#custom-chimes).
 - **A new prompt starts fresh.** When you send the next prompt, the previous reply is dropped
   and Sonara follows the new one.
-- **One section back or on, or to the start or the end.** Tap Ctrl+Alt+Left to go back one
+- **One section back or on, or to the start or the end.** Tap Ctrl+Alt+Up to go back one
   section of the reply being read (a sentence, a table row, a code line, a question) and
-  Ctrl+Alt+Right to go on one; tap again to go further. Hold Ctrl+Alt+Left for half a second to
+  Ctrl+Alt+Down to go on one; tap again to go further. Hold Ctrl+Alt+Up for half a second to
   hear the latest reply again from the top (in summary mode it re-reads the last summary). Hold
-  Ctrl+Alt+Right to skip the rest of the reply: to its first question when it has questions,
-  else on to the next session. There is no stepping back through older replies.
+  Ctrl+Alt+Down to flush: skip the rest of the reply and its questions, on to the next session. There is no stepping back through older replies.
 - **Several sessions.** Every session's latest reply is read, one after another. With *Background sessions: earcons only* on the settings page, only that
   session is read; the others play their earcons and their latest reply waits. Ctrl+Alt+P moves
   the voice to the next session; an unread reply resumes, a read one starts over. Every move to
@@ -142,9 +141,9 @@ pauses between the parts of a line are commas; after each line Sonara waits the 
 (0.5 s by default). Code is read at the *Code reading speed* (80 % of your rate by default).
 Inline code in a sentence, like `useState()`, is read with the same words.
 
-While a code block is read, **Ctrl+Alt+Right** goes to the next line and **Ctrl+Alt+Left** to
+While a code block is read, **Ctrl+Alt+Down** goes to the next line and **Ctrl+Alt+Up** to
 the one before. Turn on **Step through code** on the settings page to go one line at a time:
-Sonara says the block's name and "Use Ctrl+Alt+Right for the next line." (whatever key you
+Sonara says the block's name and "Use Ctrl+Alt+Down for the next line." (whatever key you
 bound), then waits before each line. Past the last line it goes on with the reply. The `pause`
 action (unbound by default; bind it on the Hotkeys tab) reads the rest of the block straight
 through.
@@ -158,10 +157,11 @@ and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
 
 When Claude asks several questions at once, Sonara reads the reply, then only the first question,
 as "Question 1 of 4." and stops: Claude Code shows one question at a time. The questions are
-sections after the reply: **Ctrl+Alt+Right** goes to the next question and **Ctrl+Alt+Left** to
-the one before (on question 1, back into the reply). Holding **Ctrl+Alt+Right** while the reply is
-read jumps to question 1. Holding **Ctrl+Alt+Left** reads the whole message again, the reply and
-then question 1, and **Ctrl+Alt+Down** skips all of it. When
+sections after the reply: **Ctrl+Alt+Down** goes to the next question and **Ctrl+Alt+Up** to
+the one before (on question 1, back into the reply). Answering a question in Claude Code does not
+read the next one: Claude Code tells plugins nothing until the whole set is answered, so press
+**Ctrl+Alt+Down**. Holding **Ctrl+Alt+Up** reads the whole message again, the reply and then
+question 1, and holding **Ctrl+Alt+Down** skips all of it. When
 Claude only thought before asking (Claude Code shows the thinking, but sends plugins no text),
 Sonara reads that thinking before the question.
 
@@ -172,14 +172,14 @@ saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt o
 
 | Hotkey | Action |
 |---|---|
-| Ctrl+Alt+Down | Flush: skip the reply being read: what is playing, what that session has queued and the rest of that reply still arriving (its questions are still read). *Flush skips* on the Hotkeys tab sets what else goes: *This session* (default) goes on to the next session; *Everything queued* also drops every other session's finished replies waiting to be read. A session still writing its reply keeps it either way. To silence everything, mute (Ctrl+Alt+M). Holding Ctrl+Alt+Left replays what had arrived before the flush |
+| Ctrl+Alt+Up | Tap: back one section of the reply being read: a sentence, a table row, a code line, a question (when nothing is read: the latest reply again; after question 2 or later: the question before). Hold half a second: the latest reply from the top (summary mode: re-read the last summary; with questions: the reply, then question 1) |
+| Ctrl+Alt+Down | Tap: on one section (after the reply's last sentence come its questions; on the last section the `nav_edge` chime, and reading goes on). Hold half a second: flush: skip the reply being read: what is playing, what that session has queued and the rest of that reply still arriving (its questions are still read). *Flush skips* on the Hotkeys tab sets what else goes: *This session* (default) goes on to the next session; *Everything queued* also drops every other session's finished replies waiting to be read. A session still writing its reply keeps it either way. To silence everything, mute (Ctrl+Alt+M). Holding Ctrl+Alt+Up replays what had arrived before the flush |
 | Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
 | Ctrl+Alt+P | Move the voice to the next session |
-| Ctrl+Alt+Left | Tap: back one section of the reply being read: a sentence, a table row, a code line, a question (when nothing is read: the latest reply again; after question 2 or later: the question before). Hold half a second: the latest reply from the top (summary mode: re-read the last summary; with questions: the reply, then question 1) |
-| Ctrl+Alt+Right | Tap: on one section (after the reply's last sentence come its questions; on the last section the `nav_edge` chime, and reading goes on). Hold half a second: skip the rest of the reply, to question 1 when it has questions, else on to what comes next |
 
-`restart` (what Ctrl+Alt+Up did until 0.30.0: tap back, hold from the top), `pause`, `faster`
-and `slower` are also actions; they ship unbound. Each hotkey confirms itself
+`previous_question` and `next_question` (Ctrl+Alt+Left and Right in 0.22 to 0.30: the same
+sections; held, Right skips to question 1 instead of flushing), `pause`, `faster` and `slower`
+are also actions; they ship unbound. Each hotkey confirms itself
 with a short spoken cue ("Muted.", "Rate 275.").
 
 <details>
@@ -199,8 +199,8 @@ Win+Alt+G/R/T/PrtScn. If another app holds a chord, `/sonara:doctor` reports it 
 row. Intel graphics drivers can own Ctrl+Alt+arrows to rotate the screen: then turn those hotkeys
 off in Intel Graphics Command Center, or rebind the question keys with Win.
 
-The defaults are unchanged from 0.6.x, plus Ctrl+Alt+Left/Right since 0.22.0, minus Ctrl+Alt+Up
-since 0.30.0 (Left does what it did). **Reset hotkeys to defaults** on the Hotkeys tab puts
+The default keys are Ctrl+Alt+Up/Down/M/P, as in 0.6.x; since 0.31.0 a tap on Up or Down moves
+one section and a hold restarts or flushes. **Reset hotkeys to defaults** on the Hotkeys tab puts
 every binding back on them.
 
 </details>

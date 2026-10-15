@@ -946,15 +946,15 @@ pub fn apply_reader(
 /// the key bound to `next_question` in `keymap` (it moves to the next code
 /// line while code plays).
 pub fn code_reading(store: &Store, keymap: &Path) -> sonara_reader::CodeReading {
-    use sonara_system::keymap::{self, Action};
+    use sonara_system::keymap;
     let d = sonara_reader::CodeReading::default();
     let num = |k: &str| store.value(k).as_u64();
     sonara_reader::CodeReading {
         speed: num("code_speed").map_or(d.speed, |n| n as u8),
         pause_ms: num("code_pause").map_or(d.pause_ms, |n| n as u32),
         step: store.value("code_step").as_str() == Some("on"),
-        next_key: keymap::label(&keymap::load(keymap), Action::NextQuestion)
-            .unwrap_or_else(|| "the next question hotkey".into()),
+        next_key: keymap::next_section_label(&keymap::load(keymap))
+            .unwrap_or_else(|| "the next section hotkey".into()),
     }
 }
 

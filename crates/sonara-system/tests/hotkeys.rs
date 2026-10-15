@@ -43,51 +43,45 @@ fn start_pressed(fake: &Fake) -> (Hotkeys, Got) {
     (hk, got)
 }
 
-const RIGHT: u32 = 0x27;
+const DOWN: u32 = 0x28;
 
 #[test]
-fn a_quick_press_of_right_is_a_tap() {
-    // #299, #307: a tap moves one section.
+fn a_quick_press_of_down_is_a_tap() {
+    // #299, #307, #309: a tap moves one section.
     let fake = Fake::new();
     let (_hk, got) = start_pressed(&fake);
-    fake.hold_key(RIGHT);
-    fake.press(Action::NextQuestion.id());
+    fake.hold_key(DOWN);
+    fake.press(Action::Flush.id());
     std::thread::sleep(Duration::from_millis(60));
-    fake.release_key(RIGHT);
+    fake.release_key(DOWN);
     assert!(eventually(|| got.lock().unwrap().len() == 1));
-    assert_eq!(
-        *got.lock().unwrap(),
-        vec![(Action::NextQuestion, Press::Tap)]
-    );
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Flush, Press::Tap)]);
 }
 
 #[test]
-fn holding_right_is_a_hold_that_fires_before_the_release() {
-    // #299, #307: a hold acts while the key is still down.
+fn holding_down_is_a_hold_that_fires_before_the_release() {
+    // #299, #307, #309: a hold acts while the key is still down.
     let fake = Fake::new();
     let (_hk, got) = start_pressed(&fake);
-    fake.hold_key(RIGHT);
-    let t0 = Instant::now();
-    fake.press(Action::NextQuestion.id());
-    assert!(eventually(|| got.lock().unwrap().len() == 1));
-    assert!(t0.elapsed() >= HOLD);
-    assert_eq!(
-        *got.lock().unwrap(),
-        vec![(Action::NextQuestion, Press::Hold)]
-    );
-    fake.release_key(RIGHT);
-}
-
-#[test]
-fn down_cannot_be_held() {
-    let fake = Fake::new();
-    let (_hk, got) = start_pressed(&fake);
-    fake.hold_key(0x28); // Down
+    fake.hold_key(DOWN);
     let t0 = Instant::now();
     fake.press(Action::Flush.id());
     assert!(eventually(|| got.lock().unwrap().len() == 1));
+    assert!(t0.elapsed() >= HOLD);
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Flush, Press::Hold)]);
+    fake.release_key(DOWN);
+}
+
+#[test]
+fn mute_cannot_be_held() {
+    let fake = Fake::new();
+    let (_hk, got) = start_pressed(&fake);
+    fake.hold_key(0x4D); // M
+    let t0 = Instant::now();
+    fake.press(Action::Mute.id());
+    assert!(eventually(|| got.lock().unwrap().len() == 1));
     assert!(t0.elapsed() < HOLD, "no wait for a key that cannot be held");
-    assert_eq!(*got.lock().unwrap(), vec![(Action::Flush, Press::Tap)]);
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Mute, Press::Tap)]);
 }
 
 #[test]
@@ -95,24 +89,24 @@ fn the_defaults_are_registered_with_norepeat() {
     let fake = Fake::new();
     let (hk, _) = start(&fake);
     let w = fake.world();
-    assert_eq!(w.hotkeys.len(), 5);
-    let up = w.hotkeys.iter().find(|h| h.vk == RIGHT).unwrap();
-    assert_eq!(up.mods, MOD_CTRL | MOD_ALT | MOD_NOREPEAT);
-    assert_eq!(up.id, Action::NextQuestion.id());
+    assert_eq!(w.hotkeys.len(), 4);
+    let down = w.hotkeys.iter().find(|h| h.vk == DOWN).unwrap();
+    assert_eq!(down.mods, MOD_CTRL | MOD_ALT | MOD_NOREPEAT);
+    assert_eq!(down.id, Action::Flush.id());
     assert!(hk.collisions().is_empty());
-    assert_eq!(hk.registered().len(), 5);
+    assert_eq!(hk.registered().len(), 4);
 }
 
 #[test]
 fn a_press_dispatches_its_action() {
     let fake = Fake::new();
     let (_hk, got) = start(&fake);
-    fake.press(Action::NextQuestion.id());
+    fake.press(Action::Flush.id());
     fake.press(Action::NextChannel.id());
     assert!(eventually(|| got.lock().unwrap().len() == 2));
     assert_eq!(
         *got.lock().unwrap(),
-        vec![Action::NextQuestion, Action::NextChannel]
+        vec![Action::Flush, Action::NextChannel]
     );
 }
 
@@ -143,8 +137,8 @@ fn a_chord_another_program_owns_is_a_collision_not_a_failure() {
     assert_eq!(hk.collisions()[0].action, Action::Mute);
     assert_eq!(hk.collisions()[0].error, ERROR_HOTKEY_ALREADY_REGISTERED);
     assert!(hk.collisions()[0].already_owned());
-    assert_eq!(fake.world().hotkeys.len(), 4, "the other four still work");
-    fake.press(Action::NextQuestion.id());
+    assert_eq!(fake.world().hotkeys.len(), 3, "the other three still work");
+    fake.press(Action::Flush.id());
     assert!(eventually(|| got.lock().unwrap().len() == 1));
 }
 
@@ -158,7 +152,7 @@ fn stop_unregisters_so_a_restart_gets_every_chord_back() {
     assert!(fake.world().hotkeys.is_empty());
     let (hk2, got) = start(&fake);
     assert!(hk2.collisions().is_empty());
-    assert_eq!(fake.world().hotkeys.len(), 5);
+    assert_eq!(fake.world().hotkeys.len(), 4);
     fake.press(Action::Mute.id());
     assert!(eventually(|| got.lock().unwrap().len() == 1));
     drop(hk2);
@@ -173,8 +167,8 @@ fn a_toggle_double_tap_is_ignored_directional_keys_are_not() {
     assert!(!d.allow(Action::Mute, t0 + Duration::from_millis(100)));
     assert!(d.allow(Action::Mute, t0 + DEBOUNCE + Duration::from_millis(1)));
     assert!(d.allow(Action::Pause, t0));
-    assert!(d.allow(Action::NextQuestion, t0));
-    assert!(d.allow(Action::NextQuestion, t0));
+    assert!(d.allow(Action::Flush, t0));
+    assert!(d.allow(Action::Flush, t0));
     assert!(d.allow(Action::NextChannel, t0));
     assert!(d.allow(Action::NextChannel, t0));
 }
@@ -199,7 +193,7 @@ fn a_slow_action_never_blocks_capture() {
             g.lock().unwrap().push(a);
         }),
     );
-    fake.press(Action::NextQuestion.id());
+    fake.press(Action::Flush.id());
     fake.press(Action::Flush.id());
     fake.press(Action::NextChannel.id());
     std::thread::sleep(Duration::from_millis(50));
