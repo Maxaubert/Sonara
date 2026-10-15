@@ -23,7 +23,7 @@ use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
 use crate::quiet::Quiet;
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
-use sonara_agent::{Earcon, FlushReport, Flushed, Step};
+use sonara_agent::{Back, Earcon, FlushReport, FlushScope, Flushed, Forward, Nav, Section, Skip};
 use sonara_reader::{Control, Key, ReaderHandle, Registry, RATE_MAX, RATE_MIN};
 use sonara_system::audio::{AudioConfig, AudioControl, AudioMode};
 use sonara_system::hotkeys::{Hotkeys, Press};
@@ -98,8 +98,18 @@ impl HotkeyTarget {
         if *retiring {
             return;
         }
+        // #307: Left (and Up) tap back one section and hold for the message
+        // from the top; Right taps on one section and holds to skip the
+        // rest of the message.
         let (name, outcome) = match (action, press) {
-            (Action::Restart, Press::Tap) => ("back", self.back()),
+            (Action::Restart | Action::PreviousQuestion, Press::Tap) => {
+                ("back", self.previous_section())
+            }
+            (Action::Restart | Action::PreviousQuestion, Press::Hold) => {
+                ("restart", self.apply(Action::Restart))
+            }
+            (Action::NextQuestion, Press::Tap) => ("next", self.next_section()),
+            (Action::NextQuestion, Press::Hold) => ("skip", self.skip()),
             _ => (action.as_str(), self.apply(action)),
         };
         sonara_system::log::emit(
@@ -158,7 +168,139 @@ impl HotkeyTarget {
         sonara_system::log::value(&self.session_label(channel))
     }
 
-    /// A tap on Up (#299): back one section, as `control back`.
+    /// A code line is playing (#295): the arrow keys move by code line.
+    fn in_code(&self) -> bool {
+        self.reader
+            .state()
+            .ok()
+            .and_then(|s| s.now_playing)
+            .is_some_and(|np| np.code)
+    }
+
+    /// Where a question move landed, for the log; the edge chimes.
+    fn question_detail(&self, ch: &str, nav: &Nav) -> String {
+        let mut detail = format!(
+            "session={} question={}/{}",
+            self.session_value(ch),
+            nav.index + 1,
+            nav.size
+        );
+        if nav.edge {
+            self.earcon(Earcon::NavEdge);
+            detail.push_str(" edge");
+        }
+        detail
+    }
+
+    /// A tap on Left (#307): the code line before, the question before
+    /// (from question 2 on), else back one section (`back`).
+    fn previous_section(&self) -> Result<Option<String>, String> {
+        if self.in_code() {
+            self.control(Control::PreviousLine)?;
+            return Ok(Some("line".into()));
+        }
+        let Some(a) = self.agent.get() else {
+            return self.back();
+        };
+        match a.previous_section().map_err(|e| e.to_string())? {
+            Section::Question(ch, nav) => Ok(Some(self.question_detail(&ch, &nav))),
+            Section::Back(done) => Ok(Some(self.back_detail(&done))),
+            Section::Forward(_) => Ok(None),
+        }
+    }
+
+    /// A tap on Right (#307): the next code line, the next question, else
+    /// on one section; nothing to move to chimes the edge.
+    fn next_section(&self) -> Result<Option<String>, String> {
+        if self.in_code() {
+            self.control(Control::NextLine)?;
+            return Ok(Some("line".into()));
+        }
+        let moved = match (self.agent.get(), self.channels.get()) {
+            (Some(a), _) => a.next_section().map_err(|e| e.to_string())?,
+            (None, Some(ch)) => Section::Forward(ch.forward().map_err(|e| e.to_string())?),
+            (None, None) => Section::Forward(Forward::Nothing),
+        };
+        let (ch, to) = match moved {
+            Section::Question(ch, nav) => return Ok(Some(self.question_detail(&ch, &nav))),
+            Section::Back(_) => return Ok(None),
+            Section::Forward(Forward::Chunk(ch)) => (ch, "chunk"),
+            Section::Forward(Forward::Entry(ch)) => (ch, "entry"),
+            Section::Forward(Forward::End(ch)) => {
+                self.earcon(Earcon::NavEdge);
+                (ch, "end")
+            }
+            Section::Forward(Forward::Nothing) => {
+                self.earcon(Earcon::NavEdge);
+                return Ok(Some("none".into()));
+            }
+        };
+        Ok(Some(format!("session={} to={to}", self.session_value(&ch))))
+    }
+
+    /// A hold on Right (#307): the rest of the message is skipped, to its
+    /// question 1 when a question set follows, else as the flush hotkey
+    /// for the session being read only.
+    fn skip(&self) -> Result<Option<String>, String> {
+        let flushed = match (self.agent.get(), self.channels.get()) {
+            (Some(a), _) => match a.skip_message().map_err(|e| e.to_string())? {
+                Skip::Questions(ch, nav) => return Ok(Some(self.question_detail(&ch, &nav))),
+                Skip::Flushed(report) => report,
+                Skip::Nothing => FlushReport {
+                    flushed: Flushed::Nothing,
+                    others: Vec::new(),
+                },
+            },
+            (None, Some(ch)) => FlushReport {
+                flushed: ch.stop_reading("flush").map_err(|e| e.to_string())?,
+                others: Vec::new(),
+            },
+            (None, None) => FlushReport {
+                flushed: Flushed::Nothing,
+                others: Vec::new(),
+            },
+        };
+        Ok(Some(self.flush_detail(&flushed, None)))
+    }
+
+    /// What a flush did, for the log; it chimes `nav`, or `nav_edge` when
+    /// there was nothing to flush.
+    fn flush_detail(&self, flushed: &FlushReport, scope: Option<FlushScope>) -> String {
+        let had = flushed.flushed != Flushed::Nothing || !flushed.others.is_empty();
+        self.earcon(if had { Earcon::Nav } else { Earcon::NavEdge });
+        let mut detail = match &flushed.flushed {
+            Flushed::Channel(id) => format!("session={}", self.session_value(id)),
+            Flushed::Announcement(id) => {
+                format!("announcement session={}", self.session_value(id))
+            }
+            Flushed::Direct => "direct".into(),
+            Flushed::Nothing => "idle".into(),
+        };
+        if let Some(scope) = scope {
+            detail.push_str(&format!(" scope={}", scope.as_str()));
+        }
+        if !flushed.others.is_empty() {
+            let names: Vec<String> = flushed
+                .others
+                .iter()
+                .map(|id| self.session_label(id))
+                .collect();
+            let names = sonara_system::log::value(&names.join(","));
+            detail.push_str(&format!(" others={names}"));
+        }
+        detail
+    }
+
+    /// Where `back` went, for the log.
+    fn back_detail(&self, done: &Back) -> String {
+        let (channel, to) = channels_ext::back_fields(done);
+        match channel {
+            Some(c) => format!("session={} to={to}", self.session_value(c)),
+            None => format!("to={to}"),
+        }
+    }
+
+    /// Back one section (#299), as `control back`.
     fn back(&self) -> Result<Option<String>, String> {
         let done = match (self.agent.get(), self.channels.get()) {
             (Some(a), _) => a.back().map_err(|e| e.to_string())?,
@@ -169,11 +311,7 @@ impl HotkeyTarget {
                 return Ok(None);
             }
         };
-        let (channel, to) = channels_ext::back_fields(&done);
-        Ok(Some(match channel {
-            Some(c) => format!("session={} to={to}", self.session_value(c)),
-            None => format!("to={to}"),
-        }))
+        Ok(Some(self.back_detail(&done)))
     }
 
     /// Carry out `action`; what it did, for the log line, when the action
@@ -197,51 +335,9 @@ impl HotkeyTarget {
                 },
                 None => self.control(Control::Restart).map(|_| None),
             },
-            Action::NextQuestion | Action::PreviousQuestion => {
-                // #295: while code is read, the keys move by code line.
-                let in_code = self
-                    .reader
-                    .state()
-                    .ok()
-                    .and_then(|s| s.now_playing)
-                    .is_some_and(|np| np.code);
-                if in_code {
-                    let c = if action == Action::NextQuestion {
-                        Control::NextLine
-                    } else {
-                        Control::PreviousLine
-                    };
-                    self.control(c)?;
-                    return Ok(Some("line".into()));
-                }
-                // #283: move between the message and its questions. A move
-                // says "Question k of N." itself; nothing to move to (no
-                // set, or the last question) chimes the edge.
-                let step = if action == Action::NextQuestion {
-                    Step::Next
-                } else {
-                    Step::Previous
-                };
-                let moved = match self.agent.get() {
-                    Some(a) => a.question(step).map_err(|e| e.to_string())?,
-                    None => None,
-                };
-                let Some((ch, nav)) = moved else {
-                    self.earcon(Earcon::NavEdge);
-                    return Ok(Some("none".into()));
-                };
-                let mut detail = format!(
-                    "session={} question={}/{}",
-                    self.session_value(&ch),
-                    nav.index + 1,
-                    nav.size
-                );
-                if nav.edge {
-                    self.earcon(Earcon::NavEdge);
-                    detail.push_str(" edge");
-                }
-                Ok(Some(detail))
-            }
+            // Taps (#307; `perform` routes the holds).
+            Action::NextQuestion => self.next_section(),
+            Action::PreviousQuestion => self.previous_section(),
             Action::Pause => {
                 // "Paused." / "Resumed." (Python controls.py): spoken over
                 // the paused reader, so the user hears what the key did.
@@ -287,29 +383,7 @@ impl HotkeyTarget {
                         )
                     }
                 };
-                let had = flushed.flushed != Flushed::Nothing || !flushed.others.is_empty();
-                self.earcon(if had { Earcon::Nav } else { Earcon::NavEdge });
-                let mut detail = match &flushed.flushed {
-                    Flushed::Channel(id) => format!("session={}", self.session_value(id)),
-                    Flushed::Announcement(id) => {
-                        format!("announcement session={}", self.session_value(id))
-                    }
-                    Flushed::Direct => "direct".into(),
-                    Flushed::Nothing => "idle".into(),
-                };
-                if let Some(scope) = scope {
-                    detail.push_str(&format!(" scope={}", scope.as_str()));
-                }
-                if !flushed.others.is_empty() {
-                    let names: Vec<String> = flushed
-                        .others
-                        .iter()
-                        .map(|id| self.session_label(id))
-                        .collect();
-                    let names = sonara_system::log::value(&names.join(","));
-                    detail.push_str(&format!(" others={names}"));
-                }
-                Ok(Some(detail))
+                Ok(Some(self.flush_detail(&flushed, scope)))
             }
             Action::Mute => match self.agent.get() {
                 // The mute cycle: unmuted, muted (earcons on), super muted.

@@ -155,7 +155,7 @@ def test_a_home_with_a_keymap_keeps_it(start, tmp_path, profile):
     c = rt.tcp(extensions=["system"])
     by_action = {b["action"]: b for b in get(c, "hotkeys")["bindings"]}
     assert by_action["mute"]["combo"] == "Ctrl+Alt+K"
-    assert by_action["restart"]["combo"] == "Ctrl+Alt+Up"
+    assert by_action["flush"]["combo"] == "Ctrl+Alt+Down"
     assert get(c, "rate") == 250, "the settings are still imported"
 
 

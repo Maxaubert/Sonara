@@ -17,8 +17,9 @@ use std::path::Path;
 /// What a hotkey does. The host maps each action to protocol controls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
-    /// Up: a tap goes back one section (`control back`), a hold reads the
-    /// message again from the top (`control restart`, #299).
+    /// A tap goes back one section (`control back`), a hold reads the
+    /// message again from the top (`control restart`, #299). Unbound by
+    /// default since #307 (Left does the same).
     Restart,
     /// Flush: stop only the session being read (`control flush`, #228;
     /// `control stop` without channels).
@@ -33,13 +34,12 @@ pub enum Action {
     Faster,
     /// Speak slower (rate - 25).
     Slower,
-    /// The previous question of the message's question set; from the
-    /// message text, question 1; on question 1, question 1 again
-    /// (`control previous_question`, #283).
+    /// Left (#307; named for #283's question navigation, kept so saved
+    /// keymaps still apply): a tap goes back one section (a sentence, a
+    /// code line, a question), a hold reads the message again from the top.
     PreviousQuestion,
-    /// The next question of the message's question set; from the message
-    /// text, or a set not started yet, question 1 (`control
-    /// next_question`, #283).
+    /// Right (#307): a tap goes on one section (the questions of a set
+    /// come after the text), a hold skips the rest of the message.
     NextQuestion,
 }
 
@@ -89,10 +89,14 @@ impl Action {
         })
     }
 
-    /// Held past `hotkeys::HOLD` it does something else (#299: Up held
-    /// restarts the message, a tap goes back one section).
+    /// Held past `hotkeys::HOLD` it does something else (#299, #307: held,
+    /// Up and Left restart the message and Right skips the rest of it; a
+    /// tap moves one section).
     pub fn holdable(&self) -> bool {
-        matches!(self, Action::Restart)
+        matches!(
+            self,
+            Action::Restart | Action::PreviousQuestion | Action::NextQuestion
+        )
     }
 
     /// A rapid repeat of a toggle is ignored (pause and mute).
@@ -125,12 +129,12 @@ pub const MOD_WIN: u32 = 0x0008;
 /// so a clash is a warning whose fix is a rebind with Win.
 pub const DEFAULT_MODS: [&str; 2] = ["ctrl", "alt"];
 
-/// Action -> default key; pause, faster and slower ship unbound. Left
-/// and Right move between a message's questions (#283); Intel graphics
+/// Action -> default key; restart, pause, faster and slower ship unbound
+/// (restart since #307: Left does the same). Left and Right move one
+/// section, held to the start or the end (#307); Intel graphics
 /// drivers may own Ctrl+Alt+arrows (screen rotation): a clash is a doctor
 /// and settings warning whose fix is turning that off or a rebind.
-pub const DEFAULT_KEYS: [(Action, &str); 6] = [
-    (Action::Restart, "up"),
+pub const DEFAULT_KEYS: [(Action, &str); 5] = [
     (Action::Flush, "down"),
     (Action::Mute, "m"),
     (Action::NextChannel, "p"),
