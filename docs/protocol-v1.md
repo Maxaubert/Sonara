@@ -769,7 +769,7 @@ left to their own rules. The rules and their sources: `research/sonara/2026-10-1
 
 **Code reading** (protocol 1.7, runtime 0.25.0, #295). At `verbosity` `"read_code"` and
 `"everything"` a fenced code block in `stream` text is read as one item: its announcement
-(`"TypeScript code block, 7 lines."`, the fence's language by name), each line (`"Line three. ..."`, the number in words,
+(`"TypeScript code block, 7 lines."`, the fence's language by name), each line (`"Line three: ..."`, the number in words,
 numbered as in the source, a blank line counted but not read), then `"End of TypeScript code."`.
 A line names its symbols (`.` dot, `(` open paren, `=` equals, `=>` arrow, ...), reads strings,
 comments and the text between markup tags as written, splits identifiers into words

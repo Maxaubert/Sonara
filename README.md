@@ -134,7 +134,7 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
 ### Code
 
 At detail *Read code* or *Everything* a code block is read line by line: "TypeScript code block,
-7 lines.", then "Line 1. function Welcome, empty parens, open brace." and so on, then "End of
+7 lines.", then "Line one: function Welcome, empty parens, open brace." and so on, then "End of
 TypeScript code." Symbols are said as words (dot, comma, open paren, equals, arrow), strings and
 comments are read as written, and names like `getUserName` are read "get user name". The brief
 pauses between the parts of a line are commas; after each line Sonara waits the *Line pause*

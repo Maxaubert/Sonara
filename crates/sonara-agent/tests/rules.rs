@@ -153,8 +153,8 @@ fn everything_announces_a_code_block_then_reads_it_and_skip_code_drops_it_silent
             "Here it is.".to_string(),
             format!(
                 "{CODE_START}Python code block, 3 lines.\n\
-                 {CODE_LINE}Line one. print, open paren, 1, close paren.\n\
-                 {CODE_LINE}Line three. x, equals, 2.\n\
+                 {CODE_LINE}Line one: print, open paren, 1, close paren.\n\
+                 {CODE_LINE}Line three: x, equals, 2.\n\
                  End of Python code."
             ),
             "Done.".to_string(),
@@ -192,7 +192,7 @@ fn read_code_reads_code_blocks_without_announcing_tools() {
             "Look.".to_string(),
             format!(
                 "{CODE_START}JavaScript code block, 1 line.\n\
-                 {CODE_LINE}Line one. x, equals, 1.\n\
+                 {CODE_LINE}Line one: x, equals, 1.\n\
                  End of JavaScript code."
             ),
             "Done.".to_string(),

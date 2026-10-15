@@ -1918,10 +1918,11 @@ fn tapping_down_goes_on_one_section() {
     start_playing(&r.out);
     r.fake.press(Action::Flush.id());
     read_through(&r, "Two is here.");
-    let log = log_of(&r);
+    // The log line is written after the press is carried out: wait for it.
     assert!(
-        log.contains("hotkey next session=web-app to=entry"),
-        "{log}"
+        eventually(|| log_of(&r).contains("hotkey next session=web-app to=entry")),
+        "{}",
+        log_of(&r)
     );
     assert!(eventually(
         || log_of(&r).contains("hotkey next session=web-app to=end")

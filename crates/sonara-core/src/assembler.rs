@@ -54,6 +54,69 @@ pub enum Chunk {
     ParagraphBreak,
 }
 
+/// A fence without a language (or marked as text) whose lines are mostly
+/// words is prose, not code (#315: a draft prompt was read "Line one. You
+/// are Claude, comma, ..."). A prose line has three or more words and no
+/// code characters; at least eight words in all, two in three of the lines
+/// that have text are prose lines, and some line reads as a sentence (a
+/// full stop or a comma: a list of shell commands has neither).
+fn prose_fence(lang: &str, lines: &[String]) -> bool {
+    const TEXT: &[&str] = &[
+        "",
+        "text",
+        "txt",
+        "plain",
+        "plaintext",
+        "markdown",
+        "md",
+        "prompt",
+    ];
+    if !TEXT.contains(&lang.to_ascii_lowercase().as_str()) {
+        return false;
+    }
+    let code = |l: &str| {
+        l.contains(['{', '}', ';', '=', '<', '>', '$', '\\', '`', '|'])
+            || ["()", "::", "->", "=>", "&&"].iter().any(|s| l.contains(s))
+    };
+    let words = |l: &str| {
+        l.split_whitespace()
+            .filter(|w| w.chars().any(char::is_alphabetic))
+            .count()
+    };
+    let filled: Vec<&String> = lines.iter().filter(|l| !l.trim().is_empty()).collect();
+    let prose = filled.iter().filter(|l| words(l) >= 3 && !code(l)).count();
+    let total: usize = filled.iter().map(|l| words(l)).sum();
+    let sentence = filled.iter().any(|l| {
+        let t = l.trim_end();
+        t.contains(". ") || t.contains(", ") || t.ends_with(['.', '?', '!'])
+    });
+    total >= 8 && sentence && prose * 3 >= filled.len() * 2
+}
+
+/// The lines of a prose fence as text: a line without end punctuation
+/// ends there when the next line starts something new (a capital, a
+/// bullet, a number: "How you talk" over a list), and runs on when the
+/// next line continues in lower case (a hard-wrapped sentence).
+fn prose_lines(lines: &[String]) -> String {
+    let starts_new = |l: &str| {
+        let t = l.trim_start();
+        t.starts_with(['-', '*', '+', '#'])
+            || t.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit())
+    };
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        out.push_str(line.trim_end());
+        let next = lines.get(i + 1).map(String::as_str).unwrap_or("");
+        let open =
+            !line.trim().is_empty() && !line.trim_end().ends_with(['.', '!', '?', ':', ';', ',']);
+        if open && (next.trim().is_empty() || starts_new(next)) {
+            out.push('.');
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// Python `str.isspace()`: Unicode White_Space plus U+001C..U+001F.
 fn is_py_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
@@ -167,7 +230,7 @@ impl ProseAssembler {
                     // spoken prose (deep audit #25). Backticks followed directly
                     // by a word ("```python") are content, not a close.
                     if let Some(close_rest) = self.closing_fence_rest(stripped) {
-                        out.push(self.close_fence());
+                        out.extend(self.close_fence());
                         if !close_rest.is_empty() {
                             self.pending = format!("{close_rest}\n{}", self.pending);
                         }
@@ -189,7 +252,7 @@ impl ProseAssembler {
                     let tail = std::mem::take(&mut self.pending);
                     let stripped = py_strip(&tail);
                     if let Some(close_rest) = self.closing_fence_rest(stripped) {
-                        out.push(self.close_fence());
+                        out.extend(self.close_fence());
                         if !close_rest.is_empty() {
                             self.pending = close_rest;
                             continue; // resume prose scan (still forced)
@@ -202,7 +265,7 @@ impl ProseAssembler {
                                 self.fence_lang = stripped.to_string();
                             }
                         }
-                        out.push(self.close_fence());
+                        out.extend(self.close_fence());
                     }
                 }
                 break;
@@ -284,9 +347,23 @@ impl ProseAssembler {
         0
     }
 
-    fn close_fence(&mut self) -> Chunk {
+    fn close_fence(&mut self) -> Vec<Chunk> {
         let n = self.fence_lines.len();
         let lang = std::mem::take(&mut self.fence_lang);
+        if prose_fence(&lang, &self.fence_lines) {
+            // Prose in a fence (a draft, a quote, #315): read as text.
+            let text = prose_lines(&std::mem::take(&mut self.fence_lines));
+            self.in_fence = false;
+            self.fence_opened_line = false;
+            let mut out = Vec::new();
+            for (i, para) in PARA.split(&text).enumerate() {
+                if i > 0 {
+                    out.push(Chunk::ParagraphBreak);
+                }
+                out.extend(Self::sentences_of(&stabilize_ordinals(para), false).0);
+            }
+            return out;
+        }
         let lines = std::mem::take(&mut self.fence_lines)
             .iter()
             .enumerate()
@@ -294,11 +371,11 @@ impl ProseAssembler {
             .collect();
         self.in_fence = false;
         self.fence_opened_line = false;
-        Chunk::Code {
+        vec![Chunk::Code {
             summary: code_speech::announcement(&lang, n),
             lines,
             end: code_speech::end_of_code(&lang),
-        }
+        }]
     }
 
     /// Clean one RAW chunk and append it if speakable. Cleaning happens
@@ -455,6 +532,40 @@ mod tests {
         a.feed("Old text", 0, false);
         let out = texts(a.feed("New.", 0, true));
         assert_eq!(out, vec![Some("Old text".into()), Some("New.".into())]);
+    }
+
+    #[test]
+    fn a_prose_fence_joins_wrapped_lines_and_ends_headings() {
+        let lines: Vec<String> = [
+            "Sound like a friendly colleague",
+            "giving a quick update.",
+            "",
+            "Ending",
+            "- Thank him briefly",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(prose_fence("", &lines));
+        assert_eq!(
+            prose_lines(&lines),
+            "Sound like a friendly colleague\ngiving a quick update.\n\nEnding.\n- Thank him briefly.\n"
+        );
+        let code: Vec<String> = [
+            "let x = foo();",
+            "if x > 1 { bar(x); }",
+            "println!(\"{x}\");",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert!(!prose_fence("", &code));
+        assert!(!prose_fence("python", &lines), "a language is code");
+        let shell: Vec<String> = ["npm install", "npm run build", "git push origin main"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!prose_fence("", &shell), "commands are no sentences");
     }
 
     #[test]

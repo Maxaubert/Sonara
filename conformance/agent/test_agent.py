@@ -383,8 +383,8 @@ CODE_TURN = "Look.\n```python\nx = 1\ny = 2\n```\nDone.\n"
 CODE_CHUNKS = [
     "Look.",
     "Python code block, 2 lines.",
-    "Line one. x, equals, 1.",
-    "Line two. y, equals, 2.",
+    "Line one: x, equals, 1.",
+    "Line two: y, equals, 2.",
     "End of Python code.",
     "Done.",
 ]
@@ -425,10 +425,10 @@ def test_step_through_code_waits_at_each_line(rt):
     assert ok(c, {"type": "set", "key": "code_step", "value": "on"})["value"] == "on"
     stream(c, "a", CODE_TURN)
     s = c.state(lambda s: s["paused"] and s["now_playing"] is not None)
-    assert s["now_playing"]["text"] == "Line one. x, equals, 1."
+    assert s["now_playing"]["text"] == "Line one: x, equals, 1."
     ok(c, {"type": "control", "action": "next_line"})
     s = c.state(lambda s: s["paused"] and (s["now_playing"] or {}).get("chunk") == 2)
-    assert s["now_playing"]["text"] == "Line two. y, equals, 2."
+    assert s["now_playing"]["text"] == "Line two: y, equals, 2."
     ok(c, {"type": "control", "action": "previous_line"})
     c.state(lambda s: s["paused"] and (s["now_playing"] or {}).get("chunk") == 2)
     ok(c, {"type": "control", "action": "toggle"})

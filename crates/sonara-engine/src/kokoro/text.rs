@@ -113,6 +113,12 @@ pub fn normalize(text: &str) -> String {
     static CAMEL1: OnceLock<Regex> = OnceLock::new();
     static CAMEL2: OnceLock<Regex> = OnceLock::new();
     static HYPHEN: OnceLock<Regex> = OnceLock::new();
+    /// English words of one or two letters that end a hyphenated word.
+    const SHORT_WORDS: &[&str] = &[
+        "a", "i", "up", "in", "on", "of", "to", "by", "at", "go", "do", "no", "so", "be", "me",
+        "we", "he", "it", "is", "an", "as", "or", "if", "my", "us", "ok", "oh", "hi", "ex", "ox",
+        "ax",
+    ];
     static WS: OnceLock<Regex> = OnceLock::new();
 
     let mut t = text.to_string();
@@ -196,11 +202,12 @@ pub fn normalize(text: &str) -> String {
         .replace_all(&t, "$1 $2")
         .into_owned();
     // Code-ish hyphens: cargo-deny stays a compound; a short tail becomes
-    // an acronym that misaki spells: espeak-ng -> espeak NG.
+    // an acronym that misaki spells: espeak-ng -> espeak NG. A short English
+    // word stays a word: follow-up, check-in, add-on (#314).
     t = re(&HYPHEN, r"\b([a-z]+)-([a-z]+)\b")
         .replace_all(&t, |c: &Captures| {
             let b = &c[2];
-            if b.len() <= 2 {
+            if b.len() <= 2 && !SHORT_WORDS.contains(&b) {
                 format!("{} {}", &c[1], b.to_uppercase())
             } else {
                 format!("{}-{}", &c[1], b)
@@ -261,6 +268,15 @@ mod tests {
         assert_eq!(
             normalize("espeak-ng and cargo-deny"),
             "espeak NG and cargo-deny"
+        );
+    }
+
+    #[test]
+    fn a_short_english_word_after_a_hyphen_is_not_spelled() {
+        // sonarad.log 2026-10-15 13:07:36: "follow-up" was read "follow U P".
+        assert_eq!(
+            normalize("a follow-up, a check-in, an add-on and a set-up"),
+            "a follow-up, a check-in, an add-on and a set-up"
         );
         assert_eq!(normalize("GUIDs and IDs"), "GUID's and ID's");
     }
