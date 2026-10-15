@@ -3,7 +3,9 @@
 //! and the channels thread with a timeout.
 use sonara_audio::OutputCall;
 use sonara_audio::TestOutput;
-use sonara_channels::{Announced, Back, Channels, Config, Control, Flushed, Policy, QueueMode};
+use sonara_channels::{
+    Announced, Back, Channels, Config, Control, Flushed, Forward, Policy, QueueMode,
+};
 use sonara_engine::fake::FakeEngine;
 use sonara_reader::{Config as ReaderConfig, ReaderHandle, Registry};
 use std::sync::Arc;
@@ -1191,5 +1193,71 @@ fn back_while_idle_replays_the_message() {
     assert_eq!(r.ch.back().unwrap(), Back::Replay);
     r.read("One.");
     r.read("Two.");
+    r.stays_idle();
+}
+
+// -- Right: tap goes on a section (Ctrl+Alt+Right, #307) --------------------
+
+/// Alpha's message "One.", "Two.", "Three.", "One." playing.
+fn on_the_first_section() -> Rig {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("a", "Two.");
+    r.speak("a", "Three.");
+    r.wait_for("One.");
+    r.out.start();
+    r
+}
+
+#[test]
+fn forward_goes_to_the_next_section() {
+    let r = on_the_first_section();
+    assert_eq!(r.ch.forward().unwrap(), Forward::Entry("a".into()));
+    r.read("Two.");
+    r.read("Three.");
+    r.stays_idle();
+}
+
+#[test]
+fn forward_twice_goes_on_two_sections() {
+    let r = on_the_first_section();
+    r.ch.forward().unwrap();
+    assert_eq!(r.ch.forward().unwrap(), Forward::Entry("a".into()));
+    r.read("Three.");
+    r.stays_idle();
+}
+
+#[test]
+fn forward_inside_an_item_goes_to_its_next_chunk() {
+    let r = Rig::two();
+    r.speak("a", "First part. Second part.");
+    r.speak("a", "After.");
+    r.wait_for("First part.");
+    r.out.start();
+    assert_eq!(r.ch.forward().unwrap(), Forward::Chunk("a".into()));
+    r.read("Second part.");
+    r.read("After.");
+    r.stays_idle();
+}
+
+#[test]
+fn forward_on_the_last_section_keeps_reading_it() {
+    let r = Rig::two();
+    r.speak("a", "One.");
+    r.speak("b", "Beta one.");
+    r.wait_for("One.");
+    r.out.start();
+    assert_eq!(r.ch.forward().unwrap(), Forward::End("a".into()));
+    assert_eq!(r.playing().as_deref(), Some("One."), "not cut");
+    r.read("One.");
+    r.read("Beta.");
+    r.read("Beta one.");
+    r.stays_idle();
+}
+
+#[test]
+fn forward_while_idle_does_nothing() {
+    let r = Rig::two();
+    assert_eq!(r.ch.forward().unwrap(), Forward::Nothing);
     r.stays_idle();
 }

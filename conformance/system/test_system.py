@@ -19,7 +19,9 @@ import urllib.parse
 from harness import TIMEOUT, long_text, wait_until
 
 LONG = long_text(3)
-DEFAULT_COMBOS = {"restart": "Ctrl+Alt+Up", "flush": "Ctrl+Alt+Down", "mute": "Ctrl+Alt+M", "next_channel": "Ctrl+Alt+P"}
+# #307: Left and Right move one section; restart (Up until 0.30.0) ships unbound.
+DEFAULT_COMBOS = {"flush": "Ctrl+Alt+Down", "mute": "Ctrl+Alt+M", "next_channel": "Ctrl+Alt+P",
+                  "previous_question": "Ctrl+Alt+Left", "next_question": "Ctrl+Alt+Right"}
 
 
 def write_world(path, world):
@@ -245,8 +247,9 @@ def test_hotkeys_are_registered_only_while_a_client_needs_them(rt):
     for action, combo in DEFAULT_COMBOS.items():
         b = binding(v, action)
         assert b["combo"] == combo and b["registered"] is True, b
-    assert binding(v, "pause")["key"] is None, "pause, faster and slower ship unbound"
-    assert len(read_world(rt.fake_system)["hotkeys"]) == 6
+    for action in ("restart", "pause"):
+        assert binding(v, action)["key"] is None, "restart, pause, faster and slower ship unbound"
+    assert len(read_world(rt.fake_system)["hotkeys"]) == 5
     c.close()
     assert wait_until(lambda: read_world(rt.fake_system)["hotkeys"] == [])
     status, r = rt.post("hello", {"extensions": ["system"]})
@@ -259,7 +262,7 @@ def test_keep_alive_holds_the_hotkeys_after_the_client_left(rt):
     c = system_client(rt, keep_alive=True)
     c.close()
     time.sleep(0.3)
-    assert len(read_world(rt.fake_system)["hotkeys"]) == 6
+    assert len(read_world(rt.fake_system)["hotkeys"]) == 5
 
 
 def test_bind_unbind_reset_and_the_keymap_file(rt):
@@ -270,8 +273,8 @@ def test_bind_unbind_reset_and_the_keymap_file(rt):
     assert on_disk["mute"] == {"key": "k", "mods": ["win", "alt"]}
     registered = read_world(rt.fake_system)["hotkeys"]
     assert any(h["vk"] == ord("K") and h["mods"] & 0xF == 0x9 for h in registered)
-    v = set_key(c, "hotkeys", {"action": "restart", "key": None})
-    assert binding(v, "restart")["key"] is None
+    v = set_key(c, "hotkeys", {"action": "flush", "key": None})
+    assert binding(v, "flush")["key"] is None
     v = set_key(c, "hotkeys", "reset")
     for action, combo in DEFAULT_COMBOS.items():
         assert binding(v, action)["combo"] == combo
@@ -297,7 +300,7 @@ def test_a_chord_another_program_owns_is_reported(start, tmp_path):
     v = hotkeys(system_client(rt))
     b = binding(v, "next_channel")
     assert b["registered"] is False and b["error"] == "already_owned"
-    assert binding(v, "restart")["registered"] is True
+    assert binding(v, "flush")["registered"] is True
 
 
 def test_altgr_clash_is_a_warning(start, tmp_path):
@@ -305,7 +308,7 @@ def test_altgr_clash_is_a_warning(start, tmp_path):
     rt = start_with_apps(start, tmp_path, altgr=[{"vk": 0x4D, "shift": False, "char": "µ"}])
     v = hotkeys(system_client(rt))
     assert binding(v, "mute")["altgr"] == "µ"
-    assert binding(v, "restart")["altgr"] is None
+    assert binding(v, "flush")["altgr"] is None
 
 
 # --- the settings page --------------------------------------------------------

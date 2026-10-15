@@ -275,6 +275,19 @@ pub enum Back {
     Replay,
 }
 
+/// What `forward` did (#307).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Forward {
+    /// The next chunk of the item being read, in the named channel.
+    Chunk(String),
+    /// The next entry of the named channel's batch.
+    Entry(String),
+    /// The named channel's last section is being read: nothing changed.
+    End(String),
+    /// No channel entry was being read: nothing changed.
+    Nothing,
+}
+
 /// What `flush_with` did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlushReport {
@@ -753,6 +766,42 @@ impl Channels {
             Some(_) => Back::Entry(f.channel),
             None => Back::First(f.channel),
         })
+    }
+
+    /// On one section (#307, a tap on Right): while a channel's entry is
+    /// read, its item's next chunk, else the batch's next entry; on the
+    /// last section nothing changes (`Forward::End`), and while no channel
+    /// entry is read neither (`Forward::Nothing`).
+    pub fn forward(&self) -> Result<Forward> {
+        let mut st = self.lock();
+        let reader = &self.inner.reader;
+        let Some((f, entry)) = st.in_flight.clone().and_then(|f| f.entry.map(|e| (f, e))) else {
+            return Ok(Forward::Nothing);
+        };
+        // As for `back`: only the in-flight item's own chunk counts.
+        if let Some(n) = reader.state()?.now_playing.filter(|n| n.item_id == f.id) {
+            if n.chunk + 1 < n.chunks {
+                reader.control(Control::Next)?;
+                return Ok(Forward::Chunk(f.channel));
+            }
+        }
+        let next = st.router.channel(&f.channel).and_then(|c| {
+            let at = c.entries().iter().position(|e| e.id == entry)?;
+            c.entries().get(at + 1).map(|e| e.id)
+        });
+        let Some(next) = next else {
+            return Ok(Forward::End(f.channel));
+        };
+        self.inner.read_from(&mut st, &f.channel, Some(next))?;
+        Ok(Forward::Entry(f.channel))
+    }
+
+    /// The in-flight entry: its channel and entry id (not an announcement,
+    /// not text spoken to the reader directly).
+    pub fn reading(&self) -> Option<(String, u64)> {
+        let st = self.lock();
+        let f = st.in_flight.as_ref()?;
+        Some((f.channel.clone(), f.entry?))
     }
 
     /// The channel whose batch got the newest entry (`Restart` before any

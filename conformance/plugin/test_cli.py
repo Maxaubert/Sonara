@@ -44,7 +44,7 @@ def test_doctor_reports_rows_and_never_fails_on_information(box, cli):
     assert "[ OK ] engine: fake, ready" in text
     assert "250 words per minute" in text, "the product default rate"
     assert "[INFO] audio: media apps are paused" in text, "the product default audio mode"
-    assert re.search(r"\[ OK \] hotkeys: Ctrl\+Alt\+Up restart", text)
+    assert re.search(r"\[ OK \] hotkeys: Ctrl\+Alt\+Down flush", text)
     assert "[ OK ] hooks:" in text, "run from the plugin (CLAUDE_PLUGIN_ROOT)"
     assert "[WARN] onnxruntime.dll" in text or "[ OK ] onnxruntime.dll" in text
     assert "[FAIL]" not in text

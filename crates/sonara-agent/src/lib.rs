@@ -133,7 +133,30 @@ pub use settings::{
     Verbosity,
 };
 use sonara_channels::Resolved;
-pub use sonara_channels::{Back, Channels, Control, FlushReport, Flushed, QueueMode};
+pub use sonara_channels::{Back, Channels, Control, FlushReport, Flushed, Forward, QueueMode};
+
+/// Where a tap on Left or Right went (#307).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Section {
+    /// L2's `back`.
+    Back(Back),
+    /// L2's `forward` (`Forward::Nothing`: nothing read and no question
+    /// set to go to).
+    Forward(Forward),
+    /// Within a question set: the session and where it landed.
+    Question(String, Nav),
+}
+
+/// What a hold on Right did (#307).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Skip {
+    /// The text was skipped to the session's question 1.
+    Questions(String, Nav),
+    /// The session being read was flushed.
+    Flushed(FlushReport),
+    /// Nothing was being read.
+    Nothing,
+}
 pub use summarizer::Summarizer;
 
 use sonara_engine::PcmChunk;
@@ -601,8 +624,14 @@ impl Agent {
     /// still writing its reply (no `turn_end` yet) keeps everything in
     /// both scopes. `others` names the sessions that lost something.
     pub fn flush(&self) -> Result<FlushReport> {
+        let all = self.lock().settings.flush_scope == FlushScope::All;
+        self.flush_in(all)
+    }
+
+    /// `flush` with the scope given: `all` also drops the other sessions'
+    /// unread text.
+    fn flush_in(&self, all: bool) -> Result<FlushReport> {
         let mut rules = self.lock();
-        let all = rules.settings.flush_scope == FlushScope::All;
         // The wipe line goes before the drops it explains, as for stop.
         let writing: Vec<String> = rules
             .channels()
@@ -764,6 +793,78 @@ impl Agent {
         }
         self.restart()?;
         Ok(Back::Replay)
+    }
+
+    /// The session being read, when the entry playing shows its question
+    /// set (#307).
+    fn on_question(&self, rules: &Rules) -> Option<String> {
+        let (ch, entry) = self.inner.channels.reading()?;
+        (rules.question_entry(&ch) == Some(entry)).then_some(ch)
+    }
+
+    /// A tap on Left (#307): back one section. On question 2 or later of
+    /// a set (also after it was read), the question before; else `back`
+    /// (on question 1 that is the message's last sentence; while nothing
+    /// is read, the message again).
+    pub fn previous_section(&self) -> Result<Section> {
+        let rules = self.lock();
+        // While nothing is read, after question 2 or later: the question
+        // before, as #283's Left did (else the message again).
+        let at = match self.inner.channels.reading() {
+            Some(_) => self.on_question(&rules),
+            None => self.targets().into_iter().next(),
+        };
+        let later = at.is_some_and(|ch| rules.question_set(&ch).is_some_and(|(i, _)| i > 0));
+        drop(rules);
+        if later {
+            if let Some((ch, nav)) = self.question(Step::Previous)? {
+                return Ok(Section::Question(ch, nav));
+            }
+        }
+        Ok(Section::Back(self.back()?))
+    }
+
+    /// A tap on Right (#307): on one section. On a question of a set, the
+    /// next question (`edge` on the last); else L2's `forward` (from the
+    /// message's last sentence that is its question set, the entry after
+    /// it). While nothing is read, question 1 of a set (as `question`).
+    pub fn next_section(&self) -> Result<Section> {
+        let rules = self.lock();
+        let on_question = self.on_question(&rules).is_some();
+        let reading = self.inner.channels.reading().is_some();
+        drop(rules);
+        if on_question || !reading {
+            return Ok(match self.question(Step::Next)? {
+                Some((ch, nav)) => Section::Question(ch, nav),
+                None => Section::Forward(Forward::Nothing),
+            });
+        }
+        Ok(Section::Forward(self.inner.channels.forward()?))
+    }
+
+    /// A hold on Right (#307): the rest of the message is skipped. From
+    /// its text, a question set that follows is read from question 1;
+    /// else the session being read is flushed (only that one, whatever
+    /// the flush scope) and reading goes on as after the flush hotkey.
+    pub fn skip_message(&self) -> Result<Skip> {
+        let rules = self.lock();
+        let Some((ch, _)) = self.inner.channels.reading() else {
+            return Ok(Skip::Nothing);
+        };
+        let questions = self.on_question(&rules).is_none()
+            && rules.question_entry(&ch).is_some_and(|e| {
+                self.inner
+                    .channels
+                    .channel(&ch)
+                    .is_some_and(|c| c.entries()[c.cursor()..].iter().any(|x| x.id == e))
+            });
+        drop(rules);
+        if questions {
+            if let Some((ch, nav)) = self.question(Step::Next)? {
+                return Ok(Skip::Questions(ch, nav));
+            }
+        }
+        Ok(Skip::Flushed(self.flush_in(false)?))
     }
 
     /// `channel`'s question set: the current question (0-based) and its

@@ -972,14 +972,14 @@ Actions and what they do (the same as the protocol request named):
 
 | action | default | effect |
 |---|---|---|
-| `restart` | Ctrl+Alt+Up | a tap is `control back` (back one section, #299); held for half a second it is `control restart` (the message again from the top; with `agent`, a message with a question set: its text, then question 1, #283), heard while the key is still down. The log line says `hotkey back session=<label> to=<what>` or `hotkey restart` |
+| `restart` | unbound (Ctrl+Alt+Up until runtime 0.30.0, #307) | the same as `previous_question` outside code and question sets: a tap is `control back` (back one section, #299); held for half a second it is `control restart` (the message again from the top; with `agent`, a message with a question set: its text, then question 1, #283), heard while the key is still down. The log line says `hotkey back session=<label> to=<what>` or `hotkey restart` |
 | `flush` | Ctrl+Alt+Down | with `channels`: `control flush` (the session being read and the rest of its reply, #228; with `flush_scope` `all` also every other session's ready messages); without it, `control stop`. With `agent`, plays `nav` (or `nav_edge` when nothing was dropped) |
 | `pause` | unbound | `control toggle`, then the cue `"Paused."` or `"Resumed."` |
 | `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute`; then its cue |
 | `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` then says `"Session changed: <label>."` (the announcement; `"Session changed."` for a session without a label; when switches are not announced, the earcon alone); with no channel open, the cue `"No session."` |
 | `faster` / `slower` | unbound | `rate` plus or minus 25, then `"Rate N."` |
-| `previous_question` | Ctrl+Alt+Left | `control previous_question` (#283): question 1 from the message text; the question before; question 1 again on question 1. Plays `nav_edge` when no session has a question set |
-| `next_question` | Ctrl+Alt+Right | `control next_question` (#283): question 1 from the message text or a set not started; the next question. Plays `nav_edge` on the last question or when no session has a set. While a code block is read (#295) it is `control next_line` instead, and `previous_question` is `previous_line` |
+| `previous_question` | Ctrl+Alt+Left | runtime 0.30.0 (#307), named for #283: a tap goes back one section. On question 2 or later of a question set (also once it was read) it is `control previous_question`; else `control back` (on question 1: the message's last sentence; while nothing is read, the message again). Held for half a second it is `control restart`, as `restart` held. The log line says `hotkey back ...` or `hotkey restart ...` |
+| `next_question` | Ctrl+Alt+Right | runtime 0.30.0 (#307): a tap goes on one section: the item's next chunk, else the batch's next entry (after a message's last sentence, its question set); on a question, `control next_question`; while nothing is read, `control next_question` (question 1 of a set). Nothing to move to plays `nav_edge` and reading goes on. Held for half a second it skips the rest of the message: from its text to question 1 of a set that follows, else the session being read is flushed as `control flush` with `flush_scope` `session`. The log line says `hotkey next session=<label> to=<chunk, entry or end>`, `hotkey next ... question=<k>/<n>` or `hotkey skip ...`. While a code block is read (#295) a tap is `control next_line` instead, and a tap on `previous_question` is `previous_line` |
 
 A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`,
 `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A
@@ -1000,7 +1000,7 @@ Intel Graphics Command Center or rebind with Win. The user's bindings are kept i
 
 ```json
 {"active": true,
- "bindings": [{"action": "restart", "key": "up", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+Up", "registered": true, "error": null, "altgr": null},
+ "bindings": [{"action": "flush", "key": "down", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+Down", "registered": true, "error": null, "altgr": null},
               {"action": "mute", "key": "m", "mods": ["ctrl", "alt"], "combo": "Ctrl+Alt+M", "registered": true, "error": null, "altgr": "µ"},
               {"action": "pause", "key": null, "mods": [], "combo": null, "registered": false, "error": null, "altgr": null}],
  "keys": ["0", "1", "...", "up"], "mods": ["alt", "cmd", "control", "ctrl", "shift", "win"], "problems": []}

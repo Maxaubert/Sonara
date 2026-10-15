@@ -39,8 +39,8 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - PRIVACY.md lists every file in `%LOCALAPPDATA%\Sonara`: update it when adding one.
 
 ## Product rules
-- One message, always the last: Sonara reads the latest turn; Up restarts it. Nothing may silently drop it.
-- Default hotkeys stay Ctrl+Alt+Up/Down/M/P (#160): Windows owns Win+Alt+arrows/M/P. Ctrl+Alt is AltGr on European layouts, so a clash is a doctor/settings warning whose fix is a rebind with Win, not a reset.
+- One message, always the last: Sonara reads the latest turn; holding Left restarts it. Nothing may silently drop it.
+- Default hotkeys are Ctrl+Alt+Left/Right/Down/M/P (#160, #307; Up unbound since 0.30.0): Windows owns Win+Alt+arrows/M/P. Ctrl+Alt is AltGr on European layouts, so a clash is a doctor/settings warning whose fix is a rebind with Win, not a reset.
 - Never leave other apps ducked or paused.
 - External engines: never put a model id or voice name in code, defaults, hints or docs (#235, user decision 2026-10-05): they come from the provider's live lists or are typed; examples use `<model>`/`<voice>`.
 

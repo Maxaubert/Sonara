@@ -5,8 +5,8 @@
 //! gets a new turn, decisions read with priority, earcons and mute levels.
 use sonara_agent::earcon::Library;
 use sonara_agent::{
-    Agent, Ask, AskKind, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Settings, Step,
-    Summarizer, SummarySettings,
+    Agent, Ask, AskKind, Back, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Forward,
+    Section, Settings, Skip, Step, Summarizer, SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};
@@ -1578,4 +1578,116 @@ fn a_single_question_is_reached_from_the_text_and_restarted_by_left() {
     r.agent.question(Step::Previous).unwrap().unwrap();
     r.read("Only question?");
     r.stays_idle();
+}
+
+// -- Left and Right: one section, questions included (#307) -----------------
+
+#[test]
+fn right_moves_through_the_text_then_the_questions_and_left_comes_back() {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    ask_set(&r, "a", 2);
+    r.wait_for("One is here.");
+    r.out.start();
+    assert_eq!(
+        r.agent.next_section().unwrap(),
+        Section::Forward(Forward::Entry("a".into()))
+    );
+    r.wait_for("Two is here.");
+    r.out.start();
+    r.agent.next_section().unwrap();
+    r.wait_for("Question 1 of 2.");
+    r.out.start();
+    let Section::Question(_, nav) = r.agent.next_section().unwrap() else {
+        panic!("a question");
+    };
+    assert_eq!((nav.index, nav.edge), (1, false));
+    r.wait_for("Question 2 of 2.");
+    r.out.start();
+    // Left on question 2: question 1.
+    let Section::Question(_, nav) = r.agent.previous_section().unwrap() else {
+        panic!("a question");
+    };
+    assert_eq!(nav.index, 0);
+    r.wait_for("Question 1 of 2.");
+    r.out.start();
+    // Left on question 1: the message's last sentence, then question 1.
+    assert_eq!(
+        r.agent.previous_section().unwrap(),
+        Section::Back(Back::Entry("a".into()))
+    );
+    r.read("Two is here.");
+    r.read("Question 1 of 2.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn right_on_the_last_question_is_the_edge() {
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    ask_set(&r, "a", 2);
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 2.");
+    r.out.start();
+    r.agent.next_section().unwrap();
+    r.wait_for("Question 2 of 2.");
+    r.out.start();
+    let Section::Question(_, nav) = r.agent.next_section().unwrap() else {
+        panic!("a question");
+    };
+    assert!(nav.edge);
+    r.read("Question 2 of 2.");
+    r.read("Question text 2?");
+    r.stays_idle();
+}
+
+#[test]
+fn right_on_the_last_sentence_keeps_reading_it() {
+    let r = Rig::new();
+    r.stream("a", "Only one.", 0, None);
+    r.wait_for("Only one.");
+    r.out.start();
+    assert_eq!(
+        r.agent.next_section().unwrap(),
+        Section::Forward(Forward::End("a".into()))
+    );
+    r.read("Only one.");
+    r.stays_idle();
+    assert_eq!(
+        r.agent.next_section().unwrap(),
+        Section::Forward(Forward::Nothing)
+    );
+}
+
+#[test]
+fn holding_right_skips_the_text_to_question_one() {
+    let r = text_and_four_questions();
+    r.wait_for("Here is my answer.");
+    r.out.start();
+    let Skip::Questions(ch, nav) = r.agent.skip_message().unwrap() else {
+        panic!("to the questions");
+    };
+    assert_eq!((ch.as_str(), nav.index), ("a", 0));
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn holding_right_skips_the_rest_of_the_message_to_the_next_session() {
+    let r = Rig::new();
+    r.agent.set_flush_scope(FlushScope::All);
+    r.stream("a", "One is here. Two is here.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.wait_for("One is here.");
+    r.out.start();
+    let Skip::Flushed(report) = r.agent.skip_message().unwrap() else {
+        panic!("flushed");
+    };
+    assert_eq!(report.flushed, Flushed::Channel("a".into()));
+    assert!(report.others.is_empty(), "only the session read");
+    r.read("From beta.");
+    r.stays_idle();
+    assert_eq!(r.agent.skip_message().unwrap(), Skip::Nothing);
 }
