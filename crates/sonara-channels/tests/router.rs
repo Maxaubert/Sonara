@@ -603,17 +603,17 @@ fn pending_and_has_work() {
 }
 
 #[test]
-fn a_prioritized_channel_preempts_the_batch_reading_now() {
-    // Python test_background_decision_preempts_current_reader: a decision
-    // in another channel is read right after the current entry, before the
-    // rest of the reading channel's batch, which then resumes.
+fn a_question_in_another_session_waits_for_the_message_being_read() {
+    // #305: with one entry per sentence the old preemption (Python
+    // test_background_decision_preempts_current_reader) cut a message in
+    // the middle. The decision is read once the reading batch ends.
     let mut r = router(&["A", "B"]);
     push(&mut r, "A", &["a1", "a2"]);
     assert_eq!(next(&mut r).unwrap(), "a1");
     push(&mut r, "B", &["question"]);
     assert!(r.prioritize("B"));
     assert_eq!(r.prioritized(), ["B"]);
-    assert_eq!(drain(&mut r), ["[b]", "question", "[a]", "a2"]);
+    assert_eq!(drain(&mut r), ["a2", "[b]", "question"]);
     assert!(
         r.prioritized().is_empty(),
         "drained channels leave the list"
@@ -974,13 +974,10 @@ fn next_channel_and_mute_during_a_replay_move_on() {
     push(&mut r, "B", &["b1"]);
     push(&mut r, "C", &["question"]);
     r.prioritize("C");
-    // next_channel lands on B's unread message: not a replay, no hold
-    // (live reading: the question goes first, then B resumes).
+    // next_channel lands on B's unread message: not a replay, no hold,
+    // but B's message is read to its end before the question (#305).
     assert_eq!(r.next_channel(), Some(("B".to_string(), false)));
-    assert_eq!(
-        drain(&mut r),
-        ["[b manual]", "[c]", "question", "[b]", "b1"]
-    );
+    assert_eq!(drain(&mut r), ["[b manual]", "b1", "[c]", "question"]);
 
     let mut r = replaying_a(&["A", "B"]);
     push(&mut r, "B", &["question"]);
@@ -1005,9 +1002,9 @@ fn a_restart_with_a_channel_mid_read_holds_the_floor_too() {
 }
 
 #[test]
-fn reading_returns_to_a_batch_cut_by_a_priority() {
-    // A reads live; C (opened first) has a waiting message; B's question
-    // cuts A's batch. A resumes right after the question, before C.
+fn a_question_waits_for_the_reading_batch_then_goes_before_other_messages() {
+    // A reads live; C (opened first and focused) has a waiting message;
+    // B's question waits for A's batch (#305), then goes before C.
     let mut r = router(&["C", "A", "B"]);
     r.focus("A");
     push(&mut r, "A", &["a1", "a2"]);
@@ -1016,13 +1013,13 @@ fn reading_returns_to_a_batch_cut_by_a_priority() {
     push(&mut r, "C", &["c1"]);
     push(&mut r, "B", &["question"]);
     r.prioritize("B");
-    assert_eq!(drain(&mut r), ["[b]", "question", "[a]", "a2", "[c]", "c1"]);
+    assert_eq!(drain(&mut r), ["a2", "[b]", "question", "[c]", "c1"]);
 }
 
 #[test]
-fn reading_returns_to_a_batch_cut_by_a_priority_under_focus_only() {
-    // No stall: A reads by next_channel (not focused, not authorized) when
-    // the focused session's question cuts in; A's rest is still read.
+fn a_batch_read_by_next_channel_finishes_under_focus_only() {
+    // A reads by next_channel (not focused, not authorized) when the
+    // focused session's question arrives: A finishes first (#305).
     let mut r = router(&["F", "A"]);
     r.set_focus_only(true);
     r.focus("F");
@@ -1032,24 +1029,28 @@ fn reading_returns_to_a_batch_cut_by_a_priority_under_focus_only() {
     assert_eq!(next(&mut r).unwrap(), "a1");
     push(&mut r, "F", &["question"]);
     r.prioritize("F");
-    assert_eq!(drain(&mut r), ["[f]", "question", "[a]", "a2"]);
+    assert_eq!(drain(&mut r), ["a2", "[f]", "question"]);
 }
 
 #[test]
-fn live_reading_still_lets_a_question_in() {
+fn a_growing_batch_lets_a_question_in_when_it_is_caught_up() {
+    // Live reading of a turn still being written: between its messages
+    // (the batch caught up) a waiting question goes first (#305).
     let mut r = router(&["A", "B"]);
-    push(&mut r, "A", &["a1", "a2"]);
+    r.append("A", "a1", false, false).unwrap();
     assert_eq!(next(&mut r).unwrap(), "a1");
     push(&mut r, "B", &["question"]);
     r.prioritize("B");
-    assert_eq!(drain(&mut r), ["[b]", "question", "[a]", "a2"]);
+    assert_eq!(next(&mut r).unwrap(), "[b]");
+    r.append("A", "a2", false, false).unwrap();
+    assert_eq!(drain(&mut r), ["question", "[a]", "a2"]);
 }
 
 #[test]
-fn a_replay_does_not_hold_text_appended_after_it_started() {
+fn text_appended_during_a_replay_is_read_before_a_question() {
     // Up replays a session that is still writing its turn: what it writes
-    // during the replay is live reading, so a decision gets in after the
-    // replayed entries.
+    // during the replay is live reading, which also finishes before
+    // another session's question (#305).
     let mut r = router(&["A", "B"]);
     r.append("A", "a1", false, false).unwrap();
     r.append("A", "a2", false, false).unwrap();
@@ -1059,7 +1060,7 @@ fn a_replay_does_not_hold_text_appended_after_it_started() {
     r.append("A", "a3", false, false).unwrap();
     push(&mut r, "B", &["question"]);
     r.prioritize("B");
-    assert_eq!(drain(&mut r), ["a2", "[b]", "question", "[a]", "a3"]);
+    assert_eq!(drain(&mut r), ["a2", "a3", "[b]", "question"]);
 }
 
 #[test]

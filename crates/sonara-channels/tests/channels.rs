@@ -569,7 +569,7 @@ fn the_reader_shutting_down_ends_the_channels() {
 }
 
 #[test]
-fn prioritize_reads_a_channel_after_the_current_item_without_cutting_it() {
+fn prioritize_reads_a_channel_after_the_batch_being_read() {
     let r = Rig::two();
     r.ch.set_announce(false);
     r.speak("a", "One is here.");
@@ -578,9 +578,10 @@ fn prioritize_reads_a_channel_after_the_current_item_without_cutting_it() {
     r.speak("b", "A question.");
     r.ch.prioritize("b").unwrap();
     assert_eq!(r.playing().as_deref(), Some("One is here."), "not cut");
+    // The message is read to its end first (#305).
     r.read("One is here.");
-    r.read("A question.");
     r.read("Two is here.");
+    r.read("A question.");
     r.stays_idle();
     assert!(matches!(
         r.ch.prioritize("zz"),
@@ -1034,10 +1035,9 @@ fn flush_during_a_replay_moves_on() {
 }
 
 #[test]
-fn reading_returns_to_a_batch_cut_by_a_priority() {
+fn a_batch_read_by_next_channel_finishes_before_a_focused_question() {
     // Background policy earcon_only, Beta focused: Alpha reads because the
-    // user switched to it. Beta's question cuts in; Alpha's rest follows
-    // (it used to stall: Alpha was gated once it lost the floor).
+    // user switched to it. Alpha finishes, then Beta's question (#305).
     let r = Rig::two();
     r.ch.focus("b").unwrap();
     r.ch.set_focus_only(true).unwrap();
@@ -1050,15 +1050,14 @@ fn reading_returns_to_a_batch_cut_by_a_priority() {
     r.ch.add_with("b", "A question.", true).unwrap();
     r.ch.prioritize("b").unwrap();
     r.read("One.");
+    r.read("Two.");
     r.read("Beta.");
     r.read("A question.");
-    r.read("Alpha.");
-    r.read("Two.");
     r.stays_idle();
 }
 
 #[test]
-fn live_reading_still_lets_a_question_in() {
+fn a_question_in_another_session_waits_for_the_message_being_read() {
     let r = Rig::two();
     r.speak("a", "One.");
     r.speak("a", "Two.");
@@ -1066,10 +1065,9 @@ fn live_reading_still_lets_a_question_in() {
     r.ch.add_with("b", "A question.", true).unwrap();
     r.ch.prioritize("b").unwrap();
     r.read("One.");
+    r.read("Two.");
     r.read("Beta.");
     r.read("A question.");
-    r.read("Alpha.");
-    r.read("Two.");
     r.stays_idle();
 }
 

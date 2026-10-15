@@ -543,9 +543,9 @@ up (and not still reading its last message) starts a new batch.
   and no decision (`ask` with `agent`) cuts in at a message boundary; what arrived meanwhile is read
   after it, decisions first. `flush`, `control stop` of that channel or without a channel (also a
   `turn_start` or an `answered` of its session), `next_channel`, `speak` with `interrupt` into
-  another channel and muting it end that hold. Else a
-  decision is read first (after the item playing); then a channel whose batch a decision cut, which
-  resumes where it stopped; then the channel being read keeps the floor until its batch is read;
+  another channel and muting it end that hold. Else the channel being read keeps the floor until
+  its batch is read, so a message is read to its end (runtime 0.29.1, #305: before, a decision cut
+  in after the item playing, which split a message read one sentence per item); then a decision;
   then the focused channel; then the first channel (in opening order) with something unread. A
   channel you left with `next_channel` is not resumed on its own until it gets a new message.
 - **Muted channels** (`channel_prefs` `muted`): a muted channel's messages wait, unread, and it

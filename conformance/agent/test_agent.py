@@ -252,7 +252,8 @@ def test_the_pause_stays_on_when_another_channel_gets_a_new_turn(rt):
     assert ("Beta answer.", "b") in got and ("Alpha again.", "a") in got
 
 
-def test_a_decision_is_read_before_the_rest_of_another_channels_turn(rt):
+def test_a_decision_waits_for_the_message_being_read(rt):
+    # #305: the other session's message is read to its end first.
     c = agent_client(rt)
     stream(c, "a", TWO_LONG)
     assert starts_long(heard(c, 1)[0], "a", 0)
@@ -261,8 +262,8 @@ def test_a_decision_is_read_before_the_rest_of_another_channels_turn(rt):
     assert earcon(c) == "choice"
     ok(c, {"type": "control", "action": "skip"})
     got = heard(c, 2)
-    assert got[0] == ("Deploy now?", "b")
-    assert starts_long(got[1], "a", 1)
+    assert starts_long(got[0], "a", 1)
+    assert got[1] == ("Deploy now?", "b")
 
 
 def test_the_questions_own_permission_prompt_is_suppressed(rt):
@@ -751,15 +752,6 @@ def test_flush_during_a_replay_moves_on(rt):
     ask_b(c)
     r = ok(c, {"type": "control", "action": "flush"})
     assert (r["flushed"], r["channel"]) == ("channel", "a")
-    assert heard(c, 1) == [("Deploy now?", "b")]
-
-
-def test_live_reading_still_lets_a_question_in(rt):
-    c = agent_client(rt)
-    stream(c, "a", TWO_LONG)
-    assert starts_long(heard(c, 1)[0], "a", 0)
-    ask_b(c)
-    ok(c, {"type": "control", "action": "skip"})
     assert heard(c, 1) == [("Deploy now?", "b")]
 
 
