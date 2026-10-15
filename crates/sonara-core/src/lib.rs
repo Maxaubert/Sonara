@@ -4,4 +4,5 @@ pub mod code_speech;
 pub mod numbers;
 pub mod pronounce;
 pub mod reader;
+mod table;
 pub mod text;

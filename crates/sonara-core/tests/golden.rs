@@ -44,7 +44,12 @@ fn every_golden_case_matches() {
                 "assemble" => {
                     let deltas: Vec<String> =
                         serde_json::from_value(case["deltas"].clone()).unwrap();
-                    Value::Array(assemble(&deltas)) == case["output"]
+                    let got = Value::Array(assemble(&deltas));
+                    let ok = got == case["output"];
+                    if !ok {
+                        failures.push(format!("{name}: got {got}"));
+                    }
+                    ok
                 }
                 "clean_markdown" => {
                     clean_markdown(case["input"].as_str().unwrap())

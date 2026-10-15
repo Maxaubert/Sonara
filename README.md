@@ -105,6 +105,9 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
   (`SQL` "sequel", `nginx` "engine X") and abbreviations (`API` "A P I", `NASA` kept) are read as
   words. Add your own words under **Pronunciations** on the settings page (a word and how to say
   it); they come first.
+- **Tables row by row.** Each row of a Markdown table is one sentence with every value after
+  its column name: "Fund KLP Global, share of funds 16.4 percent, return plus 24 percent." The
+  header row is not read on its own, and Ctrl+Alt+Up goes back one row.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.

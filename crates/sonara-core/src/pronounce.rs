@@ -676,10 +676,11 @@ fn number_words(sign: &str, n: &str) -> String {
         Some((i, f)) => decimal(i, f),
         None => cardinal_str(&n),
     };
-    if sign.is_empty() {
-        w
-    } else {
-        format!("minus {w}")
+    match sign {
+        "" => w,
+        // "+32%" (#303)
+        "+" => format!("plus {w}"),
+        _ => format!("minus {w}"),
     }
 }
 
@@ -801,7 +802,7 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
         measure: re(&format!(
             r"(-?)(?:(\d+(?:\.\d+)?) ?[-–] ?)?(\d[\d,]*(?:\.\d+)?)( ?)({units})"
         )),
-        percent: re(r"(-?)(\d[\d,]*(?:\.\d+)?) ?%"),
+        percent: re(r"([-+]?)(\d[\d,]*(?:\.\d+)?) ?%"),
         times_x: re(r"(\d+(?:\.\d+)?)[x×]"),
         bits: re(
             r"(\d+)-(bit|core|inch|byte|day|hour|minute|second|week|month|year|page|step|part|point|line)",
