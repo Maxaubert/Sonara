@@ -44,7 +44,7 @@
 //!   Decisions and tool announcements stay their own (short) `Speak`: a
 //!   decision is read with priority, ahead of other sessions.
 //! - **Decisions** (`ask`) are spoken with priority: the driver puts the
-//!   channel ahead of the others after the item playing. A question plays
+//!   channel ahead of the others once the message being read ends (#305). A question plays
 //!   `choice` (once while one is unanswered) and marks the channel as
 //!   awaiting an answer; the permission prompt that the same question also
 //!   fires is then dropped, earcon and text, and consumes the mark (#11).

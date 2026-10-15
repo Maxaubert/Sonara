@@ -19,13 +19,13 @@
 //!   preempts it at an entry boundary, not another channel's new entries
 //!   and not its decisions. A flush of the channel (the flush hotkey, a
 //!   new turn in it, `Stop`), `next_channel`, `take_floor` for another
-//!   channel, muting or closing it end the hold (muting also drops its
-//!   resume below). Then a **prioritized**
-//!   channel (`prioritize`, oldest first, until its batch drains: L3
-//!   decisions preempt live reading after the current entry); then the
-//!   channel whose batch a priority cut, which resumes (whatever the
-//!   focus-only gate: it was reading); then the channel that is reading
-//!   keeps the floor until its batch drains; then the focused channel;
+//!   channel, muting or closing it end the hold. Then the channel that is
+//!   reading keeps the floor until its batch drains (whatever the
+//!   focus-only gate), so a message is read to its end, also with one
+//!   entry per sentence (#305; until then an L3 decision cut in after the
+//!   current entry); then a **prioritized** channel (`prioritize`, oldest
+//!   first, until its batch drains: L3 decisions go before other waiting
+//!   messages); then the focused channel;
 //!   then the first channel (in opening order) with something unread. So
 //!   what arrived during a held replay is read after it, decisions first.
 //!   A channel the user switched away from with `next_channel` is skipped
@@ -321,9 +321,6 @@ pub struct Router {
     /// (module docs, #271). With the last entry id that existed when it
     /// started: text added since is live reading, not held.
     hold: Option<(String, u64)>,
-    /// The channel whose batch a prioritized channel cut: it resumes once
-    /// the priorities drained (module docs, #271).
-    resume: Option<String>,
     /// Muted channel ids (open or not, so a channel opened later starts
     /// muted).
     muted: HashSet<String>,
@@ -476,15 +473,11 @@ impl Router {
         true
     }
 
-    /// End the replay hold and the resume of a cut batch (both when `id` is
-    /// `None`, else only where they name `id`): the user moved on.
+    /// End the replay hold (when `id` is `None`, or names its channel):
+    /// the user moved on.
     fn end_hold(&mut self, id: Option<&str>) {
-        let is = |o: &Option<String>| id.is_none() || o.as_deref() == id;
         if id.is_none() || self.hold.as_ref().map(|(h, _)| h.as_str()) == id {
             self.hold = None;
-        }
-        if is(&self.resume) {
-            self.resume = None;
         }
     }
 
@@ -536,7 +529,7 @@ impl Router {
             c.muted = muted;
         }
         if muted {
-            // Nothing reads it any more: no hold, no resume.
+            // Nothing reads it any more: no hold.
             self.end_hold(Some(id));
         }
     }
@@ -686,9 +679,9 @@ impl Router {
         self.audible(id) && !self.is_suppressed(id) && !self.gated(id)
     }
 
-    /// Read `id` before every other channel (after the item being read)
-    /// until its unread entries are read: an L3 decision preempts the batch
-    /// reading now. False if it is not open.
+    /// Read `id` before every other channel (after the batch being read,
+    /// #305) until its unread entries are read: an L3 decision goes before
+    /// other waiting messages. False if it is not open.
     pub fn prioritize(&mut self, id: &str) -> bool {
         if self.index(id).is_none() {
             return false;
@@ -730,22 +723,17 @@ impl Router {
             }
             self.hold = None;
         }
-        let first = self.priority.clone().into_iter().find(|p| self.pickable(p));
-        if first.is_some() {
-            return first;
-        }
-        // The batch a priority cut resumes (it was reading: no gate).
-        if let Some(c) = self.resume.clone() {
-            if self.active.as_deref() == Some(c.as_str()) || !self.ready(&c) {
-                self.resume = None;
-            } else if self.audible(&c) && !self.is_suppressed(&c) {
-                return Some(c);
-            }
-        }
+        // The channel reading keeps the floor until its batch drains: a
+        // message is read to its end, also with one entry per sentence
+        // (#305).
         if let Some(a) = self.active.clone() {
             if self.audible(&a) {
                 return Some(a);
             }
+        }
+        let first = self.priority.clone().into_iter().find(|p| self.pickable(p));
+        if first.is_some() {
+            return first;
         }
         if let Some(f) = self.focus.clone() {
             if self.audible(&f) && !self.is_suppressed(&f) {
@@ -796,12 +784,6 @@ impl Router {
             return None;
         };
         if self.active.as_deref() != Some(target.as_str()) {
-            // A priority cuts the batch reading now: remember it (#271).
-            if let Some(cut) = self.active.clone() {
-                if self.resume.is_none() && self.priority.contains(&target) && self.audible(&cut) {
-                    self.resume = Some(cut);
-                }
-            }
             let handoff = self.is_handoff(&target);
             self.set_reader(&target);
             if handoff {

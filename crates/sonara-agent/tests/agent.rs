@@ -310,8 +310,9 @@ fn the_pause_stays_on_when_another_channel_gets_a_new_turn() {
 }
 
 #[test]
-fn a_decision_is_read_before_the_rest_of_another_channels_turn() {
-    // test_background_decision_preempts_current_reader
+fn a_decision_in_another_session_waits_for_the_message_being_read() {
+    // #305: one entry per sentence (Kokoro) made the old preemption
+    // (test_background_decision_preempts_current_reader) cut a message.
     let r = Rig::new();
     r.stream("a", "One is here. Two is here.", 0, None);
     r.wait_for("One is here.");
@@ -323,9 +324,9 @@ fn a_decision_is_read_before_the_rest_of_another_channels_turn() {
     r.agent.ask("b", &ask).unwrap();
     assert_eq!(r.playing().as_deref(), Some("One is here."), "not cut");
     r.read("One is here.");
+    r.read("Two is here.");
     r.read("Deploy now?");
     r.read("Option 1: Yes.");
-    r.read("Two is here.");
     r.stays_idle();
 }
 
@@ -1374,19 +1375,6 @@ fn a_new_prompt_in_the_replayed_session_ends_the_replay() {
     r.agent.turn_start("a", None, None).unwrap();
     r.read("Deploy now?");
     r.read("Option 1: Yes.");
-    r.stays_idle();
-}
-
-#[test]
-fn live_reading_still_lets_a_question_in() {
-    let r = Rig::new();
-    r.stream("a", "One is here. Two is here.", 0, None);
-    r.wait_for("One is here.");
-    r.agent.ask("b", &deploy()).unwrap();
-    r.read("One is here.");
-    r.read("Deploy now?");
-    r.read("Option 1: Yes.");
-    r.read("Two is here.");
     r.stays_idle();
 }
 
