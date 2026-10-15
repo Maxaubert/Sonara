@@ -198,7 +198,7 @@ pub fn end_of_code(info: &str) -> String {
 }
 
 /// Source line `n` (1-based) of a block in `info`'s language, as read
-/// aloud: "Line three. ..." ending as a sentence; `None` when nothing in it is
+/// aloud: "Line three: ..." ending as a sentence; `None` when nothing in it is
 /// spoken (blank, or a lone semicolon).
 pub fn line(raw: &str, info: &str, n: usize) -> Option<String> {
     let lang = info_word(info);
@@ -219,8 +219,9 @@ pub fn line(raw: &str, info: &str, n: usize) -> Option<String> {
         return None;
     }
     // The number in words: "Line 1." ran into the next word in Kokoro
-    // ("oned ...", 2026-10-14).
-    let mut out = format!("Line {}. {spoken}", crate::numbers::cardinal(n as u64));
+    // ("oned ...", 2026-10-14). A colon, not a full stop: at the code speed
+    // Kokoro still read "Line one." as "line oned" (#317).
+    let mut out = format!("Line {}: {spoken}", crate::numbers::cardinal(n as u64));
     if !out.ends_with(['.', '!', '?']) {
         out.push('.');
     }
