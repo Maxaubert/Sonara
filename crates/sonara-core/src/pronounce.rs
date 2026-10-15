@@ -398,6 +398,31 @@ static TECH: Lazy<HashMap<&'static str, &'static str>> = Lazy::new(|| {
         ("a11y", "accessibility"),
         ("TODO", "to do"),
         ("OK", "okay"),
+        // Lowercase abbreviations in chat ("your api key", #310): a
+        // capitalised one is spelled by Festival's rule, these were read
+        // as words.
+        ("api", "A P I"),
+        ("apis", "A P Is"),
+        ("id", "I D"),
+        ("ids", "I Ds"),
+        ("url", "U R L"),
+        ("urls", "U R Ls"),
+        ("uri", "U R I"),
+        ("cli", "C L I"),
+        ("ui", "U I"),
+        ("ux", "U X"),
+        ("ai", "A I"),
+        ("llm", "L L M"),
+        ("llms", "L L Ms"),
+        ("gpu", "G P U"),
+        ("cpu", "C P U"),
+        ("sdk", "S D K"),
+        ("ssh", "S S H"),
+        ("uuid", "U U I D"),
+        ("html", "H T M L"),
+        ("css", "C S S"),
+        ("pdf", "P D F"),
+        ("sql", "sequel"),
     ])
 });
 

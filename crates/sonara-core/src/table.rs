@@ -1,6 +1,6 @@
-//! Markdown tables read row by row (#303): each row becomes one sentence
-//! with every value after its column name, "Fund KLP Global, share of funds
-//! 16.4%, return +24%.", instead of one run of cells.
+//! Markdown tables read row by row (#303): each row is one line with every
+//! value after its column name, "Fund: KLP Global. Share of funds: 16.4%.
+//! Return: +24%." (#313), instead of one run of cells.
 //!
 //! A table is a line with a `|`, then a separator line of dashes, then the
 //! rows that follow while they have a `|`. The header is not read on its own.
@@ -39,36 +39,27 @@ fn cells(line: &str) -> Vec<String> {
     out.iter().map(|c| c.trim().to_string()).collect()
 }
 
-/// "Share of funds" reads mid-sentence as "share of funds"; "ETF" stays.
-fn mid_sentence(header: &str) -> String {
-    let mut chars = header.chars();
-    match (chars.next(), chars.next()) {
-        (Some(first), Some(second)) if first.is_uppercase() && second.is_lowercase() => first
-            .to_lowercase()
-            .chain(header[first.len_utf8()..].chars())
-            .collect(),
-        _ => header.to_string(),
-    }
-}
-
-/// One row as a sentence; an empty cell is left out, a cell past the
-/// header (or under an empty one) is read without a name.
+/// One row as one line: each value after its column name and a colon, and
+/// a full stop after each value (#313: "Fund: KLP Global. Share of funds:
+/// 16.4%." pauses between a name and its value, where "Fund KLP Global,
+/// share of funds 16.4%" ran them together). An empty cell is left out, a
+/// cell past the header (or under an empty one) is read without a name.
 fn speak_row(header: &[String], row: &[String]) -> String {
-    let parts: Vec<String> = row
-        .iter()
+    row.iter()
         .enumerate()
         .filter(|(_, value)| !value.is_empty())
-        .map(|(i, value)| match header.get(i).filter(|h| !h.is_empty()) {
-            Some(h) if i == 0 => format!("{h} {value}"),
-            Some(h) => format!("{} {value}", mid_sentence(h)),
-            None => value.clone(),
+        .map(|(i, value)| {
+            let mut part = match header.get(i).filter(|h| !h.is_empty()) {
+                Some(h) => format!("{h}: {value}"),
+                None => value.clone(),
+            };
+            if !part.ends_with(['.', '!', '?']) {
+                part.push('.');
+            }
+            part
         })
-        .collect();
-    let mut s = parts.join(", ");
-    if !s.is_empty() && !s.ends_with(['.', '!', '?']) {
-        s.push('.');
-    }
-    s
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The first table in `text`, if any.
@@ -157,7 +148,6 @@ mod tests {
     #[test]
     fn unicode_never_panics() {
         let t = find("| Ålesund | ✓ |\n|---|---|\n| é | 日本 |").unwrap();
-        assert_eq!(t.rows, vec!["Ålesund é, ✓ 日本."]);
-        assert_eq!(mid_sentence("Ø"), "Ø");
+        assert_eq!(t.rows, vec!["Ålesund: é. ✓: 日本."]);
     }
 }

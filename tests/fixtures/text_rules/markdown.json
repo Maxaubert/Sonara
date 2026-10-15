@@ -47,7 +47,7 @@
       "name": "snake_case_unsnaked",
       "fn": "normalize_for_speech",
       "input": "Call get_user_id and _voiced_upto.",
-      "output": "Call get user id and voiced upto."
+      "output": "Call get user I D and voiced upto."
     },
     {
       "name": "arrow_and_ampersand",

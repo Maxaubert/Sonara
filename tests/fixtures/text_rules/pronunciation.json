@@ -356,6 +356,12 @@
       "output": "twenty three point five percent"
     },
     {
+      "name": "lowercase_abbreviations_are_spelled",
+      "fn": "pronounce",
+      "input": "your api key is tied to your account id, so check the url, the cli and the gpu",
+      "output": "your A P I key is tied to your account I D, so check the U R L, the C L I and the G P U"
+    },
+    {
       "name": "percent_with_a_plus_sign",
       "fn": "pronounce",
       "input": "return +32%, then -8.5%",

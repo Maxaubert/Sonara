@@ -1,5 +1,5 @@
 {
-  "description": "Markdown tables are read row by row, each value after its column name (#303).",
+  "description": "Markdown tables are read row by row, each value after its column name and a colon (#303, #313).",
   "cases": [
     {
       "name": "table_rows_name_every_column",
@@ -10,8 +10,8 @@
       "output": [
         "Here are the funds:",
         null,
-        "Fund K L P Emerging Markets Index, share of funds sixteen point eight percent, return plus thirty two percent.",
-        "Fund A B International Technology (active), share of funds twelve point six percent, return minus eight point five percent.",
+        "Fund: K L P Emerging Markets Index. Share of funds: sixteen point eight percent. Return: plus thirty two percent.",
+        "Fund: A B International Technology (active). Share of funds: twelve point six percent. Return: minus eight point five percent.",
         null,
         "That is all."
       ]
@@ -27,8 +27,8 @@
       ],
       "output": [
         "Results:",
-        "Name Ann, score 3.",
-        "Name Bob.",
+        "Name: Ann. Score: 3.",
+        "Name: Bob.",
         null,
         "Done."
       ]
@@ -40,7 +40,7 @@
         "Key | ETF\n--- | ---\nA | yes | extra"
       ],
       "output": [
-        "Key A, E T F yes, extra."
+        "Key: A. E T F: yes. extra."
       ]
     },
     {
@@ -50,7 +50,7 @@
         "| Op | Meaning |\n|---|---|\n| a \\| b | Either one. |"
       ],
       "output": [
-        "Op a b, meaning Either one."
+        "Op: a b. Meaning: Either one."
       ]
     },
     {

@@ -190,7 +190,7 @@ pub(crate) mod tests {
     fn snake_case_and_arrows() {
         assert_eq!(
             normalize_for_speech("call get_user_id -> done & ok"),
-            "call get user id to done and ok"
+            "call get user I D to done and ok"
         );
     }
 
