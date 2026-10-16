@@ -112,8 +112,8 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.
-- **Other earcons** come from the runtime: `turn_done` when a reply ends, `nav` and `nav_edge`
-  for a restart or flush (`nav_edge`: nothing to restart, or nothing to flush), `session_change` when the
+- **Other earcons** come from the runtime: `turn_done` when a reply ends, `nav` for a restart
+  or flush and `nav_edge` when there is nothing to move to, restart or flush, `session_change` when the
   voice moves to another session (followed by "Session changed: *folder*."), `error` when
   speech fails, and `summary_failed` when a summary-mode turn had no text to read. You can
   replace any of them with your own sound: see [Custom chimes](#custom-chimes).
@@ -233,11 +233,12 @@ Sonara's built-in chimes are original sounds, synthesised from scratch for it (M
 
 | Chime | When | Sound |
 | --- | --- | --- |
-| `choice` | a question needs your answer | kalimba, two notes rising an octave |
+| `choice` | a question needs your answer | two bubble pops rising |
 | `permission` | a permission prompt | two soft rising blips |
-| `turn_done` | a reply ends | kalimba arpeggio landing on the tonic |
+| `turn_done` | a reply ends | marimba, two notes up a third |
 | `session_change` | the voice moves to another session | slow, warm e-piano arpeggio |
-| `nav`, `nav_edge` | a restart or flush (`nav_edge`: nothing to restart) | a light tick (the same sound) |
+| `nav` | a restart (hold Ctrl+Alt+Up) or a flush (hold Ctrl+Alt+Down) | a short rewind swell into a light tick |
+| `nav_edge` | nothing to move to, restart or flush | the light tick alone |
 | `error` | speech fails | a low falling knock pair |
 | `summary_failed` | a summary-mode turn had no text | a short, soft falling knock |
 

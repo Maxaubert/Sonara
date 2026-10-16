@@ -106,7 +106,12 @@ impl HotkeyTarget {
                 ("back", self.previous_section())
             }
             (Action::Restart | Action::PreviousQuestion, Press::Hold) => {
-                ("restart", self.apply(Action::Restart))
+                let done = self.apply(Action::Restart);
+                // The restart sound, as for a flush (#318).
+                if done.is_ok() {
+                    self.earcon(Earcon::Nav);
+                }
+                ("restart", done)
             }
             (Action::NextQuestion | Action::Flush, Press::Tap) => ("next", self.next_section()),
             (Action::Flush, Press::Hold) => ("flush", self.apply(Action::Flush)),
