@@ -269,6 +269,40 @@ impl Engine for BrokenEngine {
     fn cancel(&self) {}
 }
 
+/// The fake engine, except that a synthesis whose text holds "boom" panics,
+/// as a G2P bug once did inside Kokoro's phonemizer.
+#[derive(Default)]
+pub struct PanicEngine {
+    pub inner: FakeEngine,
+}
+
+impl Engine for PanicEngine {
+    fn id(&self) -> EngineId {
+        EngineId("panic")
+    }
+
+    fn license_class(&self) -> LicenseClass {
+        LicenseClass::Permissive
+    }
+
+    fn voices(&self) -> Vec<Voice> {
+        Vec::new()
+    }
+
+    fn warm(&self) -> Result<()> {
+        Ok(())
+    }
+
+    fn synthesize(&self, text: &str, voice: &str, rate: u32) -> Result<PcmStream> {
+        assert!(!text.contains("boom"), "a bug in the engine");
+        self.inner.synthesize(text, voice, rate)
+    }
+
+    fn cancel(&self) {
+        self.inner.cancel()
+    }
+}
+
 /// The fake engine as `other`, offering only its `tone` voice.
 #[derive(Default)]
 pub struct OtherEngine {

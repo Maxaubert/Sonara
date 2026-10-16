@@ -4,6 +4,7 @@
 use sonara_core::reader::ItemId;
 use sonara_engine::{Engine, EngineId, PcmChunk};
 use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 
@@ -176,7 +177,12 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
         };
         match task {
             Task::Warm(engine) => {
-                let result = engine.warm();
+                let result =
+                    catch_unwind(AssertUnwindSafe(|| engine.warm())).unwrap_or_else(|_| {
+                        Err(sonara_engine::Error::Engine(
+                            "the engine panicked while warming up".into(),
+                        ))
+                    });
                 shared.lock().in_flight = None;
                 if let Err(e) = result {
                     done(Done::WarmFailed {
@@ -188,37 +194,14 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
             }
             Task::Chunk(job) => {
                 let streams = job.engine.streams();
-                let result = job
-                    .engine
-                    .synthesize(&job.text, &job.voice, job.rate)
-                    .and_then(|stream| {
-                        if !streams {
-                            return stream.collect::<Result<Vec<_>, _>>();
-                        }
-                        // Each piece goes out as it comes (#235); the whole
-                        // chunk follows. A failure after audio came keeps
-                        // that audio (a cancel does not: its item ended).
-                        let mut all = Vec::new();
-                        for piece in stream {
-                            match piece {
-                                Ok(pcm) => {
-                                    done(Done::Part {
-                                        item: job.item,
-                                        chunk: job.chunk,
-                                        pcm: pcm.clone(),
-                                    });
-                                    all.push(pcm);
-                                }
-                                Err(e)
-                                    if all.is_empty()
-                                        || matches!(e, sonara_engine::Error::Cancelled) =>
-                                {
-                                    return Err(e)
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                        Ok(all)
+                // A panic in the engine (a G2P bug, say) fails this chunk
+                // only: the thread lives on and the reader hears the chunk
+                // ended, instead of waiting for it forever in silence.
+                let result = catch_unwind(AssertUnwindSafe(|| synthesize(&job, streams, &done)))
+                    .unwrap_or_else(|_| {
+                        Err(sonara_engine::Error::Engine(
+                            "the engine panicked while synthesizing".into(),
+                        ))
                     });
                 shared.lock().in_flight = None;
                 done(Done::Chunk {
@@ -230,4 +213,39 @@ fn run(shared: &Shared, done: impl Fn(Done)) {
             }
         }
     }
+}
+
+fn synthesize(
+    job: &Job,
+    streams: bool,
+    done: &impl Fn(Done),
+) -> Result<Vec<PcmChunk>, sonara_engine::Error> {
+    job.engine
+        .synthesize(&job.text, &job.voice, job.rate)
+        .and_then(|stream| {
+            if !streams {
+                return stream.collect::<Result<Vec<_>, _>>();
+            }
+            // Each piece goes out as it comes (#235); the whole
+            // chunk follows. A failure after audio came keeps
+            // that audio (a cancel does not: its item ended).
+            let mut all = Vec::new();
+            for piece in stream {
+                match piece {
+                    Ok(pcm) => {
+                        done(Done::Part {
+                            item: job.item,
+                            chunk: job.chunk,
+                            pcm: pcm.clone(),
+                        });
+                        all.push(pcm);
+                    }
+                    Err(e) if all.is_empty() || matches!(e, sonara_engine::Error::Cancelled) => {
+                        return Err(e)
+                    }
+                    Err(_) => break,
+                }
+            }
+            Ok(all)
+        })
 }

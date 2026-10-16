@@ -735,7 +735,8 @@ name it got. With the extension on, `channel_close` also forgets the channel's t
 `control stop` without a channel also drops every channel's summary work and held decisions.
 `control flush` (#228) does that for the session being read: its prose held by `read_mode`, the
 prose kept for its summary, its summaries in flight, waiting or settling and the decisions waiting
-for them are dropped, and the rest of that reply is skipped: until the session's next `turn_start`,
+for them are dropped, and the rest of that reply is skipped: until the session's next turn (its
+next `turn_start`, or a tool or decision after its `turn_end`, which starts a new reply),
 its prose (also late prose after its `turn_end`) is dropped and its tool runs are not announced
 (logged `dropped: flushed reply`), and it makes no summary. Its decisions (question, permission,
 plan) asked later in that reply are still read, since they need an answer; `turn_done` still plays
