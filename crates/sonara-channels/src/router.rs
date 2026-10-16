@@ -908,6 +908,17 @@ impl Router {
     /// the channel is not open, has nothing to replay, or has no such
     /// entry.
     pub fn replay_from(&mut self, id: &str, entry: Option<u64>) -> bool {
+        self.read_at(id, entry, true)
+    }
+
+    /// `replay_from` for a step back or on (`Channels::back`/`forward`):
+    /// it holds the floor too, but it is not a replay, so a `next_channel`
+    /// back to the channel resumes where it stopped.
+    pub fn step_to(&mut self, id: &str, entry: u64) -> bool {
+        self.read_at(id, Some(entry), false)
+    }
+
+    fn read_at(&mut self, id: &str, entry: Option<u64>, replay: bool) -> bool {
         let Some(c) = self.channel_mut(id) else {
             return false;
         };
@@ -922,7 +933,9 @@ impl Router {
             },
         };
         c.cursor = at;
-        c.replaying = true;
+        if replay {
+            c.replaying = true;
+        }
         let handoff = self.is_handoff(id);
         self.set_reader(id);
         self.suppressed.remove(id);
@@ -931,7 +944,7 @@ impl Router {
         // The user started it: it holds the floor (#271).
         self.start_hold(id);
         if handoff {
-            self.arm(id, true, true);
+            self.arm(id, replay, true);
         }
         true
     }

@@ -1523,9 +1523,10 @@ impl Rules {
     /// work still out lands dead.
     pub fn close(&mut self, channel: &str) {
         self.turns.remove(channel);
-        // Turn-end slots of the channel still waiting land dead too, so a
-        // watchdog that fires later finds nothing to speak.
-        self.watched.retain(|_, r| r.channel != channel);
+        // Its turn-end slots stay watched: a worker that never answers is
+        // still served by the watchdog, so the slots behind it (any
+        // session's) move on. `apply` drops the release, as its channel
+        // has no turn state (or a new gen) any more.
     }
 
     /// The channel has turn state.

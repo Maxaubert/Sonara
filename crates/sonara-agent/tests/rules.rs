@@ -1063,6 +1063,27 @@ fn the_watchdog_speaks_a_hung_summary_raw_and_releases_the_ones_behind() {
 }
 
 #[test]
+fn a_closed_channel_whose_summary_hangs_still_lets_later_summaries_through() {
+    // Its watchdog still serves the slot: the summaries behind it are
+    // heard, the closed channel's text is not.
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    prose(&mut r, "b", &PAD.repeat(6), 0, true);
+    let ea = end_and_settle(&mut r, "a", None);
+    let ja = jobs(&ea).remove(0);
+    let jb = jobs(&end_and_settle(&mut r, "b", None)).remove(0);
+    r.close("a");
+    assert!(spoken(&r.digest_done(&jb, Some("B.".into()))).is_empty());
+    let dog = timers(&ea)
+        .into_iter()
+        .map(|(_, t)| t)
+        .find(|t| matches!(t, Timer::Watchdog { .. }))
+        .unwrap();
+    assert_eq!(spoken(&r.fire(&dog, None)), ["B."]);
+    assert!(spoken(&r.digest_done(&ja, Some("Late.".into()))).is_empty());
+}
+
+#[test]
 fn a_closed_channel_never_comes_back_through_a_late_summary() {
     let mut r = summary_rules();
     prose(&mut r, "fg", &PAD.repeat(6), 0, true);
