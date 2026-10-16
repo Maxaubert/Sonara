@@ -31,7 +31,7 @@
 //!   `rate_limited`; either way its `RetryInfo.retryDelay` (or
 //!   `Retry-After`) is kept, so nothing is sent before it ends (`health`).
 //!   A per-day limit waits for the daily reset (`daily_wait`).
-use super::adapter::{encode, ModelInfo, ModelSource, StreamPiece, VoiceSource};
+use super::adapter::{encode, stopped_early, ModelInfo, ModelSource, StreamPiece, VoiceSource};
 use super::adapter::{key_allowed, Adapter, ErrorBody, HttpReply, HttpRequest, VoiceInfo};
 use super::audio::decode_body;
 use super::error::{clean, headline, model_message, ExtError};
@@ -408,7 +408,9 @@ impl Adapter for Gemini {
 
     /// The `inlineData` parts of the first candidate, in order, as one
     /// chunk. No audio at all (a blocked or empty generation) is `server`:
-    /// it belongs to this text, so it must not block the engine.
+    /// it belongs to this text, so it must not block the engine. Audio that
+    /// stopped for another reason than `STOP` (`stopped_early`) is the same:
+    /// only part of the text, so the fallback reads all of it.
     fn audio(&self, reply: &HttpReply, label: &str) -> Result<PcmChunk, ExtError> {
         let v: Value = serde_json::from_slice(&reply.body).map_err(|_| {
             ExtError::new(
@@ -417,7 +419,11 @@ impl Adapter for Gemini {
             )
         })?;
         let piece = self.audio_of(&v, label, None)?;
-        piece.audio.ok_or_else(|| no_audio(label, piece.note))
+        match (piece.audio, piece.note) {
+            (Some(_), Some(why)) if stopped_early(&why) => Err(cut_short(label, &why)),
+            (Some(pcm), _) => Ok(pcm),
+            (None, note) => Err(no_audio(label, note)),
+        }
     }
 
     fn map_error(&self, reply: &HttpReply, _voice: &str, _listed: Option<bool>) -> ExtError {
@@ -640,6 +646,15 @@ impl Adapter for Gemini {
     }
 }
 
+/// Audio that stopped before the end of the text: `server`, of this text
+/// only.
+pub fn cut_short(label: &str, why: &str) -> ExtError {
+    ExtError::new(
+        Reason::Server,
+        format!("{label} stopped the answer early (reason: {why})"),
+    )
+}
+
 /// No audio at all for a text: `server`, of this text only.
 pub fn no_audio(label: &str, note: Option<String>) -> ExtError {
     ExtError::new(
@@ -825,6 +840,30 @@ mod tests {
             assert!(e.message.contains(why), "{}", e.message);
             assert!(e.reason.is_transient(), "never blocks the engine");
         }
+    }
+
+    #[test]
+    fn audio_that_stopped_early_is_a_server_failure_not_an_answer() {
+        // Review 2026-10-16 #10: audio with a finishReason other than STOP
+        // is part of the text only; the fallback reads all of it.
+        let a = adapter(json!({}));
+        let parts = json!([{"inlineData": {"mimeType": "audio/L16;codec=pcm;rate=24000",
+            "data": b64(&[1, 2])}}]);
+        for why in ["MAX_TOKENS", "OTHER", "SAFETY"] {
+            let body = json!({"candidates": [{"content": {"role": "model", "parts": parts},
+                "finishReason": why}]});
+            let e = a
+                .audio(&reply(200, &body.to_string()), "Gemini")
+                .unwrap_err();
+            assert_eq!(e.reason, Reason::Server, "{why}");
+            assert!(e.message.contains(why), "{}", e.message);
+        }
+        // STOP, or no reason given, is the whole answer.
+        assert!(a
+            .audio(&reply(200, &audio_reply(parts.clone())), "Gemini")
+            .is_ok());
+        let body = json!({"candidates": [{"content": {"role": "model", "parts": parts}}]});
+        assert!(a.audio(&reply(200, &body.to_string()), "Gemini").is_ok());
     }
 
     #[test]

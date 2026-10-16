@@ -14,22 +14,26 @@
 //! speak), which also bounds the request thread (`Within`).
 //!
 //! An answer that ends early after audio came (a stall, a broken
-//! connection, `answer_ms`) keeps the audio received (spec 13.2). In send
-//! mode `message` the rest of the text is then read with the fallback,
-//! the cue first once per episode, from the start of the sentence the
-//! audio had reached (`rest_of`: an estimate from the seconds played at
-//! `CHARS_PER_SECOND`, set low so a sentence may be read twice but none
-//! is dropped); the notice names the fallback. A mute (the hold) during a
-//! message reads the rest locally the same way, with no cue and no notice
-//! (a mute is no failure). In send mode `sentence` the chunk ends with
-//! what was spoken, as before.
-use super::adapter::{Adapter, StreamPiece, Within};
+//! connection, `answer_ms`, or a last reason other than `STOP`, such as
+//! Gemini's `MAX_TOKENS`) keeps the audio received (spec 13.2) and, when
+//! transient, counts toward the breaker: only a clean end is a success,
+//! not the first audio. In send mode `message` the rest of the text is
+//! then read with the fallback, the cue first once per episode, from the
+//! start of the sentence the audio had reached (`rest_of`: an estimate
+//! from the seconds played at `CHARS_PER_SECOND`, set low and slowed with
+//! the rate, so a sentence may be read twice but none is dropped); the
+//! notice names the fallback. A mute (the hold) during a message reads the
+//! rest locally the same way, with no cue and no notice (a mute is no
+//! failure). In send mode `sentence` the chunk ends with what was spoken,
+//! as before.
+use super::adapter::{stopped_early, Adapter, StreamPiece, Within};
 use super::cache::CueCache;
 use super::error::cue_text;
 use super::error::ExtError;
 use super::health::Health;
 use super::hold::{self, Hold, Scope};
 use super::keys::Secret;
+use super::rate;
 use super::sse::{self, Event};
 use super::worker::CancelToken;
 use super::{External, Notice, NoticeFn, RETRY_AFTER_MAX};
@@ -42,15 +46,19 @@ use std::time::{Duration, Instant};
 const POLL: Duration = Duration::from_millis(10);
 
 /// The speaking rate assumed to find where a cut answer stopped in its
-/// text: lower than most voices (about 15 characters a second), so the
-/// estimate falls behind the real place, never ahead of it.
+/// text at 200 wpm (speed 1.0): lower than most voices (about 15
+/// characters a second), so the estimate falls behind the real place,
+/// never ahead of it.
 pub const CHARS_PER_SECOND: f64 = 12.0;
 
-/// The text still to read after `secs` seconds of `text` were spoken: from
-/// the start of the sentence the estimated place is in (`CHARS_PER_SECOND`),
-/// trimmed; empty when the estimate is past the end.
-pub fn rest_of(text: &str, secs: f64) -> &str {
-    let reached = (secs.max(0.0) * CHARS_PER_SECOND) as usize;
+/// The text still to read after `secs` seconds of `text` were spoken at
+/// `wpm`: from the start of the sentence the estimated place is in
+/// (`CHARS_PER_SECOND`, scaled down by a rate below 200 wpm, where the
+/// provider reads slower; never up, review 2026-10-16), trimmed; empty
+/// when the estimate is past the end.
+pub fn rest_of(text: &str, secs: f64, wpm: u32) -> &str {
+    let pace = CHARS_PER_SECOND * rate::factor(wpm).min(1.0);
+    let reached = (secs.max(0.0) * pace) as usize;
     let Some((at, _)) = text.char_indices().nth(reached) else {
         return "";
     };
@@ -128,9 +136,9 @@ pub(super) enum Begun {
 
 /// What the wait for the first audio saw.
 enum First {
-    /// The first audio, the rest of the stream and the half sample it
-    /// ended with, if any.
-    Audio(PcmChunk, Receiver<Event>, Vec<u8>),
+    /// The first audio, the rest of the stream, the half sample it ended
+    /// with, if any, and the note it carried.
+    Audio(PcmChunk, Receiver<Event>, Vec<u8>, Option<String>),
     Failed(ExtError),
 }
 
@@ -190,12 +198,13 @@ impl External {
                 }
             };
             match self.first_audio(adapter, wire, gen, rx, first_audio, voice)? {
-                First::Audio(pcm, rx, carry) => {
+                First::Audio(pcm, rx, carry, note) => {
                     return Ok(Begun::Playing(Box::new(Rest {
                         first: Some(pcm),
                         rx: Some(rx),
                         wire,
                         carry,
+                        note,
                         deadline: started + total,
                         idle: first_audio,
                         last: Instant::now(),
@@ -277,8 +286,11 @@ impl External {
                 Ok(ev @ (Event::Data(_) | Event::Bytes(_) | Event::Whole(_))) => {
                     match decode(adapter, wire, &mut carry, ev, &self.label) {
                         Ok(StreamPiece {
-                            audio: Some(pcm), ..
-                        }) if !pcm.samples.is_empty() => return Ok(First::Audio(pcm, rx, carry)),
+                            audio: Some(pcm),
+                            note: n,
+                        }) if !pcm.samples.is_empty() => {
+                            return Ok(First::Audio(pcm, rx, carry, n.or(note)))
+                        }
                         Ok(p) => note = p.note.or(note),
                         Err(e) => return Ok(First::Failed(e)),
                     }
@@ -330,6 +342,8 @@ struct Rest {
     wire: Wire,
     /// A half sample from the last event (`Adapter::stream_piece`).
     carry: Vec<u8>,
+    /// The last reason the provider gave for stopping (`StreamPiece::note`).
+    note: Option<String>,
     deadline: Instant,
     /// The longest wait for the next audio (`first_audio_ms`).
     idle: Duration,
@@ -363,11 +377,17 @@ struct Rest {
 
 impl Rest {
     /// The stream ended early: the audio received stays, the log says why,
-    /// and in a message the rest of the text is read with the fallback
-    /// (module docs).
+    /// a transient reason counts toward the breaker (review 2026-10-16: a
+    /// provider that always stalls after its first audio must open it), and
+    /// in a message the rest of the text is read with the fallback (module
+    /// docs).
     fn cut(&mut self, reason: Reason, message: String) -> Option<Result<PcmChunk>> {
         self.done = true;
         self.rx = None;
+        if reason.is_transient() {
+            self.health
+                .record_failure(&ExtError::new(reason, message.clone()), &self.cache_key.0);
+        }
         let rest = self.rest_text();
         let fallback = match (&rest, &self.fallback) {
             (Some(_), Some(f)) => Some(f.id()),
@@ -418,7 +438,7 @@ impl Rest {
         if !self.message {
             return None;
         }
-        let rest = rest_of(&self.cache_key.2, self.played);
+        let rest = rest_of(&self.cache_key.2, self.played, self.rate);
         (!rest.is_empty()).then(|| rest.to_string())
     }
 
@@ -451,9 +471,27 @@ impl Rest {
         self.message || CueCache::cacheable(&self.cache_key.2)
     }
 
+    /// The stream ended: cleanly, a success (the first audio alone is
+    /// none); with a reason other than `STOP` after audio came, the answer
+    /// stopped early and is cut (review 2026-10-16), not kept.
     fn finish(&mut self) -> Option<Result<PcmChunk>> {
+        if let Some(why) = self.note.clone().filter(|n| stopped_early(n)) {
+            let m = format!("{} stopped the answer early (reason: {why})", self.label);
+            return self.cut(Reason::Server, m);
+        }
         self.done = true;
         self.rx = None;
+        if self.health.record_success(&self.cache_key.0) {
+            if let Some(n) = &self.notice {
+                n(Notice {
+                    engine: self.engine,
+                    reason: None,
+                    status: None,
+                    message: "recovered".into(),
+                    fallback: self.fallback.as_ref().map(|f| f.id()),
+                });
+            }
+        }
         let (voice, rate, text) = &self.cache_key;
         self.cache.keep(
             voice,
@@ -511,16 +549,16 @@ impl Iterator for Rest {
             match rx.recv_timeout(left.min(quiet).min(POLL)) {
                 Ok(ev @ (Event::Data(_) | Event::Bytes(_) | Event::Whole(_))) => {
                     match decode(&self.adapter, self.wire, &mut self.carry, ev, &self.label) {
-                        Ok(StreamPiece {
-                            audio: Some(pcm), ..
-                        }) if !pcm.samples.is_empty() => {
-                            if self.keeps() {
-                                self.got.push(pcm.clone());
+                        Ok(StreamPiece { audio, note }) => {
+                            self.note = note.or(self.note.take());
+                            if let Some(pcm) = audio.filter(|p| !p.samples.is_empty()) {
+                                if self.keeps() {
+                                    self.got.push(pcm.clone());
+                                }
+                                self.played(&pcm);
+                                return Some(Ok(pcm));
                             }
-                            self.played(&pcm);
-                            return Some(Ok(pcm));
                         }
-                        Ok(_) => {}
                         Err(e) => return self.cut(e.reason, e.message),
                     }
                 }
@@ -543,16 +581,27 @@ mod tests {
     #[test]
     fn the_rest_starts_at_the_sentence_the_audio_reached() {
         let t = "One two three. Four five six! Seven?\n\nEight nine.";
-        assert_eq!(rest_of(t, 0.0), t);
+        assert_eq!(rest_of(t, 0.0, 200), t);
         // 12 characters: still in the first sentence.
-        assert_eq!(rest_of(t, 1.0), t);
+        assert_eq!(rest_of(t, 1.0, 200), t);
         // 24 characters: in "Four five six!", which is read again.
-        assert_eq!(rest_of(t, 2.0), "Four five six! Seven?\n\nEight nine.");
+        assert_eq!(rest_of(t, 2.0, 200), "Four five six! Seven?\n\nEight nine.");
         // 42 characters: in "Eight nine."
-        assert_eq!(rest_of(t, 3.5), "Eight nine.");
-        assert_eq!(rest_of(t, 60.0), "", "past the end: nothing left");
+        assert_eq!(rest_of(t, 3.5, 200), "Eight nine.");
+        assert_eq!(rest_of(t, 60.0, 200), "", "past the end: nothing left");
         // A decimal point is no sentence end.
         let d = "It is 3.5 times faster than before.";
-        assert_eq!(rest_of(d, 2.0), d);
+        assert_eq!(rest_of(d, 2.0, 200), d);
+    }
+
+    #[test]
+    fn the_estimated_place_slows_with_the_rate() {
+        // Review 2026-10-16 #11: at 100 wpm the provider reads at half
+        // speed, so 2 s reach 12 characters, not 24 (still the first
+        // sentence). Faster than 200 wpm the estimate stays at 12 a second.
+        let t = "One two three. Four five six! Seven?\n\nEight nine.";
+        assert_eq!(rest_of(t, 2.0, 100), t);
+        assert_eq!(rest_of(t, 4.0, 100), "Four five six! Seven?\n\nEight nine.");
+        assert_eq!(rest_of(t, 2.0, 400), rest_of(t, 2.0, 200));
     }
 }

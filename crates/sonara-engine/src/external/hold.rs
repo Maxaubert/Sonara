@@ -15,10 +15,11 @@
 //!   even while held) and `local` (Sonara's own mute cues such as
 //!   "Unmuted.": the fallback speaks them even when not held).
 //!   `External::test` (the Test button) is always explicit.
-//! - Every change moves the hold's `epoch`, so an engine whose request was
+//! - Every raise moves the hold's `epoch`, so an engine whose request was
 //!   cut by a mute that already lifted again (a quick mute and unmute) can
 //!   tell it from a reader cancel and still speak the chunk locally,
-//!   instead of dropping it.
+//!   instead of dropping it. A release does not move it: a reader cancel
+//!   at the moment of an unmute is still a cancel.
 use super::worker::CancelToken;
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -28,7 +29,7 @@ use std::sync::{Arc, Mutex, Weak};
 #[derive(Debug, Default)]
 pub struct Hold {
     held: AtomicBool,
-    /// Moved by every `set`, before the hold changes.
+    /// Moved by every `set(true)`, before the hold changes.
     epoch: AtomicU64,
     /// The cancel tokens of the engines built with this hold.
     tokens: Mutex<Vec<Weak<CancelToken>>>,
@@ -43,7 +44,7 @@ impl Hold {
         self.held.load(Ordering::SeqCst)
     }
 
-    /// How many times the hold was set (see the module notes).
+    /// How many times the hold was raised (see the module notes).
     pub fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
     }
@@ -52,8 +53,11 @@ impl Hold {
     /// flight of the engines built with it.
     pub fn set(&self, held: bool) -> bool {
         // First, so an engine that sees the hold released after a cut also
-        // sees the epoch moved.
-        self.epoch.fetch_add(1, Ordering::SeqCst);
+        // sees the epoch moved. Only a raise moves it: a release alone (an
+        // unmute while unmuted) cuts nothing (review 2026-10-16 #35).
+        if held {
+            self.epoch.fetch_add(1, Ordering::SeqCst);
+        }
         let changed = self.held.swap(held, Ordering::SeqCst) != held;
         if changed && held {
             let mut tokens = self.tokens.lock().unwrap_or_else(|p| p.into_inner());

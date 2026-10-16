@@ -261,6 +261,23 @@ fn a_chunk_begun_before_a_mute_and_unmute_is_still_spoken() {
 }
 
 #[test]
+fn a_redundant_unmute_with_a_reader_cancel_drops_the_chunk() {
+    // Review 2026-10-16 #35: an unmute (or a mute_level write) while
+    // unmuted, at the moment the reader cancels, is no hold cut: the
+    // cancelled chunk is not read again with the fallback.
+    let r = rig();
+    r.engine.begin();
+    assert!(!r.hold.set(false), "no change");
+    r.engine.cancel();
+    assert!(matches!(
+        samples(&r.engine, "Skipped."),
+        Err(Error::Cancelled)
+    ));
+    assert_eq!(r.fake.syntheses(), 0, "nothing read locally");
+    assert_eq!(r.server.count(SPEECH), 0);
+}
+
+#[test]
 fn a_mute_during_a_paged_voice_list_stops_the_pages() {
     use sonara_engine::external::keys::{KeyStore, Secret};
     let server = ScriptServer::start();
