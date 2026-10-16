@@ -1625,23 +1625,25 @@ fn fraction_words(n: u64, d: u64) -> Option<String> {
     Some(format!("{} {den}", cardinal(n)))
 }
 
+/// Words that start a list of numbers, before them: `ports 80 443` and
+/// `codes 200 404` are separate numbers, not space-grouped thousands.
+const NUMBER_LIST_WORDS: &[&str] = &[
+    "port", "ports", "code", "codes", "id", "ids", "number", "numbers", "no", "nos", "line",
+    "lines", "pid", "pids", "version", "versions", "error", "errors", "status", "issue", "issues",
+    "pr", "prs", "ticket", "tickets", "step", "steps", "item", "items",
+];
+
 /// Things counted, after a number: `3/5 tests pass` is a count, not a
-/// fraction, and `in 1500 chunks` is not a year.
+/// fraction, and `in 1500 chunks` is not a year. Plural only: `1/2 page`
+/// is a fraction.
 const COUNT_NOUNS: &[&str] = &[
     "tests",
-    "test",
     "files",
-    "file",
     "checks",
-    "check",
     "steps",
-    "step",
     "items",
-    "item",
     "tasks",
-    "task",
     "pages",
-    "page",
     "rows",
     "lines",
     "chunks",
@@ -1817,23 +1819,25 @@ fn numbers(t: &str) -> String {
     let cur = t.clone();
     // `1 000 000` (space-grouped thousands) as one number.
     let t = each(&cur, &r.grouped_space, |c, s, e| {
-        if !free_left(&cur, s, e) || matches!(next(&cur, e), Some('.' | ',')) {
+        // A "." or "," right after is fine at the end of a sentence or
+        // clause, not before more digits ("1 000.5").
+        let joined = matches!(next(&cur, e), Some('.' | ','))
+            && next(&cur, e + 1).is_some_and(|ch| ch.is_ascii_digit());
+        if !free_left(&cur, s, e) || joined {
             return None;
         }
-        // Only with a 1 or 2 digit first group not after a plural ("12 000
-        // users", not "ports 80 443"), or before a currency or unit.
-        let first = c[2].split(' ').next().unwrap_or("");
+        // One number unless a word that starts a list of numbers comes
+        // before ("ports 80 443", "codes 200 404"); a group with a leading
+        // zero is never a number of its own ("ids 10 000"), and a currency
+        // or unit after it always makes one number.
         let before = cur[..s]
             .trim_end()
             .rsplit(|ch: char| !ch.is_alphabetic())
             .next()
             .unwrap_or("")
             .to_ascii_lowercase();
-        let plural = before.len() > 3
-            && before.ends_with('s')
-            && !before.ends_with("ss")
-            && !before.ends_with("us")
-            && !before.ends_with("is");
+        let list = NUMBER_LIST_WORDS.contains(&before.as_str());
+        let zero_group = c[2].split(' ').skip(1).any(|g| g.starts_with('0'));
         let after = word_after(&cur, e);
         let unit = matches!(
             after.as_str(),
@@ -1848,7 +1852,7 @@ fn numbers(t: &str) -> String {
                 | "sek"
                 | "dkk"
         ) || UNITS.iter().any(|u| u.0.eq_ignore_ascii_case(&after));
-        if !(unit || first.len() <= 2 && !plural) {
+        if list && !unit && !zero_group {
             return None;
         }
         let sign = if sign_ok(&cur, s) { &c[1] } else { "" };
@@ -1980,8 +1984,15 @@ fn numbers(t: &str) -> String {
         let after = word_after(&cur, e);
         // Not a year before a count ("in 1500 chunks") or as the start of
         // a range of plain numbers ("from 1024 to 4096").
-        let is_year =
-            is_year && !COUNT_NOUNS.contains(&after.as_str()) && !to_plain_number(&cur, e);
+        // A strong cue with 1900 to 2099 stays a year: "since 2019 users
+        // have asked".
+        let strong = matches!(
+            cue.as_str(),
+            "since" | "in" | "by" | "until" | "before" | "after"
+        ) && (1900..=2099).contains(&n);
+        let is_year = is_year
+            && (strong || !COUNT_NOUNS.contains(&after.as_str()))
+            && !to_plain_number(&cur, e);
         // A graphics card number (#325): 1050 to 5090 with tens of 50 to
         // 90, after a brand, or before "Ti", "Super", "GPU", or after
         // "your", "a", "the" with a GPU word in the same sentence: "your
