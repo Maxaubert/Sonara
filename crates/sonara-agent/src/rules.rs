@@ -69,8 +69,8 @@
 //!   dropped; the decisions waiting for that summary are spoken now and a
 //!   question keeps its mark (a flush answers nothing). Stop drops those
 //!   decisions. The rest of the flushed reply is skipped too: prose and
-//!   tool announcements arriving before the session's next `turn_start`
-//!   are dropped (`dropped: flushed reply`); its decisions are still
+//!   tool announcements arriving before the session's next turn (a
+//!   `turn_start`, or a tool or decision after its `turn_end`) are dropped (`dropped: flushed reply`); its decisions are still
 //!   spoken. With flush scope `all` the driver also calls `flush_ready`
 //!   on every other session whose turn ended (the late prose of a reply it
 //!   flushed is skipped the same way); a session still writing its reply
@@ -449,7 +449,8 @@ struct Turn {
     /// came without a `turn_start` (`take_new_turn`, #243).
     batch_cut: bool,
     /// The user flushed this reply (#228): the rest of it is skipped until
-    /// the next `turn_start`, except its decisions.
+    /// the next `turn_start` (or a new turn without one, `take_new_turn`),
+    /// except its decisions.
     skip_reply: bool,
     /// This turn's prose chunks, and how many were voiced by a summary.
     prose: Vec<String>,
@@ -496,6 +497,18 @@ impl Turn {
             inflight: 0,
             last_token: 0,
         }
+    }
+
+    /// The prose kept for a summary and not yet voiced, now voiced as it
+    /// is: summaries were turned off before its summary went out (review
+    /// 2026-10-16 #13).
+    fn take_kept(&mut self) -> Vec<(String, bool)> {
+        let kept = self.prose[self.voiced..]
+            .iter()
+            .map(|t| (t.clone(), false))
+            .collect();
+        self.voiced = self.prose.len();
+        kept
     }
 
     fn stale(&self, turn: Option<&str>, t: Option<f64>) -> bool {
@@ -681,6 +694,29 @@ impl Rules {
         n + deltas
     }
 
+    /// Summaries are off: the prose kept for a summary while they were on
+    /// goes before the held prose, read as it is (review 2026-10-16 #13).
+    /// Returns how many chunks it moved.
+    fn hold_kept(&mut self, channel: &str) -> usize {
+        let c = self.turn(channel);
+        let kept = c.take_kept();
+        let n = kept.len();
+        c.held_prose.splice(0..0, kept);
+        self.note_kept(channel, n);
+        n
+    }
+
+    fn note_kept(&self, channel: &str, n: usize) {
+        if n > 0 {
+            self.note(
+                Some(channel),
+                "prose",
+                format!("read as it is: {n} chunk(s) kept for the summary (summaries turned off)"),
+                None,
+            );
+        }
+    }
+
     /// Speak the prose held by `read_mode`.
     fn flush_prose(&mut self, out: &mut Vec<Action>, channel: &str) {
         let n = self.turn(channel).held_prose.len();
@@ -824,6 +860,12 @@ impl Rules {
         let mut texts: Vec<(String, bool)> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut breaks: Option<usize> = None;
+        // Summaries off: the prose kept for a summary while they were on
+        // comes first, as it is (review 2026-10-16 #13).
+        if !summaries {
+            texts = c.take_kept();
+        }
+        let kept = texts.len();
         for (delta, index, is_final) in deltas {
             // `index` numbers the deltas of a message block (0, 1, 2, ...): a
             // new block restarts at 0 and starts a paragraph; the next delta of
@@ -862,7 +904,12 @@ impl Rules {
                 breaks = Some(texts.len());
             }
         }
+        if !summaries {
+            // Read as it is, so a summary turned on later does not recap it.
+            c.voiced = c.prose.len();
+        }
         let settle = c.settle_armed;
+        self.note_kept(channel, kept);
         for t in skipped {
             self.note(
                 Some(channel),
@@ -1005,6 +1052,9 @@ impl Rules {
         c.released = true;
         c.ended = true;
         c.batch_cut = false;
+        if !self.summaries() {
+            self.hold_kept(channel);
+        }
         self.flush_prose(&mut out, channel);
         if self.summaries() {
             // Not yet: the turn's last prose can arrive after this (#14).
@@ -1311,7 +1361,8 @@ impl Rules {
 
     /// The flush hotkey (#228): `channel`, the session being read, is
     /// caught up and the rest of its reply is skipped: prose and tool
-    /// announcements that arrive before its next `turn_start` are dropped
+    /// announcements that arrive before its next turn (`turn_start`, or a
+    /// woken one, `take_new_turn`) are dropped
     /// (noted `flushed reply`), while the decisions it asks are still read
     /// (a question needs an answer). Unlike an answer, a flush answers
     /// nothing: a question keeps its awaiting mark (its permission prompt
@@ -1376,11 +1427,19 @@ impl Rules {
     /// A tool or a decision came after the channel's turn ended, with no
     /// `turn_start` (a background task or a subagent woke the agent): a
     /// new turn, so the driver starts a new batch (#243). True once per
-    /// `turn_end`.
+    /// `turn_end`. The new reply starts fresh as after a `turn_start` (a
+    /// flush of the last one does not skip it, it is held and still being
+    /// written), but nothing is wiped: what the last reply queued stays,
+    /// and so does its summary work.
     pub fn take_new_turn(&mut self, channel: &str) -> bool {
         match self.turns.get_mut(channel) {
             Some(c) if c.ended && !c.batch_cut => {
                 c.batch_cut = true;
+                c.released = false;
+                c.ended = false;
+                c.skip_reply = false;
+                c.new_para = false;
+                c.last_index = None;
                 true
             }
             _ => false,
@@ -1638,6 +1697,11 @@ impl Rules {
         focused: Option<&str>,
     ) -> bool {
         if !self.summaries() {
+            // Turned off while the turn settled: read the kept prose as it
+            // is rather than lose it (review 2026-10-16 #13).
+            if self.hold_kept(channel) > 0 {
+                self.flush_prose(out, channel);
+            }
             return false;
         }
         let c = self.turn(channel);

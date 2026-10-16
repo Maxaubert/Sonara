@@ -611,7 +611,8 @@ impl Agent {
     /// The flush hotkey (#228). The session being read is stopped: its
     /// item, its unread text, its held prose, the prose kept for its
     /// summary and its summary work are dropped, and the rest of its reply
-    /// is skipped until its next `turn_start` (`Rules::flush`, L2
+    /// is skipped until its next turn (`turn_start`, or a woken one,
+    /// `Rules::take_new_turn`) (`Rules::flush`, L2
     /// `flush_with`); the decisions that waited for that summary, and the
     /// ones it asks later, are spoken, and a question keeps its awaiting
     /// mark. A switch announcement playing, or text spoken to the reader
@@ -947,7 +948,8 @@ impl Agent {
     }
 
     /// Replace the summary settings. Turning summaries off does not cancel
-    /// work already out.
+    /// work already out; prose kept for a summary that has not gone out is
+    /// read as it is.
     pub fn set_summaries(&self, s: SummarySettings) -> Result<()> {
         if s.enabled && self.inner.summarizer.is_none() {
             return Err(Error::NoSummarizer);

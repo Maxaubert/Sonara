@@ -435,13 +435,18 @@ impl Lexicon {
             return None;
         }
 
-        let stem = if lower.len() > 5 && self.is_known(&lower[..lower.len() - 3], tag) {
-            lower[..lower.len() - 3].to_string()
-        } else if self.is_known(&(lower[..lower.len() - 3].to_string() + "e"), tag) {
-            lower[..lower.len() - 3].to_string() + "e"
+        // "ing" is ASCII, so cutting it off lands on a char boundary. One more
+        // character is dropped by char, never by byte: a non-ASCII letter
+        // before "ing" would otherwise split inside it and panic.
+        let base = &lower[..lower.len() - 3];
+        let stem = if lower.len() > 5 && self.is_known(base, tag) {
+            base.to_string()
+        } else if self.is_known(&(base.to_string() + "e"), tag) {
+            base.to_string() + "e"
         } else if lower.len() > 5 {
             // Python regex: r'([bcdgklmnprstvxz])\1ing$|cking$'
-            let stem_candidate = &lower[..lower.len() - 4];
+            let cut = base.char_indices().last().map_or(0, |(i, _)| i);
+            let stem_candidate = &base[..cut];
             if self.is_known(stem_candidate, tag) {
                 // Check for doubled consonants or 'ck'
                 let chars: Vec<char> = stem_candidate.chars().collect();
@@ -731,6 +736,14 @@ mod tests {
             .get_word("Toml", "NNP", None, None)
             .expect("a known word");
         assert_eq!(ps, "tˈɑːməl");
+    }
+
+    #[test]
+    fn a_non_ascii_letter_before_ing_does_not_panic() {
+        let lexicon = lexicon(&[("run", "ɹˈʌn")]);
+        for word in ["aéing", "调试ing", "naïveéing", "ééing"] {
+            assert_eq!(lexicon.get_word(word, "NN", None, None), None, "{word}");
+        }
     }
 
     #[test]

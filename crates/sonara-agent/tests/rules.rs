@@ -1442,6 +1442,104 @@ fn a_flushed_summary_reply_makes_no_summary_and_the_next_turn_does() {
     );
 }
 
+#[test]
+fn a_reply_woken_after_a_flush_is_read() {
+    // Review 2026-10-16 #2: a background task woke the agent after the user
+    // flushed its last reply (no turn_start). The woken reply is the
+    // session's latest message: it is read, not skipped as flushed.
+    let mut r = rules();
+    r.settings.verbosity = Verbosity::Everything;
+    prose(&mut r, "a", "Heard. ", 0, true);
+    r.flush("a");
+    r.turn_end("a", None, None).unwrap();
+    assert!(r.take_new_turn("a"));
+    assert_eq!(
+        spoken(&r.tool("a", "Bash", "Running the tests.")),
+        ["Running the tests."]
+    );
+    assert_eq!(
+        spoken(&prose(&mut r, "a", "The woken reply. ", 0, true)),
+        ["The woken reply."]
+    );
+}
+
+#[test]
+fn a_reply_woken_after_flush_all_is_read() {
+    // flush scope all flushed b's finished reply; b's woken reply is read.
+    let mut r = rules();
+    prose(&mut r, "b", "Read. ", 0, true);
+    r.turn_end("b", None, None).unwrap();
+    assert!(r.flush_ready("b", true).is_some());
+    assert!(r.take_new_turn("b"));
+    assert_eq!(
+        spoken(&prose(&mut r, "b", "The woken reply. ", 0, true)),
+        ["The woken reply."]
+    );
+}
+
+#[test]
+fn a_woken_reply_is_held_for_its_own_turn_end_in_read_mode_done() {
+    let mut r = done_rules();
+    prose(&mut r, "a", "Old reply. ", 0, true);
+    assert_eq!(
+        spoken(&r.turn_end("a", None, None).unwrap()),
+        ["Old reply."]
+    );
+    assert!(r.take_new_turn("a"));
+    assert!(r.writing("a"), "the woken reply is still being written");
+    assert!(spoken(&prose(&mut r, "a", "Woken. ", 0, true)).is_empty());
+    assert_eq!(spoken(&r.turn_end("a", None, None).unwrap()), ["Woken."]);
+    assert!(!r.writing("a"));
+}
+
+#[test]
+fn turning_summaries_off_before_turn_end_speaks_the_kept_prose() {
+    // Review 2026-10-16 #13: the prose kept for the summary was lost.
+    let mut r = summary_rules();
+    prose(&mut r, "a", "Kept for the summary. ", 0, true);
+    r.settings.summaries.enabled = false;
+    let end = r.turn_end("a", None, None).unwrap();
+    assert_eq!(spoken(&end), ["Kept for the summary."]);
+}
+
+#[test]
+fn turning_summaries_off_in_the_settle_window_speaks_the_kept_prose() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", &PAD.repeat(6), 0, true);
+    let end = r.turn_end("a", None, None).unwrap();
+    assert!(spoken(&end).is_empty());
+    r.settings.summaries.enabled = false;
+    let out = r.fire(&settle_of(&end), Some("a"));
+    assert!(jobs(&out).is_empty());
+    let said = spoken(&out);
+    assert_eq!(said.len(), 6, "{said:?}");
+}
+
+#[test]
+fn turning_summaries_off_mid_turn_speaks_the_kept_prose_before_what_follows() {
+    let mut r = summary_rules();
+    prose(&mut r, "a", "Kept one. ", 0, true);
+    r.settings.summaries.enabled = false;
+    assert_eq!(
+        spoken(&prose(&mut r, "a", "Then two. ", 0, true)),
+        ["Kept one.", "Then two."]
+    );
+    assert!(spoken(&r.turn_end("a", None, None).unwrap()).is_empty());
+}
+
+#[test]
+fn turning_summaries_on_mid_turn_does_not_recap_what_was_already_read() {
+    let mut r = rules();
+    assert_eq!(
+        spoken(&prose(&mut r, "a", "Read aloud. ", 0, true)),
+        ["Read aloud."]
+    );
+    r.settings.summaries.enabled = true;
+    prose(&mut r, "a", "Kept. ", 0, true);
+    let out = end_and_settle(&mut r, "a", Some("a"));
+    assert_eq!(spoken(&out), ["Kept."]);
+}
+
 // -- flush_scope all: every ready message (#228) ---------------------------
 
 #[test]

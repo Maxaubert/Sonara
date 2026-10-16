@@ -2,7 +2,7 @@
 //! engines off the control path, engine errors, shutdown, control storms.
 mod common;
 
-use common::engines::{BrokenEngine, GateEngine, SlowWarmEngine, TurnstileEngine};
+use common::engines::{BrokenEngine, GateEngine, PanicEngine, SlowWarmEngine, TurnstileEngine};
 use common::{fmt, len, play, Rig, THREE, TIMEOUT};
 use sonara_audio::OutputCall;
 use sonara_reader::{
@@ -161,6 +161,33 @@ fn an_engine_that_cannot_speak_fails_items_and_says_why() {
         r.h.engine_status().unwrap().readiness,
         sonara_engine::Readiness::Unavailable
     );
+}
+
+#[test]
+fn a_panic_in_the_engine_fails_one_chunk_and_the_next_item_still_speaks() {
+    let r = Rig::with(Arc::new(PanicEngine::default()));
+    speak(&r.h, "A boom here.");
+    speak(&r.h, "Fine here.");
+    let events = r.events_until("item 2 Started");
+    assert!(events.iter().any(|e| e == "item 1 Failed"), "{events:?}");
+    assert!(
+        events
+            .iter()
+            .any(|e| e.starts_with("log synthesis failed for item 1 chunk 0")),
+        "{events:?}"
+    );
+    let end = Instant::now() + TIMEOUT;
+    loop {
+        let calls = r.out.take_calls();
+        if calls
+            .iter()
+            .any(|c| matches!(c, OutputCall::Play { item, .. } if *item == ItemId(2)))
+        {
+            break;
+        }
+        assert!(Instant::now() < end, "item 2 never played");
+        thread::sleep(Duration::from_millis(2));
+    }
 }
 
 #[test]
