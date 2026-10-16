@@ -30,6 +30,10 @@ static SENTENCE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r#"(?s)(.+?[.!?]["'’”)\]*_`]*)[\s\x1C-\x1F]+"#).unwrap());
 // a chunk is speakable only if it contains at least one word character
 static WORD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z0-9]").unwrap());
+// A list item's first line, after `stabilize_ordinals` ("3. " is "3: "):
+// a bullet or an ordinal, then a space (#324).
+static LIST_ITEM: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[ \t]*(?:[-*+\u{2022}]|\d{1,3}:)[ \t]+\S").unwrap());
 // A paragraph boundary = a blank line. We split the RAW buffer on this (before
 // cleaning collapses whitespace) so the boundary survives even when the
 // blank line straddles two streamed deltas. feed() yields ParagraphBreak between
@@ -413,14 +417,61 @@ impl ProseAssembler {
     fn sentences_of(text: &str, keep_remainder: bool) -> (Vec<Chunk>, &str) {
         if keep_remainder {
             let hold = table::hold_from(text);
-            let (out, remainder) = Self::prose_sentences(&text[..hold], true);
+            let (out, remainder) = Self::list_sentences(&text[..hold], true);
             return (out, &text[hold - remainder.len()..]);
         }
         let mut out = Vec::new();
         Self::with_tables(text, &mut out, |prose, out| {
-            out.extend(Self::prose_sentences(prose, false).0)
+            out.extend(Self::list_sentences(prose, false).0)
         });
         (out, "")
+    }
+
+    /// `prose_sentences`, with each list item (a numbered or bulleted line
+    /// and the indented lines under it) one chunk (#324: "3. OmniVoice: ...
+    /// Norwegian coverage is unverified." was two sections). Streaming, the
+    /// last item waits in the remainder: it may still grow.
+    fn list_sentences(text: &str, keep_remainder: bool) -> (Vec<Chunk>, &str) {
+        let mut out = Vec::new();
+        // Segments: (start, end, is an item).
+        let mut segs: Vec<(usize, usize, bool)> = Vec::new();
+        let mut at = 0;
+        for line in text.split_inclusive('\n') {
+            let end = at + line.len();
+            let continues = line.starts_with([' ', '\t']) && !line.trim().is_empty();
+            match segs.last_mut() {
+                _ if LIST_ITEM.is_match(line) => segs.push((at, end, true)),
+                Some(last) if last.2 && continues => last.1 = end,
+                Some(last) if !last.2 => last.1 = end,
+                _ => segs.push((at, end, false)),
+            }
+            at = end;
+        }
+        let n = segs.len();
+        for (i, (s, e, item)) in segs.into_iter().enumerate() {
+            let last = i + 1 == n;
+            if keep_remainder && last {
+                if item {
+                    return (out, &text[s..]);
+                }
+                let (sents, rest) = Self::prose_sentences(&text[s..e], true);
+                out.extend(sents);
+                return (out, rest);
+            }
+            if item {
+                Self::emit_chunk(text[s..e].trim_end(), &mut out);
+            } else {
+                out.extend(Self::prose_sentences(&text[s..e], false).0);
+            }
+        }
+        (
+            out,
+            if keep_remainder {
+                &text[text.len()..]
+            } else {
+                ""
+            },
+        )
     }
 
     fn prose_sentences(text: &str, keep_remainder: bool) -> (Vec<Chunk>, &str) {

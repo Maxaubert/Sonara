@@ -1823,6 +1823,38 @@ fn numbers(t: &str) -> String {
                     | "nov"
                     | "dec"
             );
+        // A graphics card number (#325): 1050 to 5090 with tens of 50 to
+        // 90, after a brand or "your", "a", "the", or before "Ti",
+        // "Super", "GPU": "your 5090" is "fifty ninety".
+        let after = cur[e..]
+            .trim_start()
+            .split(|ch: char| !ch.is_alphanumeric())
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let is_card = c[1].len() == 4
+            && matches!(n / 100, 10 | 20 | 30 | 40 | 50)
+            && matches!(n % 100, 50 | 60 | 70 | 80 | 90)
+            && (matches!(
+                cue.as_str(),
+                "rtx"
+                    | "gtx"
+                    | "rx"
+                    | "geforce"
+                    | "radeon"
+                    | "your"
+                    | "my"
+                    | "our"
+                    | "their"
+                    | "his"
+                    | "her"
+                    | "a"
+                    | "an"
+                    | "the"
+            ) || matches!(after.as_str(), "ti" | "super" | "gpu" | "gpus" | "card"));
+        if is_card {
+            return Some(format!("{} {}", cardinal(n / 100), cardinal(n % 100)));
+        }
         Some(if is_year { year(n) } else { cardinal(n) })
     })
 }

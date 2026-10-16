@@ -362,6 +362,12 @@
       "output": "your A P I key is tied to your account I D, so check the U R L, the C L I and the G P U"
     },
     {
+      "name": "graphics_card_numbers_are_read_in_pairs",
+      "fn": "pronounce",
+      "input": "Run it on your 5090 or an RTX 4090 Ti, not a GTX 1080. I counted 5090 rows.",
+      "output": "Run it on your fifty ninety or an R T X forty ninety Ti, not a G T X ten eighty. I counted five thousand and ninety rows."
+    },
+    {
       "name": "percent_with_a_plus_sign",
       "fn": "pronounce",
       "input": "return +32%, then -8.5%",
