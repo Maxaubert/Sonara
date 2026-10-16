@@ -1588,6 +1588,17 @@ impl Rules {
         // has no turn state (or a new gen) any more.
     }
 
+    /// Summary work or decisions still to be read (`Agent::has_work`): a
+    /// summary in flight, a parked one its turn still waits for, a settle
+    /// window armed, decisions pending or held behind a summary.
+    pub fn has_work(&self) -> bool {
+        let live = |channel: &str, gen: u64| self.turns.get(channel).is_some_and(|c| c.gen == gen);
+        self.turns
+            .values()
+            .any(|c| c.inflight > 0 || c.settle_armed || !c.pending.is_empty() || c.held.is_some())
+            || self.parked.values().any(|r| live(&r.channel, r.gen))
+    }
+
     /// The channel has turn state.
     pub fn tracks(&self, channel: &str) -> bool {
         self.turns.contains_key(channel)

@@ -569,6 +569,15 @@ impl Agent {
         Ok(())
     }
 
+    /// Work that will be read without another message (review finding
+    /// 45): a summary out or waiting for an earlier one, decisions in the
+    /// settle window or held behind a summary. The host's idle exit and
+    /// takeover wait for it. Prose held for a `turn_end` is not counted:
+    /// it needs the client.
+    pub fn has_work(&self) -> bool {
+        self.lock().has_work()
+    }
+
     /// The channels with turn state (diagnostics, tests).
     pub fn tracked(&self) -> Vec<String> {
         self.lock().channels()

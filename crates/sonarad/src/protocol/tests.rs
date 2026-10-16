@@ -349,6 +349,161 @@ fn a_recent_request_keeps_it_from_retiring() {
     assert!(!s.retire_if_idle());
 }
 
+/// The hotkeys' view of `s`, as `Server::with_system` builds it.
+fn hotkeys(s: &Server) -> HotkeyTarget {
+    HotkeyTarget {
+        reader: s.reader.clone(),
+        channels: s.channels.clone(),
+        agent: s.agent.clone(),
+        retiring: s.retiring.clone(),
+        store: s.store.clone(),
+        cues: None,
+        log: None,
+        quiet: s.quiet.clone(),
+        setting: s.setting.clone(),
+    }
+}
+
+fn rate(s: &Server) -> u64 {
+    match s.reader.get(Key::Rate).unwrap() {
+        sonara_reader::Value::Number(n) => n,
+        other => panic!("rate {other:?}"),
+    }
+}
+
+#[test]
+fn a_mute_hotkey_and_a_protocol_mute_never_deadlock() {
+    // Review finding 19: `control mute` holds the mute change while it is
+    // admitted. A mute hotkey pressed meanwhile waits for the change
+    // without holding the admission lock, so the request still gets in.
+    let (s, _) = server();
+    let s = Arc::new(s);
+    let target = Arc::new(hotkeys(&s));
+    let change = s.quiet.change();
+    let t = target.clone();
+    let key = std::thread::spawn(move || {
+        t.perform(
+            sonara_system::keymap::Action::Mute,
+            sonara_system::hotkeys::Press::Tap,
+        )
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let s2 = s.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(s2.admit().is_ok());
+    });
+    let admitted = rx.recv_timeout(Duration::from_secs(2));
+    drop(change);
+    key.join().unwrap();
+    assert_eq!(
+        admitted,
+        Ok(true),
+        "the request waited for the hotkey that waited for it"
+    );
+    assert!(s.reader.state().unwrap().muted);
+}
+
+#[test]
+fn a_rate_hotkey_is_saved_under_the_set_lock() {
+    // Review finding 47: a `set` in progress finishes (value and record)
+    // before the faster hotkey reads the rate, so config.json keeps the
+    // rate in force.
+    let (s, _) = server();
+    let target = hotkeys(&s);
+    let before = rate(&s);
+    let held = s.setting.lock().unwrap();
+    std::thread::scope(|sc| {
+        let key = sc.spawn(|| {
+            target.perform(
+                sonara_system::keymap::Action::Faster,
+                sonara_system::hotkeys::Press::Tap,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let during = rate(&s);
+        drop(held);
+        key.join().unwrap();
+        assert_eq!(during, before, "the hotkey waits for the set in progress");
+    });
+    let after = before + u64::from(system_ext::RATE_STEP);
+    assert_eq!(rate(&s), after);
+    assert_eq!(s.store.value("rate"), json!(after));
+}
+
+#[test]
+fn every_request_but_hello_is_busy_while_the_runtime_exits() {
+    // Review finding 46: over TCP as over HTTP, nothing is carried out
+    // (and saved) once a takeover was accepted or the exit requested.
+    for how in ["takeover", "exit"] {
+        let (s, _) = server();
+        let mut session = authed(&s);
+        if how == "takeover" {
+            let mut other = Session::tcp();
+            let o = call(
+                &s,
+                &mut other,
+                json!({"type": "hello", "token": "secret", "takeover": true}),
+            );
+            assert_eq!(o.reply["ok"], true);
+        } else {
+            s.lifetime().request_exit(ExitReason::Idle);
+        }
+        for req in [
+            json!({"type": "set", "key": "volume", "value": 40}),
+            json!({"type": "get", "key": "volume"}),
+            json!({"type": "engine_add"}),
+            json!({"type": "voices"}),
+        ] {
+            let o = call(&s, &mut session, req.clone());
+            assert_eq!(code(&o), "E_BUSY", "{how}: {req}");
+        }
+        assert_ne!(
+            s.reader.get(Key::Volume).unwrap(),
+            sonara_reader::Value::Number(40),
+            "{how}: the set was not carried out"
+        );
+        assert_ne!(s.store.value("volume"), json!(40), "{how}: nor saved");
+    }
+}
+
+#[test]
+fn a_hello_with_a_wrong_token_is_never_logged() {
+    // Review finding 44: what a connection sends before the token checked
+    // out stays out of the log.
+    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = lines.clone();
+    let (s, _) = server();
+    let s = s.with_log(Arc::new(move |l: &str| {
+        sink.lock().unwrap().push(l.to_string())
+    }));
+    let mut session = Session::tcp();
+    call(
+        &s,
+        &mut session,
+        json!({"type": "hello", "token": "nope", "client": {"name": "intruder"}}),
+    );
+    call(
+        &s,
+        &mut session,
+        json!({"type": "hello", "client": {"name": "intruder"}}),
+    );
+    assert!(!session.authed);
+    call(
+        &s,
+        &mut session,
+        json!({"type": "hello", "token": "secret", "client": {"name": "friend"}}),
+    );
+    let lines = lines.lock().unwrap().clone();
+    assert!(!lines.iter().any(|l| l.contains("intruder")), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("in ") && l.contains("friend")),
+        "{lines:?}"
+    );
+}
+
 #[test]
 fn token_comparison() {
     assert!(token_eq("abc", "abc"));

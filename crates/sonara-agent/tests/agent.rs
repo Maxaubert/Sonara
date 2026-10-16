@@ -628,6 +628,49 @@ fn a_summary_is_read_at_the_end_of_a_long_turn() {
     assert!(seen[0].starts_with("test-model:This filler"));
 }
 
+/// A summarizer that answers only when the test lets it.
+struct Gated {
+    go: Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Summarizer for Gated {
+    fn summarize(&self, _text: &str, _s: &SummarySettings) -> Result<String, String> {
+        let _ = self.go.lock().unwrap().recv();
+        Ok("The recap.".into())
+    }
+}
+
+#[test]
+fn a_summary_in_flight_is_work_the_idle_checks_wait_for() {
+    // Review finding 45: nothing plays and the channels are idle while
+    // the summarizer runs, yet the turn is not read yet: the idle exit
+    // and a takeover must not drop it.
+    let (go, rx) = std::sync::mpsc::channel();
+    let settings = Settings {
+        summaries: SummarySettings {
+            enabled: true,
+            settle_ms: 0,
+            model: "test-model".into(),
+            ..SummarySettings::default()
+        },
+        ..Settings::default()
+    };
+    let gated = Arc::new(Gated { go: Mutex::new(rx) });
+    let r = Rig::with(settings, Some(gated as Arc<dyn Summarizer>));
+    assert!(!r.agent.has_work());
+    r.agent.turn_start("a", None, None).unwrap();
+    r.stream("a", LONG, 0, None);
+    r.agent.turn_end("a", None, None).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(r.playing(), None);
+    assert!(r.agent.channels().is_idle());
+    assert!(r.agent.has_work(), "the summary is still out");
+    go.send(()).unwrap();
+    r.read("The recap.");
+    r.stays_idle();
+    assert!(!r.agent.has_work());
+}
+
 #[test]
 fn a_failed_summary_reads_the_raw_turn() {
     let (r, _) = summary_rig(None);

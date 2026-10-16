@@ -324,7 +324,7 @@ A change of `engine_status` alone (download progress, about four times a second 
 | `E_UNKNOWN_TYPE` | a `type` this protocol does not define |
 | `E_UNSUPPORTED` | an unmet `require`, an unknown event stream, or a message, action or key of an extension that is not enabled |
 | `E_INCOMPATIBLE` | `hello` with another protocol major |
-| `E_BUSY` | `hello` with `takeover: true` while something is playing or queued; `speak` or `control` after a takeover was accepted or the idle exit was decided; any request while the runtime is exiting |
+| `E_BUSY` | `hello` with `takeover: true` while something is playing or queued; any request but `hello` after a takeover was accepted or the idle exit was decided, over TCP as over HTTP (review finding 46); any request while the runtime is exiting |
 | `E_ENGINE` | the engine or the reader failed; a Credential Manager failure; a failed `engine_test` |
 | `E_NOT_FOUND` | an unknown voice, engine or external engine profile |
 | `E_FORBIDDEN` | protocol 1.3: a request no client may make over the protocol, from any transport or SDK: `engine_add` of a `command` engine, or one that would replace a `command` engine (see [External engines](#external-engines)) |
@@ -337,7 +337,7 @@ values as `engine_status.reason`:
 
 A client is a TCP connection that completed `hello`, or an open SSE stream; a plain HTTP request
 only counts as activity. The runtime exits 30 s (`--idle-exit <seconds>`) after the last client left
-and nothing is being read (a paused item does not count), unless a client sent `keep_alive: true` or
+and nothing is being read (a paused item does not count) or summarized (a summary still out, or decisions held behind one, review finding 45), unless a client sent `keep_alive: true` or
 it runs with `--standalone`. The countdown starts when `runtime.json` is written, so a slow start
 never uses it up before the first client can connect. The exit is decided atomically with the
 requests that start speech: a `speak` or `control` either comes first (and keeps the runtime while
