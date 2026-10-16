@@ -201,11 +201,96 @@ def test_the_bootstrap_removes_older_runtimes_only(box, releases, exes):
     serve_good_release(box, releases, exes)
     old = box.install(exes, "0.0.1")
     newer = box.install(exes, NEWER)
-    p = run_bootstrap(box, "-NoStart")
+    box.env.update(NO_START)
+    p = run_bootstrap(box)
     assert p.returncode == 0, p.stdout + p.stderr
     assert (box.dest / "sonara-hook.exe").is_file()
     assert not old.exists()
     assert newer.is_dir(), "a newer plugin's runtime stays"
+
+
+def test_a_bootstrap_with_nostart_keeps_the_older_runtime_that_still_runs(box, releases, exes):
+    # bin/sonara installs with -NoStart: nothing replaced the runtime that
+    # runs from the older folder, so the folder stays until `sonara start`.
+    serve_good_release(box, releases, exes)
+    old = box.install(exes, "0.0.1")
+    p = run_bootstrap(box, "-NoStart")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert (box.dest / "sonara-hook.exe").is_file()
+    assert (old / "sonara-hook.exe").is_file(), "the older runtime is left whole"
+
+
+def test_a_bootstrap_keeps_an_install_that_appeared_during_its_download(box, releases, exes):
+    # Two bootstraps (a lock taken over twice): the first one installs and
+    # starts the runtime while the second still downloads. The second must
+    # not delete that runtime.
+    data = ph.fake_zip(exes)
+    r = releases({ph.ZIP_NAME: data, "SHA256SUMS": ph.sums_for(data)}, hold=True)
+    box.env["SONARA_RELEASE_BASE_URL"] = r.url
+    env = {k: v for k, v in box.env.items() if k.upper() != "PSMODULEPATH"}
+    env.update(NO_START)
+    p = subprocess.Popen(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+         "-File", str(ph.BIN / "sonara-bootstrap.ps1"), "-Version", ph.VERSION],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, creationflags=0x08000000)
+    box.wait_for(lambda: r.hits.get("SHA256SUMS"), what="the first download")
+    box.install(exes)
+    marker = box.dest / "in-use.txt"
+    marker.write_bytes(b"")
+    r.open_gate()
+    out, err = p.communicate(timeout=180)
+    assert p.returncode == 0, (out + err).decode(errors="replace")
+    assert marker.is_file(), "the install that appeared was not deleted"
+    assert (box.dest / "sonara-hook.exe").is_file()
+    assert not [d for d in box.root.iterdir() if d.name.startswith(".")], "no leftovers"
+
+
+def test_a_stale_lock_is_not_taken_over_while_another_hook_takes_it(box, releases, exes):
+    # Taking over a stale lock goes through a second lock folder, so two
+    # hooks that both saw it stale never both start a bootstrap.
+    r = serve_good_release(box, releases, exes)
+    lock = box.root / ".bootstrap.lock"
+    lock.mkdir(parents=True)
+    old = time.time() - 20 * 60
+    os.utime(lock, (old, old))
+    (box.root / ".bootstrap.lock.takeover").mkdir()
+    code, took = box.launch("SessionStart", {}, NO_START)
+    assert (code, took < QUICK) == (0, True)
+    time.sleep(1.0)
+    assert r.hits == {}, "no second bootstrap"
+    (box.root / ".bootstrap.lock.takeover").rmdir()
+    code, _ = box.launch("SessionStart", {}, NO_START)
+    assert code == 0
+    box.wait_for(lambda: (box.dest / "sonara-hook.exe").is_file(), what="the install")
+    box.wait_bootstrap()
+    assert not [d for d in box.root.iterdir() if d.name.startswith(".")], "no leftovers"
+
+
+def test_a_home_with_forward_slashes_is_still_stopped(box, releases, exes):
+    r = serve_good_release(box, releases, exes)
+    box.home.mkdir(parents=True)
+    (box.home / "stopped").write_bytes(b"")
+    box.env["SONARA_HOME"] = str(box.home).replace("\\", "/")
+    code, took = box.launch("SessionStart", {}, NO_START)
+    assert (code, took < QUICK) == (0, True)
+    time.sleep(1.0)
+    assert r.hits == {}
+    assert not box.dest.exists()
+
+
+def test_a_localappdata_with_forward_slashes_finds_the_runtime(box, releases, exes, tmp_path):
+    r = serve_good_release(box, releases, exes)
+    box.install(exes)
+    box.env["LOCALAPPDATA"] = str(box.lad).replace("\\", "/")
+    capture = tmp_path / "capture"
+    code, _ = box.launch("MessageDisplay", {"session_id": "s1"},
+                         {"SONARA_CAPTURE": str(capture), "SONARA_NO_START": "1"})
+    assert code == 0
+    assert list(capture.glob("MessageDisplay-*.json")), "the installed runtime got the event"
+    assert r.hits == {}, "nothing downloaded"
+    p = box.wrapper("version")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "Installing" not in p.stdout
 
 
 def test_the_wrapper_takes_over_a_stale_lock_only(box, releases, exes):

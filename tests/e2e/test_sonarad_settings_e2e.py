@@ -104,6 +104,22 @@ def test_every_section_of_the_old_page_is_there(live, browser):
     page.close()
 
 
+def test_the_token_leaves_the_address_bar_and_a_reload_still_opens_the_page(live, browser):
+    # Review #57: history and browser sync never keep the token.
+    lv = live()
+    page = open_page(browser, lv.url)
+    assert "token" not in page.url, page.url
+    page.reload()
+    pw.expect(page.locator("#rt-version")).not_to_have_text("–")
+    assert "token" not in page.url, page.url
+    # A new tab without the token gets only the reopen hint.
+    other = browser.new_page()
+    other.goto(lv.url.split("?")[0])
+    pw.expect(other.locator("body")).to_contain_text("/sonara:settings")
+    other.close()
+    page.close()
+
+
 def test_outdated_controls_are_gone(live, browser):
     # #214: no engine picker, no per-session voice, no process noise.
     lv = live()

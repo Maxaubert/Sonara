@@ -125,6 +125,30 @@ fn query_param<'a>(query: Option<&'a str>, name: &str) -> Option<&'a str> {
         .map(|(_, v)| v)
 }
 
+/// The answer to a reload of the page: the page drops `?token=` from its
+/// address (so history and sync never keep it) and keeps the token in its
+/// tab's `sessionStorage`; this page takes it from there and asks again.
+/// It holds no token itself.
+const REOPEN: &str = "<!doctype html><meta charset=\"utf-8\"><title>Sonara settings</title>\
+<p>Open the settings page with /sonara:settings.</p>\
+<script>try{const t=sessionStorage.getItem(\"sonara-token\");\
+if(/^[0-9a-f]+$/i.test(t||\"\"))location.replace(\"/settings?token=\"+t)}catch(e){}</script>";
+
+/// The body and content type of a refusal from `render`: the reopen page
+/// when the token is missing (a reload), else the message as text (a
+/// wrong token is text too, so a stale one never loops).
+pub fn refusal(
+    status: u16,
+    message: &'static str,
+    query: Option<&str>,
+) -> (&'static str, &'static str) {
+    if status == 401 && query_param(query, "token").is_none() {
+        (REOPEN, "text/html; charset=utf-8")
+    } else {
+        (message, "text/plain; charset=utf-8")
+    }
+}
+
 /// The page for a request with this `Host` header and query, or the HTTP
 /// status and message to answer instead.
 pub fn render(
@@ -198,6 +222,30 @@ mod tests {
                 .unwrap_err()
                 .0,
             401
+        );
+    }
+
+    #[test]
+    fn the_token_leaves_the_address_bar_and_a_reload_brings_it_back() {
+        // The page drops ?token= from its address (history, sync) and keeps
+        // the token for this tab only.
+        assert!(PAGE.contains("history.replaceState("));
+        assert!(PAGE.contains("sessionStorage.setItem(\"sonara-token\""));
+        // A reload then asks without the token: the answer is a page that
+        // takes it from the tab and asks again, never the token itself.
+        let (body, kind) = refusal(401, "x", None);
+        assert!(kind.starts_with("text/html"));
+        assert!(body.contains("sessionStorage.getItem(\"sonara-token\")"));
+        assert!(body.contains("location.replace("));
+        assert!(!body.contains(TOKEN_SLOT));
+        // A wrong token is refused as text, so a stale one never loops.
+        assert_eq!(
+            refusal(401, "wrong", Some("token=nope")),
+            ("wrong", "text/plain; charset=utf-8")
+        );
+        assert_eq!(
+            refusal(403, "host", None),
+            ("host", "text/plain; charset=utf-8")
         );
     }
 

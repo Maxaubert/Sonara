@@ -167,7 +167,7 @@ Since 0.11 (#202) everything lives under `%LOCALAPPDATA%\Sonara`
 | Path | What it holds |
 |---|---|
 | `runtime\<version>\` | Sonara's programs (`sonarad.exe`, `sonara-hook.exe`, `sonara.exe`), Microsoft's ONNX Runtime and the Visual C++ runtime DLLs it needs, and the licence notices, from the release zip. Only the current version is kept |
-| `runtime\.bootstrap.lock` | Present while the runtime is being installed |
+| `runtime\.bootstrap.lock` | Present while the runtime is being installed (`.bootstrap.lock.takeover` for a moment while a hook takes over the lock of an install that was killed) |
 | `runtime\.bootstrap.failed` | The time and reason of the last failed install (a download error or a checksum mismatch), so hooks wait a few minutes before trying again |
 | `models\kokoro\v1.0\` | The Kokoro voice model (`kokoro-v1.0.onnx`, `voices-v1.0.bin`; a download in progress is `*.part`) and `verified.json` (size, time and hash of the checked files) |
 
@@ -251,9 +251,10 @@ troubleshooting. It is off unless you set it. Delete the folder to remove what i
 ## Removing your data
 
 Run `/sonara:uninstall`. It asks what to keep (your settings, the voice model, the logs), stops
-Sonara, and removes `runtime\` and every other file in `%LOCALAPPDATA%\Sonara` except those
-(and, unless you keep your settings, your external engines' keys in Credential Manager), then
-writes the `stopped` file so Sonara stays off. Remove the plugin with
+Sonara, and removes `runtime\` and every other file listed above in `%LOCALAPPDATA%\Sonara`
+except those (and, unless you keep your settings, your external engines' keys in Credential
+Manager), then writes the `stopped` file so Sonara stays off. Anything in the folder that
+Sonara did not make is listed and left in place. Remove the plugin with
 `/plugin uninstall sonara@sonara`, and delete `%LOCALAPPDATA%\Sonara` to remove what you kept.
 
 ## Changes to this policy
