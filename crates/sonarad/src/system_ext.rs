@@ -20,7 +20,7 @@ use crate::channels_ext;
 use crate::config::Store;
 use crate::cues::{self, Cues};
 use crate::protocol::{bad, opt_str, reader_failure, After, Handled};
-use crate::quiet::Quiet;
+use crate::quiet::{Change, Quiet};
 use crate::wire::{Code, Failure};
 use serde_json::{json, Map, Value};
 use sonara_agent::{Back, Earcon, FlushReport, FlushScope, Flushed, Forward, Nav, Section, Skip};
@@ -87,6 +87,9 @@ pub struct HotkeyTarget {
     pub log: Option<LogFn>,
     /// The mute of external engines (#227), raised before a mute applies.
     pub quiet: Quiet,
+    /// The server's `set` lock: a setting the hotkey changes is applied
+    /// and recorded under it, as by a `set` (review finding 47).
+    pub setting: Arc<Mutex<()>>,
 }
 
 impl HotkeyTarget {
@@ -94,6 +97,16 @@ impl HotkeyTarget {
     /// with one log line saying what it did. A tap on Up is `back`, a hold
     /// `restart` (#299).
     pub fn perform(&self, action: Action, press: Press) {
+        // One lock order everywhere (review finding 19): the `set` lock,
+        // then the mute change, then the admission lock, as `set` and
+        // `control mute` take them. A rate hotkey holds the `set` lock from
+        // the rate read to its record (review finding 47). Mute is never
+        // kept waiting by a slow `set` (an engine load): the mute change
+        // orders it against a `set mute_level`, and only its record takes
+        // the `set` lock (`record_mute`).
+        let saves = matches!(action, Action::Faster | Action::Slower);
+        let _setting = saves.then(|| self.setting.lock().unwrap_or_else(|p| p.into_inner()));
+        let change = (action == Action::Mute).then(|| self.quiet.change());
         let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
         if *retiring {
             return;
@@ -106,7 +119,7 @@ impl HotkeyTarget {
                 ("back", self.previous_section())
             }
             (Action::Restart | Action::PreviousQuestion, Press::Hold) => {
-                let done = self.apply(Action::Restart);
+                let done = self.apply(Action::Restart, None);
                 // The restart sound, as for a flush (#318).
                 if done.is_ok() {
                     self.earcon(Earcon::Nav);
@@ -114,14 +127,31 @@ impl HotkeyTarget {
                 ("restart", done)
             }
             (Action::NextQuestion | Action::Flush, Press::Tap) => ("next", self.next_section()),
-            (Action::Flush, Press::Hold) => ("flush", self.apply(Action::Flush)),
+            (Action::Flush, Press::Hold) => ("flush", self.apply(Action::Flush, None)),
             (Action::NextQuestion, Press::Hold) => ("skip", self.skip()),
-            _ => (action.as_str(), self.apply(action)),
+            _ => (action.as_str(), self.apply(action, change)),
         };
+        drop(retiring);
+        if action == Action::Mute && outcome.is_ok() {
+            self.record_mute();
+        }
         sonara_system::log::emit(
             self.log.as_ref(),
             &crate::support_log::hotkey_line(name, &outcome),
         );
+    }
+
+    /// Save the agent's mute level under the `set` lock (review finding
+    /// 47), taken after the mute change and the admission lock are let go
+    /// (finding 19's order). The level in force is saved, not the one this
+    /// press chose: a `set mute_level` that came in between is kept.
+    fn record_mute(&self) {
+        let Some(a) = self.agent.get() else {
+            return;
+        };
+        let _setting = self.setting.lock().unwrap_or_else(|p| p.into_inner());
+        self.store
+            .record("mute_level", &json!(a.settings().mute_level));
     }
 
     fn control(&self, c: Control) -> Result<(), String> {
@@ -339,8 +369,9 @@ impl HotkeyTarget {
     }
 
     /// Carry out `action`; what it did, for the log line, when the action
-    /// alone does not say it.
-    fn apply(&self, action: Action) -> Result<Option<String>, String> {
+    /// alone does not say it. `change`: the mute change `perform` started
+    /// for `Mute` (else one starts here).
+    fn apply(&self, action: Action, change: Option<Change<'_>>) -> Result<Option<String>, String> {
         match action {
             Action::Restart => match self.agent.get() {
                 // A message with a question set is read again from the
@@ -414,7 +445,7 @@ impl HotkeyTarget {
                 Some(a) => {
                     // One mute change at a time: the level read here is the
                     // one changed, and the hold follows it on drop.
-                    let change = self.quiet.change();
+                    let change = change.unwrap_or_else(|| self.quiet.change());
                     let next = (a.settings().mute_level + 1) % 3;
                     if next >= 1 {
                         change.hold_now();
@@ -422,12 +453,12 @@ impl HotkeyTarget {
                     let done = a.set_mute_level(next).map_err(|e| e.to_string());
                     drop(change);
                     done?;
-                    self.store.record("mute_level", &json!(next));
+                    // `perform` saves it (`record_mute`).
                     self.cue_local(cues::mute_level_cue(u64::from(next)));
                     Ok(Some(format!("level={next}")))
                 }
                 None => {
-                    let change = self.quiet.change();
+                    let change = change.unwrap_or_else(|| self.quiet.change());
                     let muted = self.reader.state().map(|s| s.muted).unwrap_or(false);
                     let c = if muted {
                         Control::Unmute
@@ -736,6 +767,15 @@ impl SystemExt {
         }
     }
 
+    /// After a `set hotkeys` took effect, outside the `set` lock: register
+    /// the new keymap and return `get hotkeys`. Stopping the old hotkeys
+    /// joins their action thread, which may be waiting for the `set` lock
+    /// in `perform` (a rate or mute press), so this never runs under it.
+    pub fn hotkeys_set(&self) -> Value {
+        self.reload_hotkeys();
+        self.hotkeys_json()
+    }
+
     /// The runtime exits: release the hotkeys and restore other apps.
     pub fn shutdown(&self) {
         self.stop_hotkeys();
@@ -805,7 +845,9 @@ impl SystemExt {
         })
     }
 
-    /// `set` or `get` of one of `KEYS`.
+    /// `set` or `get` of one of `KEYS`. A `set hotkeys` saves the keymap
+    /// only: the caller registers it with `hotkeys_set` once the `set` lock
+    /// is let go.
     pub fn setting(&self, key: &str, value: Option<&Value>) -> Handled {
         if let Some(v) = value {
             match key {
@@ -831,10 +873,7 @@ impl SystemExt {
                         self.cue(&cues::duck_level_cue(n), Some("duck_level"));
                     }
                 }
-                "hotkeys" => {
-                    self.set_hotkeys(v)?;
-                    self.reload_hotkeys();
-                }
+                "hotkeys" => self.set_hotkeys(v)?,
                 _ => return Err(bad(format!("'{key}' is read-only"))),
             }
         }

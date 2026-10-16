@@ -459,14 +459,15 @@ async fn run(
     // start (the startup sweep, the migration) must not use up the idle
     // time before the first client could connect (#194).
     life.touch();
-    // Reading, or fetching the Kokoro model: an idle exit mid-download
-    // would leave the first install without Kokoro for longer.
+    // Reading, a summary still out (review finding 45), or fetching the
+    // Kokoro model: an idle exit mid-download would leave the first
+    // install without Kokoro for longer.
     let busy_server = server.clone();
     let retire_server = server.clone();
     tokio::spawn(lifetime::monitor(
         life.clone(),
         Duration::from_millis(100),
-        move || busy_server.is_reading() || kokoro.as_ref().is_some_and(Kokoro::is_preparing),
+        move || busy_server.is_busy() || kokoro.as_ref().is_some_and(Kokoro::is_preparing),
         move || retire_server.retire_if_idle(),
     ));
     eprintln!(

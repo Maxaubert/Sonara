@@ -5,7 +5,7 @@
 //! - `in {json}`: every protocol message received, before it is handled
 //!   (but the read-only `get`, `voices` and `engine_list`, and the
 //!   settings page's `hello` polls), compact: the token is never written, `options` become
-//!   their labels and a string over `FIELD_MAX` is clipped; `in failed
+//!   their labels, a string over `FIELD_MAX` is clipped and the line at `IN_MAX`; `in failed
 //!   type=<t> E_...: <message>` when it was refused.
 //! - `agent <source> channel=<id> ...`: what the agent did with it
 //!   (`sonara_agent::Trace`): `speak kind=<k> entry=<n>` with the text
@@ -274,10 +274,17 @@ pub fn logged(kind: &str, over_http: bool) -> bool {
     !(QUIET.contains(&kind) || (over_http && kind == "hello"))
 }
 
+/// Longest `in` line (bytes, before the clip marker): each string is
+/// clipped at `FIELD_MAX`, and a message of many strings is cut here.
+pub const IN_MAX: usize = 4 * FIELD_MAX;
+
 /// The `in` line of a message, or `None` when it is not logged.
 pub fn input_line(m: &Map<String, Value>, over_http: bool, debug: bool) -> Option<String> {
     let kind = m.get("type").and_then(Value::as_str).unwrap_or("");
-    logged(kind, over_http).then(|| format!("in {}", input_json(m, debug)))
+    logged(kind, over_http).then(|| {
+        let json = input_json(m, debug).to_string();
+        format!("in {}", sonara_log::clip(&json, IN_MAX))
+    })
 }
 
 /// Seconds between two logged refusals of a connection that has not
@@ -354,6 +361,17 @@ mod tests {
             failed_line("ask", "E_UNSUPPORTED", "not enabled"),
             "in failed type=ask E_UNSUPPORTED: not enabled"
         );
+    }
+
+    #[test]
+    fn an_in_line_is_capped_however_many_strings_it_carries() {
+        // Review finding 44: each string is clipped at FIELD_MAX, so a
+        // message of many strings is capped as a whole too.
+        let many = vec![Value::String("x".repeat(FIELD_MAX)); 64];
+        let m = map(json!({"type": "speak", "client": {"name": many}}));
+        let line = input_line(&m, false, true).unwrap();
+        assert!(line.len() <= IN_MAX + 64, "{} bytes", line.len());
+        assert!(line.contains("bytes]"), "the cut is marked");
     }
 
     #[test]

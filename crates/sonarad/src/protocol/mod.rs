@@ -185,7 +185,7 @@ pub struct Server {
     store: Arc<Store>,
     /// Serializes `set`: the change and its record in `config.json`, so two
     /// clients setting one key leave the file holding the value in force.
-    setting: Mutex<()>,
+    setting: Arc<Mutex<()>>,
     /// The support log's activity lines (`with_log`; else stderr).
     log: Option<LogFn>,
     /// What produced each channel entry the agent added (#219), for the
@@ -298,7 +298,7 @@ impl Server {
             system: None,
             enabling: Mutex::new(()),
             store: Store::memory(),
-            setting: Mutex::new(()),
+            setting: Arc::new(Mutex::new(())),
             log: None,
             origins: Origins::default(),
             engines: None,
@@ -386,6 +386,7 @@ impl Server {
             cues: None,
             log: self.log.clone(),
             quiet: self.quiet.clone(),
+            setting: self.setting.clone(),
         };
         self.system = Some(Arc::new(SystemExt::new(host, target)));
         self
@@ -427,14 +428,15 @@ impl Server {
         token_eq(token, &self.token)
     }
 
-    /// Nothing playing and nothing queued (a paused item is not idle), and
-    /// no channel with text it would read.
+    /// Nothing playing and nothing queued (a paused item is not idle), no
+    /// channel with text it would read and no agent work still to be read
+    /// (review finding 45).
     pub fn is_idle(&self) -> bool {
         let reader = match self.reader.state() {
             Ok(s) => s.now_playing.is_none() && s.queued == 0,
             Err(_) => true,
         };
-        reader && self.channels.get().is_none_or(Channels::is_idle)
+        reader && self.channels.get().is_none_or(Channels::is_idle) && !self.agent_has_work()
     }
 
     /// Something is being read right now (an item playing, not paused): the
@@ -446,10 +448,22 @@ impl Server {
         }
     }
 
+    /// The agent has a summary out or decisions held (review finding 45,
+    /// `Agent::has_work`): they are read without another message.
+    pub fn agent_has_work(&self) -> bool {
+        self.agent.get().is_some_and(Agent::has_work)
+    }
+
+    /// Reading, or agent work that will be read (review finding 45): the
+    /// idle exit waits.
+    pub fn is_busy(&self) -> bool {
+        self.is_reading() || self.agent_has_work()
+    }
+
     /// The idle exit (spec section 3), decided under the admission lock:
     /// true (and nothing is admitted from now on) when no client is
     /// connected, the idle time ran out since the last activity and
-    /// nothing is being read; false otherwise. A request that touched the
+    /// nothing is being read or summarized (`is_busy`); false otherwise. A request that touched the
     /// lifetime before this check keeps the runtime; one admitted after it
     /// gets `E_BUSY` instead of being accepted and then lost (#194).
     pub fn retire_if_idle(&self) -> bool {
@@ -458,11 +472,18 @@ impl Server {
             return true;
         }
         let life = &self.lifetime;
-        if !life.may_idle_exit() || !life.idle_expired() || self.is_reading() {
+        if !life.may_idle_exit() || !life.idle_expired() || self.is_busy() {
             return false;
         }
         *retiring = true;
         true
+    }
+
+    /// A takeover was accepted, the idle exit decided or the exit
+    /// requested: every request but `hello` is `E_BUSY` (spec, Errors).
+    fn exiting(&self) -> bool {
+        self.lifetime.exit_requested().is_some()
+            || *self.retiring.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// Hold the admission lock for a request that could start speech, or
@@ -498,9 +519,12 @@ impl Server {
         };
         let kind = m.get("type").and_then(Value::as_str);
         let over_http = session.transport == Transport::Http;
-        // Nothing a connection sends before `hello` is logged (the token
-        // is stripped from the `hello` itself).
-        if request.is_object() && (session.authed || kind == Some("hello")) {
+        // Nothing a connection sends before `hello` with the token is
+        // logged, not even a `hello` with a wrong one (review finding 44;
+        // the token is stripped from the `hello` itself).
+        let hello_ok = kind == Some("hello")
+            && self.token_ok(m.get("token").and_then(Value::as_str).unwrap_or(""));
+        if request.is_object() && (session.authed || hello_ok) {
             if let Some(line) = trace_log::input_line(m, over_http, trace_log::debug()) {
                 self.trace(&line);
             }
@@ -512,6 +536,10 @@ impl Server {
             ))
         } else if !request.is_object() {
             Err(bad("a request is a JSON object"))
+        } else if kind != Some("hello") && self.exiting() {
+            // Not carried out (nor saved) for a runtime that is gone once
+            // the reply is out: over TCP as over HTTP (review finding 46).
+            Err(Failure::new(Code::Busy, "this runtime is exiting"))
         } else {
             match kind {
                 None => Err(bad("missing 'type'")),
