@@ -374,7 +374,7 @@ When a client finds an instance it cannot use (another protocol major, a missing
 Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types,
 capabilities and events; it never changes the meaning of what exists. Clients ignore unknown fields
 and event types. A new major is a new protocol: a client that needs it takes over an idle older
-runtime. The runtime speaks 1.11 (`PROTOCOL_MINOR` in `crates/sonarad/src/protocol/mod.rs`).
+runtime. The runtime speaks 1.12 (`PROTOCOL_MINOR` in `crates/sonarad/src/protocol/mod.rs`).
 
 | Minor | Runtime | Issue | What it added |
 |---|---|---|---|
@@ -390,6 +390,7 @@ runtime. The runtime speaks 1.11 (`PROTOCOL_MINOR` in `crates/sonarad/src/protoc
 | 1.9 | 0.27.0 | | The core key `paths`; step mode also waits after a block's last line, and line labels are words (`"Line three."`) |
 | 1.10 | 0.28.0 | #299 | The `channels` `control` action `back` (back one section); `restart` without a channel replays the whole batch being read, not only the item playing. Hotkeys: since 0.31.0 (#309) a tap on Up is `back` and holding it is `restart` |
 | 1.11 | 0.32.0 | #320 | The `agent` key `question_step` (default `"off"`: a question set is read in order; `"on"`: question 1, then the navigation, as before) |
+| 1.12 | 0.33.0 | #323 | The `agent` message `question_shown`: a terminal that draws Claude Code's question widget reports the question it shows, and the runtime reads it |
 
 Changes with no minor bump: runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and
 `skip_code` (old values are accepted as aliases) and added `engine_status` to `runtime`; no shipped
@@ -713,6 +714,7 @@ dropped and answered `{stale: true}`; so is one naming, in `turn`, a turn id tha
 | `turn_end` | `channel`, `turn?`, `t?`, `label?` | the agent finished: plays `turn_done` and reads text held by `read_mode`. Reply `{stale}` |
 | `ask` | `channel`, `kind: question\|permission\|plan`, `text?`, `options?`, `multi_select?`, `notes?`, `hint?`, `hint_once?`, `set_index?`, `set_size?`, `label?` | a decision, read with priority (after the item playing, before the other channels; a replay the user started is read to its end first, #271). `question`: the text, then `Option n: label.` and its description for each of `options` (strings or `{label, description?}`; an option without a label keeps its number), plays `choice`, and marks the channel as waiting for an answer. `permission`: the pending action, plays `permission`; while a question waits, the permission prompt it fires itself is dropped (no earcon, no text) and clears the mark. `plan`: `"Plan ready. <text>"`, no earcon. `notes` is read after the decision; `hint` too at verbosity `everything`, and `hint_once` after it the first time a channel gets one. `set_index` (0-based) and `set_size` (both or neither, `set_index` below `set_size`, else `E_BAD_REQUEST`; protocol 1.6, #283) make a `question` one of a set, see "Question sets" below |
 | `tool` | `channel`, `name`, `summary?`, `label?` | the agent runs a tool: clears a waiting question; at verbosity `everything` it reads `summary` (else `"Running <name>."`) after the text held so far (read_mode `done`: the text stays held until the turn ends or a decision) |
+| `question_shown` | `channel?` or `host_tab?`, `text?`, `review?`, `label?` | protocol 1.12 (#323): the session is `channel`, or found by `host_tab`, the terminal tab its hook reported (`SONARA_HOST_TAB` or `PRISM_TAB_ID`; the newest session of that tab with a match; `E_BAD_REQUEST` without either). The terminal shows `text`, a question of the channel's question set as drawn on screen (its wrapped lines joined with spaces), or with `review: true` the review of the answers after the last question. The text is matched to the set's questions with case and anything but letters and digits ignored (a screen cut short matches the question it starts, from 20 characters on). A question other than the current one is read now: with `question_step` `"on"` the set moves to it (as `next_question`), else the reading goes on from that question's entry. The current question, an unknown text or channel and a set already reviewed do nothing. `review` says `"Review your answers."` once per set. Exactly one of `text` and `review: true` (`E_BAD_REQUEST` otherwise). Reply: `moved`, and when something moved `channel`, `question` (1-based) and `of` for a question, `review: true` for the review. PrismTerminal sends it with its tab's `PRISM_TAB_ID` |
 | `answered` | `channel`, `label?` | the user answered the question: everything queued for the channel is stale, so its unread text is dropped and its item cut, summary work and held decisions are dropped; the turn goes on |
 | `earcon` | `kind` | play an earcon: `choice`, `permission`, `error`, `turn_done`, `nav`, `nav_edge`, `step` (runtime 0.32.2, #328: every section or code line move), `session_change`, `summary_failed` |
 

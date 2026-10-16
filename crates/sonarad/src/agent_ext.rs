@@ -270,7 +270,21 @@ pub fn tool(a: &Agent, m: &Map<String, Value>) -> Handled {
 /// review of the answers. Reply: `moved` (false: nothing to move to), and
 /// when it moved to a question its `question` (1-based) and `of`.
 pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
-    let ch = channel(m)?;
+    // The session by its id, or by the terminal tab it runs in (`host_tab`,
+    // the tab id its hook reported; PrismTerminal knows only its tab): the
+    // newest session of that tab first.
+    let chans: Vec<String> = match (opt_str(m, "channel")?, opt_str(m, "host_tab")?) {
+        (Some(c), _) => vec![c.to_string()],
+        (None, Some(tab)) if !tab.is_empty() => {
+            let ch = a.channels();
+            ch.channel_ids()
+                .into_iter()
+                .rev()
+                .filter(|id| ch.channel(id).and_then(|c| c.host_tab).as_deref() == Some(tab))
+                .collect()
+        }
+        _ => return Err(bad("question_shown needs 'channel' or 'host_tab'")),
+    };
     let text = opt_str(m, "text")?;
     let review = match m.get("review") {
         None | Some(Value::Null) => false,
@@ -287,7 +301,14 @@ pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
         }
     };
     let mut f = Map::new();
-    let moved = a.question_shown(ch, shown).map_err(failure)?;
+    let mut moved = None;
+    for ch in &chans {
+        moved = a.question_shown(ch, shown).map_err(failure)?;
+        if moved.is_some() {
+            f.insert("channel".into(), json!(ch));
+            break;
+        }
+    }
     f.insert("moved".into(), json!(moved.is_some()));
     match moved {
         Some(ShownMove::Land(nav)) => {
