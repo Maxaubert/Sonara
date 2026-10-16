@@ -437,13 +437,14 @@ pub enum ShownMove {
     Review,
 }
 
-/// Text folded for matching the screen: lower case, words only.
+/// Text folded for matching the screen: lower case, letters and digits
+/// only, no separators (the terminal cuts a word wider than a line in
+/// two, and the screen's lines are joined with a space).
 fn fold(s: &str) -> String {
     s.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
 }
 
 /// Which of `texts` the screen's `shown` is: equal once folded, else the
@@ -1610,6 +1611,28 @@ impl Rules {
                 })
             }
         }
+    }
+
+    /// Whether `channel` has a question set the screen can show (#323):
+    /// a stepping set or one read in order.
+    pub fn has_question_set(&self, channel: &str) -> bool {
+        self.turns
+            .get(channel)
+            .is_some_and(|c| c.questions.is_some() || c.read_set.is_some())
+    }
+
+    /// "Review your answers." for the review screen (#323), spoken or,
+    /// while muted, stored like any other speech.
+    pub fn review_line(&self, channel: &str) -> Vec<Action> {
+        let mut out = Vec::new();
+        self.speak(
+            &mut out,
+            channel,
+            "Review your answers.".into(),
+            false,
+            "review",
+        );
+        out
     }
 
     /// The L2 entry showing `channel`'s question set, once it was spoken.

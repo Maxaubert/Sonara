@@ -272,16 +272,23 @@ pub fn tool(a: &Agent, m: &Map<String, Value>) -> Handled {
 pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
     // The session by its id, or by the terminal tab it runs in (`host_tab`,
     // the tab id its hook reported; PrismTerminal knows only its tab): the
-    // newest session of that tab first.
-    let chans: Vec<String> = match (opt_str(m, "channel")?, opt_str(m, "host_tab")?) {
-        (Some(c), _) => vec![c.to_string()],
+    // newest session of that tab with a question set, and only that one (an
+    // older session of the tab may still have a set it never closed).
+    let chan: Option<String> = match (opt_str(m, "channel")?, opt_str(m, "host_tab")?) {
+        (Some(c), _) => Some(c.to_string()),
         (None, Some(tab)) if !tab.is_empty() => {
             let ch = a.channels();
-            ch.channel_ids()
+            let tabbed: Vec<String> = ch
+                .channel_ids()
                 .into_iter()
                 .rev()
                 .filter(|id| ch.channel(id).and_then(|c| c.host_tab).as_deref() == Some(tab))
-                .collect()
+                .collect();
+            tabbed
+                .iter()
+                .find(|id| a.has_question_set(id))
+                .or(tabbed.first())
+                .cloned()
         }
         _ => return Err(bad("question_shown needs 'channel' or 'host_tab'")),
     };
@@ -302,11 +309,10 @@ pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
     };
     let mut f = Map::new();
     let mut moved = None;
-    for ch in &chans {
+    if let Some(ch) = &chan {
         moved = a.question_shown(ch, shown).map_err(failure)?;
         if moved.is_some() {
             f.insert("channel".into(), json!(ch));
-            break;
         }
     }
     f.insert("moved".into(), json!(moved.is_some()));
@@ -965,5 +971,58 @@ mod tests {
             json!({"type": "stream", "channel": "s6", "delta": "Hi.", "label": "repo-six"}),
         );
         assert_eq!(label(&s, "s6").as_deref(), Some("Mine"));
+    }
+
+    #[test]
+    fn host_tab_stops_at_the_newest_session_of_the_tab_with_a_question_set() {
+        // #323: an older session of the same tab (one that died without
+        // SessionEnd) still has a set; the newest one with a set answers.
+        let (s, mut a) = enabled();
+        for (ch, q) in [("old", "Old"), ("new", "New")] {
+            call(
+                &s,
+                &mut a,
+                json!({"type": "channel_open", "channel": ch, "host_tab": "p-1"}),
+            );
+            for i in 0..2 {
+                let r = call(
+                    &s,
+                    &mut a,
+                    json!({"type": "ask", "channel": ch, "kind": "question",
+                           "text": format!("{q} question {}?", i + 1),
+                           "set_index": i, "set_size": 2}),
+                );
+                assert_eq!(r["ok"], true, "{r}");
+            }
+        }
+        // The newest session of the tab, without a set, is passed over.
+        call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "newest", "host_tab": "p-1"}),
+        );
+        let shown = |a: &mut Session, extra: Value| {
+            let mut m = json!({"type": "question_shown", "host_tab": "p-1"});
+            m.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            call(&s, a, m)
+        };
+        let r = shown(&mut a, json!({"review": true}));
+        assert_eq!(
+            (r["moved"].clone(), r["channel"].clone()),
+            (json!(true), json!("new")),
+            "{r}"
+        );
+        let r = shown(&mut a, json!({"review": true}));
+        assert_eq!(r["moved"], false, "reviewed already, not the old set: {r}");
+        let r = shown(&mut a, json!({"text": "Old question 2?"}));
+        assert_eq!(r["moved"], false, "only the old set has it: {r}");
+        let r = shown(&mut a, json!({"text": "New question 2?"}));
+        assert_eq!(
+            (r["moved"].clone(), r["question"].clone()),
+            (json!(true), json!(2)),
+            "{r}"
+        );
     }
 }
