@@ -9,7 +9,7 @@ here="$(cd "${0%/*}" 2>/dev/null && pwd)" || here="${0%/*}"
 ver=""
 { IFS= read -r ver < "$here/runtime-version"; } 2>/dev/null
 ver="${ver%$'\r'}"
-lad="${LOCALAPPDATA//\//}"
+lad="${LOCALAPPDATA//\\//}"
 if [ -z "$ver" ] || [ -z "$lad" ]; then
     echo "Sonara: cannot find bin/runtime-version or LOCALAPPDATA." >&2
     exit 1
@@ -39,16 +39,23 @@ if [ ! -f "$exe" ]; then
     lock="$root/.bootstrap.lock"
     # A hook may be installing it already: wait for it. As in the hook
     # launcher, only a lock older than 15 minutes (a killed bootstrap) is
-    # taken over; a slow download keeps its lock.
+    # taken over (under a second lock folder, checked again there, so a
+    # hook's fresh lock is never removed); a slow download keeps its lock.
     own=""
+    take="$lock.takeover"
     while [ ! -f "$exe" ]; do
         if mkdir "$lock" 2>/dev/null; then
             own=1
             break
         fi
         if [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ]; then
-            rm -rf "$lock"
-            continue
+            if mkdir "$take" 2>/dev/null; then
+                [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ] && rm -rf "$lock"
+                rmdir "$take"
+                continue
+            fi
+            # Held for a moment only: one older than a minute was killed.
+            [ -n "$(find "$take" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$take"
         fi
         sleep 1
     done

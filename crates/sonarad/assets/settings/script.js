@@ -1,5 +1,16 @@
 // The runtime fills in its token when it serves this page (settings_page.rs).
 const TOKEN = "__SONARA_TOKEN__";
+// Keep the token out of the address bar, history and sync: this tab keeps
+// it, and a reload gets it back from there (settings_page.rs REOPEN).
+try { sessionStorage.setItem("sonara-token", TOKEN); } catch (e) {}
+{
+  const q = new URLSearchParams(location.search);
+  if (q.has("token")) {
+    q.delete("token");
+    const rest = q.toString();
+    history.replaceState(history.state, "", location.pathname + (rest ? "?" + rest : "") + location.hash);
+  }
+}
 // And the ranges and defaults of its whole-number settings, from its
 // SCHEMA: {key: {min, max, default}} (#257).
 const SCHEMA = /*__SONARA_SCHEMA__*/{};

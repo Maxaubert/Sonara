@@ -400,6 +400,12 @@ fn map_unlabelled(
             Value::Object(msg("focus", channel)),
             Value::Object(msg("turn_start", channel)),
         ],
+        // A compaction also fires SessionStart, on its own in a session
+        // running in the background: it opens the channel but never
+        // takes the focus from the session the user is in.
+        "SessionStart" if text(payload, "source") == "compact" => {
+            vec![open(channel, label().as_deref(), env)]
+        }
         "SessionStart" => vec![
             open(channel, label().as_deref(), env),
             Value::Object(msg("focus", channel)),

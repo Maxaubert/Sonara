@@ -174,12 +174,19 @@ fn settings(paths: &Paths) -> Result<(), String> {
         .get("settings_url")
         .and_then(|v| v.as_str().map(str::to_string))
         .ok_or("the runtime gave no settings page address")?;
-    if open_url(&url) {
-        println!("Opened the Sonara settings page in your browser: {url}");
-    } else {
-        println!("Sonara settings page: {url}");
-    }
+    println!("{}", settings_line(&url, open_url(&url)));
     Ok(())
+}
+
+/// What `sonara settings` prints. The address carries the runtime's token
+/// and the output lands in the Claude Code transcript, so it is printed
+/// only when no browser opened it (`SONARA_NO_BROWSER`, or no browser).
+fn settings_line(url: &str, opened: bool) -> String {
+    if opened {
+        "Opened the Sonara settings page in your browser.".to_string()
+    } else {
+        format!("Sonara settings page: {url}")
+    }
 }
 
 /// `sonara engines ...`: one protocol request to the running runtime
@@ -487,6 +494,9 @@ fn uninstall(paths: &Paths, exe: &Path, keep: &[Keep]) -> Result<(), String> {
     for p in &r.kept {
         println!("Kept {}", p.display());
     }
+    for p in &r.unknown {
+        println!("Left {} (not made by Sonara)", p.display());
+    }
     for (p, e) in &r.failed {
         println!("Could not remove {} ({e})", p.display());
     }
@@ -498,5 +508,20 @@ fn uninstall(paths: &Paths, exe: &Path, keep: &[Keep]) -> Result<(), String> {
         Ok(())
     } else {
         Err("some files could not be removed".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_opened_settings_page_is_reported_without_its_token() {
+        let url = "http://127.0.0.1:5000/settings?token=abc123";
+        let line = settings_line(url, true);
+        assert!(!line.contains("abc123"), "{line}");
+        assert!(line.contains("Opened"), "{line}");
+        // With no browser opened, the address is the only way to the page.
+        assert!(settings_line(url, false).contains(url));
     }
 }

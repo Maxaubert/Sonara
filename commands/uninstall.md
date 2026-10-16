@@ -19,6 +19,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/bin/sonara" uninstall --keep <items>
 for example `--keep settings,models`. It stops Sonara (other apps' audio is restored
 first), removes its runtime (`%LOCALAPPDATA%\Sonara\runtime`) and the files in its home
 (`%LOCALAPPDATA%\Sonara`) except the kept ones, and prints what it removed and kept.
+Files in the home that Sonara did not make are listed and left in place.
 Sonara then stays off: the plugin's hooks do nothing until `/sonara:start`.
 
 Print the command's output to the user verbatim. Then tell the user that the plugin itself

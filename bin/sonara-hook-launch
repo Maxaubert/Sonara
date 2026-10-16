@@ -24,7 +24,7 @@ here="${0%/*}"
 ver=""
 { IFS= read -r ver < "$here/runtime-version"; } 2>/dev/null
 ver="${ver%$'\r'}"
-lad="${LOCALAPPDATA//\//}"
+lad="${LOCALAPPDATA//\\//}"
 [ -n "$ver" ] && [ -n "$lad" ] || exit 0
 sonara_rt=""
 if . "$here/sonara-runtime.sh" 2>/dev/null; then
@@ -40,7 +40,7 @@ fi
 
 # --- not installed: start the bootstrap once, in the background ----------
 exec </dev/null >/dev/null 2>&1
-home="${SONARA_HOME//\//}"
+home="${SONARA_HOME//\\//}"
 [ -n "$home" ] || home="$lad/Sonara"
 [ -e "$home/stopped" ] && exit 0
 root="$lad/Sonara/runtime"
@@ -52,10 +52,21 @@ fi
 lock="$root/.bootstrap.lock"
 if ! mkdir "$lock" 2>/dev/null; then
     # Another hook's bootstrap is running; one older than 15 minutes was
-    # killed and is taken over.
+    # killed and is taken over. Parallel hooks can all see it stale, so the
+    # takeover holds a second lock folder and checks again under it: one
+    # hook never removes the lock another has just taken.
     [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ] || exit 0
-    rm -rf "$lock"
-    mkdir "$lock" 2>/dev/null || exit 0
+    take="$lock.takeover"
+    if ! mkdir "$take" 2>/dev/null; then
+        # Held for a moment only: one older than a minute was killed.
+        [ -n "$(find "$take" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$take"
+        exit 0
+    fi
+    [ -n "$(find "$lock" -maxdepth 0 -mmin +15 2>/dev/null)" ] && rm -rf "$lock"
+    mkdir "$lock" 2>/dev/null
+    took=$?
+    rmdir "$take"
+    [ "$took" = 0 ] || exit 0
 fi
 ps1="$here/sonara-bootstrap.ps1"
 if command -v cygpath >/dev/null 2>&1; then

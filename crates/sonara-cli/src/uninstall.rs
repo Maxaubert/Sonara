@@ -62,9 +62,45 @@ pub struct Report {
     pub removed: Vec<PathBuf>,
     pub kept: Vec<PathBuf>,
     pub failed: Vec<(PathBuf, String)>,
+    /// Entries of the home Sonara did not make: left in place.
+    pub unknown: Vec<PathBuf>,
     /// A folder removed once this process has exited (it holds the
     /// running `sonara.exe`).
     pub deferred: Option<PathBuf>,
+}
+
+/// What Sonara makes in its home (PRIVACY.md lists each). Uninstall
+/// removes only these: `SONARA_HOME` may name a folder that holds other
+/// files too.
+const OWN: &[&str] = &[
+    "runtime",
+    "runtime.json",
+    "state",
+    "models",
+    "logs",
+    "config.json",
+    "keymap.json",
+    "session_prefs.json",
+    "engines.json",
+    "earcons",
+    "fake-keys.json",
+];
+
+/// Whether `name` is one of `OWN`, or a file Sonara writes next to one: a
+/// copy that could not be read (`<name>.bad`) or a temp file of an atomic
+/// write (`<name>.tmp`, `<name>.<pid>.tmp`).
+fn is_own(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    OWN.iter().any(|own| {
+        let Some(rest) = name.strip_prefix(own) else {
+            return false;
+        };
+        let pid_tmp = rest
+            .strip_prefix('.')
+            .and_then(|r| r.strip_suffix(".tmp"))
+            .is_some_and(|pid| !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()));
+        rest.is_empty() || (own.ends_with(".json") && (rest == ".bad" || rest == ".tmp" || pid_tmp))
+    })
 }
 
 fn remove(path: &Path) -> std::io::Result<()> {
@@ -101,8 +137,9 @@ fn remove_later(_folder: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other("not supported"))
 }
 
-/// Remove the runtime folders (`runtime_root`) and everything in `home`
-/// except what `keep` names; then write the stop sentinel, so the plugin's
+/// Remove the runtime folders (`runtime_root`) and what Sonara made in
+/// `home` except what `keep` names (anything else is listed in
+/// `Report::unknown` and left); then write the stop sentinel, so the plugin's
 /// hooks do not install the runtime again until `/sonara:start`.
 pub fn remove_all(home: &Path, runtime_root: Option<&Path>, exe: &Path, keep: &[Keep]) -> Report {
     let mut report = Report::default();
@@ -136,6 +173,10 @@ pub fn remove_all(home: &Path, runtime_root: Option<&Path>, exe: &Path, keep: &[
             }
             if kept.iter().any(|k| k.eq_ignore_ascii_case(&name)) {
                 report.kept.push(p);
+                continue;
+            }
+            if !is_own(&name) {
+                report.unknown.push(p);
                 continue;
             }
             match remove(&p) {
@@ -350,6 +391,49 @@ mod tests {
         assert_eq!(removed, vec!["openai", "kgpu"]);
         assert!(failed.is_empty());
         assert!(creds.0.borrow().is_empty());
+    }
+
+    #[test]
+    fn entries_sonara_did_not_make_are_listed_and_left() {
+        // SONARA_HOME may name a folder that holds other files too.
+        let home = tmp();
+        std::fs::create_dir_all(home.join("Photos")).unwrap();
+        std::fs::write(home.join("Photos").join("a.jpg"), b"x").unwrap();
+        std::fs::write(home.join("notes.txt"), b"x").unwrap();
+        std::fs::write(home.join("config.json.tmp.old"), b"x").unwrap();
+        std::fs::create_dir_all(home.join("logs")).unwrap();
+        std::fs::create_dir_all(home.join("state")).unwrap();
+        for f in [
+            "runtime.json",
+            "runtime.json.4242.tmp",
+            "config.json",
+            "config.json.bad",
+            "engines.json.bad",
+            "engines.json.17.tmp",
+        ] {
+            std::fs::write(home.join(f), b"{}").unwrap();
+        }
+        let exe = home.join("elsewhere").join("sonara.exe");
+        let r = remove_all(&home, None, &exe, &[]);
+        assert!(r.failed.is_empty(), "{:?}", r.failed);
+        for gone in [
+            "logs",
+            "state",
+            "runtime.json",
+            "runtime.json.4242.tmp",
+            "config.json",
+            "config.json.bad",
+            "engines.json.bad",
+            "engines.json.17.tmp",
+        ] {
+            assert!(!home.join(gone).exists(), "{gone}");
+        }
+        let left = ["Photos", "config.json.tmp.old", "notes.txt"].map(|n| home.join(n));
+        for p in &left {
+            assert!(p.exists(), "{}", p.display());
+        }
+        assert!(home.join("Photos").join("a.jpg").exists());
+        assert_eq!(r.unknown, left.to_vec());
     }
 
     #[test]

@@ -77,6 +77,15 @@ pub enum Delivery {
     Dropped,
 }
 
+/// Whether the replies of `send_on` start with an ok reply to `hello`.
+fn hello_ok(replies: &[Value]) -> bool {
+    replies
+        .first()
+        .and_then(|v| v.get("ok"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 /// Whether the wait after a start should try `rt` (the `runtime.json` now
 /// in the home): a runtime other than the `stale` one that did not answer,
 /// or the stale one again once the start has exited (a second runtime
@@ -102,9 +111,12 @@ pub fn deliver(
 ) -> Delivery {
     let before = read_runtime(home);
     if let Some(rt) = &before {
+        // A crashed runtime leaves runtime.json behind, and another program
+        // may hold its port by now: only an ok reply to hello is the runtime.
         if let Ok(s) = connect(rt, PROBE) {
-            let _ = send_on(s, rt, hello, msgs, timeout);
-            return Delivery::Sent;
+            if send_on(s, rt, hello, msgs, timeout).is_ok_and(|r| hello_ok(&r)) {
+                return Delivery::Sent;
+            }
         }
     }
     let Some(exe) = exe.filter(|_| !stopped(home)) else {
@@ -199,6 +211,48 @@ mod tests {
         );
         assert_eq!(d, Delivery::Dropped);
         assert!(t.elapsed() < Duration::from_millis(500));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_listener_that_does_not_answer_hello_ok_is_not_the_runtime() {
+        use std::net::TcpListener;
+        let dir =
+            std::env::temp_dir().join(format!("sonara-client-foreign-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Another program on the port a crashed runtime left in runtime.json.
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::fs::write(
+            dir.join(crate::home::RUNTIME_FILE),
+            json!({"port": port, "token": "old", "pid": 1}).to_string(),
+        )
+        .unwrap();
+        let server = std::thread::spawn(move || {
+            for reply in [
+                &b"{\"ok\":false}\n"[..],
+                b"HTTP/1.1 400 Bad Request\r\n\r\n",
+            ] {
+                let (s, _) = l.accept().unwrap();
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                (&s).write_all(reply).unwrap();
+            }
+        });
+        for _ in 0..2 {
+            let d = deliver(
+                &dir,
+                &HELLO,
+                &[json!({"type": "stream"})],
+                None,
+                &[],
+                Instant::now() + Duration::from_secs(1),
+                Duration::from_secs(2),
+            );
+            assert_eq!(d, Delivery::Dropped, "not counted as sent");
+        }
+        server.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

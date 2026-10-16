@@ -15,7 +15,7 @@
        SONARA_BOOTSTRAP_START=0), which replaces a runtime of an older
        release that is still running,
     5. remove the folders of older releases (newer ones stay: upgrades
-       go one way).
+       go one way; with -NoStart all stay, as their runtime may still run).
   bin/sonara-hook-launch runs it in the background from a hook (with -Lock,
   the lock folder it took, removed here when done); bin/sonara runs it in
   the foreground before a slash command. A failure is logged to
@@ -106,7 +106,19 @@ function Install-Runtime {
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $unpacked)
     $hook = Get-ChildItem -Path $unpacked -Recurse -Filter "sonara-hook.exe" | Select-Object -First 1
     if (-not $hook) { throw "$Name holds no sonara-hook.exe" }
-    if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }   # a broken earlier install
+    # Another bootstrap may have installed it meanwhile, and started it:
+    # that install stays.
+    if (Test-Path (Join-Path $Dest "sonara-hook.exe")) {
+      Write-Log "The Sonara runtime $Version was installed meanwhile; keeping it"
+      return
+    }
+    if (Test-Path $Dest) {
+      # A broken earlier install: renamed aside in one step (which fails
+      # while a program in it runs), never deleted file by file in place.
+      $aside = Join-Path $Root (".broken-" + [guid]::NewGuid().ToString("N"))
+      [IO.Directory]::Move($Dest, $aside)
+      Remove-Item -Recurse -Force $aside -ErrorAction SilentlyContinue
+    }
     [IO.Directory]::Move($hook.Directory.FullName, $Dest)
     Write-Log "Installed the Sonara runtime $Version in $Dest"
   } finally {
@@ -118,7 +130,11 @@ $code = 0
 try {
   if (-not (Test-Path (Join-Path $Dest "sonara-hook.exe"))) { Install-Runtime }
   Remove-Item -Force $Failed -ErrorAction SilentlyContinue
-  $started = $true
+  # With -NoStart nothing replaces a runtime still running from an older
+  # folder, so the older folders stay (`sonara start` removes them once it
+  # has replaced that runtime). SONARA_BOOTSTRAP_START=0 (tests) skips only
+  # the start.
+  $started = -not $NoStart
   if (-not $NoStart -and $env:SONARA_BOOTSTRAP_START -ne "0") {
     # Native stderr lines are error records in Windows PowerShell: with
     # "Stop" in force the first one would end the script.

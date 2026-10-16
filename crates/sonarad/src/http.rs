@@ -147,12 +147,15 @@ fn settings(req: &Request<Incoming>, server: &Server) -> Response<BoxBody> {
             r
         }
         Err((status, message)) => {
-            let mut r = Response::new(Full::new(Bytes::from(message)).boxed_unsync());
+            let (body, kind) = crate::settings_page::refusal(status, message, req.uri().query());
+            let mut r = Response::new(Full::new(Bytes::from(body)).boxed_unsync());
             *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::NOT_FOUND);
-            r.headers_mut().insert(
-                CONTENT_TYPE,
-                HeaderValue::from_static("text/plain; charset=utf-8"),
-            );
+            for (k, v) in crate::settings_page::HEADERS {
+                r.headers_mut()
+                    .insert(HeaderName::from_static(k), HeaderValue::from_static(v));
+            }
+            r.headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static(kind));
             r
         }
     }
