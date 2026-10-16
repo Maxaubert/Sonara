@@ -724,6 +724,13 @@ impl Channels {
         self.lock().router.revise(channel, entry, text)
     }
 
+    /// Set `channel`'s batch entry `entry` aside, or back
+    /// (`Router::set_aside`, #323). False if there is no such channel or
+    /// entry.
+    pub fn set_aside(&self, channel: &str, entry: u64, aside: bool) -> bool {
+        self.lock().router.set_aside(channel, entry, aside)
+    }
+
     /// Read `channel` now from its batch entry `entry` (`None`: from the
     /// top), whatever is being read (#283, L3's question navigation and Up
     /// on a message with a question set): the replay holds the floor
@@ -1088,7 +1095,7 @@ impl Channels {
 fn unread(st: &State, channel: &str) -> Vec<Entry> {
     st.router
         .channel(channel)
-        .map(|c| c.entries()[c.cursor()..].to_vec())
+        .map(|c| c.unread().cloned().collect())
         .unwrap_or_default()
 }
 

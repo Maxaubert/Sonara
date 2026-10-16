@@ -410,8 +410,13 @@ struct ReadSet {
     size: usize,
     texts: Vec<Option<String>>,
     entries: Vec<Option<u64>>,
+    /// The question on screen (`size`: the review, no question).
     current: usize,
     reviewed: bool,
+    /// A host reports the screen for it (a `question_shown` came, #323,
+    /// owner 2026-10-16): only the question on screen is read, the others
+    /// are set aside in L2.
+    following: bool,
 }
 
 /// What the terminal shows of a question set (#323): a question's text,
@@ -427,7 +432,8 @@ pub enum Shown<'a> {
 pub enum ShownMove {
     /// A stepping set moved to this question: read its entry, revised.
     Land(Nav),
-    /// A set read in order: read on from this question's entry.
+    /// A set read in order: read this question's entry, alone (the
+    /// others are set aside, `read_set_aside`).
     Entry {
         entry: u64,
         index: usize,
@@ -1231,6 +1237,7 @@ impl Rules {
                             entries: vec![None; n],
                             current: 0,
                             reviewed: false,
+                            following: false,
                         });
                     }
                     if let Some(r) = c.read_set.as_mut() {
@@ -1573,7 +1580,9 @@ impl Rules {
     /// screen follower): a question other than the current one is moved
     /// to (`Land` for a stepping set, `Entry` for a set read in order);
     /// the review screen is announced once (`Review`). `None`: nothing to
-    /// do (no set, no match, the current question, reviewed already).
+    /// do (no set, no match, the current question, reviewed already). A
+    /// set read in order is followed from the first report on: only the
+    /// question on screen is read (`read_set_aside`, owner 2026-10-16).
     pub fn question_shown(&mut self, channel: &str, shown: Shown) -> Option<ShownMove> {
         let c = self.turns.get_mut(channel)?;
         if let Some(q) = c.questions.as_mut() {
@@ -1593,16 +1602,24 @@ impl Rules {
         }
         let r = c.read_set.as_mut()?;
         match shown {
-            Shown::Review => (!r.reviewed).then(|| {
-                r.reviewed = true;
-                ShownMove::Review
-            }),
+            Shown::Review => {
+                // No question on screen now (owner, 2026-10-16).
+                r.following = true;
+                r.current = r.size;
+                (!r.reviewed).then(|| {
+                    r.reviewed = true;
+                    ShownMove::Review
+                })
+            }
             Shown::Text(s) => {
                 let k = match_text(&r.texts, s)?;
+                let entry = r.entries[k]?;
+                // The first report starts following the screen; the
+                // question already current is not a move.
+                r.following = true;
                 if k == r.current {
                     return None;
                 }
-                let entry = r.entries[k]?;
                 r.current = k;
                 Some(ShownMove::Entry {
                     entry,
@@ -1611,6 +1628,38 @@ impl Rules {
                 })
             }
         }
+    }
+
+    /// The entries of `channel`'s set read in order once a host follows it
+    /// on screen (#323, owner 2026-10-16), each with whether L2 sets it
+    /// aside: every question but the one on screen. Empty while nobody
+    /// follows the set (every question is read in order, #320).
+    pub fn read_set_aside(&self, channel: &str) -> Vec<(u64, bool)> {
+        let Some(r) = self
+            .turns
+            .get(channel)
+            .and_then(|c| c.read_set.as_ref())
+            .filter(|r| r.following)
+        else {
+            return Vec::new();
+        };
+        r.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.map(|e| (e, i != r.current)))
+            .collect()
+    }
+
+    /// The entry of the question on screen of `channel`'s followed set
+    /// read in order (#323), if a question is on screen.
+    pub fn shown_entry(&self, channel: &str) -> Option<u64> {
+        let r = self
+            .turns
+            .get(channel)?
+            .read_set
+            .as_ref()
+            .filter(|r| r.following)?;
+        r.entries.get(r.current).copied().flatten()
     }
 
     /// Whether `channel` has a question set the screen can show (#323):

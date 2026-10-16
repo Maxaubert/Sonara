@@ -54,12 +54,33 @@ after folding, with a prefix match as the fallback for a cut-off screen).
   is read now, as Ctrl+Alt+Down/Up would (cutting what that session is reading, never another
   session's text). The current question is ignored, so the widget appearing while the message
   text is read does not cut the text.
-- With `question_step` off (every question read in order): a match jumps to that question's entry
-  and the reading goes on from there; the current one is ignored.
+- With `question_step` off (every question read in order): the set is followed from the first
+  `question_shown` for it, and only the question on screen is read (owner decision below).
 - `review: true`: says "Review your answers." once per set (a short cue, no options).
 - No set, no match, an unknown channel: nothing happens (logged once, `question: shown text not in
   the set`), reply `ok` with `moved: false`.
 - Reply `{ok, moved, question, of}` like `next_question`.
+
+## Owner decision: only the question on screen (2026-10-16)
+
+Owner (Ove), 2026-10-16: "it follows the question, never reading a new one that's not on screen.
+Going to a different question while one is reading makes that one stop and then the new one read."
+Before this, with `question_step` off a reported question was read from its entry to the end of
+the set, so questions not on screen were read and heard ones read again. Now, once a host has sent
+`question_shown` for a set read in order:
+
+- Only the question on screen is read: Sonara stops at the end of its text and does not go on to
+  the next question. The other questions' entries are set aside in L2 (`Router::set_aside`: kept
+  in the batch, never fed, not unread), so a replay (Up) reads the message with the question on
+  screen only. "Review your answers." is read only when the screen shows the review.
+- A different question on screen stops the one being read at once and reads the new one, heard
+  before or not. The same question again (a redraw) does nothing. A question of the set read in
+  order before the screen's first report that is not on screen stops for the one on screen.
+- No `question_shown` for the set (a plain terminal): unchanged, every question in order (#322).
+- Muted: the set still follows the screen, nothing is read (the earlier mute fix stays).
+- Tests: `crates/sonara-agent/tests/agent.rs` (`a_shown_question_is_read_alone_not_the_rest_of_the_set`,
+  `moving_to_another_question_stops_the_one_reading` and others), `tests/rules.rs`, the router's
+  unit test, `conformance/agent/test_agent.py::test_question_shown_reads_only_the_question_on_screen`.
 
 ## Plan
 

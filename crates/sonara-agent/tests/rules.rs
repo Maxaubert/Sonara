@@ -2201,6 +2201,40 @@ fn a_question_shown_on_screen_jumps_in_a_set_read_in_order() {
 }
 
 #[test]
+fn a_followed_set_read_in_order_sets_aside_the_questions_not_on_screen() {
+    // Owner, 2026-10-16: only the question on screen is read.
+    let mut r = rules();
+    ask_set(&mut r, "fg", 3);
+    for e in [10, 11, 12] {
+        r.bind_question("fg", e, false);
+    }
+    assert!(r.read_set_aside("fg").is_empty(), "nobody follows it yet");
+    assert_eq!(r.shown_entry("fg"), None);
+    assert_eq!(r.question_shown("fg", Shown::Text("Q1?")), None);
+    assert_eq!(
+        r.read_set_aside("fg"),
+        [(10, false), (11, true), (12, true)]
+    );
+    assert_eq!(r.shown_entry("fg"), Some(10));
+    r.question_shown("fg", Shown::Text("Q2?"));
+    assert_eq!(
+        r.read_set_aside("fg"),
+        [(10, true), (11, false), (12, true)]
+    );
+    // The review: no question on screen; back to question 2 reads it.
+    assert_eq!(
+        r.question_shown("fg", Shown::Review),
+        Some(ShownMove::Review)
+    );
+    assert_eq!(r.read_set_aside("fg"), [(10, true), (11, true), (12, true)]);
+    assert_eq!(r.shown_entry("fg"), None);
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Q2?")),
+        Some(ShownMove::Entry { index: 1, .. })
+    ));
+}
+
+#[test]
 fn a_wrapped_question_on_screen_matches_its_text() {
     let mut r = stepping();
     let mut first = question(
