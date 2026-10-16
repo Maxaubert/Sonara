@@ -6,7 +6,7 @@
 use sonara_agent::earcon::Library;
 use sonara_agent::{
     Agent, Ask, AskKind, Back, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Forward,
-    Section, Settings, Skip, Step, Summarizer, SummarySettings,
+    Section, Settings, Shown, ShownMove, Skip, Step, Summarizer, SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};
@@ -1832,4 +1832,57 @@ fn holding_right_skips_the_rest_of_the_message_to_the_next_session() {
     r.read("From beta.");
     r.stays_idle();
     assert_eq!(r.agent.skip_message().unwrap(), Skip::Nothing);
+}
+
+// -- following the question on screen (#323) ---------------------------------
+
+#[test]
+fn a_question_shown_on_screen_is_read_when_stepping() {
+    let r = text_and_four_questions();
+    r.read("Here is my answer.");
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    // The user answered question 1: the screen shows question 2.
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Land(n)) if n.index == 1));
+    r.read("Question 2 of 4.");
+    r.read("Question text 2?");
+    r.stays_idle();
+    // Back with Shift+Tab: question 1 again.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    // The review screen, once.
+    r.agent.question_shown("a", Shown::Review).unwrap();
+    r.read("Review your answers.");
+    r.stays_idle();
+    assert_eq!(r.agent.question_shown("a", Shown::Review).unwrap(), None);
+}
+
+#[test]
+fn a_question_shown_on_screen_jumps_a_set_read_in_order() {
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 3.");
+    r.out.start();
+    // The user skipped to question 3 on screen.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 3?"))
+        .unwrap();
+    r.read("Question 3 of 3.");
+    r.read("Question text 3?");
+    r.stays_idle();
 }

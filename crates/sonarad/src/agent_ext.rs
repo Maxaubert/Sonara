@@ -14,7 +14,9 @@ use sonara_agent::settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, SummaryCommand, Verbosity,
 };
 use sonara_agent::summarizer::instruction;
-use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Step, Style, SummarySettings};
+use sonara_agent::{
+    Agent, Ask, AskKind, Choice, Earcon, Error, Shown, ShownMove, Step, Style, SummarySettings,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
@@ -32,6 +34,7 @@ pub const TYPES: &[&str] = &[
     "earcon",
     "tool",
     "answered",
+    "question_shown",
 ];
 
 /// `set`/`get` keys of the extension.
@@ -260,6 +263,47 @@ pub fn tool(a: &Agent, m: &Map<String, Value>) -> Handled {
     let summary = opt_str(m, "summary")?.unwrap_or("");
     a.tool(ch, name, summary).map_err(failure)?;
     ok(Map::new())
+}
+
+/// `question_shown` (#323, protocol 1.12): the terminal shows `text` (a
+/// question of the session's set, as on screen) or, `review: true`, the
+/// review of the answers. Reply: `moved` (false: nothing to move to), and
+/// when it moved to a question its `question` (1-based) and `of`.
+pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
+    let ch = channel(m)?;
+    let text = opt_str(m, "text")?;
+    let review = match m.get("review") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("'review' is true or false")),
+    };
+    let shown = match (text, review) {
+        (Some(t), false) => Shown::Text(t),
+        (None, true) => Shown::Review,
+        _ => {
+            return Err(bad(
+                "question_shown needs 'text' or 'review': true, not both",
+            ))
+        }
+    };
+    let mut f = Map::new();
+    let moved = a.question_shown(ch, shown).map_err(failure)?;
+    f.insert("moved".into(), json!(moved.is_some()));
+    match moved {
+        Some(ShownMove::Land(nav)) => {
+            f.insert("question".into(), json!(nav.index + 1));
+            f.insert("of".into(), json!(nav.size));
+        }
+        Some(ShownMove::Entry { index, size, .. }) => {
+            f.insert("question".into(), json!(index + 1));
+            f.insert("of".into(), json!(size));
+        }
+        Some(ShownMove::Review) => {
+            f.insert("review".into(), json!(true));
+        }
+        None => {}
+    }
+    ok(f)
 }
 
 pub fn answered(a: &Agent, m: &Map<String, Value>) -> Handled {
