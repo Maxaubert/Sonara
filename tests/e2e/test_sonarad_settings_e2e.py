@@ -203,6 +203,20 @@ def test_code_reading_rows_show_where_code_is_read_and_save(live, browser):
     page.close()
 
 
+def test_step_through_questions_is_off_by_default_and_saves(live, browser):
+    # #320: off reads every question of a set; on stops after question 1.
+    lv = live()
+    page = open_page(browser, lv.url)
+    pw.expect(page.locator("#questionstep-seg [data-value=off]")).to_have_attribute("aria-checked", "true")
+    assert lv.get("question_step") == "off"
+    page.click("#questionstep-seg [data-value=on]")
+    assert eventually(lambda: lv.saved().get("question_step") == "on")
+    assert lv.get("question_step") == "on"
+    page.reload()
+    pw.expect(page.locator("#questionstep-seg [data-value=on]")).to_have_attribute("aria-checked", "true")
+    page.close()
+
+
 def test_verbosity_has_three_levels_and_persists_across_a_reload(live, browser):
     # #214, #292: Default (skip_code, the default), Read code, Everything.
     lv = live()

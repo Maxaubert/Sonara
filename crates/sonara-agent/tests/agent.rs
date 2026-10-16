@@ -1383,7 +1383,10 @@ fn a_new_prompt_in_the_replayed_session_ends_the_replay() {
 /// The evidence of 2026-10-07 (#283): a message whose text is followed by
 /// a set of `n` questions, as the hook sends it (one `ask` per question
 /// with its place in the set).
+///
+/// With `question_step` on (#283; off by default since #320).
 fn ask_set(r: &Rig, ch: &str, n: usize) {
+    r.agent.set_question_step(true);
     for i in 0..n {
         let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
         a.set = Some((i, n));
@@ -1397,6 +1400,24 @@ fn text_and_four_questions() -> Rig {
     r.stream("a", "Here is my answer.", 0, None);
     ask_set(&r, "a", 4);
     r
+}
+
+#[test]
+fn without_question_step_a_question_set_is_read_through() {
+    // #320 (the default): every question in order, no stop.
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.read("Here is my answer.");
+    for k in 1..=3 {
+        r.read(&format!("Question {k} of 3."));
+        r.read(&format!("Question text {k}?"));
+    }
+    r.stays_idle();
 }
 
 #[test]

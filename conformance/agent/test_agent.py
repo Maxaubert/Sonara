@@ -669,6 +669,21 @@ def test_flush_scope_is_set_and_got_and_refuses_other_values(rt):
         assert r["error"]["code"] == "E_BAD_REQUEST", bad
 
 
+def test_question_step_is_off_by_default_and_every_question_is_read(rt):
+    # #320 (protocol 1.11): off reads a set's questions in order.
+    c = agent_client(rt)
+    assert ok(c, {"type": "get", "key": "question_step"})["value"] == "off"
+    for i in range(2):
+        ok(c, {"type": "ask", "channel": "a", "kind": "question", "text": f"Pick {i + 1}?",
+               "options": ["Yes"], "set_index": i, "set_size": 2})
+    assert [t for t, _ in heard(c, 2)] == ["Question 1 of 2.", "Question 2 of 2."]
+    for v in ("on", "off"):
+        assert ok(c, {"type": "set", "key": "question_step", "value": v})["value"] == v
+    for bad in ("maybe", True, None):
+        r = c.request({"type": "set", "key": "question_step", "value": bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", bad
+
+
 def test_flush_skips_the_rest_of_the_flushed_reply_but_reads_its_question(rt):
     c = agent_client(rt, policy="all")
     ok(c, {"type": "channel_open", "channel": "a"})
@@ -758,7 +773,9 @@ def test_flush_during_a_replay_moves_on(rt):
 # -- question sets (#283) -----------------------------------------------------
 
 def ask_set(c, channel, n):
-    """A set of ``n`` questions as the Claude hook sends one AskUserQuestion."""
+    """A set of ``n`` questions as the Claude hook sends one AskUserQuestion,
+    with ``question_step`` on (#283; off by default since #320)."""
+    ok(c, {"type": "set", "key": "question_step", "value": "on"})
     for i in range(n):
         ok(c, {"type": "ask", "channel": channel, "kind": "question", "text": f"Pick {i + 1}?",
                "options": ["Yes"], "set_index": i, "set_size": n})

@@ -266,6 +266,10 @@ pub struct Settings {
     pub background: BackgroundPolicy,
     pub summaries: SummarySettings,
     pub flush_scope: FlushScope,
+    /// Step through questions (`question_step`, #320): on, a question set
+    /// reads question 1 and waits for the keys (#283); off (default), every
+    /// question of the set is read in order.
+    pub question_step: bool,
 }
 
 impl Default for Settings {
@@ -278,6 +282,7 @@ impl Default for Settings {
             background: BackgroundPolicy::EarconOnly,
             summaries: SummarySettings::default(),
             flush_scope: FlushScope::Session,
+            question_step: false,
         }
     }
 }

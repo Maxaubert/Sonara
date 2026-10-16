@@ -155,12 +155,13 @@ Claude Code, or `Esc` to cancel. For a multi-select question, press each option'
 `Space` on the highlighted item), then `Enter`. With more than nine options, use the arrow keys
 and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
 
-When Claude asks several questions at once, Sonara reads the reply, then only the first question,
-as "Question 1 of 4." and stops: Claude Code shows one question at a time. The questions are
-sections after the reply: **Ctrl+Alt+Down** goes to the next question and **Ctrl+Alt+Up** to
-the one before (on question 1, back into the reply). Answering a question in Claude Code does not
-read the next one: Claude Code tells plugins nothing until the whole set is answered, so press
-**Ctrl+Alt+Down**. Holding **Ctrl+Alt+Up** reads the whole message again, the reply and then
+When Claude asks several questions at once, Sonara reads the reply, then every question in turn:
+"Question 1 of 4. ...", "Question 2 of 4. ...". Turn on **Step through questions** on the
+settings page to hear only the first and stop, as Claude Code shows one question at a time. The
+questions are sections after the reply: **Ctrl+Alt+Down** goes to the next question and **Ctrl+Alt+Up** to
+the one before (on question 1, back into the reply). With stepping on, answering a question in Claude
+Code does not read the next one: Claude Code tells plugins nothing until the whole set is
+answered, so press **Ctrl+Alt+Down**. Holding **Ctrl+Alt+Up** reads the whole message again, the reply and then
 question 1, and holding **Ctrl+Alt+Down** skips all of it. When
 Claude only thought before asking (Claude Code shows the thinking, but sends plugins no text),
 Sonara reads that thinking before the question.
@@ -214,7 +215,7 @@ engine is reading.
 
 | Page | What you can set |
 |---|---|
-| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), code reading speed, line pause and step through code (shown when code is read), file paths (Short, Last 2, Last 3 or Full), pronunciations (your own words and how to say them), other sessions (Read all or Chime only) |
+| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), code reading speed, line pause and step through code (shown when code is read), step through questions, file paths (Short, Last 2, Last 3 or Full), pronunciations (your own words and how to say them), other sessions (Read all or Chime only) |
 | Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a slide-over form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
 | Summary | Summary mode (Off, Tidy, Natural, Brief), the model, the prompt for each style, live reading: Immediately, Queue (with its queue size) or When done, and the summary timeout and settle time |
 | Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |

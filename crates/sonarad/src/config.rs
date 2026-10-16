@@ -186,6 +186,12 @@ pub const SCHEMA: &[Setting] = &[
         default: "\"session\"",
     },
     Setting {
+        key: "question_step",
+        layer: Layer::Agent,
+        kind: Kind::OneOf(ON_OFF),
+        default: "\"off\"",
+    },
+    Setting {
         key: "minqueue",
         layer: Layer::Agent,
         kind: Kind::Range(0, 10),

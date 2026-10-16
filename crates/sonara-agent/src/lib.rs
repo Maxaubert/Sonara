@@ -878,6 +878,13 @@ impl Agent {
         self.lock().settings.flush_scope = scope;
     }
 
+    /// Step through questions (#320): on, a question set reads question 1
+    /// and waits; off, every question is read in order. Applies to the
+    /// next set.
+    pub fn set_question_step(&self, on: bool) {
+        self.lock().settings.question_step = on;
+    }
+
     pub fn settings(&self) -> Settings {
         self.lock().settings.clone()
     }

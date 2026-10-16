@@ -1710,6 +1710,12 @@ fn text_and_four_questions(r: &Rig, session: &mut Session) {
         session,
         json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
     );
+    // One question at a time (#283; off by default since #320).
+    ok(
+        s,
+        session,
+        json!({"type": "set", "key": "question_step", "value": "on"}),
+    );
     ok(
         s,
         session,
