@@ -159,9 +159,11 @@ When Claude asks several questions at once, Sonara reads the reply, then every q
 "Question 1 of 4. ...", "Question 2 of 4. ...". Turn on **Step through questions** on the
 settings page to hear only the first and stop, as Claude Code shows one question at a time. The
 questions are sections after the reply: **Ctrl+Alt+Down** goes to the next question and **Ctrl+Alt+Up** to
-the one before (on question 1, back into the reply). With stepping on, answering a question in Claude
-Code does not read the next one: Claude Code tells plugins nothing until the whole set is
-answered, so press **Ctrl+Alt+Down**. Holding **Ctrl+Alt+Up** reads the whole message again, the reply and then
+the one before (on question 1, back into the reply). Claude Code tells plugins nothing until the whole set is answered, so in most terminals,
+with stepping on, press **Ctrl+Alt+Down** for the next question. In
+[PrismTerminal](https://github.com/Maxaubert/PrismTerminal), which tells Sonara which
+question it shows, Sonara follows you: answer a question or move with the arrows or Tab and
+the question on screen is read. Holding **Ctrl+Alt+Up** reads the whole message again, the reply and then
 question 1, and holding **Ctrl+Alt+Down** skips all of it. When
 Claude only thought before asking (Claude Code shows the thinking, but sends plugins no text),
 Sonara reads that thinking before the question.
