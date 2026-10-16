@@ -267,7 +267,7 @@ still plays. The recap comes from a separate, throwaway call that never touches 
 
 - **Claude** (default, Haiku): `claude -p` with tools and settings disabled, on your Claude Code
   login.
-- **Codex** (GPT-5.6 Luna or GPT-5.4 Mini): `codex exec` in a read-only sandbox, on your Codex
+- **Codex** (GPT-5.6 Luna or GPT-5.4 Mini): `codex exec` with its tools turned off, on your Codex
   login. Needs the Codex CLI on your PATH.
 
 Each finished reply costs one small call on that account. If the call fails, times out or

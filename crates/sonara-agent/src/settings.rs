@@ -179,7 +179,7 @@ impl Style {
 pub enum SummaryCommand {
     /// `claude -p` (tools and settings off).
     Claude,
-    /// `codex exec` (read-only sandbox).
+    /// `codex exec` (read-only sandbox, tools off).
     Codex,
 }
 

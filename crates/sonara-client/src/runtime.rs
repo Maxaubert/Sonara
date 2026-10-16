@@ -33,10 +33,105 @@ pub fn read_runtime(home: &Path) -> Option<Runtime> {
     })
 }
 
-/// Connect to the runtime.
+/// Connect to the runtime. Before anything is sent, the connection's other
+/// end must belong to the process `runtime.json` names (#56): after a crash
+/// the file names a free port, and another process (of any local user) that
+/// listens on it would get the token and the text. A squatter is
+/// `PermissionDenied`, which callers treat as no runtime. A file without a
+/// pid (sonarad always writes one) is not checked.
 pub fn connect(rt: &Runtime, timeout: Duration) -> std::io::Result<TcpStream> {
     let addr = SocketAddr::from(([127, 0, 0, 1], rt.port));
-    TcpStream::connect_timeout(&addr, timeout)
+    let s = TcpStream::connect_timeout(&addr, timeout)?;
+    if let Some(pid) = rt.pid.filter(|_| cfg!(windows)) {
+        let owner = peer_pid(rt.port, s.local_addr()?.port());
+        if owner.map(u64::from) != Some(pid) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "port {} is not held by the runtime (pid {pid}, holder {owner:?})",
+                    rt.port
+                ),
+            ));
+        }
+    }
+    Ok(s)
+}
+
+/// The pid that owns the loopback connection from `client_port` to
+/// `server_port` on the server side, from the system's TCP table.
+#[cfg(windows)]
+fn peer_pid(server_port: u16, client_port: u16) -> Option<u32> {
+    #[link(name = "iphlpapi")]
+    extern "system" {
+        fn GetExtendedTcpTable(
+            table: *mut core::ffi::c_void,
+            size: *mut u32,
+            order: i32,
+            family: u32,
+            class: i32,
+            reserved: u32,
+        ) -> u32;
+    }
+    const AF_INET: u32 = 2;
+    const TCP_TABLE_OWNER_PID_CONNECTIONS: i32 = 4;
+    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+    // 127.0.0.1 and a port as the table stores them (network byte order).
+    const LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    let port = |raw: u32| u16::from_be(raw as u16);
+    let mut buf: Vec<u32> = Vec::new();
+    let mut size = 0u32;
+    // The table can grow between the size query and the read: retry.
+    for _ in 0..4 {
+        let ptr = if buf.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            buf.as_mut_ptr().cast()
+        };
+        // SAFETY: `ptr` is null with `size` 0, or `buf` of at least `size`
+        // bytes; the call writes no more than `size` bytes.
+        let r = unsafe {
+            GetExtendedTcpTable(
+                ptr,
+                &mut size,
+                0,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_CONNECTIONS,
+                0,
+            )
+        };
+        match r {
+            0 if !buf.is_empty() => {
+                // MIB_TCPTABLE_OWNER_PID: the row count, then rows of
+                // state, local address, local port, remote address,
+                // remote port, owning pid.
+                let n = buf[0] as usize;
+                return buf[1..]
+                    .as_chunks::<6>()
+                    .0
+                    .iter()
+                    .take(n)
+                    .find(|row| {
+                        row[1] == LOOPBACK
+                            && port(row[2]) == server_port
+                            && row[3] == LOOPBACK
+                            && port(row[4]) == client_port
+                    })
+                    .map(|row| row[5]);
+            }
+            0 | ERROR_INSUFFICIENT_BUFFER => {
+                buf = vec![0u32; (size as usize).div_ceil(4) + 6];
+                size = (buf.len() * 4) as u32;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Not Windows: never asked (the runtime is Windows only).
+#[cfg(not(windows))]
+fn peer_pid(_server_port: u16, _client_port: u16) -> Option<u32> {
+    None
 }
 
 /// `sonarad.exe` next to the running program `me`, if it is there.
@@ -133,6 +228,28 @@ mod tests {
         std::fs::write(dir.join(RUNTIME_FILE), "{not json").unwrap();
         assert_eq!(read_runtime(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #56: after a crash, `runtime.json` names a free port; a process of
+    // another user that listens on it got the token and the turn's text.
+    // A port held by a process other than the one named is not the runtime.
+    #[cfg(windows)]
+    #[test]
+    fn a_port_held_by_another_process_is_not_the_runtime() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let rt = |pid| Runtime {
+            port,
+            token: "t".into(),
+            pid,
+        };
+        let me = u64::from(std::process::id());
+        assert!(connect(&rt(Some(me)), PROBE).is_ok(), "the named process");
+        let err = connect(&rt(Some(me + 4)), PROBE).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{err}");
+        // A file without a pid is not one sonarad writes, but cannot be
+        // checked either.
+        assert!(connect(&rt(None), PROBE).is_ok());
     }
 
     #[test]

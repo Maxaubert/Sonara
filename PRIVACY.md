@@ -69,8 +69,9 @@ so its recap can be read before the question:
 - **Claude engine** (default): `claude -p`, with tools and settings disabled. It runs on your own
   Claude Code login, so the text goes to **Anthropic** under the same terms as your Claude Code
   session.
-- **Codex engine**: `codex exec`, in a read-only sandbox with your MCP servers and memories
-  turned off for the call. It runs on your own Codex login, so the text goes to **OpenAI** under
+- **Codex engine**: `codex exec`, in a read-only sandbox and an empty folder, with its tools
+  (shell, file and image reading, web search, MCP servers, plugins) and memories turned off for
+  the call. It runs on your own Codex login, so the text goes to **OpenAI** under
   your Codex terms.
 
 The recap that comes back is spoken and kept in memory only. Sonara itself operates no service

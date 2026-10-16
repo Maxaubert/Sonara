@@ -17,7 +17,7 @@ use hyper::body::{Body, Frame, Incoming};
 use hyper::header::{HeaderName, HeaderValue, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HOST};
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use serde_json::{Map, Value};
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -42,12 +42,20 @@ const DRAIN_MAX: Duration = Duration::from_secs(1);
 /// After the exit is decided, a connection that has not sent its first
 /// request within this long stops holding the exit (`connection`).
 const FIRST_GRACE: Duration = Duration::from_millis(200);
+/// A connection whose request headers have not all arrived within this long
+/// is closed (#58), like a TCP client without `hello` (`tcp::HELLO_TIMEOUT`).
+pub const HEADER_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Serves until the exit is decided, then answers the connections that are
 /// already waiting (`E_BUSY`) and returns, closing the listener. `main`
 /// waits for this and for `Lifetime::requests_done` before the process
 /// ends, so no request loses its connection without a reply (#247).
 pub async fn serve(listener: TcpListener, server: Arc<Server>) {
+    serve_with(listener, server, HEADER_TIMEOUT).await
+}
+
+/// `serve` with another header timeout (tests).
+pub async fn serve_with(listener: TcpListener, server: Arc<Server>, header_timeout: Duration) {
     let life = server.lifetime().clone();
     loop {
         let accepted = tokio::select! {
@@ -55,7 +63,7 @@ pub async fn serve(listener: TcpListener, server: Arc<Server>) {
             _ = life.wait_exit() => break,
         };
         match accepted {
-            Ok((stream, _)) => connection(stream, &server),
+            Ok((stream, _)) => connection(stream, &server, header_timeout),
             Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
         }
     }
@@ -63,7 +71,7 @@ pub async fn serve(listener: TcpListener, server: Arc<Server>) {
     loop {
         let quiet = (tokio::time::Instant::now() + DRAIN_QUIET).min(end);
         match tokio::time::timeout_at(quiet, listener.accept()).await {
-            Ok(Ok((stream, _))) => connection(stream, &server),
+            Ok(Ok((stream, _))) => connection(stream, &server, header_timeout),
             Ok(Err(_)) => tokio::time::sleep(Duration::from_millis(10)).await,
             Err(_) => return,
         }
@@ -74,8 +82,9 @@ pub async fn serve(listener: TcpListener, server: Arc<Server>) {
 /// its first reply (so one accepted just before the exit is answered), and
 /// so does each request on it. Once the exit is decided, a connection that
 /// sent nothing within `FIRST_GRACE` (a browser preconnect) stops counting,
-/// so it never holds the exit.
-fn connection(stream: tokio::net::TcpStream, server: &Arc<Server>) {
+/// so it never holds the exit. One whose request headers do not arrive
+/// within `header_timeout` is closed.
+fn connection(stream: tokio::net::TcpStream, server: &Arc<Server>, header_timeout: Duration) {
     let server = server.clone();
     let life = server.lifetime().clone();
     let first = Arc::new(std::sync::Mutex::new(Some(life.request())));
@@ -92,6 +101,8 @@ fn connection(stream: tokio::net::TcpStream, server: &Arc<Server>) {
             }
         });
         let conn = hyper::server::conn::http1::Builder::new()
+            .timer(TokioTimer::new())
+            .header_read_timeout(header_timeout)
             .serve_connection(TokioIo::new(stream), service);
         tokio::pin!(conn);
         tokio::select! {
@@ -139,6 +150,9 @@ fn settings(req: &Request<Incoming>, server: &Server) -> Response<BoxBody> {
     };
     match page {
         Ok(html) => {
+            // Only a request the page accepted (Host and token) counts as
+            // activity (#58).
+            server.lifetime().touch();
             let mut r = Response::new(Full::new(Bytes::from(html)).boxed_unsync());
             for (k, v) in crate::settings_page::HEADERS {
                 r.headers_mut()
@@ -164,9 +178,7 @@ fn settings(req: &Request<Incoming>, server: &Server) -> Response<BoxBody> {
 async fn route(req: Request<Incoming>, server: Arc<Server>) -> Response<BoxBody> {
     let path = req.uri().path().to_string();
     if path == "/settings" && req.method() == Method::GET {
-        server.lifetime().touch();
-        let srv = server.clone();
-        return settings(&req, &srv);
+        return settings(&req, &server);
     }
     let Some(kind) = path.strip_prefix("/v1/").map(str::to_string) else {
         return failure(Failure::new(Code::NotFound, format!("no route {path}")));
@@ -436,6 +448,84 @@ mod tests {
                 started.elapsed()
             );
         });
+    }
+
+    fn get(addr: std::net::SocketAddr, request: &[u8]) -> String {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        stream.write_all(request).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut reply = String::new();
+        let _ = stream.read_to_string(&mut reply);
+        reply
+    }
+
+    // #58: any local process could keep the runtime from its idle exit with
+    // `GET /settings` and no token, because the idle timer was reset before
+    // the page checked the token.
+    #[test]
+    fn a_settings_request_without_the_token_does_not_reset_the_idle_timer() {
+        use crate::lifetime::Lifetime;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let life = Lifetime::new(Duration::from_millis(100), false);
+        let server = server(life.clone());
+        let listener = rt
+            .block_on(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        rt.spawn(serve(listener, server));
+        std::thread::sleep(Duration::from_millis(150));
+        assert!(life.idle_expired());
+        let reply = get(
+            addr,
+            b"GET /settings HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        );
+        assert!(!reply.starts_with("HTTP/1.1 200"), "{reply:?}");
+        assert!(life.idle_expired(), "the idle timer was reset");
+        let reply = get(
+            addr,
+            b"POST /v1/get HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\
+              Content-Length: 0\r\n\r\n",
+        );
+        assert!(reply.starts_with("HTTP/1.1 401"), "{reply:?}");
+        assert!(life.idle_expired(), "the idle timer was reset");
+    }
+
+    // #58: a connection that never sends its request headers was kept open
+    // (with its task) until the process ended.
+    #[test]
+    fn a_connection_that_sends_no_headers_is_closed() {
+        use crate::lifetime::Lifetime;
+        use std::io::Read;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let life = Lifetime::new(Duration::from_secs(30), false);
+        let server = server(life.clone());
+        let listener = rt
+            .block_on(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)))
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        rt.spawn(serve_with(listener, server, Duration::from_millis(300)));
+        let mut silent = std::net::TcpStream::connect(addr).unwrap();
+        silent
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let started = std::time::Instant::now();
+        let mut buf = Vec::new();
+        let read = silent.read_to_end(&mut buf);
+        assert!(read.is_ok(), "not closed: {read:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "closed after {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

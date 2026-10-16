@@ -8,7 +8,8 @@
 //!   for a bare name such as an npm `.cmd` shim), never in the current
 //!   folder (#138, audit H1).
 //! - The prompt goes on stdin, the child runs in the user's home folder
-//!   (no project instructions are picked up) with `SONARA_SUMMARIZER=1` (the
+//!   (claude) or a new empty folder (codex, #59), so no project
+//!   instructions are picked up, with `SONARA_SUMMARIZER=1` (the
 //!   hook adapter sends nothing from inside it) and no console window.
 //! - On timeout the whole process tree is killed (an npm shim runs
 //!   `cmd.exe` then `node`, and killing `cmd.exe` alone leaves `node`
@@ -18,6 +19,7 @@ use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -57,8 +59,14 @@ pub fn prompt(text: &str, settings: &SummarySettings) -> String {
 /// claude: `--tools ""` makes it text in, text out; `--setting-sources ""`
 /// loads no settings, so no plugin (Sonara's own hooks included) runs in
 /// the child (an endless summary loop otherwise, verified live).
-/// codex: read-only sandbox, no repository, MCP servers and memories off,
-/// low reasoning effort, prompt on stdin (`-`).
+/// codex: read-only sandbox, no repository, MCP servers, memories and web
+/// search off, low reasoning effort, prompt on stdin (`-`). Its read-only
+/// sandbox still reads any file, and on Windows it cannot deny reads at all
+/// (a `:root = "deny"` profile is refused: "elevated Windows sandbox
+/// requires effective `:root` read access", codex 0.162.1), so every tool
+/// that can read or reach out is turned off instead: text in, text out, as
+/// for claude (#59; verified live: with these flags codex answers that it
+/// has no tool, without them it printed a file it was told to read).
 pub fn args(command: SummaryCommand, model: &str) -> Vec<String> {
     let v: Vec<&str> = match command {
         SummaryCommand::Claude => vec![
@@ -79,8 +87,34 @@ pub fn args(command: SummaryCommand, model: &str) -> Vec<String> {
             "never",
             "-c",
             "mcp_servers={}",
+            "-c",
+            "web_search=\"disabled\"",
             "--disable",
             "memories",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "unified_exec",
+            "--disable",
+            "view_image",
+            "--disable",
+            "apps",
+            "--disable",
+            "plugins",
+            "--disable",
+            "browser_use",
+            "--disable",
+            "computer_use",
+            "--disable",
+            "multi_agent",
+            "--disable",
+            "hooks",
+            "--disable",
+            "image_generation",
+            "--disable",
+            "skill_search",
+            "--disable",
+            "tool_suggest",
             "-c",
             "model_reasoning_effort=\"low\"",
             "-m",
@@ -194,6 +228,29 @@ fn drain(mut r: impl Read + Send + 'static) -> mpsc::Receiver<Vec<u8>> {
     rx
 }
 
+/// A new empty folder under the temp folder, removed on drop.
+struct EmptyDir(PathBuf);
+
+impl EmptyDir {
+    fn new() -> Result<EmptyDir, String> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "sonara-summary-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).map_err(|e| format!("summarizer folder: {e}"))?;
+        Ok(EmptyDir(dir))
+    }
+}
+
+impl Drop for EmptyDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 impl ProcessSummarizer {
     pub fn run(
         &self,
@@ -210,9 +267,15 @@ impl ProcessSummarizer {
             std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
         let exe = resolve(name, &path, &pathext)
             .ok_or_else(|| format!("summarizer command not found on PATH: {name}"))?;
+        // codex starts in a new empty folder, not the home folder (#59).
+        let empty = match (&self.cwd, settings.command) {
+            (None, SummaryCommand::Codex) => Some(EmptyDir::new()?),
+            _ => None,
+        };
         let cwd = self
             .cwd
             .clone()
+            .or_else(|| empty.as_ref().map(|e| e.0.clone()))
             .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from));
         let mut cmd = Command::new(&exe);
         cmd.args(args(settings.command, &settings.model))

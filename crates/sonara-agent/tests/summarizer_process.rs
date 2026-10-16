@@ -2,7 +2,7 @@
 //! (never the real CLI): stdin, arguments, environment, failure, timeout.
 #![cfg(windows)]
 use sonara_agent::summarizer::ProcessSummarizer;
-use sonara_agent::{Summarizer, SummarySettings};
+use sonara_agent::{Summarizer, SummaryCommand, SummarySettings};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -12,9 +12,13 @@ struct Bin {
 
 impl Bin {
     fn new(name: &str, script: &str) -> Bin {
+        Bin::command(name, "claude.cmd", script)
+    }
+
+    fn command(name: &str, file: &str, script: &str) -> Bin {
         let dir = std::env::temp_dir().join(format!("sonara-agent-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("claude.cmd"), script.replace('\n', "\r\n")).unwrap();
+        std::fs::write(dir.join(file), script.replace('\n', "\r\n")).unwrap();
         Bin { dir }
     }
 
@@ -57,6 +61,45 @@ fn the_answer_comes_from_stdout_with_the_prompt_on_stdin() {
         lines[1],
         r#"flag=1 args=-p --model haiku --tools "" --setting-sources """#
     );
+}
+
+// #59: codex under a read-only sandbox could still read any file (its shell
+// reads anywhere), so text in the turn could make it speak a secret. It
+// gets no tools and an empty working folder, never the home folder.
+#[test]
+fn codex_runs_without_file_tools_in_an_empty_folder() {
+    let bin = Bin::command(
+        "codex",
+        "codex.cmd",
+        "@echo off\necho cwd=%CD%\necho args=%*\n",
+    );
+    let s = ProcessSummarizer {
+        path: Some(bin.dir.clone().into_os_string()),
+        cwd: None,
+    };
+    let settings = SummarySettings {
+        command: SummaryCommand::Codex,
+        model: "m".into(),
+        ..settings()
+    };
+    let out = s.summarize("Text.", &settings).unwrap();
+    let cwd = out
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("cwd="))
+        .map(PathBuf::from)
+        .unwrap();
+    let home = PathBuf::from(std::env::var_os("USERPROFILE").unwrap());
+    assert_ne!(cwd, home, "{out}");
+    assert!(cwd.starts_with(std::env::temp_dir()), "{out}");
+    // The folder was empty and is gone after the run.
+    assert!(!cwd.exists(), "{out}");
+    let args = out.lines().find(|l| l.starts_with("args=")).unwrap();
+    for feature in ["shell_tool", "unified_exec", "view_image"] {
+        assert!(
+            args.contains(&format!("--disable {feature}")),
+            "{feature}: {args}"
+        );
+    }
 }
 
 #[test]

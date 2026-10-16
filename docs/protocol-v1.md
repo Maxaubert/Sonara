@@ -91,6 +91,13 @@ exits cleanly.
 
 A stale `runtime.json` (the pid is gone after a crash) is overwritten by the next runtime.
 
+Until then its port is free, and any local process, of any user, may listen on it. A client should
+check, before it sends `hello` (which carries the token), that the other end of its connection
+belongs to the file's `pid`, and treat any other holder as no runtime (#56). The Rust client
+(`sonara-client`, used by `sonara-hook` and `sonara`) does this on Windows: it finds the server side
+of its loopback connection in the TCP table (`GetExtendedTcpTable`, `TCP_TABLE_OWNER_PID_CONNECTIONS`)
+and compares the owning pid. The protocol itself is unchanged.
+
 **One instance** per user: the runtime holds the named mutex `Local\Sonara-Runtime-<hash>`, where
 `<hash>` is the FNV-1a 64-bit hash (16 hex digits) of the user's SID string. For a home other than
 the default `%LOCALAPPDATA%\Sonara`, the hash covers the SID, a newline and the home's canonical
@@ -856,7 +863,7 @@ clip instead, and one line in `logs\sonarad.log` says why (once per version of t
 
 **Summaries** (off by default). The turn's text is recorded instead of read; when the turn ends and
 no text came for `settle_ms` (0 to 5000, default 600), a headless agent writes a spoken recap of it:
-`command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only),
+`command` `"claude"` (`claude -p`, tools and settings off) or `"codex"` (`codex exec`, read-only, tools off),
 `model` (default `"haiku"`), `style` `"tidy"`, `"natural"` (default) or `"brief"`, or a custom
 `prompt`. The command is found on `PATH` only and runs in the user's home folder with no window;
 past `timeout` seconds (15 to 300, default 60) it is killed with its child processes. A turn shorter
