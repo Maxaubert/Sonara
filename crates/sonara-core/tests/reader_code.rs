@@ -193,6 +193,67 @@ fn pause_and_play_mid_line_keeps_stepping() {
 }
 
 #[test]
+fn a_user_pause_before_a_line_ends_stays_the_users_pause() {
+    // Review #32: the line ends (or fails) after the user paused; the
+    // pause must not turn into a step wait.
+    let (mut h, _) = waiting();
+    h.ctl(Control::NextLine); // line 1 plays
+    h.ctl(Control::Pause);
+    h.finish_chunk_racing_pause();
+    let s = h.state();
+    assert!(s.paused && !s.stepping, "the user's pause, not a step wait");
+    h.ctl(Control::Restart);
+    assert!(h.plays_in_last().is_empty(), "the pause holds");
+    assert!(h.state().paused);
+}
+
+#[test]
+fn a_user_pause_before_a_line_fails_stays_the_users_pause() {
+    let (mut h, _) = waiting();
+    h.ctl(Control::NextLine);
+    h.ctl(Control::Pause);
+    h.fail_chunk();
+    let s = h.state();
+    assert!(s.paused && !s.stepping, "the user's pause, not a step wait");
+}
+
+#[test]
+fn turning_step_mode_off_during_a_wait_reads_on() {
+    // Review #33: step mode applies at once, also during a wait.
+    let (mut h, id) = waiting();
+    h.code_step(false);
+    let s = h.state();
+    assert!(!s.paused && !s.stepping);
+    assert_eq!(chunk_of(&h), 2, "line 1 plays");
+    h.play_out();
+    assert_eq!(h.heard.last(), Some(&(id, 6)));
+}
+
+#[test]
+fn a_line_step_after_play_waits_again() {
+    // Review #34: Play reads the block through, but a later next_line or
+    // previous_line plays that line and waits again after it.
+    let (mut h, _) = waiting();
+    h.ctl(Control::NextLine);
+    h.finish_chunk(); // waits at line 2
+    h.ctl(Control::Toggle); // line 2 plays, the rest would read through
+    assert_eq!(chunk_of(&h), 3);
+    h.ctl(Control::PreviousLine);
+    assert_eq!(chunk_of(&h), 2, "line 1 again");
+    h.finish_chunk();
+    let s = h.state();
+    assert!(s.paused && s.stepping, "waits at line 2 again");
+    assert_eq!(s.now_playing.unwrap().chunk, 3);
+    // The same for next_line.
+    h.ctl(Control::Toggle);
+    assert_eq!(chunk_of(&h), 3);
+    h.ctl(Control::NextLine);
+    assert_eq!(chunk_of(&h), 4, "line 3");
+    h.finish_chunk();
+    assert!(h.state().paused && h.state().stepping, "waits after line 3");
+}
+
+#[test]
 fn restart_into_a_code_block_steps_again() {
     let mut h = Host::new();
     h.reader.set_code_step(true);

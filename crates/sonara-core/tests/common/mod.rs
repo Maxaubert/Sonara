@@ -78,6 +78,12 @@ impl Host {
         self.apply(fx);
     }
 
+    /// Turn step mode (#295) on or off.
+    pub fn code_step(&mut self, on: bool) {
+        let fx = self.reader.set_code_step(on);
+        self.apply(fx);
+    }
+
     pub fn ctl(&mut self, c: Control) {
         let fx = self.reader.control(c);
         self.apply(fx);

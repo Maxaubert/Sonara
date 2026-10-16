@@ -282,7 +282,12 @@ impl Reader {
     /// after each of its lines.
     pub fn set_code_step(&mut self, on: bool) -> Vec<Effect> {
         self.code_step = on;
-        self.finish(Vec::new())
+        let mut fx = Vec::new();
+        // Off applies at once: a step wait reads on (review #33).
+        if !on && self.step_wait {
+            self.resume(&mut fx);
+        }
+        self.finish(fx)
     }
 
     pub fn code_step(&self) -> bool {
@@ -348,6 +353,8 @@ impl Reader {
         };
         self.paused = false;
         self.step_wait = false;
+        // A line step waits again after its line, also after Play (#34).
+        self.released = false;
         if to >= len {
             self.skip(fx);
         } else {
@@ -523,12 +530,14 @@ impl Reader {
             }
             // Step mode waits at the next line (#295), and after the last
             // one too: the user may want to hear it again (2026-10-14).
+            // A pause the user made before the chunk ended stays theirs
+            // (#32).
             let waits = match done {
                 CodeKind::Prose => false,
                 CodeKind::Start => next == CodeKind::Line,
                 CodeKind::Line => true,
             };
-            if self.code_step && !released && waits {
+            if self.code_step && !released && waits && !self.paused {
                 self.paused = true;
                 self.step_wait = true;
             }
