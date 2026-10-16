@@ -1644,6 +1644,30 @@ fn right_moves_through_the_text_then_the_questions_and_left_comes_back() {
 }
 
 #[test]
+fn left_right_after_a_question_ends_goes_to_the_question_before() {
+    // #321: a tap on Up just as question 2 ended went to the whole
+    // message ("back to=replay") instead of question 1.
+    for round in 0..40 {
+        let r = Rig::new();
+        r.stream("a", "Here is my answer.", 0, None);
+        ask_set(&r, "a", 3);
+        r.read("Here is my answer.");
+        r.read("Question 1 of 3.");
+        r.read("Question text 1?");
+        r.stays_idle();
+        r.agent.next_section().unwrap();
+        r.read("Question 2 of 3.");
+        r.read("Question text 2?");
+        // No wait: the tap races the end of the item.
+        let moved = r.agent.previous_section().unwrap();
+        assert!(
+            matches!(&moved, Section::Question(_, nav) if nav.index == 0),
+            "round {round}: {moved:?}"
+        );
+    }
+}
+
+#[test]
 fn right_on_the_last_question_is_the_edge() {
     let r = Rig::new();
     r.stream("a", "Here is my answer.", 0, None);

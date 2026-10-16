@@ -808,13 +808,16 @@ impl Agent {
     /// is read, the message again).
     pub fn previous_section(&self) -> Result<Section> {
         let rules = self.lock();
-        // While nothing is read, after question 2 or later: the question
-        // before, as #283's Left did (else the message again).
-        let at = match self.inner.channels.reading() {
-            Some(_) => self.on_question(&rules),
+        // The session in focus: the one reading, else the engaged one. Past
+        // question 1 of its set the tap goes to the question before, also
+        // while nothing is read (#283's Left) and whatever is in flight as
+        // an item ends (#321: a tap as question 2 ended replayed the whole
+        // message).
+        let target = match self.inner.channels.reading() {
+            Some((ch, _)) => Some(ch),
             None => self.targets().into_iter().next(),
         };
-        let later = at.is_some_and(|ch| rules.question_set(&ch).is_some_and(|(i, _)| i > 0));
+        let later = target.is_some_and(|ch| rules.question_set(&ch).is_some_and(|(i, _)| i > 0));
         drop(rules);
         if later {
             if let Some((ch, nav)) = self.question(Step::Previous)? {

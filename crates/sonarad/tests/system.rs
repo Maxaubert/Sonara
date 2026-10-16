@@ -1928,17 +1928,16 @@ fn tapping_down_goes_on_one_section() {
         || playing(&r.server).as_deref() == Some("Two is here.")
     ));
     start_playing(&r.out);
+    assert!(eventually(
+        || log_of(&r).contains("hotkey next session=web-app to=entry")
+    ));
     r.fake.press(Action::Flush.id());
-    read_through(&r, "Two is here.");
-    // The log line is written after the press is carried out: wait for it.
-    assert!(
-        eventually(|| log_of(&r).contains("hotkey next session=web-app to=entry")),
-        "{}",
-        log_of(&r)
-    );
+    // The second tap is carried out while "Two is here." still plays
+    // (#321: the test finished it first, and the tap found nothing left).
     assert!(eventually(
         || log_of(&r).contains("hotkey next session=web-app to=end")
     ));
+    read_through(&r, "Two is here.");
 }
 
 #[test]
