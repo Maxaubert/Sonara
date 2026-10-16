@@ -557,16 +557,23 @@ impl Channels {
             st.router.authorize(channel);
         }
         let dropped = if replace { before } else { 0 };
-        let fed = if interrupt {
+        // A muted channel is never read: its interrupt cuts nothing, the
+        // entry waits like any other.
+        let fed = if interrupt && !st.router.is_muted(channel) {
             // Another channel's message cut here was not heard: it is read
             // again once this channel's batch drains (as for next_channel).
-            if let Some(cut) = st.in_flight.take() {
+            let cut = st.in_flight.take();
+            if let Some(cut) = &cut {
                 if let (Some(e), true) = (cut.entry, cut.channel != channel) {
                     st.router.rewind(&cut.channel, e);
                 }
             }
             st.router.take_floor(channel);
-            self.inner.feed(&mut st, true)?
+            let fed = self.inner.feed(&mut st, true)?;
+            if fed.is_none() && cut.is_some() {
+                self.inner.reader.control(Control::Skip)?;
+            }
+            fed
         } else {
             self.inner.pump_fed(&mut st)?
         };
@@ -733,8 +740,10 @@ impl Channels {
     /// Back one section (#299, a tap on Up): while a channel's entry is
     /// read, its item's previous chunk (a code line, a part of a long
     /// item), else the batch's previous entry (a sentence in send mode
-    /// `sentence`), else that first section again; the rest of the batch
-    /// follows as usual. While no channel entry is read (idle, an
+    /// `sentence`), else that first section again (an entry no longer in
+    /// the batch: the batch from the top); the rest of the batch follows
+    /// as usual. A step is not a replay (`Router::step_to`). While no
+    /// channel entry is read (idle, an
     /// announcement, text spoken to the reader directly) it is
     /// `control(Restart, None)`.
     pub fn back(&self) -> Result<Back> {
@@ -756,12 +765,30 @@ impl Channels {
             reader.control(Control::Previous)?;
             return Ok(Back::Chunk(f.channel));
         }
-        let previous = st.router.channel(&f.channel).and_then(|c| {
+        // `Some(previous)` while the entry is in the batch.
+        let found = st.router.channel(&f.channel).and_then(|c| {
             let at = c.entries().iter().position(|e| e.id == entry)?;
-            at.checked_sub(1).map(|i| c.entries()[i].id)
+            Some(at.checked_sub(1).map(|i| c.entries()[i].id))
         });
-        self.inner
-            .read_from(&mut st, &f.channel, Some(previous.unwrap_or(entry)))?;
+        let previous = match found {
+            Some(previous) => previous,
+            None => {
+                // The entry left the batch while it was read (a policy
+                // latest push replaced it, an answered decision went): the
+                // batch from the top, else that item again.
+                if !self.inner.read_from(&mut st, &f.channel, None)? {
+                    reader.control(Control::Restart)?;
+                }
+                return Ok(Back::First(f.channel));
+            }
+        };
+        if !self
+            .inner
+            .step_to(&mut st, &f.channel, previous.unwrap_or(entry))?
+        {
+            reader.control(Control::Restart)?;
+            return Ok(Back::First(f.channel));
+        }
         Ok(match previous {
             Some(_) => Back::Entry(f.channel),
             None => Back::First(f.channel),
@@ -786,13 +813,20 @@ impl Channels {
             }
         }
         let next = st.router.channel(&f.channel).and_then(|c| {
-            let at = c.entries().iter().position(|e| e.id == entry)?;
-            c.entries().get(at + 1).map(|e| e.id)
+            // An entry that left the batch while it was read: the next
+            // unread one.
+            let at = match c.entries().iter().position(|e| e.id == entry) {
+                Some(at) => at + 1,
+                None => c.cursor(),
+            };
+            c.entries().get(at).map(|e| e.id)
         });
         let Some(next) = next else {
             return Ok(Forward::End(f.channel));
         };
-        self.inner.read_from(&mut st, &f.channel, Some(next))?;
+        if !self.inner.step_to(&mut st, &f.channel, next)? {
+            return Ok(Forward::End(f.channel));
+        }
         Ok(Forward::Entry(f.channel))
     }
 
@@ -1093,6 +1127,21 @@ impl Inner {
         if !st.router.replay_from(channel, entry) {
             return Ok(false);
         }
+        self.cut_and_feed(st, channel)
+    }
+
+    /// `read_from` for `back` and `forward`: a step, not a replay
+    /// (`Router::step_to`).
+    fn step_to(&self, st: &mut State, channel: &str, entry: u64) -> Result<bool> {
+        if !st.router.step_to(channel, entry) {
+            return Ok(false);
+        }
+        self.cut_and_feed(st, channel)
+    }
+
+    /// Cut the item in flight for `channel`, whose cursor was just set, and
+    /// feed it.
+    fn cut_and_feed(&self, st: &mut State, channel: &str) -> Result<bool> {
         if let Some(cut) = st.in_flight.take() {
             // The channel's own cut entry is not stepped back over: its
             // cursor was just set.
@@ -1191,6 +1240,15 @@ impl Inner {
             let id = self
                 .reader
                 .speak(&text, QueueMode::Append, interrupt, label)?;
+            if interrupt {
+                // Text with nothing speakable is skipped at once and cuts
+                // nothing: the item it was to cut is cut here (its entry
+                // was rewound to be read again).
+                let current = self.reader.state()?.now_playing;
+                if current.is_some_and(|n| n.item_id != id) {
+                    self.reader.control(Control::Skip)?;
+                }
+            }
             if st.tags.len() >= TAGS {
                 st.tags.pop_front();
             }

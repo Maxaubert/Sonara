@@ -813,11 +813,22 @@ impl Agent {
         // while nothing is read (#283's Left) and whatever is in flight as
         // an item ends (#321: a tap as question 2 ended replayed the whole
         // message).
-        let target = match self.inner.channels.reading() {
-            Some((ch, _)) => Some(ch),
-            None => self.targets().into_iter().next(),
+        // While the text before the set is read (a `control back` from
+        // question 2 leaves the set there), the tap goes back in the text.
+        let (target, before_set) = match self.inner.channels.reading() {
+            Some((ch, entry)) => {
+                let before = rules.question_entry(&ch).is_some_and(|q| {
+                    self.inner.channels.channel(&ch).is_some_and(|c| {
+                        let at = |id| c.entries().iter().position(|e| e.id == id);
+                        matches!((at(entry), at(q)), (Some(e), Some(q)) if e < q)
+                    })
+                });
+                (Some(ch), before)
+            }
+            None => (self.targets().into_iter().next(), false),
         };
-        let later = target.is_some_and(|ch| rules.question_set(&ch).is_some_and(|(i, _)| i > 0));
+        let later = !before_set
+            && target.is_some_and(|ch| rules.question_set(&ch).is_some_and(|(i, _)| i > 0));
         drop(rules);
         if later {
             if let Some((ch, nav)) = self.question(Step::Previous)? {

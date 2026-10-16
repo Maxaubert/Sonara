@@ -1261,3 +1261,82 @@ fn forward_while_idle_does_nothing() {
     assert_eq!(r.ch.forward().unwrap(), Forward::Nothing);
     r.stays_idle();
 }
+
+#[test]
+fn forward_then_next_channel_and_back_resumes_where_it_stopped() {
+    // A step forward is not a replay: coming back with next_channel
+    // resumes the cut section, not the message from the top.
+    let r = on_the_first_section();
+    r.speak("b", "Beta one.");
+    assert_eq!(r.ch.forward().unwrap(), Forward::Entry("a".into()));
+    r.wait_for("Two.");
+    r.out.start();
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("b"));
+    r.read("Beta.");
+    r.read("Beta one.");
+    r.stays_idle();
+    assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("a"));
+    r.read("Alpha.");
+    r.read("Two.");
+    r.read("Three.");
+    r.stays_idle();
+}
+
+/// A latest-policy channel: "Old one." playing, "New one." replaced it in
+/// the batch.
+fn on_a_replaced_entry() -> Rig {
+    let r = Rig::new();
+    r.ch.open("a", None, None, Some(Policy::Latest)).unwrap();
+    r.speak("a", "Old one.");
+    r.wait_for("Old one.");
+    r.out.start();
+    r.speak("a", "New one.");
+    r
+}
+
+#[test]
+fn back_on_an_entry_that_left_the_batch_reads_the_batch_from_the_top() {
+    let r = on_a_replaced_entry();
+    assert_eq!(r.ch.back().unwrap(), Back::First("a".into()));
+    r.read("New one.");
+    r.stays_idle();
+}
+
+#[test]
+fn forward_on_an_entry_that_left_the_batch_goes_to_the_unread_one() {
+    let r = on_a_replaced_entry();
+    assert_eq!(r.ch.forward().unwrap(), Forward::Entry("a".into()));
+    r.read("New one.");
+    r.stays_idle();
+}
+
+#[test]
+fn an_interrupt_into_a_muted_channel_cuts_nothing() {
+    let r = Rig::two();
+    r.ch.set_muted("b", true).unwrap();
+    r.speak("a", "From alpha.");
+    r.wait_for("From alpha.");
+    r.out.start();
+    let s = r.ch.speak("b", "Urgent beta.", None, true, None).unwrap();
+    assert_eq!(s.item_id, None, "a muted channel is not read");
+    assert_eq!(r.playing().as_deref(), Some("From alpha."), "not cut");
+    r.out.finish();
+    r.stays_idle();
+    r.ch.set_muted("b", false).unwrap();
+    r.read("Beta.");
+    r.read("Urgent beta.");
+    r.stays_idle();
+}
+
+#[test]
+fn an_interrupt_with_nothing_speakable_still_cuts_and_reads_the_cut_entry_once() {
+    let r = Rig::two();
+    r.ch.set_announce(false);
+    r.speak("a", "From alpha.");
+    r.wait_for("From alpha.");
+    r.out.start();
+    r.ch.speak("b", "***", None, true, None).unwrap();
+    // The cut alpha message was not heard: it is read again, once.
+    r.read("From alpha.");
+    r.stays_idle();
+}

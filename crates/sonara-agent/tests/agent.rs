@@ -1673,6 +1673,31 @@ fn right_moves_through_the_text_then_the_questions_and_left_comes_back() {
 }
 
 #[test]
+fn left_on_the_text_before_a_set_past_question_one_goes_back_a_sentence() {
+    // `control back` on question 2 puts the reader on the sentence before
+    // the set while the set stays on question 2: Left there goes back one
+    // more sentence, not forward to question 1.
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    ask_set(&r, "a", 2);
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.wait_for("Question 1 of 2.");
+    r.out.start();
+    r.agent.next_section().unwrap();
+    r.wait_for("Question 2 of 2.");
+    r.out.start();
+    assert_eq!(r.agent.back().unwrap(), Back::Entry("a".into()));
+    r.wait_for("Two is here.");
+    r.out.start();
+    assert_eq!(
+        r.agent.previous_section().unwrap(),
+        Section::Back(Back::Entry("a".into()))
+    );
+    r.read("One is here.");
+}
+
+#[test]
 fn left_right_after_a_question_ends_goes_to_the_question_before() {
     // #321: a tap on Up just as question 2 ended went to the whole
     // message ("back to=replay") instead of question 1.
