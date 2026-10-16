@@ -85,13 +85,20 @@ fn a_failed_resume_keeps_the_app_in_the_crash_record() {
 
 #[test]
 fn a_resume_that_cannot_list_sessions_keeps_every_app() {
+    // What a previous runtime left is known by app id only: resuming it
+    // needs the session list.
     let (fake, mut p, state) = setup("keepall");
-    fake.add_media("spotify", true);
-    p.pause();
+    std::fs::write(&state, json!({"apps": ["spotify"]}).to_string()).unwrap();
+    fake.add_media("spotify", false);
     fake.edit(|w| w.media_down = true);
+    p.recover();
     p.resume();
     assert!(!p.is_paused());
     assert_eq!(read_json(&state)["apps"], json!(["spotify"]));
+    fake.edit(|w| w.media_down = false);
+    p.resume();
+    assert!(fake.media("spotify").unwrap().playing);
+    assert!(!state.exists());
 }
 
 #[test]
@@ -122,7 +129,7 @@ fn the_sweep_keeps_only_the_apps_that_failed() {
     fake.edit(|w| w.media[1].fail_play = true);
     resume_from_state_file((fake.platform().media)().as_ref(), &state);
     assert!(fake.media("spotify").unwrap().playing);
-    assert_eq!(read_json(&state), json!({"apps": ["vlc"]}));
+    assert_eq!(read_json(&state)["apps"], json!(["vlc"]));
 }
 
 #[test]
@@ -133,12 +140,73 @@ fn what_could_not_be_resumed_is_retried_and_survives_the_next_pause() {
     fake.add_media("spotify", true);
     fake.edit(|w| w.media[0].fail_play = true);
     p.recover();
-    assert_eq!(read_json(&state), json!({"apps": ["vlc"]}));
+    assert_eq!(read_json(&state)["apps"], json!(["vlc"]));
     p.pause();
-    assert_eq!(read_json(&state), json!({"apps": ["vlc", "spotify"]}));
+    assert_eq!(read_json(&state)["apps"], json!(["vlc", "spotify"]));
     fake.edit(|w| w.media[0].fail_play = false);
     p.resume();
     assert!(fake.media("vlc").unwrap().playing);
     assert!(fake.media("spotify").unwrap().playing);
     assert!(!state.exists());
+}
+
+#[test]
+fn resume_plays_only_the_sessions_the_pause_paused() {
+    // #17: two tabs of one browser share an app id; the one the user had
+    // paused stays paused.
+    let (fake, mut p, _) = setup("tabs");
+    fake.add_media("chrome", true);
+    fake.add_media("chrome", false);
+    p.pause();
+    p.resume();
+    let w = fake.world();
+    assert!(w.media[0].playing);
+    assert_eq!(w.media[1].plays, 0, "the paused tab is not played");
+    assert!(!w.media[1].playing);
+}
+
+#[test]
+fn the_sweep_drops_a_record_older_than_the_age_limit() {
+    // #17: an old record (a crash, then a reboot days later) never starts
+    // an app's media unasked.
+    let (fake, _, state) = setup("old");
+    std::fs::write(&state, json!({"apps": ["spotify"], "at": 1}).to_string()).unwrap();
+    fake.add_media("spotify", false);
+    resume_from_state_file((fake.platform().media)().as_ref(), &state);
+    assert_eq!(fake.media("spotify").unwrap().plays, 0);
+    assert!(!state.exists());
+}
+
+#[test]
+fn a_pending_resume_skips_a_session_that_plays_again() {
+    // #17: a resume that failed is retried only while the session is still
+    // paused; one the user started again is left alone.
+    let (fake, mut p, state) = setup("replay");
+    fake.add_media("vlc", true);
+    fake.add_media("spotify", true);
+    p.pause();
+    fake.edit(|w| w.media[0].fail_play = true);
+    p.resume();
+    assert_eq!(read_json(&state)["apps"], json!(["vlc"]));
+    fake.edit(|w| {
+        w.media[0].fail_play = false;
+        w.media[0].playing = true; // the user starts vlc by hand
+    });
+    let plays = fake.media("vlc").unwrap().plays;
+    p.resume();
+    assert_eq!(fake.media("vlc").unwrap().plays, plays);
+    assert!(!state.exists());
+}
+
+#[test]
+fn a_pause_that_times_out_is_still_resumed() {
+    // #16: an app that answers late may pause after all, so a timed-out
+    // pause is resumed like a paused one.
+    let (fake, mut p, _) = setup("late");
+    fake.add_media("spotify", true);
+    fake.edit(|w| w.media[0].pause_times_out = true);
+    p.pause();
+    assert!(!fake.media("spotify").unwrap().playing);
+    p.resume();
+    assert!(fake.media("spotify").unwrap().playing);
 }

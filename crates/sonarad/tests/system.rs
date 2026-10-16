@@ -2087,3 +2087,40 @@ fn a_question_hotkey_without_a_set_plays_nav_edge() {
     ));
     stays_quiet(&r);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_end_of_the_windows_session_restores_other_apps() {
+    // #18: at logoff or shutdown Windows ends the process without running
+    // the exit path, so the session end restores other apps itself, before
+    // it returns.
+    let r = rig();
+    let mut session = Session::http();
+    ok(
+        &r.server,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system"], "keep_alive": true}),
+    );
+    ok(
+        &r.server,
+        &mut session,
+        json!({"type": "set", "key": "audio_mode", "value": "duck"}),
+    );
+    ok(
+        &r.server,
+        &mut session,
+        json!({"type": "set", "key": "duck_level", "value": 25}),
+    );
+    ok(
+        &r.server,
+        &mut session,
+        json!({"type": "speak", "text": "Long."}),
+    );
+    start_playing(&r.out);
+    assert!(eventually(|| ducked(&r.fake)));
+    let fake = r.fake.clone();
+    tokio::task::spawn_blocking(move || fake.end_session())
+        .await
+        .unwrap();
+    assert!(restored(&r.fake));
+    assert!(!r.home.join("state").join("duck_state.json").exists());
+}

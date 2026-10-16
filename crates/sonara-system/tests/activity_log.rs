@@ -43,6 +43,7 @@ fn control(fake: &Fake, lines: &Lines) -> (AudioControl, std::path::PathBuf) {
             state_dir: dir.clone(),
             exclude_pids: vec![OWN_PID],
             idle_grace: Duration::ZERO,
+            shutdown_wait: sonara_system::audio::SHUTDOWN_WAIT,
             log: None,
         }
         .with_log(Some(lines.sink())),

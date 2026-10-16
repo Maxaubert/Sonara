@@ -244,7 +244,10 @@ fn the_sweep_matches_a_pid_with_no_recorded_name() {
 }
 
 #[test]
-fn the_sweep_drops_a_record_whose_app_is_gone() {
+fn the_sweep_keeps_a_record_whose_app_is_not_running() {
+    // #15: Windows keeps an app's session volume across restarts, so an app
+    // ducked when the runtime died reopens at the duck level. Its record is
+    // kept until the app shows up again.
     let (fake, _, state) = setup("gone");
     write_state(
         &state,
@@ -252,6 +255,108 @@ fn the_sweep_drops_a_record_whose_app_is_gone() {
     );
     fake.add_audio(7, "other.exe", 0.4);
     restore_from_state_file((fake.platform().audio)().as_ref(), &state);
+    let left = read_json(&state)["sessions"].clone();
+    assert_eq!(left[0]["name"], "vlc.exe");
+    assert!(approx(fake.volume(7), 0.4), "another app is untouched");
+}
+
+#[test]
+fn a_kept_record_is_restored_when_its_app_starts_again() {
+    let (fake, mut d, state) = setup("comeback");
+    write_state(
+        &state,
+        json!({"sessions": [{"pid": 100, "name": "vlc.exe", "original": 0.9, "ducked": 0.3}]}),
+    );
+    d.recover();
+    assert_eq!(d.pending().len(), 1, "vlc is not running yet");
+    // vlc starts on a new pid at the level Windows kept for it.
+    fake.add_audio(300, "vlc.exe", 0.3);
+    d.duck(&[], 30);
+    assert!(approx(fake.volume(300), 0.3));
+    assert_eq!(read_json(&state)["sessions"][0]["original"], 0.9);
+    d.restore();
+    assert!(approx(fake.volume(300), 0.9));
+    assert!(!state.exists());
+}
+
+#[test]
+fn the_sweep_drops_a_record_older_than_the_age_limit() {
+    let (fake, _, state) = setup("old");
+    write_state(
+        &state,
+        json!({"sessions": [{"pid": 100, "name": "vlc.exe", "original": 0.9, "at": 1}]}),
+    );
+    fake.add_audio(7, "other.exe", 0.4);
+    restore_from_state_file((fake.platform().audio)().as_ref(), &state);
+    assert!(!state.exists());
+}
+
+#[test]
+fn a_restore_keeps_the_record_of_an_app_that_quit_during_speech() {
+    let (fake, mut d, state) = setup("quit");
+    fake.add_audio(100, "vlc.exe", 0.8);
+    d.duck(&[], 30);
+    fake.edit(|w| w.audio.clear()); // vlc quits while ducked
+    d.restore();
+    assert_eq!(d.pending().len(), 1);
+    assert_eq!(read_json(&state)["sessions"][0]["name"], "vlc.exe");
+    // It reopens at the level Windows kept; the next restore fixes it.
+    fake.add_audio(200, "vlc.exe", 0.3);
+    d.duck(&[], 30);
+    d.restore();
+    assert!(approx(fake.volume(200), 0.8));
+    assert!(!state.exists());
+}
+
+#[test]
+fn the_sweep_restores_the_ducked_session_not_an_untouched_one_of_the_same_app() {
+    // #14: zen on two devices, one already below the duck level (never
+    // ducked, never recorded). The sweep must give the record to the
+    // session that was ducked.
+    let (fake, mut d, state) = setup("sameapp");
+    fake.add_audio(100, "zen.exe", 0.1);
+    fake.add_audio(100, "zen.exe", 0.8);
+    d.duck(&[], 30);
+    assert_eq!(volumes(&fake), vec![0.1, 0.3]);
+    std::mem::forget(d);
+    restore_from_state_file((fake.platform().audio)().as_ref(), &state);
+    let v = volumes(&fake);
+    assert!(
+        (v[0] - 0.1).abs() < 1e-4 && (v[1] - 0.8).abs() < 1e-4,
+        "{v:?}"
+    );
+    assert!(!state.exists());
+}
+
+#[test]
+fn the_sweep_skips_a_session_not_at_the_recorded_duck_level() {
+    // A record without a session identity: of two sessions of the pid only
+    // the one still at the level Sonara set gets the original back.
+    let (fake, _, state) = setup("level");
+    write_state(
+        &state,
+        json!({"sessions": [{"pid": 100, "name": "zen.exe", "original": 0.8, "ducked": 0.3}]}),
+    );
+    fake.add_audio(100, "zen.exe", 0.1);
+    fake.add_audio(100, "zen.exe", 0.3);
+    restore_from_state_file((fake.platform().audio)().as_ref(), &state);
+    assert_eq!(volumes(&fake), vec![0.1, 0.8]);
+}
+
+#[test]
+fn the_sweep_matches_by_pid_before_falling_back_to_names() {
+    // #14: two processes share a name and only pid 100 was ducked; pid 200
+    // comes first in the list and must not take pid 100's record.
+    let (fake, _, state) = setup("pidfirst");
+    write_state(
+        &state,
+        json!({"sessions": [{"pid": 100, "name": "discord.exe", "original": 0.9}]}),
+    );
+    fake.add_audio(200, "discord.exe", 0.5);
+    fake.add_audio(100, "discord.exe", 0.3);
+    restore_from_state_file((fake.platform().audio)().as_ref(), &state);
+    assert!(approx(fake.volume(200), 0.5), "pid 200 is untouched");
+    assert!(approx(fake.volume(100), 0.9));
     assert!(!state.exists());
 }
 

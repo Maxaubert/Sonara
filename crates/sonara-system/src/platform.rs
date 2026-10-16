@@ -8,9 +8,21 @@ use std::sync::Arc;
 /// Platform calls fail with a message (logged, never raised to speech).
 pub type PResult<T> = std::result::Result<T, String>;
 
+/// What a platform call that ran out of time fails with (a media app that
+/// never answers, #16): the call may still take effect later.
+pub const TIMED_OUT: &str = "timed out";
+
+/// Whether a platform error is a timeout (`TIMED_OUT`).
+pub fn timed_out(e: &str) -> bool {
+    e.starts_with(TIMED_OUT)
+}
+
 /// One app's audio session on one render device.
 pub trait AudioSession {
     fn pid(&self) -> u32;
+    /// The session's instance identity (unique per session and device),
+    /// empty when unknown: a duck record finds its own session by it (#14).
+    fn id(&self) -> String;
     /// The process image name (`vlc.exe`), empty when unknown.
     fn name(&self) -> String;
     /// Master volume, 0.0 to 1.0.
@@ -64,6 +76,10 @@ pub trait KeyState: Send + Sync {
 
 type Factory<T> = Arc<dyn Fn() -> Box<T> + Send + Sync>;
 
+/// Called when the Windows session ends (logoff, shutdown); it must finish
+/// its work before returning, the process ends right after (#18).
+pub type OnSessionEnd = Box<dyn Fn() + Send + Sync>;
+
 /// A platform: factories, because audio and media objects live on the
 /// thread that created them (COM), and a registrar on its pump thread.
 #[derive(Clone)]
@@ -75,4 +91,6 @@ pub struct Platform {
     pub registrar: Factory<dyn Registrar>,
     pub layout: Arc<dyn KeyboardLayout>,
     pub keys: Arc<dyn KeyState>,
+    /// Run a callback when the Windows session ends (#18).
+    pub session_end: Arc<dyn Fn(OnSessionEnd) + Send + Sync>,
 }

@@ -911,12 +911,15 @@ and later resumed. Never touched: the runtime's own process, the Windows audio e
 (`audiodg.exe`) and virtual mixers whose session is the whole mix (SteelSeries Sonar, VoiceMeeter);
 an app already at or below the level is left alone. Other apps come back at once on `pause`, `mute`,
 a mode change and when the extension is disarmed, about 0.4 s after the reader goes idle (so the gap
-between two messages does not bring them up and down), and when the runtime exits.
+between two messages does not bring them up and down), when the runtime exits, and when the Windows
+session ends (logoff or shutdown). A resume plays only the media sessions the pause paused.
 
 **Crash restore.** Before an app is lowered or paused it is recorded in `state\duck_state.json` or
 `state\pause_state.json` in the home, and the files are removed once everything is back. A runtime
 that starts finds these files and restores the apps before it accepts clients; what still fails
-stays recorded and is retried by the next restore.
+stays recorded and is retried by the next restore. A ducked app that is not running is kept for up to
+30 days and restored when it next shows up (Windows reopens it at the level it was left at); paused
+media is resumed only from a record at most 10 minutes old.
 
 ### Settings
 
