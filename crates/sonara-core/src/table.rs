@@ -2,8 +2,9 @@
 //! value after its column name, "Fund: KLP Global. Share of funds: 16.4%.
 //! Return: +24%." (#313), instead of one run of cells.
 //!
-//! A table is a line with a `|`, then a separator line of dashes, then the
-//! rows that follow while they have a `|`. The header is not read on its own.
+//! A table is a line with a `|`, then a separator line of dashes with as
+//! many cells, then at least one row; the rows go on while they have a `|`.
+//! The header is not read on its own (without rows it is read as prose).
 
 /// A table found in raw text: its byte span and the rows as sentences.
 pub(crate) struct Table {
@@ -15,6 +16,12 @@ pub(crate) struct Table {
 fn is_separator(line: &str) -> bool {
     let t = line.trim();
     t.contains('-') && t.chars().all(|c| matches!(c, '|' | ':' | '-' | ' ' | '\t'))
+}
+
+/// `sep` is the separator under `head`: as many cells, as GFM asks (#25),
+/// so a lone `---` under a line with a pipe is a rule, not a table.
+fn separates(head: &str, sep: &str) -> bool {
+    is_separator(sep) && cells(sep).len() == cells(head).len()
 }
 
 /// The cells of one row; outer pipes are optional and `\|` is a literal pipe.
@@ -73,11 +80,12 @@ pub(crate) fn find(text: &str) -> Option<Table> {
     for i in 0..lines.len().saturating_sub(1) {
         let (start, head) = lines[i];
         let (_, sep) = lines[i + 1];
-        if !head.contains('|') || !is_separator(sep) {
+        if !head.contains('|') || !separates(head, sep) {
             continue;
         }
         let header = cells(head);
-        let mut end = lines[i + 1].0 + sep.len();
+        let body = lines[i + 1].0 + sep.len();
+        let mut end = body;
         let mut rows = Vec::new();
         for &(row_at, line) in &lines[i + 2..] {
             if !line.contains('|') || line.trim().is_empty() {
@@ -88,6 +96,11 @@ pub(crate) fn find(text: &str) -> Option<Table> {
                 rows.push(spoken);
             }
             end = row_at + line.len();
+        }
+        // Without a row the header is the only text: read it as prose
+        // rather than drop it (#25).
+        if end == body {
+            continue;
         }
         return Some(Table { start, end, rows });
     }
@@ -104,7 +117,7 @@ pub(crate) fn hold_from(text: &str) -> usize {
     for (i, line) in lines.iter().enumerate() {
         if line.contains('|') {
             match lines.get(i + 1) {
-                Some(next) if next.ends_with('\n') && !is_separator(next) => {}
+                Some(next) if next.ends_with('\n') && !separates(line, next) => {}
                 // the separator line may still be arriving
                 Some(next) if !next.ends_with('\n') && !is_separator_start(next) => {}
                 _ => return at,

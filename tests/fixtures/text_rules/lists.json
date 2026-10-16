@@ -70,6 +70,19 @@
         "fixed the race.",
         "added tests."
       ]
+    },
+    {
+      "name": "item_continues_after_a_delta_ending_in_its_indent",
+      "fn": "assemble",
+      "deltas": [
+        "- OmniVoice: good quality.\n  ",
+        "Norwegian coverage is unverified.\n\nDone."
+      ],
+      "output": [
+        "omni voice: good quality. Norwegian coverage is unverified.",
+        null,
+        "Done."
+      ]
     }
   ]
 }

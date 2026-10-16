@@ -9,11 +9,22 @@ fn fixtures_dir() -> PathBuf {
 }
 
 fn assemble(deltas: &[String]) -> Vec<Value> {
+    let last = deltas.len().saturating_sub(1);
+    let feeds: Vec<(String, u32, bool)> = deltas
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.clone(), i as u32, i == last))
+        .collect();
+    assemble_feeds(&feeds)
+}
+
+/// Each feed is (delta, index, final), for the cases that need a gap, a
+/// late delta or a resent index (`feeds` in the README).
+fn assemble_feeds(feeds: &[(String, u32, bool)]) -> Vec<Value> {
     let mut a = ProseAssembler::new();
     let mut out = Vec::new();
-    let last = deltas.len().saturating_sub(1);
-    for (i, d) in deltas.iter().enumerate() {
-        for c in a.feed(d, i as u32, i == last) {
+    for (d, index, is_final) in feeds {
+        for c in a.feed(d, *index, *is_final) {
             out.push(match c {
                 Chunk::Text(s) | Chunk::Code { summary: s, .. } => Value::String(s),
                 Chunk::ParagraphBreak => Value::Null,
@@ -42,9 +53,15 @@ fn every_golden_case_matches() {
             );
             let ok = match case["fn"].as_str().unwrap() {
                 "assemble" => {
-                    let deltas: Vec<String> =
-                        serde_json::from_value(case["deltas"].clone()).unwrap();
-                    let got = Value::Array(assemble(&deltas));
+                    let got = if case.get("feeds").is_some() {
+                        let feeds: Vec<(String, u32, bool)> =
+                            serde_json::from_value(case["feeds"].clone()).unwrap();
+                        Value::Array(assemble_feeds(&feeds))
+                    } else {
+                        let deltas: Vec<String> =
+                            serde_json::from_value(case["deltas"].clone()).unwrap();
+                        Value::Array(assemble(&deltas))
+                    };
                     let ok = got == case["output"];
                     if !ok {
                         failures.push(format!("{name}: got {got}"));

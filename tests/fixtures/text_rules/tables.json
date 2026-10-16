@@ -64,6 +64,29 @@
         "Pick a b here.",
         "Then more."
       ]
+    },
+    {
+      "name": "pipe_line_over_a_rule_is_not_a_table",
+      "fn": "assemble",
+      "deltas": [
+        "Use `ls | grep foo` to filter\n---\nThen stop."
+      ],
+      "output": [
+        "Use ls, pipe, grep foo to filter",
+        "Then stop."
+      ]
+    },
+    {
+      "name": "header_without_rows_is_not_a_table",
+      "fn": "assemble",
+      "deltas": [
+        "| Name | Status |\n|---|---|\n\nDone."
+      ],
+      "output": [
+        "Name Status",
+        null,
+        "Done."
+      ]
     }
   ]
 }
