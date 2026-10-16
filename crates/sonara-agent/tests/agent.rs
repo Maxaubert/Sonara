@@ -1167,6 +1167,35 @@ fn turn_done_and_session_change_play_one_after_the_other() {
     r.read("From beta.");
 }
 
+/// A key's sound answers the key at once (#338): pressed while the turn_done
+/// and session_change chimes play (about two seconds), it used to wait
+/// for both. It plays over them; the chimes keep their order.
+#[test]
+fn a_key_sound_plays_at_once_over_queued_chimes() {
+    for key in [Earcon::Nav, Earcon::NavEdge, Earcon::Step] {
+        let r = Rig::new();
+        let heard = r.agent.subscribe();
+        r.agent.earcon(Earcon::TurnDone).unwrap();
+        r.agent.earcon(Earcon::SessionChange).unwrap();
+        let pressed = Instant::now();
+        r.agent.earcon(key).unwrap();
+        assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
+        assert_eq!(
+            heard.recv_timeout(Duration::from_millis(200)).unwrap(),
+            key,
+            "{key:?} waited for the chimes"
+        );
+        let clip = key.clip();
+        let at = timed_clips(&r.out)
+            .into_iter()
+            .find(|c| (c.1, c.2) == (clip.samples.len(), clip.sample_rate))
+            .unwrap()
+            .0;
+        assert!(at < pressed + Duration::from_millis(100), "{key:?} late");
+        assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
+    }
+}
+
 #[test]
 fn session_change_is_logged() {
     let r = Rig::announcing(None);
@@ -1207,7 +1236,7 @@ fn a_burst_of_earcons_is_capped_and_never_overlaps() {
         Earcon::Choice,
         Earcon::Permission,
         Earcon::Error,
-        Earcon::Nav,
+        Earcon::SummaryFailed,
     ] {
         r.agent.earcon(e).unwrap();
     }

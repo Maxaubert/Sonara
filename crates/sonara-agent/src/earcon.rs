@@ -77,6 +77,12 @@ impl Earcon {
         Earcon::ALL.iter().copied().find(|e| e.as_str() == name)
     }
 
+    /// The answer to a key press (#338): played at once, over a chime
+    /// that plays or waits, never queued behind it.
+    pub fn is_key(&self) -> bool {
+        matches!(self, Earcon::Nav | Earcon::NavEdge | Earcon::Step)
+    }
+
     /// The decoded clip, mono 16-bit (decoded once).
     pub fn clip(&self) -> &'static PcmChunk {
         static CLIPS: OnceLock<Vec<PcmChunk>> = OnceLock::new();

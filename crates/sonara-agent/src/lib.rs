@@ -1064,10 +1064,15 @@ impl Inner {
     }
 
     /// Play an earcon once the one playing ended (#238, module docs): at
-    /// once when none is, else on the earcon thread. Returns what to trace:
-    /// the earcon, or why a burst dropped it.
+    /// once when none is, else on the earcon thread. A key's sound always
+    /// plays at once (#338). Returns what to trace: the earcon, or why a
+    /// burst dropped it.
     fn queue(self: &Arc<Self>, e: Earcon) -> Result<Traced> {
         let clip = self.earcons.clip(e);
+        if e.is_key() {
+            self.sound(e, &clip)?;
+            return Ok(Traced::Earcon(e));
+        }
         let len = sequencer::length(clip.samples.len(), clip.sample_rate);
         let now = Instant::now();
         let mut schedule = self.lock_schedule();
