@@ -127,7 +127,9 @@ pub mod summarizer;
 
 pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
-pub use rules::{Action, Ask, Job, Nav, Note, Rules, Stale, Step, Timer, DELTA_GAP};
+pub use rules::{
+    Action, Ask, Job, Nav, Note, Rules, Shown, ShownMove, Stale, Step, Timer, DELTA_GAP,
+};
 pub use settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
     Verbosity,
@@ -749,6 +751,51 @@ impl Agent {
             return Ok(Some((target, nav)));
         }
         Ok(None)
+    }
+
+    /// The terminal shows `shown` of `channel`'s question set (#323, the
+    /// screen follower, PrismTerminal): a question other than the current
+    /// one is read now (a stepping set lands on it; a set read in order
+    /// reads on from it); the review screen says "Review your answers."
+    /// once. Returns what moved, `None` when nothing did.
+    pub fn question_shown(&self, channel: &str, shown: Shown) -> Result<Option<ShownMove>> {
+        let mut rules = self.lock();
+        let ch = &self.inner.channels;
+        let moved = rules.question_shown(channel, shown);
+        let what = match &moved {
+            Some(ShownMove::Land(nav)) => {
+                format!("on screen: question {} of {}", nav.index + 1, nav.size)
+            }
+            Some(ShownMove::Entry { index, size, .. }) => {
+                format!("on screen: question {} of {size}", index + 1)
+            }
+            Some(ShownMove::Review) => "on screen: the review of the answers".into(),
+            None => "on screen: nothing to move to".into(),
+        };
+        self.inner.trace(
+            "question",
+            Some(channel),
+            Traced::Note(Note {
+                channel: Some(channel.to_string()),
+                kind: "question",
+                what,
+                text: None,
+            }),
+        );
+        match &moved {
+            Some(ShownMove::Land(nav)) => {
+                ch.revise(channel, nav.entry, &nav.text);
+                ch.read_from(channel, Some(nav.entry))?;
+            }
+            Some(ShownMove::Entry { entry, .. }) => {
+                ch.read_from(channel, Some(*entry))?;
+            }
+            Some(ShownMove::Review) => {
+                ch.add(channel, "Review your answers.")?;
+            }
+            None => {}
+        }
+        Ok(moved)
     }
 
     /// Up (`control restart` without a channel, #283): when the session Up

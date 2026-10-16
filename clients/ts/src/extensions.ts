@@ -138,6 +138,16 @@ export class AgentApi {
     return this.send("control", defined({ ...extra, action: "previous_question" }));
   }
 
+  /**
+   * `question_shown` (protocol 1.12, #323): the terminal shows `text`, a
+   * question of the session's set as on screen, or with `{ review: true }`
+   * the review of the answers. Reply: `moved`, `question`, `of`.
+   */
+  questionShown(channel: string, text: string | { review: true }, extra: Extra = {}): Promise<Reply> {
+    const shown = typeof text === "string" ? { text } : { review: true };
+    return this.send("question_shown", defined({ ...extra, channel, ...shown }));
+  }
+
   /** `earcon`. */
   earcon(kind: string, extra: Extra = {}): Promise<Reply> {
     return this.send("earcon", defined({ ...extra, kind }));
