@@ -585,8 +585,17 @@ impl SystemExt {
         if let Some(level) = store.value("duck_level").as_u64() {
             audio.set_duck_level(level.min(100) as u8);
         }
+        let audio = Arc::new(audio);
+        // Logoff or shutdown ends the process without the exit path: put
+        // other apps back before Windows does (#18).
+        let at_end = Arc::downgrade(&audio);
+        (host.platform.session_end)(Box::new(move || {
+            if let Some(a) = at_end.upgrade() {
+                a.shutdown();
+            }
+        }));
         SystemExt {
-            audio: Arc::new(audio),
+            audio,
             platform: host.platform,
             keymap_path: host.home.join("keymap.json"),
             settings_url: format!(

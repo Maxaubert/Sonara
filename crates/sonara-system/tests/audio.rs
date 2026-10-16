@@ -25,6 +25,7 @@ fn control(fake: &Fake, grace: Duration) -> (AudioControl, std::path::PathBuf) {
             state_dir: dir.clone(),
             exclude_pids: vec![OWN_PID],
             idle_grace: grace,
+            shutdown_wait: sonara_system::audio::SHUTDOWN_WAIT,
             log: None,
         },
     );
@@ -297,4 +298,34 @@ fn following_mid_item_engages_at_once() {
     reader.control(Control::Stop).unwrap();
     assert!(eventually(|| !c.status().ducked));
     reader.shutdown();
+}
+
+#[test]
+fn shutdown_returns_when_a_media_app_hangs() {
+    // #16: a pause the app never answers blocks the worker; the runtime
+    // exit waits for it only up to `shutdown_wait`.
+    let fake = Fake::new();
+    fake.add_media("spotify", true);
+    fake.edit(|w| w.media[0].hang_ms = 3000);
+    let dir = tmp("hang");
+    let c = AudioControl::new(
+        &fake.platform(),
+        AudioConfig {
+            state_dir: dir,
+            exclude_pids: vec![OWN_PID],
+            idle_grace: Duration::ZERO,
+            shutdown_wait: Duration::from_millis(200),
+            log: None,
+        },
+    );
+    c.set_mode(AudioMode::Pause);
+    c.arm(true);
+    c.set_activity(Activity::Speaking);
+    let started = std::time::Instant::now();
+    c.shutdown();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
 }

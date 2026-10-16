@@ -67,6 +67,11 @@ pub const IDLE_GRACE: Duration = Duration::from_millis(400);
 /// not leave them ducked or paused.
 pub const STEP_GRACE: Duration = Duration::from_secs(30);
 
+/// How long the runtime exit waits for the restore (#16). A media app that
+/// never answers holds the worker for at most `win::CALL_TIMEOUT` per call,
+/// and Windows gives a session end about 5 s.
+pub const SHUTDOWN_WAIT: Duration = Duration::from_secs(4);
+
 /// File names in the state folder.
 pub const DUCK_STATE: &str = "duck_state.json";
 pub const PAUSE_STATE: &str = "pause_state.json";
@@ -102,6 +107,8 @@ pub struct AudioConfig {
     /// Processes never ducked (this runtime's own pid).
     pub exclude_pids: Vec<u32>,
     pub idle_grace: Duration,
+    /// How long `shutdown` waits for the worker (`SHUTDOWN_WAIT`).
+    pub shutdown_wait: Duration,
     /// Where the activity lines go (else stderr).
     pub log: Option<LogFn>,
 }
@@ -112,6 +119,7 @@ impl AudioConfig {
             state_dir,
             exclude_pids: vec![std::process::id()],
             idle_grace: IDLE_GRACE,
+            shutdown_wait: SHUTDOWN_WAIT,
             log: None,
         }
     }
@@ -153,6 +161,8 @@ pub struct AudioControl {
     tx: Mutex<Option<Sender<Cmd>>>,
     status: Arc<Mutex<Status>>,
     worker: Mutex<Option<JoinHandle<()>>>,
+    shutdown_wait: Duration,
+    log: Option<LogFn>,
 }
 
 impl AudioControl {
@@ -170,6 +180,8 @@ impl AudioControl {
         let audio = platform.audio.clone();
         let media = platform.media.clone();
         let st = status.clone();
+        let shutdown_wait = config.shutdown_wait;
+        let log = config.log.clone();
         let worker = std::thread::Builder::new()
             .name("sonara-system-audio".into())
             .spawn(move || {
@@ -192,6 +204,8 @@ impl AudioControl {
             tx: Mutex::new(Some(tx)),
             status,
             worker: Mutex::new(Some(worker)),
+            shutdown_wait,
+            log,
         }
     }
 
@@ -298,11 +312,23 @@ impl AudioControl {
     }
 
     /// Restore everything and stop the worker; later calls do nothing.
+    /// Waits at most `shutdown_wait` (#16): a worker held by a media app
+    /// that never answers is left to finish on its own.
     pub fn shutdown(&self) {
-        self.call(Cmd::Shutdown);
+        let (ack, done) = mpsc::channel();
+        let finished =
+            self.send(Cmd::Shutdown(ack)) && done.recv_timeout(self.shutdown_wait).is_ok();
         self.tx.lock().unwrap_or_else(|p| p.into_inner()).take();
-        if let Some(w) = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take() {
-            let _ = w.join();
+        let worker = self.worker.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(w) = worker {
+            if finished {
+                let _ = w.join();
+            } else {
+                activity::emit(
+                    self.log.as_ref(),
+                    "restore did not finish in time: the audio worker is busy",
+                );
+            }
         }
     }
 }
@@ -370,7 +396,7 @@ impl Worker {
 
     fn pause(&mut self, why: &str) {
         self.pauser.pause();
-        let apps = self.pauser.paused_apps().to_vec();
+        let apps = self.pauser.paused_apps();
         if !apps.is_empty() {
             self.note(&format!(
                 "media pause apps={} (reason: {why})",

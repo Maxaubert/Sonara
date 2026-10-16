@@ -56,6 +56,16 @@ pub struct FakeMedia {
     pub plays: u32,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub pauses: u32,
+    /// `pause` pauses, but reports a timeout (an app that answers late).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pause_times_out: bool,
+    /// `pause` and `play` block this long first (an app that hangs).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hang_ms: u64,
+    /// A stable identity, so a session object stays bound to its session
+    /// while the list changes.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub uid: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +131,8 @@ struct Inner {
     presses: Option<Sender<Press>>,
     /// Called before every `set_volume` (tests that check ordering).
     on_set: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// What runs when the Windows session ends (`end_session`).
+    on_end: Vec<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Inner {
@@ -136,6 +148,13 @@ impl Inner {
                 a.uid = self.next_uid;
             }
             self.next_uid = self.next_uid.max(a.uid);
+        }
+        for m in self.world.media.iter_mut() {
+            if m.uid == 0 {
+                self.next_uid += 1;
+                m.uid = self.next_uid;
+            }
+            self.next_uid = self.next_uid.max(m.uid);
         }
     }
 
@@ -168,6 +187,7 @@ impl Fake {
                 next_uid: 0,
                 presses: None,
                 on_set: None,
+                on_end: Vec::new(),
             })),
         }
     }
@@ -233,6 +253,20 @@ impl Fake {
         self.inner.lock().unwrap_or_else(|p| p.into_inner()).on_set = Some(Arc::new(f));
     }
 
+    /// End the Windows session (as WM_ENDSESSION would): runs every
+    /// session-end callback and returns when they are done.
+    pub fn end_session(&self) {
+        let calls = self
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .on_end
+            .clone();
+        for f in calls {
+            f();
+        }
+    }
+
     /// Press a registered hotkey (as the OS would post WM_HOTKEY).
     pub fn press(&self, id: i32) {
         let inner = self.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -259,6 +293,7 @@ impl Fake {
         let a = self.clone();
         let m = self.clone();
         let r = self.clone();
+        let e = self.clone();
         Platform {
             name: "fake",
             audio: Arc::new(move || {
@@ -278,6 +313,13 @@ impl Fake {
             }),
             layout: Arc::new(FakeLayout(self.clone())),
             keys: Arc::new(FakeKeys(self.clone())),
+            session_end: Arc::new(move |f| {
+                e.inner
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .on_end
+                    .push(Arc::from(f));
+            }),
         }
     }
 }
@@ -329,6 +371,10 @@ impl AudioSession for FakeAudioSession {
         self.name.clone()
     }
 
+    fn id(&self) -> String {
+        format!("fake-session-{}", self.uid)
+    }
+
     fn volume(&self) -> PResult<f32> {
         self.fake
             .with(|w| match w.audio.iter().find(|a| a.uid == self.uid) {
@@ -375,12 +421,13 @@ impl MediaSessions for FakeMediaSessions {
             if w.media_down {
                 return Err("media sessions unavailable".to_string());
             }
-            Ok((0..w.media.len())
-                .map(|i| {
+            Ok(w.media
+                .iter()
+                .map(|m| {
                     Box::new(FakeMediaSession {
                         fake: self.0.clone(),
-                        app: w.media[i].app.clone(),
-                        index: i,
+                        app: m.app.clone(),
+                        uid: m.uid,
                     }) as Box<dyn MediaSession>
                 })
                 .collect())
@@ -391,15 +438,24 @@ impl MediaSessions for FakeMediaSessions {
 struct FakeMediaSession {
     fake: Fake,
     app: String,
-    index: usize,
+    uid: u64,
 }
 
 impl FakeMediaSession {
     fn with<R>(&self, f: impl FnOnce(&mut FakeMedia) -> PResult<R>) -> PResult<R> {
-        self.fake.with(|w| match w.media.get_mut(self.index) {
-            Some(m) if m.app == self.app => f(m),
-            _ => Err("session gone".into()),
-        })
+        self.fake
+            .with(|w| match w.media.iter_mut().find(|m| m.uid == self.uid) {
+                Some(m) if m.app == self.app => f(m),
+                _ => Err("session gone".into()),
+            })
+    }
+
+    /// Block for `hang_ms` (outside the world's lock).
+    fn hang(&self) {
+        let ms = self.with(|m| Ok(m.hang_ms)).unwrap_or(0);
+        if ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
     }
 }
 
@@ -413,14 +469,19 @@ impl MediaSession for FakeMediaSession {
     }
 
     fn pause(&self) -> PResult<()> {
+        self.hang();
         self.with(|m| {
             m.pauses += 1;
             m.playing = false;
+            if m.pause_times_out {
+                return Err(format!("{} after 2 s", crate::platform::TIMED_OUT));
+            }
             Ok(())
         })
     }
 
     fn play(&self) -> PResult<()> {
+        self.hang();
         self.with(|m| {
             m.plays += 1;
             if m.fail_play {

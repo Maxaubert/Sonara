@@ -6,24 +6,27 @@
 //! `#[ignore]` tests in `tests/win_live.rs` (opt-in, they touch the user's
 //! session). The unit and conformance tests use `crate::fake`.
 use crate::platform::{
-    AudioSession, AudioSessions, KeyState, KeyboardLayout, MediaSession, MediaSessions, PResult,
-    Platform, Registrar,
+    AudioSession, AudioSessions, KeyState, KeyboardLayout, MediaSession, MediaSessions,
+    OnSessionEnd, PResult, Platform, Registrar, TIMED_OUT,
 };
+use std::sync::mpsc;
 use std::sync::Arc;
-use windows::core::{Interface, PWSTR};
+use std::time::Duration;
+use windows::core::{w, Interface, RuntimeType, PWSTR};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSession as GsmtcSession,
     GlobalSystemMediaTransportControlsSessionManager as GsmtcManager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as GsmtcStatus,
 };
-use windows::Win32::Foundation::{CloseHandle, LPARAM, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Media::Audio::{
     eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator, ISimpleAudioVolume,
     MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{
     GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -33,8 +36,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     UnregisterHotKey, HOT_KEY_MODIFIERS, MAPVK_VK_TO_VSC,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetMessageW, PeekMessageW, PostThreadMessageW, MSG, PM_NOREMOVE, WM_HOTKEY, WM_QUIT,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetWindowLongPtrW,
+    PeekMessageW, PostThreadMessageW, RegisterClassW, SetWindowLongPtrW, GWLP_USERDATA, MSG,
+    PM_NOREMOVE, WINDOW_EX_STYLE, WM_ENDSESSION, WM_HOTKEY, WM_QUERYENDSESSION, WM_QUIT, WNDCLASSW,
+    WS_OVERLAPPED,
 };
+use windows_future::IAsyncOperation;
 
 /// The real platform.
 pub fn platform() -> Platform {
@@ -45,11 +52,121 @@ pub fn platform() -> Platform {
         registrar: Arc::new(|| Box::new(HotkeyThread::new()) as Box<dyn Registrar>),
         layout: Arc::new(Layout),
         keys: Arc::new(Keys),
+        session_end: Arc::new(|f| {
+            if watch_session_end(f).is_none() {
+                eprintln!("sonara-system: cannot watch for the end of the Windows session");
+            }
+        }),
     }
 }
 
 fn msg(e: windows::core::Error) -> String {
     format!("{e} ({:#010x})", e.code().0)
+}
+
+/// How long one GSMTC call may take (#16): the media app has to answer,
+/// and one that hangs must not hold the audio worker, every restore and
+/// the runtime exit behind it.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Wait for `op` at most `limit`; past it the call is cancelled and fails
+/// with `TIMED_OUT` (it may still take effect later).
+pub fn wait<T: RuntimeType + Send + 'static>(
+    op: IAsyncOperation<T>,
+    limit: Duration,
+) -> PResult<T> {
+    let (tx, rx) = mpsc::channel();
+    op.when(move |r| {
+        let _ = tx.send(r.map_err(msg));
+    })
+    .map_err(msg)?;
+    match rx.recv_timeout(limit) {
+        Ok(r) => r,
+        Err(_) => {
+            let _ = op.Cancel();
+            Err(format!("{TIMED_OUT} after {} ms", limit.as_millis()))
+        }
+    }
+}
+
+/// Run `f` when the Windows session ends (logoff, shutdown, #18). A
+/// process that loads user32 (sonarad does, for the hotkeys) never gets
+/// `CTRL_LOGOFF_EVENT` or `CTRL_SHUTDOWN_EVENT`, so a hidden top-level
+/// window (not message-only: those get no session messages) answers
+/// `WM_QUERYENDSESSION` and runs `f` inside `WM_ENDSESSION`, which Windows
+/// waits for before it ends the process. Returns the window handle, `None`
+/// when the window could not be made.
+pub fn watch_session_end(f: OnSessionEnd) -> Option<isize> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("sonara-system-session".into())
+        .spawn(move || {
+            // SAFETY: a window of this thread with its own message loop;
+            // the callback box lives as long as the thread (it is never
+            // freed: the window lives until the process ends).
+            unsafe {
+                let Ok(module) = GetModuleHandleW(None) else {
+                    let _ = tx.send(None);
+                    return;
+                };
+                let class = WNDCLASSW {
+                    lpfnWndProc: Some(session_proc),
+                    hInstance: module.into(),
+                    lpszClassName: w!("SonaraSessionEnd"),
+                    ..Default::default()
+                };
+                // A second watcher finds the class registered already.
+                let _ = RegisterClassW(&class);
+                let Ok(hwnd) = CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    w!("SonaraSessionEnd"),
+                    w!("Sonara"),
+                    WS_OVERLAPPED,
+                    0,
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    Some(module.into()),
+                    None,
+                ) else {
+                    let _ = tx.send(None);
+                    return;
+                };
+                let callback: *mut OnSessionEnd = Box::into_raw(Box::new(f));
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, callback as isize);
+                let _ = tx.send(Some(hwnd.0 as isize));
+                let mut m = MSG::default();
+                while GetMessageW(&mut m, None, 0, 0).0 > 0 {
+                    DispatchMessageW(&m);
+                }
+            }
+        })
+        .ok()?;
+    rx.recv().ok().flatten()
+}
+
+unsafe extern "system" fn session_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        // Never hold up the logoff or shutdown.
+        WM_QUERYENDSESSION => LRESULT(1),
+        // wParam is nonzero when the session really ends (not cancelled).
+        WM_ENDSESSION => {
+            if wp.0 != 0 {
+                // SAFETY: set by watch_session_end before the first message
+                // could arrive, and never freed.
+                let f = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const OnSessionEnd;
+                if !f.is_null() {
+                    // SAFETY: as above.
+                    unsafe { (*f)() };
+                }
+            }
+            LRESULT(0)
+        }
+        // SAFETY: the default handling of this window's other messages.
+        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+    }
 }
 
 /// COM on the calling thread (multithreaded; a repeat call is harmless).
@@ -90,7 +207,22 @@ struct CoreAudio;
 struct CoreSession {
     pid: u32,
     name: String,
+    id: String,
     volume: ISimpleAudioVolume,
+}
+
+/// The session instance identifier (unique per session and device), empty
+/// when unknown.
+fn session_id(control: &IAudioSessionControl2) -> String {
+    // SAFETY: the string is the caller's to free (CoTaskMemFree).
+    unsafe {
+        let Ok(p) = control.GetSessionInstanceIdentifier() else {
+            return String::new();
+        };
+        let id = p.to_string().unwrap_or_default();
+        CoTaskMemFree(Some(p.0 as *const _));
+        id
+    }
 }
 
 impl AudioSession for CoreSession {
@@ -100,6 +232,10 @@ impl AudioSession for CoreSession {
 
     fn name(&self) -> String {
         self.name.clone()
+    }
+
+    fn id(&self) -> String {
+        self.id.clone()
     }
 
     fn volume(&self) -> PResult<f32> {
@@ -156,6 +292,7 @@ impl AudioSessions for CoreAudio {
                     out.push(Box::new(CoreSession {
                         pid,
                         name: process_name(pid),
+                        id: session_id(&control2),
                         volume,
                     }));
                 }
@@ -183,7 +320,7 @@ impl MediaSession for GsmtcEntry {
     }
 
     fn pause(&self) -> PResult<()> {
-        let done = self.0.TryPauseAsync().map_err(msg)?.join().map_err(msg)?;
+        let done = wait(self.0.TryPauseAsync().map_err(msg)?, CALL_TIMEOUT)?;
         if done {
             Ok(())
         } else {
@@ -192,7 +329,7 @@ impl MediaSession for GsmtcEntry {
     }
 
     fn play(&self) -> PResult<()> {
-        let done = self.0.TryPlayAsync().map_err(msg)?.join().map_err(msg)?;
+        let done = wait(self.0.TryPlayAsync().map_err(msg)?, CALL_TIMEOUT)?;
         if done {
             Ok(())
         } else {
@@ -204,10 +341,7 @@ impl MediaSession for GsmtcEntry {
 impl MediaSessions for Gsmtc {
     fn sessions(&self) -> PResult<Vec<Box<dyn MediaSession>>> {
         com();
-        let manager = GsmtcManager::RequestAsync()
-            .map_err(msg)?
-            .join()
-            .map_err(msg)?;
+        let manager = wait(GsmtcManager::RequestAsync().map_err(msg)?, CALL_TIMEOUT)?;
         let list = manager.GetSessions().map_err(msg)?;
         let mut out: Vec<Box<dyn MediaSession>> = Vec::new();
         for i in 0..list.Size().map_err(msg)? {
