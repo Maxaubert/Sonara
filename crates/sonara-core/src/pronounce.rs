@@ -816,7 +816,7 @@ static RULES: Lazy<Rules> = Lazy::new(|| {
             r"([Tt]el|[Pp]hone|[Rr]ing|[Cc]all|[Mm]obile|[Mm]obil)\.?:? ((?:\d{2,4}[ -]){1,5}\d{2,4})",
         ),
         money: re(
-            r"([$£€])(\d[\d,]*(?:\.\d+)?)(?:\s?(bn|million|billion|thousand|trillion|k|K|m|M|b|B)\b)?(?:\s?[-–]\s?[$£€]?(\d[\d,]*(?:\.\d+)?))?",
+            r"([$£€])(\d[\d,]*(?:\.\d+)?)(?:\s?(bn|million|billion|thousand|trillion|k|K|m|M|b|B)\b)?(?:\s?[-–]\s?[$£€]?(\d[\d,]*(?:\.\d+)?)(?:\s?(bn|million|billion|thousand|trillion|k|K|m|M|b|B)\b)?)?",
         ),
         nok_before: re(r"(?:NOK|kr\.?) ?(\d{1,3}(?:[ .]\d{3})+|\d+)(?:,(\d{2}|-))?"),
         nok_after: re(r"(\d{1,3}(?:[ .]\d{3})+|\d+)(?:,(\d{2}|-))? ?(?:kr|NOK)"),
@@ -883,6 +883,15 @@ pub fn pronounce(text: &str) -> String {
     let mut t = each(&text, &r.protect, |c, _, _| {
         // A file path in inline code is read as a path (2026-10-14).
         let inner = c[0].strip_prefix('`').and_then(|s| s.strip_suffix('`'));
+        // So is a URL alone, by the url rule below.
+        if let Some(u) = inner.map(str::trim) {
+            if r.url
+                .find(u)
+                .is_some_and(|m| m.start() == 0 && m.end() == u.len())
+            {
+                return Some(u.to_string());
+            }
+        }
         if let Some(p) = inner.filter(|p| p.contains(['/', '\\'])) {
             if r.path
                 .find(p)
@@ -925,7 +934,18 @@ pub fn pronounce(text: &str) -> String {
             w.push_str(&format!(" at {}", clock(h, mi)));
             match c.get(7).map(|m| m.as_str()) {
                 Some("Z") => w.push_str(" U T C"),
-                Some(z) => w.push_str(&format!(" U T C {}", z.replace(':', ""))),
+                // "-05:00" is "minus five", "+05:30" "plus five thirty".
+                Some(z) => {
+                    let digits = z[1..].replace(':', "");
+                    let (oh, om): (u64, u64) =
+                        (digits[..2].parse().ok()?, digits[2..].parse().ok()?);
+                    w.push_str(" U T C");
+                    if (oh, om) != (0, 0) {
+                        let sign = if z.starts_with('-') { "minus" } else { "plus" };
+                        let off = if om == 0 { cardinal(oh) } else { clock(oh, om) };
+                        w.push_str(&format!(" {sign} {off}"));
+                    }
+                }
                 None => {}
             }
         }
@@ -1270,21 +1290,28 @@ fn money(t: &str) -> String {
             _ => ("euro", "euros", "cent", "cents"),
         };
         let amount = c[2].replace(',', "");
+        // " million" after an amount, said before the currency.
+        let scale = |i: usize| {
+            c.get(i).map_or("", |m| match m.as_str() {
+                "k" | "K" | "thousand" => " thousand",
+                "m" | "M" | "million" => " million",
+                "b" | "B" | "bn" | "billion" => " billion",
+                _ => " trillion",
+            })
+        };
         if let Some(to) = c.get(4) {
+            // "$1-2 million" is "one to two million dollars"; a scale on
+            // the first amount only stays with it.
+            let (first, second) = (scale(3), scale(5));
+            let first = if first == second { "" } else { first };
             return Some(format!(
-                "{} to {} {many}",
+                "{}{first} to {}{second} {many}",
                 number_words("", &amount),
                 number_words("", &to.as_str().replace(',', ""))
             ));
         }
-        if let Some(scale) = c.get(3) {
-            let scale = match scale.as_str() {
-                "k" | "K" | "thousand" => "thousand",
-                "m" | "M" | "million" => "million",
-                "b" | "B" | "bn" | "billion" => "billion",
-                _ => "trillion",
-            };
-            return Some(format!("{} {scale} {many}", number_words("", &amount)));
+        if c.get(3).is_some() {
+            return Some(format!("{}{} {many}", number_words("", &amount), scale(3)));
         }
         let (whole, cents) = match amount.split_once('.') {
             Some((w, f)) if f.len() <= 2 => (
@@ -1598,6 +1625,102 @@ fn fraction_words(n: u64, d: u64) -> Option<String> {
     Some(format!("{} {den}", cardinal(n)))
 }
 
+/// Things counted, after a number: `3/5 tests pass` is a count, not a
+/// fraction, and `in 1500 chunks` is not a year.
+const COUNT_NOUNS: &[&str] = &[
+    "tests",
+    "test",
+    "files",
+    "file",
+    "checks",
+    "check",
+    "steps",
+    "step",
+    "items",
+    "item",
+    "tasks",
+    "task",
+    "pages",
+    "page",
+    "rows",
+    "lines",
+    "chunks",
+    "bytes",
+    "records",
+    "entries",
+    "users",
+    "requests",
+    "tokens",
+    "words",
+    "characters",
+    "chars",
+    "cases",
+    "jobs",
+    "runs",
+    "commits",
+    "issues",
+    "errors",
+    "warnings",
+    "crates",
+    "packages",
+    "modules",
+    "functions",
+    "frames",
+    "samples",
+    "pixels",
+    "points",
+    "passed",
+    "failed",
+    "passing",
+    "failing",
+];
+
+/// The word right after `t[..e]`, lowercased ("" if none).
+fn word_after(t: &str, e: usize) -> String {
+    t[e..]
+        .trim_start()
+        .split(|ch: char| !ch.is_alphanumeric())
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+/// `t[e..]` goes on with "to <n>" where n is not a year: a range of plain
+/// numbers ("from 1024 to 4096").
+fn to_plain_number(t: &str, e: usize) -> bool {
+    let Some(rest) = t[e..].trim_start().strip_prefix("to ") else {
+        return false;
+    };
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    !digits.is_empty()
+        && !(digits.len() == 4
+            && digits
+                .parse()
+                .is_ok_and(|n: u64| (1000..=2099).contains(&n)))
+}
+
+/// The sentence around `t[s..e]`: from the last `.`, `!`, `?` (before a
+/// space) or line break before it to the next one after it.
+fn sentence(t: &str, s: usize, e: usize) -> &str {
+    let head = &t[..s];
+    let start = [head.rfind(['!', '?', '\n']), head.rfind(". ")]
+        .into_iter()
+        .flatten()
+        .max()
+        .map_or(0, |i| i + 1);
+    let rest = &t[e..];
+    let end = [
+        rest.find(['!', '?', '\n']),
+        rest.find(". "),
+        rest.ends_with('.').then(|| rest.len() - 1),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .map_or(t.len(), |i| e + i);
+    &t[start..end]
+}
+
 fn fractions(t: &str) -> String {
     let r = &*RULES;
     let t = each(t, &r.mixed_fraction, |c, s, e| {
@@ -1659,7 +1782,7 @@ fn fractions(t: &str) -> String {
                 | "question"
                 | "slide"
                 | "level"
-        );
+        ) || COUNT_NOUNS.contains(&word_after(&cur, e).as_str());
         if n == 0 || n >= d || d > 16 || counter {
             return Some(format!("{} of {}", cardinal(n), cardinal(d)));
         }
@@ -1695,6 +1818,37 @@ fn numbers(t: &str) -> String {
     // `1 000 000` (space-grouped thousands) as one number.
     let t = each(&cur, &r.grouped_space, |c, s, e| {
         if !free_left(&cur, s, e) || matches!(next(&cur, e), Some('.' | ',')) {
+            return None;
+        }
+        // Only with a 1 or 2 digit first group not after a plural ("12 000
+        // users", not "ports 80 443"), or before a currency or unit.
+        let first = c[2].split(' ').next().unwrap_or("");
+        let before = cur[..s]
+            .trim_end()
+            .rsplit(|ch: char| !ch.is_alphabetic())
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let plural = before.len() > 3
+            && before.ends_with('s')
+            && !before.ends_with("ss")
+            && !before.ends_with("us")
+            && !before.ends_with("is");
+        let after = word_after(&cur, e);
+        let unit = matches!(
+            after.as_str(),
+            "kr" | "nok"
+                | "kroner"
+                | "dollars"
+                | "euros"
+                | "pounds"
+                | "usd"
+                | "eur"
+                | "gbp"
+                | "sek"
+                | "dkk"
+        ) || UNITS.iter().any(|u| u.0.eq_ignore_ascii_case(&after));
+        if !(unit || first.len() <= 2 && !plural) {
             return None;
         }
         let sign = if sign_ok(&cur, s) { &c[1] } else { "" };
@@ -1823,35 +1977,44 @@ fn numbers(t: &str) -> String {
                     | "nov"
                     | "dec"
             );
+        let after = word_after(&cur, e);
+        // Not a year before a count ("in 1500 chunks") or as the start of
+        // a range of plain numbers ("from 1024 to 4096").
+        let is_year =
+            is_year && !COUNT_NOUNS.contains(&after.as_str()) && !to_plain_number(&cur, e);
         // A graphics card number (#325): 1050 to 5090 with tens of 50 to
-        // 90, after a brand or "your", "a", "the", or before "Ti",
-        // "Super", "GPU": "your 5090" is "fifty ninety".
-        let after = cur[e..]
-            .trim_start()
-            .split(|ch: char| !ch.is_alphanumeric())
-            .next()
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let is_card = c[1].len() == 4
-            && matches!(n / 100, 10 | 20 | 30 | 40 | 50)
-            && matches!(n % 100, 50 | 60 | 70 | 80 | 90)
-            && (matches!(
-                cue.as_str(),
+        // 90, after a brand, or before "Ti", "Super", "GPU", or after
+        // "your", "a", "the" with a GPU word in the same sentence: "your
+        // 5090" is "fifty ninety" next to "RTX", else a number.
+        let gpu_word = |w: &str| {
+            matches!(
+                w,
                 "rtx"
                     | "gtx"
                     | "rx"
                     | "geforce"
                     | "radeon"
-                    | "your"
-                    | "my"
-                    | "our"
-                    | "their"
-                    | "his"
-                    | "her"
-                    | "a"
-                    | "an"
-                    | "the"
-            ) || matches!(after.as_str(), "ti" | "super" | "gpu" | "gpus" | "card"));
+                    | "nvidia"
+                    | "gpu"
+                    | "gpus"
+                    | "card"
+                    | "cards"
+                    | "graphics"
+                    | "ti"
+                    | "super"
+            )
+        };
+        let is_card = c[1].len() == 4
+            && matches!(n / 100, 10 | 20 | 30 | 40 | 50)
+            && matches!(n % 100, 50 | 60 | 70 | 80 | 90)
+            && (matches!(cue.as_str(), "rtx" | "gtx" | "rx" | "geforce" | "radeon")
+                || matches!(after.as_str(), "ti" | "super" | "gpu" | "gpus" | "card")
+                || matches!(
+                    cue.as_str(),
+                    "your" | "my" | "our" | "their" | "his" | "her" | "a" | "an" | "the"
+                ) && sentence(&cur, s, e)
+                    .split(|ch: char| !ch.is_alphanumeric())
+                    .any(|w| gpu_word(&w.to_ascii_lowercase())));
         if is_card {
             return Some(format!("{} {}", cardinal(n / 100), cardinal(n % 100)));
         }
@@ -1968,7 +2131,8 @@ fn symbols(t: &str) -> String {
 fn words(t: &str) -> String {
     let r = &*RULES;
     let t = each(t, &r.roman, |c, s, e| {
-        free(t, s, e)
+        // A lone C, D, L or M is a letter label ("Part C", "Section D").
+        (free(t, s, e) && !matches!(&c[2], "C" | "D" | "L" | "M"))
             .then(|| roman(&c[2]).map(|n| format!("{} {}", &c[1], cardinal(n))))
             .flatten()
     });

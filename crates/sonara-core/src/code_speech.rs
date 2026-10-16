@@ -232,7 +232,8 @@ pub fn line(raw: &str, info: &str, n: usize) -> Option<String> {
 /// period).
 pub fn inline(code: &str) -> String {
     let code = code.trim();
-    // A URL is left to the prose rules.
+    // A URL is left to the prose rules (pronounce reads one alone in
+    // backticks as a URL, #26 of the 2026-10-16 review).
     if code.contains("://") && !code.contains(char::is_whitespace) {
         return code.to_string();
     }

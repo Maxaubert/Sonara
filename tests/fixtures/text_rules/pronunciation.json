@@ -1332,6 +1332,54 @@
       "fn": "pronounce",
       "input": "See [docs](https://x.y/v1.2.3).",
       "output": "See [docs](https://x.y/v1.2.3)."
+    },
+    {
+      "name": "a_count_noun_after_a_slash_makes_it_a_count",
+      "fn": "pronounce",
+      "input": "3/5 tests pass. Now 11/14 files are done.",
+      "output": "three of five tests pass. Now eleven of fourteen files are done."
+    },
+    {
+      "name": "a_lone_c_d_l_or_m_after_part_is_a_letter_label",
+      "fn": "pronounce",
+      "input": "See Section D of the form. Part C, then Part IV.",
+      "output": "See Section D of the form. Part C, then Part four."
+    },
+    {
+      "name": "a_money_range_says_the_scale_before_the_currency",
+      "fn": "pronounce",
+      "input": "It costs $1-2 million, or $5-10k per seat.",
+      "output": "It costs one to two million dollars, or five to ten thousand dollars per seat."
+    },
+    {
+      "name": "iso_offsets_are_read_as_sign_hours_and_minutes",
+      "fn": "pronounce",
+      "input": "2026-10-16T09:00:00-05:00 or 2026-10-16T09:00:00+05:30",
+      "output": "the sixteenth of October twenty twenty six at nine o'clock U T C minus five or the sixteenth of October twenty twenty six at nine o'clock U T C plus five thirty"
+    },
+    {
+      "name": "a_url_alone_in_inline_code_is_read_as_a_url",
+      "fn": "normalize_for_speech",
+      "input": "See `https://github.com/a/b` and `https://x.com/my_repo`.",
+      "output": "See github dot com, b and x dot com, my repo."
+    },
+    {
+      "name": "separate_numbers_with_spaces_stay_separate",
+      "fn": "pronounce",
+      "input": "Open ports 80 443 and codes 200 404 here. About 12 000 users.",
+      "output": "Open ports 80 443 and codes 200 404 here. About twelve thousand users."
+    },
+    {
+      "name": "a_year_cue_skips_counts_and_ranges",
+      "fn": "pronounce",
+      "input": "Raise it from 1024 to 4096, split in 1500 chunks, since 1999.",
+      "output": "Raise it from one thousand and twenty four to four thousand and ninety six, split in one thousand five hundred chunks, since nineteen ninety nine."
+    },
+    {
+      "name": "a_graphics_card_pair_needs_a_gpu_word_in_the_sentence",
+      "fn": "pronounce",
+      "input": "The 2070 lines changed. I bought an RTX card; my 3080 runs hot.",
+      "output": "The two thousand and seventy lines changed. I bought an R T X card; my thirty eighty runs hot."
     }
   ]
 }
