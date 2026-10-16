@@ -1,5 +1,5 @@
 """Version of this package and the protocol it speaks."""
 from __future__ import annotations
 
-__version__ = "0.32.1"
+__version__ = "0.32.2"
 PROTOCOL = {"major": 1, "minor": 0}

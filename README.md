@@ -112,8 +112,8 @@ updating the plugin), so two programs do not hold the hotkeys or speak twice.
 - **The alert is instant, the words wait their turn.** When a question or permission prompt
   appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
   has no earcon; it is read in its place.
-- **Other earcons** come from the runtime: `turn_done` when a reply ends, `nav` for a restart
-  or flush and `nav_edge` when there is nothing to move to, restart or flush, `session_change` when the
+- **Other earcons** come from the runtime: `turn_done` when a reply ends, `step` for each tap
+  that moves a section, `nav` for a restart or flush and `nav_edge` when there is nothing to move to, restart or flush, `session_change` when the
   voice moves to another session (followed by "Session changed: *folder*."), `error` when
   speech fails, and `summary_failed` when a summary-mode turn had no text to read. You can
   replace any of them with your own sound: see [Custom chimes](#custom-chimes).
@@ -239,6 +239,7 @@ Sonara's built-in chimes are original sounds, synthesised from scratch for it (M
 | `turn_done` | a reply ends | marimba, two notes up a third |
 | `session_change` | the voice moves to another session | slow, warm e-piano arpeggio |
 | `nav` | a restart (hold Ctrl+Alt+Up) or a flush (hold Ctrl+Alt+Down) | a short rewind swell into a light tick |
+| `step` | a tap on Ctrl+Alt+Up or Down moves one section or code line | the light tick |
 | `nav_edge` | nothing to move to, restart or flush | the light tick alone |
 | `error` | speech fails | a low falling knock pair |
 | `summary_failed` | a summary-mode turn had no text | a short, soft falling knock |
@@ -249,7 +250,7 @@ A WAV of your own in `%LOCALAPPDATA%\Sonara\earcons\` overrides any of them: see
 
 Put a WAV file named after a chime in `%LOCALAPPDATA%\Sonara\earcons\` and Sonara plays it
 instead of the built-in sound: `session_change.wav`, `turn_done.wav`, `choice.wav`,
-`permission.wav`, `summary_failed.wav`, `error.wav`, `nav.wav` or `nav_edge.wav`. Any WAV works
+`permission.wav`, `summary_failed.wav`, `error.wav`, `nav.wav`, `step.wav` or `nav_edge.wav`. Any WAV works
 (8 to 32-bit or float, mono or stereo, any sample rate, up to 10 seconds). It is used from the
 next time that chime plays, with no restart; delete the file to get the built-in sound back. The
 Audio page shows the folder and which chimes are your own. A file Sonara cannot play is skipped

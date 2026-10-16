@@ -41,6 +41,7 @@ PICKS = {
     "session_change": ("round2", "session_changed-01.wav"),
     "nav": ("round3", "rewind_tick.wav"),
     "nav_edge": ("pack", "nav-3.wav"),
+    "step": ("pack", "nav-3.wav"),
     "error": ("pack", "error-3.wav"),
     "summary_failed": ("pack", "error-6.wav"),
 }

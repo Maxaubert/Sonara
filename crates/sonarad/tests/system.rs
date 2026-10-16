@@ -735,7 +735,7 @@ fn custom_earcons_are_listed_played_and_bad_files_logged() {
     );
     let v = ok(s, &mut session, json!({"type": "get", "key": "earcons"}))["value"].clone();
     assert_eq!(v["custom"], json!([]));
-    assert_eq!(v["kinds"].as_array().unwrap().len(), 8);
+    assert_eq!(v["kinds"].as_array().unwrap().len(), 9);
     let folder = r.home.join("earcons");
     assert_eq!(v["folder"], json!(folder.display().to_string()));
     std::fs::create_dir_all(&folder).unwrap();
@@ -1923,7 +1923,13 @@ fn tapping_down_goes_on_one_section() {
     let r = rig();
     let mut session = Session::http();
     on_the_first_sentence(&r, &mut session);
+    let heard = r.server.agent().unwrap().subscribe();
     r.fake.press(Action::Flush.id());
+    // Every move plays the step tick (#328: only the edge played one).
+    assert_eq!(
+        heard.recv_timeout(Duration::from_secs(10)).unwrap(),
+        sonara_agent::Earcon::Step
+    );
     assert!(eventually(
         || playing(&r.server).as_deref() == Some("Two is here.")
     ));
@@ -2021,10 +2027,14 @@ fn a_question_hotkey_without_a_set_plays_nav_edge() {
     }
     while heard.try_recv().is_ok() {}
     r.fake.press(Action::Flush.id());
-    assert_eq!(
-        heard.recv_timeout(Duration::from_secs(10)).unwrap(),
-        sonara_agent::Earcon::NavEdge
-    );
+    // The step ticks of the moves before can still be on their way (#328).
+    let edge = loop {
+        match heard.recv_timeout(Duration::from_secs(10)).unwrap() {
+            sonara_agent::Earcon::Step => continue,
+            other => break other,
+        }
+    };
+    assert_eq!(edge, sonara_agent::Earcon::NavEdge);
     assert!(eventually(
         || log_of(&r).contains("hotkey next session=web-app question=4/4 edge")
     ));

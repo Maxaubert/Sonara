@@ -194,23 +194,34 @@ impl HotkeyTarget {
         if nav.edge {
             self.earcon(Earcon::NavEdge);
             detail.push_str(" edge");
+        } else {
+            self.earcon(Earcon::Step);
         }
         detail
     }
 
     /// A tap on Left (#307): the code line before, the question before
     /// (from question 2 on), else back one section (`back`).
+    /// Every move plays the step tick (#328); the edge plays `nav_edge`.
     fn previous_section(&self) -> Result<Option<String>, String> {
         if self.in_code() {
             self.control(Control::PreviousLine)?;
+            self.earcon(Earcon::Step);
             return Ok(Some("line".into()));
         }
         let Some(a) = self.agent.get() else {
-            return self.back();
+            let done = self.back();
+            if done.is_ok() {
+                self.earcon(Earcon::Step);
+            }
+            return done;
         };
         match a.previous_section().map_err(|e| e.to_string())? {
             Section::Question(ch, nav) => Ok(Some(self.question_detail(&ch, &nav))),
-            Section::Back(done) => Ok(Some(self.back_detail(&done))),
+            Section::Back(done) => {
+                self.earcon(Earcon::Step);
+                Ok(Some(self.back_detail(&done)))
+            }
             Section::Forward(_) => Ok(None),
         }
     }
@@ -220,6 +231,7 @@ impl HotkeyTarget {
     fn next_section(&self) -> Result<Option<String>, String> {
         if self.in_code() {
             self.control(Control::NextLine)?;
+            self.earcon(Earcon::Step);
             return Ok(Some("line".into()));
         }
         let moved = match (self.agent.get(), self.channels.get()) {
@@ -230,8 +242,14 @@ impl HotkeyTarget {
         let (ch, to) = match moved {
             Section::Question(ch, nav) => return Ok(Some(self.question_detail(&ch, &nav))),
             Section::Back(_) => return Ok(None),
-            Section::Forward(Forward::Chunk(ch)) => (ch, "chunk"),
-            Section::Forward(Forward::Entry(ch)) => (ch, "entry"),
+            Section::Forward(Forward::Chunk(ch)) => {
+                self.earcon(Earcon::Step);
+                (ch, "chunk")
+            }
+            Section::Forward(Forward::Entry(ch)) => {
+                self.earcon(Earcon::Step);
+                (ch, "entry")
+            }
             Section::Forward(Forward::End(ch)) => {
                 self.earcon(Earcon::NavEdge);
                 (ch, "end")
