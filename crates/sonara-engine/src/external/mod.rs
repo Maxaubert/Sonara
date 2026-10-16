@@ -550,7 +550,7 @@ impl External {
         };
         match answer {
             Ok(pcm) => {
-                if self.health.record_success() {
+                if self.health.record_success(&voice) {
                     self.notify(None, None, "recovered".into());
                 }
                 Ok(TestResult {
@@ -917,12 +917,9 @@ impl Engine for External {
                         return self.quiet(text, rate)
                     }
                     Err(e) => return Err(e),
-                    Ok(Begun::Playing(stream)) => {
-                        if self.health.record_success() {
-                            self.notify(None, None, "recovered".into());
-                        }
-                        return Ok(stream);
-                    }
+                    // Not a success yet: the stream records one when it
+                    // ends cleanly, a failure when it is cut (`Rest`).
+                    Ok(Begun::Playing(stream)) => return Ok(stream),
                     Ok(Begun::Failed(e)) => {
                         self.health.record_failure(&e, &voice);
                         self.notify(Some(e.reason), e.status, e.message.clone());
@@ -940,7 +937,7 @@ impl Engine for External {
         };
         match answer {
             Ok(pcm) => {
-                if self.health.record_success() {
+                if self.health.record_success(&voice) {
                     self.notify(None, None, "recovered".into());
                 }
                 self.cache

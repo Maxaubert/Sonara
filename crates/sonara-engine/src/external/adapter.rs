@@ -155,8 +155,16 @@ pub struct ModelSource {
 pub struct StreamPiece {
     pub audio: Option<PcmChunk>,
     /// Why the provider stopped (`finishReason`, `blockReason`), for the
-    /// message when no audio came at all.
+    /// message when no audio came at all, and to tell an answer that
+    /// stopped early (`stopped_early`).
     pub note: Option<String>,
+}
+
+/// Whether a `StreamPiece::note` says the provider stopped before the end
+/// of the text: anything but `STOP` (review 2026-10-16). No note says
+/// nothing.
+pub fn stopped_early(note: &str) -> bool {
+    note != "STOP"
 }
 
 /// One provider shape.

@@ -346,6 +346,84 @@ fn a_stream_that_stops_keeps_the_audio_it_sent() {
     assert_eq!(got[1..], with_cue(Reason::Timeout, "Cut.")[..]);
 }
 
+/// Review 2026-10-16 #10: a stream whose last event says the model stopped
+/// for another reason than STOP (MAX_TOKENS, OTHER, SAFETY) ended early.
+/// The audio received stays, the rest of the message is read with the
+/// fallback, and the cut answer is not kept for a replay.
+#[test]
+fn an_answer_that_stops_early_reads_the_rest_and_is_not_kept() {
+    for (why, with_audio) in [("OTHER", false), ("MAX_TOKENS", true)] {
+        let r = rig();
+        let mut last: Value = serde_json::from_str(&response(&[2], false)).unwrap();
+        if !with_audio {
+            last["candidates"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove("content");
+        }
+        last["candidates"][0]["finishReason"] = json!(why);
+        r.server.on(
+            SPEAK,
+            Route::sse(vec![
+                (Duration::ZERO, response(&[1], false)),
+                (Duration::ZERO, last.to_string()),
+            ]),
+        );
+        let got = samples(&r.engine, "Cut short.", "", 200);
+        let heard = if with_audio { 2 } else { 1 };
+        assert_eq!(got[..heard], [1, 2][..heard], "{why}");
+        assert_eq!(
+            got[heard..],
+            with_cue(Reason::Server, "Cut short.")[..],
+            "{why}"
+        );
+        let n = r.notices.lock().unwrap().clone();
+        assert!(
+            n.iter()
+                .any(|x| x.reason == Some(Reason::Server) && x.message.contains(why)),
+            "{why}: {n:?}"
+        );
+        samples(&r.engine, "Cut short.", "", 200);
+        assert_eq!(
+            r.server.count(SPEAK),
+            2,
+            "{why}: a cut answer is not replayed"
+        );
+    }
+}
+
+/// Review 2026-10-16 #12: a provider that starts every answer and then
+/// stalls counts toward the breaker. The first audio is no success; only
+/// a clean finish is. Two stalls open the breaker, and the cue is said
+/// once for the episode.
+#[test]
+fn answers_that_stall_after_audio_open_the_breaker() {
+    let mut v = gemini();
+    v["options"]["first_audio_ms"] = json!(1000);
+    let r = rig_with(v, Some(KEY), true, None);
+    r.server.on(
+        SPEAK,
+        Route::sse(vec![
+            (Duration::ZERO, response(&[1], false)),
+            (Duration::from_secs(5), response(&[2], true)),
+        ]),
+    );
+    let first = samples(&r.engine, "Stalls.", "", 200);
+    assert_eq!(first[1..], with_cue(Reason::Timeout, "Stalls.")[..]);
+    let second = samples(&r.engine, "Stalls.", "", 200);
+    assert_eq!(
+        second[1..],
+        FakeEngine::render("Stalls.", "", 200).unwrap()[..],
+        "the cue once per episode"
+    );
+    assert_eq!(r.server.count(SPEAK), 2);
+    let st = r.engine.status();
+    assert_eq!(st.reason, Some(Reason::Timeout), "two stalls open it");
+    let third = samples(&r.engine, "Stalls.", "", 200);
+    assert_eq!(third, FakeEngine::render("Stalls.", "", 200).unwrap());
+    assert_eq!(r.server.count(SPEAK), 2, "nothing sent while open");
+}
+
 #[test]
 fn a_sample_split_between_events_plays_whole() {
     // Review of #235: Google may cut the PCM in the middle of a sample

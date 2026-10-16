@@ -159,25 +159,38 @@ impl Health {
         });
     }
 
-    /// A request succeeded: close the breaker, clear any block, and allow
-    /// a cue for the next episode. True when the engine was not healthy
-    /// (a recovery worth a log line).
-    pub fn record_success(&self) -> bool {
-        let mut s = self.lock();
-        let was = std::mem::replace(&mut s.troubled, false);
-        s.consecutive = 0;
-        s.open_until = None;
-        s.next_open = BREAKER_FIRST;
-        s.last_transient = None;
-        s.blocked = None;
-        s.cue_said = false;
-        was
+    /// A request for `voice` succeeded: close the breaker, clear any block,
+    /// and allow a cue for the next episode. A `bad_voice` block of another
+    /// voice stays, with its episode (review 2026-10-16 #36). True when the
+    /// engine was not healthy and now is (a recovery worth a log line).
+    pub fn record_success(&self, voice: &str) -> bool {
+        self.succeed(Some(voice))
     }
 
     /// The user changed something (a key, the profile) or a test passed:
     /// forget every failure.
     pub fn clear(&self) {
-        self.record_success();
+        self.succeed(None);
+    }
+
+    fn succeed(&self, voice: Option<&str>) -> bool {
+        let mut s = self.lock();
+        let kept = voice.is_some_and(|v| {
+            s.blocked
+                .as_ref()
+                .and_then(|b| b.voice.as_deref())
+                .is_some_and(|b| b != v)
+        });
+        let was = std::mem::replace(&mut s.troubled, kept);
+        s.consecutive = 0;
+        s.open_until = None;
+        s.next_open = BREAKER_FIRST;
+        s.last_transient = None;
+        if !kept {
+            s.blocked = None;
+            s.cue_said = false;
+        }
+        was && !kept
     }
 
     /// Clear a `no_key` or `auth` block (a new key).
@@ -307,7 +320,7 @@ mod tests {
         assert!(h.skip("v").is_some());
         clock.advance(BREAKER_FIRST);
         assert_eq!(h.skip("v"), None, "expired: the next chunk probes");
-        assert!(h.record_success(), "a recovery");
+        assert!(h.record_success("v"), "a recovery");
         h.record_failure(&fail(Reason::Network), "v");
         assert_eq!(h.skip("v"), None, "the backoff and the count were reset");
         h.record_failure(&fail(Reason::Network), "v");
@@ -413,6 +426,26 @@ mod tests {
     }
 
     #[test]
+    fn a_success_with_another_voice_keeps_a_bad_voice_block() {
+        // Review 2026-10-16 #36: a preview with voice v2 succeeds while
+        // nova is blocked; nova is not tried again and its cue not said
+        // again.
+        let (h, _) = rig();
+        h.record_failure(&fail(Reason::BadVoice), "nova");
+        assert!(h.take_cue());
+        assert!(
+            !h.record_success("v2"),
+            "not recovered while nova is blocked"
+        );
+        assert_eq!(h.skip("nova").map(|s| s.0), Some(Reason::BadVoice));
+        assert!(!h.take_cue(), "the same episode for nova");
+        // A success with the blocked voice itself ends it.
+        assert!(h.record_success("nova"));
+        assert_eq!(h.skip("nova"), None);
+        assert!(h.take_cue());
+    }
+
+    #[test]
     fn cue_once_per_episode() {
         let (h, _) = rig();
         h.record_failure(&fail(Reason::Network), "v");
@@ -420,7 +453,7 @@ mod tests {
         h.record_failure(&fail(Reason::Network), "v");
         assert!(!h.take_cue(), "same episode");
         assert!(!h.take_cue());
-        h.record_success();
+        h.record_success("v");
         h.record_failure(&fail(Reason::Server), "v");
         assert!(h.take_cue(), "a new episode after a success");
         h.clear();
