@@ -115,7 +115,7 @@ fn replace_bare_urls(text: &str) -> String {
 }
 
 /// `(?<![A-Za-z0-9_])_{0,2}[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+(?![A-Za-z0-9_])`
-/// with every `_` of the match spoken as a space.
+/// with every `_` of the match spoken as a space, outside inline code.
 ///
 /// Every char the pattern consumes is in `[A-Za-z0-9_]` and both lookarounds
 /// reject that class, so a match is always one whole maximal run of it. The
@@ -136,15 +136,27 @@ fn speak_snake_case(text: &str) -> String {
         }
         parts >= 2
     }
-    WORD_RUN
-        .replace_all(text, |c: &regex::Captures| {
-            if is_snake(&c[0]) {
-                c[0].replace('_', " ")
-            } else {
-                c[0].to_string()
-            }
-        })
-        .into_owned()
+    let prose = |t: &str| {
+        WORD_RUN
+            .replace_all(t, |c: &regex::Captures| {
+                if is_snake(&c[0]) {
+                    c[0].replace('_', " ")
+                } else {
+                    c[0].to_string()
+                }
+            })
+            .into_owned()
+    };
+    // Inline code is left to the code words (`code_speech::inline`).
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for m in INLINE_CODE.find_iter(text) {
+        out.push_str(&prose(&text[last..m.start()]));
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&prose(&text[last..]));
+    out
 }
 
 pub fn clean_markdown(text: &str) -> String {
