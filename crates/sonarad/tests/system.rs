@@ -877,6 +877,53 @@ fn hotkey_changes_are_persisted_like_a_set() {
 }
 
 #[test]
+fn a_hotkeys_set_racing_a_mute_hotkey_never_deadlocks() {
+    // Review of #332: `set hotkeys` re-registers the hotkeys, which joins
+    // their action thread. Done under the `set` lock, a mute press waiting
+    // for that lock on that thread hung both for good.
+    let r = rig();
+    let s = r.server.clone();
+    let mut session = Session::http();
+    ok(
+        &s,
+        &mut session,
+        json!({"type": "hello", "extensions": ["system", "agent"], "keep_alive": true}),
+    );
+    // The action thread watches a held Up while the mute press queues
+    // behind it; the set starts meanwhile.
+    r.fake.hold_key(UP);
+    r.fake.press(Action::Restart.id());
+    r.fake.press(Action::Mute.id());
+    std::thread::sleep(Duration::from_millis(50));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let s2 = s.clone();
+    std::thread::spawn(move || {
+        let mut h = Session::http();
+        let reply = call(
+            &s2,
+            &mut h,
+            json!({"type": "set", "key": "hotkeys",
+                   "value": {"action": "pause", "key": "p", "mods": ["win", "alt"]}}),
+        );
+        let _ = tx.send(reply);
+    });
+    let reply = rx.recv_timeout(Duration::from_secs(5));
+    r.fake.release_key(UP);
+    let reply = reply.expect("the set hung on the mute hotkey that waited for it");
+    assert_eq!(reply["ok"], true, "{reply}");
+    let pause = reply["value"]["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["action"] == "pause")
+        .unwrap()
+        .clone();
+    assert_eq!(pause["combo"], "Win+Alt+P");
+    assert_eq!(pause["registered"], true, "the reply shows the new chord");
+    assert!(eventually(|| saved(&r.home)["mute_level"] == 1));
+}
+
+#[test]
 fn persisted_settings_apply_when_each_layer_starts() {
     let home = tmp();
     std::fs::write(

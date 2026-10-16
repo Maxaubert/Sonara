@@ -432,6 +432,31 @@ fn a_rate_hotkey_is_saved_under_the_set_lock() {
 }
 
 #[test]
+fn a_mute_hotkey_does_not_wait_for_a_set_in_progress() {
+    // Review of #332: a slow `set` (an engine load) holds the `set` lock;
+    // the mute hotkey still silences at once, only its record waits.
+    let (s, _) = server();
+    let target = hotkeys(&s);
+    let held = s.setting.lock().unwrap();
+    std::thread::scope(|sc| {
+        let key = sc.spawn(|| {
+            target.perform(
+                sonara_system::keymap::Action::Mute,
+                sonara_system::hotkeys::Press::Tap,
+            )
+        });
+        let end = std::time::Instant::now() + Duration::from_secs(2);
+        while !s.reader.state().unwrap().muted && std::time::Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let muted = s.reader.state().unwrap().muted;
+        drop(held);
+        key.join().unwrap();
+        assert!(muted, "the mute waited for the set in progress");
+    });
+}
+
+#[test]
 fn every_request_but_hello_is_busy_while_the_runtime_exits() {
     // Review finding 46: over TCP as over HTTP, nothing is carried out
     // (and saved) once a takeover was accepted or the exit requested.

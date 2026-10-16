@@ -99,10 +99,12 @@ impl HotkeyTarget {
     pub fn perform(&self, action: Action, press: Press) {
         // One lock order everywhere (review finding 19): the `set` lock,
         // then the mute change, then the admission lock, as `set` and
-        // `control mute` take them. A hotkey that changes a setting holds
-        // the `set` lock from the value read to its record (review finding
-        // 47).
-        let saves = matches!(action, Action::Mute | Action::Faster | Action::Slower);
+        // `control mute` take them. A rate hotkey holds the `set` lock from
+        // the rate read to its record (review finding 47). Mute is never
+        // kept waiting by a slow `set` (an engine load): the mute change
+        // orders it against a `set mute_level`, and only its record takes
+        // the `set` lock (`record_mute`).
+        let saves = matches!(action, Action::Faster | Action::Slower);
         let _setting = saves.then(|| self.setting.lock().unwrap_or_else(|p| p.into_inner()));
         let change = (action == Action::Mute).then(|| self.quiet.change());
         let retiring = self.retiring.lock().unwrap_or_else(|p| p.into_inner());
@@ -129,10 +131,27 @@ impl HotkeyTarget {
             (Action::NextQuestion, Press::Hold) => ("skip", self.skip()),
             _ => (action.as_str(), self.apply(action, change)),
         };
+        drop(retiring);
+        if action == Action::Mute && outcome.is_ok() {
+            self.record_mute();
+        }
         sonara_system::log::emit(
             self.log.as_ref(),
             &crate::support_log::hotkey_line(name, &outcome),
         );
+    }
+
+    /// Save the agent's mute level under the `set` lock (review finding
+    /// 47), taken after the mute change and the admission lock are let go
+    /// (finding 19's order). The level in force is saved, not the one this
+    /// press chose: a `set mute_level` that came in between is kept.
+    fn record_mute(&self) {
+        let Some(a) = self.agent.get() else {
+            return;
+        };
+        let _setting = self.setting.lock().unwrap_or_else(|p| p.into_inner());
+        self.store
+            .record("mute_level", &json!(a.settings().mute_level));
     }
 
     fn control(&self, c: Control) -> Result<(), String> {
@@ -434,7 +453,7 @@ impl HotkeyTarget {
                     let done = a.set_mute_level(next).map_err(|e| e.to_string());
                     drop(change);
                     done?;
-                    self.store.record("mute_level", &json!(next));
+                    // `perform` saves it (`record_mute`).
                     self.cue_local(cues::mute_level_cue(u64::from(next)));
                     Ok(Some(format!("level={next}")))
                 }
@@ -748,6 +767,15 @@ impl SystemExt {
         }
     }
 
+    /// After a `set hotkeys` took effect, outside the `set` lock: register
+    /// the new keymap and return `get hotkeys`. Stopping the old hotkeys
+    /// joins their action thread, which may be waiting for the `set` lock
+    /// in `perform` (a rate or mute press), so this never runs under it.
+    pub fn hotkeys_set(&self) -> Value {
+        self.reload_hotkeys();
+        self.hotkeys_json()
+    }
+
     /// The runtime exits: release the hotkeys and restore other apps.
     pub fn shutdown(&self) {
         self.stop_hotkeys();
@@ -817,7 +845,9 @@ impl SystemExt {
         })
     }
 
-    /// `set` or `get` of one of `KEYS`.
+    /// `set` or `get` of one of `KEYS`. A `set hotkeys` saves the keymap
+    /// only: the caller registers it with `hotkeys_set` once the `set` lock
+    /// is let go.
     pub fn setting(&self, key: &str, value: Option<&Value>) -> Handled {
         if let Some(v) = value {
             match key {
@@ -843,10 +873,7 @@ impl SystemExt {
                         self.cue(&cues::duck_level_cue(n), Some("duck_level"));
                     }
                 }
-                "hotkeys" => {
-                    self.set_hotkeys(v)?;
-                    self.reload_hotkeys();
-                }
+                "hotkeys" => self.set_hotkeys(v)?,
                 _ => return Err(bad(format!("'{key}' is read-only"))),
             }
         }

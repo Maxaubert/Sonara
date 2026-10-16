@@ -249,6 +249,22 @@ impl Server {
     /// agent extension, field by field; the keymap and channel preferences
     /// have files of their own).
     pub(super) fn set(&self, m: &Map<String, Value>) -> Handled {
+        let mut result = self.set_one_at_a_time(m);
+        // A new keymap is registered once the `set` lock is let go: that
+        // joins the hotkey action thread, which may be waiting for the lock
+        // in a rate or mute press (review of #332).
+        if let (Ok((fields, _)), Some("hotkeys"), Some(s)) = (
+            &mut result,
+            opt_str(m, "key").ok().flatten(),
+            self.system.as_ref().filter(|s| s.is_enabled()),
+        ) {
+            fields.insert("value".into(), s.hotkeys_set());
+        }
+        result
+    }
+
+    /// `set` under the `set` lock: value, cue and record.
+    fn set_one_at_a_time(&self, m: &Map<String, Value>) -> Handled {
         let _one_at_a_time = self.setting.lock().unwrap_or_else(|p| p.into_inner());
         let engine_before = self
             .engine
