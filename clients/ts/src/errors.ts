@@ -1,6 +1,6 @@
 /**
  * Error codes. The `E_*` codes of protocol v1 come from the runtime as is;
- * the client adds three of its own for what happens before or after a reply.
+ * the client adds four of its own for what happens before or after a reply.
  */
 export type ErrorCode =
   | "E_AUTH"
@@ -19,6 +19,8 @@ export type ErrorCode =
   | "E_START_FAILED"
   /** The connection closed before the reply (the runtime exited or close() was called). */
   | "E_CLOSED"
+  /** No reply within the request's `timeoutMs`; the connection stays open. */
+  | "E_TIMEOUT"
   | (string & {});
 
 /** Any failure of a Sonara call: a coded protocol error or a client-side one. */

@@ -39,6 +39,8 @@ ORT_URL = (
 )
 ORT_SHA256 = "c4eedd29489d5feca21866d054638416f3655bf6b18851b3b6b85c8313e95c35"
 CACHE = REPO / "target" / "onnxruntime"
+# In the extracted folder: the SHA-256 of each file, from the checked zip.
+CACHE_SUMS = "SHA256SUMS"
 # (member in the zip, name next to sonarad.exe)
 ORT_FILES = (
     ("lib/onnxruntime.dll", "onnxruntime.dll"),
@@ -60,10 +62,26 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _cached(out: Path) -> bool:
+    """True when ``out`` holds every ORT file with the SHA-256 recorded at
+    extraction (``SHA256SUMS``, from the hash-checked zip)."""
+    try:
+        lines = (out / CACHE_SUMS).read_text(encoding="ascii").splitlines()
+    except (OSError, ValueError):
+        return False
+    want = {}
+    for line in lines:
+        digest, _, name = line.partition("  ")
+        want[name] = digest
+    return all((out / name).is_file() and want.get(name) == sha256(out / name) for _, name in ORT_FILES)
+
+
 def fetch(cache: Path = CACHE, url: str = ORT_URL, expected: str = ORT_SHA256) -> Path:
-    """The folder with the extracted ORT files, downloading the zip once."""
+    """The folder with the extracted ORT files, downloading the zip once.
+    A cached file is used only while its SHA-256 matches the one recorded
+    when it was extracted (#55); else the folder is extracted again."""
     out = cache / ORT_VERSION
-    if all((out / name).is_file() for _, name in ORT_FILES):
+    if _cached(out):
         return out
     cache.mkdir(parents=True, exist_ok=True)
     zpath = cache / f"onnxruntime-win-x64-{ORT_VERSION}.zip"
@@ -76,11 +94,21 @@ def fetch(cache: Path = CACHE, url: str = ORT_URL, expected: str = ORT_SHA256) -
             tmp.unlink()
             raise SystemExit(f"{url}: SHA-256 {got} is not the pinned {expected}")
         tmp.replace(zpath)
-    out.mkdir(parents=True, exist_ok=True)
+    # Extract into a folder of its own and rename it into place, so a run
+    # that stops part-way never leaves files a later run accepts.
+    part = cache / f"{ORT_VERSION}.part"
+    shutil.rmtree(part, ignore_errors=True)
+    part.mkdir()
     root = f"onnxruntime-win-x64-{ORT_VERSION}/"
+    sums = []
     with zipfile.ZipFile(zpath) as z:
         for member, name in ORT_FILES:
-            (out / name).write_bytes(z.read(root + member))
+            data = z.read(root + member)
+            (part / name).write_bytes(data)
+            sums.append(f"{hashlib.sha256(data).hexdigest()}  {name}\n")
+    (part / CACHE_SUMS).write_bytes("".join(sums).encode("ascii"))
+    shutil.rmtree(out, ignore_errors=True)
+    part.rename(out)
     return out
 
 

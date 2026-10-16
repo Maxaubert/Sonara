@@ -29,6 +29,16 @@ export interface SpeakOptions {
   label?: string;
 }
 
+/** Options of one `request`. */
+export interface RequestOptions {
+  /**
+   * Reject with `E_TIMEOUT` when no reply came within this many ms (default:
+   * no bound). The connection stays open and a late reply is dropped.
+   * `engine_test` may take up to a profile's `timeout_ms` (60 s for Gemini).
+   */
+  timeoutMs?: number;
+}
+
 export interface NowPlaying {
   item_id: number;
   label: string | null;

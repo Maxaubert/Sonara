@@ -512,6 +512,25 @@ def test_hotkey_capture_with_the_keyboard(live, browser):
     page.close()
 
 
+def test_a_chord_another_action_uses_moves_to_the_new_one(live, browser):
+    # #43: one chord, one action. The runtime refuses a second binding of a
+    # chord, so the page unbinds the other action once the user agrees.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=hotkeys]")
+    page.once("dialog", lambda d: d.accept())
+    page.locator("[data-action=pause] .kbd").focus()
+    page.keyboard.press("Enter")
+    page.wait_for_selector("[data-action=pause].listen")
+    page.keyboard.press("Control+Alt+KeyM")
+
+    def moved():
+        b = {x["action"]: x for x in lv.get("hotkeys")["bindings"]}
+        return b["pause"]["combo"] == "Ctrl+Alt+M" and b["mute"]["combo"] is None
+    assert eventually(moved)
+    page.close()
+
+
 def test_agent_sections_explain_themselves_without_an_agent(live, browser):
     lv = live(extensions=("system",))
     page = open_page(browser, lv.url)

@@ -321,6 +321,48 @@ async fn serve(r: &Rig) -> u16 {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_chord_bound_to_two_actions_is_reported_as_bound_twice_not_another_program() {
+    // #43: a hand-edited keymap.json puts faster on mute's Ctrl+Alt+M.
+    let t = tmp();
+    std::fs::write(
+        t.join("keymap.json"),
+        json!({"faster": {"key": "m", "mods": ["ctrl", "alt"]}}).to_string(),
+    )
+    .unwrap();
+    let mut r = rig_on(t.to_path_buf());
+    r._tmp = Some(t);
+    let port = serve(&r).await;
+    let (mut c, h) = tcp_client(
+        port,
+        json!({"type": "hello", "token": TOKEN, "extensions": ["system"]}),
+    )
+    .await;
+    assert_eq!(h["ok"], true);
+    let g = request(&mut c, json!({"type": "get", "key": "hotkeys"})).await;
+    let b = |a: &str| {
+        g["value"]["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["action"] == a)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(g["value"]["active"], true);
+    assert_eq!(b("mute")["error"], Value::Null);
+    assert_eq!(b("faster")["error"], "bound_twice");
+    assert_eq!(b("faster")["taken_by"], "mute");
+    // A new duplicate is refused before it reaches the file.
+    let e = request(
+        &mut c,
+        json!({"type": "set", "key": "hotkeys",
+               "value": {"action": "pause", "key": "m", "mods": ["alt", "ctrl"]}}),
+    )
+    .await;
+    assert_eq!(e["error"]["code"], "E_BAD_REQUEST", "{e}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn restore_on_client_drop() {
     // The client that enabled `system` goes away mid-utterance: other apps
     // are restored at once although the reader keeps reading.

@@ -230,6 +230,22 @@ fn bind_refuses_a_hotkey_without_ctrl_alt_or_win() {
 }
 
 #[test]
+fn bind_refuses_a_chord_another_action_already_uses() {
+    // #43: both would be registered and the second never fires.
+    let path = tmp("km-dup").join("keymap.json");
+    let e = keymap::bind(&path, Action::Faster, "M", &mods(&["Alt", "control"])).unwrap_err();
+    assert!(e.contains("Ctrl+Alt+M") && e.contains("mute"), "{e}");
+    assert!(!path.exists(), "nothing persisted");
+    keymap::bind(&path, Action::Faster, "f", &mods(&["ctrl", "alt"])).unwrap();
+    let e = keymap::bind(&path, Action::Slower, "f", &mods(&["alt", "ctrl"])).unwrap_err();
+    assert!(e.contains("faster"), "{e}");
+    // Rebinding an action to its own chord, or after the other one moved, is fine.
+    keymap::bind(&path, Action::Faster, "f", &mods(&["ctrl", "alt"])).unwrap();
+    keymap::unbind(&path, Action::Mute).unwrap();
+    keymap::bind(&path, Action::Faster, "m", &mods(&["ctrl", "alt"])).unwrap();
+}
+
+#[test]
 fn unbind_writes_an_explicit_override_for_a_default_binding() {
     let path = tmp("km-unbind").join("keymap.json");
     keymap::unbind(&path, Action::Restart).unwrap();

@@ -7,9 +7,26 @@ import socket
 import threading
 from typing import Optional
 
-from .errors import E_CLOSED, SonaraError
+from .errors import E_BAD_REQUEST, E_CLOSED, SonaraError
 
+#: Longest line the runtime accepts (bytes, newline included); a longer one
+#: is answered "line too long" and the runtime closes the connection.
 MAX_LINE = 1 << 20
+
+#: Seconds a request that asks the provider may take at least (#22): the
+#: runtime answers ``engine_test`` only after one synthesis (up to a
+#: profile's ``timeout_ms``, 60 s for Gemini or a local server), and a
+#: ``refresh`` or draft ``profile`` waits on the provider's lists.
+SLOW_TIMEOUT = 90.0
+
+
+def is_slow(type_: str, fields: dict) -> bool:
+    """True for the messages that wait on an external engine's provider."""
+    if type_ == "engine_test":
+        return True
+    if type_ in ("voices", "engine_models"):
+        return bool(fields.get("refresh")) or "profile" in fields
+    return False
 
 
 class Connection:
@@ -29,27 +46,35 @@ class Connection:
         self._events: list = []
         self.closed = False
 
-    def request(self, type_: str, fields: Optional[dict] = None) -> dict:
-        """Send ``{type, **fields}``; the ``ok: true`` reply, or SonaraError."""
+    def request(self, type_: str, fields: Optional[dict] = None, timeout: Optional[float] = None) -> dict:
+        """Send ``{type, **fields}``; the ``ok: true`` reply, or SonaraError.
+        ``timeout`` bounds this request (default: the connection's, and at
+        least ``SLOW_TIMEOUT`` for a message that waits on a provider)."""
+        msg = dict(fields or {})
+        if timeout is None:
+            timeout = max(self._timeout, SLOW_TIMEOUT) if is_slow(type_, msg) else self._timeout
         with self._lock:
             if self.closed:
                 raise SonaraError(E_CLOSED, "the connection is closed")
-            msg = dict(fields or {})
             msg["type"] = type_
             msg["id"] = next(self._ids)
+            line = json.dumps(msg).encode("utf-8") + b"\n"
+            if len(line) > MAX_LINE:
+                # Refused here, so the shared connection stays open (#54).
+                raise SonaraError(E_BAD_REQUEST, f"line too long: {len(line)} bytes, at most {MAX_LINE}")
             try:
-                self._sock.sendall(json.dumps(msg).encode("utf-8") + b"\n")
+                self._sock.sendall(line)
             except OSError as e:
                 self._mark_closed()
                 raise SonaraError(E_CLOSED, f"send failed: {e}") from None
             while True:
                 try:
-                    reply = self._read(self._timeout)
+                    reply = self._read(timeout)
                 except socket.timeout:
                     # A late reply would answer the next request: give up
                     # on this connection instead.
                     self._mark_closed()
-                    raise SonaraError(E_CLOSED, f"no reply within {self._timeout} s") from None
+                    raise SonaraError(E_CLOSED, f"no reply within {timeout} s") from None
                 if reply is None:
                     raise SonaraError(E_CLOSED, "the connection closed before the reply")
                 if "event" in reply:

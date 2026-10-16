@@ -7,6 +7,8 @@ from typing import Optional
 E_NOT_RUNNING = "E_NOT_RUNNING"  # nothing running, nothing to start
 E_START_FAILED = "E_START_FAILED"  # the bundled runtime did not come up in time
 E_CLOSED = "E_CLOSED"  # the connection closed before the reply
+# A protocol code the client also raises itself (a request over 1 MiB).
+E_BAD_REQUEST = "E_BAD_REQUEST"
 
 
 class SonaraError(Exception):

@@ -154,3 +154,13 @@ def test_the_npm_dry_run_never_asks_the_real_registry():
     assert "--offline" in flags
     registry = flags[flags.index("--registry") + 1]
     assert "registry.npmjs.org" not in registry
+
+
+def test_release_runs_share_one_fixed_concurrency_group():
+    # #52: a per-commit group let a docs push during an in-flight release
+    # build the same version and fail red at the tag. One group serialises
+    # the runs, so the later one sees the tag and skips.
+    yaml = pytest.importorskip("yaml")
+    conc = yaml.safe_load(RELEASE.read_text(encoding="utf-8"))["concurrency"]
+    assert "${{" not in conc["group"]
+    assert conc["cancel-in-progress"] is False

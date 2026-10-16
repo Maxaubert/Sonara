@@ -50,7 +50,9 @@ def connect(
        ``E_INCOMPATIBLE``.
 
     ``runtime_args`` are extra arguments for a started runtime (tests:
-    ``["--engine", "fake"]``); ``timeout`` bounds each request.
+    ``["--engine", "fake"]``); ``timeout`` bounds each request
+    (``engine_test`` and a provider ``refresh`` get at least 90 s; see
+    ``Client.request``).
     """
     if not isinstance(client_name, str) or not client_name:
         raise SonaraError("E_BAD_REQUEST", "connect() needs a client_name")

@@ -545,6 +545,10 @@ function renderHotkeys(h) {
     if (b.error === "already_owned") {
       text = "Another program owns " + (b.combo || "this shortcut") + ". Pick another one.";
       if (/^Ctrl\+Alt\+(Up|Down|Left|Right)$/.test(b.combo || "")) text += ROTATION_HINT;
+    } else if (b.error === "bound_twice") {
+      // #43: one of our own actions holds the chord.
+      text = (b.combo || "This shortcut") + " is also bound to " +
+        (ACTION_NAMES[b.taken_by] || b.taken_by || "another action") + ". Pick another one.";
     } else if (b.error) {
       text = "Windows refused this shortcut (" + b.error + ").";
     }
@@ -605,8 +609,12 @@ function armCapture(row, action) {
     const sorted = JSON.stringify([...mods].sort());
     const other = state.hotkeys && state.hotkeys.bindings.find(b =>
       b.action !== action && b.key === key && JSON.stringify([...(b.mods || [])].sort()) === sorted);
-    if (other && !confirm("Also bound to " + (ACTION_NAMES[other.action] || other.action) + ". Rebind anyway?")) return;
-    change("hotkeys", {action, key, mods}, "Shortcut");
+    // #43: one chord, one action. Moving it unbinds the other one first.
+    if (other && !confirm("Also bound to " + (ACTION_NAMES[other.action] || other.action) + ". Move it here?")) return;
+    (async () => {
+      if (other && await change("hotkeys", {action: other.action, key: null}, "Shortcut") === undefined) return;
+      change("hotkeys", {action, key, mods}, "Shortcut");
+    })();
   };
   activeCapture = {row, handler: h};
   addEventListener("keydown", h, true);

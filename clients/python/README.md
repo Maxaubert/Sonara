@@ -17,6 +17,7 @@ with sonara_client.connect("my-app", runtime_path=r"C:\path\to\sonarad.exe") as 
 - `connect(client_name, *, runtime_path=None, home=None, autostart=True, require=(), extensions=(), keep_alive=False)`: finds the shared runtime through `runtime.json`, starts the bundled `sonarad.exe` when none is usable (`runtime_path`, default `SONARA_RUNTIME`), takes over an idle incompatible one.
 - `speak(text, mode=None, interrupt=None, label=None)` returns the item id; `control(action)`; `set(key, value)` / `get(key)`; `voices(engine=None)`.
 - `subscribe(events)` opens an event stream on its own connection: iterate it, or `read(timeout)`.
+- `request(type, fields=None, timeout=None)` sends any message. Each request waits up to `connect(..., timeout=10.0)` seconds, `engine_test` and a provider `refresh` at least 90 s; no reply in time closes the client. A request over 1 MiB (UTF-8) is refused with `E_BAD_REQUEST` and the client stays open.
 - `channels`, `agent`, `system`: extension namespaces that send the protocol's extension messages as they are.
 - Errors are `SonaraError` with a `code`. The client is thread-safe.
 

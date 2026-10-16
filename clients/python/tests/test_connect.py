@@ -196,6 +196,41 @@ def test_a_dropped_connection_is_e_closed(home, fake):
     assert e.value.code == "E_CLOSED"
 
 
+def test_a_slow_engine_test_or_refresh_outlasts_the_request_timeout(home, fake):
+    # engine_test and a provider refresh may take up to the profile's
+    # timeout_ms (60 s for Gemini): the client's 10 s bound must not close it.
+    fake(delays={"engine_test": 0.6, "voices": 0.6, "engine_models": 0.6})
+    with _open(home, timeout=0.3) as c:
+        assert c.engines.test("slow")["echoed"] == "engine_test"
+        assert c.voices("slow", refresh=True)[0]["id"] == "fake-1"
+        assert c.engines.voices("slow", refresh=True)[0]["id"] == "fake-1"
+        assert c.engines.models("slow", refresh=True)["echoed"] == "engine_models"
+        assert c.engines.models(profile={"kind": "gemini"})["echoed"] == "engine_models"
+        assert not c.closed
+        assert c.speak("still open") == 1
+
+
+def test_a_per_call_timeout_bounds_one_request(home, fake):
+    fake(delays={"engine_test": 0.6})
+    c = _open(home)
+    with pytest.raises(SonaraError) as e:
+        c.request("engine_test", {"engine": "slow"}, timeout=0.2)
+    assert e.value.code == "E_CLOSED"
+    assert c.closed
+
+
+def test_a_line_over_one_mib_is_refused_and_the_connection_stays_open(home, fake):
+    f = fake()
+    with _open(home) as c:
+        # The runtime would answer "line too long" and close the connection.
+        with pytest.raises(SonaraError) as e:
+            c.speak("€" * 400_000)
+        assert e.value.code == "E_BAD_REQUEST"
+        assert not c.closed
+        assert c.speak("short") == 1
+    assert [r["type"] for r in f.requests()] == ["hello", "speak"]
+
+
 def test_subscribe_opens_its_own_connection_and_iterates_events(home, fake):
     f = fake()
     with _open(home) as c:

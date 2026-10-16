@@ -1015,7 +1015,9 @@ Intel Graphics Command Center or rebind with Win. The user's bindings are kept i
 ```
 
 `active`: the hotkeys are registered now (the extension is armed). `registered: false` with
-`error: "already_owned"` means another program owns that chord. `problems` lists entries of
+`error: "already_owned"` means another program owns that chord; `error: "bound_twice"` (#43) that another
+action of ours, named in `taken_by` (else null), holds it (a hand-edited `keymap.json`; `set hotkeys`
+refuses such a binding with `E_BAD_REQUEST`). `problems` lists entries of
 `keymap.json` that were skipped: an unknown key or modifier never disables the other hotkeys.
 
 ### Settings page

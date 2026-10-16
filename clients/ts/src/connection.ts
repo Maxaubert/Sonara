@@ -1,6 +1,9 @@
 import * as net from "node:net";
 import { SonaraError } from "./errors.js";
-import type { Reply } from "./types.js";
+import type { Reply, RequestOptions } from "./types.js";
+
+/** Longest line the runtime accepts (bytes, newline included); a longer one closes the connection. */
+export const MAX_LINE = 1 << 20;
 
 interface Pending {
   resolve: (reply: Reply) => void;
@@ -57,15 +60,41 @@ export class Connection {
   }
 
   /** Send `{type, ...fields}`; resolves with the `ok: true` reply, rejects with a SonaraError. */
-  request(type: string, fields: Record<string, unknown> = {}): Promise<Reply> {
+  request(type: string, fields: Record<string, unknown> = {}, opts: RequestOptions = {}): Promise<Reply> {
     if (this.closedFlag) {
       return Promise.reject(new SonaraError("E_CLOSED", "the connection is closed"));
     }
     const id = this.nextId++;
-    const msg = { ...fields, type, id };
+    const line = JSON.stringify({ ...fields, type, id }) + "\n";
+    const bytes = Buffer.byteLength(line, "utf8");
+    if (bytes > MAX_LINE) {
+      // Refused here, so the shared connection stays open (#54).
+      return Promise.reject(new SonaraError("E_BAD_REQUEST", `line too long: ${bytes} bytes, at most ${MAX_LINE}`));
+    }
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.sock.write(JSON.stringify(msg) + "\n");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = () => {
+        if (timer !== undefined) clearTimeout(timer);
+      };
+      this.pending.set(id, {
+        resolve: (r) => {
+          done();
+          resolve(r);
+        },
+        reject: (e) => {
+          done();
+          reject(e);
+        },
+      });
+      if (opts.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          // Replies carry their id, so a late one is dropped (onLine).
+          if (this.pending.delete(id)) {
+            reject(new SonaraError("E_TIMEOUT", `no reply to ${type} within ${opts.timeoutMs} ms`));
+          }
+        }, opts.timeoutMs);
+      }
+      this.sock.write(line);
     });
   }
 
@@ -102,7 +131,9 @@ export class Connection {
     const id = typeof m.id === "number" ? m.id : undefined;
     // Replies come in request order, so a reply without our id (the runtime
     // could not parse the request) belongs to the oldest pending request.
-    const key = id !== undefined && this.pending.has(id) ? id : this.pending.keys().next().value;
+    // One with an id no longer pending answers a request that timed out.
+    if (id !== undefined && !this.pending.has(id)) return;
+    const key = id !== undefined ? id : this.pending.keys().next().value;
     if (key === undefined) return;
     const p = this.pending.get(key)!;
     this.pending.delete(key);

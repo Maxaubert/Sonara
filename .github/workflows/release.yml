@@ -53,10 +53,14 @@ on:
 permissions:
   contents: write
 
-# One group per commit: a newer push never cancels an older one's pending
-# release. Two releases of one version fail at the tag, never overwrite.
+# One group for every release run (#52), never cancelled in progress: runs go
+# one after another, so a docs push merged while a release builds sees its
+# tag in "Changes" and skips, instead of building the same version and
+# failing red at the tag. A newer run replaces an older one still waiting;
+# it diffs against the last tag too, so it releases what that one would have
+# (when its own CI passed; else the next green push does).
 concurrency:
-  group: release-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: release
   cancel-in-progress: false
 
 env:
