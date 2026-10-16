@@ -71,9 +71,13 @@ class Client:
     def closed(self) -> bool:
         return self._conn.closed
 
-    def request(self, type_: str, fields: Optional[dict] = None) -> dict:
-        """Send any protocol message; the ``ok: true`` reply."""
-        return self._conn.request(type_, fields)
+    def request(self, type_: str, fields: Optional[dict] = None, timeout: Optional[float] = None) -> dict:
+        """Send any protocol message; the ``ok: true`` reply. ``timeout``
+        (seconds) bounds this one request; by default the ``connect``
+        timeout, and at least 90 s for ``engine_test`` and a provider
+        ``refresh``. A request with no reply in time closes the client (a
+        late reply would answer the next one)."""
+        return self._conn.request(type_, fields, timeout)
 
     def speak(self, text: str, mode: Optional[str] = None, interrupt: Optional[bool] = None,
               label: Optional[str] = None) -> int:

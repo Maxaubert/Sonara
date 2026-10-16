@@ -743,15 +743,15 @@ impl SystemExt {
             Arc::new(move |a, press| target.perform(a, press)),
         );
         for c in hk.collisions() {
+            let why = match c.taken_by {
+                Some(other) => format!(": also bound to {}", other.as_str()),
+                None if c.already_owned() => ": another program owns it".to_string(),
+                None => String::new(),
+            };
             eprintln!(
-                "sonarad: hotkey {} not registered (error {}{})",
+                "sonarad: hotkey {} not registered (error {}{why})",
                 c.action.as_str(),
                 c.error,
-                if c.already_owned() {
-                    ": another program owns it"
-                } else {
-                    ""
-                }
             );
         }
         *slot = Some(hk);
@@ -836,11 +836,15 @@ impl SystemExt {
                     "mods": b.mods,
                     "combo": r.map(|r| keymap::combo_label(r.mods, r.vk)),
                     "registered": registered,
-                    "error": collision.map(|c| if c.already_owned() {
+                    "error": collision.map(|c| if c.taken_by.is_some() {
+                        "bound_twice".to_string()
+                    } else if c.already_owned() {
                         "already_owned".to_string()
                     } else {
                         format!("error {}", c.error)
                     }),
+                    // #43: the action of ours that holds the chord.
+                    "taken_by": collision.and_then(|c| c.taken_by).map(|a| a.as_str()),
                     "altgr": altgr.iter().find(|a| a.action == *action).map(|a| a.character.clone()),
                 })
             })

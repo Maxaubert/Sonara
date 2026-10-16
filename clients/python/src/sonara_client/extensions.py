@@ -91,7 +91,10 @@ class Agent:
         """``ask``: ``question``, ``permission`` or ``plan``, spoken with priority.
 
         A question of a set (protocol 1.6, runtime 0.22.0) passes ``set_index``
-        (0-based) and ``set_size``: only the first is read, "Question 1 of N.".
+        (0-based) and ``set_size``. By default (agent key ``question_step``
+        ``"off"``, protocol 1.11, runtime 0.32.0) every question of the set is
+        read in order, "Question k of N."; with ``set question_step "on"``
+        only question 1 is read and the others wait for ``next_question``.
         """
         return self._send("ask", _defined({**extra, "channel": channel, "kind": kind, "text": text,
                                            "options": list(options) if options is not None else None}))

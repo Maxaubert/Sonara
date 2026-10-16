@@ -8,6 +8,7 @@ import type {
   ItemEvent,
   LogEvent,
   Reply,
+  RequestOptions,
   RuntimeInfo,
   SettingKey,
   SpeakOptions,
@@ -75,9 +76,12 @@ export class SonaraClient {
     return this.conn.closed;
   }
 
-  /** Send any protocol message; resolves with the `ok: true` reply. */
-  request(type: string, fields: Record<string, unknown> = {}): Promise<Reply> {
-    return this.conn.request(type, fields);
+  /**
+   * Send any protocol message; resolves with the `ok: true` reply.
+   * `opts.timeoutMs` bounds this one request (`E_TIMEOUT`; default: none).
+   */
+  request(type: string, fields: Record<string, unknown> = {}, opts: RequestOptions = {}): Promise<Reply> {
+    return this.conn.request(type, fields, opts);
   }
 
   /** Add `text` as one item; resolves with its item id. */

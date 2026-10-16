@@ -33,6 +33,7 @@ export type {
   LogEvent,
   NowPlaying,
   Reply,
+  RequestOptions,
   RuntimeInfo,
   SettingKey,
   SpeakMode,

@@ -61,11 +61,15 @@ pub struct Collision {
     pub action: Action,
     /// The OS error code.
     pub error: u32,
+    /// Another of our actions bound to the same chord holds it (#43); the
+    /// chord is not registered twice, `error` is then 1409.
+    pub taken_by: Option<Action>,
 }
 
 impl Collision {
+    /// Another program owns the chord.
     pub fn already_owned(&self) -> bool {
-        self.error == ERROR_HOTKEY_ALREADY_REGISTERED
+        self.error == ERROR_HOTKEY_ALREADY_REGISTERED && self.taken_by.is_none()
     }
 }
 
@@ -124,6 +128,19 @@ impl Hotkeys {
                 let mut registered = Vec::new();
                 for b in &bindings {
                     let id = b.action.id();
+                    // A chord an earlier action holds: Windows would refuse
+                    // it with the same 1409 as another program's (#43).
+                    let ours = registered
+                        .iter()
+                        .find(|r: &&Resolved| r.vk == b.vk && r.mods == b.mods);
+                    if let Some(first) = ours {
+                        collisions.push(Collision {
+                            action: b.action,
+                            error: ERROR_HOTKEY_ALREADY_REGISTERED,
+                            taken_by: Some(first.action),
+                        });
+                        continue;
+                    }
                     match reg.register(id, b.mods | MOD_NOREPEAT, b.vk) {
                         Ok(()) => {
                             ids.push(id);
@@ -132,6 +149,7 @@ impl Hotkeys {
                         Err(error) => collisions.push(Collision {
                             action: b.action,
                             error,
+                            taken_by: None,
                         }),
                     }
                 }

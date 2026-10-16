@@ -402,6 +402,20 @@ pub fn bind(path: &Path, action: Action, key: &str, mods: &[String]) -> Result<(
                 .into(),
         );
     }
+    // Two actions on one chord: the second would never fire, and Windows
+    // reports it like a chord another program owns (#43).
+    let vk = key_code(&key).unwrap_or_default();
+    let (resolved, _) = resolve(&load(path));
+    if let Some(other) = resolved
+        .iter()
+        .find(|r| r.action != action && r.vk == vk && r.mods == held)
+    {
+        return Err(format!(
+            "{} is already bound to {}: unbind it there first",
+            combo_label(held, vk),
+            other.action.as_str()
+        ));
+    }
     let mut list = read_overrides(path);
     let b = Binding {
         key: Some(key),

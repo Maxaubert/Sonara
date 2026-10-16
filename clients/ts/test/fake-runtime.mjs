@@ -6,7 +6,8 @@
 //
 // Options: home (required), helloError (a code every plain hello fails
 // with), busyTakeovers (how many takeover hellos answer E_BUSY first; -1:
-// always), protocolMajor (in the hello reply).
+// always), protocolMajor (in the hello reply), delays (`{type: ms}`: how
+// long a request of that type waits before its reply).
 // Requests are appended to <home>/requests.jsonl.
 import { appendFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -93,7 +94,9 @@ const server = createServer((conn) => {
       buf = buf.slice(nl + 1);
       const msg = JSON.parse(line);
       appendFileSync(join(opts.home, "requests.jsonl"), JSON.stringify(msg) + "\n");
-      handle(conn, msg);
+      const delay = opts.delays?.[msg.type];
+      if (delay) setTimeout(() => handle(conn, msg), delay);
+      else handle(conn, msg);
     }
   });
   conn.on("error", () => {});

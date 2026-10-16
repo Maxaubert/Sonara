@@ -7,13 +7,15 @@ process so its pid can end (an accepted takeover).
 
 Options: home (required), hello_error (a code every plain hello fails
 with), busy_takeovers (takeover hellos answered E_BUSY first; -1: always),
-protocol_major (in the hello reply).
+protocol_major (in the hello reply), delays (``{type: seconds}``: how
+long a request of that type waits before its reply).
 """
 import json
 import os
 import socket
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 
 OPTS = json.loads(sys.argv[1])
@@ -50,6 +52,8 @@ def serve(conn):
             send({"id": mid, "ok": False, "error": {"code": code, "message": message}})
 
         t = msg.get("type")
+        if t in OPTS.get("delays", {}):
+            time.sleep(OPTS["delays"][t])
         if t == "hello":
             if msg.get("token") != TOKEN:
                 fail("E_AUTH")

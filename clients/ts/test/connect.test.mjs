@@ -219,6 +219,26 @@ describe("core API", () => {
     assert.ok(closed);
     await rejectsWith(c.speak("late"), "E_CLOSED");
   });
+
+  it("rejects a request with E_TIMEOUT after its timeoutMs and ignores the late reply", async () => {
+    fake = await startFake(home, { delays: { engine_test: 300, fail_me: 600 } });
+    const c = await open();
+    await rejectsWith(c.request("engine_test", { engine: "slow" }, { timeoutMs: 100 }), "E_TIMEOUT");
+    assert.ok(!c.closed);
+    // The late engine_test reply comes while fail_me waits: it must not settle it.
+    await rejectsWith(c.request("fail_me", { code: "E_NOT_FOUND" }), "E_NOT_FOUND");
+    assert.equal(await c.speak("still open"), 1);
+  });
+
+  it("refuses a line over 1 MiB of UTF-8 and keeps the connection open", async () => {
+    fake = await startFake(home);
+    const c = await open();
+    // 400 000 characters, but 1.2 MB as UTF-8: the runtime would close the connection.
+    await rejectsWith(c.speak("€".repeat(400_000)), "E_BAD_REQUEST");
+    assert.ok(!c.closed);
+    assert.equal(await c.speak("short"), 1);
+    assert.deepEqual(fake.requests().map((r) => r.type), ["hello", "speak"]);
+  });
 });
 
 describe("events", () => {

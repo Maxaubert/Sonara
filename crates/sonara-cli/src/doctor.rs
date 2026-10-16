@@ -152,6 +152,12 @@ pub fn hotkeys_row(h: &Value) -> Row {
         if b["error"].as_str() == Some("already_owned") {
             problems.push(format!("{combo} is taken by another program"));
             rotation |= ctrl_alt_arrow(combo);
+        } else if b["error"].as_str() == Some("bound_twice") {
+            // #43: one of our own actions holds the chord.
+            let other = b["taken_by"].as_str().unwrap_or("another action");
+            problems.push(format!(
+                "{combo} {action} is also bound to {other}; rebind one in the settings page"
+            ));
         } else if let Some(err) = b["error"].as_str() {
             problems.push(format!("{combo}: {err}"));
         }
@@ -267,6 +273,23 @@ mod tests {
             "{}",
             r.detail
         );
+    }
+
+    #[test]
+    fn a_chord_bound_twice_names_the_other_action_not_another_program() {
+        // #43
+        let h = json!({"active": true, "bindings": [
+            {"action": "mute", "combo": "Ctrl+Alt+M", "error": null},
+            {"action": "faster", "combo": "Ctrl+Alt+M", "error": "bound_twice", "taken_by": "mute"}],
+            "problems": []});
+        let r = hotkeys_row(&h);
+        assert_eq!(r.status, Status::Warn);
+        assert!(
+            r.detail.contains("Ctrl+Alt+M faster is also bound to mute"),
+            "{}",
+            r.detail
+        );
+        assert!(!r.detail.contains("another program"), "{}", r.detail);
     }
 
     #[test]

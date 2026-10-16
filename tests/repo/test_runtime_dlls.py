@@ -1,9 +1,11 @@
-"""The VC++ runtime staged next to onnxruntime.dll (packaging/runtime_dlls.py, #200)."""
+"""The VC++ runtime staged next to onnxruntime.dll (packaging/runtime_dlls.py, #200),
+and the cached ORT files fetch() hands out (#55)."""
 from __future__ import annotations
 
 import importlib.util
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,51 @@ def _module():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _ort_zip(rd, cache: Path) -> str:
+    """A stand-in ORT zip in the cache (so fetch downloads nothing); its SHA-256."""
+    cache.mkdir(parents=True)
+    zpath = cache / f"onnxruntime-win-x64-{rd.ORT_VERSION}.zip"
+    root = f"onnxruntime-win-x64-{rd.ORT_VERSION}/"
+    with zipfile.ZipFile(zpath, "w") as z:
+        for member, name in rd.ORT_FILES:
+            z.writestr(root + member, f"real {name}")
+    return rd.sha256(zpath)
+
+
+def test_a_changed_cached_ort_file_is_extracted_again_from_the_checked_zip(tmp_path):
+    rd = _module()
+    cache = tmp_path / "ort"
+    pinned = _ort_zip(rd, cache)
+    out = rd.fetch(cache, url="http://unused.invalid/", expected=pinned)
+    # A truncated notices file (a stopped run) and a changed dll.
+    (out / "onnxruntime-ThirdPartyNotices.txt").write_text("real onnx", encoding="utf-8")
+    (out / "onnxruntime.dll").write_text("patched", encoding="utf-8")
+    out = rd.fetch(cache, url="http://unused.invalid/", expected=pinned)
+    for _, name in rd.ORT_FILES:
+        assert (out / name).read_text(encoding="utf-8") == f"real {name}"
+
+
+def test_an_interrupted_extraction_leaves_nothing_a_later_run_accepts(tmp_path, monkeypatch):
+    rd = _module()
+    cache = tmp_path / "ort"
+    pinned = _ort_zip(rd, cache)
+    real_read = zipfile.ZipFile.read
+
+    def stop_at_the_notices(self, name, *a, **kw):
+        if name.endswith("ThirdPartyNotices.txt"):
+            raise KeyboardInterrupt
+        return real_read(self, name, *a, **kw)
+
+    monkeypatch.setattr(zipfile.ZipFile, "read", stop_at_the_notices)
+    with pytest.raises(KeyboardInterrupt):
+        rd.fetch(cache, url="http://unused.invalid/", expected=pinned)
+    assert not (cache / rd.ORT_VERSION).exists()
+    monkeypatch.setattr(zipfile.ZipFile, "read", real_read)
+    out = rd.fetch(cache, url="http://unused.invalid/", expected=pinned)
+    for _, name in rd.ORT_FILES:
+        assert (out / name).read_text(encoding="utf-8") == f"real {name}"
 
 
 def _crt(tmp_path, versions):

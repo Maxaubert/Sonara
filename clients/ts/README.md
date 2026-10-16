@@ -19,6 +19,7 @@ await sonara.close();
 - `control(action)`: `play`, `pause`, `toggle`, `stop`, `skip`, `previous`, `next`, `restart`, `mute`, `unmute`.
 - `set(key, value)` / `get(key)` for `volume` (0..100), `rate` (100..400 wpm), `voice`, `engine`; `voices(engine?)`.
 - `onState`, `onItem`, `onLog` return an unsubscribe function; events arrive on a second connection opened by the first listener. Every state listener, also one added later, gets the current state first. `onClose` fires when the runtime goes away.
+- `request(type, fields, { timeoutMs })` sends any message; with `timeoutMs` it rejects with `E_TIMEOUT` and the client stays open (no bound by default; `engine_test` may take a minute). A request over 1 MiB of UTF-8 is refused with `E_BAD_REQUEST` and the client stays open.
 - `channels`, `agent`, `system`: extension namespaces that send the protocol's extension messages as they are.
 - Errors are `SonaraError` with a `code` (`E_BUSY`, `E_NOT_RUNNING`, ...).
 

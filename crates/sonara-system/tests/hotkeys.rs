@@ -143,6 +143,28 @@ fn a_chord_another_program_owns_is_a_collision_not_a_failure() {
 }
 
 #[test]
+fn two_actions_on_one_chord_are_a_self_collision_not_another_program() {
+    // #43: the second RegisterHotKey of a chord this thread holds fails
+    // with 1409, which read as "another program owns it".
+    let fake = Fake::new();
+    let (mut bindings, _) = keymap::resolve(&keymap::defaults());
+    bindings.push(keymap::Resolved {
+        action: Action::Faster,
+        vk: 0x4D,
+        mods: MOD_CTRL | MOD_ALT,
+    });
+    let p = fake.platform();
+    let hk = Hotkeys::start(p.registrar, p.keys, bindings, Arc::new(|_, _| {}));
+    assert_eq!(hk.collisions().len(), 1);
+    let c = &hk.collisions()[0];
+    assert_eq!(c.taken_by, Some(Action::Mute));
+    assert!(!c.already_owned());
+    let mute = hk.collisions().iter().any(|c| c.action == Action::Mute);
+    assert!(!mute, "the first action keeps the chord");
+    assert_eq!(fake.world().hotkeys.len(), 4);
+}
+
+#[test]
 fn stop_unregisters_so_a_restart_gets_every_chord_back() {
     // H2: a restart racing the old thread's unregister left every hotkey
     // dark. stop joins the pump, which unregisters first.
