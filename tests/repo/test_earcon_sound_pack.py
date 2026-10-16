@@ -25,6 +25,7 @@ KINDS = [
     "session_change",
     "nav",
     "nav_edge",
+    "step",
     "error",
     "summary_failed",
 ]

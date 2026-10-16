@@ -4,7 +4,8 @@
 //! `packaging/sounds/build_earcons.py` (#211; `sounds/SHA256SUMS` pins
 //! them), compiled in, and played through the L1 output's clip mixer so
 //! they never pause or cut speech. `nav` (a restart, a flush) is a rewind
-//! swell into the tick that `nav_edge` plays alone (#318).
+//! swell into the tick that `nav_edge` plays alone (#318); `step` is that
+//! tick for a section move (#328).
 //!
 //! **Custom earcons** (`Library`): a host gives a folder; `<kind>.wav` there
 //! (`session_change.wav`, `turn_done.wav`, ...) replaces that kind's bundled
@@ -68,6 +69,7 @@ earcons! {
     NavEdge => "nav_edge",
     SessionChange => "session_change",
     SummaryFailed => "summary_failed",
+    Step => "step",
 }
 
 impl Earcon {

@@ -147,7 +147,7 @@ def test_custom_earcons_folder(rt):
     assert folder.is_dir(), "created at startup so the user can drop WAVs in"
     assert v["custom"] == []
     assert sorted(v["kinds"]) == sorted([
-        "choice", "permission", "error", "turn_done", "nav", "nav_edge",
+        "choice", "permission", "error", "turn_done", "nav", "nav_edge", "step",
         "session_change", "summary_failed",
     ])
     (folder / "session_change.wav").write_bytes(wav(48000, 4800))
