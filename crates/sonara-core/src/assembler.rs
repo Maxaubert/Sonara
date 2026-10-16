@@ -170,10 +170,17 @@ pub struct ProseAssembler {
     /// raw tail not yet split into a line/fence token
     pending: String,
     in_fence: bool,
+    /// backticks in the opening run: only a run at least this long closes
+    fence_ticks: usize,
     fence_lang: String,
     fence_lines: Vec<String>,
     /// have we consumed the opening info-string line?
     fence_opened_line: bool,
+    /// the last block's final index and the indices it had, kept after its
+    /// final so a delta that missed it is read at once (#9)
+    done: Option<(u32, HashSet<u32>)>,
+    /// the last chunk out was a ParagraphBreak (no two in a row)
+    last_break: bool,
 }
 
 impl ProseAssembler {
@@ -182,25 +189,52 @@ impl ProseAssembler {
     }
 
     pub fn feed(&mut self, delta: &str, index: u32, is_final: bool) -> Vec<Chunk> {
+        let out = self.feed_block(delta, index, is_final);
+        // A fence close and the blank line after it both end a paragraph.
+        let mut kept = Vec::with_capacity(out.len());
+        for c in out {
+            let brk = c == Chunk::ParagraphBreak;
+            if !(brk && self.last_break) {
+                kept.push(c);
+            }
+            self.last_break = brk;
+        }
+        kept
+    }
+
+    fn feed_block(&mut self, delta: &str, index: u32, is_final: bool) -> Vec<Chunk> {
         let mut out = Vec::new();
-        if self.seen.contains(&index) {
-            if index == 0 {
-                // A NEW message block restarts at index 0. A lost final from the
-                // previous block would otherwise leave seen poisoned and every
-                // colliding delta of the new block silently DROPPED (deep audit
-                // #25). Flush the stale block and start fresh; a true duplicate
-                // first delta re-speaks at worst, never drops.
+        // A delta that missed its block's final (given up on and released
+        // late) is read at once, never held to run into the next block (#9).
+        // Index 0 always starts a block: a late index 0 cannot be told
+        // from the next block's first delta.
+        if let Some((final_index, had)) = &mut self.done {
+            if index > 0 && index < *final_index && had.insert(index) {
+                self.pending.push_str(delta);
                 out.extend(self.consume(true));
                 out.extend(self.flush_prose());
-                self.reset();
-            } else {
-                // still honor a final flush even on a duplicate index
-                if is_final {
-                    out.extend(self.flush_prose());
-                    self.reset();
-                }
                 return out;
             }
+            self.done = None;
+        }
+        if index == 0 && !self.seen.is_empty() {
+            // A NEW message block restarts at index 0. A lost final from the
+            // previous block would otherwise leave seen poisoned and every
+            // colliding delta of the new block silently DROPPED (deep audit
+            // #25), or its held tail glued to the new text (#9). Flush the
+            // stale block and start fresh; a true duplicate first delta
+            // re-speaks at worst, never drops.
+            out.extend(self.consume(true));
+            out.extend(self.flush_prose());
+            self.reset();
+        }
+        if self.seen.contains(&index) {
+            // still honor a final flush even on a duplicate index, with
+            // what waits in pending (an open fence, held backticks, #29)
+            if is_final {
+                out.extend(self.finish(index));
+            }
+            return out;
         }
         self.seen.insert(index);
 
@@ -208,10 +242,19 @@ impl ProseAssembler {
         out.extend(self.consume(false));
 
         if is_final {
-            out.extend(self.consume(true));
-            out.extend(self.flush_prose());
-            self.reset();
+            out.extend(self.finish(index));
         }
+        out
+    }
+
+    /// The block's final: read everything left and remember the block, so
+    /// a delta that arrives after it is read late, not held (#9).
+    fn finish(&mut self, index: u32) -> Vec<Chunk> {
+        let mut out = self.consume(true);
+        out.extend(self.flush_prose());
+        let had = std::mem::take(&mut self.seen);
+        self.reset();
+        self.done = Some((index, had));
         out
     }
 
@@ -240,6 +283,15 @@ impl ProseAssembler {
                         }
                         continue;
                     }
+                    if !self.fence_opened_line && line.contains('`') {
+                        // "```js``` here" is inline code, not a fence: an
+                        // info string has no backtick (CommonMark)
+                        self.in_fence = false;
+                        let ticks = "`".repeat(self.fence_ticks);
+                        self.buf.push_str(&format!("{ticks}{line}\n"));
+                        out.extend(self.split_sentences());
+                        continue;
+                    }
                     if !self.fence_opened_line {
                         // first line after opening ``` is the info string
                         self.fence_lang = stripped.to_string();
@@ -255,6 +307,14 @@ impl ProseAssembler {
                     // (newline-less) closing fence or a final content line
                     let tail = std::mem::take(&mut self.pending);
                     let stripped = py_strip(&tail);
+                    if !self.fence_opened_line && tail.contains('`') {
+                        // inline code on the last line, not a fence
+                        self.in_fence = false;
+                        self.buf.push_str(&"`".repeat(self.fence_ticks));
+                        self.buf.push_str(&tail);
+                        out.extend(self.split_sentences());
+                        break;
+                    }
                     if let Some(close_rest) = self.closing_fence_rest(stripped) {
                         out.extend(self.close_fence());
                         if !close_rest.is_empty() {
@@ -274,10 +334,17 @@ impl ProseAssembler {
                 }
                 break;
             }
-            if let Some(open_at) = self.pending.find(FENCE) {
+            if let Some((open_at, ticks)) = self.fence_opening() {
                 let prose = self.pending[..open_at].to_string();
                 self.buf.push_str(&prose);
-                self.pending = self.pending[open_at + FENCE.len()..].to_string();
+                if open_at + ticks == self.pending.len() && !force {
+                    // the run may still grow ("```" then "`md"): wait
+                    self.pending = self.pending[open_at..].to_string();
+                    out.extend(self.split_sentences());
+                    break;
+                }
+                self.pending = self.pending[open_at + ticks..].to_string();
+                self.fence_ticks = ticks;
                 out.extend(self.split_sentences());
                 // An unterminated lead-in ("Here is the code:") must be
                 // spoken BEFORE the fence summary -- it used to sit as the
@@ -321,7 +388,8 @@ impl ProseAssembler {
 
     /// If `stripped` (a fence-interior line) is a closing fence, return the
     /// trailing prose after it ("" if none); else None. A close = the line
-    /// STARTS with >= 3 backticks followed by end-of-line or whitespace; a
+    /// STARTS with as many backticks as opened the fence (at least 3),
+    /// followed by end-of-line or whitespace; a
     /// word glued to the backticks ("```python") is content (deep audit #25).
     /// Only valid once the info-string line was consumed.
     fn closing_fence_rest(&self, stripped: &str) -> Option<String> {
@@ -329,7 +397,8 @@ impl ProseAssembler {
             return None;
         }
         let ticks = stripped.len() - stripped.trim_start_matches('`').len();
-        if ticks < 3 {
+        // a "````" fence holds a "```" one: only as long a run closes (#8)
+        if ticks < self.fence_ticks.max(FENCE.len()) {
             return None;
         }
         let rest = &stripped[ticks..];
@@ -339,6 +408,34 @@ impl ProseAssembler {
             }
         }
         Some(py_strip(rest).to_string())
+    }
+
+    /// The first run of 3 or more backticks in `pending` that opens a fence,
+    /// as (byte offset, run length). A fence opens only at the start of a
+    /// line, after nothing but indent (#7): "wrap it in ``` fences" mid-line
+    /// is prose, not a block that swallows the rest of the reply. Any indent
+    /// counts, since a fence under a list item is often indented 4 spaces.
+    fn fence_opening(&self) -> Option<(usize, usize)> {
+        let mut from = 0;
+        while let Some(rel) = self.pending[from..].find(FENCE) {
+            let at = from + rel;
+            let ticks = self.pending[at..].len() - self.pending[at..].trim_start_matches('`').len();
+            let before = &self.pending[..at];
+            let indent = match before.rfind('\n') {
+                Some(nl) => &before[nl + 1..],
+                None => before,
+            };
+            let line_start = indent.chars().all(|c| c == ' ' || c == '\t')
+                && (before.contains('\n') || {
+                    let tail = &self.buf[self.buf.rfind('\n').map_or(0, |nl| nl + 1)..];
+                    tail.chars().all(|c| c == ' ' || c == '\t')
+                });
+            if line_start {
+                return Some((at, ticks));
+            }
+            from = at + ticks;
+        }
+        None
     }
 
     /// How many trailing bytes of `pending` could be the start of a fence.
@@ -351,7 +448,16 @@ impl ProseAssembler {
         0
     }
 
+    /// A closed fence, then a ParagraphBreak: a fence is a block, so the
+    /// text after it starts a new paragraph (#30).
     fn close_fence(&mut self) -> Vec<Chunk> {
+        let mut out = self.fence_chunks();
+        out.push(Chunk::ParagraphBreak);
+        out
+    }
+
+    fn fence_chunks(&mut self) -> Vec<Chunk> {
+        self.fence_ticks = 0;
         let n = self.fence_lines.len();
         let lang = std::mem::take(&mut self.fence_lang);
         if prose_fence(&lang, &self.fence_lines) {
@@ -438,7 +544,10 @@ impl ProseAssembler {
         let mut at = 0;
         for line in text.split_inclusive('\n') {
             let end = at + line.len();
-            let continues = line.starts_with([' ', '\t']) && !line.trim().is_empty();
+            // An indent with no newline yet is the start of a continuation
+            // line (a delta that ends "\n  ", #31), not a new paragraph.
+            let continues =
+                line.starts_with([' ', '\t']) && (!line.trim().is_empty() || !line.ends_with('\n'));
             match segs.last_mut() {
                 _ if LIST_ITEM.is_match(line) => segs.push((at, end, true)),
                 Some(last) if last.2 && continues => last.1 = end,
@@ -545,8 +654,12 @@ impl ProseAssembler {
         Self::sentences_of(&stabilize_ordinals(&buf)[start..], false).0
     }
 
+    /// Clear the block; whether the last chunk out was a break carries on.
     fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            last_break: self.last_break,
+            ..Self::default()
+        };
     }
 }
 

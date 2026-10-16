@@ -1,0 +1,88 @@
+{
+  "description": "Deltas fed with their own index and final flag (`feeds`): a gap, a late delta, a resent index.",
+  "cases": [
+    {
+      "name": "late_delta_after_the_final_is_read_at_once",
+      "fn": "assemble",
+      "feeds": [
+        [
+          "I checked the build ",
+          0,
+          false
+        ],
+        [
+          "and it passes.",
+          2,
+          true
+        ],
+        [
+          "logs and",
+          1,
+          false
+        ],
+        [
+          "Now running tests. ",
+          0,
+          false
+        ],
+        [
+          "All green.",
+          1,
+          true
+        ]
+      ],
+      "output": [
+        "I checked the build and it passes.",
+        "logs and",
+        "Now running tests.",
+        "All green."
+      ]
+    },
+    {
+      "name": "stale_block_without_index_zero_is_flushed_by_the_next_block",
+      "fn": "assemble",
+      "feeds": [
+        [
+          "stale tail",
+          1,
+          false
+        ],
+        [
+          "New block.",
+          0,
+          true
+        ]
+      ],
+      "output": [
+        "stale tail",
+        "New block."
+      ]
+    },
+    {
+      "name": "resent_final_flushes_an_open_fence",
+      "fn": "assemble",
+      "feeds": [
+        [
+          "Here:\n```py\nx = 1\ny = 2\n",
+          0,
+          false
+        ],
+        [
+          "z = 3\n",
+          1,
+          false
+        ],
+        [
+          "z = 3\n",
+          1,
+          true
+        ]
+      ],
+      "output": [
+        "Here:",
+        "Python code block, 3 lines.",
+        null
+      ]
+    }
+  ]
+}

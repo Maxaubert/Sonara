@@ -1,5 +1,5 @@
 {
-  "description": "Fenced code blocks become a spoken announcement, their language and size (#295); the lines are read only at verbosity read_code and everything.",
+  "description": "Fenced code blocks become a spoken announcement, their language and size (#295); the lines are read only at verbosity read_code and everything. A fence opens only at a line start (#7), closes only on a backtick run as long as the one that opened it (#8), and ends its paragraph: a ParagraphBreak follows every closed fence (#30).",
   "cases": [
     {
       "name": "python_fence",
@@ -10,6 +10,7 @@
       "output": [
         "Here is code:",
         "Python code block, 2 lines.",
+        null,
         "Done."
       ]
     },
@@ -24,6 +25,7 @@
       "output": [
         "Before.",
         "JavaScript code block, 1 line.",
+        null,
         "After."
       ]
     },
@@ -35,7 +37,8 @@
       ],
       "output": [
         "See:",
-        "Code block, 1 line."
+        "Code block, 1 line.",
+        null
       ]
     },
     {
@@ -53,6 +56,7 @@
         "How you talk.",
         "Say things the way a person would.",
         "Keep the call short.",
+        null,
         "Done."
       ]
     },
@@ -64,7 +68,88 @@
       ],
       "output": [
         "Start.",
-        "Bash code block, 1 line."
+        "Bash code block, 1 line.",
+        null
+      ]
+    },
+    {
+      "name": "triple_backticks_mid_line_are_prose",
+      "fn": "assemble",
+      "deltas": [
+        "Wrap the snippet in ``` fences. Then run it.\n\nAfter that the tests pass.\n"
+      ],
+      "output": [
+        "Wrap the snippet in fences.",
+        "Then run it.",
+        null,
+        "After that the tests pass."
+      ]
+    },
+    {
+      "name": "inline_backticks_at_a_line_start_are_prose",
+      "fn": "assemble",
+      "deltas": [
+        "Type ```js``` there.\n```js``` also inline.\nEnd."
+      ],
+      "output": [
+        "Type js there.",
+        "js also inline.",
+        "End."
+      ]
+    },
+    {
+      "name": "indented_fence_opens",
+      "fn": "assemble",
+      "deltas": [
+        "Run:\n   ```sh\n   ls\n   ```\nDone."
+      ],
+      "output": [
+        "Run:",
+        "shell code block, 1 line.",
+        null,
+        "Done."
+      ]
+    },
+    {
+      "name": "four_backtick_fence_holds_an_inner_fence",
+      "fn": "assemble",
+      "deltas": [
+        "````markdown\n```python\nx = 1\n```\n````\n\nThat is the README. Next I run the tests.\n"
+      ],
+      "output": [
+        "Markdown code block, 3 lines.",
+        null,
+        "That is the README.",
+        "Next I run the tests."
+      ]
+    },
+    {
+      "name": "four_backtick_fence_streamed",
+      "fn": "assemble",
+      "deltas": [
+        "Look:\n````",
+        "md\n```\nx\n```\n",
+        "````\nAfter."
+      ],
+      "output": [
+        "Look:",
+        "Markdown code block, 3 lines.",
+        null,
+        "After."
+      ]
+    },
+    {
+      "name": "paragraph_after_a_fence_is_new",
+      "fn": "assemble",
+      "deltas": [
+        "Intro.\n\n```py\nx = 1\n```\n\nAfter that, done."
+      ],
+      "output": [
+        "Intro.",
+        null,
+        "Python code block, 1 line.",
+        null,
+        "After that, done."
       ]
     }
   ]
