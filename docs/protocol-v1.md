@@ -378,7 +378,9 @@ provider's models, live), the profile's `send_mode` ("Send to the engine") and t
 `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
 filling in a default model or voice for any external engine (a profile without one it needs is kept
 and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
-are only what the profile sets. 1.10 (runtime 0.28.0, #299) added the `channels` `control` action
+are only what the profile sets. 1.11 (runtime 0.32.0, #320) added the `agent` key `question_step`
+(default `"off"`: a question set is read in order; `"on"`: question 1, then the navigation, as
+before). 1.10 (runtime 0.28.0, #299) added the `channels` `control` action
 `back` (back one section) and made `restart` without a channel replay the whole batch being read,
 not only the item playing; the Up hotkey is `back` on a tap and `restart` when held. 1.9 (runtime 0.27.0) added the core key `paths`; step mode also
 waits after a block's last line, and line labels are words (`"Line three."`). 1.8 (runtime 0.26.0, #294) added the core key `pronunciations` and
@@ -405,14 +407,14 @@ setting (the mute cycle, faster, slower) save it too.
 **Defaults** (#202). A setting nobody set has the runtime's default, the Claude plugin's product
 settings: `voice` `af_sarah` (with an engine that has it; otherwise the engine's default voice),
 `rate` 250, `volume` 100, `channel_announce` `"on"`, `mute_level` 0, `verbosity` `"skip_code"`,
-`read_mode` `"done"` (#222), `flush_scope` `"session"` (#228), `minqueue` 5, `background_policy`
+`read_mode` `"done"` (#222), `flush_scope` `"session"` (#228), `question_step` `"off"` (#320), `minqueue` 5, `background_policy`
 `"all"`, summaries off, `audio_mode` `"pause"`, `duck_level` 30, `debug_log` true. The tables below
 give the same defaults. `sonarad` applies them to the layers itself; the library crates keep their
 own (rate 200, `"everything"`, `"queue"` with 1, `"earcon_only"`, `"off"`).
 
 | file in the home | holds |
 |---|---|
-| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `paths`, `pronunciations`. A `_migrated` key records the migration below |
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `question_step`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `paths`, `pronunciations`. A `_migrated` key records the migration below |
 | `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
 | `engines.json` | the [external engines](#external-engines) added with `engine_add`: `{"format": 2, "engines": [profile, ...]}`, never a key. An `env:` entry may carry `key_origin` (see Keys below), which only the user writes in the file; a format 1 file is migrated at the first start (its keys and `env:` entries are bound to their addresses then) and saved as format 2. A file that is not JSON is copied to `engines.json.bad` (and logged) and counts as empty until the next change; an entry that fails validation or names a kind this runtime lacks is kept, listed and not used. Read once at start, before the first speech, so a saved `engine` naming one applies at once |
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
@@ -779,7 +781,8 @@ after it; `now_playing.text` shows it as read, without the marker that tells the
 Inline code in prose (`` `useState()` ``) is read with the same words. Core `speak` text is not
 read this way (a fence there is only announced).
 
-**Question sets** (protocol 1.6, runtime 0.22.0, #283). Claude Code shows the questions of one
+**Question sets** (protocol 1.6, runtime 0.22.0, #283; with `question_step` `"on"` since 1.11,
+#320: off, the default, reads every question in order). Claude Code shows the questions of one
 `AskUserQuestion` one at a time, so they are not read back to back: an `ask` `question` with
 `set_size` 2 or more is one question of a set. The one with `set_index` 0 is read (once, with
 `choice`) as `"Question 1 of N. "` before its text, followed by its `notes` and hints (send them on
@@ -843,6 +846,7 @@ clip instead, and one line in `logs\sonarad.log` says why (once per version of t
 | `code_pause` | protocol 1.7 (#295): silence after each code line, in milliseconds, `0` to `2000` (default `500`) |
 | `code_step` | protocol 1.7 (#295): `"on"` or `"off"` (default): step through code. The reader waits after a block's announcement (which adds `"Use <key> for the next line."`, the key bound to `next_question`) and after each line, the last one too (1.9: the text after the block waits as well), until `next_line`, `previous_line` or `play` / `toggle` (the rest of the block straight through, then the text after it). While waiting it is `paused`; a move away (`restart`, `skip`, `next`, an interrupting `speak`) plays at once, while a `pause` sent during the wait holds as usual. Other apps stay ducked or paused through a wait, for 30 seconds at most |
 | `read_mode` | when a turn's sentences are read (#222): `"immediate"`: each as it arrives; `"queue"`: held until `minqueue` are waiting, the turn ends, a tool runs or a decision arrives; `"done"` (default): held until the turn ends or a decision (question, permission, plan) arrives, a tool run does not release them. A decision reads the held sentences first, then itself; after the turn ends, late sentences are read at once. With summaries on, summaries own the turn whatever the mode. A `config.json` from before #222 with a `minqueue` the user set and no `read_mode` loads `0` and `1` as `"immediate"` and more as `"queue"` (written with the next change); without one the default applies |
+| `question_step` | protocol 1.11 (#320): `"off"` (default) or `"on"`: step through questions. Off, every question of a set (`ask` with `set_index` and `set_size`) is read in order as its own decision, `"Question k of N. ..."` (the notes and hints on the first); `next_question` and `previous_question` have no set to move in. On, only question 1 is read and the others wait for the navigation (#283, below). Applies to the next set |
 | `flush_scope` | what `control flush` (the flush hotkey) skips (#228): `"session"` (default): the session being read, for the rest of its reply, then the next session is read; `"all"`: also every other session's ready messages (queued text, finished replies, summaries); a reply still being written is kept in both. See `control flush` above |
 | `minqueue` | `0` to `10` (default 5), read mode `"queue"` only: a turn's sentences are held until this many are waiting, the turn ends, a tool runs or a decision arrives; `0` and `1` read at once |
 | `background_policy` | `"all"` (default) or `"earcon_only"`: see Background sessions |

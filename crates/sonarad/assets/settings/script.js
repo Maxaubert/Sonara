@@ -112,7 +112,7 @@ async function change(key, value, label, done) {
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
               "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
-              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step", "paths", "pronunciations"];
+              "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step", "question_step", "paths", "pronunciations"];
 let voices = [];
 let engineData = null;   // the engine_list reply, when this runtime allows external engines
 const profileVoices = {}; // added engine id -> its voices as last fetched (null: the fetch failed)
@@ -297,6 +297,7 @@ function render() {
     if (s.code_speed !== undefined) { setVal("codespeed", s.code_speed); setText("codespeed-out", s.code_speed + " %"); }
     if (s.code_pause !== undefined) { setVal("codepause", s.code_pause); setText("codepause-out", seconds(s.code_pause)); }
     setSegments("codestep-seg", s.code_step);
+    setSegments("questionstep-seg", s.question_step);
     setSegments("background-seg", s.background_policy);
     renderSummary(s.summaries);
     setSegments("readmode-seg", s.read_mode);
@@ -1916,6 +1917,7 @@ for (const [id, key, out, show] of [["rate", "rate", "rate-out", v => v + " wpm"
 $("codespeed").addEventListener("change", e => change("code_speed", Number(e.target.value), "Code reading speed"));
 $("codepause").addEventListener("change", e => change("code_pause", Number(e.target.value), "Line pause"));
 wireSegments("codestep-seg", v => change("code_step", v, "Step through code"));
+wireSegments("questionstep-seg", v => change("question_step", v, "Step through questions"));
 wireSegments("paths-seg", v => change("paths", v, "File paths"));
 $("rate").addEventListener("change", e => change("rate", Number(e.target.value), "Rate"));
 $("volume").addEventListener("change", e => change("volume", Number(e.target.value), "Volume"));

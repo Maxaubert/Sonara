@@ -1,7 +1,7 @@
 //! The `agent` extension (spec 4.3) on top of `sonara_agent`: `stream`,
 //! `turn_start`, `turn_end`, `ask`, `earcon`, `tool`, `answered`, the
 //! settings `mute_level`, `verbosity`, `read_mode`, `minqueue`,
-//! `background_policy`, `flush_scope` and
+//! `background_policy`, `flush_scope`, `question_step` (#320) and
 //! `summaries`, the read-only key `earcons` (the custom earcons folder and
 //! the kinds it overrides), and the `earcons` event stream. It needs
 //! `channels`, which enabling it enables too. `protocol` calls in here once a client enabled it; before that its
@@ -47,6 +47,7 @@ pub const KEYS: &[&str] = &[
     "code_speed",
     "code_pause",
     "code_step",
+    "question_step",
 ];
 
 pub(crate) fn failure(e: Error) -> Failure {
@@ -399,6 +400,7 @@ pub fn settings_from(store: &Store) -> Settings {
     {
         s.flush_scope = f;
     }
+    s.question_step = store.value("question_step").as_str() == Some("on");
     if let Ok(merged) = merge_summaries(s.summaries.clone(), &Value::Object(store.summaries())) {
         s.summaries = merged;
     }
@@ -454,6 +456,10 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
                     .ok_or_else(|| bad("'flush_scope' is \"session\" or \"all\""))?;
                 a.set_flush_scope(f);
             }
+            "question_step" => {
+                let v = crate::config::validate(key, v).map_err(bad)?;
+                a.set_question_step(v.as_str() == Some("on"));
+            }
             "code_speed" | "code_pause" | "code_step" => {
                 // #295: kept by the reader, which reads the code.
                 let v = crate::config::validate(key, v).map_err(bad)?;
@@ -500,6 +506,7 @@ pub fn setting(a: &Agent, store: &Store, key: &str, value: Option<&Value>) -> Ha
         "minqueue" => json!(s.minqueue),
         "background_policy" => json!(s.background.as_str()),
         "flush_scope" => json!(s.flush_scope.as_str()),
+        "question_step" => json!(if s.question_step { "on" } else { "off" }),
         "earcons" => earcons_json(a.earcons()),
         _ => summaries_json(&s.summaries, &store.prompts()),
     };

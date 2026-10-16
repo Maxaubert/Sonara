@@ -1024,7 +1024,10 @@ impl Rules {
             Some((i, n)) if ask.kind == AskKind::Question && n >= 2 && i < n => Some((i, n)),
             _ => None,
         };
-        if let Some((i, n)) = set.filter(|(i, _)| *i > 0) {
+        // #320: without stepping every question of a set is read in order,
+        // each its own decision; Up and Down move between them as sections.
+        let read_all = !self.settings.question_step;
+        if let Some((i, n)) = set.filter(|(i, _)| *i > 0 && !read_all) {
             // A later question of a set (#283): kept for the navigation.
             let body = decision::question_text(&ask.text, &ask.options, ask.multi);
             let kept = self
@@ -1067,6 +1070,7 @@ impl Rules {
                 // reaches it from the text and Left reads it again. A later
                 // question whose first never came is read on its own.
                 let size = match (set, ask.set) {
+                    _ if read_all && set.is_some() => None,
                     (Some((0, n)), _) => Some(n),
                     (None, Some((i, _))) if i > 0 => None,
                     (None, _) => Some(1),
@@ -1090,7 +1094,7 @@ impl Rules {
                     _ => None,
                 };
                 let text = match set {
-                    Some((0, n)) => decision::numbered_question(0, n, &body),
+                    Some((i, n)) if i == 0 || read_all => decision::numbered_question(i, n, &body),
                     _ => body,
                 };
                 (text, "question")
@@ -1116,10 +1120,13 @@ impl Rules {
             AskKind::Plan => (decision::plan_text(&ask.text), "plan"),
         };
         let mut extras: Vec<&str> = Vec::new();
-        if let Some(n) = &ask.notes {
+        // Read in order (#320), the notes and hints ride on the first
+        // question of a set only.
+        let later = read_all && set.is_some_and(|(i, _)| i > 0);
+        if let (Some(n), false) = (&ask.notes, later) {
             extras.push(n);
         }
-        if everything {
+        if everything && !later {
             if let Some(h) = &ask.hint {
                 extras.push(h);
             }

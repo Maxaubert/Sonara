@@ -185,8 +185,10 @@ def test_a_session_started_outside_a_repo_keeps_its_first_folder(hook_exe, rt, t
 def test_a_question_without_text_is_read_after_its_thinking_and_alone_in_its_set(hook_exe, rt):
     # #283, transcript rows 4834 to 4836 (2026-10-07): the message held only
     # thinking blocks and the AskUserQuestion. The hook reads the thinking
-    # from the transcript; the runtime reads it, then question 1 of 2 only.
+    # from the transcript; the runtime reads it, then question 1 of 2 only
+    # (with question_step on; off by default since #320).
     c = listener(rt)
+    assert c.request({"type": "set", "key": "question_step", "value": "on"})["ok"]
     transcript = harness.REPO / "tests" / "fixtures" / "transcripts" / "thinking_only_question.jsonl"
     hook(hook_exe, rt, "PreToolUse", {
         "session_id": SESSION,

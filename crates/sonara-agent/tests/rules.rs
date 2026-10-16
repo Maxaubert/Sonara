@@ -1630,6 +1630,32 @@ fn stop_still_drops_the_decisions_that_waited_for_the_summary() {
 
 // -- question sets (#283) ---------------------------------------------------
 
+/// Rules with `question_step` on: one question at a time (#283; off by
+/// default since #320).
+fn stepping() -> Rules {
+    let mut r = rules();
+    r.settings.question_step = true;
+    r
+}
+
+#[test]
+fn with_question_step_off_every_question_of_a_set_is_read_in_order() {
+    // #320: the default reads the whole set without stopping.
+    let mut r = rules();
+    let a = ask_set(&mut r, "fg", 3);
+    assert_eq!(
+        spoken(&a),
+        [
+            "!Question 1 of 3. Q1? Option 1: Yes. Use arrows. Press a number. Selecting is immediate.",
+            "!Question 2 of 3. Q2? Option 1: Yes.",
+            "!Question 3 of 3. Q3? Option 1: Yes.",
+        ]
+    );
+    assert_eq!(earcons(&a), [Earcon::Choice], "one chime for the set");
+    assert!(r.awaiting("fg"));
+    assert_eq!(r.question_set("fg"), None, "no stepping set");
+}
+
 /// A set of `n` questions as the hook sends it: `set` on each, the hints
 /// and notes on the first.
 fn question_set(n: usize) -> Vec<Ask> {
@@ -1655,7 +1681,7 @@ fn ask_set(r: &mut Rules, ch: &str, n: usize) -> Vec<Action> {
 #[test]
 fn a_question_set_reads_only_its_first_question_with_question_1_of_n() {
     // Bug 1 of #283: the 4 questions were read back to back.
-    let mut r = rules();
+    let mut r = stepping();
     let a = ask_set(&mut r, "fg", 4);
     assert_eq!(
         spoken(&a),
@@ -1667,7 +1693,7 @@ fn a_question_set_reads_only_its_first_question_with_question_1_of_n() {
 
 #[test]
 fn the_other_questions_of_a_set_are_kept_not_spoken() {
-    let mut r = rules();
+    let mut r = stepping();
     let set = question_set(3);
     r.ask("fg", &set[0]);
     r.take_notes();
@@ -1684,7 +1710,7 @@ fn the_other_questions_of_a_set_are_kept_not_spoken() {
 
 #[test]
 fn a_single_question_has_no_question_1_of_1_prefix() {
-    let mut r = rules();
+    let mut r = stepping();
     let mut one = question("Pick?", &["A"]);
     one.set = Some((0, 1));
     assert_eq!(
@@ -1695,7 +1721,7 @@ fn a_single_question_has_no_question_1_of_1_prefix() {
     // It is still a set of one, so the navigation reaches it.
     assert_eq!(r.question_set("fg"), Some((0, 1)));
     // Without the set fields, every question is read as before.
-    let mut r = rules();
+    let mut r = stepping();
     let a: Vec<Action> = ["One?", "Two?"]
         .iter()
         .flat_map(|q| r.ask("fg", &question(q, &[])))
@@ -1706,7 +1732,7 @@ fn a_single_question_has_no_question_1_of_1_prefix() {
 #[test]
 fn navigate_from_the_text_goes_to_question_one() {
     for step in [Step::Next, Step::Previous] {
-        let mut r = rules();
+        let mut r = stepping();
         ask_set(&mut r, "fg", 3);
         r.bind_question("fg", 7, false);
         let nav = r.navigate("fg", step, false).expect("a set");
@@ -1720,7 +1746,7 @@ fn navigate_from_the_text_goes_to_question_one() {
 
 #[test]
 fn next_question_moves_on_and_edges_on_the_last() {
-    let mut r = rules();
+    let mut r = stepping();
     ask_set(&mut r, "fg", 3);
     // No entry yet (nothing spoken): nothing to navigate.
     assert_eq!(r.navigate("fg", Step::Next, true), None);
@@ -1740,7 +1766,7 @@ fn next_question_moves_on_and_edges_on_the_last() {
 
 #[test]
 fn previous_question_on_question_one_restarts_it() {
-    let mut r = rules();
+    let mut r = stepping();
     ask_set(&mut r, "fg", 2);
     r.bind_question("fg", 7, false);
     r.navigate("fg", Step::Next, true);
@@ -1755,7 +1781,7 @@ fn previous_question_on_question_one_restarts_it() {
 
 #[test]
 fn answered_and_turn_start_forget_the_question_set() {
-    let mut r = rules();
+    let mut r = stepping();
     ask_set(&mut r, "fg", 2);
     r.answered("fg");
     assert_eq!(r.question_set("fg"), None);
@@ -1776,7 +1802,7 @@ fn answered_and_turn_start_forget_the_question_set() {
 
 #[test]
 fn the_set_hint_and_notes_are_read_with_each_question_and_hint_once_once() {
-    let mut r = rules();
+    let mut r = stepping();
     let a = ask_set(&mut r, "fg", 2);
     assert!(spoken(&a)[0].ends_with("Use arrows. Press a number. Selecting is immediate."));
     r.bind_question("fg", 7, false);
@@ -1786,7 +1812,7 @@ fn the_set_hint_and_notes_are_read_with_each_question_and_hint_once_once() {
         "{q2}"
     );
     // At verbosity skip_code: the notes alone.
-    let mut r = rules();
+    let mut r = stepping();
     r.settings.verbosity = Verbosity::SkipCode;
     let a = ask_set(&mut r, "fg", 2);
     assert_eq!(
