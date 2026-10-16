@@ -2237,3 +2237,41 @@ fn the_review_screen_is_announced_once_per_set() {
     assert_eq!(r.question_shown("fg", Shown::Review), None);
     assert_eq!(r.question_shown("nobody", Shown::Review), None);
 }
+
+#[test]
+fn a_long_token_wrapped_mid_word_on_screen_matches_its_question() {
+    // The terminal cuts a word wider than a line in two, and the screen's
+    // lines are joined with a space (#323).
+    let mut r = stepping();
+    let mut first = question("Which one?", &["Yes"]);
+    first.set = Some((0, 2));
+    let mut second = question(
+        "Should I delete C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\C--Users-Admin-Documents-Claude\\cache?",
+        &["Yes"],
+    );
+    second.set = Some((1, 2));
+    r.ask("fg", &first);
+    r.ask("fg", &second);
+    r.bind_question("fg", 3, false);
+    assert!(matches!(
+        r.question_shown(
+            "fg",
+            Shown::Text("Should I delete C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\C--Users-Admin-Docu ments-Claude\\cache?")
+        ),
+        Some(ShownMove::Land(n)) if n.index == 1
+    ));
+    // Cut off on screen: the start still matches, from 20 characters on.
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Which one?")),
+        Some(ShownMove::Land(n)) if n.index == 0
+    ));
+    assert_eq!(
+        r.question_shown("fg", Shown::Text("Should I del")),
+        None,
+        "too short"
+    );
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Should I delete C:\\Users\\Admin\\App Data")),
+        Some(ShownMove::Land(n)) if n.index == 1
+    ));
+}

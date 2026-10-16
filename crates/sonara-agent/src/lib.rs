@@ -757,12 +757,17 @@ impl Agent {
     /// screen follower, PrismTerminal): a question other than the current
     /// one is read now (a stepping set lands on it; a set read in order
     /// reads on from it); the review screen says "Review your answers."
-    /// once. Returns what moved, `None` when nothing did.
+    /// once. A screen change is not a Sonara key: while muted (level 1 or
+    /// more) the set still follows the screen but nothing is read, and the
+    /// review line is stored. A question already being read goes on.
+    /// Returns what moved, `None` when nothing did.
     pub fn question_shown(&self, channel: &str, shown: Shown) -> Result<Option<ShownMove>> {
         let mut rules = self.lock();
         let ch = &self.inner.channels;
         let moved = rules.question_shown(channel, shown);
-        let what = match &moved {
+        let muted = rules.settings.mute_level >= 1;
+        let reading = |entry: u64| ch.reading() == Some((channel.to_string(), entry));
+        let mut what = match &moved {
             Some(ShownMove::Land(nav)) => {
                 format!("on screen: question {} of {}", nav.index + 1, nav.size)
             }
@@ -772,6 +777,15 @@ impl Agent {
             Some(ShownMove::Review) => "on screen: the review of the answers".into(),
             None => "on screen: nothing to move to".into(),
         };
+        match &moved {
+            Some(ShownMove::Land(_) | ShownMove::Entry { .. }) if muted => {
+                what.push_str(", not read: muted");
+            }
+            Some(ShownMove::Entry { entry, .. }) if reading(*entry) => {
+                what.push_str(", being read already");
+            }
+            _ => {}
+        }
         self.inner.trace(
             "question",
             Some(channel),
@@ -784,18 +798,30 @@ impl Agent {
         );
         match &moved {
             Some(ShownMove::Land(nav)) => {
+                // Revised also while muted: a later replay reads it.
                 ch.revise(channel, nav.entry, &nav.text);
-                ch.read_from(channel, Some(nav.entry))?;
+                if !muted {
+                    ch.read_from(channel, Some(nav.entry))?;
+                }
             }
             Some(ShownMove::Entry { entry, .. }) => {
-                ch.read_from(channel, Some(*entry))?;
+                if !muted && !reading(*entry) {
+                    ch.read_from(channel, Some(*entry))?;
+                }
             }
             Some(ShownMove::Review) => {
-                ch.add(channel, "Review your answers.")?;
+                let actions = rules.review_line(channel);
+                self.inner
+                    .execute(&mut rules, "question", Some(channel), actions)?;
             }
             None => {}
         }
         Ok(moved)
+    }
+
+    /// Whether `channel` has a question set the screen can show (#323).
+    pub fn has_question_set(&self, channel: &str) -> bool {
+        self.lock().has_question_set(channel)
     }
 
     /// Up (`control restart` without a channel, #283): when the session Up

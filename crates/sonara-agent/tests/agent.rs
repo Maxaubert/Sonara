@@ -1886,3 +1886,68 @@ fn a_question_shown_on_screen_jumps_a_set_read_in_order() {
     r.read("Question text 3?");
     r.stays_idle();
 }
+
+#[test]
+fn a_question_shown_on_screen_is_not_read_while_muted() {
+    // A screen change is not a Sonara key: mute level 1 keeps it silent.
+    let r = Rig::new();
+    r.agent.set_mute_level(1).unwrap();
+    r.stream("a", "Here is my answer.", 0, None);
+    ask_set(&r, "a", 3);
+    r.stays_idle();
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Land(n)) if n.index == 1));
+    r.stays_idle();
+    assert_eq!(
+        r.agent.question_shown("a", Shown::Review).unwrap(),
+        Some(ShownMove::Review)
+    );
+    r.stays_idle();
+    // A set read in order stays silent too.
+    let r = Rig::new();
+    r.agent.set_mute_level(1).unwrap();
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.stays_idle();
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 3?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Entry { index: 2, .. })));
+    r.stays_idle();
+}
+
+#[test]
+fn a_question_shown_on_screen_does_not_restart_the_question_being_read() {
+    // A set read in order: Sonara reads question 2 when the user answers
+    // question 1, so the screen shows the question already being read.
+    let r = Rig::new();
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.wait_for("Question 2 of 3.");
+    r.out.start();
+    let item = || r.reader().state().unwrap().now_playing.map(|n| n.item_id);
+    let (before, calls) = (item(), r.out.calls().len());
+    r.agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(item(), before, "the item reading it goes on");
+    assert_eq!(r.out.calls().len(), calls, "nothing cut or loaded");
+    r.out.finish();
+    r.read("Question text 2?");
+    r.read("Question 3 of 3.");
+    r.read("Question text 3?");
+    r.stays_idle();
+}
