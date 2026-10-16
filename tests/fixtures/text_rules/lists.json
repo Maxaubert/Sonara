@@ -27,6 +27,38 @@
       ]
     },
     {
+      "name": "a_list_item_is_one_section",
+      "fn": "assemble",
+      "deltas": [
+        "Picks:\n\n3. OmniVoice: voice cloning, Apache-2.0. Norwegian coverage is unverified.\n4. StemDeck: local stem splitting. It is useful for remixing.\n- A bullet. With two sentences.\n  and a wrapped line.\n\nDone."
+      ],
+      "output": [
+        "Picks:",
+        null,
+        "3: omni voice: voice cloning, Apache-2.0. Norwegian coverage is unverified.",
+        "4: stem deck: local stem splitting. It is useful for remixing.",
+        "A bullet. With two sentences. and a wrapped line.",
+        null,
+        "Done."
+      ]
+    },
+    {
+      "name": "a_list_item_streamed_in_pieces_is_one_section",
+      "fn": "assemble",
+      "deltas": [
+        "Picks:\n1. First one. Still first.\n2. Sec",
+        "ond one. Also second.\n",
+        "\nDone."
+      ],
+      "output": [
+        "Picks:",
+        "1: First one. Still first.",
+        "2: Second one. Also second.",
+        null,
+        "Done."
+      ]
+    },
+    {
       "name": "bullet_list_chunks",
       "fn": "assemble",
       "deltas": [
