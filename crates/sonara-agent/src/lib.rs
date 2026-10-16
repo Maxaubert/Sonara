@@ -756,17 +756,31 @@ impl Agent {
     /// The terminal shows `shown` of `channel`'s question set (#323, the
     /// screen follower, PrismTerminal): a question other than the current
     /// one is read now (a stepping set lands on it; a set read in order
-    /// reads on from it); the review screen says "Review your answers."
-    /// once. A screen change is not a Sonara key: while muted (level 1 or
-    /// more) the set still follows the screen but nothing is read, and the
-    /// review line is stored. A question already being read goes on.
-    /// Returns what moved, `None` when nothing did.
+    /// reads that question); the review screen says "Review your answers."
+    /// once. A set read in order is followed from the first report on
+    /// (owner, 2026-10-16): only the question on screen is read, the
+    /// others are set aside in L2, and a question of the set not on screen
+    /// that is being read stops for the one on screen. A screen change is
+    /// not a Sonara key: while muted (level 1 or more) the set still
+    /// follows the screen but nothing is read, and the review line is
+    /// stored. A question already being read goes on. Returns what moved,
+    /// `None` when nothing did.
     pub fn question_shown(&self, channel: &str, shown: Shown) -> Result<Option<ShownMove>> {
         let mut rules = self.lock();
         let ch = &self.inner.channels;
         let moved = rules.question_shown(channel, shown);
+        for (entry, aside) in rules.read_set_aside(channel) {
+            ch.set_aside(channel, entry, aside);
+        }
         let muted = rules.settings.mute_level >= 1;
         let reading = |entry: u64| ch.reading() == Some((channel.to_string(), entry));
+        // A question of the set the screen does not show is being read
+        // (read in order before the screen's first report): it stops.
+        let off_screen = ch
+            .reading()
+            .filter(|(c, _)| c == channel)
+            .is_some_and(|(_, e)| ch.channel(channel).is_some_and(|c| c.is_aside(e)));
+        let shown_entry = rules.shown_entry(channel);
         let mut what = match &moved {
             Some(ShownMove::Land(nav)) => {
                 format!("on screen: question {} of {}", nav.index + 1, nav.size)
@@ -783,6 +797,9 @@ impl Agent {
             }
             Some(ShownMove::Entry { entry, .. }) if reading(*entry) => {
                 what.push_str(", being read already");
+            }
+            None if off_screen && shown_entry.is_some() && !muted => {
+                what.push_str(", the question read instead of one not on screen");
             }
             _ => {}
         }
@@ -814,7 +831,11 @@ impl Agent {
                 self.inner
                     .execute(&mut rules, "question", Some(channel), actions)?;
             }
-            None => {}
+            None => {
+                if let (true, false, Some(e)) = (off_screen, muted, shown_entry) {
+                    ch.read_from(channel, Some(e))?;
+                }
+            }
         }
         Ok(moved)
     }
@@ -1288,6 +1309,14 @@ impl Inner {
         first
     }
 
+    /// A question of a set the screen is followed for (#323) is set aside
+    /// in L2 unless it is the one on screen.
+    fn follow_screen(&self, rules: &Rules, channel: &str) {
+        for (entry, aside) in rules.read_set_aside(channel) {
+            self.channels.set_aside(channel, entry, aside);
+        }
+    }
+
     /// Why text added to `channel` may wait (for the trace).
     fn waits(&self, channel: &str, release: bool) -> Option<&'static str> {
         let ch = &self.channels;
@@ -1312,6 +1341,7 @@ impl Inner {
                 if kind == "question" {
                     // The entry that shows a question set (#283).
                     rules.bind_question(&channel, spoken.entry, false);
+                    self.follow_screen(rules, &channel);
                 }
                 if decision {
                     ch.prioritize(&channel)?;
@@ -1341,6 +1371,7 @@ impl Inner {
                 let stored = ch.store(&channel, &text, decision)?;
                 if kind == "question" {
                     rules.bind_question(&channel, stored.entry, true);
+                    self.follow_screen(rules, &channel);
                 }
                 self.trace(
                     source,
