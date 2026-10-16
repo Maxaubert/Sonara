@@ -244,6 +244,9 @@ Sonara's built-in chimes are original sounds, synthesised from scratch for it (M
 | `error` | speech fails | a low falling knock pair |
 | `summary_failed` | a summary-mode turn had no text | a short, soft falling knock |
 
+Chimes play one after the other, never on top of each other. The key sounds (`step`, `nav`,
+`nav_edge`) are the exception: they play the moment the key acts, over a chime that is playing.
+
 A WAV of your own in `%LOCALAPPDATA%\Sonara\earcons\` overrides any of them: see below.
 
 ### Custom chimes
