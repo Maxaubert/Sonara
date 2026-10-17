@@ -4,7 +4,7 @@
   # Sonara
 
   **A speech runtime for Windows apps.**<br>
-  One shared text-to-speech engine that apps embed, with a Claude Code plugin built on it.
+  Offline local voices and cloud engines behind one API, with SDKs for Node, Python and React.
 
   [![CI](https://github.com/Maxaubert/Sonara/actions/workflows/ci.yml/badge.svg)](https://github.com/Maxaubert/Sonara/actions/workflows/ci.yml)
   [![Release](https://img.shields.io/github/v/release/Maxaubert/Sonara?color=5B4BDB)](https://github.com/Maxaubert/Sonara/releases)
