@@ -3,8 +3,8 @@
 
   # Sonara
 
-  **Eyes-free speech for [Claude Code](https://claude.ai/code) on Windows.**<br>
-  An accessibility tool for blind and low-vision developers: hear every reply, answer every prompt, keep the screen off.
+  **A speech runtime for Windows apps.**<br>
+  One shared text-to-speech engine that apps embed, with a Claude Code plugin built on it for blind and low-vision developers.
 
   [![CI](https://github.com/Maxaubert/Sonara/actions/workflows/ci.yml/badge.svg)](https://github.com/Maxaubert/Sonara/actions/workflows/ci.yml)
   [![Release](https://img.shields.io/github/v/release/Maxaubert/Sonara?color=5B4BDB)](https://github.com/Maxaubert/Sonara/releases)
@@ -15,9 +15,14 @@
 
 ---
 
-Sonara is a Claude Code plugin that reads Claude's output aloud: prose, plans, multiple-choice
-questions and permission prompts. A distinct sound plays the moment a decision needs you, you
-answer by number, and global hotkeys control the voice from any window.
+Sonara is a text-to-speech runtime (sonarad.exe) that any Windows app can bundle or talk to over a
+local protocol. It owns the voice: Kokoro neural voices offline, Windows voices, or cloud and local
+engines you add, with queues, global hotkeys, audio ducking and several clients sharing one
+instance. SDKs for Node and Python and a React player sit on top (see [Bundle Sonara in your app](docs/bundling.md)).
+
+The first app built on it is the **Claude Code plugin** below. It reads Claude's output aloud: prose,
+plans, multiple-choice questions and permission prompts. A distinct sound plays the moment a decision
+needs you, you answer by number, and hotkeys control the voice from any window.
 
 > [!NOTE]
 > This is the Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari)
