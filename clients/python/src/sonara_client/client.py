@@ -98,7 +98,8 @@ class Client:
         self.request("control", {"action": action})
 
     def set(self, key: str, value: Any) -> Any:
-        """Change ``volume``, ``rate``, ``voice``, ``engine``, ``paths``
+        """Change ``volume``, ``rate``, ``voice``, ``engine``, ``debug_log``
+        (``True`` or ``False``: the troubleshooting log records text), ``paths``
         (protocol 1.9: ``"short"``, ``"last_two"``, ``"last_three"`` or ``"full"``) or
         ``pronunciations`` (protocol 1.8: a list of ``{"word", "say"}``); the value now in force."""
         return self.request("set", {"key": key, "value": value})["value"]

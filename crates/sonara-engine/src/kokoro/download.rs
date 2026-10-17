@@ -38,8 +38,7 @@ pub struct ModelFile {
     pub size: u64,
 }
 
-/// The pinned Kokoro v1.0 files (fp32 model, see the M4 notes in
-/// `docs/plans/2026-10-02-m0-engine-spike.md`) under `base` (`BASE_URL`, or
+/// The pinned Kokoro v1.0 files (fp32 model) under `base` (`BASE_URL`, or
 /// a mirror or test server with the same file names).
 pub fn pinned_files(base: &str) -> Vec<ModelFile> {
     let base = base.trim_end_matches('/');

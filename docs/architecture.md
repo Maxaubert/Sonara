@@ -2,8 +2,7 @@
 
 How the Rust runtime in `crates/` is put together, for contributors. User-facing behaviour is in
 the [README](../README.md); the wire contract for clients is [protocol-v1.md](protocol-v1.md)
-(external engines: [protocol-v1-engines.md](protocol-v1-engines.md)). The design came from the
-runtime spec and plan in `docs/plans/`. The retired Python daemon's architecture (up to 0.10) is
+(external engines: [protocol-v1-engines.md](protocol-v1-engines.md)). The retired Python daemon's architecture (up to 0.10) is
 kept in [history/architecture-python.md](history/architecture-python.md).
 
 Each crate's `src/lib.rs` opens with a `//!` header that says what it owns and the rules it keeps.
@@ -29,19 +28,19 @@ crates each crate may depend on, read against `cargo metadata`, so a new depende
 
 | Crate | Layer | Owns | Workspace deps | Key files | Tests |
 |---|---|---|---|---|---|
-| `sonara-core` | L1 | Pure text rules (markdown cleanup, the streamed-text assembler, code read aloud: `code_speech`, #295; text read as said: `pronounce`, `numbers`, #294) and the reader state machine (one queue of items, controls, state and item events; code lines as their own chunks and step mode). No threads, no I/O, no clock | none | `text.rs`, `assembler.rs`, `code_speech.rs`, `pronounce.rs`, `numbers.rs`, `reader/mod.rs`, `reader/types.rs`, `reader/chunks.rs` | `tests/golden.rs` (shared fixtures in `tests/fixtures/text_rules/`), `tests/code_speech.rs`, `tests/reader_*.rs`, `tests/layering.rs` (R7 guard for the whole workspace) |
-| `sonara-engine` | L1 | The `Engine` trait, its types, the `Registry` (licence rule R6), OneCore, Kokoro (feature `kokoro`), external engines (feature `external`), the fake engine (feature `test-util`) | `sonara-log` (feature `external`), `misaki` (feature `kokoro`) | `lib.rs`, `types.rs`, `registry.rs`, `onecore/`, `kokoro/`, `external/`, `http.rs`, `bin/sonara-fake-tts.rs` | `tests/registry.rs`, `tests/fake.rs`, `tests/kokoro_*.rs` (G2P goldens in `tests/golden/`), `tests/external_*.rs`; opt-in live: `onecore_live`, `kokoro_live`, `external_live`, `credman_live` |
+| `sonara-core` | L1 | Pure text rules (markdown cleanup, the streamed-text assembler, code read aloud: `code_speech`, #295; text read as said: `pronounce`, `numbers`, #294) and the reader state machine (one queue of items, controls, state and item events; code lines as their own chunks and step mode). No threads, no I/O, no clock | none | `text.rs`, `table.rs` (tables read row by row), `assembler.rs`, `code_speech.rs`, `pronounce.rs`, `numbers.rs`, `reader/mod.rs`, `reader/types.rs`, `reader/chunks.rs` | `tests/golden.rs` (shared fixtures in `tests/fixtures/text_rules/`), `tests/code_speech.rs`, `tests/reader_*.rs`, `tests/layering.rs` (R7 guard for the whole workspace) |
+| `sonara-engine` | L1 | The `Engine` trait, its types, the `Registry` (licence rule R6), OneCore, Kokoro (feature `kokoro`), external engines (feature `external`), the fake engine (feature `test-util`) | `sonara-log` (feature `external`), `misaki` (feature `kokoro`) | `lib.rs`, `types.rs`, `error.rs`, `registry.rs`, `wav.rs` (WAV decoding), `fake.rs`, `onecore/`, `kokoro/`, `external/`, `http.rs`, `bin/sonara-fake-tts.rs` | `tests/registry.rs`, `tests/fake.rs`, `tests/kokoro_*.rs` (G2P goldens in `tests/golden/`), `tests/external_*.rs`; opt-in live: `onecore_live`, `kokoro_live`, `external_live`, `credman_live` |
 | `misaki` | L1 | Vendored, trimmed misaki G2P (US English) for Kokoro | none | `g2p.rs`, `lexicon.rs`, `tagger.rs`, `data/` (packed by `tools/pack_data.py`) | `tests/data.rs` |
 | `sonara-audio` | L1 | Audio output: plays one chunk's PCM with true pause and resume, volume, clips mixed over speech; follows the Windows default output at the next chunk (#288); device trouble is an `AudioEvent::Failed`, never a panic | `sonara-core`, `sonara-engine` | `rodio_output.rs` (rodio on WASAPI, own thread), `test_output.rs` (feature `test-util`) | unit tests |
 | `sonara-reader` | L1 | The facade `ReaderHandle`: a worker thread owns the state machine and carries out its effects with an engine and an output; synthesis on its own thread; `subscribe` for events | `sonara-core`, `sonara-engine`, `sonara-audio` | `lib.rs`, `worker.rs`, `synth.rs`, `settings.rs` | `tests/playback.rs`, `threads.rs`, `lookahead.rs`, `settings.rs`, `engine_status.rs` |
 | `sonara-log` | L1 | The log folder: streams, 1 MB segments, a 10 MB budget for the folder, an OS lock per append; secret masking; `scrub` and `FIELD_MAX` for JSON written to the log (sonarad and the hook) | none | `lib.rs`, `secrets.rs`, `json.rs` | `tests/budget.rs`, unit tests (`json.rs`, `secrets.rs`) |
 | `sonara-channels` | L2 | Several named sources share one reader; one channel reads at a time, switches are announced, entries are fed one at a time when the reader is idle | `sonara-reader` | `lib.rs` (the driver), `router.rs` (pure rules) | `tests/channels.rs`, `router.rs` |
 | `sonara-agent` | L3 | Agent sessions on channels: streamed turns, decisions with priority, earcons (one at a time), three mute levels, read modes, summaries | `sonara-channels`, `sonara-reader`, `sonara-core`, `sonara-engine` | `lib.rs` (the driver), `rules.rs` (pure), `decision.rs`, `earcon.rs` + `sounds/`, `sequencer.rs`, `settings.rs`, `summarizer.rs`, `prompts/` | `tests/agent.rs`, `rules.rs`, `muted_store.rs`, `send_mode.rs`, `summarizer_process.rs` |
-| `sonara-system` | L4 | Windows extras: duck or pause other apps while speech plays (with crash restore), global hotkeys, the keymap and AltGr check, activity log lines; all OS access behind `platform::Platform` | `sonara-reader` | `audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `platform.rs`, `win.rs`, `fake.rs`, `log.rs` | `tests/audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `activity_log.rs`; opt-in live: `win_live` |
+| `sonara-system` | L4 | Windows extras: duck or pause other apps while speech plays (with crash restore), global hotkeys, the keymap and AltGr check, activity log lines; all OS access behind `platform::Platform` | `sonara-reader` | `audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `state_file.rs` (small JSON files in the home), `platform.rs`, `win.rs`, `fake.rs`, `log.rs` | `tests/audio.rs`, `ducking.rs`, `pausing.rs`, `hotkeys.rs`, `keymap.rs`, `activity_log.rs`; opt-in live: `win_live` |
 | `sonara-client` | L5 support (leaf) | The protocol v1 client of a local `sonarad` (#255): the home (`SONARA_HOME`, else `%LOCALAPPDATA%\Sonara`), `runtime.json` and the stop sentinel, connect, `hello`, a fire-and-forget batch that starts the runtime when none answers (`deliver`), request and reply with events (`Conn`, `attach`), the runtime started detached (`start_runtime`). Only `serde_json` | none | `home.rs`, `runtime.rs`, `hello.rs`, `batch.rs`, `conn.rs` | unit tests; the hook's `tests/binary.rs` and conformance end to end |
-| `sonara-hook` | L5 | `sonara-hook.exe`: maps a Claude Code hook event to protocol v1 `channels` and `agent` messages (only the mapping, its `hello` and its log; `sonara-client` delivers them as one batch and starts `sonarad` when none answers); never fails the session | `sonara-client`, `sonara-log` (no runtime crate) | `lib.rs` (`map_event`, `HELLO`, `log_line`), `project.rs` (session names), `main.rs` | `tests/golden.rs` (cases in `tests/golden/`), `binary.rs` |
+| `sonara-hook` | L5 | `sonara-hook.exe`: maps a Claude Code hook event to protocol v1 `channels` and `agent` messages (only the mapping, its `hello` and its log; `sonara-client` delivers them as one batch and starts `sonarad` when none answers); never fails the session | `sonara-client`, `sonara-log` (no runtime crate) | `lib.rs` (`map_event`, `HELLO`, `log_line`), `project.rs` (session names), `transcript.rs` (the lead-in of a question whose message has no text), `main.rs` | `tests/golden.rs` (cases in `tests/golden/`), `binary.rs` |
 | `sonara-cli` | L5 | `sonara.exe`: `start`, `stop`, `settings`, `doctor`, `uninstall`, `engines`, `version`; a protocol v1 client through `sonara-client` | `sonara-client` | `main.rs`, `client.rs` (its `hello`), `lifecycle.rs`, `doctor.rs`, `uninstall.rs`, `engines.rs`, `engines_file.rs`, `paths.rs` | unit tests; conformance `conformance/plugin/` |
-| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | `sonara-reader`, `sonara-engine`, `sonara-audio`, `sonara-channels`, `sonara-agent`, `sonara-system`, `sonara-log`, `sonara-client` (the home and the `runtime.json` name, shared with the clients) | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
+| `sonarad` | host | The runtime process: one reader, protocol v1 over TCP and HTTP, the extensions, persisted settings, external engine profiles, the settings page, the logs | `sonara-core`, `sonara-reader`, `sonara-engine`, `sonara-audio`, `sonara-channels`, `sonara-agent`, `sonara-system`, `sonara-log`, `sonara-client` (the home and the `runtime.json` name, shared with the clients) | see [Inside sonarad](#inside-sonarad) | `tests/*.rs`, unit tests, and the black-box `conformance/` suite |
 
 Pure rules and drivers: L1 (`sonara_core::reader`), L2 (`router.rs`) and L3 (`rules.rs`) keep their
 decisions in pure code with no threads, clock or I/O, and a driver carries out the actions they
@@ -92,10 +91,12 @@ plugin once, `migrate.rs`), builds the engines and the `ReaderHandle`, writes `r
 | `cues.rs` | Spoken control cues ("Paused.", "Rate 250.") on one worker, mixed over speech as clips |
 | `quiet.rs` | Muted means no request reaches an external engine (#227) |
 | `config.rs` | `SCHEMA` of persisted settings, `Store` (`config.json`, `session_prefs.json`), `apply_reader` |
+| `home.rs` | The home folder: `--home`, else `SONARA_HOME`, else `%LOCALAPPDATA%\Sonara` |
 | `lifetime.rs` | Clients, activity and the idle exit |
 | `settings_page.rs`, `assets/settings/` | The settings page (markup, `style.css` and `script.js`, joined at compile time; the ranges and defaults of `SCHEMA` filled in when served), driving the runtime only through the public HTTP API |
 | `support_log.rs`, `trace_log.rs` | The lines of `logs\sonarad.log` |
 | `null_output.rs` | `--output null`: a silent output that keeps real time (conformance, CI) |
+| `wav_output.rs` | `--output wav:<dir>`: the null output that also writes every chunk and clip it is handed to a WAV file (#274), so an end-to-end test can check real audio |
 
 ## Threads
 
@@ -186,8 +187,7 @@ Host locks in `sonarad` are taken at the start of handling a request, before any
 
 ## External engines
 
-Speech engines the user adds at run time (#224 to #227, #235; spec
-`docs/plans/2026-10-04-external-engines-spec.md`; contract
+Speech engines the user adds at run time (#224 to #227, #235; contract
 [protocol-v1-engines.md](protocol-v1-engines.md)). Each profile is an `Engine` of licence class
 `External` in the reader's `Registry` (shared, with interior mutability, so profiles come and go
 while the reader runs), next to Kokoro and OneCore. The reader and the layers above only see

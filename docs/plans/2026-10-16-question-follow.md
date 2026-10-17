@@ -1,6 +1,7 @@
 # Following the question on screen (spec and plan, 2026-10-16)
 
-For the owner's approval. Research: `C:\Users\Admin\Documents\Claude\research\sonara\2026-10-16-question-widget-probe.md`.
+Status: open plan, tracked in issue #323 (not yet implemented). Research: the widget probe
+(`research/sonara/2026-10-16-question-widget-probe.md` in the maintainer's notes, not in this repo).
 
 ## Problem
 

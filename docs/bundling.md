@@ -129,6 +129,7 @@ Every failure is a `SonaraError` with a `code`. The runtime's codes (`E_BAD_REQU
 | `E_START_FAILED` | the bundled runtime did not start, or wrote no `runtime.json` within 5 s |
 | `E_CLOSED` | the connection closed before the reply (the runtime exited, a takeover, or `close()`) |
 | `E_INCOMPATIBLE` | the running instance cannot serve you and stayed busy for 30 s, or your bundled runtime lacks what you `require` |
+| `E_TIMEOUT` | TypeScript client only: no reply to one request within its `timeoutMs` option (default: no limit) |
 
 ## Extensions
 

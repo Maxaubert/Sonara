@@ -5,7 +5,7 @@
 
 How Sonara is put together, for contributors. Current as of 0.8.3 (2026-10-02). User-facing
 behaviour is in the [README](../../README.md); the wire contract for embedding hosts is
-[protocol.md](../protocol.md).
+[protocol.md](../protocol-v1.md).
 
 > Since 0.11 (#202) the Claude Code plugin runs the Rust runtime (`crates/`) and no longer uses
 > the Python package described here; it stays until a follow-up removes it. The runtime's
@@ -173,7 +173,7 @@ needs no speech engine, audio device or real hotkeys.
 
 Newline-delimited JSON over loopback TCP, authenticated by a token from `~/.sonara/daemon.lock`.
 Message types are in `protocol.py`. The full contract, including SPEAK, SUBSCRIBE and the host
-tab, is [protocol.md](../protocol.md). Changes stay additive, and the doc changes with the code.
+tab, is [protocol.md](../protocol-v1.md). Changes stay additive, and the doc changes with the code.
 
 ## Config schema
 
