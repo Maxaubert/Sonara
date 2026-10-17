@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "sonara",
-  "description": "Sonara: eyes-free text-to-speech for Claude Code (blind/low-vision developers)",
+  "description": "Sonara: text-to-speech for Claude Code on Windows",
   "owner": {
     "name": "Max Aubert",
     "email": "aubert@post.com"
@@ -10,11 +10,11 @@
     {
       "name": "sonara",
       "version": "0.32.14",
-      "description": "Eyes-free text-to-speech for Claude Code (Windows): reads replies, options, plans and permissions per session with a Kokoro voice, earcons and global hotkeys. No Python needed: the runtime installs itself on first use.",
+      "description": "Text-to-speech for Claude Code (Windows): reads replies, options, plans and permissions per session with a Kokoro voice, earcons and global hotkeys. No Python needed: the runtime installs itself on first use.",
       "author": {
         "name": "Max Aubert"
       },
-      "category": "accessibility",
+      "category": "productivity",
       "homepage": "https://github.com/Maxaubert/Sonara",
       "repository": "https://github.com/Maxaubert/Sonara",
       "source": "./"

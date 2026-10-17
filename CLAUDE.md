@@ -1,6 +1,6 @@
 # Sonara
 
-Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime in `crates/`. Hooks: `hooks/hooks.json` -> `bin/sonara-hook-launch` (Git Bash) -> `sonara-hook.exe` -> `sonarad.exe`. Commands: `commands/*.md` -> `bin/sonara` -> `sonara.exe` (`crates/sonara-cli`). Docs index: `docs/README.md`.
+Text-to-speech runtime for Windows with a Claude Code plugin, run by the Rust runtime in `crates/`. Hooks: `hooks/hooks.json` -> `bin/sonara-hook-launch` (Git Bash) -> `sonara-hook.exe` -> `sonarad.exe`. Commands: `commands/*.md` -> `bin/sonara` -> `sonara.exe` (`crates/sonara-cli`). Docs index: `docs/README.md`.
 
 ## Remotes
 - `origin` = the fork `Maxaubert/Sonara` (PRs go here). `upstream` = `nimkimi/sonari`: never push there.
