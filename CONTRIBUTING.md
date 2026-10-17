@@ -100,7 +100,7 @@ what you tested.
 
 ## Behaviour changes
 
-Sonara is an eyes-free tool, so changes to core controls (hotkeys, what gets spoken, default
+Sonara is driven by hotkeys and sound, so changes to core controls (hotkeys, what gets spoken, default
 bindings) are user-facing decisions. Call them out in the PR description with a
 **Behaviour change:** line, and raise anything that removes or remaps a default before you
 build it.

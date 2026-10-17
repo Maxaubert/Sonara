@@ -4,7 +4,7 @@ _Last updated: 2026-10-07 (0.22.0: the hook reads the end of the session's trans
 speech engines; 0.16.0: ElevenLabs, Azure and Google as external speech engines;
 0.15.0: external speech engines you add, their keys in Windows Credential Manager)_
 
-Sonara is a Windows accessibility plugin for [Claude Code](https://claude.ai/code) that reads
+Sonara is a Windows text-to-speech runtime and [Claude Code](https://claude.ai/code) plugin that reads
 Claude Code's output aloud. This page says exactly what it does with your data, what it keeps on
 your computer and what, if anything, leaves it.
 
