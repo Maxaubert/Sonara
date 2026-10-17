@@ -192,6 +192,51 @@ mod tests {
         );
     }
 
+    // #56: a stale runtime.json whose port another process now holds gets
+    // nothing: not the hello with the token, not the messages.
+    #[cfg(windows)]
+    #[test]
+    fn nothing_is_sent_to_a_process_squatting_the_port_of_a_dead_runtime() {
+        use crate::home::RUNTIME_FILE;
+        use std::io::Read;
+        use std::net::TcpListener;
+        let dir = std::env::temp_dir().join(format!("sonara-client-squat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let dead = u64::from(std::process::id()) + 4;
+        std::fs::write(
+            dir.join(RUNTIME_FILE),
+            json!({"pid": dead, "port": port, "token": "secret"}).to_string(),
+        )
+        .unwrap();
+        let squatter = std::thread::spawn(move || {
+            l.set_nonblocking(false).unwrap();
+            let Ok((mut s, _)) = l.accept() else {
+                return Vec::new();
+            };
+            s.set_read_timeout(Some(Duration::from_millis(500)))
+                .unwrap();
+            let mut got = Vec::new();
+            let _ = s.read_to_end(&mut got);
+            got
+        });
+        let t = Instant::now();
+        let d = deliver(
+            &dir,
+            &HELLO,
+            &[json!({"type": "stream", "text": "the turn"})],
+            None,
+            &[],
+            t + Duration::from_secs(1),
+            Duration::from_secs(2),
+        );
+        assert_eq!(d, Delivery::Dropped);
+        let got = squatter.join().unwrap();
+        assert!(got.is_empty(), "{}", String::from_utf8_lossy(&got));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_stopped_home_is_not_started() {
         let dir = std::env::temp_dir().join(format!("sonara-client-stop-d-{}", std::process::id()));

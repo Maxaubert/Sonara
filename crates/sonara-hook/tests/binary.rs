@@ -35,7 +35,9 @@ fn fake_runtime(home: &Home) -> mpsc::Receiver<Vec<Value>> {
     let port = l.local_addr().unwrap().port();
     std::fs::write(
         home.dir.join("runtime.json"),
-        json!({"pid": 1, "port": port, "http_port": 1, "token": "tok"}).to_string(),
+        // The pid that holds the port: the client checks it (#56).
+        json!({"pid": std::process::id(), "port": port, "http_port": 1, "token": "tok"})
+            .to_string(),
     )
     .unwrap();
     let (tx, rx) = mpsc::channel();
