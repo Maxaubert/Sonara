@@ -346,6 +346,8 @@ describe("extension namespaces", () => {
     await c.agent.ask("tab-1", "question", "Red?", ["yes"], { set_index: 0, set_size: 2 });
     await c.agent.nextQuestion();
     await c.agent.previousQuestion();
+    await c.agent.questionShown("tab-1", "Red?");
+    await c.agent.questionShown("tab-1", { review: true });
     await c.agent.setMuteLevel(2);
     await c.agent.setSummaries({ enabled: true });
     await c.system.setAudioMode("duck");
@@ -369,6 +371,8 @@ describe("extension namespaces", () => {
       { type: "ask", channel: "tab-1", kind: "question", text: "Red?", options: ["yes"], set_index: 0, set_size: 2 },
       { type: "control", action: "next_question" },
       { type: "control", action: "previous_question" },
+      { type: "question_shown", channel: "tab-1", text: "Red?" },
+      { type: "question_shown", channel: "tab-1", review: true },
       { type: "set", key: "mute_level", value: 2 },
       { type: "set", key: "summaries", value: { enabled: true } },
       { type: "set", key: "audio_mode", value: "duck" },

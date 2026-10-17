@@ -7,8 +7,8 @@
 //! the Python regressions.
 use sonara_agent::settings::Settings;
 use sonara_agent::{
-    Action, Ask, AskKind, Choice, Earcon, Job, ReadMode, Rules, Stale, Step, Timer, Verbosity,
-    DELTA_GAP,
+    Action, Ask, AskKind, Choice, Earcon, Job, ReadMode, Rules, Shown, ShownMove, Stale, Step,
+    Timer, Verbosity, DELTA_GAP,
 };
 use sonara_core::code_speech::{CODE_LINE, CODE_START, SPOKEN};
 use std::time::Duration;
@@ -2153,4 +2153,159 @@ fn a_gap_timer_of_a_closed_channel_does_not_cut_a_new_wait_short() {
     let new = gap_of(&prose(&mut r, "fg", "New two. ", 2, true));
     assert!(spoken(&r.fire(&old, Some("fg"))).is_empty(), "stale timer");
     assert_eq!(spoken(&r.fire(&new, Some("fg"))), ["New two."]);
+}
+
+// -- following the question on screen (#323) ---------------------------------
+
+#[test]
+fn a_question_shown_on_screen_moves_a_stepping_set_to_it() {
+    let mut r = stepping();
+    ask_set(&mut r, "fg", 3);
+    r.bind_question("fg", 7, false);
+    // The question already current is ignored (the widget appearing).
+    assert_eq!(r.question_shown("fg", Shown::Text("Q1?")), None);
+    let Some(ShownMove::Land(nav)) = r.question_shown("fg", Shown::Text("  q2? ")) else {
+        panic!("landed");
+    };
+    assert_eq!((nav.entry, nav.index, nav.size), (7, 1, 3));
+    assert_eq!(
+        r.question_shown("fg", Shown::Text("Q2?")),
+        None,
+        "already there"
+    );
+    let Some(ShownMove::Land(back)) = r.question_shown("fg", Shown::Text("Q1?")) else {
+        panic!("back");
+    };
+    assert_eq!(back.index, 0);
+    assert_eq!(r.question_shown("fg", Shown::Text("Something else?")), None);
+    assert_eq!(r.question_shown("other", Shown::Text("Q1?")), None);
+}
+
+#[test]
+fn a_question_shown_on_screen_jumps_in_a_set_read_in_order() {
+    let mut r = rules();
+    ask_set(&mut r, "fg", 3);
+    for e in [10, 11, 12] {
+        r.bind_question("fg", e, false);
+    }
+    assert_eq!(r.question_shown("fg", Shown::Text("Q1?")), None);
+    assert_eq!(
+        r.question_shown("fg", Shown::Text("Q3?")),
+        Some(ShownMove::Entry {
+            entry: 12,
+            index: 2,
+            size: 3
+        })
+    );
+    assert_eq!(r.question_shown("fg", Shown::Text("Q3?")), None);
+}
+
+#[test]
+fn a_followed_set_read_in_order_sets_aside_the_questions_not_on_screen() {
+    // Owner, 2026-10-16: only the question on screen is read.
+    let mut r = rules();
+    ask_set(&mut r, "fg", 3);
+    for e in [10, 11, 12] {
+        r.bind_question("fg", e, false);
+    }
+    assert!(r.read_set_aside("fg").is_empty(), "nobody follows it yet");
+    assert_eq!(r.shown_entry("fg"), None);
+    assert_eq!(r.question_shown("fg", Shown::Text("Q1?")), None);
+    assert_eq!(
+        r.read_set_aside("fg"),
+        [(10, false), (11, true), (12, true)]
+    );
+    assert_eq!(r.shown_entry("fg"), Some(10));
+    r.question_shown("fg", Shown::Text("Q2?"));
+    assert_eq!(
+        r.read_set_aside("fg"),
+        [(10, true), (11, false), (12, true)]
+    );
+    // The review: no question on screen; back to question 2 reads it.
+    assert_eq!(
+        r.question_shown("fg", Shown::Review),
+        Some(ShownMove::Review)
+    );
+    assert_eq!(r.read_set_aside("fg"), [(10, true), (11, true), (12, true)]);
+    assert_eq!(r.shown_entry("fg"), None);
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Q2?")),
+        Some(ShownMove::Entry { index: 1, .. })
+    ));
+}
+
+#[test]
+fn a_wrapped_question_on_screen_matches_its_text() {
+    let mut r = stepping();
+    let mut first = question(
+        "When the installer finds the search service running, should it restart it?",
+        &["Yes"],
+    );
+    first.set = Some((0, 2));
+    let mut second = question("Which platforms should the build cover?", &["Windows"]);
+    second.set = Some((1, 2));
+    r.ask("fg", &first);
+    r.ask("fg", &second);
+    r.bind_question("fg", 3, false);
+    // The screen joins the wrapped lines with single spaces; a cut-off
+    // screen still matches by its start.
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Which platforms should the build cover?")),
+        Some(ShownMove::Land(_))
+    ));
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("When the installer finds the search service running,")),
+        Some(ShownMove::Land(n)) if n.index == 0
+    ));
+}
+
+#[test]
+fn the_review_screen_is_announced_once_per_set() {
+    let mut r = stepping();
+    ask_set(&mut r, "fg", 2);
+    r.bind_question("fg", 4, false);
+    assert_eq!(
+        r.question_shown("fg", Shown::Review),
+        Some(ShownMove::Review)
+    );
+    assert_eq!(r.question_shown("fg", Shown::Review), None);
+    assert_eq!(r.question_shown("nobody", Shown::Review), None);
+}
+
+#[test]
+fn a_long_token_wrapped_mid_word_on_screen_matches_its_question() {
+    // The terminal cuts a word wider than a line in two, and the screen's
+    // lines are joined with a space (#323).
+    let mut r = stepping();
+    let mut first = question("Which one?", &["Yes"]);
+    first.set = Some((0, 2));
+    let mut second = question(
+        "Should I delete C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\C--Users-Admin-Documents-Claude\\cache?",
+        &["Yes"],
+    );
+    second.set = Some((1, 2));
+    r.ask("fg", &first);
+    r.ask("fg", &second);
+    r.bind_question("fg", 3, false);
+    assert!(matches!(
+        r.question_shown(
+            "fg",
+            Shown::Text("Should I delete C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\C--Users-Admin-Docu ments-Claude\\cache?")
+        ),
+        Some(ShownMove::Land(n)) if n.index == 1
+    ));
+    // Cut off on screen: the start still matches, from 20 characters on.
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Which one?")),
+        Some(ShownMove::Land(n)) if n.index == 0
+    ));
+    assert_eq!(
+        r.question_shown("fg", Shown::Text("Should I del")),
+        None,
+        "too short"
+    );
+    assert!(matches!(
+        r.question_shown("fg", Shown::Text("Should I delete C:\\Users\\Admin\\App Data")),
+        Some(ShownMove::Land(n)) if n.index == 1
+    ));
 }

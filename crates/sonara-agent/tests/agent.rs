@@ -6,7 +6,7 @@
 use sonara_agent::earcon::Library;
 use sonara_agent::{
     Agent, Ask, AskKind, Back, BackgroundPolicy, Channels, Config, Earcon, FlushScope, Forward,
-    Section, Settings, Skip, Step, Summarizer, SummarySettings,
+    Section, Settings, Shown, ShownMove, Skip, Step, Summarizer, SummarySettings,
 };
 use sonara_audio::{OutputCall, TestOutput};
 use sonara_channels::{Config as ChannelsConfig, Control, Flushed, Policy};
@@ -1832,4 +1832,255 @@ fn holding_right_skips_the_rest_of_the_message_to_the_next_session() {
     r.read("From beta.");
     r.stays_idle();
     assert_eq!(r.agent.skip_message().unwrap(), Skip::Nothing);
+}
+
+// -- following the question on screen (#323) ---------------------------------
+
+#[test]
+fn a_question_shown_on_screen_is_read_when_stepping() {
+    let r = text_and_four_questions();
+    r.read("Here is my answer.");
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    // The user answered question 1: the screen shows question 2.
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Land(n)) if n.index == 1));
+    r.read("Question 2 of 4.");
+    r.read("Question text 2?");
+    r.stays_idle();
+    // Back with Shift+Tab: question 1 again.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    r.read("Question 1 of 4.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    // The review screen, once.
+    r.agent.question_shown("a", Shown::Review).unwrap();
+    r.read("Review your answers.");
+    r.stays_idle();
+    assert_eq!(r.agent.question_shown("a", Shown::Review).unwrap(), None);
+}
+
+#[test]
+fn a_question_shown_on_screen_jumps_a_set_read_in_order() {
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 3.");
+    r.out.start();
+    // The user skipped to question 3 on screen.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 3?"))
+        .unwrap();
+    r.read("Question 3 of 3.");
+    r.read("Question text 3?");
+    r.stays_idle();
+}
+
+#[test]
+fn a_question_shown_on_screen_is_not_read_while_muted() {
+    // A screen change is not a Sonara key: mute level 1 keeps it silent.
+    let r = Rig::new();
+    r.agent.set_mute_level(1).unwrap();
+    r.stream("a", "Here is my answer.", 0, None);
+    ask_set(&r, "a", 3);
+    r.stays_idle();
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Land(n)) if n.index == 1));
+    r.stays_idle();
+    assert_eq!(
+        r.agent.question_shown("a", Shown::Review).unwrap(),
+        Some(ShownMove::Review)
+    );
+    r.stays_idle();
+    // A set read in order stays silent too.
+    let r = Rig::new();
+    r.agent.set_mute_level(1).unwrap();
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.stays_idle();
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 3?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Entry { index: 2, .. })));
+    r.stays_idle();
+}
+
+#[test]
+fn a_question_shown_on_screen_does_not_restart_the_question_being_read() {
+    // A set read in order: Sonara reads question 2 when the user answers
+    // question 1, so the screen shows the question already being read.
+    let r = Rig::new();
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.wait_for("Question 2 of 3.");
+    r.out.start();
+    let item = || r.reader().state().unwrap().now_playing.map(|n| n.item_id);
+    let (before, calls) = (item(), r.out.calls().len());
+    r.agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(item(), before, "the item reading it goes on");
+    assert_eq!(r.out.calls().len(), calls, "nothing cut or loaded");
+    r.out.finish();
+    r.read("Question text 2?");
+    // Question 3 is not on screen: it waits for the screen (owner,
+    // 2026-10-16).
+    r.stays_idle();
+}
+
+/// A set of `n` questions read in order (`question_step` off, #320).
+fn read_in_order(r: &Rig, ch: &str, n: usize) {
+    for i in 0..n {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, n));
+        r.agent.ask(ch, &a).unwrap();
+    }
+}
+
+#[test]
+fn a_shown_question_is_read_alone_not_the_rest_of_the_set() {
+    // Owner, 2026-10-16: it follows the question, never reading one that
+    // is not on screen.
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    read_in_order(&r, "a", 3);
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 3.");
+    r.out.start();
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    r.out.finish();
+    r.read("Question text 1?");
+    r.stays_idle();
+    // The user answered question 1: the screen shows question 2, only it.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    r.read("Question 2 of 3.");
+    r.read("Question text 2?");
+    r.stays_idle();
+    // The review line only when the screen shows the review.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 3?"))
+        .unwrap();
+    r.read("Question 3 of 3.");
+    r.read("Question text 3?");
+    r.stays_idle();
+    r.agent.question_shown("a", Shown::Review).unwrap();
+    r.read("Review your answers.");
+    r.stays_idle();
+}
+
+#[test]
+fn a_shown_question_is_not_followed_by_questions_not_on_screen_yet() {
+    // The screen reports question 1 before Sonara reaches it.
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    read_in_order(&r, "a", 3);
+    r.wait_for("Here is my answer.");
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    r.out.start();
+    r.out.finish();
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn moving_to_another_question_stops_the_one_reading() {
+    let r = Rig::new();
+    read_in_order(&r, "a", 3);
+    r.wait_for("Question 1 of 3.");
+    r.out.start();
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    // The user moves on before question 1 was read to its end.
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Entry { index: 1, .. })));
+    r.read("Question 2 of 3.");
+    r.read("Question text 2?");
+    r.stays_idle();
+    // Back to question 1, heard before: it is on screen now.
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.stays_idle();
+    // A redraw of the same question does nothing.
+    assert_eq!(
+        r.agent
+            .question_shown("a", Shown::Text("Question text 1?"))
+            .unwrap(),
+        None
+    );
+    r.stays_idle();
+}
+
+#[test]
+fn a_shown_question_cuts_a_question_read_in_order_that_is_not_on_screen() {
+    // Sonara read on into question 2 before the screen's first report.
+    let r = Rig::new();
+    read_in_order(&r, "a", 3);
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.wait_for("Question 2 of 3.");
+    r.out.start();
+    r.agent
+        .question_shown("a", Shown::Text("Question text 1?"))
+        .unwrap();
+    r.read("Question 1 of 3.");
+    r.read("Question text 1?");
+    r.stays_idle();
+}
+
+#[test]
+fn up_on_a_followed_set_reads_the_question_on_screen_only() {
+    let r = Rig::new();
+    r.stream("a", "Here is my answer.", 0, None);
+    read_in_order(&r, "a", 3);
+    r.read("Here is my answer.");
+    r.wait_for("Question 1 of 3.");
+    r.agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    r.read("Question 2 of 3.");
+    r.read("Question text 2?");
+    r.stays_idle();
+    r.agent.restart().unwrap();
+    r.read("Here is my answer.");
+    r.read("Question 2 of 3.");
+    r.read("Question text 2?");
+    r.stays_idle();
 }

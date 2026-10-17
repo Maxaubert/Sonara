@@ -352,8 +352,14 @@ fn map_unlabelled(
             let input = payload.get("tool_input").unwrap_or(&empty);
             match tool {
                 "AskUserQuestion" => {
-                    let mut out: Vec<Value> = thinking_lead_in(channel, payload, lead_in)
+                    // In a host tab the channel is opened again with it: a
+                    // runtime started mid-turn knows the session only from
+                    // this, and the tab's terminal finds the set by its tab
+                    // (`question_shown`, #323).
+                    let reopen = host_tab(env).map(|_| open(channel, label().as_deref(), env));
+                    let mut out: Vec<Value> = reopen
                         .into_iter()
+                        .chain(thinking_lead_in(channel, payload, lead_in))
                         .collect();
                     out.extend(questions(channel, input));
                     out

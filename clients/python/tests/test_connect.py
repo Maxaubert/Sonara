@@ -263,6 +263,8 @@ def test_extension_namespaces_send_their_message_types(home, fake):
         c.agent.ask("tab-1", "question", "Red?", ["yes"], set_index=0, set_size=2)
         c.agent.next_question()
         c.agent.previous_question()
+        c.agent.question_shown("tab-1", "Red?")
+        c.agent.question_shown("tab-1", review=True)
         c.agent.set_mute_level(2)
         c.agent.set_summaries({"enabled": True})
         c.system.set_audio_mode("duck")
@@ -286,6 +288,8 @@ def test_extension_namespaces_send_their_message_types(home, fake):
          "set_index": 0, "set_size": 2},
         {"type": "control", "action": "next_question"},
         {"type": "control", "action": "previous_question"},
+        {"type": "question_shown", "channel": "tab-1", "text": "Red?"},
+        {"type": "question_shown", "channel": "tab-1", "review": True},
         {"type": "set", "key": "mute_level", "value": 2},
         {"type": "set", "key": "summaries", "value": {"enabled": True}},
         {"type": "set", "key": "audio_mode", "value": "duck"},

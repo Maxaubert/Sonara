@@ -30,7 +30,7 @@ mod profiles;
 mod tests;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 11;
+pub const PROTOCOL_MINOR: u64 = 12;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -617,6 +617,7 @@ impl Server {
                     }
                     "earcon" => agent_ext::earcon(a, m),
                     "tool" => agent_ext::tool(a, m),
+                    "question_shown" => agent_ext::question_shown(a, m),
                     _ => agent_ext::answered(a, m),
                 }
             }

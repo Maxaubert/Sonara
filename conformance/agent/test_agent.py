@@ -855,3 +855,57 @@ def test_ask_set_fields_are_checked(rt):
     for bad in ({"set_index": 0}, {"set_index": 2, "set_size": 2}, {"set_index": -1, "set_size": 2}):
         r = c.request({"type": "ask", "channel": "a", "kind": "question", "text": "Q?", **bad})
         assert r["error"]["code"] == "E_BAD_REQUEST", (bad, r)
+
+
+def test_question_shown_follows_the_question_on_screen(rt):
+    # #323 (protocol 1.12): the terminal reports the question it shows.
+    c = agent_client(rt)
+    ask_set(c, "a", 3)
+    assert heard(c, 1)[0][0] == "Question 1 of 3."
+    r = ok(c, {"type": "question_shown", "channel": "a", "text": "  pick 3? "})
+    assert (r["moved"], r["question"], r["of"]) == (True, 3, 3)
+    assert heard(c, 1)[0][0] == "Question 3 of 3."
+    assert ok(c, {"type": "question_shown", "channel": "a", "text": "Pick 3?"})["moved"] is False
+    assert ok(c, {"type": "question_shown", "channel": "a", "text": "Not a question here"})["moved"] is False
+    r = ok(c, {"type": "question_shown", "channel": "a", "review": True})
+    assert r["moved"] is True and r["review"] is True
+    assert ok(c, {"type": "question_shown", "channel": "a", "review": True})["moved"] is False
+    for bad in ({"text": "Pick 1?", "review": True}, {}, {"review": "yes"}):
+        r = c.request({"type": "question_shown", "channel": "a", **bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", bad
+
+def test_question_shown_reads_only_the_question_on_screen(rt):
+    # #323, owner 2026-10-16: with question_step off, a set the screen is
+    # reported for reads the question on screen alone, never the rest.
+    c = agent_client(rt)
+    for i in range(3):
+        ok(c, {"type": "ask", "channel": "a", "kind": "question", "text": f"Pick {i + 1}?",
+               "options": ["Yes"], "set_index": i, "set_size": 3})
+    assert heard(c, 1)[0][0] == "Question 1 of 3."
+    r = ok(c, {"type": "question_shown", "channel": "a", "text": "Pick 2?"})
+    assert (r["moved"], r["question"], r["of"]) == (True, 2, 3)
+    assert heard(c, 1)[0][0] == "Question 2 of 3."
+    until_idle(c)
+    quiet(c)
+    assert ok(c, {"type": "question_shown", "channel": "a", "text": "Pick 2?"})["moved"] is False
+    quiet(c)
+    r = ok(c, {"type": "question_shown", "channel": "a", "text": "Pick 1?"})
+    assert (r["moved"], r["question"]) == (True, 1)
+    assert heard(c, 1)[0][0] == "Question 1 of 3."
+    until_idle(c)
+    quiet(c)
+
+
+def test_question_shown_finds_the_session_by_its_terminal_tab(rt):
+    # #323: PrismTerminal knows its tab, not the Claude session; the hook
+    # reported the tab as the channel's host_tab.
+    c = agent_client(rt)
+    ok(c, {"type": "channel_open", "channel": "old", "host_tab": "tab-9"})
+    ok(c, {"type": "channel_open", "channel": "t", "host_tab": "tab-9"})
+    ask_set(c, "t", 2)
+    assert heard(c, 1)[0][0] == "Question 1 of 2."
+    r = ok(c, {"type": "question_shown", "host_tab": "tab-9", "text": "Pick 2?"})
+    assert (r["moved"], r["channel"], r["question"]) == (True, "t", 2)
+    assert ok(c, {"type": "question_shown", "host_tab": "tab-0", "text": "Pick 1?"})["moved"] is False
+    r = c.request({"type": "question_shown", "text": "Pick 1?"})
+    assert r["error"]["code"] == "E_BAD_REQUEST"

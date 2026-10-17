@@ -389,6 +389,10 @@ pub struct Nav {
 struct QuestionSet {
     size: usize,
     bodies: Vec<Option<String>>,
+    /// The questions as Claude wrote them, to match the screen (#323).
+    texts: Vec<Option<String>>,
+    /// The review screen was announced (#323).
+    reviewed: bool,
     notes: Option<String>,
     hint: Option<String>,
     hint_once: Option<String>,
@@ -397,6 +401,76 @@ struct QuestionSet {
     /// A question of it was read aloud (not only stored while muted): until
     /// then the navigation starts at question 1.
     heard: bool,
+}
+
+/// A question set read in order (#320): the questions' texts and the L2
+/// entries that speak them, bound in order (#323).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadSet {
+    size: usize,
+    texts: Vec<Option<String>>,
+    entries: Vec<Option<u64>>,
+    /// The question on screen (`size`: the review, no question).
+    current: usize,
+    reviewed: bool,
+    /// A host reports the screen for it (a `question_shown` came, #323,
+    /// owner 2026-10-16): only the question on screen is read, the others
+    /// are set aside in L2.
+    following: bool,
+}
+
+/// What the terminal shows of a question set (#323): a question's text,
+/// or the review screen after the last question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shown<'a> {
+    Text(&'a str),
+    Review,
+}
+
+/// What a question shown on screen asks of the driver (#323).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShownMove {
+    /// A stepping set moved to this question: read its entry, revised.
+    Land(Nav),
+    /// A set read in order: read this question's entry, alone (the
+    /// others are set aside, `read_set_aside`).
+    Entry {
+        entry: u64,
+        index: usize,
+        size: usize,
+    },
+    /// The review screen: say so, once.
+    Review,
+}
+
+/// Text folded for matching the screen: lower case, letters and digits
+/// only, no separators (the terminal cuts a word wider than a line in
+/// two, and the screen's lines are joined with a space).
+fn fold(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
+/// Which of `texts` the screen's `shown` is: equal once folded, else the
+/// one starting with it (a cut-off screen, at least 20 characters).
+fn match_text(texts: &[Option<String>], shown: &str) -> Option<usize> {
+    let s = fold(shown);
+    if s.is_empty() {
+        return None;
+    }
+    let folded: Vec<Option<String>> = texts.iter().map(|t| t.as_deref().map(fold)).collect();
+    folded
+        .iter()
+        .position(|t| t.as_deref() == Some(s.as_str()))
+        .or_else(|| {
+            (s.len() >= 20).then(|| {
+                folded
+                    .iter()
+                    .position(|t| t.as_deref().is_some_and(|t| t.starts_with(&s)))
+            })?
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -429,6 +503,9 @@ struct Turn {
     hinted: bool,
     /// The question set waiting for its answer (#283).
     questions: Option<QuestionSet>,
+    /// A question set read in order (`question_step` off, #320): each
+    /// question its own entry, for the screen follower (#323).
+    read_set: Option<ReadSet>,
     /// Prose held by `read_mode`, each chunk with whether it starts a
     /// paragraph (joined with a blank line in whole messages).
     held_prose: Vec<(String, bool)>,
@@ -479,6 +556,7 @@ impl Turn {
             awaiting: false,
             hinted: false,
             questions: None,
+            read_set: None,
             held_prose: Vec::new(),
             new_para: false,
             last_index: None,
@@ -1001,6 +1079,7 @@ impl Rules {
         c.current = turn.map(str::to_string);
         c.awaiting = false;
         c.questions = None;
+        c.read_set = None;
         self.drop_held(channel, "turn_start");
         let c = self.turn(channel);
         c.released = false;
@@ -1088,6 +1167,7 @@ impl Rules {
             match kept {
                 Some(q) => {
                     q.bodies[i] = Some(body.clone());
+                    q.texts[i] = Some(ask.text.clone());
                     self.note(
                         Some(channel),
                         "question",
@@ -1130,9 +1210,13 @@ impl Rules {
                     Some(n) => {
                         let mut bodies = vec![None; n];
                         bodies[0] = Some(body.clone());
+                        let mut texts = vec![None; n];
+                        texts[0] = Some(ask.text.clone());
                         Some(QuestionSet {
                             size: n,
                             bodies,
+                            texts,
+                            reviewed: false,
                             notes: ask.notes.clone(),
                             hint: ask.hint.clone(),
                             hint_once: ask.hint_once.clone(),
@@ -1143,6 +1227,23 @@ impl Rules {
                     }
                     _ => None,
                 };
+                if let (true, Some((i, n))) = (read_all, set) {
+                    // Kept for the screen follower (#323).
+                    let c = self.turn(channel);
+                    if i == 0 || c.read_set.as_ref().is_none_or(|r| r.size != n) {
+                        c.read_set = Some(ReadSet {
+                            size: n,
+                            texts: vec![None; n],
+                            entries: vec![None; n],
+                            current: 0,
+                            reviewed: false,
+                            following: false,
+                        });
+                    }
+                    if let Some(r) = c.read_set.as_mut() {
+                        r.texts[i] = Some(ask.text.clone());
+                    }
+                }
                 let text = match set {
                     Some((i, n)) if i == 0 || read_all => decision::numbered_question(i, n, &body),
                     _ => body,
@@ -1221,6 +1322,7 @@ impl Rules {
         let c = self.turn(channel);
         c.awaiting = false;
         c.questions = None;
+        c.read_set = None;
         let summary = summary.trim();
         let text = if summary.is_empty() {
             format!("Running {}.", name.trim())
@@ -1269,6 +1371,7 @@ impl Rules {
         let c = self.turn(channel);
         c.awaiting = false;
         c.questions = None;
+        c.read_set = None;
         let (decisions, _) = self.catch_up(channel, "answered");
         self.drop_decisions(channel, decisions, "answered");
         vec![Action::Wipe {
@@ -1450,6 +1553,17 @@ impl Rules {
     /// `channel` as L2 entry `entry` (#283): when a question set waits for
     /// its entry, that entry shows the set's questions from now on.
     pub fn bind_question(&mut self, channel: &str, entry: u64, stored: bool) {
+        // A set read in order: its questions' entries, in order (#323).
+        if let Some(r) = self
+            .turns
+            .get_mut(channel)
+            .and_then(|c| c.read_set.as_mut())
+        {
+            if let Some(i) = (0..r.size).find(|i| r.entries[*i].is_none() && r.texts[*i].is_some())
+            {
+                r.entries[i] = Some(entry);
+            }
+        }
         if let Some(q) = self
             .turns
             .get_mut(channel)
@@ -1460,6 +1574,114 @@ impl Rules {
                 q.heard = !stored;
             }
         }
+    }
+
+    /// The terminal shows `shown` of `channel`'s question set (#323, the
+    /// screen follower): a question other than the current one is moved
+    /// to (`Land` for a stepping set, `Entry` for a set read in order);
+    /// the review screen is announced once (`Review`). `None`: nothing to
+    /// do (no set, no match, the current question, reviewed already). A
+    /// set read in order is followed from the first report on: only the
+    /// question on screen is read (`read_set_aside`, owner 2026-10-16).
+    pub fn question_shown(&mut self, channel: &str, shown: Shown) -> Option<ShownMove> {
+        let c = self.turns.get_mut(channel)?;
+        if let Some(q) = c.questions.as_mut() {
+            return match shown {
+                Shown::Review => (!q.reviewed).then(|| {
+                    q.reviewed = true;
+                    ShownMove::Review
+                }),
+                Shown::Text(s) => {
+                    let k = match_text(&q.texts, s)?;
+                    if k == q.current || q.entry.is_none() {
+                        return None;
+                    }
+                    self.land_on(channel, k, false).map(ShownMove::Land)
+                }
+            };
+        }
+        let r = c.read_set.as_mut()?;
+        match shown {
+            Shown::Review => {
+                // No question on screen now (owner, 2026-10-16).
+                r.following = true;
+                r.current = r.size;
+                (!r.reviewed).then(|| {
+                    r.reviewed = true;
+                    ShownMove::Review
+                })
+            }
+            Shown::Text(s) => {
+                let k = match_text(&r.texts, s)?;
+                let entry = r.entries[k]?;
+                // The first report starts following the screen; the
+                // question already current is not a move.
+                r.following = true;
+                if k == r.current {
+                    return None;
+                }
+                r.current = k;
+                Some(ShownMove::Entry {
+                    entry,
+                    index: k,
+                    size: r.size,
+                })
+            }
+        }
+    }
+
+    /// The entries of `channel`'s set read in order once a host follows it
+    /// on screen (#323, owner 2026-10-16), each with whether L2 sets it
+    /// aside: every question but the one on screen. Empty while nobody
+    /// follows the set (every question is read in order, #320).
+    pub fn read_set_aside(&self, channel: &str) -> Vec<(u64, bool)> {
+        let Some(r) = self
+            .turns
+            .get(channel)
+            .and_then(|c| c.read_set.as_ref())
+            .filter(|r| r.following)
+        else {
+            return Vec::new();
+        };
+        r.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.map(|e| (e, i != r.current)))
+            .collect()
+    }
+
+    /// The entry of the question on screen of `channel`'s followed set
+    /// read in order (#323), if a question is on screen.
+    pub fn shown_entry(&self, channel: &str) -> Option<u64> {
+        let r = self
+            .turns
+            .get(channel)?
+            .read_set
+            .as_ref()
+            .filter(|r| r.following)?;
+        r.entries.get(r.current).copied().flatten()
+    }
+
+    /// Whether `channel` has a question set the screen can show (#323):
+    /// a stepping set or one read in order.
+    pub fn has_question_set(&self, channel: &str) -> bool {
+        self.turns
+            .get(channel)
+            .is_some_and(|c| c.questions.is_some() || c.read_set.is_some())
+    }
+
+    /// "Review your answers." for the review screen (#323), spoken or,
+    /// while muted, stored like any other speech.
+    pub fn review_line(&self, channel: &str) -> Vec<Action> {
+        let mut out = Vec::new();
+        self.speak(
+            &mut out,
+            channel,
+            "Review your answers.".into(),
+            false,
+            "review",
+        );
+        out
     }
 
     /// The L2 entry showing `channel`'s question set, once it was spoken.
