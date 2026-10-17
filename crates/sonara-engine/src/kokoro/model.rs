@@ -48,8 +48,7 @@ pub struct OrtModel {
 }
 
 impl OrtModel {
-    /// Load the model (`init_runtime` first). Measured on the M0 corpus
-    /// (M4 notes in `docs/plans/2026-10-02-m0-engine-spike.md`): the CPU
+    /// Load the model (`init_runtime` first). Measured on the M0 corpus: the CPU
     /// arena allocator halves synthesis time (RTF 0.10 instead of 0.21)
     /// for about 30 MB more; memory patterns only add memory (about 50 MB),
     /// so they are off. Peak working set about 700 MB with sentence batches.

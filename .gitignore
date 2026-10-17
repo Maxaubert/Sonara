@@ -12,12 +12,10 @@ __pycache__/
 
 # Local agent and tooling scratch
 .sonara/
-graphify-out/
-.superpowers/
 .claude/worktrees/
 .claude/settings.local.json
 
-# Candidate WAVs from packaging/sounds/make_pack.py and make_round2.py
+# Candidate WAVs from packaging/sounds/make_pack.py, make_round2.py and make_round3.py
 packaging/sounds/out/
 
 # Release zip output (packaging/release_zip.py)

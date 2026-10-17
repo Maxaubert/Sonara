@@ -12,6 +12,8 @@ It installs Sonara's runtime first if it is missing (a one-time download from Gi
 prints one row per check: `[ OK ]`, `[INFO]` (worth knowing, such as the voice model still
 downloading), `[WARN]` (worth fixing) or `[FAIL]`.
 
+The rows, in order: `version`, `home`, `sonarad.exe`, `sonara-hook.exe`, `onnxruntime.dll`, `runtime`, then (only while the runtime answers) `engine`, `voice`, `voices`, `hotkeys`, `audio`, `summaries`, `mute level`, then `hooks`, and a legacy-plugin row only when Sonara 0.10 or older is still set up. What each means: `docs/user/troubleshooting.md`.
+
 Print the command's output to the user verbatim so they can see each row. Do not add
 commentary beyond the raw output, except one short line on how to fix a `[FAIL]` or
 `[WARN]` row when the row itself says how.

@@ -4,7 +4,7 @@ use crate::types::{EngineId, LicenseClass, Reason};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// How to restore OneCore voice data (D7, `docs/plans/phase0-plan.md`).
+/// How to restore OneCore voice data (D7).
 pub const MISSING_VOICE_DATA_FIX: &str = "Fix: Settings > Time & language > Speech > Manage \
 voices, remove and add English (United States) again, or in an elevated prompt run: DISM \
 /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0";

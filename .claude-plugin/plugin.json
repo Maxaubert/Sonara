@@ -2,7 +2,7 @@
   "name": "sonara",
   "displayName": "Sonara",
   "version": "0.32.14",
-  "description": "Eyes-free text-to-speech layer for Claude Code (Windows). Forked from Sonari by Nima Hakimi.",
+  "description": "Eyes-free text-to-speech for Claude Code on Windows.",
   "author": {
     "name": "Max Aubert",
     "email": "aubert@post.com"

@@ -1,5 +1,4 @@
-//! External engines (feature `external`; spec
-//! `docs/plans/2026-10-04-external-engines-spec.md`): a profile the user
+//! External engines (feature `external`): a profile the user
 //! added at run time, spoken to over HTTP, as an `Engine` next to Kokoro and
 //! OneCore. Licence class `External`, so a host must allow it.
 //!

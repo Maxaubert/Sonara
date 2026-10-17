@@ -32,8 +32,7 @@ main document (transports, errors, versioning, additive changes) apply here too.
 
 Protocol 1.2, capability `engines` (runtime 0.15.0, #224; the kinds `elevenlabs`, `azure` and
 `google` since 0.16.0, #225; `cartesia`, `deepgram` and `command`, `engine_reload` and `E_FORBIDDEN`
-(protocol 1.3) since 0.17.0, #226; `gemini` since 0.19.0, #235; design
-`docs/plans/2026-10-04-external-engines-spec.md`). The user adds speech engines that are not part of
+(protocol 1.3) since 0.17.0, #226; `gemini` since 0.19.0, #235). The user adds speech engines that are not part of
 Sonara: a cloud API (OpenAI, ElevenLabs, Azure AI Speech, Google Cloud Text-to-Speech, Gemini,
 Cartesia, Deepgram), a local server that speaks OpenAI's speech API, or a program of the user's own
 on this PC (`command`). Each is a **profile** that becomes an engine next to `kokoro` and `onecore`

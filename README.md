@@ -23,6 +23,16 @@ answer by number, and global hotkeys control the voice from any window.
 > This is the Windows line of Sonara, forked from [nimkimi/sonari](https://github.com/nimkimi/sonari)
 > and developed independently. It runs on Windows only.
 
+[Install](#install) · [Hotkeys](#hotkeys) · [Settings](docs/user/settings.md) · [Troubleshooting](docs/user/troubleshooting.md) · [Privacy](PRIVACY.md) · [Docs](#documentation)
+
+## Quick start
+
+1. In Claude Code run `/plugin marketplace add Maxaubert/Sonara`, then `/plugin install sonara@sonara`.
+2. Restart Claude Code. The runtime installs itself on the first hook.
+3. Send a prompt. Sonara reads the reply (a Windows voice at first, Kokoro once its model has downloaded).
+4. Keys: **Ctrl+Alt+Up** back or restart, **Ctrl+Alt+Down** on or flush, **Ctrl+Alt+M** mute, **Ctrl+Alt+P** next session.
+5. Something wrong? Run `/sonara:doctor`.
+
 ## Features
 
 - **One message, always the last.** Sonara reads the latest reply. Hold **Ctrl+Alt+Up** and it
@@ -31,8 +41,8 @@ answer by number, and global hotkeys control the voice from any window.
   every session, even one that is not speaking.
 - **Answer by number.** Questions and permission prompts are read with their options; press the
   option's number in Claude Code. No key injection.
-- **One question at a time.** When Claude asks several questions at once, Sonara reads the first
-  ("Question 1 of 4") and stops, as Claude Code shows them one by one. **Ctrl+Alt+Down** and
+- **One question at a time.** When Claude asks several questions at once, Sonara can read the
+  first ("Question 1 of 4") and stop, as Claude Code shows them one by one. **Ctrl+Alt+Down** and
   **Ctrl+Alt+Up** move between them.
 - **Global hotkeys.** Move a sentence back or on, restart, skip, flush, mute and switch sessions
   without leaving your editor.
@@ -77,333 +87,70 @@ missing and installs it in the background, without holding up Claude Code:
 Speech starts with the next event, usually a few seconds later. `/sonara:doctor` shows the
 progress of the voice download. Offline, the hooks stay silent and try again every 5 minutes.
 
-**Defaults** are the voice `af_sarah` at 250 words per minute, detail *Default* (code blocks
-and tool announcements skipped; *Read code* reads code blocks aloud, line by line; *Everything* also announces each tool; see [Code](#code)), each answer read once the agent is done, every session read, media paused while Sonara speaks, summaries off. Change
-them on the settings page (`/sonara:settings`).
+**Defaults**
+
+| Setting | Default |
+|---|---|
+| Voice | `af_sarah` (Kokoro) |
+| Speaking rate | 250 words per minute |
+| Detail | *Default*: code blocks and tool announcements skipped (*Read code* reads code aloud, *Everything* also announces each tool) |
+| When a reply is read | Once the agent is done |
+| Other sessions | Read all |
+| Other apps' audio | Media paused while Sonara speaks |
+| Summaries | Off |
+
+Change them on the settings page (`/sonara:settings`). Every setting is listed in
+[docs/user/settings.md](docs/user/settings.md).
 
 **Updates.** A plugin update names a new runtime release; the next hook installs it the same way,
 replaces the running runtime and removes the old version. Your settings stay.
 
-<details>
-<summary>Upgrading from the Python plugin (0.10 and older)</summary>
-
-The first start imports your settings from `~/.sonara` (voice, speed, audio mode, summaries,
-hotkeys, session names) into `%LOCALAPPDATA%\Sonara` and never changes `~/.sonara`. The old
-Python daemon is not stopped for you: if `/sonara:doctor` shows a `python sonara` warning, remove
-it once from Git Bash with `PYTHONPATH=~/.sonara/app python -m sonara.cli uninstall` (best before
-updating the plugin), so two programs do not hold the hotkeys or speak twice.
-
-</details>
+**Coming from the old Python plugin (0.10 and older)?** Your settings are imported on the first
+start. See [Troubleshooting](docs/user/troubleshooting.md) for the one-time cleanup.
 
 ## How it reads
 
-- **The latest reply, as it streams.** Sonara turns Markdown into speakable sentences (code
-  blocks are announced, and read at *Read code* and *Everything*: see [Code](#code)) and reads them in order. A question, plan or
-  permission prompt is spoken in its natural place, after the text that explains it.
-- **Said the way people say it.** Dates (`12.12.2026` "the twelfth of December twenty twenty six",
-  day first), times, money (including kroner), units, versions ("version one point twenty"),
-  file paths (their last two parts), web addresses (the site and the last part), tech terms
-  (`SQL` "sequel", `nginx` "engine X") and abbreviations (`API` "A P I", `NASA` kept) are read as
-  words. Add your own words under **Pronunciations** on the settings page (a word and how to say
-  it); they come first.
-- **Tables row by row.** Each row of a Markdown table is read with every value after its
-  column name and a short pause: "Fund: KLP Global. Share of funds: 16.4 percent. Return: plus 24
-  percent." The header row is not read on its own, and Ctrl+Alt+Up and Down move one row.
-- **The alert is instant, the words wait their turn.** When a question or permission prompt
-  appears, its earcon plays at once; its spoken text follows the sentences before it. A plan
-  has no earcon; it is read in its place.
-- **Other earcons** come from the runtime: `turn_done` when a reply ends, `step` for each tap
-  that moves a section, `nav` for a restart or flush and `nav_edge` when there is nothing to move to, restart or flush, `session_change` when the
-  voice moves to another session (followed by "Session changed: *folder*."), `error` when
-  speech fails, and `summary_failed` when a summary-mode turn had no text to read. You can
-  replace any of them with your own sound: see [Custom chimes](#custom-chimes).
-- **A new prompt starts fresh.** When you send the next prompt, the previous reply is dropped
-  and Sonara follows the new one.
-- **One section back or on, or to the start or the end.** Tap Ctrl+Alt+Up to go back one
-  section of the reply being read (a sentence, a table row, a code line, a question) and
-  Ctrl+Alt+Down to go on one; tap again to go further. Hold Ctrl+Alt+Up for half a second to
-  hear the latest reply again from the top (in summary mode it re-reads the last summary). Hold
-  Ctrl+Alt+Down to flush: skip the rest of the reply and its questions, on to the next session. There is no stepping back through older replies.
-- **Several sessions.** Every session's latest reply is read, one after another. With *Background sessions: earcons only* on the settings page, only that
-  session is read; the others play their earcons and their latest reply waits. Ctrl+Alt+P moves
-  the voice to the next session; an unread reply resumes, a read one starts over. Every move to
-  another session, by the hotkey or because another session's reply is next, plays the
-  `session_change` chime and then says "Session changed: *folder*." ("..., reading again." when
-  it starts over). Give a session another name on the Sessions page.
+Sonara turns the latest reply into speakable sentences and reads them in order. A question, plan
+or permission prompt is spoken in its place, after the text that explains it, and its earcon plays
+at once. Dates, money, units, versions, file paths, web addresses and tech terms are said the way
+people say them, and you can add your own words under **Pronunciations** on the settings page.
 
-### Code
-
-At detail *Read code* or *Everything* a code block is read line by line: "TypeScript code block,
-7 lines.", then "Line one: function Welcome, empty parens, open brace." and so on, then "End of
-TypeScript code." Symbols are said as words (dot, comma, open paren, equals, arrow), strings and
-comments are read as written, and names like `getUserName` are read "get user name". The brief
-pauses between the parts of a line are commas; after each line Sonara waits the *Line pause*
-(0.5 s by default). Code is read at the *Code reading speed* (80 % of your rate by default).
-Inline code in a sentence, like `useState()`, is read with the same words.
-
-While a code block is read, **Ctrl+Alt+Down** goes to the next line and **Ctrl+Alt+Up** to
-the one before. Turn on **Step through code** on the settings page to go one line at a time:
-Sonara says the block's name and "Use Ctrl+Alt+Down for the next line." (whatever key you
-bound), then waits before each line. Past the last line it goes on with the reply. The `pause`
-action (unbound by default; bind it on the Hotkeys tab) reads the rest of the block straight
-through.
-
-### Answering prompts
-
-When a question, permission prompt or plan appears, press the option's **number (1 to 9)** in
-Claude Code, or `Esc` to cancel. For a multi-select question, press each option's number (or
-`Space` on the highlighted item), then `Enter`. With more than nine options, use the arrow keys
-and `Enter` for the tenth and later. Sonara speaks these hints when they apply.
-
-When Claude asks several questions at once, Sonara reads the reply, then every question in turn:
-"Question 1 of 4. ...", "Question 2 of 4. ...". Turn on **Step through questions** on the
-settings page to hear only the first and stop, as Claude Code shows one question at a time. The
-questions are sections after the reply: **Ctrl+Alt+Down** goes to the next question and **Ctrl+Alt+Up** to
-the one before (on question 1, back into the reply). With stepping on, answering a question in Claude
-Code does not read the next one: Claude Code tells plugins nothing until the whole set is
-answered, so press **Ctrl+Alt+Down**. Holding **Ctrl+Alt+Up** reads the whole message again, the reply and then
-question 1, and holding **Ctrl+Alt+Down** skips all of it. When
-Claude only thought before asking (Claude Code shows the thinking, but sends plugins no text),
-Sonara reads that thinking before the question.
+| Topic | Page |
+|---|---|
+| Spoken forms, tables, file paths, code blocks, step through code | [Reading and code](docs/user/reading-and-code.md) |
+| Options by number, several questions at once, step through questions | [Answering prompts](docs/user/answering-prompts.md) |
+| Spoken recaps instead of the whole reply | [Summaries](docs/user/summaries.md) |
+| Several sessions, names, Other sessions: Chime only | [Sessions](docs/user/sessions.md) |
+| The built-in chimes and your own WAV files | [Settings](docs/user/settings.md) |
 
 ## Hotkeys
 
-The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab (it is
-saved in `%LOCALAPPDATA%\Sonara\keymap.json`). A hotkey must include Ctrl, Alt or Win.
+The default chord is **Ctrl+Alt**. Rebind any action on the settings page's Hotkeys tab. A hotkey
+must include Ctrl, Alt or Win.
 
-| Hotkey | Action |
-|---|---|
-| Ctrl+Alt+Up | Tap: back one section of the reply being read: a sentence, a table row, a code line, a question (when nothing is read: the latest reply again; after question 2 or later: the question before). Hold half a second: the latest reply from the top (summary mode: re-read the last summary; with questions: the reply, then question 1) |
-| Ctrl+Alt+Down | Tap: on one section (after the reply's last sentence come its questions; on the last section the `nav_edge` chime, and reading goes on). Hold half a second: flush: skip the reply being read: what is playing, what that session has queued and the rest of that reply still arriving (its questions are still read). *Flush skips* on the Hotkeys tab sets what else goes: *This session* (default) goes on to the next session; *Everything queued* also drops every other session's finished replies waiting to be read. A session still writing its reply keeps it either way. To silence everything, mute (Ctrl+Alt+M). Holding Ctrl+Alt+Up replays what had arrived before the flush |
-| Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) |
-| Ctrl+Alt+P | Move the voice to the next session |
+| Hotkey | Tap | Hold half a second |
+|---|---|---|
+| Ctrl+Alt+Up | Back one section (sentence, table row, code line, question) | Read the latest reply again from the top |
+| Ctrl+Alt+Down | On one section | Flush: skip the rest of the reply being read, on to the next session |
+| Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) | |
+| Ctrl+Alt+P | Move the voice to the next session | |
 
-`previous_question` and `next_question` (Ctrl+Alt+Left and Right in 0.22 to 0.30: the same
-sections; held, Right skips to question 1 instead of flushing), `pause`, `faster` and `slower`
-are also actions; they ship unbound. Each hotkey confirms itself
-with a short spoken cue ("Muted.", "Rate 275.").
+`pause`, `faster` and `slower` are also actions; they ship unbound. On a European keyboard
+(AltGr) Ctrl+Alt can take a character away: rebind that key with Win. Details, conflicts and every
+action: [docs/user/hotkeys.md](docs/user/hotkeys.md).
 
-<details>
-<summary>European keyboards (AltGr), and which keys to avoid</summary>
+## Voices and engines
 
-Windows sends AltGr as Ctrl+Alt, so on keyboard layouts with AltGr characters (German,
-Norwegian, Polish and others) a Ctrl+Alt hotkey takes that character away: Ctrl+Alt+M bound to
-mute stops AltGr+M from typing µ. `/sonara:doctor` names each clashing hotkey in its hotkeys
-warning row, and the settings page warns next to the binding. The fix is to rebind that key
-with Win, for example to Win+Alt+Home/End or Ctrl+Win+Up/Down; a Win chord never matches
-AltGr. Resetting to the defaults does not help, since they use Ctrl+Alt.
+- **Kokoro** (default): 28 natural English voices such as `af_sarah` and `af_heart`. The model
+  (about 350 MB) downloads once, is checked against pinned SHA-256 values, then runs fully offline.
+- **Windows voices** (OneCore): no download. Natural ones sound better: add one under *Settings >
+  Time & language > Speech > Add voices*.
+- **Your own engine** (optional): OpenAI, ElevenLabs, Azure, Google, Gemini, Cartesia, Deepgram,
+  a speech server on your PC, or a program of your own. Nothing is sent anywhere until you add one
+  **and** choose *Use*. No model or voice is built in: Sonara lists what the provider offers now.
+- If an engine fails, Kokoro reads instead and says why once. While muted, nothing is sent.
 
-Win+Alt is not the default because Windows 11 already owns Win+Alt+Up/Down (snap a window),
-Win+Alt+M and Win+Alt+P, plus Win+Alt+B (HDR), Win+Alt+D (date and time), Win+Alt+H (voice
-typing), Win+Alt+K (microphone mute), Win+Alt+Enter and the Game Bar chords
-Win+Alt+G/R/T/PrtScn. If another app holds a chord, `/sonara:doctor` reports it in its hotkeys
-row. Intel graphics drivers can own Ctrl+Alt+arrows to rotate the screen: then turn those hotkeys
-off in Intel Graphics Command Center, or rebind the question keys with Win.
-
-The default keys are Ctrl+Alt+Up/Down/M/P, as in 0.6.x; since 0.31.0 a tap on Up or Down moves
-one section and a hold restarts or flushes. **Reset hotkeys to defaults** on the Hotkeys tab puts
-every binding back on them.
-
-</details>
-
-## Settings page
-
-Run `/sonara:settings` to open the settings page in your browser. It is served by the runtime on
-`127.0.0.1` and protected by a token. Changes apply immediately and are saved in
-`%LOCALAPPDATA%\Sonara\config.json`. The sidebar has a search box and a *Now* card that says which
-engine is reading.
-
-| Page | What you can set |
-|---|---|
-| Speech | The voice engine, a dropdown of Kokoro, Windows voices and the engines you added (its last entry, *Add new engine*, opens the form under Engines), with its status (Windows' voice stands in while Kokoro downloads); voice (with a preview button), speaking rate, mute level, detail (Default, Read code or Everything), code reading speed, line pause and step through code (shown when code is read), step through questions, file paths (Short, Last 2, Last 3 or Full), pronunciations (your own words and how to say them), other sessions (Read all or Chime only) |
-| Engines | The speech engines you added (see *Speech engines*): where each sends text, its key and status, and buttons to use, test, edit or remove it; a slide-over form to add one, with required fields starred, the voices listed as soon as the key is in, and a clear saved state. Shown when the runtime allows external engines |
-| Summary | Summary mode (Off, Tidy, Natural, Brief), the model, the prompt for each style, live reading: Immediately, Queue (with its queue size) or When done, and the summary timeout and settle time |
-| Audio | Speech volume, what other apps do while Sonara speaks (Off, Duck, Pause), the duck level, and the folder for your own chimes |
-| Sessions | A name and audio on/off per Claude Code session, closed sessions under *Earlier* (forget one there), and switch announcements |
-| Hotkeys | Every binding, with conflict warnings (`/sonara:doctor` reports AltGr clashes), what Flush skips, and a reset to defaults |
-| System | Runtime version, uptime and protocol, the settings file, the debug log |
-
-**Audio mode.** *Duck* lowers other apps to the duck level while Sonara speaks; *Pause* pauses
-media that Windows can control (music, video players) and resumes it afterwards. Either way
-Sonara restores them when it stops, and on the next start if it was killed mid-sentence.
-
-### Sounds
-
-Sonara's built-in chimes are original sounds, synthesised from scratch for it (MIT, no samples;
-`packaging/sounds` rebuilds them):
-
-| Chime | When | Sound |
-| --- | --- | --- |
-| `choice` | a question needs your answer | two bubble pops rising |
-| `permission` | a permission prompt | two soft rising blips |
-| `turn_done` | a reply ends | marimba, two notes up a third |
-| `session_change` | the voice moves to another session | slow, warm e-piano arpeggio |
-| `nav` | a restart (hold Ctrl+Alt+Up) or a flush (hold Ctrl+Alt+Down) | a short rewind swell into a light tick |
-| `step` | a tap on Ctrl+Alt+Up or Down moves one section or code line | the light tick |
-| `nav_edge` | nothing to move to, restart or flush | the light tick alone |
-| `error` | speech fails | a low falling knock pair |
-| `summary_failed` | a summary-mode turn had no text | a short, soft falling knock |
-
-Chimes play one after the other, never on top of each other. The key sounds (`step`, `nav`,
-`nav_edge`) are the exception: they play the moment the key acts, over a chime that is playing.
-
-A WAV of your own in `%LOCALAPPDATA%\Sonara\earcons\` overrides any of them: see below.
-
-### Custom chimes
-
-Put a WAV file named after a chime in `%LOCALAPPDATA%\Sonara\earcons\` and Sonara plays it
-instead of the built-in sound: `session_change.wav`, `turn_done.wav`, `choice.wav`,
-`permission.wav`, `summary_failed.wav`, `error.wav`, `nav.wav`, `step.wav` or `nav_edge.wav`. Any WAV works
-(8 to 32-bit or float, mono or stereo, any sample rate, up to 10 seconds). It is used from the
-next time that chime plays, with no restart; delete the file to get the built-in sound back. The
-Audio page shows the folder and which chimes are your own. A file Sonara cannot play is skipped
-(the built-in sound plays) and `logs\sonarad.log` says why. Chimes you set up in the Python
-version (`~/.sonara`) are copied there when Sonara imports its settings (the runtime's first
-start; from 0.11.1).
-
-**Summary mode.** Instead of reading a whole reply, Sonara waits for it to finish and speaks a
-short recap. Questions, plans and permission prompts are still read in full and every earcon
-still plays. The recap comes from a separate, throwaway call that never touches your session:
-
-- **Claude** (default, Haiku): `claude -p` with tools and settings disabled, on your Claude Code
-  login.
-- **Codex** (GPT-5.6 Luna or GPT-5.4 Mini): `codex exec` with its tools turned off, on your Codex
-  login. Needs the Codex CLI on your PATH.
-
-Each finished reply costs one small call on that account. If the call fails, times out or
-returns nothing, Sonara reads the original reply instead; the `summary_failed` earcon plays only
-when the turn had no text at all. See [PRIVACY.md](PRIVACY.md) for what is sent.
-
-## Voices
-
-**Kokoro** (the default) gives 28 natural English voices such as `af_sarah` and `af_heart`. Its
-model (about 350 MB) is downloaded once on first use, checked against pinned SHA-256 values,
-and then runs fully offline (Microsoft's ONNX Runtime, shipped in the runtime zip). An
-interrupted download resumes; a failed one is retried later. Until it is ready Sonara speaks
-with a Windows voice. Pick a voice on the settings page.
-
-**Windows voices** (OneCore) need no download. Natural ones sound better: open *Settings > Time &
-language > Speech > Add voices* and add an English voice.
-
-**Windows voices listed but silent?** On some PCs the voices are listed while their data files
-are missing, so synthesis fails with "file not found". The repair: remove and re-add *English
-(United States)* under *Settings > Time & language > Speech > Manage voices*, or in an elevated
-prompt run `DISM /Online /Add-Capability /CapabilityName:Language.TextToSpeech~~~en-US~0.0.1.0`.
-Kokoro voices are unaffected.
-
-## Speech engines
-
-Besides Kokoro and the Windows voices, Sonara can read with a speech engine you add: a cloud
-voice, a speech server on your PC, or a speech program of your own. Nothing is sent anywhere
-until you add one **and** choose *Use*.
-
-| Kind | What it is | Key | Speaking rate it can follow |
-|---|---|---|---|
-| `openai-compatible`, preset `openai` | OpenAI's speech API (a model from its list, a voice from OpenAI's guide) | yes | all (100 to 400 wpm) |
-| `openai-compatible`, presets `kokoro-fastapi`, `localai`, `speaches`, `openedai-speech`, `chatterbox-api`, `chatterbox-server`, `generic` | A server on your PC (or network) that speaks OpenAI's API | usually none | all, if the server follows it (Chatterbox servers ignore it) |
-| `elevenlabs` | ElevenLabs (a voice from your list, cloned voices too; the model is optional) | yes | 140 to 240 wpm (faster stays at 240) |
-| `azure` | Azure AI Speech (a region and a voice from its list) | yes | all |
-| `google` | Google Cloud Text-to-Speech (a voice from its list) | yes | all |
-| `gemini` | Gemini speech (a model and a voice from Google's lists; a free key from [Google AI Studio](https://aistudio.google.com), *Get API key*) | yes | roughly: a style (*speaking slowly* / *quickly*), no exact speed |
-| `cartesia` | Cartesia (a model from Cartesia's documentation, a voice from its list) | yes | 120 to 300 wpm |
-| `deepgram` | Deepgram (a voice from its list of speech models) | yes | 140 to 300 wpm (not yet confirmed live) |
-| `command` | A program of yours on this PC (an `.exe`, for example Piper): text in, WAV or PCM out | none | gets `{rate}` and `{speed}` to use as it likes |
-
-**No model or voice is built in.** Providers add and retire models and voices all the time, so
-Sonara names none of its own and never picks one for you: it lists what the provider offers now
-(its model and voice lists, fetched with your key) and you choose. A provider without a list
-(OpenAI's voices, Cartesia's models) gets a text field and a link to where it names them. An
-engine without a model or voice it needs says *Choose a model* or *Choose a voice*, and Kokoro
-reads meanwhile.
-
-**Add one** on the settings page under **Engines** (*Add an engine*: pick the kind, give it a
-name, paste the key; its models and voices are then listed; choose, save), or with the CLI from
-Git Bash:
-
-```bash
-S="bash <plugin folder>/bin/sonara"
-$S engines add gemini --kind gemini          # Gemini
-$S engines key gemini                        # paste the key when asked (never an argument)
-$S engines models gemini                     # Google's speech models now
-$S engines voices gemini                     # and its voices
-$S engines add gemini --kind gemini --model <model> --voice <voice> --replace
-$S engines add gpu --preset kokoro-fastapi --url http://127.0.0.1:8880/v1 --no-key --voice <voice>
-$S engines test gemini                       # one sentence, with no stand-in
-$S engines use gemini                        # read with it; `use kokoro` goes back
-$S engines list                              # every engine, its key and status
-```
-
-**Which voice is used.** While an added engine is in use, the voice you pick on the Speech page
-is the one you hear, in replies, previews and *Test* alike; otherwise the engine's own voice
-(the one in its form) is used.
-
-A **program on this PC** (`command`) is never added on the settings page or by any app over
-the API, since it runs a program: add it yourself with the CLI or in `engines.json` in the home.
-The settings page then lists it to use, test or remove.
-
-```bash
-$S engines add piper --kind command --option 'argv=["C:\\piper\\piper.exe","--model","C:\\piper\\<model>.onnx","--output_file","{out}"]' --option output=file
-```
-
-`sonara engines --help` lists the options of every kind.
-
-**Send to the engine.** Every added engine has this setting, in its form on the settings page
-(or `--send-mode` with the CLI):
-
-- **Full message in one request** (`message`, the default for every cloud provider): what Sonara
-  is about to read at once goes to the provider as one request. A reply read when it is done is
-  one request, not one per sentence; the text before a question is one request and the question
-  its own short one; with *Reading: Immediately* each paragraph is one request. The audio plays
-  as it arrives (Gemini, ElevenLabs, OpenAI with `pcm`, Cartesia), so reading starts with the
-  first audio. Up reads the message again without a new request. A very long message is split
-  only past the provider's limit (at paragraphs, then sentences; `--option chunk_chars=<n>`
-  lowers it).
-- **As it comes in** (`sentence`, the default for a program or a speech server on this PC): each
-  sentence is its own request, read as soon as it is made. Nothing is billed locally, and a
-  local server answers one sentence faster than a whole message.
-
-Skipping, flushing or a new prompt stops a message that is still arriving: the request is
-cancelled and nothing more is sent for it (a provider that already started may still bill that
-one request). If the provider fails before any audio, Kokoro reads the whole message (and says
-once why); if an answer stalls or breaks off midway, what was played stays and Kokoro reads the
-rest from the sentence it had reached (that sentence may be heard twice). Muting midway reads
-the rest with Kokoro the same way. A long message is never cut for its length: the time limit
-grows with the text. Kokoro and the Windows voices always read sentence by sentence.
-
-**Gemini** counts requests on its free tier (per minute and per day), so it sends a whole
-message per request by default (up to 2000 characters each; a longer one in as few parts as
-fit). When a per-minute limit is reached, Kokoro reads and Sonara waits as long as Google asks; when the
-daily limit is reached, Kokoro reads until Google's daily reset (midnight Pacific time).
-On the free tier Google may use the text it reads to improve its products; with billing on, it
-does not (see [PRIVACY.md](PRIVACY.md)).
-Gemini's audio is **streamed**: a sentence starts playing with its first audio, and when none
-has come after 12 seconds (`first_audio_ms`, on the settings page as *Wait for audio* under
-*More options*, with *Characters per request* for `chunk_chars`) Kokoro reads that part instead, so a slow free tier never holds a reply for a minute. Gemini
-has no speed setting: away from the default rate Sonara asks it to speak slowly or quickly, an
-approximate direction. On the free tier Google may use the text to improve its products; with
-billing on it does not.
-
-**Keys** are kept in Windows Credential Manager (`sonara:<name>`), or read from an environment
-variable you name (one ending in `_API_KEY` or `_SPEECH_KEY`). They are never written to a file,
-shown again, or logged. A key goes only to the address it was entered for (a program's key only
-to that program): point an engine at another address or region and enter its key again.
-
-**When an engine fails** (no key, a refused key, no credit, no network, a busy or broken server),
-Kokoro reads that sentence instead and says once why ("OpenAI cannot be reached. Reading with the
-built-in voice."); after two failures in a row Sonara stops asking the engine for a while, then
-tries again. The settings page and `sonara engines list` show the reason.
-
-**Muted means nothing is sent.** While Sonara is muted or super-muted, nothing goes to an added
-engine: Kokoro reads instead (also the "Muted." and "Unmuted." confirmations), voice lists are
-not fetched, and a sentence on its way is cut the moment you mute. Only *Test* and a voice
-preview, which you ask for yourself, still reach it.
-
-**Speed.** Sonara prepares the next sentences while one plays, so a cloud voice keeps up with a
-reply once it is reading; the first sentence waits for one round trip.
-
-**Privacy.** A cloud engine receives the text Sonara reads aloud (the same sentences it speaks),
-under that provider's terms; a server or program on your PC keeps it here. See
-[PRIVACY.md](PRIVACY.md#external-voices-opt-in).
+Setup, rates, send modes, keys and the CLI: [docs/user/voices-and-engines.md](docs/user/voices-and-engines.md).
 
 ## Commands
 
@@ -412,43 +159,40 @@ under that provider's terms; a server or program on your PC keeps it here. See
 | `/sonara:settings` | Open the settings page |
 | `/sonara:doctor` | Check the runtime, the voice engine and its download, voices, hotkeys, audio mode and hooks |
 | `/sonara:start` | Start Sonara (installs the runtime if needed) and clear a previous stop |
-| `/sonara:uninstall` | Remove Sonara, keeping what you choose (see *Uninstall*) |
+| `/sonara:uninstall` | Remove Sonara, keeping what you choose (see [Uninstall](#uninstall)) |
 
-They run `sonara.exe` from the runtime folder through `bin/sonara`, which you can also call from
-Git Bash: `bash <plugin folder>/bin/sonara <command>`. Besides the four above it has `stop`
-(Sonara stays off, and the hooks do not start it, until `start`) and `version`.
+The slash commands run `sonara.exe` from the runtime folder through `bin/sonara`. You can also
+call it from Git Bash: `bash <plugin folder>/bin/sonara <command>`.
+
+| CLI command | What it does |
+|---|---|
+| `start` | Start Sonara and keep it on; clears a stop |
+| `stop` | Stop Sonara; it stays off until `start` |
+| `settings` | Open the settings page in the browser (starts Sonara) |
+| `doctor` | Check the install and the runtime |
+| `uninstall [--keep LIST]` | Stop Sonara and remove its runtime and files. `LIST` is any of `settings`, `models`, `logs` (comma-separated) or `none`; default `settings` |
+| `engines ...` | Manage the speech engines you added (`sonara engines help`) |
+| `version` | Print the version |
+
+| Environment variable | Effect |
+|---|---|
+| `SONARA_HOME` | The home folder (default `%LOCALAPPDATA%\Sonara`) |
+| `SONARA_NO_BROWSER` | Print the settings URL only, do not open a browser |
+| `SONARA_RUNTIME_ARGS` | Extra arguments for `sonarad` |
 
 ## Troubleshooting
 
 Run `/sonara:doctor` first. Each row is `OK`, `INFO` (worth knowing, such as the voice model
 still downloading), `WARN` (worth fixing) or `FAIL`.
 
-- **No speech at all.** Run `/sonara:start` (`sonara stop` and `/sonara:uninstall` keep Sonara
-  off until then), then `/sonara:doctor`. The runtime's log is
-  `%LOCALAPPDATA%\Sonara\logs\sonarad.log`; the install's is `logs\bootstrap.log` there.
-- **Music or video paused or quieter "at random".** In audio mode *Pause* (the default) or
-  *Duck*, Sonara pauses or lowers other apps while it reads, including messages from background
-  sessions. `%LOCALAPPDATA%\Sonara\logs\sonarad.log` shows each one with a UTC time:
-  `read start item=12 session=<name> chunks=3`, then `media pause apps=spotify.exe (reason:
-  reading item=12 session=<name>)`, `read end item=12 finished` and `media resume apps=...
-  (reason: idle)`; `reader paused` and `reader resumed` mark a pause of Sonara itself; ducking
-  logs `duck apps=... level=30` and `restore apps=...`, hotkeys `hotkey <action>`.
-  Set audio mode to *Off* on the settings page if you do not want this.
-- **It read something else, or skipped something.** With *Troubleshooting log* on (settings
-  page, System; on by default for now) `sonarad.log` also shows what came in (`in {...}`), what
-  was decided and why (`agent ... speak kind=question ...`, `agent ... permission: not spoken:
-  ...`), the exact text read (`read text item=12 kind=prose from=turn_end text="..."`) and text
-  dropped unread with the reason (`drop ... reason=turn_start`); `logs\hook.log` has what each
-  Claude Code hook received and sent. The logs hold session text then; all of them together stay
-  under 10 MB, oldest first out (see PRIVACY.md). Turn it off to keep text out.
-- **Nothing after installing the plugin.** Restart Claude Code; the runtime installs on the first
-  hook. Offline or blocked downloads are retried every 5 minutes, or at once by `/sonara:start`.
-- **Hooks not firing.** Make sure the `sonara` plugin is enabled in `/plugin`, start a new
-  session, and check the hooks row of `/sonara:doctor`.
-- **Too fast or too slow.** Change the speaking rate on the settings page (default 250 words per
-  minute), or bind the `faster` and `slower` hotkeys.
-- **Too chatty.** Set detail to *Default*, turn on summary mode, or mute (the mute hotkey
-  cycles muted and super muted), on the settings page.
+- **No speech at all:** run `/sonara:start`, then `/sonara:doctor`. `sonara stop` and
+  `/sonara:uninstall` keep Sonara off until then.
+- **Nothing after installing:** restart Claude Code; the runtime installs on the first hook.
+- **Logs:** `%LOCALAPPDATA%\Sonara\logs\sonarad.log` (runtime), `bootstrap.log` (install),
+  `hook.log` (hooks).
+
+More fixes (music paused "at random", hooks not firing, too fast, too chatty, Windows voices
+listed but silent) and the doctor rows: [docs/user/troubleshooting.md](docs/user/troubleshooting.md).
 
 ## Uninstall
 
@@ -463,11 +207,14 @@ still downloading), `WARN` (worth fixing) or `FAIL`.
 ## Privacy
 
 Sonara runs on your computer and has no servers, accounts or telemetry. The only text that
-leaves your machine is a finished reply in summary mode, sent to Anthropic (`claude -p`) or
-OpenAI (`codex exec`) depending on the engine you chose, and, only if you add and select an
-external speech engine (OpenAI, ElevenLabs, Azure, Google, Gemini, Cartesia, Deepgram), the text read
-aloud, sent to that provider (a speech program of your own on your PC keeps it local). Details, and every file Sonara keeps,
-are in [PRIVACY.md](PRIVACY.md).
+leaves your machine is:
+
+- a finished reply in summary mode, sent to Anthropic (`claude -p`) or OpenAI (`codex exec`)
+  depending on the engine you chose;
+- the text read aloud, only if you add and select an external speech engine (OpenAI, ElevenLabs,
+  Azure, Google, Gemini, Cartesia, Deepgram). A speech program of your own on your PC keeps it local.
+
+Details, and every file Sonara keeps: [PRIVACY.md](PRIVACY.md).
 
 ## Use Sonara in your own app
 
@@ -485,14 +232,31 @@ Other languages take `sonara-runtime-win-x64-<version>.zip` (with `SHA256SUMS`) 
 sign them with your app if your installer needs it. How to bundle, start and license the runtime:
 [docs/bundling.md](docs/bundling.md).
 
-## Contributing
+## Documentation
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [docs/architecture.md](docs/architecture.md)
-for how Sonara is built. Embedding hosts talk to the runtime over the protocol in
-[docs/protocol-v1.md](docs/protocol-v1.md). Bugs and ideas: [GitHub issues](https://github.com/Maxaubert/Sonara/issues).
+**For users** (start at [docs/user/README.md](docs/user/README.md)):
+
+| Page | What it covers |
+|---|---|
+| [Getting started](docs/user/getting-started.md) | Install, first use, first reply |
+| [Reading and code](docs/user/reading-and-code.md) | How replies are spoken, tables, paths, code |
+| [Answering prompts](docs/user/answering-prompts.md) | Questions, permissions, plans |
+| [Hotkeys](docs/user/hotkeys.md) | Every action, rebinding, AltGr |
+| [Settings](docs/user/settings.md) | Every setting, chimes, custom sounds |
+| [Voices and engines](docs/user/voices-and-engines.md) | Kokoro, Windows voices, cloud and local engines |
+| [Summaries](docs/user/summaries.md) | Spoken recaps |
+| [Sessions](docs/user/sessions.md) | Several Claude Code sessions |
+| [Troubleshooting](docs/user/troubleshooting.md) | Fixes, doctor rows, Python-plugin migration |
+| [FAQ](docs/user/faq.md) | Short answers |
+
+**For contributors and embedders:** [CONTRIBUTING.md](CONTRIBUTING.md) ·
+[Architecture](docs/architecture.md) · [Protocol v1](docs/protocol-v1.md) ·
+[Engine protocol](docs/protocol-v1-engines.md) · [Bundling](docs/bundling.md) ·
+[Testing](docs/testing.md) · [PRIVACY.md](PRIVACY.md) · [LICENSING.md](LICENSING.md).
+Bugs and ideas: [GitHub issues](https://github.com/Maxaubert/Sonara/issues).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Apps that bundle the new runtime may sell, close-source, relicense and sign;
-they ship [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) ([LICENSING.md](LICENSING.md)). How to bundle it:
-[docs/bundling.md](docs/bundling.md).
+MIT, see [LICENSE](LICENSE). Apps that bundle the runtime may sell, close-source, relicense and
+sign; they ship [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) ([LICENSING.md](LICENSING.md)).
+How to bundle it: [docs/bundling.md](docs/bundling.md).

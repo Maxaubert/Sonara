@@ -121,9 +121,10 @@ one sends nothing; it is used only once you select it (*Use* under Engines on th
   products; with billing on (the paid tier) it does not (Gemini API terms,
   https://ai.google.dev/gemini-api/terms). Sonara uses Gemini's `streamGenerateContent` call (the
   `generateContent` family, streamed so a sentence plays as its audio arrives), which Google
-  does not store as an interaction; it also asks `models` and `voices` for the lists. For Gemini, Sonara sends several sentences of a reply
-  in one request (up to 1000 characters by default, up to 4000 when set; with Quick start off a
-  whole reply under that is one request) to use fewer of the free tier's requests.
+  does not store as an interaction; it also asks `models` and `voices` for the lists. For Gemini,
+  Sonara sends a whole message in one request (up to 2000 characters by default; 200 to 5000 with
+  "Characters per request" on the settings page; a longer message goes in as few parts as fit) to
+  use fewer of the free tier's requests.
 - **Nothing is sent while Sonara is muted.** While Sonara is muted or super-muted (the mute
   hotkey, the settings page's mute level, or `mute` from any client), nothing goes to an external
   engine: Sonara reads with its built-in voice (Kokoro, else the Windows voices) on your PC, says

@@ -1,6 +1,5 @@
 //! Kokoro's own text rules, run before G2P: code identifiers, paths,
-//! versions, numbers and keys, read the way a developer says them (M0,
-//! `docs/plans/2026-10-02-m0-engine-spike.md`). Sonara's shared text rules
+//! versions, numbers and keys, read the way a developer says them. Sonara's shared text rules
 //! (`sonara_core::text`) come first in the hosts that use them; these only
 //! add what the misaki lexicon cannot know. OneCore does not need them.
 use regex::{Captures, Regex};

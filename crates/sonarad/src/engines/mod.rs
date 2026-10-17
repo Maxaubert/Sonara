@@ -1,5 +1,4 @@
-//! External engine profiles in this runtime (spec docs/plans/
-//! 2026-10-04-external-engines-spec.md, sections 5 to 8): `engines.json` in
+//! External engine profiles in this runtime (see `docs/protocol-v1-engines.md`): `engines.json` in
 //! the home, one `External` engine per supported profile, registered in the
 //! reader's and the previews' registries, keys in a `KeyStore`, and the
 //! fallback notices as `sonarad.log` lines.

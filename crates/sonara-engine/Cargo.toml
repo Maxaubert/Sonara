@@ -11,7 +11,7 @@ onecore = ["dep:windows", "dep:windows-future"]
 # The Kokoro engine: vendored misaki G2P, ONNX Runtime loaded at run time
 # (Microsoft's onnxruntime.dll next to the exe), and the model manager.
 kokoro = ["dep:misaki", "dep:ort", "dep:ureq", "dep:sha2", "dep:regex", "dep:serde_json"]
-# External engines (spec docs/plans/2026-10-04-external-engines-spec.md):
+# External engines:
 # profiles the user adds at run time (cloud APIs, local servers), keys in
 # Windows Credential Manager, the HTTP core with fallback.
 external = ["dep:ureq", "dep:serde_json", "dep:windows", "dep:sonara-log", "dep:base64"]

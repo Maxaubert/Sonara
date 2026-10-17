@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn speech_provider_keys_and_headers_are_masked() {
-        // Spec docs/plans/2026-10-04-external-engines-spec.md 4.3.
+        // Keys and auth headers never reach the log.
         for n in [
             "secret",
             "xi-api-key",

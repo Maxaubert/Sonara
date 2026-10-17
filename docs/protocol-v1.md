@@ -2,15 +2,14 @@
 
 The contract between `sonarad.exe` (the Sonara runtime) and its clients: apps that bundle Sonara,
 SDKs (`@sonara/client`, `sonara-client`) and anything else on the same PC. This document covers the
-**core** (protocol 1.5), which every runtime offers, [external engines](#external-engines)
+**core**, which every runtime offers (protocol 1.11 now; see [Versioning](#versioning)), [external engines](#external-engines)
 (capability `engines`), and the [`channels`](#extension-channels), [`agent`](#extension-agent) and
 [`system`](#extension-system) extensions.
 
 Source of truth in code: `crates/sonarad` (server), `crates/sonara-reader` (the reader behind it),
 `crates/sonara-channels` (the `channels` extension), `crates/sonara-agent` (`agent`),
 `crates/sonara-system` (`system`). Black-box tests: `conformance/`
-(`python -m pytest conformance -q` after `cargo build -p sonarad`). Spec:
-`docs/plans/2026-10-02-sonara-runtime-spec.md` sections 3 and 4.
+(`python -m pytest conformance -q` after `cargo build -p sonarad`).
 
 Since 0.11 (#202) the Claude Code plugin runs this runtime too. The retired Python daemon's older
 protocol was removed with its package (#248); it stays in the git history before 0.21.0.
@@ -69,8 +68,8 @@ exits cleanly.
   "port": 50311,
   "http_port": 50312,
   "token": "64 hex characters",
-  "version": "0.9.7",
-  "protocol": {"major": 1, "minor": 4},
+  "version": "0.32.x",
+  "protocol": {"major": 1, "minor": 11},
   "capabilities": ["core", "speak", "control", "set", "get", "voices", "subscribe", "events.state", "events.items", "events.log", "engine_status", "engines"],
   "extensions": ["channels", "agent", "system"],
   "started_at": "2026-10-02T10:40:45Z"
@@ -132,6 +131,8 @@ JSON object with a `type`; requests are applied in the order they arrive on a co
 - The reply body is the same JSON as on TCP. Status: 200 for `ok: true`; for errors `E_AUTH` 401,
   `E_UNKNOWN_TYPE` and `E_NOT_FOUND` 404, `E_BUSY` and `E_INCOMPATIBLE` 409, `E_ENGINE` 500,
   `E_FORBIDDEN` 403, anything else 400.
+- A connection whose request headers have not all arrived within 5 s is closed (#58), like a TCP
+  client that sends no `hello` in time. The body size limit and the other rules are unchanged.
 - `GET /v1/events?events=state,items,log` (default: all three) is a Server-Sent Events stream. Each
   event is `event: <name>` plus `data: <the same JSON as on TCP>`; a `: ping` comment comes every 15
   s. `subscribe` over POST is `E_BAD_REQUEST`.
@@ -155,8 +156,8 @@ in every request, and clients must ignore fields they do not know in replies and
 | `keep_alive?` | `true`: the runtime keeps running after the last client left (until a takeover or the process is ended) |
 
 ```json
-> {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 0}, "require": ["core"], "extensions": ["channels"]}
-< {"id": 1, "ok": true, "version": "0.10.0", "protocol": {"major": 1, "minor": 1}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
+> {"type": "hello", "id": 1, "token": "...", "client": {"name": "prism", "version": "2.1"}, "protocol": {"major": 1, "minor": 11}, "require": ["core"], "extensions": ["channels"]}
+< {"id": 1, "ok": true, "version": "0.32.x", "protocol": {"major": 1, "minor": 11}, "capabilities": ["core", "speak", ...], "extensions": ["channels"], "unavailable": []}
 ```
 
 The reply's `extensions` lists the extensions enabled on this runtime now. An extension is enabled
@@ -371,38 +372,28 @@ When a client finds an instance it cannot use (another protocol major, a missing
 ## Versioning
 
 Semantic versioning on `protocol: {major, minor}`. A minor only adds optional fields, message types,
-capabilities and events; it never changes the meaning of what exists. 1.1 (runtime 0.10.0) added the
-readiness fields of `engine_status` and the `engine_status` capability. 1.2 (runtime 0.15.0, #224)
-added [external engines](#external-engines): the capability `engines` and its five core messages,
-`engine_status.reason`, `error.reason`, `voices.refresh` and the licence class `external`. Runtime
-0.16.0 (#225) added the kinds `elevenlabs`, `azure` and `google`, runtime 0.17.0 (#226) `cartesia`,
-`deepgram` and `command` (new values of `engine_list.kinds`). 1.3 (runtime 0.17.0, #226) added the
-message `engine_reload` and the error code `E_FORBIDDEN`: a `command` engine runs a program on the
-user's PC, so it is never added or changed over the protocol (the kind is new in the same release,
-so no client depended on adding one). 1.4 (runtime 0.18.0, #227) added `voices` with `profile` and
-`secret` (the voices of an unsaved profile). 1.5 (runtime 0.19.0, #235) added `engine_models` (a
-provider's models, live), the profile's `send_mode` ("Send to the engine") and the profile view's
-`takes_model`, `model_required`, `model_list`, `missing` and `send_mode`; the same release stopped
-filling in a default model or voice for any external engine (a profile without one it needs is kept
-and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice`
-are only what the profile sets. 1.11 (runtime 0.32.0, #320) added the `agent` key `question_step`
-(default `"off"`: a question set is read in order; `"on"`: question 1, then the navigation, as
-before). 1.10 (runtime 0.28.0, #299) added the `channels` `control` action
-`back` (back one section) and made `restart` without a channel replay the whole batch being read,
-not only the item playing; the Up hotkey is `back` on a tap and `restart` when held. 1.9 (runtime 0.27.0) added the core key `paths`; step mode also
-waits after a block's last line, and line labels are words (`"Line three."`). 1.8 (runtime 0.26.0, #294) added the core key `pronunciations` and
-reads text the way people say it (see How text is read). 1.7 (runtime 0.25.0, #295) added code reading: the `control` actions
-`next_line` and `previous_line` and the `agent` keys `code_speed`, `code_pause` and `code_step`
-(see Code reading). 1.6 (runtime 0.22.0, #283) added question sets: the `ask` fields
-`set_index` and `set_size`, the `agent` `control` actions `next_question` and `previous_question`,
-and, with `agent`, `restart` without a channel reading a message with a question set again from the
-top (the text, then question 1) instead of restarting the question playing: the Up key's documented
-intent ("read the current message again"); without a set it is unchanged. Runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and
-`skip_code` (old values are accepted as aliases: `all` is `everything`, `medium` and `quiet` are
-`skip_code`, so `get` returns the new names) and added `engine_status` to `runtime`; no shipped
-client depended on the old verbosity values, so the protocol minor was not bumped for it. Clients
-ignore unknown fields and event types. A new major is a new protocol: a client that needs it takes
-over an idle older runtime.
+capabilities and events; it never changes the meaning of what exists. Clients ignore unknown fields
+and event types. A new major is a new protocol: a client that needs it takes over an idle older
+runtime. The runtime speaks 1.11 (`PROTOCOL_MINOR` in `crates/sonarad/src/protocol/mod.rs`).
+
+| Minor | Runtime | Issue | What it added |
+|---|---|---|---|
+| 1.0 | first runtime | #183 | The core: `hello`, `speak`, `control`, `set`, `get`, `voices`, `subscribe`, the three event streams |
+| 1.1 | 0.10.0 | | Readiness fields of `engine_status` and the capability `engine_status` |
+| 1.2 | 0.15.0 | #224 | [External engines](#external-engines): the capability `engines` and its five core messages, `engine_status.reason`, `error.reason`, `voices.refresh` and the licence class `external`. Runtime 0.16.0 (#225) added the kinds `elevenlabs`, `azure` and `google`; runtime 0.17.0 (#226) `cartesia`, `deepgram` and `command` (new values of `engine_list.kinds`) |
+| 1.3 | 0.17.0 | #226 | The message `engine_reload` and the error code `E_FORBIDDEN`: a `command` engine runs a program on the user's PC, so it is never added or changed over the protocol (the kind is new in the same release, so no client depended on adding one) |
+| 1.4 | 0.18.0 | #227 | `voices` with `profile` and `secret` (the voices of an unsaved profile) |
+| 1.5 | 0.19.0 | #235 | `engine_models` (a provider's models, live), the profile's `send_mode` ("Send to the engine") and the profile view's `takes_model`, `model_required`, `model_list`, `missing` and `send_mode`. The same release stopped filling in a default model or voice for any external engine (a profile without one it needs is kept and reports `bad_config`, "choose a model" or "choose a voice"), so the view's `model` and `voice` are only what the profile sets |
+| 1.6 | 0.22.0 | #283 | Question sets: the `ask` fields `set_index` and `set_size`, the `agent` `control` actions `next_question` and `previous_question`, and, with `agent`, `restart` without a channel reading a message with a question set again from the top (the text, then question 1) instead of restarting the question playing. Without a set it is unchanged. Hotkeys: Ctrl+Alt+Left and Right were bound to the two question actions in 0.22.0 to 0.30.0; Left and Right are unbound since 0.30.0 (#307) |
+| 1.7 | 0.25.0 | #295 | Code reading: the `control` actions `next_line` and `previous_line` and the `agent` keys `code_speed`, `code_pause` and `code_step` (see Code reading) |
+| 1.8 | 0.26.0 | #294 | The core key `pronunciations`; text is read the way people say it (see How text is read) |
+| 1.9 | 0.27.0 | | The core key `paths`; step mode also waits after a block's last line, and line labels are words (`"Line three."`) |
+| 1.10 | 0.28.0 | #299 | The `channels` `control` action `back` (back one section); `restart` without a channel replays the whole batch being read, not only the item playing. Hotkeys: since 0.31.0 (#309) a tap on Up is `back` and holding it is `restart` |
+| 1.11 | 0.32.0 | #320 | The `agent` key `question_step` (default `"off"`: a question set is read in order; `"on"`: question 1, then the navigation, as before) |
+
+Changes with no minor bump: runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and
+`skip_code` (old values are accepted as aliases) and added `engine_status` to `runtime`; no shipped
+client depended on the old values.
 
 ## Saved settings
 
@@ -434,8 +425,8 @@ Files are written atomically (a temp file, then a rename). A `config.json` that 
 gives the defaults and is copied to `config.json.bad` (and logged) before the next save replaces it.
 A value out of range is not applied (and logged), the others still apply; it stays in the file, like
 a key this runtime does not know (from a newer release), until a client sets that key. A saved value
-the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice from the
-Python plugin while only OneCore is installed), is logged and kept in `config.json`, so it applies
+the reader refuses at start, such as a voice the current engine lacks (a Kokoro voice
+while only OneCore is installed), is logged and kept in `config.json`, so it applies
 once it is available; the default is used meanwhile. `--engine` on the command line wins over a
 saved `engine` (except that `--engine fake` keeps a saved external engine, with the fake engine as
 its fallback), which wins over the default choice below; a saved `engine` may name an external
@@ -582,7 +573,7 @@ up (and not still reading its last message) starts a new batch.
   tab, after `/clear` or a relaunch, replaces it; without a `host_tab` such a new session is
   announced); `next_channel` is always announced. Without `agent`, a channel without a `label` is
   not announced. `set channel_announce "off"` turns announcements off. With the `agent` extension on
-  (an agent host such as the Claude plugin) the texts are the Python plugin's,
+  (an agent host such as the Claude plugin) the texts are
   `"Session changed: <label>."` and `"Session changed: <label>, reading again."` (a channel without
   a label: `"Session changed."` and `"Session changed, reading again."`, so no switch is silent,
   #241), and every announcement is preceded by the `session_change` earcon, for automatic hand-offs
@@ -692,11 +683,11 @@ unread sentences, and its item if it is being read ("one message, always the las
 arrives late from an earlier turn is dropped (see `t`). Decisions (`ask`) are read before the other
 channels as soon as the item playing ends (the batch reading now waits), and play an earcon.
 
-**Background sessions (`background_policy`, #195).** With `"earcon_only"` (the Python plugin's
-default; the runtime's is `"all"` since #202) only the focused channel (the session the user
+**Background sessions (`background_policy`, #195).** With `"earcon_only"` (the runtime's
+default is `"all"`, since #202) only the focused channel (the session the user
 prompted last: the Claude hooks `focus` on every prompt) is read automatically; the other channels
 play their earcons, and their text and decisions wait until the user prompts that session (`focus`),
-switches to it (`next_channel`) or replays it (`restart`). Exceptions, as in the Python plugin: the
+switches to it (`next_channel`) or replays it (`restart`). Exceptions: the
 channel focused before keeps the right to finish what it had unread when the focus moved, a summary
 (or the raw text standing in for one) is read whatever the focus, and text a host speaks into a
 channel (`speak` with `channel`) is always read. With no channel focused nothing is held back.
@@ -774,8 +765,8 @@ numbers of 1000 or more (years after a cue word), abbreviations (`e.g.`), roman 
 keyword, tech terms (`SQL` "sequel", `nginx` "engine X"), identifiers (`getUserName` "get user
 name") and capitalised abbreviations spelled out unless they make a word (`API` "A P I", `NASA`
 kept). Whole numbers under 1000 with no other reading stay digits. Counts read as counts (`12/12` "twelve of twelve"), durations as seconds (`30s`), and a sentence-ending dot after `PM` or `U.S.` stays. The agent's text is converted once: the reader then only cuts it into sentences. Inline code and link targets are
-left to their own rules. The rules and their sources: `research/sonara/2026-10-13-text-normalization-survey.md`
-(outside the repo) and `tests/fixtures/text_rules/pronunciation.json` (the cases).
+left to their own rules. The rules were drawn from a text-normalization survey kept in the maintainer's notes (not in this
+repo); the cases are in `tests/fixtures/text_rules/pronunciation.json`.
 
 **Code reading** (protocol 1.7, runtime 0.25.0, #295). At `verbosity` `"read_code"` and
 `"everything"` a fenced code block in `stream` text is read as one item: its announcement
@@ -849,7 +840,7 @@ clip instead, and one line in `logs\sonarad.log` says why (once per version of t
 | key | value |
 |---|---|
 | `mute_level` | `0` (default), `1`: agent text is not spoken (what is queued and playing is dropped), earcons still play; `2`: earcons are silent too. Setting 1 or 2 stops everything queued and playing, core `speak` and channel `speak` items included (as the Python daemon's global mute); text spoken without the extension afterwards is read as usual. **Muting never loses a session's latest message** (runtime 0.20.2, #243): at level 1 and 2 the agent text that would be read is stored in its channel as that session's latest message, marked heard, so it is never read on its own, nothing is synthesized and no request reaches an engine. Setting 0 reads nothing. A switch to the session (`next_channel`) or `restart` (Up) reads it, from the top of the batch. Every rule runs as while unmuted (`read_mode`, send mode `message`, `turn_start`, `flush`), only the outcome is stored. Summaries are not made while muted: the prose kept for a summary is stored as it is (no summarizer run for text nobody hears); a summary that lands while muted is stored. Two exceptions to "unmuting reads nothing": a summary already in flight (or a settle window started) when muting that lands after unmuting is read, and with `read_mode` `done` prose held while muted is read by a `turn_end` that comes after unmuting (the turn ended unmuted). See "Agent batches" above |
-| `verbosity` | `"everything"`: text, decisions, tool announcements, hints, and each code block read (see Code reading; runtime 0.23.0 #290, 0.25.0 #295); `"read_code"` (runtime 0.24.0, #292): text, decisions and code blocks as at `"everything"`, no tool announcements or hints; `"skip_code"` (default, shown as *Default*): text and decisions, code blocks dropped without a word, no tool announcements or hints. Aliases for older clients (#214): `"medium"` and `"quiet"` are `"skip_code"`, `"all"` is `"everything"`; a `set` with an alias answers (and saves) the new name, and a saved alias loads as the new name |
+| `verbosity` | `"everything"`: text, decisions, tool announcements, hints, and each code block read (see Code reading; runtime 0.23.0 #290, 0.25.0 #295); `"read_code"` (runtime 0.24.0, #292): text, decisions and code blocks as at `"everything"`, no tool announcements or hints; `"skip_code"` (default, shown as *Default*): text and decisions, code blocks dropped without a word, no tool announcements or hints. Aliases for older clients (#214): `"medium"` and `"quiet"` are `"skip_code"`, `"all"` is `"everything"`; a `set` with an alias answers (and saves) the new name, and a saved alias loads as the new name Old values are accepted as aliases (runtime 0.13.0, #214): `all` is `everything`, `medium` and `quiet` are `skip_code`, so `get` returns the new names |
 | `code_speed` | protocol 1.7 (#295): code lines and a block's announcement are read at this percent of `rate`, `50` to `100` (default `80`). External engines without a speed parameter (Gemini) take it as their pace style |
 | `code_pause` | protocol 1.7 (#295): silence after each code line, in milliseconds, `0` to `2000` (default `500`) |
 | `code_step` | protocol 1.7 (#295): `"on"` or `"off"` (default): step through code. The reader waits after a block's announcement (which adds `"Use <key> for the next line."`, the key bound to `next_question`) and after each line, the last one too (1.9: the text after the block waits as well), until `next_line`, `previous_line` or `play` / `toggle` (the rest of the block straight through, then the text after it). While waiting it is `paused`; a move away (`restart`, `skip`, `next`, an interrupting `speak`) plays at once, while a `pause` sent during the wait holds as usual. Other apps stay ducked or paused through a wait, for 30 seconds at most |
@@ -963,7 +954,7 @@ while Sonara is muted: the user asked for it.
 
 ### Spoken cues
 
-Short confirmations, as the Python plugin spoke them (#197): the hotkeys say `"Paused."` /
+Short confirmations (#197): the hotkeys say `"Paused."` /
 `"Resumed."` (pause, only while an item is loaded), `"Muted."`, `"Super muted."`, `"Unmuted."` (mute
 cycle; without `agent`, `"Muted."` / `"Unmuted."`), `"Rate 225."` (faster, slower) and
 `"No session."` (`next_channel` with no channel open); a `set` of `mute_level` that changes it, of
@@ -977,8 +968,7 @@ silently. With an [external engine](#external-engines) current, the cues of a mu
 with the built-in engine, never sent to it (#227). Cues are spoken in order; a rate, duck-level or
 audio-mode cue still waiting when a newer one of the same kind comes is skipped. Stream `cues` (ask
 for it by name in `subscribe`, or `GET /v1/events?events=cues`; `E_UNSUPPORTED` over TCP while the
-extension is off): `{"event": "cue", "text": "Muted."}` for every cue spoken. The Python plugin's
-setup-guide cue ("run slash sonara install") is not carried over: the runtime needs no install step
+extension is off): `{"event": "cue", "text": "Muted."}` for every cue spoken. There is no setup-guide cue: the runtime needs no install step
 (the hook starts it).
 
 ### Hotkeys
@@ -987,14 +977,14 @@ Actions and what they do (the same as the protocol request named):
 
 | action | default | effect |
 |---|---|---|
-| `restart` | Ctrl+Alt+Up (unbound in runtime 0.30.0) | since runtime 0.31.0 (#309) the same as `previous_question`: a tap goes back one section (a code line, a question, else `control back`) (back one section, #299); held for half a second it is `control restart` (the message again from the top; with `agent`, a message with a question set: its text, then question 1, #283), heard while the key is still down. The log line says `hotkey back session=<label> to=<what>` or `hotkey restart` |
-| `flush` | Ctrl+Alt+Down | since runtime 0.31.0 (#309) a tap goes on one section, as a tap on `next_question` (log `hotkey next ...`); held for half a second: with `channels`, `control flush` (the session being read and the rest of its reply, #228; with `flush_scope` `all` also every other session's ready messages); without it, `control stop`. With `agent`, plays `nav` (or `nav_edge` when nothing was dropped) |
+| `restart` | Ctrl+Alt+Up | a tap goes back one section (a code line, a question, else `control back`, #299, #309); held for half a second it is `control restart` (the message again from the top; with `agent`, a message with a question set: its text, then question 1, #283), heard while the key is still down. The log line says `hotkey back session=<label> to=<what>` or `hotkey restart` |
+| `flush` | Ctrl+Alt+Down | a tap goes on one section, as a tap on `next_question` (log `hotkey next ...`); held for half a second: with `channels`, `control flush` (the session being read and the rest of its reply, #228; with `flush_scope` `all` also every other session's ready messages); without it, `control stop`. With `agent`, plays `nav` (or `nav_edge` when nothing was dropped) |
 | `pause` | unbound | `control toggle`, then the cue `"Paused."` or `"Resumed."` |
 | `mute` | Ctrl+Alt+M | with `agent`: `mute_level` 0, 1, 2, 0 and so on; else `mute` and `unmute`; then its cue |
 | `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` then says `"Session changed: <label>."` (the announcement; `"Session changed."` for a session without a label; when switches are not announced, the earcon alone); with no channel open, the cue `"No session."` |
 | `faster` / `slower` | unbound | `rate` plus or minus 25, then `"Rate N."` |
-| `previous_question` | unbound (Ctrl+Alt+Left in runtime 0.22.0 to 0.30.0) | runtime 0.30.0 (#307), named for #283: a tap goes back one section. On question 2 or later of a question set (also once it was read) it is `control previous_question`; else `control back` (on question 1: the message's last sentence; while nothing is read, the message again). Held for half a second it is `control restart`, as `restart` held. The log line says `hotkey back ...` or `hotkey restart ...` |
-| `next_question` | unbound (Ctrl+Alt+Right in runtime 0.22.0 to 0.30.0) | runtime 0.30.0 (#307): a tap goes on one section: the item's next chunk, else the batch's next entry (after a message's last sentence, its question set); on a question, `control next_question`; while nothing is read, `control next_question` (question 1 of a set). Nothing to move to plays `nav_edge` and reading goes on. Held for half a second it skips the rest of the message: from its text to question 1 of a set that follows, else the session being read is flushed as `control flush` with `flush_scope` `session`. The log line says `hotkey next session=<label> to=<chunk, entry or end>`, `hotkey next ... question=<k>/<n>` or `hotkey skip ...`. While a code block is read (#295) a tap is `control next_line` instead, and a tap on `previous_question` is `previous_line` |
+| `previous_question` | unbound | Named for #283 (#307): a tap goes back one section. On question 2 or later of a question set (also once it was read) it is `control previous_question`; else `control back` (on question 1: the message's last sentence; while nothing is read, the message again). Held for half a second it is `control restart`, as `restart` held. The log line says `hotkey back ...` or `hotkey restart ...` |
+| `next_question` | unbound | A tap goes on one section: the item's next chunk, else the batch's next entry (after a message's last sentence, its question set); on a question, `control next_question`; while nothing is read, `control next_question` (question 1 of a set). Nothing to move to plays `nav_edge` and reading goes on. Held for half a second it skips the rest of the message: from its text to question 1 of a set that follows, else the session being read is flushed as `control flush` with `flush_scope` `session`. The log line says `hotkey next session=<label> to=<chunk, entry or end>`, `hotkey next ... question=<k>/<n>` or `hotkey skip ...`. While a code block is read (#295) a tap is `control next_line` instead, and a tap on `previous_question` is `previous_line` |
 
 A binding is a `key` (a letter, a digit, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`,
 `pagedown`, `period`, `leftbracket`, `rightbracket`) and `mods` (`ctrl`, `alt`, `shift`, `win`). A

@@ -16,7 +16,7 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - E2E (headless): `python -m pytest tests/e2e -q` (`pip install --group e2e`, `playwright install chromium`). Run when: `crates/sonarad/assets/settings/` (the page in parts, joined in `settings_page.rs`), `crates/sonarad/src/settings_page.rs` or `config.rs` change (needs `cargo build -p sonarad`).
 - `clients/`, `packaging/npm-runtime` or a version file changed: run the SDK gates. Rust dependency changed: regenerate notices. Live tests, Kokoro, G2P bless, earcons, SDK steps: `docs/testing.md`.
 - Embedder e2e (#274): `python -m pytest tests/embed -q -rs` after the release build of all three exes and `runtime_dlls.py stage` (gate `embed`; runs when the runtime, SDKs, packaging or `docs/protocol-v1.md`/`bundling.md` change). Hosts on the packed npm packages, the wheel in a fresh venv and the release zip; `sonarad --output wav:<dir>` lets them check real audio. Opt-in: `SONARA_EMBED_RELEASE=1` for the latest GitHub release.
-- Engine contract tests (#275, no network, in `cargo test`): `crates/sonara-engine/tests/contract_*.rs` check each adapter against fragments of the provider's official spec in `tests/contracts/<provider>/` (each with `SOURCES.md`); refresh with `packaging/contracts/extract_fragment.py` (`docs/testing.md`).
+- Engine contract tests (#275, no network, in `cargo test`): `crates/sonara-engine/tests/contract_*.rs` check each adapter against fragments of the provider's official spec in `crates/sonara-engine/tests/contracts/<provider>/` (each with `SOURCES.md`); refresh with `packaging/contracts/extract_fragment.py` (`docs/testing.md`).
 - Skill `sonara-gates`: the gate script, every gate command and when the e2e and SDK gates apply.
 - Skill `sonara-live-tests`: the opt-in live checks and their env vars.
 - Build / package: `cargo build -p sonarad -p sonara-hook -p sonara-cli --release; python packaging/runtime_dlls.py stage target/release; python packaging/release_zip.py`   Artifact: `sonara-runtime-win-x64-<version>.zip` + `SHA256SUMS`
@@ -50,4 +50,9 @@ Eyes-free text-to-speech for Claude Code, Windows only, run by the Rust runtime 
 - Golden fixtures: text rules `tests/fixtures/text_rules/` (`crates/sonara-core/tests/golden.rs`), hook mapping `crates/sonara-hook/tests/golden/` with the captured payloads in `tests/fixtures/`. Change a case only with a deliberate rule change.
 
 ## Current work
-- Repo cleanup after the 2026-10-05 audit (the Python package `src/sonara` was removed in #248).
+- #323: follow the question on screen (open plan: `docs/plans/2026-10-16-question-follow.md`).
+- #343: a woken reply that is prose only.
+- #321: flaky tests.
+- Architecture steps that came out of the 2026-10-16 review (check `gh issue list` for the open ones).
+- User docs live in `docs/user/` (index: `docs/user/README.md`); keep them in step with `config.rs` `SCHEMA`, the settings page and the hotkeys.
+- The old Python-era plans, audits and specs were removed from the tree; the full old tree is at git tag `history-final`.
