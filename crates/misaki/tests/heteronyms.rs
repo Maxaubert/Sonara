@@ -51,3 +51,35 @@ fn other_heteronyms_follow_their_part_of_speech() {
         assert!(ps.contains(want), "{text}: {ps}, want {want}");
     }
 }
+
+#[test]
+fn content_is_the_noun_unless_a_linking_verb_leads_to_it() {
+    // Owner's report 2026-10-17: "the content action" was said like
+    // "feeling content" (kentent), the adjective.
+    let g2p = G2P::new(Language::EnglishUS);
+    for noun in [
+        "Step 9 is the content action now.",
+        "The content action is done.",
+        "Check the content of the file.",
+        "The content is good.",
+        "Content is king.",
+        "Markdown content works.",
+    ] {
+        assert!(
+            phonemes(&g2p, noun).contains("kˈɑntɛnt"),
+            "{noun}: {}",
+            phonemes(&g2p, noun)
+        );
+    }
+    for adjective in [
+        "I am content with it.",
+        "She seems very content.",
+        "I'm content.",
+    ] {
+        assert!(
+            phonemes(&g2p, adjective).contains("kəntˈɛnt"),
+            "{adjective}: {}",
+            phonemes(&g2p, adjective)
+        );
+    }
+}

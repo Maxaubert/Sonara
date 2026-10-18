@@ -112,5 +112,17 @@
     "normalized": "Hello, world!",
     "phonemes": "həlˈO, wˈɜːld!",
     "text": "Hello, world!"
+  },
+  {
+    "batches": 1,
+    "normalized": "Step 9 is the content action now, and step 8's task is done.",
+    "phonemes": "stˈɛp nˈIn ɪz ðə kˈɑntɛnt ˈækʃən nˈW, ænd stˈɛp ˈAts tˈæsk ɪz dˈʌn.",
+    "text": "Step 9 is the content action now, and step 8's task is done."
+  },
+  {
+    "batches": 1,
+    "normalized": "I am content with it.",
+    "phonemes": "ˌI ɐm kəntˈɛnt wɪð ɪɾ.",
+    "text": "I am content with it."
   }
 ]
