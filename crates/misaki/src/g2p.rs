@@ -264,6 +264,8 @@ impl G2P {
             }
         }
 
+        self.join_number_possessives(&processed_text, &mut tokens_with_spans);
+
         let mut tokens: Vec<MToken> = tokens_with_spans.into_iter().map(|(tk, _)| tk).collect();
 
         // Collect words for tagging
@@ -279,6 +281,7 @@ impl G2P {
         for (tk, tag) in tokens.iter_mut().zip(tags.iter()) {
             tk.tag = tag.tag.clone();
         }
+        settle_content(&mut tokens);
 
         // Process in reverse to build context from future tokens
         for i in (0..tokens.len()).rev() {
@@ -450,6 +453,48 @@ impl G2P {
         Ok((result, tokens))
     }
 
+    /// "step 8's task" reads "step eight's task": the number and its `'s`
+    /// become one word (the apostrophe is not a subtoken, so the `s` was
+    /// spelled as a letter, "eight ess"). A four digit year is left alone.
+    fn join_number_possessives(
+        &self,
+        text: &str,
+        tokens: &mut Vec<(MToken, std::ops::Range<usize>)>,
+    ) {
+        let mut i = 1;
+        while i < tokens.len() {
+            // A curly apostrophe is a token of its own; fold it into the gap.
+            if i + 1 < tokens.len()
+                && matches!(tokens[i].0.text.as_str(), "\u{2019}" | "\u{2018}")
+                && tokens[i + 1].0.text == "s"
+                && self.is_number(&tokens[i - 1].0.text)
+            {
+                tokens.remove(i);
+            }
+            let (prev, prev_span) = (&tokens[i - 1].0, tokens[i - 1].1.clone());
+            let (cur, cur_span) = (&tokens[i].0, tokens[i].1.clone());
+            let joined = cur.text == "s"
+                && prev.phonemes.is_none()
+                && cur.phonemes.is_none()
+                && matches!(
+                    text.get(prev_span.end..cur_span.start),
+                    Some("'" | "\u{2019}")
+                )
+                && self.is_number(&prev.text)
+                && !is_year(&prev.text);
+            if joined {
+                let spoken = self.convert_number(&prev.text);
+                if spoken != prev.text {
+                    tokens[i - 1].0.text = format!("{spoken}'s");
+                    tokens[i - 1].1.end = cur_span.end;
+                    tokens.remove(i);
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
     fn is_number(&self, word: &str) -> bool {
         let clean = word.replace(",", "");
         clean.parse::<i64>().is_ok()
@@ -466,6 +511,93 @@ impl G2P {
             }
         }
         word.to_string()
+    }
+}
+
+/// A four digit number that reads as a year ("1990").
+fn is_year(word: &str) -> bool {
+    word.len() == 4
+        && word.bytes().all(|b| b.is_ascii_digit())
+        && matches!(word.parse::<u32>(), Ok(1100..=2099))
+}
+
+/// Words before "content" that make it the adjective ("I am content",
+/// "feels content", "not very content").
+const CONTENT_ADJECTIVE_CUES: &[&str] = &[
+    "am",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "i'm",
+    "you're",
+    "we're",
+    "they're",
+    "he's",
+    "she's",
+    "it's",
+    "that's",
+    "there's",
+    "isn't",
+    "aren't",
+    "wasn't",
+    "weren't",
+    "feel",
+    "feels",
+    "felt",
+    "feeling",
+    "seem",
+    "seems",
+    "seemed",
+    "remain",
+    "remains",
+    "stay",
+    "stays",
+    "look",
+    "looks",
+    "get",
+    "gets",
+    "got",
+    "getting",
+    "become",
+    "becomes",
+    "very",
+    "so",
+    "quite",
+    "not",
+    "n't",
+    "more",
+    "less",
+    "too",
+    "fairly",
+    "rather",
+    "pretty",
+    "really",
+    "perfectly",
+    "fully",
+    "completely",
+    "entirely",
+    "mostly",
+    "just",
+    "also",
+    "still",
+];
+
+/// The tagger calls "content" an adjective in "the content action" and
+/// Kokoro then said it like "feeling content" (owner's report 2026-10-17).
+/// The noun is by far the common use in what Claude writes, so "content" is
+/// the adjective only after a linking verb or an adverb that goes with one.
+fn settle_content(tokens: &mut [MToken]) {
+    for i in 0..tokens.len() {
+        if !tokens[i].text.eq_ignore_ascii_case("content") {
+            continue;
+        }
+        let adjective =
+            i > 0 && CONTENT_ADJECTIVE_CUES.contains(&tokens[i - 1].text.to_lowercase().as_str());
+        tokens[i].tag = if adjective { "JJ" } else { "NN" }.to_string();
     }
 }
 

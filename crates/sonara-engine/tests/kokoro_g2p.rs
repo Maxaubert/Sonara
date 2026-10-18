@@ -36,6 +36,9 @@ const CASES: &[&str] = &[
     "Call fetchModelFiles() then useState in the React component.",
     "Sonara uses Kokoro and Claude, not Codex.",
     "Hello, world!",
+    // Heteronym and possessive fixes (2026-10-17).
+    "Step 9 is the content action now, and step 8's task is done.",
+    "I am content with it.",
 ];
 
 fn render(p: &Phonemizer, input: &str) -> Value {
