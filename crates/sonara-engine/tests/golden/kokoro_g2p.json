@@ -124,5 +124,17 @@
     "normalized": "I am content with it.",
     "phonemes": "ˌI ɐm kəntˈɛnt wɪð ɪɾ.",
     "text": "I am content with it."
+  },
+  {
+    "batches": 1,
+    "normalized": "Should I?",
+    "phonemes": "ʃˌʊd ˈI?",
+    "text": "Should I?"
+  },
+  {
+    "batches": 1,
+    "normalized": "Should I try that?",
+    "phonemes": "ʃˌʊd ˌI tɹˈI ðˈæt?",
+    "text": "Should I try that?"
   }
 ]
