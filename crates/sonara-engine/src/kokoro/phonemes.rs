@@ -63,6 +63,33 @@ pub fn to_kokoro_symbols(ps: &str) -> String {
     out.trim().to_string()
 }
 
+/// misaki leaves a weak word (a pronoun, an auxiliary) with only a secondary
+/// stress, which is right mid-sentence. As the last word before `.`, `!` or
+/// `?` it makes Kokoro sound as if more were coming ("should I?" like the
+/// start of "should I try that?"), so its first secondary stress becomes
+/// primary.
+pub fn stress_sentence_end(ps: &str) -> String {
+    let chars: Vec<char> = ps.chars().collect();
+    let mut out = chars.clone();
+    for (i, c) in chars.iter().enumerate() {
+        if !matches!(c, '.' | '!' | '?') || chars.get(i + 1).is_some_and(|n| *n != ' ') {
+            continue;
+        }
+        let start = chars[..i]
+            .iter()
+            .rposition(|c| *c == ' ')
+            .map_or(0, |p| p + 1);
+        let word = &chars[start..i];
+        if word.contains(&'ˈ') {
+            continue;
+        }
+        if let Some(p) = word.iter().position(|c| *c == 'ˌ') {
+            out[start + p] = 'ˈ';
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// The G2P with Sonara's words and fallback. Building it decodes the
 /// embedded lexicons (about a second); it is then shared.
 pub struct Phonemizer {
@@ -89,7 +116,7 @@ impl Phonemizer {
             return String::new();
         }
         match self.g2p.g2p(&t) {
-            Ok((ps, _)) => to_kokoro_symbols(&ps),
+            Ok((ps, _)) => stress_sentence_end(&to_kokoro_symbols(&ps)),
             // Our fallback never fails; keep the words rather than nothing.
             Err(_) => String::new(),
         }
@@ -204,6 +231,24 @@ mod tests {
             to_kokoro_symbols("hˈa\u{200d}ʊs ,  t\u{200d}ʃˈe\u{200d}ɪn ."),
             "hˈWs, ʧˈAn."
         );
+    }
+
+    #[test]
+    fn a_weak_last_word_is_stressed_so_a_short_question_sounds_finished() {
+        // "should I?" has the same weak "I" as the start of "should I try that?".
+        assert_eq!(stress_sentence_end("ʃˌʊd ˌI?"), "ʃˌʊd ˈI?");
+        assert_eq!(
+            stress_sentence_end("kˌæn ˌI. ʃˌʊd ˌI?"),
+            "kˌæn ˈI. ʃˌʊd ˈI?"
+        );
+        // Mid-sentence words, and last words that already carry a primary
+        // stress, are left alone.
+        assert_eq!(
+            stress_sentence_end("ʃˌʊd ˌI tɹˈI ðˈæt?"),
+            "ʃˌʊd ˌI tɹˈI ðˈæt?"
+        );
+        assert_eq!(stress_sentence_end("ɪz ɪɾ?"), "ɪz ɪɾ?");
+        assert_eq!(stress_sentence_end("ˈe.ɡ. ˌI"), "ˈe.ɡ. ˌI");
     }
 
     #[test]

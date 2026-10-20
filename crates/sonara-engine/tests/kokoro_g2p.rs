@@ -39,6 +39,8 @@ const CASES: &[&str] = &[
     // Heteronym and possessive fixes (2026-10-17).
     "Step 9 is the content action now, and step 8's task is done.",
     "I am content with it.",
+    "Should I?",
+    "Should I try that?",
 ];
 
 fn render(p: &Phonemizer, input: &str) -> Value {
