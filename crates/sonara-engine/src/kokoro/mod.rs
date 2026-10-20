@@ -22,6 +22,7 @@
 //!   `clamp(wpm / 200, 0.5, 2.0)` (`speed`), as the Python reader.
 pub mod download;
 mod fallback;
+pub mod lead_in;
 pub mod model;
 pub mod phonemes;
 pub mod text;
@@ -549,24 +550,43 @@ impl Iterator for Stream {
             return Some(Err(Error::Cancelled));
         }
         let batch = self.batches.pop_front()?;
-        let tokens = phonemes::tokens(&batch);
-        let Some(style) = self.loaded.styles.style(self.voice, tokens.len()) else {
+        // A short question is heard in the context of a lead-in sentence,
+        // cropped off again; without a clean crop it is spoken on its own.
+        let cropped = if lead_in::wants_lead_in(&batch) {
+            self.infer(&lead_in::with_lead_in(&batch))
+                .ok()
+                .and_then(|a| lead_in::crop_lead_in(trim(&a), SAMPLE_RATE))
+        } else {
+            None
+        };
+        let audio = match cropped {
+            Some(a) => Ok(a),
+            None => self.infer(&batch).map(|a| trim(&a).to_vec()),
+        };
+        if matches!(audio, Err(Error::UnknownVoice(_))) {
             self.done = true;
-            return Some(Err(Error::UnknownVoice(self.voice.to_string())));
-        };
-        let audio = {
-            let mut model = self.loaded.model.lock().unwrap_or_else(|e| e.into_inner());
-            model.infer(&tokens, style, self.speed)
-        };
+        }
         if self.inner.generation.load(Ordering::SeqCst) != self.generation {
             self.done = true;
             return Some(Err(Error::Cancelled));
         }
         Some(audio.map(|a| PcmChunk {
-            samples: to_i16(&normalize_rms(trim(&a))),
+            samples: to_i16(&normalize_rms(&a)),
             sample_rate: SAMPLE_RATE,
             channels: 1,
         }))
+    }
+}
+
+impl Stream {
+    /// One model call for the phonemes `ps`.
+    fn infer(&self, ps: &str) -> Result<Vec<f32>> {
+        let tokens = phonemes::tokens(ps);
+        let Some(style) = self.loaded.styles.style(self.voice, tokens.len()) else {
+            return Err(Error::UnknownVoice(self.voice.to_string()));
+        };
+        let mut model = self.loaded.model.lock().unwrap_or_else(|e| e.into_inner());
+        model.infer(&tokens, style, self.speed)
     }
 }
 
