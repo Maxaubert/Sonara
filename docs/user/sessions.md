@@ -64,7 +64,7 @@ Rebind the key on the Hotkeys page: [Hotkeys](hotkeys.md).
 
 ## Mute, flush and sessions
 
-- **Ctrl+Alt+M** cycles unmuted, muted (speech) and super muted (speech and chimes). It covers all sessions.
+- **Ctrl+Alt+M** toggles muted (speech) and unmuted; hold it for super muted (speech and chimes). It covers all sessions.
 - Hold **Ctrl+Alt+Down** to flush. The **Flush skips** setting (Hotkeys page) decides how far it goes:
 
 | Flush skips | Effect |

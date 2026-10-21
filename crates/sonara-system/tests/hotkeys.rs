@@ -73,15 +73,21 @@ fn holding_down_is_a_hold_that_fires_before_the_release() {
 }
 
 #[test]
-fn mute_cannot_be_held() {
+fn holding_mute_is_a_hold_and_next_session_cannot_be_held() {
+    // A tap toggles muted, a hold is super muted.
     let fake = Fake::new();
     let (_hk, got) = start_pressed(&fake);
     fake.hold_key(0x4D); // M
-    let t0 = Instant::now();
     fake.press(Action::Mute.id());
     assert!(eventually(|| got.lock().unwrap().len() == 1));
+    assert_eq!(*got.lock().unwrap(), vec![(Action::Mute, Press::Hold)]);
+    fake.release_key(0x4D);
+    fake.hold_key(0x50); // P
+    let t0 = Instant::now();
+    fake.press(Action::NextChannel.id());
+    assert!(eventually(|| got.lock().unwrap().len() == 2));
     assert!(t0.elapsed() < HOLD, "no wait for a key that cannot be held");
-    assert_eq!(*got.lock().unwrap(), vec![(Action::Mute, Press::Tap)]);
+    assert_eq!(got.lock().unwrap()[1], (Action::NextChannel, Press::Tap));
 }
 
 #[test]

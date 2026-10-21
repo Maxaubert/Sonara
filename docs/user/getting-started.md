@@ -45,7 +45,7 @@ Offline or blocked downloads: the hooks stay silent and try again after 5 minute
 | 0:30 | Send any prompt | Hear nothing yet, or a Windows voice. The runtime is installing |
 | 1:00 | Send another prompt | Hear Claude's reply once the turn is done |
 | 1:30 | Run `/sonara:doctor` | See one row per check. A `[INFO]` engine row shows the voice download progress, for example `105 of 354 MB` |
-| 2:00 | Press **Ctrl+Alt+M** while it reads | Hear "Muted." Press again for "Super muted.", again for "Unmuted." |
+| 2:00 | Press **Ctrl+Alt+M** while it reads | Hear "Muted." Tap again for "Unmuted.", or hold it for "Super muted." |
 | 2:30 | Tap **Ctrl+Alt+Up** or **Ctrl+Alt+Down** while it reads | Go back or on one section, with a short tick |
 | 3:00 | When Claude asks a question or a permission, listen for the chime | Hear the chime at once, then the question and its options. Press the option's **number** in Claude Code to answer |
 | 4:00 | Run `/sonara:settings` | Your browser opens the settings page. Try the voice preview and the speaking rate |

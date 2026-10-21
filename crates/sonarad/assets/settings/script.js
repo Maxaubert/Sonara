@@ -514,7 +514,7 @@ function renderSessions(list) {
 }
 
 // ---- hotkeys ------------------------------------------------------------
-const ACTION_NAMES = {restart: "Back / hold: from the start", flush: "Next / hold: flush", pause: "Pause / resume", mute: "Mute cycle",
+const ACTION_NAMES = {restart: "Back / hold: from the start", flush: "Next / hold: flush", pause: "Pause / resume", mute: "Mute / hold: super mute",
                       next_channel: "Next session", faster: "Faster", slower: "Slower",
                       previous_question: "Back, second key / hold: from the start",
                       next_question: "Next, second key / hold: skip the rest"};
