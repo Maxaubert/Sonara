@@ -128,7 +128,11 @@ fn a_present_model_speaks_one_batch_per_sentence() {
         assert!(!c.samples.is_empty());
     }
     let calls = fx.calls.lock().unwrap().clone();
-    assert_eq!(calls.len(), 3);
+    // "How are you?" is a short question: the model is first called with a
+    // lead-in sentence before it. The fake audio has no pause to crop at, so
+    // the question is then spoken on its own.
+    assert_eq!(calls.len(), 4);
+    assert!(calls[1].0 > calls[2].0, "{calls:?}");
     // Default voice af_heart is voice 0 of the catalogue; speed 1.0.
     assert!(calls
         .iter()
