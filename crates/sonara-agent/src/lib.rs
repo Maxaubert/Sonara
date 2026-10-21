@@ -772,7 +772,13 @@ impl Agent {
         for (entry, aside) in rules.read_set_aside(channel) {
             ch.set_aside(channel, entry, aside);
         }
-        let muted = rules.settings.mute_level >= 1;
+        // A question on the screen of another session than the one read is
+        // never a reason to switch to it (owner, 2026-10-21: it cut a message
+        // and read it again from the start once the question was answered).
+        // The set still follows the screen; the question is read when that
+        // session is read.
+        let elsewhere = ch.engaged().is_some_and(|e| e != channel);
+        let muted = rules.settings.mute_level >= 1 || elsewhere;
         let reading = |entry: u64| ch.reading() == Some((channel.to_string(), entry));
         // A question of the set the screen does not show is being read
         // (read in order before the screen's first report): it stops.
@@ -793,7 +799,11 @@ impl Agent {
         };
         match &moved {
             Some(ShownMove::Land(_) | ShownMove::Entry { .. }) if muted => {
-                what.push_str(", not read: muted");
+                what.push_str(if elsewhere {
+                    ", not read: another session is read"
+                } else {
+                    ", not read: muted"
+                });
             }
             Some(ShownMove::Entry { entry, .. }) if reading(*entry) => {
                 what.push_str(", being read already");

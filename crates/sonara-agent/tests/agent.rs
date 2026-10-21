@@ -1888,6 +1888,23 @@ fn a_question_shown_on_screen_jumps_a_set_read_in_order() {
 }
 
 #[test]
+fn a_question_shown_in_another_session_does_not_cut_the_one_being_read() {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    ask_set(&r, "b", 3);
+    r.wait_for("One is here.");
+    r.out.start();
+    // The screen of session b moves to its question 2 while a is read.
+    let moved = r
+        .agent
+        .question_shown("b", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Land(n)) if n.index == 1));
+    r.read("One is here.");
+    r.read("Two is here.");
+}
+
+#[test]
 fn a_question_shown_on_screen_is_not_read_while_muted() {
     // A screen change is not a Sonara key: mute level 1 keeps it silent.
     let r = Rig::new();
