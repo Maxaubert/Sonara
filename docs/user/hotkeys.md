@@ -10,7 +10,7 @@ The default chord is **Ctrl+Alt**. Four actions are bound; the rest ship unbound
 |---|---|---|
 | **Ctrl+Alt+Up** | Back one section | Read the latest message again from the top |
 | **Ctrl+Alt+Down** | On one section | Flush: skip what is being read |
-| **Ctrl+Alt+M** | Mute cycle (not holdable) | |
+| **Ctrl+Alt+M** | Mute, or unmute from muted or super muted | Super mute (silences the chimes too) |
 | **Ctrl+Alt+P** | Move the voice to the next session (not holdable) | |
 
 A **section** is a sentence, a table row, a code line or a question.
@@ -24,7 +24,7 @@ A **section** is a sentence, a table row, a code line or a question.
 | Repeat | Holding does not repeat the action |
 | Double press | A second press of mute or pause within 0.3 s is ignored |
 
-Only Up and Down (and the two unbound question keys below) tell a tap from a hold. Mute, next session, pause, faster and slower act on press.
+Only Up, Down, M (and the two unbound question keys below) tell a tap from a hold. Next session, pause, faster and slower act on press.
 
 ## What each action does
 
@@ -32,7 +32,7 @@ Only Up and Down (and the two unbound question keys below) tell a tap from a hol
 |---|---|---|---|
 | `restart` | Back / hold: from the start | Ctrl+Alt+Up | Tap: back one section of the reply being read. While code plays, back one code line. In a set of questions, the question before (from question 2 on). With nothing being read, the latest message again. Hold: the latest message again from the top. With a set of questions it reads the reply, then question 1. In summary mode it re-reads the last summary |
 | `flush` | Next / hold: flush | Ctrl+Alt+Down | Tap: on one section. After a reply's last sentence come its questions. While code plays, on one code line. Hold: flush, which skips what is playing, what that session has queued and the rest of its reply still arriving. Its questions are still read |
-| `mute` | Mute | Ctrl+Alt+M | Cycles unmuted, muted, super muted. Muted: text is not spoken, chimes still play. Super muted: chimes are silent too. Says "Muted.", "Super muted." or "Unmuted." |
+| `mute` | Mute | Ctrl+Alt+M | A tap switches between unmuted and muted; a hold goes to super muted. Any press from super muted unmutes, a second hold included. Muted: text is not spoken, chimes still play. Super muted: chimes are silent too. Says "Muted.", "Super muted." or "Unmuted." |
 | `next_channel` | Next session | Ctrl+Alt+P | Moves the voice to the next Claude Code session. Plays the `session_change` chime, then says "Session changed: *folder*." With no session open it says "No session." |
 | `pause` | Pause | unbound | Pause or resume. Says "Paused." or "Resumed." (only while something is loaded) |
 | `faster` | Faster | unbound | Rate plus 25 words per minute, then says "Rate N." |

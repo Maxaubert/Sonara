@@ -537,12 +537,26 @@ fn hotkeys_drive_the_agent_mute_cycle_and_channel_switches() {
             .reply["value"]
             .clone()
     };
+    // A tap toggles muted and unmuted; a hold goes to super muted, and any
+    // press from super muted unmutes.
     r.fake.press(Action::Mute.id());
     assert!(eventually(|| level(s) == json!(1)));
-    std::thread::sleep(sonara_system::hotkeys::DEBOUNCE + Duration::from_millis(50));
-    r.fake.press(Action::Mute.id());
+    settle_debounce();
+    hold(&r, Action::Mute, M);
     assert!(eventually(|| level(s) == json!(2)));
-    std::thread::sleep(sonara_system::hotkeys::DEBOUNCE + Duration::from_millis(50));
+    settle_debounce();
+    r.fake.press(Action::Mute.id());
+    assert!(eventually(|| level(s) == json!(0)));
+    settle_debounce();
+    hold(&r, Action::Mute, M);
+    assert!(eventually(|| level(s) == json!(2)));
+    settle_debounce();
+    hold(&r, Action::Mute, M);
+    assert!(eventually(|| level(s) == json!(0)));
+    settle_debounce();
+    r.fake.press(Action::Mute.id());
+    assert!(eventually(|| level(s) == json!(1)));
+    settle_debounce();
     r.fake.press(Action::Mute.id());
     assert!(eventually(|| level(s) == json!(0)));
     ok(
@@ -1221,9 +1235,17 @@ fn hotkeys_speak_their_cues_over_a_paused_reader() {
     settle_debounce();
     r.fake.press(Action::Pause.id());
     assert_eq!(cues_heard(&cues, 1), ["Resumed."]);
-    for want in ["Muted.", "Super muted.", "Unmuted."] {
+    for (want, held) in [
+        ("Muted.", false),
+        ("Super muted.", true),
+        ("Unmuted.", false),
+    ] {
         settle_debounce();
-        r.fake.press(Action::Mute.id());
+        if held {
+            hold(&r, Action::Mute, M);
+        } else {
+            r.fake.press(Action::Mute.id());
+        }
         assert_eq!(cues_heard(&cues, 1), [want]);
     }
     r.fake.press(Action::Faster.id());
@@ -1900,6 +1922,8 @@ fn holding_up_during_question_two_restarts_the_message() {
 /// The Up and Down keys' virtual-key codes.
 const UP: u32 = 0x26;
 const DOWN: u32 = 0x28;
+/// The M key (mute).
+const M: u32 = 0x4D;
 
 /// Hold `vk` past the hold time while `action` is pressed, then let go
 /// (#309: a flush is a hold on Down).

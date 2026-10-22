@@ -286,9 +286,20 @@ fn mute_and_unmute_cues_never_reach_the_provider() {
     // The hotkey's mute cycle too.
     r.ok(json!({"type": "set", "key": "hotkeys",
                 "value": {"action": "mute", "key": "m", "mods": ["ctrl", "alt"]}}));
-    for want in ["Muted.", "Super muted.", "Unmuted."] {
+    for (want, held) in [
+        ("Muted.", false),
+        ("Super muted.", true),
+        ("Unmuted.", false),
+    ] {
         std::thread::sleep(sonara_system::hotkeys::DEBOUNCE + Duration::from_millis(50));
-        r.fake.press(Action::Mute.id());
+        if held {
+            r.fake.hold_key(0x4D);
+            r.fake.press(Action::Mute.id());
+            std::thread::sleep(sonara_system::hotkeys::HOLD + Duration::from_millis(150));
+            r.fake.release_key(0x4D);
+        } else {
+            r.fake.press(Action::Mute.id());
+        }
         heard(&cues, want);
     }
     assert_eq!(r.requests(), 0);

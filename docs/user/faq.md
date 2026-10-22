@@ -25,7 +25,7 @@ By design: Sonara reads the latest reply, and nothing older gets in the way. Sen
 More: [Reading and code](reading-and-code.md).
 
 **How do I make it stop talking?**
-Tap **Ctrl+Alt+Down** to skip a section. Hold it for half a second to flush the rest of the reply. Press **Ctrl+Alt+M** to mute (press again for super mute, which also silences the chimes).
+Tap **Ctrl+Alt+Down** to skip a section. Hold it for half a second to flush the rest of the reply. Tap **Ctrl+Alt+M** to mute or unmute. Hold it for half a second for super mute, which also silences the chimes.
 More: [Hotkeys](hotkeys.md).
 
 **How do I answer a question or a permission prompt?**

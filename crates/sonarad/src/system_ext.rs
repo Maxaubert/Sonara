@@ -77,7 +77,7 @@ pub struct HotkeyTarget {
     pub agent: agent_ext::Slot,
     /// The server's takeover flag: nothing starts once it is set.
     pub retiring: Arc<Mutex<bool>>,
-    /// Hotkeys that change a setting (mute cycle, faster, slower) persist
+    /// Hotkeys that change a setting (mute, faster, slower) persist
     /// it like a `set`.
     pub store: Arc<Store>,
     /// The spoken cues (set by `SystemExt::new`).
@@ -90,6 +90,20 @@ pub struct HotkeyTarget {
     /// The server's `set` lock: a setting the hotkey changes is applied
     /// and recorded under it, as by a `set` (review finding 47).
     pub setting: Arc<Mutex<()>>,
+}
+
+/// The mute level after a press of the mute hotkey (0 unmuted, 1 muted, 2
+/// super muted). Super muted is a deeper muted: a tap toggles between
+/// unmuted and muted, a hold goes to super muted from either, and any press
+/// from super muted unmutes (a second hold does not keep it there, so the
+/// way out is always the same key).
+fn next_mute_level(level: u8, press: Press) -> u8 {
+    match (level, press) {
+        (2, _) | (1, Press::Tap) => 0,
+        (0, Press::Tap) => 1,
+        (_, Press::Hold) => 2,
+        _ => 0,
+    }
 }
 
 impl HotkeyTarget {
@@ -129,6 +143,7 @@ impl HotkeyTarget {
             (Action::NextQuestion | Action::Flush, Press::Tap) => ("next", self.next_section()),
             (Action::Flush, Press::Hold) => ("flush", self.apply(Action::Flush, None)),
             (Action::NextQuestion, Press::Hold) => ("skip", self.skip()),
+            (Action::Mute, _) => ("mute", self.mute(press, change)),
             _ => (action.as_str(), self.apply(action, change)),
         };
         drop(retiring);
@@ -368,6 +383,48 @@ impl HotkeyTarget {
         Ok(Some(self.back_detail(&done)))
     }
 
+    /// The mute hotkey: a tap toggles muted and unmuted, a hold goes to super
+    /// muted, and any press from super muted unmutes. Without the agent
+    /// there is only the core mute, which both presses toggle.
+    fn mute(&self, press: Press, change: Option<Change<'_>>) -> Result<Option<String>, String> {
+        match self.agent.get() {
+            Some(a) => {
+                // One mute change at a time: the level read here is the
+                // one changed, and the hold follows it on drop.
+                let change = change.unwrap_or_else(|| self.quiet.change());
+                let next = next_mute_level(a.settings().mute_level, press);
+                if next >= 1 {
+                    change.hold_now();
+                }
+                let done = a.set_mute_level(next).map_err(|e| e.to_string());
+                drop(change);
+                done?;
+                // `perform` saves it (`record_mute`).
+                self.cue_local(cues::mute_level_cue(u64::from(next)));
+                Ok(Some(format!("level={next}")))
+            }
+            None => {
+                let change = change.unwrap_or_else(|| self.quiet.change());
+                let muted = self.reader.state().map(|s| s.muted).unwrap_or(false);
+                let c = if muted {
+                    Control::Unmute
+                } else {
+                    Control::Mute
+                };
+                if !muted {
+                    change.hold_now();
+                }
+                let done = self.reader.control(c).map_err(|e| e.to_string());
+                drop(change);
+                done?;
+                // A muted reader plays clips silently: only the unmute
+                // is heard.
+                self.cue_local(if muted { "Unmuted." } else { "Muted." });
+                Ok(Some(if muted { "unmuted" } else { "muted" }.into()))
+            }
+        }
+    }
+
     /// Carry out `action`; what it did, for the log line, when the action
     /// alone does not say it. `change`: the mute change `perform` started
     /// for `Mute` (else one starts here).
@@ -440,43 +497,7 @@ impl HotkeyTarget {
                 };
                 Ok(Some(self.flush_detail(&flushed, scope)))
             }
-            Action::Mute => match self.agent.get() {
-                // The mute cycle: unmuted, muted (earcons on), super muted.
-                Some(a) => {
-                    // One mute change at a time: the level read here is the
-                    // one changed, and the hold follows it on drop.
-                    let change = change.unwrap_or_else(|| self.quiet.change());
-                    let next = (a.settings().mute_level + 1) % 3;
-                    if next >= 1 {
-                        change.hold_now();
-                    }
-                    let done = a.set_mute_level(next).map_err(|e| e.to_string());
-                    drop(change);
-                    done?;
-                    // `perform` saves it (`record_mute`).
-                    self.cue_local(cues::mute_level_cue(u64::from(next)));
-                    Ok(Some(format!("level={next}")))
-                }
-                None => {
-                    let change = change.unwrap_or_else(|| self.quiet.change());
-                    let muted = self.reader.state().map(|s| s.muted).unwrap_or(false);
-                    let c = if muted {
-                        Control::Unmute
-                    } else {
-                        Control::Mute
-                    };
-                    if !muted {
-                        change.hold_now();
-                    }
-                    let done = self.reader.control(c).map_err(|e| e.to_string());
-                    drop(change);
-                    done?;
-                    // A muted reader plays clips silently: only the unmute
-                    // is heard.
-                    self.cue_local(if muted { "Unmuted." } else { "Muted." });
-                    Ok(Some(if muted { "unmuted" } else { "muted" }.into()))
-                }
-            },
+            Action::Mute => self.mute(Press::Tap, change),
             Action::NextChannel => {
                 let Some(ch) = self.channels.get() else {
                     return Ok(Some("session=none".into()));

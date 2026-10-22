@@ -70,10 +70,11 @@ fn the_section_keys_can_be_held() {
         Action::Flush,
         Action::PreviousQuestion,
         Action::NextQuestion,
+        Action::Mute,
     ] {
         assert!(a.holdable(), "{a:?}");
     }
-    assert!(!Action::Mute.holdable() && !Action::NextChannel.holdable());
+    assert!(!Action::Pause.holdable() && !Action::NextChannel.holdable());
 }
 
 #[test]

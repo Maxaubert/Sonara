@@ -27,7 +27,8 @@ pub enum Action {
     Flush,
     /// Pause or resume (`control toggle`).
     Pause,
-    /// Mute cycle (agent mute levels 0, 1, 2; else core mute and unmute).
+    /// Mute: a tap toggles muted, a hold is super muted (agent mute levels
+    /// 0, 1, 2; else core mute and unmute).
     Mute,
     /// Switch to the next channel (`control next_channel`).
     NextChannel,
@@ -94,11 +95,15 @@ impl Action {
 
     /// Held past `hotkeys::HOLD` it does something else (#299, #307, #309:
     /// a tap moves one section; held, Up restarts the message and Down
-    /// flushes it).
+    /// flushes it; a tap on mute toggles muted, held it is super muted).
     pub fn holdable(&self) -> bool {
         matches!(
             self,
-            Action::Restart | Action::Flush | Action::PreviousQuestion | Action::NextQuestion
+            Action::Restart
+                | Action::Flush
+                | Action::PreviousQuestion
+                | Action::NextQuestion
+                | Action::Mute
         )
     }
 

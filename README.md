@@ -137,7 +137,7 @@ must include Ctrl, Alt or Win.
 |---|---|---|
 | Ctrl+Alt+Up | Back one section (sentence, table row, code line, question) | Read the latest reply again from the top |
 | Ctrl+Alt+Down | On one section | Flush: skip the rest of the reply being read, on to the next session |
-| Ctrl+Alt+M | Mute cycle: unmuted, muted (speech), super muted (speech and earcons) | |
+| Ctrl+Alt+M | Mute or unmute (speech) | Super mute (speech and earcons); any press from there unmutes |
 | Ctrl+Alt+P | Move the voice to the next session | |
 
 `pause`, `faster` and `slower` are also actions; they ship unbound. On a European keyboard
