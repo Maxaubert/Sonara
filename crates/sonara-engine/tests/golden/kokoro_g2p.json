@@ -136,5 +136,17 @@
     "normalized": "Should I try that?",
     "phonemes": "ʃˌʊd ˌI tɹˈI ðˈæt?",
     "text": "Should I try that?"
+  },
+  {
+    "batches": 1,
+    "normalized": "Agreed, that one starts with the A.",
+    "phonemes": "ˈɐɡɹˈiːd, ðæt wˈʌn stˈɑːɹts wɪð ði ˈA.",
+    "text": "Agreed, that one starts with the A."
+  },
+  {
+    "batches": 1,
+    "normalized": "A real project with real users.",
+    "phonemes": "ˈɐ ɹˈiːəl pɹˈɑʤˌɛkt wɪð ɹˈiːəl jˈuːzɚz.",
+    "text": "A real project with real users."
   }
 ]
