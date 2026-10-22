@@ -15,6 +15,9 @@ use std::time::{Duration, Instant};
 pub const GAP: Duration = Duration::from_millis(60);
 /// The most earcons waiting or playing at one time.
 pub const MAX: usize = 3;
+/// How long after a key's sound (the flush sound, which plays at once and is
+/// not queued) the chimes and the speech that follow it wait.
+pub const AFTER_KEY: Duration = Duration::from_millis(300);
 
 /// Why an earcon was not scheduled.
 pub const DUPLICATE: &str = "the same earcon is queued right before it";
@@ -26,9 +29,27 @@ pub const MUTED: &str = "mute level 2";
 #[derive(Debug, Default)]
 pub struct Schedule {
     slots: VecDeque<(Earcon, Instant, Instant)>,
+    /// When the last key's sound ends (it plays at once and is not queued).
+    key_end: Option<Instant>,
 }
 
 impl Schedule {
+    /// A key's sound of `len` plays at `now`: what is scheduled after it
+    /// starts `AFTER_KEY` after it ended.
+    pub fn key_sound(&mut self, len: Duration, now: Instant) {
+        let end = now + len;
+        self.key_end = Some(self.key_end.map_or(end, |k| k.max(end)));
+    }
+
+    /// The earliest start for what is scheduled at `now`: `now`, or `AFTER_KEY`
+    /// after the last key's sound when that is still to come.
+    fn floor(&self, now: Instant) -> Instant {
+        match self.key_end {
+            Some(end) if end + AFTER_KEY > now => end + AFTER_KEY,
+            _ => now,
+        }
+    }
+
     /// Schedule `e`, lasting `len`, at `now`: its start time, or why it is
     /// dropped.
     pub fn admit(
@@ -38,6 +59,7 @@ impl Schedule {
         now: Instant,
     ) -> Result<Instant, &'static str> {
         self.slots.retain(|(_, _, end)| *end > now);
+        let floor = self.floor(now);
         if let Some((last, _, end)) = self.slots.back() {
             if *last == e {
                 return Err(DUPLICATE);
@@ -45,12 +67,12 @@ impl Schedule {
             if self.slots.len() >= MAX {
                 return Err(FULL);
             }
-            let start = (*end + GAP).max(now);
+            let start = (*end + GAP).max(floor);
             self.slots.push_back((e, start, start + len));
             return Ok(start);
         }
-        self.slots.push_back((e, now, now + len));
-        Ok(now)
+        self.slots.push_back((e, floor, floor + len));
+        Ok(floor)
     }
 
     /// Forget the earcons that have not started at `now` (they will not
@@ -62,9 +84,10 @@ impl Schedule {
     /// When the last earcon scheduled has ended and its gap passed (`now`
     /// when none is): what follows the earcons starts then.
     pub fn quiet_at(&self, now: Instant) -> Instant {
+        let floor = self.floor(now);
         self.slots
             .back()
-            .map_or(now, |(_, _, end)| (*end + GAP).max(now))
+            .map_or(floor, |(_, _, end)| (*end + GAP).max(floor))
     }
 }
 
@@ -89,6 +112,25 @@ mod tests {
         let next = s.admit(Earcon::SessionChange, ms(1000), t + ms(2));
         assert_eq!(next, Ok(t + ms(750) + GAP));
         assert_eq!(s.quiet_at(t), t + ms(750) + GAP + ms(1000) + GAP);
+    }
+
+    #[test]
+    fn an_earcon_after_a_key_sound_waits_for_it_and_a_third_of_a_second() {
+        // The flush sound plays at once and is not queued, yet the chime of
+        // the session switch that follows must not start under it.
+        let mut s = Schedule::default();
+        let t = Instant::now();
+        s.key_sound(ms(333), t);
+        assert_eq!(
+            s.admit(Earcon::SessionChange, ms(1000), t + ms(2)),
+            Ok(t + ms(333) + AFTER_KEY)
+        );
+        assert_eq!(s.quiet_at(t), t + ms(333) + AFTER_KEY + ms(1000) + GAP);
+        // A key sound long over changes nothing.
+        let mut s = Schedule::default();
+        s.key_sound(ms(333), t);
+        let later = t + ms(5000);
+        assert_eq!(s.admit(Earcon::TurnDone, ms(750), later), Ok(later));
     }
 
     #[test]

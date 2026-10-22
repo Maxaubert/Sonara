@@ -1196,6 +1196,11 @@ impl Inner {
     fn queue(self: &Arc<Self>, e: Earcon) -> Result<Traced> {
         let clip = self.earcons.clip(e);
         if e.is_key() {
+            // Not queued, but what follows it waits for it (`AFTER_KEY`).
+            self.lock_schedule().key_sound(
+                sequencer::length(clip.samples.len(), clip.sample_rate),
+                Instant::now(),
+            );
             self.sound(e, &clip)?;
             return Ok(Traced::Earcon(e));
         }

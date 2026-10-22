@@ -7,6 +7,7 @@
 //! event channel with `AudioEvent`s tagged with the `gen` of the play they
 //! belong to. Device problems are reported as `AudioEvent::Failed`, never as
 //! a panic or an error return: the reader skips the chunk and moves on.
+mod dump;
 mod rodio_output;
 
 #[cfg(feature = "test-util")]
