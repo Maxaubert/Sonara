@@ -1,5 +1,5 @@
 {
-  "description": "Emoji and check marks.",
+  "description": "Emoji and check marks. A status mark standing alone (a table cell, a line, after a colon) is read as a word; next to words it is dropped (owner, 2026-10-25).",
   "cases": [
     {
       "name": "check_marks_stripped",
@@ -30,6 +30,36 @@
         "Shipped.",
         "🚀🚀 All green."
       ]
+    },
+    {
+      "name": "status_mark_alone_in_a_cell_is_read",
+      "fn": "normalize_for_speech",
+      "input": "Step: Card. Status: ✅.",
+      "output": "Step: Card. Status: done."
+    },
+    {
+      "name": "status_marks_alone_are_words",
+      "fn": "normalize_for_speech",
+      "input": "✅",
+      "output": "done"
+    },
+    {
+      "name": "cross_alone_is_no",
+      "fn": "normalize_for_speech",
+      "input": "Lint: ❌. Tests: ✔.",
+      "output": "Lint: no. Tests: done."
+    },
+    {
+      "name": "hourglass_and_warning_alone",
+      "fn": "normalize_for_speech",
+      "input": "Credit: ⏳. Cap: ⚠️.",
+      "output": "Credit: pending. Cap: warning."
+    },
+    {
+      "name": "status_mark_before_words_is_dropped",
+      "fn": "normalize_for_speech",
+      "input": "Status: ⏳ Try again later. ⚠️ Careful here.",
+      "output": "Status: Try again later. Careful here."
     }
   ]
 }

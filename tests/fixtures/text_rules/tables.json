@@ -87,6 +87,18 @@
         null,
         "Done."
       ]
+    },
+    {
+      "name": "table_status_marks_are_read_when_alone",
+      "fn": "assemble",
+      "deltas": [
+        "| Step | Status |\n|---|---|\n| Card | ✅ |\n| Credit | ⏳ Try again later |\n| Cap | ⏳ |\n"
+      ],
+      "output": [
+        "Step: Card. Status: done.",
+        "Step: Credit. Status: Try again later.",
+        "Step: Cap. Status: pending."
+      ]
     }
   ]
 }
