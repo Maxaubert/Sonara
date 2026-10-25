@@ -393,6 +393,7 @@ runtime. The runtime speaks 1.12 (`PROTOCOL_MINOR` in `crates/sonarad/src/protoc
 | 1.12 | 0.33.0 | #323 | The `agent` message `question_shown`: a terminal that draws Claude Code's question widget reports the question it shows, and the runtime reads it |
 | 1.13 | 0.34.0 | #323 | `stream` `lead_in?`: a question's lead-in from the hook; the same text again later in the turn is not read twice |
 | 1.14 | 0.35.0 | #355 | `turn_end` `reply?` and `before_reply?`: the turn's final reply and the text before it; the `agent` key `read_mode` value `"final"` reads only it |
+| 1.15 | 0.36.0 | #357 | The `channels` key `announce_voice`: switch announcements in a voice of their own |
 
 Changes with no minor bump: runtime 0.13.0 (#214) narrowed `verbosity` to `everything` and
 `skip_code` (old values are accepted as aliases) and added `engine_status` to `runtime`; no shipped
@@ -407,7 +408,7 @@ setting (the mute cycle, faster, slower) save it too.
 
 **Defaults** (#202). A setting nobody set has the runtime's default, the Claude plugin's product
 settings: `voice` `af_sarah` (with an engine that has it; otherwise the engine's default voice),
-`rate` 250, `volume` 100, `channel_announce` `"on"`, `mute_level` 0, `verbosity` `"skip_code"`,
+`rate` 250, `volume` 100, `channel_announce` `"on"`, `announce_voice` null (the reading voice), `mute_level` 0, `verbosity` `"skip_code"`,
 `read_mode` `"done"` (#222), `flush_scope` `"session"` (#228), `question_step` `"off"` (#320), `minqueue` 5, `background_policy`
 `"all"`, summaries off, `audio_mode` `"pause"`, `duck_level` 30, `debug_log` true. The tables below
 give the same defaults. `sonarad` applies them to the layers itself; the library crates keep their
@@ -415,7 +416,7 @@ own (rate 200, `"everything"`, `"queue"` with 1, `"earcon_only"`, `"off"`).
 
 | file in the home | holds |
 |---|---|
-| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `question_step`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `paths`, `pronunciations`. A `_migrated` key records the migration below |
+| `config.json` | only the keys a client set (even to the default), never the defaults: `engine`, `voice`, `rate`, `volume`, `channel_announce`, `announce_voice`, `mute_level`, `verbosity`, `read_mode`, `flush_scope`, `question_step`, `minqueue`, `background_policy`, `summaries` (only the fields that were set, plus `prompts`), `audio_mode`, `duck_level`, `debug_log`, `code_speed`, `code_pause`, `code_step`, `paths`, `pronunciations`. A `_migrated` key records the migration below |
 | `session_prefs.json` | per channel: `label`, `voice`, `muted` (see `channel_prefs`), the 200 most recently changed |
 | `engines.json` | the [external engines](#external-engines) added with `engine_add`: `{"format": 2, "engines": [profile, ...]}`, never a key. An `env:` entry may carry `key_origin` (see Keys below), which only the user writes in the file; a format 1 file is migrated at the first start (its keys and `env:` entries are bound to their addresses then) and saved as format 2. A file that is not JSON is copied to `engines.json.bad` (and logged) and counts as empty until the next change; an entry that fails validation or names a kind this runtime lacks is kept, listed and not used. Read once at start, before the first speech, so a saved `engine` naming one applies at once |
 | `keymap.json` | the hotkey overrides (see [Hotkeys](#hotkeys)) |
@@ -657,6 +658,7 @@ replays it).
 | key | value |
 |---|---|
 | `channel_announce` | `"on"` (default) or `"off"`: switch announcements |
+| `announce_voice` | `null` (default: the reading voice) or `{engine, voice}` (non-empty strings, a voice id or name of that engine): the voice switch announcements are read in (protocol 1.15, runtime 0.36.0, #357). An engine or voice the runtime does not offer reads the announcement in the reading voice |
 | `channel_prefs` | the user's preferences per channel, for a settings page. `get`: a list of `{channel, open, reading, client_label, host_tab, label, voice, muted}`, the open channels first (in opening order), then channels with saved preferences only (most recent first). `set {channel, label?, voice?, muted?}` changes the fields given (`null` or `""` clears a label or voice) and replies with the list. A `label` replaces the one the client sends in `channel_open` (also for a channel opened by its first text), so switch announcements say it; `client_label` is the client's. `muted: true` mutes the channel at once and in every later run (see Muted channels, #196); `voice` is saved for the page and not applied yet. `set {channel, forget: true}` forgets a channel that is not the focused one (`E_BAD_REQUEST`): its preferences, and its messages and turn (it is closed if open; a session that died without ending) |
 
 ### State

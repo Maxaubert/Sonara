@@ -31,6 +31,7 @@ pub(crate) enum Msg {
         mode: QueueMode,
         interrupt: bool,
         label: Option<String>,
+        voice: Option<crate::ItemVoice>,
         reply: Sender<ItemId>,
     },
     Control(Control, Sender<()>),
@@ -118,6 +119,7 @@ pub(crate) fn spawn(start: Start, tx: Sender<Msg>, rx: Receiver<Msg>) -> Result<
         hold: None,
         code: CodeReading::default(),
         pause_after: HashSet::new(),
+        item_voices: HashMap::new(),
     };
     thread::Builder::new()
         .name("sonara-reader".into())
@@ -214,6 +216,8 @@ struct Loop {
     code: CodeReading,
     /// Code line chunks that get `code.pause_ms` of silence after them.
     pause_after: HashSet<(ItemId, usize)>,
+    /// The items read in a voice of their own (`speak_as`), until they end.
+    item_voices: HashMap<ItemId, (Arc<dyn Engine>, String)>,
 }
 
 impl Loop {
@@ -288,9 +292,14 @@ impl Loop {
                 mode,
                 interrupt,
                 label,
+                voice,
                 reply,
             } => {
                 let (id, fx) = self.reader.speak(&text, mode, interrupt, label);
+                // Before its chunks are synthesized (`fx`).
+                if let Some(pick) = voice.and_then(|v| self.item_voice(&v)) {
+                    self.item_voices.insert(id, pick);
+                }
                 self.run(fx);
                 let _ = reply.send(id);
             }
@@ -359,6 +368,13 @@ impl Loop {
         self.run(fx);
         self.synth.shutdown();
         self.subscribers.clear();
+    }
+
+    /// The engine and voice id of `v`, when the registry offers them.
+    fn item_voice(&self, v: &crate::ItemVoice) -> Option<(Arc<dyn Engine>, String)> {
+        let engine = self.registry.get(&v.engine).ok()?;
+        let voice = settings::resolve_voice(engine.as_ref(), Some(&v.voice)).ok()??;
+        Some((engine, voice))
     }
 
     fn set(&mut self, key: Key, value: Value) -> Result<()> {
@@ -685,13 +701,17 @@ impl Loop {
                 if kind == CodeKind::Start && self.code.step {
                     words.push_str(&format!(" Use {} for the next line.", self.code.next_key));
                 }
+                let (engine, voice) = match self.item_voices.get(&item) {
+                    Some((e, v)) => (e.clone(), v.clone()),
+                    None => (self.engine.clone(), state.voice.unwrap_or_default()),
+                };
                 self.synth.push_job(Job {
                     item,
                     chunk,
                     text: words,
-                    voice: state.voice.unwrap_or_default(),
+                    voice,
                     rate,
-                    engine: self.engine.clone(),
+                    engine,
                 });
             }
             Effect::PlayChunk { item, chunk, gen } => {
@@ -745,6 +765,7 @@ impl Loop {
                         }
                         self.audio.retain(|(item, _), _| item != item_id);
                         self.pause_after.retain(|(item, _)| item != item_id);
+                        self.item_voices.remove(item_id);
                         self.synth.drop_item(*item_id);
                     }
                 }

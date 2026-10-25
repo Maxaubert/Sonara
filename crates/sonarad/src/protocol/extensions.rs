@@ -23,6 +23,9 @@ impl Server {
         {
             let config = sonara_channels::Config {
                 announce: self.store.value(channels_ext::ANNOUNCE_KEY) != "off",
+                announce_voice: channels_ext::voice_pick(
+                    &self.store.value(channels_ext::ANNOUNCE_VOICE_KEY),
+                ),
                 ..Default::default()
             };
             let ch =
@@ -154,6 +157,7 @@ impl Server {
         let ch = self.channels.get()?;
         match name {
             channels_ext::ANNOUNCE_KEY => Some(channels_ext::announce(ch, value)),
+            channels_ext::ANNOUNCE_VOICE_KEY => Some(channels_ext::announce_voice(ch, value)),
             channels_ext::PREFS_KEY => Some(channels_ext::prefs_setting(
                 ch,
                 self.agent.get(),

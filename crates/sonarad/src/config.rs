@@ -63,6 +63,8 @@ enum Kind {
     Bool,
     /// The user's pronunciations: a list of {word, say} (#294).
     Pronunciations,
+    /// A voice of any engine, `{engine, voice}`, or null.
+    VoicePick,
 }
 
 /// One persisted setting.
@@ -160,6 +162,13 @@ pub const SCHEMA: &[Setting] = &[
         layer: Layer::Channels,
         kind: Kind::OneOf(ON_OFF),
         default: "\"on\"",
+    },
+    // The voice switch announcements are read in; null: the reading voice.
+    Setting {
+        key: "announce_voice",
+        layer: Layer::Channels,
+        kind: Kind::VoicePick,
+        default: "null",
     },
     Setting {
         key: "mute_level",
@@ -316,6 +325,21 @@ pub fn validate(key: &str, v: &Value) -> Result<Value, String> {
             .map(Value::Bool)
             .ok_or_else(|| format!("'{key}' is true or false")),
         Kind::Pronunciations => validate_pronunciations(v),
+        Kind::VoicePick => match v {
+            Value::Null => Ok(Value::Null),
+            Value::Object(o) => match (
+                o.get("engine").and_then(non_blank),
+                o.get("voice").and_then(non_blank),
+            ) {
+                (Some(e), Some(v)) if o.len() == 2 => Ok(json!({"engine": e, "voice": v})),
+                _ => Err(format!(
+                    "'{key}' is {{engine, voice}} (non-empty strings) or null"
+                )),
+            },
+            _ => Err(format!(
+                "'{key}' is {{engine, voice}} (non-empty strings) or null"
+            )),
+        },
     }
 }
 

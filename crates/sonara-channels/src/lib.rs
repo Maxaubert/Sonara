@@ -18,6 +18,7 @@
 //!   comes first). A channel without a label is announced by the unnamed
 //!   texts (`set_unnamed_announce_texts`; L3 says "Session changed.",
 //!   #241) and, when none are set (the default), not at all.
+//!   `set_announce_voice` reads them in a voice of their own.
 //!   `on_announce` runs a hook right before an announcement is handed to
 //!   the reader (L3 plays its session-change earcon there, so the chime
 //!   comes first); it runs under the driver's lock and must not call back
@@ -78,7 +79,7 @@
 pub mod router;
 
 pub use router::{Channel, Entry, Feed, Policy, Resolved, Router};
-pub use sonara_reader::{Control, ItemId, QueueMode, ReaderHandle};
+pub use sonara_reader::{Control, ItemId, ItemVoice, QueueMode, ReaderHandle};
 
 use sonara_reader::{Event, ItemPhase};
 use std::cell::RefCell;
@@ -115,6 +116,8 @@ pub struct Config {
     pub unnamed_text: Option<String>,
     /// The replay announcement for a channel without a label.
     pub unnamed_replay_text: Option<String>,
+    /// The voice announcements are read in; `None` is the voice in force.
+    pub announce_voice: Option<ItemVoice>,
 }
 
 impl Default for Config {
@@ -125,6 +128,7 @@ impl Default for Config {
             replay_text: "{label}, reading again.".into(),
             unnamed_text: None,
             unnamed_replay_text: None,
+            announce_voice: None,
         }
     }
 }
@@ -1003,6 +1007,16 @@ impl Channels {
         self.lock().config.announce
     }
 
+    /// The voice switch announcements are read in (`None`: the voice in
+    /// force; one the registry does not offer reads in it too).
+    pub fn set_announce_voice(&self, voice: Option<ItemVoice>) {
+        self.lock().config.announce_voice = voice;
+    }
+
+    pub fn announce_voice(&self) -> Option<ItemVoice> {
+        self.lock().config.announce_voice.clone()
+    }
+
     /// Replace the announcement texts (`{label}` is the channel's label):
     /// `text` for a switch, `replay` for a batch read again from the top.
     pub fn set_announce_texts(&self, text: &str, replay: &str) {
@@ -1211,7 +1225,7 @@ impl Inner {
             let Some(feed) = st.router.next_feed() else {
                 return Ok(None);
             };
-            let (channel, entry, text, label) = match feed {
+            let (channel, entry, text, label, voice) = match feed {
                 Feed::Announce {
                     channel,
                     label,
@@ -1241,20 +1255,21 @@ impl Inner {
                             manual,
                         });
                     }
-                    (channel, None, text, label)
+                    let voice = st.config.announce_voice.clone();
+                    (channel, None, text, label, voice)
                 }
                 Feed::Entry { channel, entry } => {
                     let label = entry
                         .label
                         .clone()
                         .or_else(|| st.router.channel(&channel).and_then(|c| c.label.clone()));
-                    (channel, Some(entry.id), entry.text, label)
+                    (channel, Some(entry.id), entry.text, label, None)
                 }
             };
             let host_tab = st.router.channel(&channel).and_then(|c| c.host_tab.clone());
             let id = self
                 .reader
-                .speak(&text, QueueMode::Append, interrupt, label)?;
+                .speak_as(&text, QueueMode::Append, interrupt, label, voice)?;
             if interrupt {
                 // Text with nothing speakable is skipped at once and cuts
                 // nothing: the item it was to cut is cut here (its entry

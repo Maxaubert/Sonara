@@ -100,6 +100,7 @@ Each finished reply costs one small call on your Claude or Codex login. See [sum
 | Label | Key | Default | Choices | Effect |
 |---|---|---|---|---|
 | Announce switches | `channel_announce` | `on` | `on`, `off` | Say the folder name ("*folder*.") when the voice moves to another session. Off keeps the chime only |
+| Announce voice | `announce_voice` | Same as reading voice | any installed voice of any engine | The voice the folder name is said in. A voice that is no longer installed falls back to the reading voice |
 
 The session list (name and Audio switch per session) is stored in `session_prefs.json`, not in `config.json`. See [sessions.md](sessions.md).
 
@@ -131,6 +132,7 @@ The bindings themselves are in `keymap.json`. See [hotkeys.md](hotkeys.md).
 | `code_pause` | 0 to 2000 | 500 | Speech |
 | `code_step` | `on`, `off` | `off` | Speech |
 | `channel_announce` | `on`, `off` | `on` | Sessions |
+| `announce_voice` | `null`, `{engine, voice}` | `null` | Sessions |
 | `mute_level` | 0 to 2 | 0 | Speech |
 | `verbosity` | `everything`, `read_code`, `skip_code` | `skip_code` | Speech |
 | `read_mode` | `immediate`, `queue`, `done`, `final` | `done` | Summary |
