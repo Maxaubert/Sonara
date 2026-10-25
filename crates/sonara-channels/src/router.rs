@@ -67,6 +67,10 @@
 //!   was answered; `Resolved` says which ones), so a replay never reads an
 //!   answered question or a decided permission. `end_batch` stops the
 //!   growth without a flush (L3: a new turn without `turn_start`).
+//! - **Set aside** (#323, `set_aside`, L3's screen follower): an entry set
+//!   aside stays in its batch but is never fed, also not by a replay, and
+//!   is not unread; the cursor passes over it. Setting it back makes it
+//!   readable again (L3 then reads it with `replay_from`).
 //! - `next_channel` is a round robin over the channels in opening order,
 //!   skipping channels with nothing to hear (unless all are empty), from the
 //!   channel reading or, after an idle gap, the one that read last. A fully
@@ -150,6 +154,9 @@ pub struct Channel {
     /// L3 wrote into this channel (`append`): an empty batch is its latest
     /// message, so `Restart` reads nothing rather than the core's last item.
     agent: bool,
+    /// Entry ids L3 set aside (`set_aside`, #323): passed over by the
+    /// cursor, never fed, not counted as unread.
+    aside: HashSet<u64>,
 }
 
 impl Channel {
@@ -167,6 +174,7 @@ impl Channel {
             growing: false,
             decisions: HashMap::new(),
             agent: false,
+            aside: HashSet::new(),
         }
     }
 
@@ -185,13 +193,25 @@ impl Channel {
         self.cursor
     }
 
-    /// Unread entries.
+    /// Unread entries (not counting the ones set aside).
     pub fn pending(&self) -> usize {
-        self.entries.len() - self.cursor
+        self.unread().count()
     }
 
     pub fn caught_up(&self) -> bool {
-        self.cursor >= self.entries.len()
+        self.pending() == 0
+    }
+
+    /// The unread entries, in order, without the ones set aside.
+    pub fn unread(&self) -> impl Iterator<Item = &Entry> {
+        self.entries[self.cursor.min(self.entries.len())..]
+            .iter()
+            .filter(|e| !self.aside.contains(&e.id))
+    }
+
+    /// `entry` is set aside (`Router::set_aside`).
+    pub fn is_aside(&self, entry: u64) -> bool {
+        self.aside.contains(&entry)
     }
 
     /// Add `entry`. A caught-up channel starts a new batch unless its last
@@ -202,6 +222,7 @@ impl Channel {
         if replace || (self.caught_up() && !reading && !self.growing) {
             self.entries.clear();
             self.decisions.clear();
+            self.aside.clear();
             self.cursor = 0;
         }
         let at = if front {
@@ -215,6 +236,13 @@ impl Channel {
     }
 
     fn take(&mut self) -> Option<Entry> {
+        while self
+            .entries
+            .get(self.cursor)
+            .is_some_and(|e| self.aside.contains(&e.id))
+        {
+            self.cursor += 1;
+        }
         let e = self.entries.get(self.cursor)?.clone();
         self.cursor += 1;
         Some(e)
@@ -242,6 +270,7 @@ impl Channel {
             });
             if goes {
                 self.decisions.remove(&id);
+                self.aside.remove(&id);
                 let e = self.entries.remove(i);
                 if before {
                     self.cursor -= 1;
@@ -499,7 +528,7 @@ impl Router {
         self.audible(id)
             && self
                 .channel(id)
-                .is_some_and(|c| c.entries[c.cursor..].iter().any(|e| e.id <= mark))
+                .is_some_and(|c| c.unread().any(|e| e.id <= mark))
     }
 
     /// Put `id` in front for the auto pick. False if it is not open. The
@@ -949,6 +978,27 @@ impl Router {
         true
     }
 
+    /// Set `id`'s batch entry `entry` aside, or (`aside` false) back (#323:
+    /// the questions of a set L3 follows on screen that the screen does
+    /// not show): an entry set aside stays in the batch but the cursor
+    /// passes over it, so it is never fed (not by a replay either) and is
+    /// not unread. It comes back once L3 takes it back. False if there is
+    /// no such channel or entry.
+    pub fn set_aside(&mut self, id: &str, entry: u64, aside: bool) -> bool {
+        let Some(c) = self.channel_mut(id) else {
+            return false;
+        };
+        if !c.entries.iter().any(|e| e.id == entry) {
+            return false;
+        }
+        if aside {
+            c.aside.insert(entry);
+        } else {
+            c.aside.remove(&entry);
+        }
+        true
+    }
+
     /// Replace the text of `id`'s batch entry `entry` in place (#283: L3
     /// shows another question of a set in its question entry). The entry
     /// keeps its id, its place and its decision mark; it is not new content
@@ -1028,5 +1078,37 @@ mod tests {
         assert!(!r.rewind("a", two));
         assert!(r.rewind("a", one));
         assert_eq!(r.channel("a").unwrap().cursor(), 0);
+    }
+
+    fn fed(r: &mut Router) -> Option<String> {
+        match r.next_feed()? {
+            Feed::Entry { entry, .. } => Some(entry.text),
+            Feed::Announce { .. } => fed(r),
+        }
+    }
+
+    #[test]
+    fn an_entry_set_aside_is_passed_over_and_not_unread() {
+        let mut r = Router::new();
+        r.open("a", None, None, Some(Policy::Queue));
+        r.push("a", "One.", None).unwrap();
+        let two = r.push("a", "Two.", None).unwrap();
+        let three = r.push("a", "Three.", None).unwrap();
+        assert!(r.set_aside("a", two, true));
+        assert!(!r.set_aside("a", 99, true));
+        assert_eq!(r.channel("a").unwrap().pending(), 2);
+        assert_eq!(fed(&mut r).as_deref(), Some("One."));
+        assert_eq!(fed(&mut r).as_deref(), Some("Three."));
+        assert_eq!(fed(&mut r), None);
+        assert!(r.channel("a").unwrap().caught_up());
+        // A replay passes over it too; set back, it is read again.
+        assert!(r.replay("a"));
+        assert_eq!(fed(&mut r).as_deref(), Some("One."));
+        assert_eq!(fed(&mut r).as_deref(), Some("Three."));
+        assert!(r.set_aside("a", two, false));
+        assert!(r.replay_from("a", Some(two)));
+        assert_eq!(fed(&mut r).as_deref(), Some("Two."));
+        assert!(r.set_aside("a", three, true));
+        assert_eq!(fed(&mut r), None);
     }
 }

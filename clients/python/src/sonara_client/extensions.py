@@ -110,6 +110,14 @@ class Agent:
         message text, else the question before (question 1 again on question 1)."""
         return self._send("control", _defined({**extra, "action": "previous_question"}))
 
+    def question_shown(self, channel: str, text: Optional[str] = None, review: bool = False,
+                       **extra: Any) -> dict:
+        """``question_shown`` (protocol 1.12, #323): the terminal shows ``text``, a
+        question of the session's set as on screen, or with ``review=True`` the
+        review of the answers. Reply: ``moved``, ``question``, ``of``."""
+        shown = {"review": True} if review else {"text": text}
+        return self._send("question_shown", _defined({**extra, "channel": channel, **shown}))
+
     def earcon(self, kind: str, **extra: Any) -> dict:
         """``earcon``."""
         return self._send("earcon", _defined({**extra, "kind": kind}))

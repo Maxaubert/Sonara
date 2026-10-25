@@ -41,6 +41,9 @@ const CASES: &[&str] = &[
     "I am content with it.",
     "Should I?",
     "Should I try that?",
+    // A leading unstressed schwa survives the default rate (2026-10-22).
+    "Agreed, that one starts with the A.",
+    "A real project with real users.",
 ];
 
 fn render(p: &Phonemizer, input: &str) -> Value {

@@ -1,7 +1,7 @@
 {
   "name": "@sonara/player",
   "private": true,
-  "version": "0.32.18",
+  "version": "0.33.0",
   "description": "Player for the Sonara text-to-speech runtime: a headless controller and a React player bar on the core API of @sonara/client.",
   "license": "MIT",
   "repository": {

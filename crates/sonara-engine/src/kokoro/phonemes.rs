@@ -90,6 +90,23 @@ pub fn stress_sentence_end(ps: &str) -> String {
     out.into_iter().collect()
 }
 
+/// Kokoro drops an unstressed schwa that starts a sentence at Sonara's
+/// default rate ("Agreed" is heard as "greed", "A real" as "real"), so one
+/// there gets a primary stress. A schwa inside a sentence is left alone.
+pub fn stress_sentence_start(ps: &str) -> String {
+    let chars: Vec<char> = ps.chars().collect();
+    let mut out = String::with_capacity(ps.len() + 4);
+    for (i, c) in chars.iter().enumerate() {
+        let starts =
+            i == 0 || (i >= 2 && chars[i - 1] == ' ' && matches!(chars[i - 2], '.' | '!' | '?'));
+        if starts && matches!(c, 'ɐ' | 'ə') {
+            out.push('ˈ');
+        }
+        out.push(*c);
+    }
+    out
+}
+
 /// The G2P with Sonara's words and fallback. Building it decodes the
 /// embedded lexicons (about a second); it is then shared.
 pub struct Phonemizer {
@@ -116,7 +133,7 @@ impl Phonemizer {
             return String::new();
         }
         match self.g2p.g2p(&t) {
-            Ok((ps, _)) => stress_sentence_end(&to_kokoro_symbols(&ps)),
+            Ok((ps, _)) => stress_sentence_start(&stress_sentence_end(&to_kokoro_symbols(&ps))),
             // Our fallback never fails; keep the words rather than nothing.
             Err(_) => String::new(),
         }
@@ -249,6 +266,22 @@ mod tests {
         );
         assert_eq!(stress_sentence_end("ɪz ɪɾ?"), "ɪz ɪɾ?");
         assert_eq!(stress_sentence_end("ˈe.ɡ. ˌI"), "ˈe.ɡ. ˌI");
+    }
+
+    #[test]
+    fn a_sentence_starting_with_a_weak_vowel_keeps_it_at_a_fast_rate() {
+        // At Sonara's default rate (Kokoro speed 1.25) the model drops a
+        // leading unstressed schwa: "Agreed" came out as "greed", "A real"
+        // as "real". Stressed, it stays.
+        assert_eq!(stress_sentence_start("ɐɡɹˈiːd, ðˈæt."), "ˈɐɡɹˈiːd, ðˈæt.");
+        assert_eq!(
+            stress_sentence_start("ɐ ɹˈiːəl pɹˈɑʤˌɛkt. ɐɡɹˈi! ə?"),
+            "ˈɐ ɹˈiːəl pɹˈɑʤˌɛkt. ˈɐɡɹˈi! ˈə?"
+        );
+        // Other starts, a schwa inside a sentence and a stressed one stay.
+        assert_eq!(stress_sentence_start("hˈɛlO ɐ kˈæt."), "hˈɛlO ɐ kˈæt.");
+        assert_eq!(stress_sentence_start("ˈɐbaʊt. kˈæt."), "ˈɐbaʊt. kˈæt.");
+        assert_eq!(stress_sentence_start(""), "");
     }
 
     #[test]

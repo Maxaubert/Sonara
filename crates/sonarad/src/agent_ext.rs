@@ -14,7 +14,9 @@ use sonara_agent::settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, SummaryCommand, Verbosity,
 };
 use sonara_agent::summarizer::instruction;
-use sonara_agent::{Agent, Ask, AskKind, Choice, Earcon, Error, Step, Style, SummarySettings};
+use sonara_agent::{
+    Agent, Ask, AskKind, Choice, Earcon, Error, Shown, ShownMove, Step, Style, SummarySettings,
+};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
@@ -32,6 +34,7 @@ pub const TYPES: &[&str] = &[
     "earcon",
     "tool",
     "answered",
+    "question_shown",
 ];
 
 /// `set`/`get` keys of the extension.
@@ -260,6 +263,74 @@ pub fn tool(a: &Agent, m: &Map<String, Value>) -> Handled {
     let summary = opt_str(m, "summary")?.unwrap_or("");
     a.tool(ch, name, summary).map_err(failure)?;
     ok(Map::new())
+}
+
+/// `question_shown` (#323, protocol 1.12): the terminal shows `text` (a
+/// question of the session's set, as on screen) or, `review: true`, the
+/// review of the answers. Reply: `moved` (false: nothing to move to), and
+/// when it moved to a question its `question` (1-based) and `of`.
+pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
+    // The session by its id, or by the terminal tab it runs in (`host_tab`,
+    // the tab id its hook reported; PrismTerminal knows only its tab): the
+    // newest session of that tab with a question set, and only that one (an
+    // older session of the tab may still have a set it never closed).
+    let chan: Option<String> = match (opt_str(m, "channel")?, opt_str(m, "host_tab")?) {
+        (Some(c), _) => Some(c.to_string()),
+        (None, Some(tab)) if !tab.is_empty() => {
+            let ch = a.channels();
+            let tabbed: Vec<String> = ch
+                .channel_ids()
+                .into_iter()
+                .rev()
+                .filter(|id| ch.channel(id).and_then(|c| c.host_tab).as_deref() == Some(tab))
+                .collect();
+            tabbed
+                .iter()
+                .find(|id| a.has_question_set(id))
+                .or(tabbed.first())
+                .cloned()
+        }
+        _ => return Err(bad("question_shown needs 'channel' or 'host_tab'")),
+    };
+    let text = opt_str(m, "text")?;
+    let review = match m.get("review") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(bad("'review' is true or false")),
+    };
+    let shown = match (text, review) {
+        (Some(t), false) => Shown::Text(t),
+        (None, true) => Shown::Review,
+        _ => {
+            return Err(bad(
+                "question_shown needs 'text' or 'review': true, not both",
+            ))
+        }
+    };
+    let mut f = Map::new();
+    let mut moved = None;
+    if let Some(ch) = &chan {
+        moved = a.question_shown(ch, shown).map_err(failure)?;
+        if moved.is_some() {
+            f.insert("channel".into(), json!(ch));
+        }
+    }
+    f.insert("moved".into(), json!(moved.is_some()));
+    match moved {
+        Some(ShownMove::Land(nav)) => {
+            f.insert("question".into(), json!(nav.index + 1));
+            f.insert("of".into(), json!(nav.size));
+        }
+        Some(ShownMove::Entry { index, size, .. }) => {
+            f.insert("question".into(), json!(index + 1));
+            f.insert("of".into(), json!(size));
+        }
+        Some(ShownMove::Review) => {
+            f.insert("review".into(), json!(true));
+        }
+        None => {}
+    }
+    ok(f)
 }
 
 pub fn answered(a: &Agent, m: &Map<String, Value>) -> Handled {
@@ -900,5 +971,58 @@ mod tests {
             json!({"type": "stream", "channel": "s6", "delta": "Hi.", "label": "repo-six"}),
         );
         assert_eq!(label(&s, "s6").as_deref(), Some("Mine"));
+    }
+
+    #[test]
+    fn host_tab_stops_at_the_newest_session_of_the_tab_with_a_question_set() {
+        // #323: an older session of the same tab (one that died without
+        // SessionEnd) still has a set; the newest one with a set answers.
+        let (s, mut a) = enabled();
+        for (ch, q) in [("old", "Old"), ("new", "New")] {
+            call(
+                &s,
+                &mut a,
+                json!({"type": "channel_open", "channel": ch, "host_tab": "p-1"}),
+            );
+            for i in 0..2 {
+                let r = call(
+                    &s,
+                    &mut a,
+                    json!({"type": "ask", "channel": ch, "kind": "question",
+                           "text": format!("{q} question {}?", i + 1),
+                           "set_index": i, "set_size": 2}),
+                );
+                assert_eq!(r["ok"], true, "{r}");
+            }
+        }
+        // The newest session of the tab, without a set, is passed over.
+        call(
+            &s,
+            &mut a,
+            json!({"type": "channel_open", "channel": "newest", "host_tab": "p-1"}),
+        );
+        let shown = |a: &mut Session, extra: Value| {
+            let mut m = json!({"type": "question_shown", "host_tab": "p-1"});
+            m.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            call(&s, a, m)
+        };
+        let r = shown(&mut a, json!({"review": true}));
+        assert_eq!(
+            (r["moved"].clone(), r["channel"].clone()),
+            (json!(true), json!("new")),
+            "{r}"
+        );
+        let r = shown(&mut a, json!({"review": true}));
+        assert_eq!(r["moved"], false, "reviewed already, not the old set: {r}");
+        let r = shown(&mut a, json!({"text": "Old question 2?"}));
+        assert_eq!(r["moved"], false, "only the old set has it: {r}");
+        let r = shown(&mut a, json!({"text": "New question 2?"}));
+        assert_eq!(
+            (r["moved"].clone(), r["question"].clone()),
+            (json!(true), json!(2)),
+            "{r}"
+        );
     }
 }

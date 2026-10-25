@@ -11,6 +11,7 @@
 //! default when they differ. The check runs at a chunk boundary only, so a
 //! change never cuts a chunk mid-word: the chunk playing ends on the old
 //! device.
+use crate::dump::Dump;
 use crate::{AudioEvent, ItemId, Output, PcmChunk};
 use rodio::buffer::SamplesBuffer;
 use rodio::cpal::traits::HostTrait;
@@ -208,6 +209,7 @@ impl RodioOutput {
             loaded: None,
             awaiting_finish: false,
             volume: 1.0,
+            dump: Dump::from_env(),
         };
         // If the thread cannot start, every play fails (see `send`).
         let _ = thread::Builder::new()
@@ -307,6 +309,8 @@ struct Worker {
     /// is still playing even when its sink has run dry.
     awaiting_finish: bool,
     volume: f32,
+    /// `SONARA_AUDIO_DUMP`: what is handed to the device, as WAV files.
+    dump: Option<Dump>,
 }
 
 /// The sink gain for a volume percent. Above 100 is full volume, never
@@ -345,6 +349,9 @@ impl Worker {
                 Cmd::Append { gen, pcm } => {
                     if let (Some(s), Some(g)) = (&self.sink, self.loaded) {
                         if g == gen {
+                            if let Some(d) = &mut self.dump {
+                                d.append(&pcm);
+                            }
                             for buffer in pcm.iter().filter_map(to_buffer) {
                                 s.append(buffer);
                             }
@@ -373,6 +380,9 @@ impl Worker {
                     }
                 }
                 Cmd::Stop => {
+                    if let Some(d) = &self.dump {
+                        d.note("stop");
+                    }
                     self.sink = None;
                     self.loaded = None;
                 }
@@ -435,6 +445,9 @@ impl Worker {
     }
 
     fn play(&mut self, pcm: Vec<PcmChunk>, item: ItemId, chunk: usize, gen: u64, open: bool) {
+        if let Some(d) = &mut self.dump {
+            d.play(item.0, chunk, &pcm);
+        }
         self.sink = None;
         self.loaded = None;
         let default = self.follow_default();
@@ -472,6 +485,9 @@ impl Worker {
     }
 
     fn clip(&mut self, samples: Vec<i16>, sample_rate: u32) {
+        if let Some(d) = &mut self.dump {
+            d.clip(&samples, sample_rate);
+        }
         let pcm = PcmChunk {
             samples,
             sample_rate,

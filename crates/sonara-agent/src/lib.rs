@@ -127,7 +127,9 @@ pub mod summarizer;
 
 pub use decision::{AskKind, Choice};
 pub use earcon::{Earcon, Library};
-pub use rules::{Action, Ask, Job, Nav, Note, Rules, Stale, Step, Timer, DELTA_GAP};
+pub use rules::{
+    Action, Ask, Job, Nav, Note, Rules, Shown, ShownMove, Stale, Step, Timer, DELTA_GAP,
+};
 pub use settings::{
     BackgroundPolicy, FlushScope, ReadMode, Settings, Style, SummaryCommand, SummarySettings,
     Verbosity,
@@ -751,6 +753,121 @@ impl Agent {
         Ok(None)
     }
 
+    /// The terminal shows `shown` of `channel`'s question set (#323, the
+    /// screen follower, PrismTerminal): a question other than the current
+    /// one is read now (a stepping set lands on it; a set read in order
+    /// reads that question); the review screen says "Review your answers."
+    /// once. A set read in order is followed from the first report on
+    /// (owner, 2026-10-16): only the question on screen is read, the
+    /// others are set aside in L2, and a question of the set not on screen
+    /// that is being read stops for the one on screen. A screen change is
+    /// not a Sonara key: while muted (level 1 or more) the set still
+    /// follows the screen but nothing is read, and the review line is
+    /// stored. A question already being read goes on, and so does the
+    /// message text before the set: the question on screen is read after
+    /// it (owner, 2026-10-25). Returns what moved,
+    /// `None` when nothing did.
+    pub fn question_shown(&self, channel: &str, shown: Shown) -> Result<Option<ShownMove>> {
+        let mut rules = self.lock();
+        let ch = &self.inner.channels;
+        let moved = rules.question_shown(channel, shown);
+        for (entry, aside) in rules.read_set_aside(channel) {
+            ch.set_aside(channel, entry, aside);
+        }
+        // A question on the screen of another session than the one read is
+        // never a reason to switch to it (owner, 2026-10-21: it cut a message
+        // and read it again from the start once the question was answered).
+        // The set still follows the screen; the question is read when that
+        // session is read.
+        let elsewhere = ch.engaged().is_some_and(|e| e != channel);
+        let muted = rules.settings.mute_level >= 1 || elsewhere;
+        let reading = |entry: u64| ch.reading() == Some((channel.to_string(), entry));
+        // A question of the set the screen does not show is being read
+        // (read in order before the screen's first report): it stops.
+        let off_screen = ch
+            .reading()
+            .filter(|(c, _)| c == channel)
+            .is_some_and(|(_, e)| ch.channel(channel).is_some_and(|c| c.is_aside(e)));
+        let shown_entry = rules.shown_entry(channel);
+        // The message text before the set is being read: it is read to its
+        // end and the question on screen follows (owner, 2026-10-25: the
+        // screen never skips the message, only the questions follow it).
+        let in_text = ch
+            .reading()
+            .filter(|(c, _)| c == channel)
+            .zip(rules.first_set_entry(channel))
+            .is_some_and(|((_, e), first)| e < first);
+        let mut what = match &moved {
+            Some(ShownMove::Land(nav)) => {
+                format!("on screen: question {} of {}", nav.index + 1, nav.size)
+            }
+            Some(ShownMove::Entry { index, size, .. }) => {
+                format!("on screen: question {} of {size}", index + 1)
+            }
+            Some(ShownMove::Review) => "on screen: the review of the answers".into(),
+            None => "on screen: nothing to move to".into(),
+        };
+        match &moved {
+            Some(ShownMove::Land(_) | ShownMove::Entry { .. }) if muted => {
+                what.push_str(if elsewhere {
+                    ", not read: another session is read"
+                } else {
+                    ", not read: muted"
+                });
+            }
+            Some(ShownMove::Entry { entry, .. }) if reading(*entry) => {
+                what.push_str(", being read already");
+            }
+            Some(ShownMove::Land(_) | ShownMove::Entry { .. }) if in_text => {
+                what.push_str(", read after the message");
+            }
+            None if off_screen && shown_entry.is_some() && !muted => {
+                what.push_str(", the question read instead of one not on screen");
+            }
+            _ => {}
+        }
+        self.inner.trace(
+            "question",
+            Some(channel),
+            Traced::Note(Note {
+                channel: Some(channel.to_string()),
+                kind: "question",
+                what,
+                text: None,
+            }),
+        );
+        match &moved {
+            Some(ShownMove::Land(nav)) => {
+                // Revised also while muted: a later replay reads it.
+                ch.revise(channel, nav.entry, &nav.text);
+                if !muted && !in_text {
+                    ch.read_from(channel, Some(nav.entry))?;
+                }
+            }
+            Some(ShownMove::Entry { entry, .. }) => {
+                if !muted && !in_text && !reading(*entry) {
+                    ch.read_from(channel, Some(*entry))?;
+                }
+            }
+            Some(ShownMove::Review) => {
+                let actions = rules.review_line(channel);
+                self.inner
+                    .execute(&mut rules, "question", Some(channel), actions)?;
+            }
+            None => {
+                if let (true, false, Some(e)) = (off_screen, muted, shown_entry) {
+                    ch.read_from(channel, Some(e))?;
+                }
+            }
+        }
+        Ok(moved)
+    }
+
+    /// Whether `channel` has a question set the screen can show (#323).
+    pub fn has_question_set(&self, channel: &str) -> bool {
+        self.lock().has_question_set(channel)
+    }
+
     /// Up (`control restart` without a channel, #283): when the session Up
     /// aims at (L2's target: the engaged one, else the focused one, else
     /// the one written last) has a question set, its message is read again
@@ -1092,6 +1209,11 @@ impl Inner {
     fn queue(self: &Arc<Self>, e: Earcon) -> Result<Traced> {
         let clip = self.earcons.clip(e);
         if e.is_key() {
+            // Not queued, but what follows it waits for it (`AFTER_KEY`).
+            self.lock_schedule().key_sound(
+                sequencer::length(clip.samples.len(), clip.sample_rate),
+                Instant::now(),
+            );
             self.sound(e, &clip)?;
             return Ok(Traced::Earcon(e));
         }
@@ -1215,6 +1337,14 @@ impl Inner {
         first
     }
 
+    /// A question of a set the screen is followed for (#323) is set aside
+    /// in L2 unless it is the one on screen.
+    fn follow_screen(&self, rules: &Rules, channel: &str) {
+        for (entry, aside) in rules.read_set_aside(channel) {
+            self.channels.set_aside(channel, entry, aside);
+        }
+    }
+
     /// Why text added to `channel` may wait (for the trace).
     fn waits(&self, channel: &str, release: bool) -> Option<&'static str> {
         let ch = &self.channels;
@@ -1239,6 +1369,7 @@ impl Inner {
                 if kind == "question" {
                     // The entry that shows a question set (#283).
                     rules.bind_question(&channel, spoken.entry, false);
+                    self.follow_screen(rules, &channel);
                 }
                 if decision {
                     ch.prioritize(&channel)?;
@@ -1268,6 +1399,7 @@ impl Inner {
                 let stored = ch.store(&channel, &text, decision)?;
                 if kind == "question" {
                     rules.bind_question(&channel, stored.entry, true);
+                    self.follow_screen(rules, &channel);
                 }
                 self.trace(
                     source,
