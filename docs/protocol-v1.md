@@ -577,7 +577,7 @@ up (and not still reading its last message) starts a new batch.
   announced); `next_channel` is always announced. Without `agent`, a channel without a `label` is
   not announced. `set channel_announce "off"` turns announcements off. With the `agent` extension on
   (an agent host such as the Claude plugin) the texts are
-  `"Session changed: <label>."` and `"Session changed: <label>, reading again."` (a channel without
+  `"<label>."` and `"<label>, reading again."` (a channel without
   a label: `"Session changed."` and `"Session changed, reading again."`, so no switch is silent,
   #241), and every announcement is preceded by the `session_change` earcon, for automatic hand-offs
   and manual switches alike (#209); not at `mute_level` 2. The chime waits for any earcon playing,
@@ -634,10 +634,9 @@ switch is read again).
 now. When a channel's item is playing or paused, that channel is skipped to its end and its item
 cut, as `stop` with that `channel` (`flushed: "channel"`, `channel` its id); a paused reader is
 un-paused. In scope `session` the other channels keep everything and are read next as usual. When a
-switch announcement is playing, only the announcement is skipped and the channel it names is read at
-once with all its messages (`flushed: "announcement"`, `channel` the announced one): the press was
-aimed at the channel that had just ended. Once that channel's first item has started, a flush
-flushes it. When the reader is reading text spoken without a `channel`, only that item is skipped
+switch announcement is playing, it is skipped with the channel it names, as that channel's flush
+(`flushed: "announcement"`, `channel` the announced one; runtime 0.35.1: before, the announced
+channel was read at once with all its messages), and the next channel is read as usual. When the reader is reading text spoken without a `channel`, only that item is skipped
 (`flushed: "direct"`). When nothing is being read, `flushed` is `"nothing"`: in scope `session`
 nothing changes; with `agent` and scope `all` the other sessions' ready text is still dropped and
 listed in `others`. It takes no `channel` (`E_BAD_REQUEST`; use `stop` with the channel). Without
@@ -985,7 +984,7 @@ Actions and what they do (the same as the protocol request named):
 | `flush` | Ctrl+Alt+Down | a tap goes on one section, as a tap on `next_question` (log `hotkey next ...`); held for half a second: with `channels`, `control flush` (the session being read and the rest of its reply, #228; with `flush_scope` `all` also every other session's ready messages); without it, `control stop`. With `agent`, plays `nav` (or `nav_edge` when nothing was dropped) |
 | `pause` | unbound | `control toggle`, then the cue `"Paused."` or `"Resumed."` |
 | `mute` | Ctrl+Alt+M | with `agent`: a tap toggles `mute_level` 0 and 1; held for half a second it is 2 (super muted); any press at 2 gives 0 (a second hold included); else `mute` and `unmute`, a hold being a tap; then its cue |
-| `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` then says `"Session changed: <label>."` (the announcement; `"Session changed."` for a session without a label; when switches are not announced, the earcon alone); with no channel open, the cue `"No session."` |
+| `next_channel` | Ctrl+Alt+P | `control next_channel` (with `channels`); with `agent`, plays `session_change` then says `"<label>."` (the announcement; `"Session changed."` for a session without a label; when switches are not announced, the earcon alone); with no channel open, the cue `"No session."` |
 | `faster` / `slower` | unbound | `rate` plus or minus 25, then `"Rate N."` |
 | `previous_question` | unbound | Named for #283 (#307): a tap goes back one section. On question 2 or later of a question set (also once it was read) it is `control previous_question`; else `control back` (on question 1: the message's last sentence; while nothing is read, the message again). Held for half a second it is `control restart`, as `restart` held. The log line says `hotkey back ...` or `hotkey restart ...` |
 | `next_question` | unbound | A tap goes on one section: the item's next chunk, else the batch's next entry (after a message's last sentence, its question set); on a question, `control next_question`; while nothing is read, `control next_question` (question 1 of a set). Nothing to move to plays `nav_edge` and reading goes on. Held for half a second it skips the rest of the message: from its text to question 1 of a set that follows, else the session being read is flushed as `control flush` with `flush_scope` `session`. The log line says `hotkey next session=<label> to=<chunk, entry or end>`, `hotkey next ... question=<k>/<n>` or `hotkey skip ...`. While a code block is read (#295) a tap is `control next_line` instead, and a tap on `previous_question` is `previous_line` |

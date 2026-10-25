@@ -365,7 +365,7 @@ fn first_clip_and_last_play(out: &TestOutput) -> (usize, usize) {
 
 #[test]
 fn an_automatic_session_switch_chimes_then_says_session_changed() {
-    // Python daemon/__init__.py "Session changed: {0}." and the router's
+    // Python daemon/__init__.py "{0}." and the router's
     // session_change item: the chime first, then the announcement.
     let r = Rig::announcing(None);
     let heard = r.agent.subscribe();
@@ -373,7 +373,7 @@ fn an_automatic_session_switch_chimes_then_says_session_changed() {
     r.stream("b", "From beta.", 0, None);
     r.read("From alpha.");
     assert!(heard.try_recv().is_err(), "no chime before the switch");
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     let (clip, play) = first_clip_and_last_play(&r.out);
     assert!(clip < play, "the earcon goes before the announcement");
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
@@ -403,7 +403,7 @@ fn a_question_in_another_session_after_the_last_reader_closed_is_announced() {
     r.agent
         .ask("b", &Ask::new(AskKind::Question, "Red or blue?"))
         .unwrap();
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::Choice);
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
     r.out.start();
@@ -431,7 +431,7 @@ fn a_session_without_a_name_is_announced_as_session_changed() {
         r.agent.channels().next_channel().unwrap().as_deref(),
         Some("a")
     );
-    r.read("Session changed: Alpha, reading again.");
+    r.read("Alpha, reading again.");
     r.read("From alpha.");
     assert_eq!(
         r.agent.channels().next_channel().unwrap().as_deref(),
@@ -448,7 +448,7 @@ fn a_manual_session_switch_chimes_then_says_session_changed_reading_again() {
     r.read("From alpha.");
     r.stays_idle();
     r.stream("b", "From beta.", 0, None);
-    r.read("Session changed: Beta.");
+    r.read("Beta.");
     r.read("From beta.");
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
     r.stays_idle();
@@ -457,7 +457,7 @@ fn a_manual_session_switch_chimes_then_says_session_changed_reading_again() {
         r.agent.channels().next_channel().unwrap().as_deref(),
         Some("a")
     );
-    r.wait_for("Session changed: Alpha, reading again.");
+    r.wait_for("Alpha, reading again.");
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
     assert_eq!(r.clips(), before + 1);
     r.out.start();
@@ -492,7 +492,7 @@ fn custom_earcons_replace_the_bundled_clips() {
     r.stream("a", "From alpha.", 0, None);
     r.stream("b", "From beta.", 0, None);
     r.read("From alpha.");
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     assert!(r.out.calls().contains(&OutputCall::PlayClip {
         samples: 800,
         sample_rate: 8_000,
@@ -1177,7 +1177,7 @@ fn turn_done_and_session_change_play_one_after_the_other() {
     r.out.start();
     r.agent.turn_end("a", None, None).unwrap();
     r.out.finish();
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::TurnDone);
     assert_eq!(heard.recv_timeout(TIMEOUT).unwrap(), Earcon::SessionChange);
     let clips = timed_clips(&r.out);
@@ -1254,7 +1254,7 @@ fn the_session_change_after_a_flush_waits_for_the_flush_sound() {
     r.out.start();
     r.agent.flush().unwrap();
     r.agent.earcon(Earcon::Nav).unwrap();
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     let nav = Earcon::Nav.clip();
     let clips = timed_clips(&r.out);
     let (at, _, _) = *clips
@@ -1285,7 +1285,7 @@ fn a_session_switch_waits_for_the_flush_sound_and_a_third_of_a_second() {
     r.agent.earcon(Earcon::Nav).unwrap();
     r.agent.turn_end("a", None, None).unwrap();
     r.out.finish();
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     let nav = Earcon::Nav.clip();
     let clips = timed_clips(&r.out);
     let (at, _, _) = *clips
@@ -1330,7 +1330,7 @@ fn session_change_is_logged() {
     r.stream("a", "From alpha.", 0, None);
     r.stream("b", "From beta.", 0, None);
     r.read("From alpha.");
-    r.wait_for("Session changed: Beta.");
+    r.wait_for("Beta.");
     let traced = traced.lock().unwrap();
     assert!(
         traced.iter().any(|t| t.source == "announce"

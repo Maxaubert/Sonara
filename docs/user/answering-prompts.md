@@ -66,7 +66,7 @@ Sonara has nine built-in sounds. They play one after the other, never on top of 
 | `choice` | A question needs your answer | Two bubble pops, rising |
 | `permission` | A permission prompt | Two soft rising blips |
 | `turn_done` | A reply ends | Marimba, two notes up a third |
-| `session_change` | The voice moves to another session (then "Session changed: *folder*.") | Slow, warm e-piano arpeggio |
+| `session_change` | The voice moves to another session (then the folder name ("*folder*.")) | Slow, warm e-piano arpeggio |
 | `nav` | A restart (hold Ctrl+Alt+Up) or a flush (hold Ctrl+Alt+Down) | Short rewind swell into a light tick |
 | `step` | A tap on Ctrl+Alt+Up or Down moved one section or code line | The light tick |
 | `nav_edge` | A tap had nothing to move to | The light tick alone |

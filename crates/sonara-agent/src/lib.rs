@@ -89,7 +89,7 @@
 //!   switch is never silent) and plays the `session_change` earcon right
 //!   before each announcement is handed to the reader (L2's
 //!   `on_announce`), so every switch the user hears, automatic or manual,
-//!   chimes first and then says "Session changed: <label>.". The chime
+//!   chimes first and then says "<label>.". The chime
 //!   queues behind any earcon playing, and the announcement is held
 //!   (`ReaderHandle::hold_start`) until the chime ended, so the name is
 //!   heard after it, not under it (#238). The hold lasts until every
@@ -173,11 +173,12 @@ use std::time::{Duration, Instant};
 /// that died without `SessionEnd` is affected.
 pub const FORGET_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
 
-/// The switch announcement (`{label}`: the session's label), as the Python
-/// plugin said it.
-pub const SESSION_CHANGED: &str = "Session changed: {label}.";
+/// The switch announcement (`{label}`: the session's label): its name
+/// alone after the session-change chime (the Python plugin said "Session
+/// changed: {label}.", shortened by the owner 2026-10-25).
+pub const SESSION_CHANGED: &str = "{label}.";
 /// The switch announcement when the session is read again from the top.
-pub const SESSION_CHANGED_AGAIN: &str = "Session changed: {label}, reading again.";
+pub const SESSION_CHANGED_AGAIN: &str = "{label}, reading again.";
 /// The switch announcement for a session without a label (#241).
 pub const SESSION_CHANGED_UNNAMED: &str = "Session changed.";
 /// The replay announcement for a session without a label.
@@ -699,13 +700,15 @@ impl Agent {
         )?;
         self.inner.skipped_sets(&mut rules, &unread);
         let mut first = Ok(());
-        if let Flushed::Channel(ch) = &report.flushed {
+        if let Flushed::Channel(ch) | Flushed::Announcement(ch) = &report.flushed {
             let actions = rules.flush(ch);
             first = self.inner.execute(&mut rules, "flush", Some(ch), actions);
         }
         if all {
             for ch in rules.channels() {
-                if report.flushed == Flushed::Channel(ch.clone()) {
+                if report.flushed == Flushed::Channel(ch.clone())
+                    || report.flushed == Flushed::Announcement(ch.clone())
+                {
                     continue;
                 }
                 let queued = report.others.contains(&ch);

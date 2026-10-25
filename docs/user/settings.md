@@ -99,7 +99,7 @@ Each finished reply costs one small call on your Claude or Codex login. See [sum
 
 | Label | Key | Default | Choices | Effect |
 |---|---|---|---|---|
-| Announce switches | `channel_announce` | `on` | `on`, `off` | Say "Session changed: *folder*." when the voice moves to another session. Off keeps the chime only |
+| Announce switches | `channel_announce` | `on` | `on`, `off` | Say the folder name ("*folder*.") when the voice moves to another session. Off keeps the chime only |
 
 The session list (name and Audio switch per session) is stored in `session_prefs.json`, not in `config.json`. See [sessions.md](sessions.md).
 

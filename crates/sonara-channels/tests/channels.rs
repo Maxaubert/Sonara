@@ -50,6 +50,13 @@ impl Rig {
         r
     }
 
+    fn three() -> Rig {
+        let r = Self::two();
+        r.ch.open("c", Some("Gamma".into()), None, Some(Policy::Queue))
+            .unwrap();
+        r
+    }
+
     fn reader(&self) -> &ReaderHandle {
         self.ch.reader()
     }
@@ -197,17 +204,14 @@ fn announcement_text_is_configurable() {
 #[test]
 fn announcement_texts_can_be_changed_on_a_running_driver() {
     let r = Rig::two();
-    r.ch.set_announce_texts(
-        "Session changed: {label}.",
-        "Session changed: {label}, reading again.",
-    );
+    r.ch.set_announce_texts("{label}.", "{label}, reading again.");
     r.speak("a", "From alpha.");
     r.speak("b", "From beta.");
     r.read("From alpha.");
-    r.read("Session changed: Beta.");
+    r.read("Beta.");
     r.read("From beta.");
     assert_eq!(r.ch.next_channel().unwrap().as_deref(), Some("a"));
-    r.read("Session changed: Alpha, reading again.");
+    r.read("Alpha, reading again.");
     r.read("From alpha.");
 }
 
@@ -775,14 +779,15 @@ fn stop_reading_while_idle_does_nothing() {
 }
 
 #[test]
-fn stop_reading_during_a_switch_announcement_skips_only_the_announcement() {
-    // #228 review: a's item ends a moment before the press and b's switch
-    // announcement starts. The press was aimed at a: b's message must not
-    // be wiped before a word of it was heard.
-    let r = Rig::two();
+fn stop_reading_during_a_switch_announcement_skips_the_announced_message_too() {
+    // Owner 2026-10-25 (it was the announcement alone in the #228 review):
+    // a hold on Down while the session's name is said skips that session's
+    // message as well; the next session is read as usual.
+    let r = Rig::three();
     r.speak("a", "Alpha one.");
     r.speak("b", "Beta one.");
     r.speak("b", "Beta two.");
+    r.speak("c", "Gamma one.");
     r.read("Alpha one.");
     r.wait_for("Beta.");
     let drops = Arc::new(Mutex::new(Vec::new()));
@@ -794,10 +799,10 @@ fn stop_reading_during_a_switch_announcement_skips_only_the_announcement() {
         r.ch.stop_reading("flush").unwrap(),
         Flushed::Announcement("b".into())
     );
-    r.read("Beta one.");
-    r.read("Beta two.");
+    r.read("Gamma.");
+    r.read("Gamma one.");
     r.stays_idle();
-    assert!(drops.lock().unwrap().is_empty());
+    assert_eq!(*drops.lock().unwrap(), ["Beta one.", "Beta two."]);
 }
 
 #[test]
@@ -900,7 +905,8 @@ fn flush_with_during_an_announcement_flushes_the_announced_channel_it_names() {
     r.wait_for("Beta.");
     let report = r.ch.flush_with("flush", |_| {}, |_| true).unwrap();
     assert_eq!(report.flushed, Flushed::Announcement("b".into()));
-    assert_eq!(report.others, ["b"]);
+    // Flushed as the announced channel, not as one of the others.
+    assert!(report.others.is_empty(), "{:?}", report.others);
     r.stays_idle();
 }
 
