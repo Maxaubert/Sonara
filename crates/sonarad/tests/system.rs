@@ -667,8 +667,8 @@ fn clip_before_last_play(out: &TestOutput) -> bool {
 }
 
 #[test]
-fn the_next_session_hotkey_chimes_then_says_session_changed() {
-    // Python controls.py on_next_session + "Session changed: {0}." (#209).
+fn the_next_session_hotkey_chimes_then_says_the_session_name() {
+    // Python controls.py on_next_session (#209); the name alone since 2026-10-25.
     let r = rig();
     let s = &r.server;
     let mut session = Session::http();
@@ -681,7 +681,7 @@ fn the_next_session_hotkey_chimes_then_says_session_changed() {
     two_sessions(&r, &mut session);
     r.fake.press(Action::NextChannel.id());
     assert!(
-        eventually(|| playing(s).as_deref() == Some("Session changed: beta-repo.")),
+        eventually(|| playing(s).as_deref() == Some("beta-repo.")),
         "playing {:?}",
         playing(s)
     );
@@ -706,7 +706,7 @@ fn the_next_session_hotkey_chimes_then_says_session_changed() {
         sonara_agent::Earcon::SessionChange
     );
     assert!(eventually(
-        || playing(s).is_some_and(|t| !t.starts_with("Session changed"))
+        || playing(s).is_some_and(|t| !t.ends_with("-repo."))
     ));
 }
 
@@ -768,9 +768,7 @@ fn an_automatic_session_switch_chimes_then_says_session_changed() {
     assert!(eventually(|| r.out.loaded().is_some()));
     r.out.start();
     r.out.finish();
-    assert!(eventually(
-        || playing(s).as_deref() == Some("Session changed: beta-repo.")
-    ));
+    assert!(eventually(|| playing(s).as_deref() == Some("beta-repo.")));
     assert_eq!(
         chimes.recv_timeout(Duration::from_secs(5)).unwrap(),
         sonara_agent::Earcon::SessionChange
@@ -2067,7 +2065,7 @@ fn holding_down_flushes_the_message() {
     on_the_first_sentence(&r, &mut session);
     r.fake.hold_key(DOWN);
     r.fake.press(Action::Flush.id());
-    read_through(&r, "Session changed: docs.");
+    read_through(&r, "docs.");
     r.fake.release_key(DOWN);
     read_through(&r, "From beta.");
     stays_quiet(&r);

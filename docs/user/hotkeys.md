@@ -31,9 +31,9 @@ Only Up, Down, M (and the two unbound question keys below) tell a tap from a hol
 | Action | Settings page label | Default | Effect |
 |---|---|---|---|
 | `restart` | Back / hold: from the start | Ctrl+Alt+Up | Tap: back one section of the reply being read. While code plays, back one code line. In a set of questions, the question before (from question 2 on). With nothing being read, the latest message again. Hold: the latest message again from the top. With a set of questions it reads the reply, then question 1. In summary mode it re-reads the last summary |
-| `flush` | Next / hold: flush | Ctrl+Alt+Down | Tap: on one section. After a reply's last sentence come its questions. While code plays, on one code line. Hold: flush, which skips what is playing, what that session has queued and the rest of its reply still arriving. Its questions are still read |
+| `flush` | Next / hold: flush | Ctrl+Alt+Down | Tap: on one section. After a reply's last sentence come its questions. While code plays, on one code line. Hold: flush, which skips what is playing, what that session has queued and the rest of its reply still arriving. Its questions are still read. While a session's name is said after a switch, the hold skips that session's message too |
 | `mute` | Mute | Ctrl+Alt+M | A tap switches between unmuted and muted; a hold goes to super muted. Any press from super muted unmutes, a second hold included. Muted: text is not spoken, chimes still play. Super muted: chimes are silent too. Says "Muted.", "Super muted." or "Unmuted." |
-| `next_channel` | Next session | Ctrl+Alt+P | Moves the voice to the next Claude Code session. Plays the `session_change` chime, then says "Session changed: *folder*." With no session open it says "No session." |
+| `next_channel` | Next session | Ctrl+Alt+P | Moves the voice to the next Claude Code session. Plays the `session_change` chime, then says the folder name ("*folder*.") With no session open it says "No session." |
 | `pause` | Pause | unbound | Pause or resume. Says "Paused." or "Resumed." (only while something is loaded) |
 | `faster` | Faster | unbound | Rate plus 25 words per minute, then says "Rate N." |
 | `slower` | Slower | unbound | Rate minus 25 words per minute, then says "Rate N." |
@@ -61,7 +61,7 @@ Every key press answers with a sound or a spoken word, so you know it worked.
 
 These three play the moment the key acts, over a chime that is already playing. Other chimes wait their turn. The other six chimes (`choice`, `permission`, `turn_done`, `session_change`, `error`, `summary_failed`) are not key answers. You can replace any chime with your own WAV: see [settings.md](settings.md#chimes-and-where-files-live).
 
-The spoken answers: "Muted.", "Super muted.", "Unmuted.", "Paused.", "Resumed.", "Rate 275.", "No session." and, for a switch, "Session changed: *folder*."
+The spoken answers: "Muted.", "Super muted.", "Unmuted.", "Paused.", "Resumed.", "Rate 275.", "No session." and, for a switch, the folder name ("*folder*.")
 
 ## Hotkeys only work while Sonara is in use
 

@@ -1,7 +1,7 @@
 """Extension ``agent``: session switches and custom earcons (#209). With the
 agent on, a switch the user hears plays the ``session_change`` earcon and
-then says "Session changed: <label>." (a replay: "..., reading again."), as
-the Python plugin did, for automatic hand-offs and for ``control
+then says "<label>." (a replay: "..., reading again."; the Python plugin
+said "Session changed: <label>."), for automatic hand-offs and for ``control
 next_channel``. ``<home>/earcons/<kind>.wav`` replaces a bundled earcon
 (``get earcons`` lists it). The runtime logs its start in
 ``logs/sonarad.log``. Hotkey presses are covered by
@@ -25,7 +25,7 @@ def test_an_automatic_hand_off_chimes_and_says_session_changed(rt):
     stream(c, "b", "Beta words.")
     assert heard(c, 3) == [
         ("Alpha words.", "a"),
-        ("Session changed: beta-repo.", "b"),
+        ("beta-repo.", "b"),
         ("Beta words.", "b"),
     ]
     assert earcon(c) == "session_change"
@@ -41,7 +41,7 @@ def test_next_channel_chimes_and_says_session_changed_reading_again(rt):
     r = ok(c, {"type": "control", "action": "next_channel"})
     assert r["channel"] == "a"
     assert heard(c, 2) == [
-        ("Session changed: alpha-repo, reading again.", "a"),
+        ("alpha-repo, reading again.", "a"),
         ("Alpha words.", "a"),
     ]
     assert earcon(c) == "session_change"
@@ -68,7 +68,7 @@ def test_a_question_after_the_last_reader_closed_is_announced(rt):
     ok(c, {"type": "ask", "channel": "w", "kind": "question", "text": "Red or blue?",
            "options": ["Red", "Blue"], "label": "work"})
     assert heard(c, 2) == [
-        ("Session changed: work.", "w"),
+        ("work.", "w"),
         ("Red or blue?", "w"),
     ]
     assert sorted([earcon(c), earcon(c)]) == ["choice", "session_change"]
@@ -85,7 +85,7 @@ def test_a_session_first_seen_by_its_stream_is_announced_with_its_label(rt):
            "label": "beta-repo"})
     assert heard(c, 3) == [
         ("Alpha words.", "a"),
-        ("Session changed: beta-repo.", "b"),
+        ("beta-repo.", "b"),
         ("Beta words.", "b"),
     ]
 

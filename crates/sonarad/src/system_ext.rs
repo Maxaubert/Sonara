@@ -508,7 +508,7 @@ impl HotkeyTarget {
                     None => "session=none".into(),
                 };
                 match next {
-                    // An announced switch chimes as its "Session changed"
+                    // An announced switch chimes as its
                     // announcement is fed (the agent's L2 hook: earcon
                     // first); a switch that is not announced (announcements
                     // off, or a channel without a label and no unnamed

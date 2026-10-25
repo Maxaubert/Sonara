@@ -14,8 +14,8 @@
 //! - A switch between channels is announced by a short item (`"<label>."`,
 //!   or `"<label>, reading again."` for a replay) fed before the new
 //!   channel's first entry. `Config::announce` turns it off;
-//!   `set_announce_texts` changes the texts (L3 says "Session changed:
-//!   <label>."). A channel without a label is announced by the unnamed
+//!   `set_announce_texts` changes the texts (L3 keeps these, the chime
+//!   comes first). A channel without a label is announced by the unnamed
 //!   texts (`set_unnamed_announce_texts`; L3 says "Session changed.",
 //!   #241) and, when none are set (the default), not at all.
 //!   `on_announce` runs a hook right before an announcement is handed to
@@ -251,9 +251,9 @@ pub struct Channels {
 pub enum Flushed {
     /// The channel being read, flushed.
     Channel(String),
-    /// A switch announcement was playing: only it was skipped, and the
-    /// channel it announces (named) is read next with everything it had.
-    /// The press was aimed at the session that had just ended.
+    /// A switch announcement was playing: it was skipped with the unread
+    /// entries of the channel it announces (named), as that channel's
+    /// flush; the next channel is read as usual.
     Announcement(String),
     /// An item spoken to the reader directly, skipped.
     Direct,
@@ -856,8 +856,8 @@ impl Channels {
     /// flushed as `control(Stop, channel)` (its unread entries skipped,
     /// reported to `on_drop` with `reason`, its item cut) and the next
     /// channel is read as usual; other channels keep everything. A switch
-    /// announcement in flight is skipped alone (`Flushed::Announcement`):
-    /// the session it names has not been heard yet. Text spoken to the
+    /// announcement in flight is skipped with the channel it names
+    /// (`Flushed::Announcement`, owner 2026-10-25). Text spoken to the
     /// reader directly is skipped one item at a time. Idle, nothing
     /// changes. A paused reader is un-paused, as `Stop` does.
     pub fn stop_reading(&self, reason: &str) -> Result<Flushed> {
@@ -924,6 +924,11 @@ impl Channels {
             .as_ref()
             .map(|f| (f.channel.clone(), f.entry.is_none()));
         let flushed = if let Some((ch, true)) = target {
+            // The announced session goes with its announcement (owner
+            // 2026-10-25): its unread entries are skipped too.
+            before(st, &ch);
+            report(st, &ch, unread(st, &ch), reason, None);
+            st.router.flush(Some(&ch));
             st.in_flight = None;
             st.router.done();
             reader.control(Control::Skip)?;
@@ -943,7 +948,10 @@ impl Channels {
         let mut others = Vec::new();
         let ids: Vec<String> = st.router.channels().iter().map(|c| c.id.clone()).collect();
         for id in ids {
-            if flushed == Flushed::Channel(id.clone()) || !also(&id) {
+            if flushed == Flushed::Channel(id.clone())
+                || flushed == Flushed::Announcement(id.clone())
+                || !also(&id)
+            {
                 continue;
             }
             let entries = unread(st, &id);

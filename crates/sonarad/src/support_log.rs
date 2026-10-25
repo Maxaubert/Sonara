@@ -445,7 +445,7 @@ mod tests {
             state_at(1, None, "More secret words.", 1, 2),
             item(1, ItemPhase::Finished),
             item(2, ItemPhase::Started),
-            state(2, Some("work"), "Session changed: work.", 1),
+            state(2, Some("work"), "work.", 1),
             item(2, ItemPhase::Skipped),
             // Dropped from the queue unread.
             item(3, ItemPhase::Skipped),
