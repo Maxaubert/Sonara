@@ -64,7 +64,7 @@ fn run(home: &Home, event: &str, stdin: &[u8], extra: &[(&str, &str)]) -> i32 {
         .env_remove("SONARA_SUMMARIZER")
         .env_remove("SONARA_CAPTURE")
         .env_remove("SONARA_HOST_TAB")
-        .env_remove("PRISM_TAB_ID")
+        .env_remove("FLARE_TAB_ID")
         // Never start a real runtime from a unit test (conformance covers
         // the start with the fake engine and system).
         .env("SONARA_NO_START", "1")

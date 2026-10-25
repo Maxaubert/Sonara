@@ -1,6 +1,7 @@
 # Following the question on screen (spec and plan, 2026-10-16)
 
-Status: done (Sonara #327, 0.33.0; PrismTerminal #236, #242). Owner rule added 2026-10-25: a screen
+Status: done (Sonara #327, 0.33.0). PrismTerminal is retired (2026-10-25): Flare hosts the watcher
+(`crates/flare-agent/src/question_watch.rs`, `sonara.rs`) and the hook reads its `FLARE_TAB_ID`. Owner rule added 2026-10-25: a screen
 change while the message text before the set is read never skips it; the question on screen follows it. Research: the widget probe
 (`research/sonara/2026-10-16-question-widget-probe.md` in the maintainer's notes, not in this repo).
 

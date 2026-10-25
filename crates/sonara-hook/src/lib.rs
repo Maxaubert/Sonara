@@ -139,10 +139,10 @@ pub fn tool_summary(tool: &str, input: &Value) -> String {
     }
 }
 
-/// The embedding host's tab (`SONARA_HOST_TAB`, or PrismTerminal's
-/// `PRISM_TAB_ID`), if the hook runs inside one.
+/// The embedding host's tab (`SONARA_HOST_TAB`, or Flare's
+/// `FLARE_TAB_ID`), if the hook runs inside one.
 fn host_tab(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
-    ["SONARA_HOST_TAB", "PRISM_TAB_ID"]
+    ["SONARA_HOST_TAB", "FLARE_TAB_ID"]
         .iter()
         .filter_map(|k| env(k))
         .find(|v| !v.is_empty())

@@ -9,7 +9,7 @@
     "CLAUDE_PLUGIN_VERSION": "0.4.0",
     "CLAUDE_PLUGIN_ROOT": "/plug/root",
     "SONARA_HOST_TAB": "",
-    "PRISM_TAB_ID": "p-2"
+    "FLARE_TAB_ID": "p-2"
   },
   "messages": [
     {

@@ -5,7 +5,7 @@
     "cwd": "/x/proj/"
   },
   "env": {
-    "PRISM_TAB_ID": "p-1"
+    "FLARE_TAB_ID": "p-1"
   },
   "messages": [
     {

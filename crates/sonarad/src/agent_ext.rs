@@ -271,7 +271,7 @@ pub fn tool(a: &Agent, m: &Map<String, Value>) -> Handled {
 /// when it moved to a question its `question` (1-based) and `of`.
 pub fn question_shown(a: &Agent, m: &Map<String, Value>) -> Handled {
     // The session by its id, or by the terminal tab it runs in (`host_tab`,
-    // the tab id its hook reported; PrismTerminal knows only its tab): the
+    // the tab id its hook reported; Flare knows only its tab): the
     // newest session of that tab with a question set, and only that one (an
     // older session of the tab may still have a set it never closed).
     let chan: Option<String> = match (opt_str(m, "channel")?, opt_str(m, "host_tab")?) {
