@@ -1934,6 +1934,50 @@ fn a_question_shown_on_screen_jumps_a_set_read_in_order() {
 }
 
 #[test]
+fn a_question_shown_while_the_message_is_read_waits_for_its_end_when_stepping() {
+    // The user answers question 1 while the text before the questions is
+    // read: the text is read to its end, then the question on screen.
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    ask_set(&r, "a", 3);
+    r.wait_for("One is here.");
+    r.out.start();
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 2?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Land(n)) if n.index == 1));
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.read("Question 2 of 3.");
+    r.read("Question text 2?");
+    r.stays_idle();
+}
+
+#[test]
+fn a_question_shown_while_the_message_is_read_waits_for_its_end_in_a_set_read_in_order() {
+    let r = Rig::new();
+    r.stream("a", "One is here. Two is here.", 0, None);
+    for i in 0..3 {
+        let mut a = Ask::new(AskKind::Question, &format!("Question text {}?", i + 1));
+        a.set = Some((i, 3));
+        r.agent.ask("a", &a).unwrap();
+    }
+    r.wait_for("One is here.");
+    r.out.start();
+    let moved = r
+        .agent
+        .question_shown("a", Shown::Text("Question text 3?"))
+        .unwrap();
+    assert!(matches!(moved, Some(ShownMove::Entry { index: 2, .. })));
+    r.read("One is here.");
+    r.read("Two is here.");
+    r.read("Question 3 of 3.");
+    r.read("Question text 3?");
+    r.stays_idle();
+}
+
+#[test]
 fn a_question_shown_in_another_session_does_not_cut_the_one_being_read() {
     let r = Rig::new();
     r.stream("a", "One is here. Two is here.", 0, None);

@@ -763,7 +763,9 @@ impl Agent {
     /// that is being read stops for the one on screen. A screen change is
     /// not a Sonara key: while muted (level 1 or more) the set still
     /// follows the screen but nothing is read, and the review line is
-    /// stored. A question already being read goes on. Returns what moved,
+    /// stored. A question already being read goes on, and so does the
+    /// message text before the set: the question on screen is read after
+    /// it (owner, 2026-10-25). Returns what moved,
     /// `None` when nothing did.
     pub fn question_shown(&self, channel: &str, shown: Shown) -> Result<Option<ShownMove>> {
         let mut rules = self.lock();
@@ -787,6 +789,14 @@ impl Agent {
             .filter(|(c, _)| c == channel)
             .is_some_and(|(_, e)| ch.channel(channel).is_some_and(|c| c.is_aside(e)));
         let shown_entry = rules.shown_entry(channel);
+        // The message text before the set is being read: it is read to its
+        // end and the question on screen follows (owner, 2026-10-25: the
+        // screen never skips the message, only the questions follow it).
+        let in_text = ch
+            .reading()
+            .filter(|(c, _)| c == channel)
+            .zip(rules.first_set_entry(channel))
+            .is_some_and(|((_, e), first)| e < first);
         let mut what = match &moved {
             Some(ShownMove::Land(nav)) => {
                 format!("on screen: question {} of {}", nav.index + 1, nav.size)
@@ -808,6 +818,9 @@ impl Agent {
             Some(ShownMove::Entry { entry, .. }) if reading(*entry) => {
                 what.push_str(", being read already");
             }
+            Some(ShownMove::Land(_) | ShownMove::Entry { .. }) if in_text => {
+                what.push_str(", read after the message");
+            }
             None if off_screen && shown_entry.is_some() && !muted => {
                 what.push_str(", the question read instead of one not on screen");
             }
@@ -827,12 +840,12 @@ impl Agent {
             Some(ShownMove::Land(nav)) => {
                 // Revised also while muted: a later replay reads it.
                 ch.revise(channel, nav.entry, &nav.text);
-                if !muted {
+                if !muted && !in_text {
                     ch.read_from(channel, Some(nav.entry))?;
                 }
             }
             Some(ShownMove::Entry { entry, .. }) => {
-                if !muted && !reading(*entry) {
+                if !muted && !in_text && !reading(*entry) {
                     ch.read_from(channel, Some(*entry))?;
                 }
             }

@@ -1692,6 +1692,16 @@ impl Rules {
             .and_then(|q| q.entry)
     }
 
+    /// The first L2 entry of `channel`'s question set, stepping or read in
+    /// order (#323): an entry before it is the message text.
+    pub fn first_set_entry(&self, channel: &str) -> Option<u64> {
+        let c = self.turns.get(channel)?;
+        if let Some(q) = c.questions.as_ref() {
+            return q.entry;
+        }
+        c.read_set.as_ref()?.entries.iter().flatten().min().copied()
+    }
+
     /// `channel`'s question set: the current question (0-based) and the
     /// set's size (diagnostics, tests).
     pub fn question_set(&self, channel: &str) -> Option<(usize, usize)> {
