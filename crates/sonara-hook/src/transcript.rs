@@ -1,14 +1,18 @@
-//! The lead-in of a question whose message has no text (#283, Bug 2).
+//! The lead-in of a question: the text or thinking of its message (#283,
+//! Bug 2; #323).
 //!
 //! Claude Code shows a message's thinking, so a message made of thinking
 //! blocks and an `AskUserQuestion` looks like a normal reply; but only text
 //! blocks reach the hook (`MessageDisplay`), so Sonara read the question
-//! alone. For `PreToolUse AskUserQuestion` the hook reads the end of the
-//! session's own transcript (`transcript_path`), finds the assistant
-//! message that holds the tool use (`tool_use_id`), and when none of that
-//! message's rows has a text block, takes its last thinking block with
-//! text. Claude Code writes each content block as its own row; the rows
-//! of one message share `message.id`.
+//! alone. And the text before a question often never reaches the hook at
+//! all: `MessageDisplay` fires after `PreToolUse`, and for AskUserQuestion
+//! mostly not (hook.log, 2026-10-25). For `PreToolUse AskUserQuestion` the
+//! hook reads the end of the session's own transcript (`transcript_path`),
+//! finds the assistant message that holds the tool use (`tool_use_id`) and
+//! takes its text blocks, joined; when none has text, its last thinking
+//! block with text. The runtime drops a later `MessageDisplay` repeating
+//! it (`lead_in`). Claude Code writes each content block as its own row;
+//! the rows of one message share `message.id`.
 //!
 //! Only the last `TAIL` bytes are read, and a row is parsed only when it
 //! holds the id it is looked for by. Whatever goes wrong (no file, an IO
@@ -112,6 +116,7 @@ fn find(tail: &str, tool_use_id: &str) -> Found {
         return Found::NoToolUse;
     };
     let mut thinking: Option<String> = None;
+    let mut texts: Vec<String> = Vec::new();
     for row in lines
         .iter()
         .filter(|l| l.contains(message.as_str()))
@@ -126,14 +131,23 @@ fn find(tail: &str, tool_use_id: &str) -> Found {
         for b in content {
             let text = |key: &str| b.get(key).and_then(Value::as_str).unwrap_or("");
             match kind(b) {
-                // The message has text: it was read as prose.
-                "text" if !text("text").trim().is_empty() => return Found::Message(None),
+                "text" if !text("text").trim().is_empty() => {
+                    texts.push(text("text").trim().to_string());
+                }
                 "thinking" if !text("thinking").trim().is_empty() => {
                     thinking = Some(text("thinking").trim().to_string());
                 }
                 _ => {}
             }
         }
+    }
+    if !texts.is_empty() {
+        // The message's text, whole: MessageDisplay may never bring it.
+        return Found::Message(Some(texts.join(
+            "
+
+",
+        )));
     }
     Found::Message(thinking.and_then(|t| clip(&t)))
 }
@@ -204,13 +218,24 @@ mod tests {
     }
 
     #[test]
-    fn a_question_with_a_text_block_reads_no_thinking() {
+    fn a_question_with_text_reads_the_text_not_the_thinking() {
+        // MessageDisplay often never fires for the text before a question
+        // (hook.log, 2026-10-25): the text comes from the transcript.
         let tail = lines(&[
             row("m1", thinking("Thinking.")),
             row("m1", json!({"type": "text", "text": "Here is my answer."})),
+            row("m1", json!({"type": "text", "text": "  "})),
+            row("m1", json!({"type": "text", "text": "And a second part."})),
             row("m1", tool_use("t1")),
         ]);
-        assert_eq!(lead_in_from(&tail, "t1"), None);
+        assert_eq!(
+            lead_in_from(&tail, "t1").as_deref(),
+            Some(
+                "Here is my answer.
+
+And a second part."
+            )
+        );
     }
 
     #[test]

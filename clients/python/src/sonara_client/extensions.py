@@ -74,7 +74,12 @@ class Agent:
 
     def stream(self, channel: str, turn: Turn, delta: str, index: int, final: bool,
                t: Optional[float] = None, **extra: Any) -> dict:
-        """``stream``: one delta of a turn's text (``t``: sender start time)."""
+        """``stream``: one delta of a turn's text (``t``: sender start time).
+
+        ``lead_in=True`` in ``extra`` (protocol 1.13, #323): the text before a
+        question, sent with it; the same text again later in the turn is not
+        read twice.
+        """
         return self._send("stream", _defined({**extra, "channel": channel, "turn": turn, "delta": delta,
                                               "index": index, "final": final, "t": t}))
 

@@ -506,6 +506,21 @@ impl Agent {
         })
     }
 
+    /// A question's lead-in from the hook (#323, `stream` with `lead_in`):
+    /// read as prose; the same text from `MessageDisplay` later in the turn
+    /// is dropped. Returns false when stale (dropped).
+    pub fn lead_in(
+        &self,
+        channel: &str,
+        turn: Option<&str>,
+        delta: &str,
+        t: Option<f64>,
+    ) -> Result<bool> {
+        self.apply("stream", Some(channel), |r| {
+            r.lead_in(channel, turn, delta, t)
+        })
+    }
+
     /// A new turn. Returns false when it is older than the channel's last
     /// one (dropped).
     pub fn turn_start(&self, channel: &str, turn: Option<&str>, t: Option<f64>) -> Result<bool> {

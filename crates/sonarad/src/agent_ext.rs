@@ -120,9 +120,13 @@ pub fn stream(a: &Agent, m: &Map<String, Value>) -> Handled {
     };
     let is_final = opt_flag(m, "final")?;
     let turn = opt_str(m, "turn")?;
-    let applied = a
-        .stream(ch, turn, delta, index, is_final, opt_t(m)?)
-        .map_err(failure)?;
+    // A question's lead-in (protocol 1.13, #323): one final delta.
+    let applied = if opt_flag(m, "lead_in")? {
+        a.lead_in(ch, turn, delta, opt_t(m)?)
+    } else {
+        a.stream(ch, turn, delta, index, is_final, opt_t(m)?)
+    }
+    .map_err(failure)?;
     stale(applied)
 }
 

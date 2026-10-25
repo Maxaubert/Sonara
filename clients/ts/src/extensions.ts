@@ -87,6 +87,11 @@ export interface StreamMessage {
   final: boolean;
   /** Sender start time, so late text from a previous turn is dropped. */
   t?: number;
+  /**
+   * The text before a question, sent with it (protocol 1.13, #323): the
+   * same text again later in the turn is not read twice.
+   */
+  lead_in?: boolean;
   [extra: string]: unknown;
 }
 
