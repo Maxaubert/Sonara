@@ -644,6 +644,11 @@ impl Agent {
     /// unread text.
     fn flush_in(&self, all: bool) -> Result<FlushReport> {
         let mut rules = self.lock();
+        // The flush sound plays after the flush (the hotkey's `nav`), but
+        // the session switch the flush causes is scheduled during it: its
+        // slot is taken first, so the switch waits for it (owner,
+        // 2026-10-25: the two overlapped).
+        self.inner.reserve_key(Earcon::Nav);
         // The wipe line goes before the drops it explains, as for stop.
         let writing: Vec<String> = rules
             .channels()
@@ -1200,6 +1205,16 @@ impl Inner {
 
     fn lock_schedule(&self) -> MutexGuard<'_, sequencer::Schedule> {
         self.schedule.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Take a key sound's slot in the earcon schedule before it plays, so
+    /// what is scheduled meanwhile waits for it (`AFTER_KEY`).
+    fn reserve_key(&self, e: Earcon) {
+        let clip = self.earcons.clip(e);
+        self.lock_schedule().key_sound(
+            sequencer::length(clip.samples.len(), clip.sample_rate),
+            Instant::now(),
+        );
     }
 
     /// Play an earcon once the one playing ended (#238, module docs): at

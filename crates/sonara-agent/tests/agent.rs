@@ -1243,6 +1243,39 @@ fn a_key_sound_plays_at_once_over_queued_chimes() {
 /// is followed by used to chime and speak on top of its end. The chimes wait
 /// for the flush sound and a third of a second.
 #[test]
+fn the_session_change_after_a_flush_waits_for_the_flush_sound() {
+    // The flush hotkey flushes first and plays its sound after (sonarad),
+    // so the switch the flush causes was scheduled before the sound
+    // existed and the two overlapped (owner, 2026-10-25).
+    let r = Rig::announcing(None);
+    r.stream("a", "From alpha.", 0, None);
+    r.stream("b", "From beta.", 0, None);
+    r.wait_for("From alpha.");
+    r.out.start();
+    r.agent.flush().unwrap();
+    r.agent.earcon(Earcon::Nav).unwrap();
+    r.wait_for("Session changed: Beta.");
+    let nav = Earcon::Nav.clip();
+    let clips = timed_clips(&r.out);
+    let (at, _, _) = *clips
+        .iter()
+        .find(|c| (c.1, c.2) == (nav.samples.len(), nav.sample_rate))
+        .unwrap();
+    let free =
+        at + clip_len(nav.samples.len(), nav.sample_rate) + sonara_agent::sequencer::AFTER_KEY;
+    let slack = Duration::from_millis(30);
+    for (start, samples, rate) in &clips {
+        if (*samples, *rate) != (nav.samples.len(), nav.sample_rate) {
+            assert!(
+                *start + slack >= free,
+                "a chime started {:?} before the flush sound and 0.3 s were over",
+                free - *start
+            );
+        }
+    }
+}
+
+#[test]
 fn a_session_switch_waits_for_the_flush_sound_and_a_third_of_a_second() {
     let r = Rig::announcing(None);
     r.stream("a", "From alpha.", 0, None);
