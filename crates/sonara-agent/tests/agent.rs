@@ -1934,6 +1934,26 @@ fn a_question_shown_on_screen_jumps_a_set_read_in_order() {
 }
 
 #[test]
+fn a_questions_lead_in_is_read_once_when_message_display_repeats_it() {
+    // The hook sends the message text with the question (#323); a late
+    // MessageDisplay with the same text is not read again.
+    let r = Rig::new();
+    r.agent
+        .lead_in("a", None, "Here is my answer.", None)
+        .unwrap();
+    ask_set(&r, "a", 2);
+    r.read("Here is my answer.");
+    r.read("Question 1 of 2.");
+    r.read("Question text 1?");
+    r.stream("a", "Here is my answer.", 0, None);
+    r.stays_idle();
+    // Other text later in the turn is read.
+    r.stream("a", "Something new.", 0, None);
+    r.read("Something new.");
+    r.stays_idle();
+}
+
+#[test]
 fn a_question_shown_while_the_message_is_read_waits_for_its_end_when_stepping() {
     // The user answers question 1 while the text before the questions is
     // read: the text is read to its end, then the question on screen.

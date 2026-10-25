@@ -39,10 +39,11 @@
 //!   (EARCON choice + CHOICE); the Claude TUI's key notes and selection
 //!   hints ride on the first one. Of two or more, each carries `set_index`
 //!   and `set_size` (#283): the runtime reads only the first and the
-//!   question hotkeys move between them. When the question's message has
-//!   no text block, its last thinking block (read from the end of the
-//!   session's transcript, `transcript`) goes first as one final `stream`,
-//!   so the answer before the question is read (#283).
+//!   question hotkeys move between them. The question's message text, or
+//!   with no text its last thinking block (read from the end of the
+//!   session's transcript, `transcript`), goes first as one final `stream`
+//!   marked `lead_in`, so the answer before the question is read (#283;
+//!   #323: `MessageDisplay` mostly never brings it).
 //!   `ExitPlanMode` -> `ask` `plan` (PLAN).
 //!   Any other tool -> `tool` with a short summary (TOOL).
 //! - `PostToolUse` `AskUserQuestion` -> `answered` (CHOICE_ANSWERED).
@@ -271,15 +272,16 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 }
 
 /// How the hook finds the lead-in of a question (#283): the transcript's
-/// path and the tool use's id give the message's last thinking block when
-/// it has no text (`transcript::lead_in`).
+/// path and the tool use's id give the message's text, or its last
+/// thinking block when it has no text (`transcript::lead_in`).
 pub type LeadIn<'a> = &'a dyn Fn(&Path, &str) -> Option<String>;
 
 /// The lead-in before the questions of `payload`, as one final `stream`
+/// marked `lead_in` (#323)
 /// (the prose rules apply: held and released by the question, skipped in a
 /// flushed reply). A subagent's question (`agent_id`) has its tool use in
 /// another transcript: no lead-in.
-fn thinking_lead_in(channel: &str, payload: &Value, lead_in: LeadIn) -> Option<Value> {
+fn question_lead_in(channel: &str, payload: &Value, lead_in: LeadIn) -> Option<Value> {
     if !text(payload, "agent_id").is_empty() {
         return None;
     }
@@ -293,6 +295,7 @@ fn thinking_lead_in(channel: &str, payload: &Value, lead_in: LeadIn) -> Option<V
     m.insert("delta".into(), json!(t));
     m.insert("index".into(), json!(0));
     m.insert("final".into(), json!(true));
+    m.insert("lead_in".into(), json!(true));
     Some(Value::Object(m))
 }
 
@@ -304,8 +307,8 @@ pub fn map_event(event: &str, payload: &Value, env: &dyn Fn(&str) -> Option<Stri
     map_event_with(event, payload, env, &|_, _| None)
 }
 
-/// `map_event`, with `lead_in` finding the thinking to read before a
-/// question whose message has no text (#283; `main` passes
+/// `map_event`, with `lead_in` finding the text or thinking to read
+/// before a question (#283, #323; `main` passes
 /// `transcript::lead_in`, the tests a pure stand-in).
 pub fn map_event_with(
     event: &str,
@@ -359,7 +362,7 @@ fn map_unlabelled(
                     let reopen = host_tab(env).map(|_| open(channel, label().as_deref(), env));
                     let mut out: Vec<Value> = reopen
                         .into_iter()
-                        .chain(thinking_lead_in(channel, payload, lead_in))
+                        .chain(question_lead_in(channel, payload, lead_in))
                         .collect();
                     out.extend(questions(channel, input));
                     out
@@ -580,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn the_thinking_goes_as_one_final_stream_before_the_asks() {
+    fn the_lead_in_goes_as_one_final_stream_before_the_asks() {
         let asked = std::cell::RefCell::new(Vec::new());
         let lead = |p: &Path, id: &str| {
             asked
@@ -597,10 +600,10 @@ mod tests {
         assert_eq!(
             out[0],
             json!({"type": "stream", "channel": "s", "index": 0, "final": true,
-                   "delta": "The answer before the question."})
+                   "lead_in": true, "delta": "The answer before the question."})
         );
         assert_eq!(out[1]["type"], "ask");
-        // No lead-in (a text block, or nothing found): the asks alone.
+        // No lead-in (nothing found): the asks alone.
         let out = map_event_with("PreToolUse", &ask_payload(2), &|_| None, &|_, _| None);
         assert!(out.iter().all(|m| m["type"] == "ask"));
         // A subagent's question is not looked up.

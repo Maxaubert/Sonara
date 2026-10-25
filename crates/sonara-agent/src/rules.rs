@@ -506,6 +506,10 @@ struct Turn {
     /// A question set read in order (`question_step` off, #320): each
     /// question its own entry, for the screen follower (#323).
     read_set: Option<ReadSet>,
+    /// The lead-in the hook sent with a question (#323, its text folded):
+    /// the same text from `MessageDisplay` later in the turn is not read
+    /// again.
+    lead_in: Option<String>,
     /// Prose held by `read_mode`, each chunk with whether it starts a
     /// paragraph (joined with a blank line in whole messages).
     held_prose: Vec<(String, bool)>,
@@ -557,6 +561,7 @@ impl Turn {
             hinted: false,
             questions: None,
             read_set: None,
+            lead_in: None,
             held_prose: Vec::new(),
             new_para: false,
             last_index: None,
@@ -832,6 +837,21 @@ impl Rules {
 
     /// A delta of streamed prose (`index` numbers the deltas of a block,
     /// restarting at 0 for a new block; `final` ends the block).
+    /// The lead-in of a question from the hook (#323, `stream` with
+    /// `lead_in`): read as prose, and remembered so the same text from
+    /// `MessageDisplay` later in the turn is dropped.
+    pub fn lead_in(
+        &mut self,
+        channel: &str,
+        turn: Option<&str>,
+        delta: &str,
+        t: Option<f64>,
+    ) -> Result<Vec<Action>, Stale> {
+        let out = self.stream(channel, turn, delta, 0, true, t)?;
+        self.turn(channel).lead_in = Some(fold(delta));
+        Ok(out)
+    }
+
     pub fn stream(
         &mut self,
         channel: &str,
@@ -845,6 +865,18 @@ impl Rules {
             return Err(Stale);
         }
         let mut out = Vec::new();
+        let c = self.turn(channel);
+        if index == 0 && is_final && c.lead_in.as_deref() == Some(fold(delta).as_str()) {
+            // The text the hook already sent as a question's lead-in.
+            c.lead_in = None;
+            self.note(
+                Some(channel),
+                "prose",
+                "dropped: the question's lead-in again (#323)".into(),
+                Some(delta.to_string()),
+            );
+            return Ok(out);
+        }
         let c = self.turn(channel);
         if c.skip_reply {
             // The user flushed this reply (#228): the rest is skipped.
@@ -1080,6 +1112,7 @@ impl Rules {
         c.awaiting = false;
         c.questions = None;
         c.read_set = None;
+        c.lead_in = None;
         self.drop_held(channel, "turn_start");
         let c = self.turn(channel);
         c.released = false;

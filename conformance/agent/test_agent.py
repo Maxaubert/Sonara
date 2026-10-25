@@ -857,6 +857,22 @@ def test_ask_set_fields_are_checked(rt):
         assert r["error"]["code"] == "E_BAD_REQUEST", (bad, r)
 
 
+def test_a_questions_lead_in_is_read_once(rt):
+    # #323 (protocol 1.13): the hook sends the text before a question with
+    # it; the same text from MessageDisplay later in the turn is dropped.
+    c = agent_client(rt)
+    ok(c, {"type": "turn_start", "channel": "a", "t": 1.0})
+    ok(c, {"type": "stream", "channel": "a", "delta": "The answer first.", "lead_in": True})
+    assert heard(c, 1) == [("The answer first.", "a")]
+    until_idle(c)
+    stream(c, "a", "The answer first.", 0)
+    quiet(c)
+    stream(c, "a", "Then more.", 0)
+    assert heard(c, 1) == [("Then more.", "a")]
+    r = c.request({"type": "stream", "channel": "a", "delta": "x", "lead_in": "yes"})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
+
+
 def test_question_shown_follows_the_question_on_screen(rt):
     # #323 (protocol 1.12): the terminal reports the question it shows.
     c = agent_client(rt)
