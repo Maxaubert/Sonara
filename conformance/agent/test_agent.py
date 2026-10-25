@@ -897,7 +897,7 @@ def test_question_shown_reads_only_the_question_on_screen(rt):
 
 
 def test_question_shown_finds_the_session_by_its_terminal_tab(rt):
-    # #323: PrismTerminal knows its tab, not the Claude session; the hook
+    # #323: Flare knows its tab, not the Claude session; the hook
     # reported the tab as the channel's host_tab.
     c = agent_client(rt)
     ok(c, {"type": "channel_open", "channel": "old", "host_tab": "tab-9"})

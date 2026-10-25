@@ -754,7 +754,7 @@ impl Agent {
     }
 
     /// The terminal shows `shown` of `channel`'s question set (#323, the
-    /// screen follower, PrismTerminal): a question other than the current
+    /// screen follower, Flare): a question other than the current
     /// one is read now (a stepping set lands on it; a set read in order
     /// reads that question); the review screen says "Review your answers."
     /// once. A set read in order is followed from the first report on

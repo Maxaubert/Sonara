@@ -66,7 +66,7 @@ class Hook:
                  pipes: bool = False):
         e = dict(os.environ)
         e["SONARA_HOME"] = str(home)
-        for k in ("SONARA_SUMMARIZER", "SONARA_CAPTURE", "SONARA_HOST_TAB", "PRISM_TAB_ID",
+        for k in ("SONARA_SUMMARIZER", "SONARA_CAPTURE", "SONARA_HOST_TAB", "FLARE_TAB_ID",
                   "SONARA_NO_START", "SONARA_RUNTIME_ARGS"):
             e.pop(k, None)
         # A runtime the hook starts never touches this PC's audio or
