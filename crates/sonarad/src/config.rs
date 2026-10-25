@@ -95,7 +95,7 @@ pub const STYLES: &[&str] = &["tidy", "natural", "brief"];
 pub const COMMANDS: &[&str] = &["claude", "codex"];
 pub const BACKGROUND: &[&str] = &["all", "earcon_only"];
 /// When a turn's prose is spoken (#222).
-pub const READ_MODES: &[&str] = &["immediate", "queue", "done"];
+pub const READ_MODES: &[&str] = &["immediate", "queue", "done", "final"];
 /// What the flush hotkey skips (#228).
 pub const FLUSH_SCOPES: &[&str] = &["session", "all"];
 const ON_OFF: &[&str] = &["on", "off"];

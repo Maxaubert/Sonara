@@ -873,6 +873,32 @@ def test_a_questions_lead_in_is_read_once(rt):
     assert r["error"]["code"] == "E_BAD_REQUEST"
 
 
+def test_read_mode_final_reads_only_the_reply(rt):
+    # #355 (protocol 1.14): the text between tools is dropped, the turn_end
+    # reply is read, and its blocks shown again after the turn_end are not.
+    c = agent_client(rt)
+    ok(c, {"type": "set", "key": "read_mode", "value": "final"})
+    ok(c, {"type": "set", "key": "verbosity", "value": "skip_code"})
+    ok(c, {"type": "turn_start", "channel": "a", "t": 1.0})
+    stream(c, "a", "Let me take a look.", 0)
+    ok(c, {"type": "tool", "channel": "a", "name": "Bash", "summary": "ls"})
+    stream(c, "a", "All done.", 0)
+    quiet(c)
+    ok(c, {"type": "turn_end", "channel": "a", "reply": "All done."})
+    assert heard(c, 1) == [("All done.", "a")]
+    until_idle(c)
+    stream(c, "a", "All done.", 0)
+    quiet(c)
+    # A short reply after a long report: the report first.
+    ok(c, {"type": "turn_start", "channel": "a", "t": 2.0})
+    report = "Found the cause. " * 20
+    ok(c, {"type": "turn_end", "channel": "a", "reply": "Tests still run.",
+           "before_reply": report})
+    assert heard(c, 1) == [("Found the cause.", "a")]
+    r = c.request({"type": "turn_end", "channel": "a", "reply": 3})
+    assert r["error"]["code"] == "E_BAD_REQUEST"
+
+
 def test_question_shown_follows_the_question_on_screen(rt):
     # #323 (protocol 1.12): the terminal reports the question it shows.
     c = agent_client(rt)

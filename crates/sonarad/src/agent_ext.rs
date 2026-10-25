@@ -140,6 +140,11 @@ pub fn turn_start(a: &Agent, m: &Map<String, Value>) -> Handled {
 
 pub fn turn_end(a: &Agent, m: &Map<String, Value>) -> Handled {
     let ch = channel(m)?;
+    if let Some(reply) = opt_str(m, "reply")? {
+        let before = opt_str(m, "before_reply")?;
+        a.reply(ch, opt_str(m, "turn")?, reply, before, opt_t(m)?)
+            .map_err(failure)?;
+    }
     let applied = a
         .turn_end(ch, opt_str(m, "turn")?, opt_t(m)?)
         .map_err(failure)?;

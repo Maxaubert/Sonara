@@ -49,7 +49,11 @@
 //! - `PostToolUse` `AskUserQuestion` -> `answered` (CHOICE_ANSWERED).
 //! - `Notification` `permission_prompt` -> `ask` `permission` (EARCON
 //!   permission + PERMISSION); other notifications send nothing.
-//! - `Stop` -> `turn_end` (EARCON turn_done).
+//! - `Stop` -> `turn_end` (EARCON turn_done), with Claude Code's
+//!   `last_assistant_message` as `reply` (read alone in `read_mode`
+//!   `final`) and, from the transcript, the text of the turn's last
+//!   message with a tool as `before_reply` (read too when the reply is
+//!   short, `transcript::before_reply`).
 //! - `UserPromptSubmit` -> `channel_open`, `focus`, `turn_start`
 //!   (SET_FOREGROUND + FLUSH).
 //! - `SessionStart` -> `channel_open`, `focus` (SET_FOREGROUND +
@@ -276,6 +280,10 @@ fn questions(channel: &str, input: &Value) -> Vec<Value> {
 /// thinking block when it has no text (`transcript::lead_in`).
 pub type LeadIn<'a> = &'a dyn Fn(&Path, &str) -> Option<String>;
 
+/// How the hook finds the text before the final reply (#355,
+/// `transcript::before_reply`).
+pub type BeforeReply<'a> = &'a dyn Fn(&Path) -> Option<String>;
+
 /// The lead-in before the questions of `payload`, as one final `stream`
 /// marked `lead_in` (#323)
 /// (the prose rules apply: held and released by the question, skipped in a
@@ -316,9 +324,21 @@ pub fn map_event_with(
     env: &dyn Fn(&str) -> Option<String>,
     lead_in: LeadIn,
 ) -> Vec<Value> {
+    map_event_full(event, payload, env, lead_in, &|_| None)
+}
+
+/// `map_event_with`, with `before_reply` finding the text before the final
+/// reply for `Stop` (#355; `main` passes `transcript::before_reply`).
+pub fn map_event_full(
+    event: &str,
+    payload: &Value,
+    env: &dyn Fn(&str) -> Option<String>,
+    lead_in: LeadIn,
+    before_reply: BeforeReply,
+) -> Vec<Value> {
     let cell = std::cell::OnceCell::new();
     let lazy = || cell.get_or_init(|| label(payload, env)).clone();
-    let msgs = map_unlabelled(event, payload, &lazy, env, lead_in);
+    let msgs = map_unlabelled(event, payload, &lazy, env, lead_in, before_reply);
     if msgs.is_empty() {
         return msgs;
     }
@@ -331,6 +351,7 @@ fn map_unlabelled(
     label: &dyn Fn() -> Option<String>,
     env: &dyn Fn(&str) -> Option<String>,
     lead_in: LeadIn,
+    before_reply: BeforeReply,
 ) -> Vec<Value> {
     let channel = match text(payload, "session_id") {
         "" => DEFAULT_CHANNEL,
@@ -403,7 +424,23 @@ fn map_unlabelled(
             m.insert("text".into(), json!(what));
             vec![Value::Object(with_hints(m))]
         }
-        "Stop" => vec![Value::Object(msg("turn_end", channel))],
+        "Stop" => {
+            let mut m = msg("turn_end", channel);
+            // The final reply (`read_mode` `final` reads only it).
+            let reply = text(payload, "last_assistant_message").trim();
+            if !reply.is_empty() {
+                m.insert("reply".into(), json!(reply));
+                // The text before it, read too when the reply is short.
+                let path = text(payload, "transcript_path");
+                let before = (!path.is_empty() && text(payload, "agent_id").is_empty())
+                    .then(|| before_reply(Path::new(path)))
+                    .flatten();
+                if let Some(b) = before {
+                    m.insert("before_reply".into(), json!(b));
+                }
+            }
+            vec![Value::Object(m)]
+        }
         "UserPromptSubmit" => vec![
             open(channel, label().as_deref(), env),
             Value::Object(msg("focus", channel)),
@@ -615,6 +652,28 @@ mod tests {
         let bash = json!({"session_id": "s", "tool_name": "Bash", "transcript_path": "x",
                           "tool_use_id": "t"});
         map_event_with("PreToolUse", &bash, &|_| None, &|_, _| panic!("looked up"));
+    }
+
+    #[test]
+    fn stop_sends_the_reply_and_the_text_before_it() {
+        let p = json!({"session_id": "s", "transcript_path": "t.jsonl",
+                       "last_assistant_message": " Done. "});
+        let before = |_: &Path| Some("The report.".to_string());
+        let out = map_event_full("Stop", &p, &|_| None, &|_, _| None, &before);
+        assert_eq!(out[0]["reply"], "Done.");
+        assert_eq!(out[0]["before_reply"], "The report.");
+        // No reply: no lookup; a subagent's Stop: no text before it.
+        let none = json!({"session_id": "s", "transcript_path": "t.jsonl"});
+        let out = map_event_full("Stop", &none, &|_| None, &|_, _| None, &|_| {
+            panic!("looked up")
+        });
+        assert!(out[0].get("reply").is_none());
+        let sub = json!({"session_id": "s", "transcript_path": "t.jsonl", "agent_id": "a",
+                         "last_assistant_message": "Done."});
+        let out = map_event_full("Stop", &sub, &|_| None, &|_, _| None, &|_| {
+            panic!("looked up")
+        });
+        assert!(out[0].get("before_reply").is_none());
     }
 
     #[test]

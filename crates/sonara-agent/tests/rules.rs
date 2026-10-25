@@ -544,6 +544,171 @@ fn read_mode_names_round_trip() {
     assert_eq!(ReadMode::parse("immediate"), Some(ReadMode::Immediate));
     assert_eq!(ReadMode::parse("queue"), Some(ReadMode::Queue));
     assert_eq!(ReadMode::parse("done"), Some(ReadMode::Done));
+    assert_eq!(ReadMode::parse("final"), Some(ReadMode::Final));
+    assert_eq!(ReadMode::Final.as_str(), "final");
+}
+
+// -- read_mode final: the final reply only ------------------------------------
+
+fn joined(actions: &[Action]) -> String {
+    spoken(actions).join(" ")
+}
+
+#[test]
+fn read_mode_final_reads_only_the_reply_at_the_turn_end() {
+    let mut r = mode_rules(ReadMode::Final);
+    assert!(spoken(&prose(&mut r, "fg", "Let me take a look. ", 0, true)).is_empty());
+    r.tool("fg", "Bash", "ls");
+    assert!(spoken(&prose(&mut r, "fg", "Found it, fixing. ", 0, true)).is_empty());
+    r.tool("fg", "Edit", "main.rs");
+    assert!(spoken(&prose(&mut r, "fg", "Fixed. Two files changed. ", 0, true)).is_empty());
+    r.reply("fg", None, "Fixed. Two files changed.", None, None)
+        .unwrap();
+    let a = r.turn_end("fg", None, None).unwrap();
+    assert_eq!(joined(&a), "Fixed. Two files changed.");
+    assert_eq!(earcons(&a), [Earcon::TurnDone]);
+    let n = notes(&r);
+    assert!(
+        n.iter()
+            .any(|(_, w, _)| w == "dropped: 4 held chunk(s) (text between tools, read_mode final)"),
+        "{n:?}"
+    );
+    // The reply itself is read, not held.
+    assert!(
+        n.last().is_some_and(|(_, w, _)| w.starts_with("dropped:")),
+        "{n:?}"
+    );
+}
+
+#[test]
+fn read_mode_final_skips_the_reply_shown_again_after_the_turn_end() {
+    let mut r = mode_rules(ReadMode::Final);
+    r.reply(
+        "fg",
+        None,
+        "All done.
+
+Two files changed.",
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        joined(&r.turn_end("fg", None, None).unwrap()),
+        "All done. Two files changed."
+    );
+    // The last blocks of the reply race the Stop hook.
+    assert!(spoken(&prose(&mut r, "fg", "Two files ", 0, false)).is_empty());
+    assert!(spoken(&prose(&mut r, "fg", "changed.", 1, true)).is_empty());
+    // Other late text is still read.
+    assert_eq!(
+        spoken(&prose(&mut r, "fg", "Something else. ", 0, true)),
+        ["Something else."]
+    );
+}
+
+#[test]
+fn read_mode_final_without_a_reply_reads_what_it_held() {
+    // An older Claude Code sends no last_assistant_message: nothing is lost.
+    let mut r = mode_rules(ReadMode::Final);
+    prose(&mut r, "fg", "Looking now. ", 0, true);
+    r.tool("fg", "Bash", "ls");
+    prose(&mut r, "fg", "Found it. ", 0, true);
+    let a = r.turn_end("fg", None, None).unwrap();
+    assert_eq!(spoken(&a), ["Looking now.", "Found it."]);
+}
+
+#[test]
+fn read_mode_final_a_question_reads_its_lead_in_not_the_text_before() {
+    let mut r = mode_rules(ReadMode::Final);
+    prose(&mut r, "fg", "Checking the code. ", 0, true);
+    r.tool("fg", "Read", "lib.rs");
+    r.lead_in("fg", None, "Two ways to go.", None).unwrap();
+    let a = r.ask("fg", &question("Which one?", &["A", "B"]));
+    assert_eq!(
+        spoken(&a),
+        ["Two ways to go.", "!Which one? Option 1: A. Option 2: B."]
+    );
+}
+
+#[test]
+fn read_mode_final_a_question_without_a_lead_in_drops_the_text_before() {
+    let mut r = mode_rules(ReadMode::Final);
+    prose(&mut r, "fg", "Checking the code. ", 0, true);
+    let a = r.ask("fg", &question("Which one?", &["A", "B"]));
+    assert_eq!(spoken(&a), ["!Which one? Option 1: A. Option 2: B."]);
+}
+
+#[test]
+fn read_mode_final_a_permission_reads_only_the_prompt() {
+    let mut r = mode_rules(ReadMode::Final);
+    prose(&mut r, "fg", "Let me run it. ", 0, true);
+    let a = r.ask("fg", &Ask::new(AskKind::Permission, "Run ls"));
+    assert_eq!(spoken(&a), ["!Run ls"]);
+    // The turn goes on; the reply is read at its end.
+    r.reply("fg", None, "It ran.", None, None).unwrap();
+    assert_eq!(joined(&r.turn_end("fg", None, None).unwrap()), "It ran.");
+}
+
+#[test]
+fn read_mode_final_a_plan_drops_the_text_before() {
+    let mut r = mode_rules(ReadMode::Final);
+    prose(&mut r, "fg", "Exploring first. ", 0, true);
+    let a = r.ask("fg", &Ask::new(AskKind::Plan, "Run ls"));
+    assert_eq!(spoken(&a), ["!Plan ready. Run ls"]);
+}
+
+#[test]
+fn read_mode_final_a_flushed_reply_stays_skipped() {
+    let mut r = mode_rules(ReadMode::Final);
+    prose(&mut r, "fg", "Working. ", 0, true);
+    r.flush("fg");
+    r.reply("fg", None, "All done.", None, None).unwrap();
+    assert!(spoken(&r.turn_end("fg", None, None).unwrap()).is_empty());
+}
+
+#[test]
+fn read_mode_final_reads_a_long_report_before_a_short_reply() {
+    let report = "Found it. ".repeat(30);
+    let mut r = mode_rules(ReadMode::Final);
+    r.reply("fg", None, "Tests are still running.", Some(&report), None)
+        .unwrap();
+    let a = joined(&r.turn_end("fg", None, None).unwrap());
+    assert!(
+        a.starts_with("Found it.") && a.ends_with("Tests are still running."),
+        "{a}"
+    );
+    // A long reply, or a short text before it: the reply alone.
+    let long = "All good. ".repeat(30);
+    for (reply, before) in [(long.as_str(), report.as_str()), ("Done.", "Fixing now.")] {
+        let mut r = mode_rules(ReadMode::Final);
+        r.reply("fg", None, reply, Some(before), None).unwrap();
+        let a = joined(&r.turn_end("fg", None, None).unwrap());
+        assert_eq!(a, reply.trim(), "{before}");
+    }
+}
+
+#[test]
+fn the_reply_is_ignored_outside_read_mode_final() {
+    let mut r = mode_rules(ReadMode::Done);
+    prose(&mut r, "fg", "Looking now. ", 0, true);
+    r.reply("fg", None, "Something else.", None, None).unwrap();
+    assert_eq!(
+        spoken(&r.turn_end("fg", None, None).unwrap()),
+        ["Looking now."]
+    );
+}
+
+#[test]
+fn a_new_turn_forgets_the_last_reply() {
+    let mut r = mode_rules(ReadMode::Final);
+    r.reply("fg", None, "Old reply.", None, None).unwrap();
+    r.turn_start("fg", None, None).unwrap();
+    prose(&mut r, "fg", "New text. ", 0, true);
+    assert_eq!(
+        spoken(&r.turn_end("fg", None, None).unwrap()),
+        ["New text."]
+    );
 }
 
 // -- decisions ---------------------------------------------------------------

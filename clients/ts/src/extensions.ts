@@ -109,7 +109,10 @@ export class AgentApi {
     return this.send("turn_start", defined({ ...extra, channel, turn }));
   }
 
-  /** `turn_end`. */
+  /**
+   * `turn_end`. `extra.reply` (protocol 1.14, runtime 0.35.0): the turn's
+   * final reply, read alone with the agent key `read_mode` `"final"`.
+   */
   turnEnd(channel: string, turn: string | number, extra: Extra = {}): Promise<Reply> {
     return this.send("turn_end", defined({ ...extra, channel, turn }));
   }

@@ -7,7 +7,7 @@
 use serde_json::Value;
 use sonara_client::{deliver, home, runtime_args, runtime_exe};
 use sonara_hook::{
-    debug_log, log, log_line, map_event_with, outcome, stamp, transcript, HELLO, START_BUDGET,
+    debug_log, log, log_line, map_event_full, outcome, stamp, transcript, HELLO, START_BUDGET,
 };
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -51,7 +51,8 @@ fn run(t0: f64, started: Instant) {
     // A question's lead-in (#283) shares the start budget.
     let lead_in =
         |path: &std::path::Path, id: &str| transcript::lead_in(path, id, started + START_BUDGET);
-    let mut msgs = map_event_with(&event, &payload, &env, &lead_in);
+    let before_reply = |path: &std::path::Path| transcript::before_reply(path);
+    let mut msgs = map_event_full(&event, &payload, &env, &lead_in, &before_reply);
     stamp(&mut msgs, t0);
     let Some(home) = home(&env) else {
         return;
