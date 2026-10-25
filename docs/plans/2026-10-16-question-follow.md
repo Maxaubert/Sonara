@@ -1,6 +1,7 @@
 # Following the question on screen (spec and plan, 2026-10-16)
 
-Status: open plan, tracked in issue #323 (not yet implemented). Research: the widget probe
+Status: done (Sonara #327, 0.33.0; PrismTerminal #236, #242). Owner rule added 2026-10-25: a screen
+change while the message text before the set is read never skips it; the question on screen follows it. Research: the widget probe
 (`research/sonara/2026-10-16-question-widget-probe.md` in the maintainer's notes, not in this repo).
 
 ## Problem

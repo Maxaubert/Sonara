@@ -50,7 +50,6 @@ Text-to-speech runtime for Windows with a Claude Code plugin, run by the Rust ru
 - Golden fixtures: text rules `tests/fixtures/text_rules/` (`crates/sonara-core/tests/golden.rs`), hook mapping `crates/sonara-hook/tests/golden/` with the captured payloads in `tests/fixtures/`. Change a case only with a deliberate rule change.
 
 ## Current work
-- #323: follow the question on screen (open plan: `docs/plans/2026-10-16-question-follow.md`).
 - #343: a woken reply that is prose only.
 - #321: flaky tests.
 - Architecture steps that came out of the 2026-10-16 review (check `gh issue list` for the open ones).
