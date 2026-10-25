@@ -122,7 +122,7 @@ async function change(key, value, label, done) {
 }
 
 const KEYS = ["volume", "rate", "voice", "engine", "audio_mode", "duck_level", "hotkeys", "runtime",
-              "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce",
+              "mute_level", "verbosity", "read_mode", "flush_scope", "minqueue", "background_policy", "summaries", "channel_announce", "announce_voice",
               "channel_prefs", "earcons", "debug_log", "code_speed", "code_pause", "code_step", "question_step", "paths", "pronunciations"];
 let voices = [];
 let engineData = null;   // the engine_list reply, when this runtime allows external engines
@@ -260,6 +260,21 @@ function voiceOptions(engine, withDefault) {
     : v.name + (v.language ? " (" + v.language + ")" : "") + (v.installed ? "" : ", not installed")]));
 }
 
+// The voice a session switch is said in: the reading voice by default, or
+// any installed voice of any engine (value "engine	voice").
+function renderAnnounceVoice(s) {
+  if (s.announce_voice === undefined) return;
+  const pick = s.announce_voice;
+  const opts = [["", "Same as reading voice"]];
+  for (const v of voices) {
+    if (v.installed === false) continue;
+    opts.push([v.engine + "	" + v.id, (v.name || v.id) + " (" + engineName(v.engine) + ")"]);
+  }
+  const cur = pick ? pick.engine + "	" + pick.voice : "";
+  if (cur && !opts.some(o => o[0] === cur)) opts.push([cur, pick.voice + " (" + engineName(pick.engine) + ")"]);
+  fillSelect($("announce-voice-select"), opts, cur);
+}
+
 function render() {
   const s = state;
   const ext = (s.hello && s.hello.extensions) || [];
@@ -339,6 +354,7 @@ function render() {
   $("sessions-off").hidden = channelsOn;
   document.querySelectorAll(".channels-pref").forEach(p => gate(p, !channelsOn));
   if (s.channel_announce !== undefined) setSwitch("announce-switch", s.channel_announce === "on");
+  renderAnnounceVoice(s);
   renderSessions(channelsOn ? s.channel_prefs : []);
 
   // Hotkeys
@@ -1907,6 +1923,10 @@ $("engine-select").addEventListener("blur", () => {
 
 // ---- wiring ---------------------------------------------------------------
 $("voice-select").addEventListener("change", e => change("voice", e.target.value || null, "Voice"));
+$("announce-voice-select").addEventListener("change", e => {
+  const [engine, voice] = e.target.value ? e.target.value.split("	") : [];
+  change("announce_voice", engine ? {engine, voice} : null, "Announce voice");
+});
 $("voice-preview").addEventListener("click", async () => {
   const btn = $("voice-preview");
   if (btn.getAttribute("aria-busy") === "true") return;

@@ -187,3 +187,38 @@ fn the_config_settings_apply_from_the_start() {
     assert_eq!(r.out.volume(), 40);
     assert_eq!(r.calls_now(), [OutputCall::SetVolume(40)]);
 }
+
+#[test]
+fn an_item_with_its_own_voice_is_synthesized_in_it_and_others_are_not() {
+    // A switch announcement in a voice of its own (owner 2026-10-25).
+    let fake = Arc::new(FakeEngine::new());
+    let other = Arc::new(OtherEngine::default());
+    let registry = Registry::default();
+    registry.register(fake.clone()).unwrap();
+    registry.register(other.clone()).unwrap();
+    let r = Rig::config(Config::new(registry));
+    let pick = sonara_reader::ItemVoice {
+        engine: "other".into(),
+        voice: "tone".into(),
+    };
+    r.h.speak_as("Beta.", QueueMode::Append, false, None, Some(pick))
+        .unwrap();
+    r.h.speak("Beta one.", QueueMode::Append, false, None)
+        .unwrap();
+    r.calls(1);
+    r.out.finish();
+    r.calls(1);
+    assert_eq!(other.inner.syntheses(), 1);
+    assert_eq!(fake.syntheses(), 1);
+    // A pick the registry does not offer reads in the voice in force.
+    let gone = sonara_reader::ItemVoice {
+        engine: "nope".into(),
+        voice: "tone".into(),
+    };
+    r.h.speak_as("Gamma.", QueueMode::Append, false, None, Some(gone))
+        .unwrap();
+    r.out.finish();
+    r.calls(1);
+    assert_eq!(fake.syntheses(), 2);
+    assert_eq!(other.inner.syntheses(), 1);
+}

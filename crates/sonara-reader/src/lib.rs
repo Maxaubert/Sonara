@@ -117,6 +117,14 @@ impl Config {
     }
 }
 
+/// A voice for one item (`ReaderHandle::speak_as`): an engine id and a
+/// voice id or name of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItemVoice {
+    pub engine: String,
+    pub voice: String,
+}
+
 /// The engines this build can offer, under the default licence policy
 /// (permissive and OS engines): OneCore on Windows with feature `onecore`.
 pub fn default_registry() -> Registry {
@@ -251,12 +259,28 @@ impl ReaderHandle {
         interrupt: bool,
         label: Option<String>,
     ) -> Result<ItemId> {
+        self.speak_as(text, mode, interrupt, label, None)
+    }
+
+    /// `speak`, the item read in `voice` instead of the voice in force (a
+    /// switch announcement's own voice). A voice the registry does not
+    /// offer (its engine removed, the voice gone) reads in the voice in
+    /// force: the item is never lost for it.
+    pub fn speak_as(
+        &self,
+        text: &str,
+        mode: QueueMode,
+        interrupt: bool,
+        label: Option<String>,
+        voice: Option<ItemVoice>,
+    ) -> Result<ItemId> {
         let text = text.to_string();
         self.call(|reply| Msg::Speak {
             text,
             mode,
             interrupt,
             label,
+            voice,
             reply,
         })
     }

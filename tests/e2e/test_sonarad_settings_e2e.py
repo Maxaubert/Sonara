@@ -233,6 +233,27 @@ def test_step_through_questions_is_off_by_default_and_saves(live, browser):
     page.close()
 
 
+def test_the_announce_voice_is_the_reading_voice_by_default_and_saves_a_pick(live, browser):
+    # Owner 2026-10-25: session switches can be said in a voice of their own.
+    lv = live()
+    page = open_page(browser, lv.url)
+    page.click("[data-page=sessions]")
+    sel = page.locator("#announce-voice-select")
+    pw.expect(sel).to_have_value("")
+    assert lv.get("announce_voice") is None
+    values = sel.locator("option").evaluate_all("os => os.map(o => o.value)")
+    pick = next(v for v in values if v)
+    sel.select_option(pick)
+    engine, voice = pick.split("	")
+    assert eventually(lambda: lv.saved().get("announce_voice") == {"engine": engine, "voice": voice})
+    page.reload()
+    page.click("[data-page=sessions]")
+    pw.expect(page.locator("#announce-voice-select")).to_have_value(pick)
+    page.locator("#announce-voice-select").select_option("")
+    assert eventually(lambda: "announce_voice" not in lv.saved() or lv.saved()["announce_voice"] is None)
+    page.close()
+
+
 def test_verbosity_has_three_levels_and_persists_across_a_reload(live, browser):
     # #214, #292: Default (skip_code, the default), Read code, Everything.
     lv = live()

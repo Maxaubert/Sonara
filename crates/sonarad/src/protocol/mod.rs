@@ -30,7 +30,7 @@ mod profiles;
 mod tests;
 
 pub const PROTOCOL_MAJOR: u64 = 1;
-pub const PROTOCOL_MINOR: u64 = 14;
+pub const PROTOCOL_MINOR: u64 = 15;
 
 /// What this host offers (`hello.capabilities`, `runtime.json`): `core` plus
 /// each core message type and event stream, so a later minor can add one
@@ -78,6 +78,7 @@ const EXTENSION_TYPES: &[&[&str]] = &[channels_ext::TYPES, agent_ext::TYPES, sys
 /// Extension keys of `set`/`get` and actions of `control`.
 const EXTENSION_KEYS: &[&str] = &[
     channels_ext::ANNOUNCE_KEY,
+    channels_ext::ANNOUNCE_VOICE_KEY,
     channels_ext::PREFS_KEY,
     "mute_level",
     "verbosity",

@@ -1,6 +1,7 @@
 //! The `channels` extension (spec 4.2) on top of `sonara_channels`:
 //! `channel_open`, `channel_close`, `focus`, `speak` and `control` with a
-//! `channel`, `control next_channel`, the `channel_announce` setting and
+//! `channel`, `control next_channel`, the `channel_announce` and
+//! `announce_voice` settings and
 //! the `state` additions. `protocol` calls in here once a client enabled
 //! the extension; before that its messages are `E_UNSUPPORTED`.
 use crate::config::{PrefsUpdate, Store};
@@ -23,6 +24,9 @@ pub const TYPES: &[&str] = &["channel_open", "channel_close", "focus"];
 
 /// The setting that turns switch announcements on and off.
 pub const ANNOUNCE_KEY: &str = "channel_announce";
+
+/// The voice switch announcements are read in (null: the reading voice).
+pub const ANNOUNCE_VOICE_KEY: &str = "announce_voice";
 
 /// The per-channel preferences (label, voice, muted) of the settings page.
 pub const PREFS_KEY: &str = "channel_prefs";
@@ -204,6 +208,30 @@ pub fn announce(ch: &Channels, value: Option<&Value>) -> Handled {
         "value".into(),
         json!(if ch.announce() { "on" } else { "off" }),
     );
+    ok(f)
+}
+
+/// The stored `announce_voice` value as the reader's pick.
+pub fn voice_pick(v: &Value) -> Option<sonara_channels::ItemVoice> {
+    Some(sonara_channels::ItemVoice {
+        engine: v.get("engine")?.as_str()?.to_string(),
+        voice: v.get("voice")?.as_str()?.to_string(),
+    })
+}
+
+/// `set announce_voice` (`{engine, voice}` or null) and `get`.
+pub fn announce_voice(ch: &Channels, value: Option<&Value>) -> Handled {
+    if let Some(v) = value {
+        let v = crate::config::validate(ANNOUNCE_VOICE_KEY, v).map_err(bad)?;
+        ch.set_announce_voice(voice_pick(&v));
+    }
+    let mut f = Map::new();
+    f.insert("key".into(), json!(ANNOUNCE_VOICE_KEY));
+    let value = match ch.announce_voice() {
+        Some(p) => json!({"engine": p.engine, "voice": p.voice}),
+        None => Value::Null,
+    };
+    f.insert("value".into(), value);
     ok(f)
 }
 

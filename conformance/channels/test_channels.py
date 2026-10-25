@@ -158,6 +158,27 @@ def test_announcements_can_be_turned_off(rt):
     assert heard(c, 2) == [("From alpha.", "a"), ("From beta.", "b")]
 
 
+def test_announcements_can_have_a_voice_of_their_own(rt):
+    # Owner 2026-10-25: `announce_voice` ({engine, voice} or null, the
+    # default: the reading voice); a voice the engines do not offer still
+    # reads the announcement in the reading voice.
+    c = channels_client(rt)
+    assert ok(c, {"type": "get", "key": "announce_voice"})["value"] is None
+    pick = {"engine": "fake", "voice": "tone"}
+    assert ok(c, {"type": "set", "key": "announce_voice", "value": pick})["value"] == pick
+    assert ok(c, {"type": "get", "key": "announce_voice"})["value"] == pick
+    for bad in ("tone", {"engine": "fake"}, {"engine": "", "voice": "tone"}, 3):
+        r = c.request({"type": "set", "key": "announce_voice", "value": bad})
+        assert r["error"]["code"] == "E_BAD_REQUEST", bad
+    ok(c, {"type": "set", "key": "announce_voice", "value": {"engine": "gone", "voice": "x"}})
+    open_two(c)
+    ok(c, {"type": "speak", "channel": "a", "text": "From alpha."})
+    ok(c, {"type": "speak", "channel": "b", "text": "From beta."})
+    assert heard(c, 3) == [("From alpha.", "a"), ("Beta.", "b"), ("From beta.", "b")]
+    ok(c, {"type": "set", "key": "announce_voice", "value": None})
+    assert ok(c, {"type": "get", "key": "announce_voice"})["value"] is None
+
+
 def test_the_reading_channel_finishes_before_the_focused_one(rt):
     c = channels_client(rt)
     open_two(c)
