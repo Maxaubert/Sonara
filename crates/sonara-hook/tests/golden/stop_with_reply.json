@@ -1,0 +1,15 @@
+{
+  "event": "Stop",
+  "payload": {
+    "session_id": "sess-1",
+    "last_assistant_message": "  Fixed. Two files changed.\n\n- main.rs\n- lib.rs\n"
+  },
+  "env": {},
+  "messages": [
+    {
+      "type": "turn_end",
+      "channel": "sess-1",
+      "reply": "Fixed. Two files changed.\n\n- main.rs\n- lib.rs"
+    }
+  ]
+}

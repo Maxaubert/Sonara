@@ -152,6 +152,86 @@ fn find(tail: &str, tool_use_id: &str) -> Found {
     Found::Message(thinking.and_then(|t| clip(&t)))
 }
 
+/// The text before the final reply (`read_mode` `final`, #355): the text
+/// blocks of the turn's last assistant message with a tool use, from the
+/// transcript at `path`. `None` past the turn (a prompt, or a Stop of an
+/// earlier reply), when that message has no text, or when its tool is a
+/// question or a plan (the runtime read that text as its lead-in).
+pub fn before_reply(path: &Path) -> Option<String> {
+    before_reply_from(&read_tail(path)?)
+}
+
+/// `before_reply` on the transcript's tail `tail` (pure).
+pub fn before_reply_from(tail: &str) -> Option<String> {
+    let mut last: Option<(String, Vec<String>, bool)> = None;
+    let mut message = String::new();
+    let mut texts: Vec<String> = Vec::new();
+    for row in tail
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+    {
+        let kind_of = row.get("type").and_then(Value::as_str).unwrap_or("");
+        let subtype = row.get("subtype").and_then(Value::as_str).unwrap_or("");
+        if (kind_of == "user" && is_prompt(&row))
+            || (kind_of == "system" && matches!(subtype, "stop_hook_summary" | "turn_duration"))
+        {
+            last = None;
+            message.clear();
+            texts.clear();
+            continue;
+        }
+        let Some((id, content)) = assistant(&row) else {
+            continue;
+        };
+        if id != message {
+            message = id.to_string();
+            texts.clear();
+        }
+        for b in content {
+            match kind(b) {
+                "text" => {
+                    let t = b.get("text").and_then(Value::as_str).unwrap_or("").trim();
+                    if !t.is_empty() {
+                        texts.push(t.to_string());
+                    }
+                }
+                "tool_use" => {
+                    let name = b.get("name").and_then(Value::as_str).unwrap_or("");
+                    let decision = matches!(name, "AskUserQuestion" | "ExitPlanMode");
+                    last = Some((message.clone(), texts.clone(), decision));
+                }
+                _ => {}
+            }
+        }
+        // Text rows after the tool use of the same message belong to it.
+        if let Some((m, t, _)) = last.as_mut() {
+            if *m == message {
+                *t = texts.clone();
+            }
+        }
+    }
+    let (_, texts, decision) = last?;
+    (!decision && !texts.is_empty()).then(|| {
+        texts.join(
+            "
+
+",
+        )
+    })
+}
+
+/// A user row that is a prompt: not a tool result, not injected (`isMeta`).
+fn is_prompt(row: &Value) -> bool {
+    if row.get("isMeta").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
+    match row.get("message").and_then(|m| m.get("content")) {
+        Some(Value::String(_)) => true,
+        Some(Value::Array(blocks)) => !blocks.iter().any(|b| kind(b) == "tool_result"),
+        _ => false,
+    }
+}
+
 /// At most `THINKING_MAX` characters, cut after the last sentence end
 /// within them (a hard cut when there is none). `None` when empty.
 fn clip(text: &str) -> Option<String> {
@@ -215,6 +295,81 @@ mod tests {
             lead_in_from(&tail, "t1").as_deref(),
             Some("Second thought.")
         );
+    }
+
+    fn text(t: &str) -> Value {
+        json!({"type": "text", "text": t})
+    }
+
+    fn bash(id: &str) -> Value {
+        json!({"type": "tool_use", "id": id, "name": "Bash", "input": {}})
+    }
+
+    fn prompt(t: &str) -> String {
+        json!({"type": "user", "message": {"role": "user", "content": t}}).to_string()
+    }
+
+    fn result(id: &str) -> String {
+        json!({"type": "user", "message": {"role": "user",
+               "content": [{"type": "tool_result", "tool_use_id": id, "content": "ok"}]}})
+        .to_string()
+    }
+
+    #[test]
+    fn before_reply_is_the_text_of_the_last_message_with_a_tool() {
+        let tail = lines(&[
+            prompt("Fix it."),
+            row("m1", text("Looking.")),
+            row("m1", bash("t1")),
+            result("t1"),
+            row("m2", text("Found it: the cache was stale.")),
+            row("m2", text("Fixing now.")),
+            row("m2", bash("t2")),
+            result("t2"),
+            row("m3", text("Done.")),
+        ]);
+        assert_eq!(
+            before_reply_from(&tail).as_deref(),
+            Some(
+                "Found it: the cache was stale.
+
+Fixing now."
+            )
+        );
+    }
+
+    #[test]
+    fn before_reply_stays_in_the_turn_and_skips_a_question() {
+        // A tool of the previous turn is not this turn's.
+        let tail = lines(&[
+            row("m1", text("Old.")),
+            row("m1", bash("t1")),
+            result("t1"),
+            prompt("Next."),
+            row("m2", text("Done.")),
+        ]);
+        assert_eq!(before_reply_from(&tail), None);
+        // A Stop of the turn ends it too: a wake-up starts a new one.
+        let stop = json!({"type": "system", "subtype": "stop_hook_summary"}).to_string();
+        let tail = lines(&[
+            row("m1", text("Old.")),
+            row("m1", bash("t1")),
+            result("t1"),
+            stop,
+        ]);
+        assert_eq!(before_reply_from(&tail), None);
+        // The text before a question was read as its lead-in.
+        let tail = lines(&[
+            prompt("Go."),
+            row("m1", text("Which one?")),
+            row("m1", tool_use("t1")),
+            result("t1"),
+            row("m2", text("Done.")),
+        ]);
+        assert_eq!(before_reply_from(&tail), None);
+        // A tool message without text: nothing.
+        let tail = lines(&[prompt("Go."), row("m1", bash("t1")), result("t1")]);
+        assert_eq!(before_reply_from(&tail), None);
     }
 
     #[test]

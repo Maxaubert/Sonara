@@ -63,6 +63,9 @@ pub enum ReadMode {
     /// Held until the turn ends or a decision arrives; a tool run does not
     /// release.
     Done,
+    /// As `Done`, but only the final reply is read: the text written
+    /// between tool runs is dropped (rules module docs).
+    Final,
 }
 
 impl ReadMode {
@@ -71,6 +74,7 @@ impl ReadMode {
             "immediate" => Some(ReadMode::Immediate),
             "queue" => Some(ReadMode::Queue),
             "done" => Some(ReadMode::Done),
+            "final" => Some(ReadMode::Final),
             _ => None,
         }
     }
@@ -80,6 +84,7 @@ impl ReadMode {
             ReadMode::Immediate => "immediate",
             ReadMode::Queue => "queue",
             ReadMode::Done => "done",
+            ReadMode::Final => "final",
         }
     }
 }

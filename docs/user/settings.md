@@ -71,7 +71,7 @@ Live reading (page group "Live reading"). These apply while Summary is Off, and 
 
 | Label | Key | Default | Range or choices | Effect |
 |---|---|---|---|---|
-| Reading | `read_mode` | `done` | `immediate` (Immediately), `queue` (Queue), `done` (When done) | Immediately: each sentence as it arrives. Queue: sentences are held until the queue size is reached, the turn ends, a tool runs or a question arrives. When done: held until the turn ends or a question, permission or plan arrives |
+| Reading | `read_mode` | `done` | `immediate` (Immediately), `queue` (Queue), `done` (When done), `final` (Final reply) | Immediately: each sentence as it arrives. Queue: sentences are held until the queue size is reached, the turn ends, a tool runs or a question arrives. When done: held until the turn ends or a question, permission or plan arrives. Final reply: only the reply after Claude's last tool is read, at the turn end; the text written between tools ("Let me look at that") is skipped. When the reply is a short closing line after a long report, the report is read too. A question still reads the text just before it, a plan reads only the plan and a permission prompt only the prompt |
 | Queue size | `minqueue` | 5 | 0 to 10 | Shown only in Queue. 0 and 1 read at once |
 
 Each finished reply costs one small call on your Claude or Codex login. See [summaries.md](summaries.md) and [PRIVACY.md](../../PRIVACY.md).
@@ -133,7 +133,7 @@ The bindings themselves are in `keymap.json`. See [hotkeys.md](hotkeys.md).
 | `channel_announce` | `on`, `off` | `on` | Sessions |
 | `mute_level` | 0 to 2 | 0 | Speech |
 | `verbosity` | `everything`, `read_code`, `skip_code` | `skip_code` | Speech |
-| `read_mode` | `immediate`, `queue`, `done` | `done` | Summary |
+| `read_mode` | `immediate`, `queue`, `done`, `final` | `done` | Summary |
 | `flush_scope` | `session`, `all` | `session` | Hotkeys |
 | `question_step` | `on`, `off` | `off` | Speech |
 | `minqueue` | 0 to 10 | 5 | Summary |

@@ -88,7 +88,8 @@ class Agent:
         return self._send("turn_start", _defined({**extra, "channel": channel, "turn": turn}))
 
     def turn_end(self, channel: str, turn: Turn, **extra: Any) -> dict:
-        """``turn_end``."""
+        """``turn_end``. ``reply`` (protocol 1.14, runtime 0.35.0): the turn's
+        final reply, read alone with the agent key ``read_mode`` ``"final"``."""
         return self._send("turn_end", _defined({**extra, "channel": channel, "turn": turn}))
 
     def ask(self, channel: str, kind: str, text: str, options: Optional[Sequence[Any]] = None,

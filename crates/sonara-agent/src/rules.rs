@@ -19,7 +19,8 @@
 //!   says (#222): `immediate` at once; `queue` held below `minqueue` until
 //!   the batch is big enough or the turn ends, a tool runs or a decision
 //!   arrives (context first); `done` held until the turn ends or a decision
-//!   arrives (context first), a tool run does not release it. At verbosity `skip_code` a
+//!   arrives (context first), a tool run does not release it; `final`
+//!   holds as `done` and reads only the final reply (below). At verbosity `skip_code` a
 //!   code block's summary is recorded but not spoken; at `read_code` and
 //!   `everything` it is spoken and the block read line by line after it
 //!   (#290, #292); summary mode records
@@ -31,6 +32,23 @@
 //!   goes in order without it. Nothing is dropped for its order.
 //! - **turn_end** plays `turn_done` and releases held prose (the turn ends
 //!   at this signal, not at a block's `final`).
+//! - **Final reply only** (`read_mode` `final`): the text Claude writes
+//!   between tool runs is not read, only the reply after the last one.
+//!   The hook's `Stop` names that reply (`reply`, from Claude Code's
+//!   `last_assistant_message`): the `turn_end` drops the held prose, reads
+//!   the reply instead, and drops the reply's own blocks that race the
+//!   `turn_end` (compared by letters and digits). It waits for `Stop`
+//!   because of the hook order: the text before a tool reaches the
+//!   runtime after that tool's `PreToolUse`, so a tool run cannot mark
+//!   where the chatter ends. Without a `reply` (an older Claude Code)
+//!   the turn end reads what was held, as `done`. A reply under
+//!   `SHORT_REPLY` words after a message of `LONG_BEFORE` or more (the
+//!   hook's `before_reply`, the text of the turn's last message with a
+//!   tool) is read after that message. A question's lead-in
+//!   drops the prose held before it (a question with none drops it at
+//!   the question), as does a plan; a permission prompt is read on its
+//!   own and keeps the held prose for the turn end. A flushed reply stays
+//!   skipped.
 //! - **Whole messages** (#235, `set_whole_messages`, which the driver sets
 //!   from the reader's engine: send mode `message`): every release of prose
 //!   is ONE `Speak`, the chunks joined with a space and paragraphs (a blank
@@ -446,6 +464,13 @@ pub enum ShownMove {
 /// Text folded for matching the screen: lower case, letters and digits
 /// only, no separators (the terminal cuts a word wider than a line in
 /// two, and the screen's lines are joined with a space).
+/// `read_mode` `final`: a reply under this many words is read after the
+/// text before it when that has `LONG_BEFORE` words or more (#355: on the
+/// owner's sessions this caught most of the reports a short closing line
+/// would have hidden, and never fired on a turn that was fine).
+pub const SHORT_REPLY: usize = 40;
+pub const LONG_BEFORE: usize = 60;
+
 fn fold(s: &str) -> String {
     s.to_lowercase()
         .chars()
@@ -510,6 +535,12 @@ struct Turn {
     /// the same text from `MessageDisplay` later in the turn is not read
     /// again.
     lead_in: Option<String>,
+    /// The final reply the hook sent with `Stop` (`read_mode` `final`),
+    /// and the text before it.
+    reply: Option<(String, Option<String>)>,
+    /// The reply read at the turn end, folded: its blocks that come after
+    /// are not read again.
+    replied: Option<String>,
     /// Prose held by `read_mode`, each chunk with whether it starts a
     /// paragraph (joined with a blank line in whole messages).
     held_prose: Vec<(String, bool)>,
@@ -562,6 +593,8 @@ impl Turn {
             questions: None,
             read_set: None,
             lead_in: None,
+            reply: None,
+            replied: None,
             held_prose: Vec::new(),
             new_para: false,
             last_index: None,
@@ -847,9 +880,83 @@ impl Rules {
         delta: &str,
         t: Option<f64>,
     ) -> Result<Vec<Action>, Stale> {
+        if self.settings.read_mode == ReadMode::Final
+            && !self.turns.get(channel).is_some_and(|c| c.stale(turn, t))
+        {
+            self.drop_held(channel, "text before the question");
+        }
         let out = self.stream(channel, turn, delta, 0, true, t)?;
         self.turn(channel).lead_in = Some(fold(delta));
         Ok(out)
+    }
+
+    /// The final reply of the turn, sent by the hook with `Stop`: the
+    /// `turn_end` that follows reads it in `read_mode` `final`, the other
+    /// modes ignore it.
+    pub fn reply(
+        &mut self,
+        channel: &str,
+        turn: Option<&str>,
+        text: &str,
+        before: Option<&str>,
+        t: Option<f64>,
+    ) -> Result<(), Stale> {
+        if self.turns.get(channel).is_some_and(|c| c.stale(turn, t)) {
+            return Err(Stale);
+        }
+        let text = text.trim();
+        let before = before.map(str::trim).filter(|b| !b.is_empty());
+        self.turn(channel).reply =
+            (!text.is_empty()).then(|| (text.to_string(), before.map(str::to_string)));
+        Ok(())
+    }
+
+    /// `read_mode` `final` at the turn end: the held prose (the text
+    /// between tools) goes and the reply is assembled in its place.
+    fn take_reply(&mut self, channel: &str) -> Vec<Action> {
+        let final_mode = self.settings.read_mode == ReadMode::Final;
+        let c = self.turn(channel);
+        let Some((reply, before)) = c.reply.take().filter(|_| final_mode) else {
+            return Vec::new();
+        };
+        if c.skip_reply {
+            return Vec::new();
+        }
+        self.drop_held(channel, "text between tools");
+        let words = |s: &str| s.split_whitespace().count();
+        let reply = match before {
+            Some(b) if words(&reply) < SHORT_REPLY && words(&b) >= LONG_BEFORE => {
+                // A short reply after a long report ("the tests are still
+                // running"): the report is what the user needs to hear.
+                self.note(
+                    Some(channel),
+                    "prose",
+                    format!(
+                        "read with the text before it: the reply has under {SHORT_REPLY} \
+                         words, the text before it {LONG_BEFORE} or more (read_mode final)"
+                    ),
+                    None,
+                );
+                format!("{b}\n\n{reply}")
+            }
+            _ => reply,
+        };
+        let c = self.turn(channel);
+        // The reply restarts the text: the assembler and the prose kept
+        // for a summary forget the text between tools.
+        c.assembler = ProseAssembler::new();
+        c.new_para = false;
+        c.last_index = None;
+        c.order.next = 0;
+        c.order.skipped.clear();
+        c.prose.truncate(c.voiced);
+        c.replied = Some(fold(&reply));
+        c.released = true;
+        let out = self.assemble(channel, vec![(reply, 0, true)]);
+        let c = self.turn(channel);
+        c.assembler = ProseAssembler::new();
+        c.last_index = None;
+        out
     }
 
     pub fn stream(
@@ -873,6 +980,21 @@ impl Rules {
                 Some(channel),
                 "prose",
                 "dropped: the question's lead-in again (#323)".into(),
+                Some(delta.to_string()),
+            );
+            return Ok(out);
+        }
+        let c = self.turn(channel);
+        if c.ended
+            && c.replied
+                .as_deref()
+                .is_some_and(|r| r.contains(fold(delta).as_str()))
+        {
+            // A block of the reply read at the turn end (read_mode final).
+            self.note(
+                Some(channel),
+                "prose",
+                "dropped: the final reply again (read_mode final)".into(),
                 Some(delta.to_string()),
             );
             return Ok(out);
@@ -1057,7 +1179,7 @@ impl Rules {
             || match mode {
                 ReadMode::Immediate => !whole,
                 ReadMode::Queue => c.held_prose.len() >= minqueue,
-                ReadMode::Done => false,
+                ReadMode::Done | ReadMode::Final => false,
             };
         let upto = before + breaks.unwrap_or(0);
         if ready {
@@ -1068,9 +1190,10 @@ impl Rules {
         let held = self.turn(channel).held_prose.len();
         if held > 0 && !ready {
             let what = match mode {
-                ReadMode::Done => {
-                    format!("held: waits for the turn end (read_mode done), {held} chunk(s)")
-                }
+                ReadMode::Done | ReadMode::Final => format!(
+                    "held: waits for the turn end (read_mode {}), {held} chunk(s)",
+                    mode.as_str()
+                ),
                 ReadMode::Immediate => format!(
                     "held: {held} chunk(s) wait for the end of the paragraph (send mode message)"
                 ),
@@ -1113,6 +1236,8 @@ impl Rules {
         c.questions = None;
         c.read_set = None;
         c.lead_in = None;
+        c.reply = None;
+        c.replied = None;
         self.drop_held(channel, "turn_start");
         let c = self.turn(channel);
         c.released = false;
@@ -1160,6 +1285,7 @@ impl Rules {
         // go in order, without the missing ones (#286).
         let deltas = self.release_gap(channel, "turn_end");
         out.extend(deltas);
+        out.extend(self.take_reply(channel));
         let c = self.turn(channel);
         c.released = true;
         c.ended = true;
@@ -1303,6 +1429,19 @@ impl Rules {
             }
             AskKind::Plan => (decision::plan_text(&ask.text), "plan"),
         };
+        if self.settings.read_mode == ReadMode::Final {
+            let c = self.turn(channel);
+            let lead_in = c.lead_in.is_some();
+            match kind {
+                "plan" => {
+                    self.drop_held(channel, "text before the plan");
+                }
+                "question" if !lead_in => {
+                    self.drop_held(channel, "text before the question");
+                }
+                _ => {}
+            }
+        }
         let mut extras: Vec<&str> = Vec::new();
         // Read in order (#320), the notes and hints ride on the first
         // question of a set only.
@@ -1341,6 +1480,12 @@ impl Rules {
             );
             self.turn(channel).pending.push(item);
             self.arm_settle(&mut out, channel);
+        } else if kind == "permission" && self.settings.read_mode == ReadMode::Final {
+            // Read on its own: the held text waits for the turn end.
+            let c = self.turn(channel);
+            let held = std::mem::take(&mut c.held_prose);
+            self.enqueue_or_hold(&mut out, channel, item, false);
+            self.turn(channel).held_prose = held;
         } else {
             self.enqueue_or_hold(&mut out, channel, item, false);
         }
@@ -1383,7 +1528,7 @@ impl Rules {
             );
             return out;
         }
-        if self.settings.read_mode != ReadMode::Done {
+        if !matches!(self.settings.read_mode, ReadMode::Done | ReadMode::Final) {
             // In whole messages the tool run is one release point; the
             // paragraph and batch rules keep holding after it (#235).
             if !self.whole {
@@ -1576,6 +1721,8 @@ impl Rules {
                 c.skip_reply = false;
                 c.new_para = false;
                 c.last_index = None;
+                c.reply = None;
+                c.replied = None;
                 true
             }
             _ => false,

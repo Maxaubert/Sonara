@@ -529,6 +529,21 @@ impl Agent {
         })
     }
 
+    /// The final reply of the turn, sent with its `turn_end` (`read_mode`
+    /// `final` reads only it). Returns false when stale (dropped).
+    pub fn reply(
+        &self,
+        channel: &str,
+        turn: Option<&str>,
+        text: &str,
+        before: Option<&str>,
+        t: Option<f64>,
+    ) -> Result<bool> {
+        self.apply("turn_end", Some(channel), |r| {
+            r.reply(channel, turn, text, before, t).map(|()| Vec::new())
+        })
+    }
+
     /// The turn ended. Returns false when it was the end of an earlier turn
     /// (dropped, no earcon).
     pub fn turn_end(&self, channel: &str, turn: Option<&str>, t: Option<f64>) -> Result<bool> {
