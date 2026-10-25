@@ -33,7 +33,24 @@ static WHITESPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\s\x1C-\x1F]+").unwr
 static WORD_RUN: Lazy<Regex> = Lazy::new(|| Regex::new(r"[A-Za-z0-9_]+").unwrap());
 static ARROW: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[\s\x1C-\x1F]*(?:->|=>|-->|→)[\s\x1C-\x1F]*").unwrap());
-static STRAY_MD: Lazy<Regex> = Lazy::new(|| Regex::new(r"[*_`~#|•✓✔✗✘❌✅]+").unwrap());
+static STRAY_MD: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"[*_`~#|•✓✔✗✘❌✅☑⏳⌛⚠\x{FE0F}]+").unwrap());
+/// A status mark standing alone: at the start or after a clause end, and
+/// before the next one or the end (a table cell, a line, "Status: ✅.").
+static STATUS_ALONE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?m)(^[ \t]*|[:;,.!?][ \t]+)([✅✔✓☑❌✗✘⏳⌛⚠])\x{FE0F}?[ \t]*([.,;:!?]|$)")
+        .unwrap()
+});
+
+/// The word for a status mark read alone (owner, 2026-10-25).
+fn status_word(mark: &str) -> &'static str {
+    match mark {
+        "❌" | "✗" | "✘" => "no",
+        "⏳" | "⌛" => "pending",
+        "⚠" => "warning",
+        _ => "done",
+    }
+}
 
 /// Length-preserving "N. " -> "N: " for numbered list items (raw text, pre-split).
 pub fn stabilize_ordinals(text: &str) -> String {
@@ -183,6 +200,13 @@ pub fn normalize_for_speech(text: &str) -> String {
     let mut t = clean_markdown(&speak_snake_case(&t));
     t = ARROW.replace_all(&t, " to ").into_owned();
     t = t.replace(" & ", " and ");
+    // A status mark alone is said; next to words it is dropped below, as
+    // the words already say it.
+    t = STATUS_ALONE
+        .replace_all(&t, |c: &regex::Captures| {
+            format!("{}{}{}", &c[1], status_word(&c[2]), &c[3])
+        })
+        .into_owned();
     t = STRAY_MD.replace_all(&t, " ").into_owned();
     WHITESPACE.replace_all(&t, " ").trim().to_string()
 }

@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "sonara",
-      "version": "0.34.0",
+      "version": "0.34.1",
       "description": "Text-to-speech for Claude Code (Windows): reads replies, options, plans and permissions per session with a Kokoro voice, earcons and global hotkeys. No Python needed: the runtime installs itself on first use.",
       "author": {
         "name": "Max Aubert"
