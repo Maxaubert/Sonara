@@ -14,6 +14,11 @@
 //! it (`lead_in`). Claude Code writes each content block as its own row;
 //! the rows of one message share `message.id`.
 //!
+//! Claude Code mostly writes a question's rows only after `PreToolUse`
+//! returns, so the lookup usually misses: waiting longer in the hook does
+//! not help (#358 polled for 1 s, found nothing and delayed every question;
+//! reverted, 2026-10-26).
+//!
 //! Only the last `TAIL` bytes are read, and a row is parsed only when it
 //! holds the id it is looked for by. Whatever goes wrong (no file, an IO
 //! or parse error, the tool use not in the tail, a subagent's call whose
@@ -28,24 +33,23 @@ use std::time::{Duration, Instant};
 pub const TAIL: u64 = 2 * 1024 * 1024;
 /// The longest lead-in, in characters (clipped at a sentence end).
 pub const THINKING_MAX: usize = 4000;
-/// The wait between two looks while the tool use is not on disk yet.
-/// Claude Code writes a question's rows about a second after `PreToolUse`
-/// starts (2026-10-26), so one retry after 100 ms nearly always missed.
-pub const POLL: Duration = Duration::from_millis(50);
+/// The wait before the one retry when the tool use is not on disk yet.
+pub const RETRY_AFTER: Duration = Duration::from_millis(100);
 
 /// The thinking to read before the question `tool_use_id`, from the
-/// transcript at `path` (module docs). While the tool use is not found it
-/// looks again every `POLL`, until `deadline`.
+/// transcript at `path` (module docs). One retry after `RETRY_AFTER` when
+/// the tool use is not found, if `deadline` allows it.
 pub fn lead_in(path: &Path, tool_use_id: &str, deadline: Instant) -> Option<String> {
     if tool_use_id.is_empty() {
         return None;
     }
-    loop {
-        match read_tail(path).map(|t| find(&t, tool_use_id))? {
-            Found::Message(lead) => return lead,
-            Found::NoToolUse if Instant::now() + POLL < deadline => std::thread::sleep(POLL),
-            Found::NoToolUse => return None,
+    match read_tail(path).map(|t| find(&t, tool_use_id)) {
+        Some(Found::Message(lead)) => lead,
+        Some(Found::NoToolUse) if Instant::now() + RETRY_AFTER < deadline => {
+            std::thread::sleep(RETRY_AFTER);
+            lead_in_from(&read_tail(path)?, tool_use_id)
         }
+        _ => None,
     }
 }
 
@@ -454,45 +458,6 @@ And a second part."
             lead_in_from(&tail, "t1").as_deref(),
             Some("This message's thought.")
         );
-    }
-
-    #[test]
-    fn a_question_written_to_disk_late_still_gets_its_lead_in() {
-        // Claude Code writes the question's rows about a second after the
-        // hook starts (Wallet session and a timed run, 2026-10-26): the
-        // lead-in waits for them until the deadline.
-        let dir = std::env::temp_dir().join(format!("sonara-late-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("t.jsonl");
-        std::fs::write(&path, lines(&[row("m0", text("Earlier."))])).unwrap();
-        let late = lines(&[
-            row("m1", thinking("Ten files, not eleven.")),
-            row("m1", tool_use("t1")),
-        ]);
-        let writer = {
-            let path = path.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(500));
-                let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
-                std::io::Write::write_all(&mut f, late.as_bytes()).unwrap();
-            })
-        };
-        let deadline = Instant::now() + Duration::from_secs(1);
-        let lead = lead_in(&path, "t1", deadline);
-        writer.join().unwrap();
-        assert_eq!(lead.as_deref(), Some("Ten files, not eleven."));
-        assert!(
-            Instant::now() < deadline + POLL,
-            "it never waits past the deadline"
-        );
-        // Never written: it gives up at the deadline.
-        let start = Instant::now();
-        assert_eq!(
-            lead_in(&path, "t9", start + Duration::from_millis(300)),
-            None
-        );
-        assert!(start.elapsed() < Duration::from_millis(300) + POLL);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
