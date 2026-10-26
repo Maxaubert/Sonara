@@ -970,7 +970,12 @@ impl Rules {
             if self.settings.read_mode == ReadMode::Final {
                 self.drop_held(channel, "text before the question");
             }
-            out = self.stream(channel, turn, delta, 0, true, t)?;
+            // It belongs to its question: read even in a flushed reply,
+            // whose other text stays skipped (Spectra, 2026-10-26).
+            let skip = std::mem::take(&mut self.turn(channel).skip_reply);
+            let streamed = self.stream(channel, turn, delta, 0, true, t);
+            self.turn(channel).skip_reply = skip;
+            out = streamed?;
             self.turn(channel).lead_in = Some(folded);
         }
         if waiting {

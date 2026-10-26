@@ -300,8 +300,8 @@ pub type BeforeReply<'a> = &'a dyn Fn(&Path) -> Option<String>;
 
 /// The lead-in before the questions of `payload`, as one final `stream`
 /// marked `lead_in` (#323)
-/// (the prose rules apply: held and released by the question, skipped in a
-/// flushed reply). A subagent's question (`agent_id`) has its tool use in
+/// (the prose rules apply: held and released by the question; read even in a
+/// flushed reply, as it belongs to the question). A subagent's question (`agent_id`) has its tool use in
 /// another transcript: no lead-in.
 fn question_lead_in(payload: &Value, lead_in: LeadIn) -> Lead {
     if !text(payload, "agent_id").is_empty() {

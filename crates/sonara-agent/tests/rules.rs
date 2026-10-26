@@ -2638,3 +2638,34 @@ fn with_summaries_on_the_settle_waits_for_the_late_lead_in() {
         ]
     );
 }
+
+#[test]
+fn a_question_s_lead_in_is_read_even_in_a_flushed_reply() {
+    // The Spectra session (2026-10-26 15:39): the user skipped a question
+    // set (hold Down), answered, and Claude asked again with context first.
+    // The context belongs to the new question: it is read, the rest of the
+    // flushed reply is not.
+    let mut r = rules();
+    prose(&mut r, "fg", "Old text. ", 0, true);
+    r.flush("fg");
+    r.answered("fg");
+    assert!(spoken(&prose(&mut r, "fg", "Skipped text. ", 0, true)).is_empty());
+    // A late lead-in (#360).
+    r.ask("fg", &pending_question("Debrid?", "q1"));
+    assert_eq!(
+        late(&mut r, "Debrid services hand back links.", "q1"),
+        [
+            "Debrid services hand back links.",
+            "!Debrid? Option 1: Yes. Option 2: No."
+        ]
+    );
+    r.answered("fg");
+    // One sent with its question.
+    let b = r.lead_in("fg", None, "More context.", None).unwrap();
+    let c = r.ask("fg", &question("Next?", &["A"]));
+    let mut said = spoken(&b);
+    said.extend(spoken(&c));
+    assert_eq!(said, ["More context.", "!Next? Option 1: A."]);
+    // Prose after it is still skipped.
+    assert!(spoken(&prose(&mut r, "fg", "Still skipped. ", 0, true)).is_empty());
+}
